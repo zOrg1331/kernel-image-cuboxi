@@ -1,0 +1,108 @@
+From: David Teigland <teigland@redhat.com>
+Subject: [RHEL5.1 PATCH] gfs2 (dlm): make lock_dlm drop_count tunable in sysfs
+Date: Fri, 26 Jan 2007 11:56:19 -0600
+Bugzilla: 224460
+Message-Id: <20070126175619.GD18186@redhat.com>
+Changelog: [dlm] make lock_dlm drop_count tunable in sysfs
+
+
+bz 224460
+(patch 2 of 2)
+
+We want to be able to change or disable the default drop_count (number at
+which the dlm asks gfs to limit the the number of locks it's holding).
+Add it to the collection of sysfs tunables for an fs.
+
+Because this is in lock_dlm, it also affects gfs1 since gfs1 uses gfs2's
+lock modules in the upstream kernel.
+
+patch in upstream gfs2 git tree
+
+
+Index: linux-rhel5-quilt/fs/gfs2/locking/dlm/main.c
+===================================================================
+--- linux-rhel5-quilt.orig/fs/gfs2/locking/dlm/main.c	2007-01-24 14:42:04.000000000 -0600
++++ linux-rhel5-quilt/fs/gfs2/locking/dlm/main.c	2007-01-25 14:27:38.000000000 -0600
+@@ -11,9 +11,6 @@
+ 
+ #include "lock_dlm.h"
+ 
+-extern int gdlm_drop_count;
+-extern int gdlm_drop_period;
+-
+ extern struct lm_lockops gdlm_ops;
+ 
+ static int __init init_lock_dlm(void)
+@@ -40,9 +37,6 @@
+ 		return error;
+ 	}
+ 
+-	gdlm_drop_count = GDLM_DROP_COUNT;
+-	gdlm_drop_period = GDLM_DROP_PERIOD;
+-
+ 	printk(KERN_INFO
+ 	       "Lock_DLM (built %s %s) installed\n", __DATE__, __TIME__);
+ 	return 0;
+Index: linux-rhel5-quilt/fs/gfs2/locking/dlm/mount.c
+===================================================================
+--- linux-rhel5-quilt.orig/fs/gfs2/locking/dlm/mount.c	2007-01-24 14:42:04.000000000 -0600
++++ linux-rhel5-quilt/fs/gfs2/locking/dlm/mount.c	2007-01-25 14:27:38.000000000 -0600
+@@ -9,8 +9,6 @@
+ 
+ #include "lock_dlm.h"
+ 
+-int gdlm_drop_count;
+-int gdlm_drop_period;
+ const struct lm_lockops gdlm_ops;
+ 
+ 
+@@ -24,8 +22,8 @@
+ 	if (!ls)
+ 		return NULL;
+ 
+-	ls->drop_locks_count = gdlm_drop_count;
+-	ls->drop_locks_period = gdlm_drop_period;
++	ls->drop_locks_count = GDLM_DROP_COUNT;
++	ls->drop_locks_period = GDLM_DROP_PERIOD;
+ 	ls->fscb = cb;
+ 	ls->sdp = sdp;
+ 	ls->fsflags = flags;
+Index: linux-rhel5-quilt/fs/gfs2/locking/dlm/sysfs.c
+===================================================================
+--- linux-rhel5-quilt.orig/fs/gfs2/locking/dlm/sysfs.c	2007-01-24 14:42:04.000000000 -0600
++++ linux-rhel5-quilt/fs/gfs2/locking/dlm/sysfs.c	2007-01-25 14:27:38.000000000 -0600
+@@ -116,6 +116,17 @@
+ 	return sprintf(buf, "%d\n", ls->recover_jid_status);
+ }
+ 
++static ssize_t drop_count_show(struct gdlm_ls *ls, char *buf)
++{
++	return sprintf(buf, "%d\n", ls->drop_locks_count);
++}
++
++static ssize_t drop_count_store(struct gdlm_ls *ls, const char *buf, size_t len)
++{
++	ls->drop_locks_count = simple_strtol(buf, NULL, 0);
++	return len;
++}
++
+ struct gdlm_attr {
+ 	struct attribute attr;
+ 	ssize_t (*show)(struct gdlm_ls *, char *);
+@@ -135,6 +146,7 @@
+ GDLM_ATTR(recover,        0644, recover_show,        recover_store);
+ GDLM_ATTR(recover_done,   0444, recover_done_show,   NULL);
+ GDLM_ATTR(recover_status, 0444, recover_status_show, NULL);
++GDLM_ATTR(drop_count,     0644, drop_count_show,     drop_count_store);
+ 
+ static struct attribute *gdlm_attrs[] = {
+ 	&gdlm_attr_proto_name.attr,
+@@ -147,6 +159,7 @@
+ 	&gdlm_attr_recover.attr,
+ 	&gdlm_attr_recover_done.attr,
+ 	&gdlm_attr_recover_status.attr,
++	&gdlm_attr_drop_count.attr,
+ 	NULL,
+ };
+ 
+

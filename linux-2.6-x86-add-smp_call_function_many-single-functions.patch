@@ -1,0 +1,707 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Date: Thu, 1 Oct 2009 06:32:21 -0400
+Subject: [x86] add smp_call_function_many/single functions
+Message-id: 4AC48535.7000800@redhat.com
+O-Subject: Re: [RHEL5 PATCH] x86 add smp_call_function_many and smp_call_function_single
+Bugzilla: 526043
+RH-Acked-by: Chris Lalancette <clalance@redhat.com>
+RH-Acked-by: Dean Nelson <dnelson@redhat.com>
+RH-Acked-by: Chris Lalancette <clalance@redhat.com>
+
+Implement smp_call_function_many() and smp_call_function_single() on i386
+and x86_64.
+
+The hwmon patch, the upcoming mce update patch, and achiang's powernow
+driver
+update patch require these functions.  In order to make integration easier
+I am posting this patch separate from the other patchsets.  The other
+patchsets
+will be regenerated against this version of the patch.
+
+Successfully tested on 32 and 64 bit bare metal and xen.
+
+Resolves BZ 526043.
+
+diff --git a/arch/i386/kernel/smp-xen.c b/arch/i386/kernel/smp-xen.c
+index 0079ba6..2ece371 100644
+--- a/arch/i386/kernel/smp-xen.c
++++ b/arch/i386/kernel/smp-xen.c
+@@ -498,35 +498,88 @@ void unlock_ipi_call_lock(void)
+ 
+ static struct call_data_struct *call_data;
+ 
+-/**
+- * smp_call_function(): Run a function on all other CPUs.
++/*
++ * this function sends a 'generic call function' IPI to one other CPU
++ * in the system.
++ *
++ * cpu is a standard Linux logical CPU number.
++ */
++static void
++__smp_call_function_single(int cpu, void (*func) (void *info), void *info,
++			   int nonatomic, int wait)
++{
++	struct call_data_struct data;
++	int cpus = 1;
++
++	data.func = func;
++	data.info = info;
++	atomic_set(&data.started, 0);
++	data.wait = wait;
++	if (wait)
++		atomic_set(&data.finished, 0);
++
++	call_data = &data;
++	wmb();
++	/* Send a message to all other CPUs and wait for them to respond */
++	send_IPI_mask(cpumask_of_cpu(cpu), CALL_FUNCTION_VECTOR);
++
++	/* Wait for response */
++	while (atomic_read(&data.started) != cpus)
++		cpu_relax();
++
++	if (!wait)
++		return;
++
++	while (atomic_read(&data.finished) != cpus)
++		cpu_relax();
++}
++
++/*
++ * smp_call_function_single - Run a function on another CPU
+  * @func: The function to run. This must be fast and non-blocking.
+  * @info: An arbitrary pointer to pass to the function.
+- * @nonatomic: currently unused.
+- * @wait: If true, wait (atomically) until function has completed on other CPUs.
++ * @nonatomic: Currently unused.
++ * @wait: If true, wait until function has completed on other CPUs.
+  *
+- * Returns 0 on success, else a negative status code. Does not return until
+- * remote CPUs are nearly ready to execute <<func>> or are or have executed.
++ * Returns 0 on success, else a negative status code.
+  *
+- * You must not call this function with disabled interrupts or from a
+- * hardware interrupt handler or from a bottom half handler.
++ * Does not return until the remote CPU is nearly ready to execute <func>
++ * or is or has executed.
+  */
+-int smp_call_function (void (*func) (void *info), void *info, int nonatomic,
+-			int wait)
++
++int smp_call_function_single (int cpu, void (*func) (void *info), void *info,
++			      int nonatomic, int wait)
++{
++	/* prevent preemption and reschedule on another processor */
++	unsigned long flags;
++	int me = get_cpu();
++
++	if (cpu == me) {
++		local_irq_save(flags);
++		func(info);
++		local_irq_restore(flags);
++	} else {
++		spin_lock_bh(&call_lock);
++		__smp_call_function_single(cpu, func, info, nonatomic, wait);
++		spin_unlock_bh(&call_lock);
++	}
++	put_cpu();
++	return 0;
++}
++EXPORT_SYMBOL(smp_call_function_single);
++
++static void __smp_call_function_many(cpumask_t *mask, void (*func) (void *info),
++				     void *info, int nonatomic, int wait)
+ {
+ 	struct call_data_struct data;
+ 	int cpus;
++	int cpu = smp_processor_id();
+ 
+-	/* Holding any lock stops cpus from going down. */
+-	spin_lock(&call_lock);
+-	cpus = num_online_cpus() - 1;
+-	if (!cpus) {
+-		spin_unlock(&call_lock);
+-		return 0;
+-	}
+-
+-	/* Can deadlock when called with interrupts disabled */
+-	WARN_ON(irqs_disabled());
++	if (cpu_isset(cpu, *mask))
++		cpu_clear(cpu, *mask);
++	cpus = cpus_weight(*mask);
++	if (!cpus)
++		return;
+ 
+ 	data.func = func;
+ 	data.info = info;
+@@ -536,20 +589,56 @@ int smp_call_function (void (*func) (void *info), void *info, int nonatomic,
+ 		atomic_set(&data.finished, 0);
+ 
+ 	call_data = &data;
+-	mb();
+-	
++	wmb();
+ 	/* Send a message to all other CPUs and wait for them to respond */
+-	send_IPI_allbutself(CALL_FUNCTION_VECTOR);
++	send_IPI_mask(*mask, CALL_FUNCTION_VECTOR);
+ 
+ 	/* Wait for response */
+ 	while (atomic_read(&data.started) != cpus)
+-		barrier();
++		cpu_relax();
+ 
+-	if (wait)
+-		while (atomic_read(&data.finished) != cpus)
+-			barrier();
++	if (!wait)
++		return;
++
++	while (atomic_read(&data.finished) != cpus)
++		cpu_relax();
++}
++
++/*
++ * this function sends a 'generic call function' IPI to all other CPUs
++ * in mask.
++ */
++void smp_call_function_many(cpumask_t *mask, void (*func) (void *info),
++			    void *info, int nonatomic, int wait)
++{
++	spin_lock(&call_lock);
++	__smp_call_function_many(mask, func, info, nonatomic, wait);
+ 	spin_unlock(&call_lock);
++}
++EXPORT_SYMBOL(smp_call_function_many);
++
++/*
++ * smp_call_function - run a function on all other CPUs.
++ * @func: The function to run. This must be fast and non-blocking.
++ * @info: An arbitrary pointer to pass to the function.
++ * @nonatomic: currently unused.
++ * @wait: If true, wait (atomically) until function has completed on other
++ *        CPUs.
++ *
++ * Returns 0 on success, else a negative status code. Does not return until
++ * remote CPUs are nearly ready to execute func or are or have executed.
++ *
++ * You must not call this function with disabled interrupts or from a
++ * hardware interrupt handler or from a bottom half handler.
++ * Actually there are a few legal cases, like panic.
++ */
++int smp_call_function (void (*func) (void *info), void *info, int nonatomic,
++			int wait)
++{
++	cpumask_t thismask = CPU_MASK_NONE;
+ 
++	cpus_or(thismask, cpu_online_map, thismask);
++	smp_call_function_many(&thismask, func, info, nonatomic, wait);
+ 	return 0;
+ }
+ EXPORT_SYMBOL(smp_call_function);
+diff --git a/arch/i386/kernel/smp.c b/arch/i386/kernel/smp.c
+index d2523c3..d62f54d 100644
+--- a/arch/i386/kernel/smp.c
++++ b/arch/i386/kernel/smp.c
+@@ -519,35 +519,88 @@ void unlock_ipi_call_lock(void)
+ 
+ static struct call_data_struct *call_data;
+ 
+-/**
+- * smp_call_function(): Run a function on all other CPUs.
++/*
++ * this function sends a 'generic call function' IPI to one other CPU
++ * in the system.
++ *
++ * cpu is a standard Linux logical CPU number.
++ */
++static void
++__smp_call_function_single(int cpu, void (*func) (void *info), void *info,
++			   int nonatomic, int wait)
++{
++	struct call_data_struct data;
++	int cpus = 1;
++
++	data.func = func;
++	data.info = info;
++	atomic_set(&data.started, 0);
++	data.wait = wait;
++	if (wait)
++		atomic_set(&data.finished, 0);
++
++	call_data = &data;
++	wmb();
++	/* Send a message to all other CPUs and wait for them to respond */
++	send_IPI_mask(cpumask_of_cpu(cpu), CALL_FUNCTION_VECTOR);
++
++	/* Wait for response */
++	while (atomic_read(&data.started) != cpus)
++		cpu_relax();
++
++	if (!wait)
++		return;
++
++	while (atomic_read(&data.finished) != cpus)
++		cpu_relax();
++}
++
++/*
++ * smp_call_function_single - Run a function on another CPU
+  * @func: The function to run. This must be fast and non-blocking.
+  * @info: An arbitrary pointer to pass to the function.
+- * @nonatomic: currently unused.
+- * @wait: If true, wait (atomically) until function has completed on other CPUs.
++ * @nonatomic: Currently unused.
++ * @wait: If true, wait until function has completed on other CPUs.
+  *
+- * Returns 0 on success, else a negative status code. Does not return until
+- * remote CPUs are nearly ready to execute <<func>> or are or have executed.
++ * Returns 0 on success, else a negative status code.
+  *
+- * You must not call this function with disabled interrupts or from a
+- * hardware interrupt handler or from a bottom half handler.
++ * Does not return until the remote CPU is nearly ready to execute <func>
++ * or is or has executed.
+  */
+-int smp_call_function (void (*func) (void *info), void *info, int nonatomic,
+-			int wait)
++
++int smp_call_function_single(int cpu, void (*func) (void *info), void *info,
++			     int nonatomic, int wait)
++{
++	/* prevent preemption and reschedule on another processor */
++	unsigned long flags;
++	int me = get_cpu();
++
++	if (cpu == me) {
++		local_irq_save(flags);
++		func(info);
++		local_irq_restore(flags);
++	} else {
++		spin_lock_bh(&call_lock);
++		__smp_call_function_single(cpu, func, info, nonatomic, wait);
++		spin_unlock_bh(&call_lock);
++	}
++	put_cpu();
++	return 0;
++}
++EXPORT_SYMBOL(smp_call_function_single);
++
++static void __smp_call_function_many(cpumask_t *mask, void (*func) (void *info),
++				     void *info, int nonatomic, int wait)
+ {
+ 	struct call_data_struct data;
+ 	int cpus;
++	int cpu = smp_processor_id();
+ 
+-	/* Holding any lock stops cpus from going down. */
+-	spin_lock(&call_lock);
+-	cpus = num_online_cpus() - 1;
+-	if (!cpus) {
+-		spin_unlock(&call_lock);
+-		return 0;
+-	}
+-
+-	/* Can deadlock when called with interrupts disabled */
+-	WARN_ON(irqs_disabled());
++	if (cpu_isset(cpu, *mask))
++		cpu_clear(cpu, *mask);
++	cpus = cpus_weight(*mask);
++	if (!cpus)
++		return;
+ 
+ 	data.func = func;
+ 	data.info = info;
+@@ -557,20 +610,56 @@ int smp_call_function (void (*func) (void *info), void *info, int nonatomic,
+ 		atomic_set(&data.finished, 0);
+ 
+ 	call_data = &data;
+-	mb();
+-	
++	wmb();
+ 	/* Send a message to all other CPUs and wait for them to respond */
+-	send_IPI_allbutself(CALL_FUNCTION_VECTOR);
++	send_IPI_mask(*mask, CALL_FUNCTION_VECTOR);
+ 
+ 	/* Wait for response */
+ 	while (atomic_read(&data.started) != cpus)
+ 		cpu_relax();
+ 
+-	if (wait)
+-		while (atomic_read(&data.finished) != cpus)
+-			cpu_relax();
++	if (!wait)
++		return;
++
++	while (atomic_read(&data.finished) != cpus)
++		cpu_relax();
++}
++
++/*
++ * this function sends a 'generic call function' IPI to all other CPUs
++ * in mask.
++ */
++void smp_call_function_many(cpumask_t *mask, void (*func) (void *info),
++			    void *info, int nonatomic, int wait)
++{
++	spin_lock(&call_lock);
++	__smp_call_function_many(mask, func, info, nonatomic, wait);
+ 	spin_unlock(&call_lock);
++}
++EXPORT_SYMBOL(smp_call_function_many);
++
++/*
++ * smp_call_function - run a function on all other CPUs.
++ * @func: The function to run. This must be fast and non-blocking.
++ * @info: An arbitrary pointer to pass to the function.
++ * @nonatomic: currently unused.
++ * @wait: If true, wait (atomically) until function has completed on other
++ *        CPUs.
++ *
++ * Returns 0 on success, else a negative status code. Does not return until
++ * remote CPUs are nearly ready to execute func or are or have executed.
++ *
++ * You must not call this function with disabled interrupts or from a
++ * hardware interrupt handler or from a bottom half handler.
++ * Actually there are a few legal cases, like panic.
++ */
++int smp_call_function(void (*func) (void *info), void *info, int nonatomic,
++		      int wait)
++{
++	cpumask_t thismask = CPU_MASK_NONE;
+ 
++	cpus_or(thismask, cpu_online_map, thismask);
++	smp_call_function_many(&thismask, func, info, nonatomic, wait);
+ 	return 0;
+ }
+ EXPORT_SYMBOL(smp_call_function);
+diff --git a/arch/x86_64/kernel/smp-xen.c b/arch/x86_64/kernel/smp-xen.c
+index b3a9351..bb2eaf1 100644
+--- a/arch/x86_64/kernel/smp-xen.c
++++ b/arch/x86_64/kernel/smp-xen.c
+@@ -347,7 +347,7 @@ void unlock_ipi_call_lock(void)
+  */
+ static void
+ __smp_call_function_single(int cpu, void (*func) (void *info), void *info,
+-				int nonatomic, int wait)
++			   int nonatomic, int wait)
+ {
+ 	struct call_data_struct data;
+ 	int cpus = 1;
+@@ -382,39 +382,43 @@ __smp_call_function_single(int cpu, void (*func) (void *info), void *info,
+  * @nonatomic: Currently unused.
+  * @wait: If true, wait until function has completed on other CPUs.
+  *
+- * Retrurns 0 on success, else a negative status code.
++ * Returns 0 on success, else a negative status code.
+  *
+  * Does not return until the remote CPU is nearly ready to execute <func>
+  * or is or has executed.
+  */
+ 
+ int smp_call_function_single (int cpu, void (*func) (void *info), void *info,
+-	int nonatomic, int wait)
++			      int nonatomic, int wait)
+ {
+ 	/* prevent preemption and reschedule on another processor */
++	unsigned long flags;
+ 	int me = get_cpu();
++
+ 	if (cpu == me) {
+-		WARN_ON(1);
+-		put_cpu();
+-		return -EBUSY;
++		local_irq_save(flags);
++		func(info);
++		local_irq_restore(flags);
++	} else {
++		spin_lock_bh(&call_lock);
++		__smp_call_function_single(cpu, func, info, nonatomic, wait);
++		spin_unlock_bh(&call_lock);
+ 	}
+-	spin_lock_bh(&call_lock);
+-	__smp_call_function_single(cpu, func, info, nonatomic, wait);
+-	spin_unlock_bh(&call_lock);
+ 	put_cpu();
+ 	return 0;
+ }
++EXPORT_SYMBOL(smp_call_function_single);
+ 
+-/*
+- * this function sends a 'generic call function' IPI to all other CPUs
+- * in the system.
+- */
+-static void __smp_call_function (void (*func) (void *info), void *info,
+-				int nonatomic, int wait)
++static void __smp_call_function_many(cpumask_t *mask, void (*func) (void *info),
++				     void *info, int nonatomic, int wait)
+ {
+ 	struct call_data_struct data;
+-	int cpus = num_online_cpus()-1;
++	int cpus;
++	int cpu = smp_processor_id();
+ 
++	if (cpu_isset(cpu, *mask))
++		cpu_clear(cpu, *mask);
++	cpus = cpus_weight(*mask);
+ 	if (!cpus)
+ 		return;
+ 
+@@ -428,7 +432,7 @@ static void __smp_call_function (void (*func) (void *info), void *info,
+ 	call_data = &data;
+ 	wmb();
+ 	/* Send a message to all other CPUs and wait for them to respond */
+-	send_IPI_allbutself(CALL_FUNCTION_VECTOR);
++	send_IPI_mask(*mask, CALL_FUNCTION_VECTOR);
+ 
+ 	/* Wait for response */
+ 	while (atomic_read(&data.started) != cpus)
+@@ -450,6 +454,19 @@ static void __smp_call_function (void (*func) (void *info), void *info,
+ }
+ 
+ /*
++ * this function sends a 'generic call function' IPI to all other CPUs
++ * in mask.
++ */
++void smp_call_function_many(cpumask_t *mask, void (*func) (void *info),
++			    void *info, int nonatomic, int wait)
++{
++	spin_lock(&call_lock);
++	__smp_call_function_many(mask, func, info, nonatomic, wait);
++	spin_unlock(&call_lock);
++}
++EXPORT_SYMBOL(smp_call_function_many);
++
++/*
+  * smp_call_function - run a function on all other CPUs.
+  * @func: The function to run. This must be fast and non-blocking.
+  * @info: An arbitrary pointer to pass to the function.
+@@ -464,12 +481,13 @@ static void __smp_call_function (void (*func) (void *info), void *info,
+  * hardware interrupt handler or from a bottom half handler.
+  * Actually there are a few legal cases, like panic.
+  */
+-int smp_call_function (void (*func) (void *info), void *info, int nonatomic,
+-			int wait)
++int smp_call_function(void (*func) (void *info), void *info, int nonatomic,
++		      int wait)
+ {
+-	spin_lock(&call_lock);
+-	__smp_call_function(func,info,nonatomic,wait);
+-	spin_unlock(&call_lock);
++	cpumask_t thismask = CPU_MASK_NONE;
++
++	cpus_or(thismask, cpu_online_map, thismask);
++	smp_call_function_many(&thismask, func, info, nonatomic, wait);
+ 	return 0;
+ }
+ EXPORT_SYMBOL(smp_call_function);
+@@ -498,6 +516,8 @@ static void smp_really_stop_cpu(void *dummy)
+ void smp_send_stop(void)
+ {
+ 	int nolock = 0;
++	cpumask_t thismask = CPU_MASK_NONE;
++
+ #ifndef CONFIG_XEN
+ 	if (reboot_force)
+ 		return;
+@@ -507,7 +527,8 @@ void smp_send_stop(void)
+ 		/* ignore locking because we have panicked anyways */
+ 		nolock = 1;
+ 	}
+-	__smp_call_function(smp_really_stop_cpu, NULL, 0, 0);
++	cpus_or(thismask, cpu_online_map, thismask);
++	__smp_call_function_many(&thismask, smp_really_stop_cpu, NULL, 0, 0);
+ 	if (!nolock)
+ 		spin_unlock(&call_lock);
+ 
+diff --git a/arch/x86_64/kernel/smp.c b/arch/x86_64/kernel/smp.c
+index ce4d348..0b6ecdc 100644
+--- a/arch/x86_64/kernel/smp.c
++++ b/arch/x86_64/kernel/smp.c
+@@ -330,7 +330,7 @@ void unlock_ipi_call_lock(void)
+  */
+ static void
+ __smp_call_function_single(int cpu, void (*func) (void *info), void *info,
+-				int nonatomic, int wait)
++			   int nonatomic, int wait)
+ {
+ 	struct call_data_struct data;
+ 	int cpus = 1;
+@@ -365,40 +365,43 @@ __smp_call_function_single(int cpu, void (*func) (void *info), void *info,
+  * @nonatomic: Currently unused.
+  * @wait: If true, wait until function has completed on other CPUs.
+  *
+- * Retrurns 0 on success, else a negative status code.
++ * Returns 0 on success, else a negative status code.
+  *
+  * Does not return until the remote CPU is nearly ready to execute <func>
+  * or is or has executed.
+  */
+ 
+ int smp_call_function_single (int cpu, void (*func) (void *info), void *info,
+-	int nonatomic, int wait)
++			      int nonatomic, int wait)
+ {
+ 	/* prevent preemption and reschedule on another processor */
++	unsigned long flags;
+ 	int me = get_cpu();
++
+ 	if (cpu == me) {
+-		WARN_ON(1);
+-		put_cpu();
+-		return -EBUSY;
++		local_irq_save(flags);
++		func(info);
++		local_irq_restore(flags);
++	} else {
++		spin_lock_bh(&call_lock);
++		__smp_call_function_single(cpu, func, info, nonatomic, wait);
++		spin_unlock_bh(&call_lock);
+ 	}
+-	spin_lock_bh(&call_lock);
+-	__smp_call_function_single(cpu, func, info, nonatomic, wait);
+-	spin_unlock_bh(&call_lock);
+ 	put_cpu();
+ 	return 0;
+ }
+ EXPORT_SYMBOL(smp_call_function_single);
+ 
+-/*
+- * this function sends a 'generic call function' IPI to all other CPUs
+- * in the system.
+- */
+-static void __smp_call_function (void (*func) (void *info), void *info,
+-				int nonatomic, int wait)
++static void __smp_call_function_many(cpumask_t *mask, void (*func) (void *info),
++				     void *info, int nonatomic, int wait)
+ {
+ 	struct call_data_struct data;
+-	int cpus = num_online_cpus()-1;
++	int cpus;
++	int cpu = smp_processor_id();
+ 
++	if (cpu_isset(cpu, *mask))
++		cpu_clear(cpu, *mask);
++	cpus = cpus_weight(*mask);
+ 	if (!cpus)
+ 		return;
+ 
+@@ -412,7 +415,7 @@ static void __smp_call_function (void (*func) (void *info), void *info,
+ 	call_data = &data;
+ 	wmb();
+ 	/* Send a message to all other CPUs and wait for them to respond */
+-	send_IPI_allbutself(CALL_FUNCTION_VECTOR);
++	send_IPI_mask(*mask, CALL_FUNCTION_VECTOR);
+ 
+ 	/* Wait for response */
+ 	while (atomic_read(&data.started) != cpus)
+@@ -426,6 +429,19 @@ static void __smp_call_function (void (*func) (void *info), void *info,
+ }
+ 
+ /*
++ * this function sends a 'generic call function' IPI to all other CPUs
++ * in mask.
++ */
++void smp_call_function_many(cpumask_t *mask, void (*func) (void *info),
++			    void *info, int nonatomic, int wait)
++{
++	spin_lock(&call_lock);
++	__smp_call_function_many(mask, func, info, nonatomic, wait);
++	spin_unlock(&call_lock);
++}
++EXPORT_SYMBOL(smp_call_function_many);
++
++/*
+  * smp_call_function - run a function on all other CPUs.
+  * @func: The function to run. This must be fast and non-blocking.
+  * @info: An arbitrary pointer to pass to the function.
+@@ -443,9 +459,10 @@ static void __smp_call_function (void (*func) (void *info), void *info,
+ int smp_call_function (void (*func) (void *info), void *info, int nonatomic,
+ 			int wait)
+ {
+-	spin_lock(&call_lock);
+-	__smp_call_function(func,info,nonatomic,wait);
+-	spin_unlock(&call_lock);
++	cpumask_t thismask = CPU_MASK_NONE;
++
++	cpus_or(thismask, cpu_online_map, thismask);
++	smp_call_function_many(&thismask, func, info, nonatomic, wait);
+ 	return 0;
+ }
+ EXPORT_SYMBOL(smp_call_function);
+@@ -472,6 +489,8 @@ static void smp_really_stop_cpu(void *dummy)
+ void smp_send_stop(void)
+ {
+ 	int nolock = 0;
++	cpumask_t thismask = CPU_MASK_NONE;
++
+ 	if (reboot_force)
+ 		return;
+ 	/* Don't deadlock on the call lock in panic */
+@@ -479,7 +498,8 @@ void smp_send_stop(void)
+ 		/* ignore locking because we have panicked anyways */
+ 		nolock = 1;
+ 	}
+-	__smp_call_function(smp_really_stop_cpu, NULL, 0, 0);
++	cpus_or(thismask, cpu_online_map, thismask);
++	__smp_call_function_many(&thismask, smp_really_stop_cpu, NULL, 0, 0);
+ 	if (!nolock)
+ 		spin_unlock(&call_lock);
+ 
+diff --git a/include/asm-i386/mach-xen/asm/smp.h b/include/asm-i386/mach-xen/asm/smp.h
+index 9b59e50..3d4e129 100644
+--- a/include/asm-i386/mach-xen/asm/smp.h
++++ b/include/asm-i386/mach-xen/asm/smp.h
+@@ -40,6 +40,10 @@ extern void (*mtrr_hook) (void);
+ extern void zap_low_mappings (void);
+ extern void lock_ipi_call_lock(void);
+ extern void unlock_ipi_call_lock(void);
++int smp_call_function_single(int cpu, void (*func) (void *info), void *info,
++			     int nonatomic, int wait);
++void smp_call_function_many(cpumask_t *mask, void (*func) (void *info),
++			    void *info, int nonatomic, int wait);
+ 
+ #define MAX_APICID 256
+ extern u8 x86_cpu_to_apicid[];
+diff --git a/include/asm-i386/smp.h b/include/asm-i386/smp.h
+index 142d10e..70fd693 100644
+--- a/include/asm-i386/smp.h
++++ b/include/asm-i386/smp.h
+@@ -40,6 +40,10 @@ extern void (*mtrr_hook) (void);
+ extern void zap_low_mappings (void);
+ extern void lock_ipi_call_lock(void);
+ extern void unlock_ipi_call_lock(void);
++int smp_call_function_single(int cpu, void (*func) (void *info), void *info,
++			     int nonatomic, int wait);
++void smp_call_function_many(cpumask_t *mask, void (*func) (void *info),
++			    void *info, int nonatomic, int wait);
+ 
+ #define MAX_APICID 256
+ extern u8 x86_cpu_to_apicid[];
+diff --git a/include/asm-x86_64/mach-xen/asm/smp.h b/include/asm-x86_64/mach-xen/asm/smp.h
+index 33b0fbe..c323b73 100644
+--- a/include/asm-x86_64/mach-xen/asm/smp.h
++++ b/include/asm-x86_64/mach-xen/asm/smp.h
+@@ -50,6 +50,8 @@ void smp_stop_cpu(void);
+ extern int smp_call_function_single(int cpuid, void (*func) (void *info),
+ 				void *info, int retry, int wait);
+ 
++extern void smp_call_function_many(cpumask_t *mask, void (*func) (void *info),
++				   void *info, int nonatomic, int wait);
+ extern cpumask_t cpu_sibling_map[NR_CPUS];
+ extern cpumask_t cpu_core_map[NR_CPUS];
+ extern u8 cpu_llc_id[NR_CPUS];
+diff --git a/include/asm-x86_64/smp.h b/include/asm-x86_64/smp.h
+index 847c657..30370ad 100644
+--- a/include/asm-x86_64/smp.h
++++ b/include/asm-x86_64/smp.h
+@@ -50,7 +50,8 @@ extern void smp_send_reschedule(int cpu);
+ void smp_stop_cpu(void);
+ extern int smp_call_function_single(int cpuid, void (*func) (void *info),
+ 				void *info, int retry, int wait);
+-
++extern void smp_call_function_many(cpumask_t *mask, void (*func) (void *info),
++				   void *info, int nonatomic, int wait);
+ extern cpumask_t cpu_sibling_map[NR_CPUS];
+ extern cpumask_t cpu_core_map[NR_CPUS];
+ extern u8 cpu_llc_id[NR_CPUS];

@@ -1,0 +1,77 @@
+From: John Feeney <jfeeney@redhat.com>
+Date: Wed, 17 Feb 2010 20:33:59 -0500
+Subject: [net] tg3: fix race condition with 57765 devices
+Message-id: <4B7C52B7.5090206@redhat.com>
+Patchwork-id: 23321
+O-Subject: [RHEL5.5 PATCH] Fix race condition with tg3 57765 devices
+Bugzilla: 565965
+RH-Acked-by: David S. Miller <davem@redhat.com>
+RH-Acked-by: Jiri Pirko <jpirko@redhat.com>
+RH-Acked-by: Andy Gospodarek <gospo@redhat.com>
+
+bz565965
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=565965
+tg3: Race condition - performance/panic with 57765 devices
+
+Description of problem:
+Broadcom just recently posted a patch upstream that fixes the
+support of 57765. More specifically, there is a race condition
+with the A0 firmware.
+
+Solution:
+On A0 revision of 57765 asic rev devices, the bootcode will
+perform some hardware operations, after the magic signature is
+presented, that will collide with setup operations performed
+by the driver. The best way to avoid the contention is to have
+the driver delay an additional 10 milliseconds. B0 revisions of
+the chip will make this workaround unnecessary.
+
+Upstream status:
+The following upstream patch from Matt Carlson, the
+Broadcom tg3 maintainer, is included:
+ commit: 6b10c1653e425e30cff7f41d0e6f9743bfa9810f
+
+Brew:
+Successfully built in Brew for all architectures
+(task 2263880).
+
+Testing:
+I have run Connectathon successfully with the x86_64
+debug kernel on RHTS systems with the following tg3 NICs.
+  5722, 5761, 5721, 5755, 5704, 5755, 5764, 5703a, 5721,
+  5703x, 5764, 5715, 5704.
+
+Acks would be appreciated. Thanks.
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/net/tg3.c b/drivers/net/tg3.c
+index a8e39e7..ec3caad 100644
+--- a/drivers/net/tg3.c
++++ b/drivers/net/tg3.c
+@@ -6196,6 +6196,13 @@ static int tg3_poll_fw(struct tg3 *tp)
+ 		       tp->dev->name);
+ 	}
+ 
++	if (tp->pci_chip_rev_id == CHIPREV_ID_57765_A0) {
++		/* The 57765 A0 needs a little more
++		 * time to do some important work.
++		 */
++		mdelay(10);
++	}
++
+ 	return 0;
+ }
+ 
+diff --git a/drivers/net/tg3.h b/drivers/net/tg3.h
+index 1a3a27d..bef5d16 100644
+--- a/drivers/net/tg3.h
++++ b/drivers/net/tg3.h
+@@ -110,6 +110,7 @@
+ #define  CHIPREV_ID_57780_A0		 0x57780000
+ #define  CHIPREV_ID_57780_A1		 0x57780001
+ #define  CHIPREV_ID_5717_A0		 0x05717000
++#define  CHIPREV_ID_57765_A0		 0x57785000
+ #define  GET_ASIC_REV(CHIP_REV_ID)	((CHIP_REV_ID) >> 12)
+ #define   ASIC_REV_5700			 0x07
+ #define   ASIC_REV_5701			 0x00

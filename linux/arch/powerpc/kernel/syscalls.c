@@ -23,8 +23,8 @@
 #include <linux/sched.h>
 #include <linux/syscalls.h>
 #include <linux/mm.h>
-#include <linux/fs.h>
 #include <linux/smp.h>
+#include <linux/smp_lock.h>
 #include <linux/sem.h>
 #include <linux/msg.h>
 #include <linux/shm.h>
@@ -38,6 +38,8 @@
 #include <linux/personality.h>
 
 #include <asm/uaccess.h>
+#include <asm/ipc.h>
+#include <asm/semaphore.h>
 #include <asm/syscalls.h>
 #include <asm/time.h>
 #include <asm/unistd.h>
@@ -136,22 +138,49 @@ int sys_ipc(uint call, int first, unsigned long second, long third,
 	return ret;
 }
 
+/*
+ * sys_pipe() is the normal C calling standard for creating
+ * a pipe. It's not the way unix traditionally does this, though.
+ */
+int sys_pipe(int __user *fildes)
+{
+	int fd[2];
+	int error;
+
+	error = do_pipe(fd);
+	if (!error) {
+		if (copy_to_user(fildes, fd, 2*sizeof(int)))
+			error = -EFAULT;
+	}
+	return error;
+}
+
 static inline unsigned long do_mmap2(unsigned long addr, size_t len,
 			unsigned long prot, unsigned long flags,
 			unsigned long fd, unsigned long off, int shift)
 {
+	struct file * file = NULL;
 	unsigned long ret = -EINVAL;
-
-	if (!arch_validate_prot(prot))
-		goto out;
 
 	if (shift) {
 		if (off & ((1 << shift) - 1))
 			goto out;
 		off >>= shift;
 	}
+		
+	ret = -EBADF;
+	if (!(flags & MAP_ANONYMOUS)) {
+		if (!(file = fget(fd)))
+			goto out;
+	}
 
-	ret = sys_mmap_pgoff(addr, len, prot, flags, fd, off);
+	flags &= ~(MAP_EXECUTABLE | MAP_DENYWRITE);
+
+	down_write(&current->mm->mmap_sem);
+	ret = do_mmap_pgoff(file, addr, len, prot, flags, off);
+	up_write(&current->mm->mmap_sem);
+	if (file)
+		fput(file);
 out:
 	return ret;
 }
@@ -231,7 +260,7 @@ long ppc_newuname(struct new_utsname __user * name)
 	int err = 0;
 
 	down_read(&uts_sem);
-	if (copy_to_user(name, utsname(), sizeof(*name)))
+	if (copy_to_user(name, &system_utsname, sizeof(*name)))
 		err = -EFAULT;
 	up_read(&uts_sem);
 	if (!err)
@@ -244,7 +273,7 @@ int sys_uname(struct old_utsname __user *name)
 	int err = 0;
 	
 	down_read(&uts_sem);
-	if (copy_to_user(name, utsname(), sizeof(*name)))
+	if (copy_to_user(name, &system_utsname, sizeof(*name)))
 		err = -EFAULT;
 	up_read(&uts_sem);
 	if (!err)
@@ -260,19 +289,19 @@ int sys_olduname(struct oldold_utsname __user *name)
 		return -EFAULT;
   
 	down_read(&uts_sem);
-	error = __copy_to_user(&name->sysname, &utsname()->sysname,
+	error = __copy_to_user(&name->sysname, &system_utsname.sysname,
 			       __OLD_UTS_LEN);
 	error |= __put_user(0, name->sysname + __OLD_UTS_LEN);
-	error |= __copy_to_user(&name->nodename, &utsname()->nodename,
+	error |= __copy_to_user(&name->nodename, &system_utsname.nodename,
 				__OLD_UTS_LEN);
 	error |= __put_user(0, name->nodename + __OLD_UTS_LEN);
-	error |= __copy_to_user(&name->release, &utsname()->release,
+	error |= __copy_to_user(&name->release, &system_utsname.release,
 				__OLD_UTS_LEN);
 	error |= __put_user(0, name->release + __OLD_UTS_LEN);
-	error |= __copy_to_user(&name->version, &utsname()->version,
+	error |= __copy_to_user(&name->version, &system_utsname.version,
 				__OLD_UTS_LEN);
 	error |= __put_user(0, name->version + __OLD_UTS_LEN);
-	error |= __copy_to_user(&name->machine, &utsname()->machine,
+	error |= __copy_to_user(&name->machine, &system_utsname.machine,
 				__OLD_UTS_LEN);
 	error |= override_machine(name->machine);
 	up_read(&uts_sem);

@@ -1,0 +1,248 @@
+From: George Beshers <gbeshers@redhat.com>
+Date: Thu, 31 Jul 2008 15:33:55 -0400
+Subject: [IA64] Support multiple CPUs going through OS_MCA
+Message-id: 20080731192800.4411.89180.sendpatchset@dhcp-100-2-194.bos.redhat.com
+O-Subject: [RHEL5.3 PATCH 15/19] [IA64] Support multiple CPUs going through OS_MCA with race fix
+Bugzilla: 455308
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+[patch] Support multiple CPUs going through OS_MCA
+
+BZ#455308
+
+Upstream: http://git.kernel.org/?p=linux/kernel/git/aegl/linux-2.6.git;a=commitdiff;h=1612b18ccb2318563ba51268289dc3271a6052f7
+Upstream: http://git.kernel.org/?p=linux/kernel/git/aegl/linux-2.6.git;a=commitdiff;h=e1b1eb011e15190eb859bad0bcae67679bda7d50
+
+Linux does not gracefully deal with multiple processors going
+through OS_MCA aa part of the same MCA event.  The first cpu
+into OS_MCA grabs the ia64_mca_serialize lock.  Subsequent
+cpus wait for that lock, preventing them from reporting in as
+rendezvoused.  The first cpu waits 5 seconds then complains
+that all the cpus have not rendezvoused.  The first cpu then
+handles its MCA and frees up all the rendezvoused cpus and
+releases the ia64_mca_serialize lock.  One of the subsequent
+cpus going thought OS_MCA then gets the ia64_mca_serialize
+lock, waits another 5 seconds and then complains that none of
+the other cpus have rendezvoused.
+
+This patch allows multiple CPUs to gracefully go through OS_MCA.
+
+The first CPU into ia64_mca_handler() grabs a mca_count lock.
+Subsequent CPUs into ia64_mca_handler() are added to a list of cpus
+that need to go through OS_MCA (a bit set in mca_cpu), and report
+in as rendezvoused, and but spin waiting their turn.
+
+The first CPU sees everyone rendezvous, handles his MCA, wakes up
+one of the other CPUs waiting to process their MCA (by clearing
+one mca_cpu bit), and then waits for the other cpus to complete
+their MCA handling.  The next CPU handles his MCA and the process
+repeats until all the CPUs have handled their MCA.  When the last
+CPU has handled it's MCA, it sets monarch_cpu to -1, releasing all
+the CPUs.
+
+In testing this works more reliably and faster.
+
+Thanks to Keith Owens for suggesting numerous improvements
+to this code.
+
+[IA64] Fix race when multiple cpus go through MCA
+
+Additional testing uncovered a situation where the MCA recovery code could
+hang due to a race condition.
+
+According to the SAL spec, SAL sends a rendezvous interrupt to all but the first
+CPU that goes into MCA.  This includes other CPUs that go into MCA at the same
+time.  Those other CPUs will go into the linux MCA handler (rather than the
+slave loop) with the rendezvous interrupt pending.  When all the CPUs have
+completed MCA processing and the last monarch completes, freeing all the CPUs,
+the CPUs with the pended rendezvous interrupt then go into the
+ia64_mca_rendez_int_handler().  In ia64_mca_rendez_int_handler() the CPUs
+get marked as rendezvoused, but then leave the handler (due to no MCA).
+That leaves the CPUs marked as rendezvoused _before_ the next MCA event.
+
+When the next MCA hits, the monarch will mistakenly believe that all the CPUs
+are rendezvoused when they are not, opening up a window where a CPU can get
+stuck in the slave loop.
+
+This patch avoids leaving CPUs marked as rendezvoused when they are not.
+
+Signed-off-by: Russ Anderson <rja@sgi.com>
+
+diff --git a/arch/ia64/kernel/mca.c b/arch/ia64/kernel/mca.c
+index 84289e3..1350dd8 100644
+--- a/arch/ia64/kernel/mca.c
++++ b/arch/ia64/kernel/mca.c
+@@ -98,7 +98,6 @@
+ #endif
+ 
+ /* Used by mca_asm.S */
+-u32				ia64_mca_serialize;
+ DEFINE_PER_CPU(u64, ia64_mca_data); /* == __per_cpu_mca[smp_processor_id()] */
+ DEFINE_PER_CPU(u64, ia64_mca_per_cpu_pte); /* PTE to map per-CPU area */
+ DEFINE_PER_CPU(u64, ia64_mca_pal_pte);	    /* PTE to map PAL code */
+@@ -709,8 +708,6 @@ static void
+ ia64_mca_wakeup(int cpu)
+ {
+ 	platform_send_ipi(cpu, IA64_MCA_WAKEUP_VECTOR, IA64_IPI_DM_INT, 0);
+-	ia64_mc_info.imi_rendez_checkin[cpu] = IA64_MCA_RENDEZ_CHECKIN_NOTDONE;
+-
+ }
+ 
+ /*
+@@ -776,6 +773,7 @@ ia64_mca_rendez_int_handler(int rendez_irq, void *arg, struct pt_regs *regs)
+ 			== NOTIFY_STOP)
+ 		ia64_mca_spin(__FUNCTION__);
+ 
++	ia64_mc_info.imi_rendez_checkin[cpu] = IA64_MCA_RENDEZ_CHECKIN_NOTDONE;
+ 	/* Enable all interrupts */
+ 	local_irq_restore(flags);
+ 	return IRQ_HANDLED;
+@@ -1185,6 +1183,13 @@ all_in:
+  *	further MCA logging is enabled by clearing logs.
+  *	Monarch also has the duty of sending wakeup-IPIs to pull the
+  *	slave processors out of rendezvous spinloop.
++ *
++ *	If multiple processors call into OS_MCA, the first will become
++ *	the monarch.  Subsequent cpus will be recorded in the mca_cpu
++ *	bitmask.  After the first monarch has processed its MCA, it
++ *	will wake up the next cpu in the mca_cpu bitmask and then go
++ *	into the rendezvous loop.  When all processors have serviced
++ *	their MCA, the last monarch frees up the rest of the processors.
+  */
+ void
+ ia64_mca_handler(struct pt_regs *regs, struct switch_stack *sw,
+@@ -1194,27 +1199,44 @@ ia64_mca_handler(struct pt_regs *regs, struct switch_stack *sw,
+ 	struct task_struct *previous_current;
+ 	struct ia64_mca_notify_die nd =
+ 		{ .sos = sos, .monarch_cpu = &monarch_cpu };
++	static atomic_t mca_count;
++	static cpumask_t mca_cpu;
+ 
++	if (atomic_add_return(1, &mca_count) == 1) {
++		monarch_cpu = cpu;
++		sos->monarch = 1;
++	} else {
++		cpu_set(cpu, mca_cpu);
++		sos->monarch = 0;
++	}
+ 	mprintk(KERN_INFO "Entered OS MCA handler. PSP=%lx cpu=%d "
+ 		"monarch=%ld\n", sos->proc_state_param, cpu, sos->monarch);
+ 
+ 	previous_current = ia64_mca_modify_original_stack(regs, sw, sos, "MCA");
+-	monarch_cpu = cpu;
++
+ 	if (notify_die(DIE_MCA_MONARCH_ENTER, "MCA", regs, (long)&nd, 0, 0)
+ 			== NOTIFY_STOP)
+ 		ia64_mca_spin(__FUNCTION__);
+-	ia64_wait_for_slaves(cpu, "MCA");
+ 
+-	/* Wakeup all the processors which are spinning in the rendezvous loop.
+-	 * They will leave SAL, then spin in the OS with interrupts disabled
+-	 * until this monarch cpu leaves the MCA handler.  That gets control
+-	 * back to the OS so we can backtrace the other cpus, backtrace when
+-	 * spinning in SAL does not work.
+-	 */
+-	ia64_mca_wakeup_all();
+-	if (notify_die(DIE_MCA_MONARCH_PROCESS, "MCA", regs, (long)&nd, 0, 0)
+-			== NOTIFY_STOP)
+-		ia64_mca_spin(__FUNCTION__);
++	ia64_mc_info.imi_rendez_checkin[cpu] = IA64_MCA_RENDEZ_CHECKIN_CONCURRENT_MCA;
++	if (sos->monarch) {
++		ia64_wait_for_slaves(cpu, "MCA");
++
++		/* Wakeup all the processors which are spinning in the
++		 * rendezvous loop.  They will leave SAL, then spin in the OS
++		 * with interrupts disabled until this monarch cpu leaves the
++		 * MCA handler.  That gets control back to the OS so we can
++		 * backtrace the other cpus, backtrace when spinning in SAL
++		 * does not work.
++		 */
++		ia64_mca_wakeup_all();
++		if (notify_die(DIE_MCA_MONARCH_PROCESS, "MCA", regs, 0, 0, 0)
++				== NOTIFY_STOP)
++			ia64_mca_spin(__FUNCTION__);
++	} else {
++		while (cpu_isset(cpu, mca_cpu))
++			cpu_relax();	/* spin until monarch wakes us */
++	}
+ 
+ 	/* Get the MCA error record and log it */
+ 	ia64_mca_log_sal_error_record(SAL_INFO_TYPE_MCA);
+@@ -1246,8 +1268,34 @@ ia64_mca_handler(struct pt_regs *regs, struct switch_stack *sw,
+ 			== NOTIFY_STOP)
+ 		ia64_mca_spin(__FUNCTION__);
+ 
++	if (atomic_dec_return(&mca_count) > 0) {
++		int i;
++
++		/* wake up the next monarch cpu,
++		 * and put this cpu in the rendez loop.
++		 */
++		for_each_online_cpu(i) {
++			if (cpu_isset(i, mca_cpu)) {
++				monarch_cpu = i;
++				cpu_clear(i, mca_cpu);	/* wake next cpu */
++#ifdef CONFIG_KDB
++				/*
++				 * No longer a monarch, report in as a slave.
++				 */
++				KDB_ENTER_SLAVE();
++#endif
++				while (monarch_cpu != -1)
++					cpu_relax();	/* spin until last cpu leaves */
++				set_curr_task(cpu, previous_current);
++				ia64_mc_info.imi_rendez_checkin[cpu]
++						= IA64_MCA_RENDEZ_CHECKIN_NOTDONE;
++				return;
++			}
++		}
++	}
+ 	set_curr_task(cpu, previous_current);
+-	monarch_cpu = -1;
++	ia64_mc_info.imi_rendez_checkin[cpu] = IA64_MCA_RENDEZ_CHECKIN_NOTDONE;
++	monarch_cpu = -1;	/* This frees the slaves and previous monarchs */
+ }
+ 
+ static DECLARE_WORK(cmc_disable_work, ia64_mca_cmc_vector_disable_keventd, NULL);
+diff --git a/arch/ia64/kernel/mca_asm.S b/arch/ia64/kernel/mca_asm.S
+index 9604749..c469ab5 100644
+--- a/arch/ia64/kernel/mca_asm.S
++++ b/arch/ia64/kernel/mca_asm.S
+@@ -141,14 +141,6 @@ ia64_do_tlb_purge:
+ //StartMain////////////////////////////////////////////////////////////////////
+ 
+ ia64_os_mca_dispatch:
+-	// Serialize all MCA processing
+-	mov	r3=1;;
+-	LOAD_PHYSICAL(p0,r2,ia64_mca_serialize);;
+-ia64_os_mca_spin:
+-	xchg4	r4=[r2],r3;;
+-	cmp.ne	p6,p0=r4,r0
+-(p6)	br ia64_os_mca_spin
+-
+ 	mov r3=IA64_MCA_CPU_MCA_STACK_OFFSET	// use the MCA stack
+ 	LOAD_PHYSICAL(p0,r2,1f)			// return address
+ 	mov r19=1				// All MCA events are treated as monarch (for now)
+@@ -315,10 +307,6 @@ END(ia64_os_mca_virtual_begin)
+ 
+ 	mov		b0=r12			// SAL_CHECK return address
+ 
+-	// release lock
+-	LOAD_PHYSICAL(p0,r3,ia64_mca_serialize);;
+-	st4.rel		[r3]=r0
+-
+ 	br		b0
+ 
+ //EndMain//////////////////////////////////////////////////////////////////////
+diff --git a/include/asm-ia64/mca.h b/include/asm-ia64/mca.h
+index ee97f7c..d8973ab 100644
+--- a/include/asm-ia64/mca.h
++++ b/include/asm-ia64/mca.h
+@@ -48,6 +48,7 @@ enum {
+ 	IA64_MCA_RENDEZ_CHECKIN_NOTDONE	=	0x0,
+ 	IA64_MCA_RENDEZ_CHECKIN_DONE	=	0x1,
+ 	IA64_MCA_RENDEZ_CHECKIN_INIT	=	0x2,
++	IA64_MCA_RENDEZ_CHECKIN_CONCURRENT_MCA	=	0x3
+ };
+ 
+ /* Information maintained by the MC infrastructure */

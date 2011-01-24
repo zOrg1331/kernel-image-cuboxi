@@ -1,0 +1,73 @@
+From: Jesse Larrew <jlarrew@redhat.com>
+Date: Wed, 5 Nov 2008 23:22:02 -0500
+Subject: [openib] ehca: deadlock race when creating small queues
+Message-id: 20081106042127.3677.44866.sendpatchset@squad5-lp1.lab.bos.redhat.com
+O-Subject: [PATCH RHEL5.3 BZ470137] IB/ehca: Possible deadlock during creation of small queues.
+Bugzilla: 470137
+RH-Acked-by: Doug Ledford <dledford@redhat.com>
+
+RHBZ#:
+======
+https://bugzilla.redhat.com/show_bug.cgi?id=470137
+
+Description:
+===========
+This is a bugfix for the Infiniband/ehca driver on Power architectures.
+
+In an error path of create_small_queues(), there is a mutex_unlock()
+missing. This could lead to a deadlock in the ehca driver.
+
+This patch simply adds the missing mutex_unlock(). It was accepted by
+the community and is now in linux-2.6.27 kernel.
+
+RHEL Version Found:
+================
+RHEL 5.3
+
+kABI Status:
+============
+No symbols were harmed.
+
+Brew:
+=====
+Built on all platforms.
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1560678
+
+Upstream Status:
+================
+Here is the link to the LKML post:
+http://lkml.org/lkml/2008/7/21/48
+
+Here is the upstream commit:
+commit 1a867c33bb65f2921351a9bdd98548bb96f0ff8c
+http://kernel.org/pub/linux/kernel/v2.6/ChangeLog-2.6.27
+
+Test Status:
+============
+This is untested.
+
+===============================================================
+
+Jesse Larrew
+IBM Onsite Partner
+Office: 978-392-3183
+Mobile: 512-791-4852
+jlarrew@redhat.com
+jlarrew@linux.vnet.ibm.com
+
+Proposed Patch:
+===============
+This patch is based on 2.6.18-122.el5.
+
+diff --git a/drivers/infiniband/hw/ehca/ipz_pt_fn.c b/drivers/infiniband/hw/ehca/ipz_pt_fn.c
+index 661f8db..c3a3284 100644
+--- a/drivers/infiniband/hw/ehca/ipz_pt_fn.c
++++ b/drivers/infiniband/hw/ehca/ipz_pt_fn.c
+@@ -163,6 +163,7 @@ static int alloc_small_queue_page(struct ipz_queue *queue, struct ehca_pd *pd)
+ 
+ out:
+ 	ehca_err(pd->ib_pd.device, "failed to allocate small queue page");
++	mutex_unlock(&pd->lock);
+ 	return 0;
+ }
+ 

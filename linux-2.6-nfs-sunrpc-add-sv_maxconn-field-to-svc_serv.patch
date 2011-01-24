@@ -1,0 +1,101 @@
+From: Jeff Layton <jlayton@redhat.com>
+Date: Mon, 15 Dec 2008 13:35:05 -0500
+Subject: [nfs] sunrpc: add sv_maxconn field to svc_serv
+Message-id: 1229366106-23523-2-git-send-email-jlayton@redhat.com
+O-Subject: [RHEL5.4 PATCH 1/2] BZ#468092: sunrpc: add sv_maxconn field to svc_serv
+Bugzilla: 468092
+
+svc_tcp_accept() attempts to prevent denial of service attacks
+by having the service close old connections once it reaches a
+threshold. This threshold is based on the number of threads in the
+service:
+
+        (serv->sv_nrthreads + 3) * 20
+
+Once we reach this, we drop the oldest connections and a printk pops
+to warn the admin that they should increase the number of nfsd threads.
+
+Increasing the number of threads isn't an option however for services
+like lockd. We don't want to eliminate this check entirely for such
+services but we need some way to increase this limit.
+
+This patch adds a sv_maxconn field to the svc_serv struct. When it's
+set to 0, we use the current method to calculate the max number of
+connections. RPC services can then set this on an as-needed basis.
+
+Signed-off-by: Jeff Layton <jlayton@redhat.com>
+
+diff --git a/include/linux/sunrpc/svc.h b/include/linux/sunrpc/svc.h
+index 3ff4e6e..ecede8b 100644
+--- a/include/linux/sunrpc/svc.h
++++ b/include/linux/sunrpc/svc.h
+@@ -44,9 +44,12 @@ struct svc_serv {
+ 	char *			sv_name;	/* service name */
+ #ifndef __GENKSYMS__
+ 	void			(*sv_shutdown)(struct svc_serv *serv);
+-						/* Callback to use when last thread
+-						 * exits.
++						/* Callback to use when last
++						 * thread exits.
+ 						 */
++	unsigned int		sv_maxconn;	/* max connections allowed or
++						 * '0' causing max to be based
++						 * on number of threads. */
+ #endif
+ };
+ 
+diff --git a/net/sunrpc/svcsock.c b/net/sunrpc/svcsock.c
+index 0a736d8..99f0919 100644
+--- a/net/sunrpc/svcsock.c
++++ b/net/sunrpc/svcsock.c
+@@ -839,6 +839,7 @@ svc_tcp_accept(struct svc_sock *svsk)
+ 	struct socket	*newsock;
+ 	struct svc_sock	*newsvsk;
+ 	int		err, slen;
++	unsigned int	limit;
+ 
+ 	dprintk("svc: tcp_accept %p sock %p\n", svsk, sock);
+ 	if (!sock)
+@@ -891,8 +892,11 @@ svc_tcp_accept(struct svc_sock *svsk)
+ 		goto failed;
+ 
+ 
+-	/* make sure that we don't have too many active connections.
+-	 * If we have, something must be dropped.
++	/* make sure that we don't have too many active connections. If we
++	 * have, something must be dropped. It's not clear what will happen if
++	 * we allow "too many" connections, but when dealing with
++	 * network-facing software, we have to code defensively. Here we do
++	 * that by imposing hard limits.
+ 	 *
+ 	 * There's no point in trying to do random drop here for
+ 	 * DoS prevention. The NFS clients does 1 reconnect in 15
+@@ -901,17 +905,24 @@ svc_tcp_accept(struct svc_sock *svsk)
+ 	 * The only somewhat efficient mechanism would be if drop
+ 	 * old connections from the same IP first. But right now
+ 	 * we don't even record the client IP in svc_sock.
++	 *
++	 * single-threaded services that expect a lot of clients will probably
++	 * need to set sv_maxconn to override the default value which is based
++	 * on the number of threads
+ 	 */
+-	if (serv->sv_tmpcnt > (serv->sv_nrthreads+3)*20) {
++	limit = serv->sv_maxconn ? serv->sv_maxconn :
++		(serv->sv_nrthreads+3) * 20;
++	if (serv->sv_tmpcnt > limit) {
+ 		struct svc_sock *svsk = NULL;
+ 		spin_lock_bh(&serv->sv_lock);
+ 		if (!list_empty(&serv->sv_tempsocks)) {
+ 			if (net_ratelimit()) {
+ 				/* Try to help the admin */
+ 				printk(KERN_NOTICE "%s: too many open TCP "
+-					"sockets, consider increasing the "
+-					"number of nfsd threads\n",
+-						   serv->sv_name);
++					"connections, consider increasing %s\n",
++					serv->sv_name, serv->sv_maxconn ?
++					"the max number of connections." :
++					"the number of threads.");
+ 				printk(KERN_NOTICE "%s: last TCP connect from "
+ 					"%u.%u.%u.%u:%d\n",
+ 					serv->sv_name,

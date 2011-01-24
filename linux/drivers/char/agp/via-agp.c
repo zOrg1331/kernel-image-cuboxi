@@ -9,7 +9,7 @@
 #include <linux/agp_backend.h>
 #include "agp.h"
 
-static const struct pci_device_id agp_via_pci_table[];
+static struct pci_device_id agp_via_pci_table[];
 
 #define VIA_GARTCTRL	0x80
 #define VIA_APSIZE	0x84
@@ -89,7 +89,7 @@ static void via_tlbflush(struct agp_memory *mem)
 }
 
 
-static const struct aper_size_info_8 via_generic_sizes[9] =
+static struct aper_size_info_8 via_generic_sizes[9] =
 {
 	{256, 65536, 6, 0},
 	{128, 32768, 5, 128},
@@ -170,7 +170,7 @@ static void via_tlbflush_agp3(struct agp_memory *mem)
 }
 
 
-static const struct agp_bridge_driver via_agp3_driver = {
+static struct agp_bridge_driver via_agp3_driver = {
 	.owner			= THIS_MODULE,
 	.aperture_sizes		= agp3_generic_sizes,
 	.size_type		= U8_APER_SIZE,
@@ -190,13 +190,10 @@ static const struct agp_bridge_driver via_agp3_driver = {
 	.alloc_by_type		= agp_generic_alloc_by_type,
 	.free_by_type		= agp_generic_free_by_type,
 	.agp_alloc_page		= agp_generic_alloc_page,
-	.agp_alloc_pages	= agp_generic_alloc_pages,
 	.agp_destroy_page	= agp_generic_destroy_page,
-	.agp_destroy_pages	= agp_generic_destroy_pages,
-	.agp_type_to_mask_type  = agp_generic_type_to_mask_type,
 };
 
-static const struct agp_bridge_driver via_driver = {
+static struct agp_bridge_driver via_driver = {
 	.owner			= THIS_MODULE,
 	.aperture_sizes		= via_generic_sizes,
 	.size_type		= U8_APER_SIZE,
@@ -216,10 +213,7 @@ static const struct agp_bridge_driver via_driver = {
 	.alloc_by_type		= agp_generic_alloc_by_type,
 	.free_by_type		= agp_generic_free_by_type,
 	.agp_alloc_page		= agp_generic_alloc_page,
-	.agp_alloc_pages	= agp_generic_alloc_pages,
 	.agp_destroy_page	= agp_generic_destroy_page,
-	.agp_destroy_pages	= agp_generic_destroy_pages,
-	.agp_type_to_mask_type  = agp_generic_type_to_mask_type,
 };
 
 static struct agp_device_ids via_agp_device_ids[] __devinitdata =
@@ -386,37 +380,9 @@ static struct agp_device_ids via_agp_device_ids[] __devinitdata =
 	/* P4M800CE */
 	{
 		.device_id	= PCI_DEVICE_ID_VIA_P4M800CE,
-		.chipset_name	= "VT3314",
+		.chipset_name	= "P4M800CE",
 	},
-	/* VT3324 / CX700 */
-	{
-		.device_id  = PCI_DEVICE_ID_VIA_VT3324,
-		.chipset_name   = "CX700",
-	},
-	/* VT3336 - this is a chipset for AMD Athlon/K8 CPU. Due to K8's unique
-	 * architecture, the AGP resource and behavior are different from
-	 * the traditional AGP which resides only in chipset. AGP is used
-	 * by 3D driver which wasn't available for the VT3336 and VT3364
-	 * generation until now.  Unfortunately, by testing, VT3364 works
-	 * but VT3336 doesn't. - explaination from via, just leave this as
-	 * as a placeholder to avoid future patches adding it back in.
-	 */
-#if 0
-	{
-		.device_id  = PCI_DEVICE_ID_VIA_VT3336,
-		.chipset_name   = "VT3336",
-	},
-#endif
-	/* P4M890 */
-	{
-		.device_id  = PCI_DEVICE_ID_VIA_P4M890,
-		.chipset_name   = "P4M890",
-	},
-	/* P4M900 */
-	{
-		.device_id  = PCI_DEVICE_ID_VIA_VT3364,
-		.chipset_name   = "P4M900",
-	},
+
 	{ }, /* dummy final entry, always present */
 };
 
@@ -519,7 +485,7 @@ static int agp_via_resume(struct pci_dev *pdev)
 #endif /* CONFIG_PM */
 
 /* must be the same order as name table above */
-static const struct pci_device_id agp_via_pci_table[] = {
+static struct pci_device_id agp_via_pci_table[] = {
 #define ID(x) \
 	{						\
 	.class		= (PCI_CLASS_BRIDGE_HOST << 8),	\
@@ -558,9 +524,6 @@ static const struct pci_device_id agp_via_pci_table[] = {
 	ID(PCI_DEVICE_ID_VIA_83_87XX_1),
 	ID(PCI_DEVICE_ID_VIA_3296_0),
 	ID(PCI_DEVICE_ID_VIA_P4M800CE),
-	ID(PCI_DEVICE_ID_VIA_VT3324),
-	ID(PCI_DEVICE_ID_VIA_P4M890),
-	ID(PCI_DEVICE_ID_VIA_VT3364),
 	{ }
 };
 
@@ -595,4 +558,4 @@ module_init(agp_via_init);
 module_exit(agp_via_cleanup);
 
 MODULE_LICENSE("GPL");
-MODULE_AUTHOR("Dave Jones <davej@redhat.com>");
+MODULE_AUTHOR("Dave Jones <davej@codemonkey.org.uk>");

@@ -1,0 +1,68 @@
+From: Rik van Riel <riel@redhat.com>
+Date: Fri, 21 Nov 2008 14:30:12 -0500
+Subject: [xen] fix physical memory address overflow
+Message-id: 20081121143012.75397637@cuia.bos.redhat.com
+O-Subject: [RHEL5.3 PATCH 1/3] xen: fix physical memory address overflow
+Bugzilla: 412691
+RH-Acked-by: Don Dutile <ddutile@redhat.com>
+RH-Acked-by: Bill Burns <bburns@redhat.com>
+RH-Acked-by: Glauber Costa <glommer@redhat.com>
+
+Fixes bug 412691
+
+# HG changeset patch
+# User Keir Fraser <keir.fraser@citrix.com>
+# Date 1205752686 0
+# Node ID f82baf1755ac6b4e1b77a35f160d26d30a094a1c
+# Parent  9f6117e9d7d9ed2761ad79403837d419145c54e2
+x86 numa: Fix the overflow of physical addresses.
+
+If memory address >4G, the address will overflow in some NUMA code if
+using unsigned long to statement a physical address in PAE arch.
+
+Replace "unsigned long" with paddr_t to avoid overflow.
+
+Signed-off-by: Duan Ronghui <ronghui.duan@intel.com>
+
+diff --git a/arch/x86/numa.c b/arch/x86/numa.c
+index 386234f..6cae894 100644
+--- a/arch/x86/numa.c
++++ b/arch/x86/numa.c
+@@ -57,7 +57,7 @@ populate_memnodemap(const struct node *nodes, int numnodes, int shift)
+ {
+ 	int i; 
+ 	int res = -1;
+-	unsigned long addr, end;
++	paddr_t addr, end;
+ 
+ 	if (shift >= 64)
+ 		return -1;
+@@ -286,13 +286,13 @@ static void dump_numa(unsigned char key)
+ 		  (u32)(now>>32), (u32)now);
+ 
+ 	for_each_online_node(i) {
+-		unsigned long pa = (NODE_DATA(i)->node_start_pfn + 1)<< PAGE_SHIFT;
++		paddr_t pa = (NODE_DATA(i)->node_start_pfn + 1)<< PAGE_SHIFT;
+ 		printk("idx%d -> NODE%d start->%lu size->%lu\n",
+ 			  i, NODE_DATA(i)->node_id,
+ 			  NODE_DATA(i)->node_start_pfn,
+ 			  NODE_DATA(i)->node_spanned_pages);
+ 		/* sanity check phys_to_nid() */
+-		printk("phys_to_nid(%lx) -> %d should be %d\n", pa, phys_to_nid(pa),
++		printk("phys_to_nid(%"PRIpaddr") -> %d should be %d\n", pa, phys_to_nid(pa),
+ 			  NODE_DATA(i)->node_id);
+ 	}
+ 	for_each_online_cpu(i)
+diff --git a/include/asm-x86/numa.h b/include/asm-x86/numa.h
+index ee15095..90233e0 100644
+--- a/include/asm-x86/numa.h
++++ b/include/asm-x86/numa.h
+@@ -52,7 +52,7 @@ struct node_data {
+ 
+ extern struct node_data node_data[];
+ 
+-static inline __attribute__((pure)) int phys_to_nid(unsigned long addr) 
++static inline __attribute__((pure)) int phys_to_nid(paddr_t addr) 
+ { 
+ 	unsigned nid; 
+ 	VIRTUAL_BUG_ON((addr >> memnode_shift) >= NODEMAPSIZE);

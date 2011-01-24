@@ -11,13 +11,18 @@
  * 20-06-1998 by Frank Denis : Linux 2.1.99+ & dcache support.
  */
 
+#include <linux/string.h>
+#include <linux/errno.h>
+#include <linux/fs.h>
+#include <linux/qnx4_fs.h>
+#include <linux/stat.h>
 #include <linux/smp_lock.h>
 #include <linux/buffer_head.h>
-#include "qnx4.h"
+
 
 static int qnx4_readdir(struct file *filp, void *dirent, filldir_t filldir)
 {
-	struct inode *inode = filp->f_path.dentry->d_inode;
+	struct inode *inode = filp->f_dentry->d_inode;
 	unsigned int offset;
 	struct buffer_head *bh;
 	struct qnx4_inode_entry *de;
@@ -79,10 +84,15 @@ const struct file_operations qnx4_dir_operations =
 {
 	.read		= generic_read_dir,
 	.readdir	= qnx4_readdir,
-	.fsync		= simple_fsync,
+	.fsync		= file_fsync,
 };
 
-const struct inode_operations qnx4_dir_inode_operations =
+struct inode_operations qnx4_dir_inode_operations =
 {
 	.lookup		= qnx4_lookup,
+#ifdef CONFIG_QNX4FS_RW
+	.create		= qnx4_create,
+	.unlink		= qnx4_unlink,
+	.rmdir		= qnx4_rmdir,
+#endif
 };

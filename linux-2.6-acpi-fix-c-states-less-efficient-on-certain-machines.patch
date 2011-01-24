@@ -1,0 +1,144 @@
+From: Luming Yu <luyu@redhat.com>
+Date: Thu, 19 Feb 2009 17:07:29 +0800
+Subject: [acpi] fix C-states less efficient on certain machines
+Message-id: 499D2151.50903@redhat.com
+O-Subject: [RHEL 5.4 PATCH] bz 484174: Fix C-states less efficient on some Nehalem machines with certain BIOS
+Bugzilla: 484174
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+
+BZ 484174
+
+Description of problem:
+
+Looking at the idle residencies, average CC6 across all cores was 70%+ but
+Package C6 (PC6) was less than 20%. Looking at individual cores instead of
+average across all cores revealed that CPU 0 and its sibling thread had < 20%
+CC6 while other threads had >80% CC6. This CPU 0 and its sibling were
+eventually limiting the package C-state for both sockets.
+
+Probing further, the OS seemd to choose C6 for CPU 0 most of the time. But, for
+SMT sibling of CPU 0, OS C-state policy chose C1 more often than C6.
+Instrumenting the C-state entry exit showed the wakeup pattern on this sibling
+thread to be something like
+
+3 830.76
+3 174.16
+1 847.55
+1 1000.31
+1 971.42
+1 1024.36
+1 1002.37
+1 966.38
+1 986.84
+1 994.96
+1 996.17
+1 970.77
+3 819.49
+3 159.93
+1 856.66
+1 988.59
+1 998.31
+1 987.61
+1 986.50
+1 964.69
+1 978.42
+
+Where first column is th C-state entered (C3 meaning hw C6) and second column
+in time spent in that state in us. Note that OS tick rate is 1000, so we expect
+one wakeup every 1000us.
+
+We see alternating short and long wakeups which sum up to 1000uS while we enter
+C6 and we see residency of ~1000us while in C1. The reason for this being that
+the external timer interrupt to CPU 0 wakes up sibling as well when in C6 and
+sibling goes back to sleep, to be woken up soon by timer IPI from CPU 0. This
+double wakeup in a tick only happens when sibling is in C6 and does not happen
+when sibling is in C1. And due to this short wakeup, OS promotion/demotion
+algorithm demotes this particular thread to go to C1, and the thread keeps
+going back to C1 for "demotion.threshold" number of time (which is 10). As a
+result of this double wakeup within a tick, the sibling of CPU 0 spends more
+time in C1, limiting the whole platform.
+
+int sleep_ticks;
+unsigned int threshold_ticks;
+
+// record start_time
+// enter C6-state
+// record stop_time
+sleep_ticks = stop_time - start_time - C6_exit_latency
+
+If (sleep_ticks < threshold_ticks)
+ // check for threshold count, etc
+
+The problem here being sleep_ticks is int and threshold_ticks is unsigned int.
+The above comparison turns into a unsigned comparison and negative sleep_ticks
+(due to small sleep and high exit latency in supermicro) gets counted as very
+high idle time and demotion does not happen on supermicro. GC on the other hand
+has a lower exit latency resulting in sleep_ticks still being small positive
+number for these short wakes and the policy demotes C-state from C6 to C1 and
+stays in C1 for next 10 C-state invocations. Fixing this int, unsigned int bug
+in OS makes this low package C6 problem appear on Supermicro as well!
+
+Now to fix the problem, we have to change the C-state policy in Redhat EL5 to
+look for 2 consecutive short wakeups in place of just 1, before it does any
+demotion.
+
+< The attached patch fixes the issue >
+
+Power difference:
+
+Testing status:
+
+Upstream status:
+Upstream doesn't need this fix due to different code base of cpu idle
+driver.
+
+Brew:
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1698914
+
+Please review and Ack.
+Thanks,
+Luming
+
+diff --git a/drivers/acpi/processor_idle.c b/drivers/acpi/processor_idle.c
+index f40b175..299734e 100644
+--- a/drivers/acpi/processor_idle.c
++++ b/drivers/acpi/processor_idle.c
+@@ -434,6 +434,9 @@ static void acpi_processor_idle(void)
+ 	if ((cx->type != ACPI_STATE_C1) && (sleep_ticks > 0))
+ 		cx->time += sleep_ticks;
+ 
++	if (sleep_ticks != 0xFFFFFFFF && sleep_ticks < 0)
++		sleep_ticks = 0;
++
+ 	next_state = pr->power.state;
+ 
+ #ifdef CONFIG_HOTPLUG_CPU
+@@ -473,6 +476,9 @@ static void acpi_processor_idle(void)
+ 					goto end;
+ 				}
+ 			}
++		} else {
++			if (cx->promotion.count > 0)
++				cx->promotion.count--;
+ 		}
+ 	}
+ 
+@@ -490,6 +496,9 @@ static void acpi_processor_idle(void)
+ 				next_state = cx->demotion.state;
+ 				goto end;
+ 			}
++		} else {
++			if (cx->demotion.count > 0)
++				cx->demotion.count--;
+ 		}
+ 	}
+ 
+@@ -557,7 +566,7 @@ static int acpi_processor_set_power_policy(struct acpi_processor *pr)
+ 		if (lower) {
+ 			cx->demotion.state = lower;
+ 			cx->demotion.threshold.ticks = cx->latency_ticks;
+-			cx->demotion.threshold.count = 1;
++			cx->demotion.threshold.count = 2;
+ 			if (cx->type == ACPI_STATE_C3)
+ 				cx->demotion.threshold.bm = bm_history;
+ 		}

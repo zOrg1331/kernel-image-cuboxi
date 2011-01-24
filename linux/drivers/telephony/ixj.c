@@ -42,6 +42,8 @@
  ***************************************************************************/
 
 /*
+ * $Log: ixj.c,v $
+ *
  * Revision 4.8  2003/07/09 19:39:00  Daniele Bellucci
  * Audit some copy_*_user and minor cleanup.
  *
@@ -257,7 +259,6 @@
 #include <linux/fs.h>		/* everything... */
 #include <linux/errno.h>	/* error codes */
 #include <linux/slab.h>
-#include <linux/smp_lock.h>
 #include <linux/mm.h>
 #include <linux/ioport.h>
 #include <linux/interrupt.h>
@@ -282,14 +283,6 @@ static int hertz = HZ;
 static int samplerate = 100;
 
 module_param(ixjdebug, int, 0);
-
-static struct pci_device_id ixj_pci_tbl[] __devinitdata = {
-	{ PCI_VENDOR_ID_QUICKNET, PCI_DEVICE_ID_QUICKNET_XJ,
-	  PCI_ANY_ID, PCI_ANY_ID, 0, 0, 0},
-	{ }
-};
-
-MODULE_DEVICE_TABLE(pci, ixj_pci_tbl);
 
 /************************************************************************
 *
@@ -647,9 +640,9 @@ static inline BYTE SLIC_GetState(IXJ *j)
 	return j->pld_slicr.bits.state;
 }
 
-static bool SLIC_SetState(BYTE byState, IXJ *j)
+static BOOL SLIC_SetState(BYTE byState, IXJ *j)
 {
-	bool fRetVal = false;
+	BOOL fRetVal = FALSE;
 
 	if (j->cardtype == QTI_PHONECARD) {
 		if (j->flags.pcmciasct) {
@@ -658,14 +651,14 @@ static bool SLIC_SetState(BYTE byState, IXJ *j)
 			case PLD_SLIC_STATE_OC:
 				j->pslic.bits.powerdown = 1;
 				j->pslic.bits.ring0 = j->pslic.bits.ring1 = 0;
-				fRetVal = true;
+				fRetVal = TRUE;
 				break;
 			case PLD_SLIC_STATE_RINGING:
 				if (j->readers || j->writers) {
 					j->pslic.bits.powerdown = 0;
 					j->pslic.bits.ring0 = 1;
 					j->pslic.bits.ring1 = 0;
-					fRetVal = true;
+					fRetVal = TRUE;
 				}
 				break;
 			case PLD_SLIC_STATE_OHT:	/* On-hook transmit */
@@ -678,14 +671,14 @@ static bool SLIC_SetState(BYTE byState, IXJ *j)
 					j->pslic.bits.powerdown = 1;
 				}
 				j->pslic.bits.ring0 = j->pslic.bits.ring1 = 0;
-				fRetVal = true;
+				fRetVal = TRUE;
 				break;
 			case PLD_SLIC_STATE_APR:	/* Active polarity reversal */
 
 			case PLD_SLIC_STATE_OHTPR:	/* OHT polarity reversal */
 
 			default:
-				fRetVal = false;
+				fRetVal = FALSE;
 				break;
 			}
 			j->psccr.bits.dev = 3;
@@ -702,7 +695,7 @@ static bool SLIC_SetState(BYTE byState, IXJ *j)
 			j->pld_slicw.bits.c3 = 0;
 			j->pld_slicw.bits.b2en = 0;
 			outb_p(j->pld_slicw.byte, j->XILINXbase + 0x01);
-			fRetVal = true;
+			fRetVal = TRUE;
 			break;
 		case PLD_SLIC_STATE_RINGING:
 			j->pld_slicw.bits.c1 = 1;
@@ -710,7 +703,7 @@ static bool SLIC_SetState(BYTE byState, IXJ *j)
 			j->pld_slicw.bits.c3 = 0;
 			j->pld_slicw.bits.b2en = 1;
 			outb_p(j->pld_slicw.byte, j->XILINXbase + 0x01);
-			fRetVal = true;
+			fRetVal = TRUE;
 			break;
 		case PLD_SLIC_STATE_ACTIVE:
 			j->pld_slicw.bits.c1 = 0;
@@ -718,7 +711,7 @@ static bool SLIC_SetState(BYTE byState, IXJ *j)
 			j->pld_slicw.bits.c3 = 0;
 			j->pld_slicw.bits.b2en = 0;
 			outb_p(j->pld_slicw.byte, j->XILINXbase + 0x01);
-			fRetVal = true;
+			fRetVal = TRUE;
 			break;
 		case PLD_SLIC_STATE_OHT:	/* On-hook transmit */
 
@@ -727,7 +720,7 @@ static bool SLIC_SetState(BYTE byState, IXJ *j)
 			j->pld_slicw.bits.c3 = 0;
 			j->pld_slicw.bits.b2en = 0;
 			outb_p(j->pld_slicw.byte, j->XILINXbase + 0x01);
-			fRetVal = true;
+			fRetVal = TRUE;
 			break;
 		case PLD_SLIC_STATE_TIPOPEN:
 			j->pld_slicw.bits.c1 = 0;
@@ -735,7 +728,7 @@ static bool SLIC_SetState(BYTE byState, IXJ *j)
 			j->pld_slicw.bits.c3 = 1;
 			j->pld_slicw.bits.b2en = 0;
 			outb_p(j->pld_slicw.byte, j->XILINXbase + 0x01);
-			fRetVal = true;
+			fRetVal = TRUE;
 			break;
 		case PLD_SLIC_STATE_STANDBY:
 			j->pld_slicw.bits.c1 = 1;
@@ -743,7 +736,7 @@ static bool SLIC_SetState(BYTE byState, IXJ *j)
 			j->pld_slicw.bits.c3 = 1;
 			j->pld_slicw.bits.b2en = 1;
 			outb_p(j->pld_slicw.byte, j->XILINXbase + 0x01);
-			fRetVal = true;
+			fRetVal = TRUE;
 			break;
 		case PLD_SLIC_STATE_APR:	/* Active polarity reversal */
 
@@ -752,7 +745,7 @@ static bool SLIC_SetState(BYTE byState, IXJ *j)
 			j->pld_slicw.bits.c3 = 1;
 			j->pld_slicw.bits.b2en = 0;
 			outb_p(j->pld_slicw.byte, j->XILINXbase + 0x01);
-			fRetVal = true;
+			fRetVal = TRUE;
 			break;
 		case PLD_SLIC_STATE_OHTPR:	/* OHT polarity reversal */
 
@@ -761,10 +754,10 @@ static bool SLIC_SetState(BYTE byState, IXJ *j)
 			j->pld_slicw.bits.c3 = 1;
 			j->pld_slicw.bits.b2en = 0;
 			outb_p(j->pld_slicw.byte, j->XILINXbase + 0x01);
-			fRetVal = true;
+			fRetVal = TRUE;
 			break;
 		default:
-			fRetVal = false;
+			fRetVal = FALSE;
 			break;
 		}
 	}
@@ -2329,6 +2322,7 @@ static int ixj_release(struct inode *inode, struct file *file_p)
 	j->rec_codec = j->play_codec = 0;
 	j->rec_frame_size = j->play_frame_size = 0;
 	j->flags.cidsent = j->flags.cidring = 0;
+	ixj_fasync(-1, file_p, 0);	/* remove from list of async notification */
 
 	if(j->cardtype == QTI_LINEJACK && !j->readers && !j->writers) {
 		ixj_set_port(j, PORT_PSTN);
@@ -2745,7 +2739,7 @@ static void alaw2ulaw(unsigned char *buff, unsigned long len)
 static ssize_t ixj_read(struct file * file_p, char __user *buf, size_t length, loff_t * ppos)
 {
 	unsigned long i = *ppos;
-	IXJ * j = get_ixj(NUM(file_p->f_path.dentry->d_inode));
+	IXJ * j = get_ixj(NUM(file_p->f_dentry->d_inode));
 
 	DECLARE_WAITQUEUE(wait, current);
 
@@ -2802,7 +2796,7 @@ static ssize_t ixj_enhanced_read(struct file * file_p, char __user *buf, size_t 
 {
 	int pre_retval;
 	ssize_t read_retval = 0;
-	IXJ *j = get_ixj(NUM(file_p->f_path.dentry->d_inode));
+	IXJ *j = get_ixj(NUM(file_p->f_dentry->d_inode));
 
 	pre_retval = ixj_PreRead(j, 0L);
 	switch (pre_retval) {
@@ -2881,7 +2875,7 @@ static ssize_t ixj_enhanced_write(struct file * file_p, const char __user *buf, 
 	int pre_retval;
 	ssize_t write_retval = 0;
 
-	IXJ *j = get_ixj(NUM(file_p->f_path.dentry->d_inode));
+	IXJ *j = get_ixj(NUM(file_p->f_dentry->d_inode));
 
 	pre_retval = ixj_PreWrite(j, 0L);
 	switch (pre_retval) {
@@ -3451,6 +3445,7 @@ static void ixj_write_frame(IXJ *j)
 {
 	int cnt, frame_count, dly;
 	IXJ_WORD dat;
+	BYTES blankword;
 
 	frame_count = 0;
 	if(j->flags.cidplay) {
@@ -3498,8 +3493,6 @@ static void ixj_write_frame(IXJ *j)
 		}
 		if (frame_count >= 1) {
 			if (j->ver.low == 0x12 && j->play_mode && j->flags.play_first_frame) {
-				BYTES blankword;
-
 				switch (j->play_mode) {
 				case PLAYBACK_MODE_ULAW:
 				case PLAYBACK_MODE_ALAW:
@@ -3507,7 +3500,6 @@ static void ixj_write_frame(IXJ *j)
 					break;
 				case PLAYBACK_MODE_8LINEAR:
 				case PLAYBACK_MODE_16LINEAR:
-				default:
 					blankword.low = blankword.high = 0x00;
 					break;
 				case PLAYBACK_MODE_8LINEAR_WSS:
@@ -3531,8 +3523,6 @@ static void ixj_write_frame(IXJ *j)
 				j->flags.play_first_frame = 0;
 			} else	if (j->play_codec == G723_63 && j->flags.play_first_frame) {
 				for (cnt = 0; cnt < 24; cnt++) {
-					BYTES blankword;
-
 					if(cnt == 12) {
 						blankword.low = 0x02;
 						blankword.high = 0x00;
@@ -4584,7 +4574,7 @@ static unsigned int ixj_poll(struct file *file_p, poll_table * wait)
 {
 	unsigned int mask = 0;
 
-	IXJ *j = get_ixj(NUM(file_p->f_path.dentry->d_inode));
+	IXJ *j = get_ixj(NUM(file_p->f_dentry->d_inode));
 
 	poll_wait(file_p, &(j->poll_q), wait);
 	if (j->read_buffer_ready > 0)
@@ -4870,7 +4860,6 @@ static char daa_CR_read(IXJ *j, int cr)
 		bytes.high = 0xB0 + cr;
 		break;
 	case SOP_PU_PULSEDIALING:
-	default:
 		bytes.high = 0xF0 + cr;
 		break;
 	}
@@ -4972,8 +4961,7 @@ static int ixj_daa_cid_read(IXJ *j)
 {
 	int i;
 	BYTES bytes;
-	char CID[ALISDAA_CALLERID_SIZE];
-	bool mContinue;
+	char CID[ALISDAA_CALLERID_SIZE], mContinue;
 	char *pIn, *pOut;
 
 	if (!SCI_Prepare(j))
@@ -5017,7 +5005,7 @@ static int ixj_daa_cid_read(IXJ *j)
 
 	pIn = CID;
 	pOut = j->m_DAAShadowRegs.CAO_REGS.CAO.CallerID;
-	mContinue = true;
+	mContinue = 1;
 	while (mContinue) {
 		if ((pIn[1] & 0x03) == 0x01) {
 			pOut[0] = pIn[0];
@@ -5031,7 +5019,7 @@ static int ixj_daa_cid_read(IXJ *j)
 		if ((pIn[4] & 0xc0) == 0x40) {
 			pOut[3] = ((pIn[4] & 0x3f) << 2) | ((pIn[3] & 0xc0) >> 6);
 		} else {
-			mContinue = false;
+			mContinue = FALSE;
 		}
 		pIn += 5, pOut += 4;
 	}
@@ -6093,15 +6081,15 @@ static int capabilities_check(IXJ *j, struct phone_capability *pcreq)
 	return retval;
 }
 
-static long do_ixj_ioctl(struct file *file_p, unsigned int cmd, unsigned long arg)
+static int ixj_ioctl(struct inode *inode, struct file *file_p, unsigned int cmd, unsigned long arg)
 {
 	IXJ_TONE ti;
 	IXJ_FILTER jf;
 	IXJ_FILTER_RAW jfr;
 	void __user *argp = (void __user *)arg;
-	struct inode *inode = file_p->f_path.dentry->d_inode;
-	unsigned int minor = iminor(inode);
+
 	unsigned int raise, mant;
+	unsigned int minor = iminor(inode);
 	int board = NUM(inode);
 
 	IXJ *j = get_ixj(NUM(inode));
@@ -6659,29 +6647,20 @@ static long do_ixj_ioctl(struct file *file_p, unsigned int cmd, unsigned long ar
 	return retval;
 }
 
-static long ixj_ioctl(struct file *file_p, unsigned int cmd, unsigned long arg)
-{
-	long ret;
-	lock_kernel();
-	ret = do_ixj_ioctl(file_p, cmd, arg);
-	unlock_kernel();
-	return ret;
-}
-
 static int ixj_fasync(int fd, struct file *file_p, int mode)
 {
-	IXJ *j = get_ixj(NUM(file_p->f_path.dentry->d_inode));
+	IXJ *j = get_ixj(NUM(file_p->f_dentry->d_inode));
 
 	return fasync_helper(fd, file_p, mode, &j->async_queue);
 }
 
-static const struct file_operations ixj_fops =
+static struct file_operations ixj_fops =
 {
         .owner          = THIS_MODULE,
         .read           = ixj_enhanced_read,
         .write          = ixj_enhanced_write,
         .poll           = ixj_poll,
-        .unlocked_ioctl = ixj_ioctl,
+        .ioctl          = ixj_ioctl,
         .release        = ixj_release,
         .fasync         = ixj_fasync
 };
@@ -7511,7 +7490,7 @@ static BYTE PCIEE_ReadBit(WORD wEEPROMAddress, BYTE lastLCC)
 	return ((inb(wEEPROMAddress) >> 3) & 1);
 }
 
-static bool PCIEE_ReadWord(WORD wAddress, WORD wLoc, WORD * pwResult)
+static BOOL PCIEE_ReadWord(WORD wAddress, WORD wLoc, WORD * pwResult)
 {
 	BYTE lastLCC;
 	WORD wEEPROMAddress = wAddress + 3;
@@ -7704,8 +7683,7 @@ static int __init ixj_probe_pci(int *cnt)
 	IXJ *j = NULL;
 
 	for (i = 0; i < IXJMAX - *cnt; i++) {
-		pci = pci_get_device(PCI_VENDOR_ID_QUICKNET,
-				      PCI_DEVICE_ID_QUICKNET_XJ, pci);
+		pci = pci_find_device(0x15E2, 0x0500, pci);
 		if (!pci)
 			break;
 
@@ -7724,7 +7702,6 @@ static int __init ixj_probe_pci(int *cnt)
 			printk(KERN_INFO "ixj: found Internet PhoneJACK PCI at 0x%x\n", j->DSPbase);
 		++*cnt;
 	}
-	pci_dev_put(pci);
 	return probe;
 }
 

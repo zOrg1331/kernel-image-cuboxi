@@ -1,0 +1,56 @@
+From: Hans-Joachim Picht <hpicht@redhat.com>
+Date: Tue, 29 Sep 2009 22:43:29 +0200
+Subject: [s390] cio: boot through XAUTOLOG with conmode 3270
+Message-id: 20090929204329.GA26546@blc4eb509856389.ibm.com
+O-Subject: [RHEL5 U5 PATCH 1/1] s390 - cio: Linux does not boot through XAUTOLOG with conmode 3270
+Bugzilla: 508934
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+RH-Acked-by: Jiri Olsa <jolsa@redhat.com>
+RH-Acked-by: Jiri Pirko <jpirko@redhat.com>
+
+Description
+===========
+The system does not boot through CP XAUTOLOG with conmode= set to 3270.
+
+The problem is caused by writing debug data to an uninitialized debug feature
+that results in a never ending loop.  To solve this issue, only write debug
+data to an initialized debug feature.
+
+Bugzilla
+========
+
+BZ 508934
+https://bugzilla.redhat.com/show_bug.cgi?id=508934
+
+Upstream status of the patch
+============================
+
+The patch is upstream as of kernel version 2.6.23
+
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=303fa9e39605c1d56971dd22cd04d2186dc42c98
+
+Test status
+===========
+
+The patch has been tested and fixes the problem.
+The fix has been verified by the IBM test department.
+
+Please ACK.
+
+With best regards,
+
+	Hans
+
+diff --git a/drivers/s390/cio/cio_debug.h b/drivers/s390/cio/cio_debug.h
+index f88844a..c9bf898 100644
+--- a/drivers/s390/cio/cio_debug.h
++++ b/drivers/s390/cio/cio_debug.h
+@@ -23,6 +23,8 @@ extern debug_info_t *cio_debug_crw_id;
+ static inline void
+ CIO_HEX_EVENT(int level, void *data, int length)
+ {
++	if (unlikely(!cio_debug_trace_id))
++		return;
+ 	while (length > 0) {
+ 		debug_event(cio_debug_trace_id, level, data, length);
+ 		length -= cio_debug_trace_id->buf_size;

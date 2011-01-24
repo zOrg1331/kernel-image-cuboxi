@@ -1,0 +1,120 @@
+From: Eugene Teo <eteo@redhat.com>
+Date: Fri, 26 Sep 2008 19:55:33 +0800
+Subject: [fs] open() allows setgid bit when user is not in group
+Message-id: 20080926115533.GA5759@kernel.sg
+O-Subject: [RHEL5.3 patch] BZ#463687 kernel: open() call allows setgid bit when user is not in new file's group [v2]
+Bugzilla: 463687
+CVE: CVE-2008-4210
+RH-Acked-by: Peter Staubach <staubach@redhat.com>
+RH-Acked-by: Alan Cox <alan@redhat.com>
+RH-Acked-by: Eric Sandeen <sandeen@redhat.com>
+RH-Acked-by: Jiri Pirko <jpirko@redhat.com>
+RH-Nacked-by: Eric Sandeen <sandeen@redhat.com>
+
+This is for bz#463687 (CVE-2008-4210).
+
+When creating a file, open()/creat() allows the setgid bit to be set via
+the mode argument even when, due to the bsdgroups mount option or the
+file being created in a setgid directory, the new file's group is one
+which the user is not a member of.  The user can then use ftruncate()
+and memory-mapped I/O to turn the new file into an arbitrary binary and
+thus gain the privileges of this group, since these operations do not
+clear the setgid bit.
+
+Backport of upstream commit: 7b82dc0e64e93f430182f36b46b79fcee87d3532
+and 01de85e057328ecbef36e108673b1e81059d54c1
+
+Brew build:
+http://porkchop.redhat.com/brewroot/scratch/eteo/task_1497103
+
+Test status:
+Booted on i686. Tested with reproducers:
+https://bugzilla.redhat.com/show_bug.cgi?id=463661#c3
+https://bugzilla.redhat.com/show_bug.cgi?id=463661#c11
+
+Before patch:
+-rwxr-s--- 1 test root 735004 Sep 26 07:01 sh*
+After patch:
+-rwxr-x--- 1 test root 735004 Sep 26 07:01 sh*
+
+Signed-off-by: Eugene Teo <eteo@redhat.com>
+
+diff --git a/fs/open.c b/fs/open.c
+index 80435ef..29b1947 100644
+--- a/fs/open.c
++++ b/fs/open.c
+@@ -215,6 +215,9 @@ int do_truncate(struct dentry *dentry, loff_t length, unsigned int time_attrs,
+ 		newattrs.ia_valid |= ATTR_FILE;
+ 	}
+ 
++	/* Remove suid/sgid on truncate too */
++	newattrs.ia_valid |= should_remove_suid(dentry);
++
+ 	mutex_lock(&dentry->d_inode->i_mutex);
+ 	err = notify_change(dentry, &newattrs);
+ 	mutex_unlock(&dentry->d_inode->i_mutex);
+diff --git a/include/linux/fs.h b/include/linux/fs.h
+index f08cec8..bd4b676 100644
+--- a/include/linux/fs.h
++++ b/include/linux/fs.h
+@@ -1762,6 +1762,8 @@ extern void iget_failed(struct inode *);
+ extern void clear_inode(struct inode *);
+ extern void destroy_inode(struct inode *);
+ extern struct inode *new_inode(struct super_block *);
++extern int __remove_suid(struct dentry *, int);
++extern int should_remove_suid(struct dentry *);
+ extern int remove_suid(struct dentry *);
+ extern void remove_dquot_ref(struct super_block *, int, struct list_head *);
+ 
+diff --git a/mm/filemap.c b/mm/filemap.c
+index 5f9971c..aa2bbcf 100644
+--- a/mm/filemap.c
++++ b/mm/filemap.c
+@@ -1914,11 +1914,10 @@ repeat:
+  *	if suid or (sgid and xgrp)
+  *		remove privs
+  */
+-int remove_suid(struct dentry *dentry)
++int should_remove_suid(struct dentry *dentry)
+ {
+ 	mode_t mode = dentry->d_inode->i_mode;
+ 	int kill = 0;
+-	int result = 0;
+ 
+ 	/* suid always must be killed */
+ 	if (unlikely(mode & S_ISUID))
+@@ -1931,13 +1930,28 @@ int remove_suid(struct dentry *dentry)
+ 	if (unlikely((mode & S_ISGID) && (mode & S_IXGRP)))
+ 		kill |= ATTR_KILL_SGID;
+ 
+-	if (unlikely(kill && !capable(CAP_FSETID))) {
+-		struct iattr newattrs;
++	if (unlikely(kill && !capable(CAP_FSETID)))
++		return kill;
+ 
+-		newattrs.ia_valid = ATTR_FORCE | kill;
+-		result = notify_change(dentry, &newattrs);
+-	}
+-	return result;
++	return 0;
++}
++
++int __remove_suid(struct dentry *dentry, int kill)
++{
++	struct iattr newattrs;
++
++	newattrs.ia_valid = ATTR_FORCE | kill;
++	return notify_change(dentry, &newattrs);
++}
++
++int remove_suid(struct dentry *dentry)
++{
++	int kill = should_remove_suid(dentry);
++
++	if (unlikely(kill))
++		return __remove_suid(dentry, kill);
++
++	return 0;
+ }
+ EXPORT_SYMBOL(remove_suid);
+ 

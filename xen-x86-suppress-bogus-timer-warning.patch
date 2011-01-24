@@ -1,0 +1,65 @@
+From: Chris Lalancette <clalance@redhat.com>
+Date: Mon, 10 Dec 2007 09:54:11 -0500
+Subject: [xen] x86: suppress bogus timer warning
+Message-id: 475D5313.5020703@redhat.com
+O-Subject: [RHEL5.2 PATCH]: Suppress bogus timer warning
+Bugzilla: 317201
+
+All,
+     Attached is a fairly simple patch to fix BZ 317201.  Basically, when
+running a 2.6.23 or newer kernel in an HVM guest, the hypervisor would
+continually spit out:
+
+(XEN) vpt.c:210:d3 HVM_PlatformTime: program too small period 192480
+
+This happens because of the tickless stuff that continually reprograms the
+APIC's; the HV, of course, is emulating the APIC's, and spits this message if
+the period for the timer is less than 0.9ms.  However, that logic really should
+only apply to periodic timers, not one-shot.  This patch adds a check to make
+sure it is periodic before printing out the messages.
+
+This is from upstream xen-3.1-testing.hg c/s 15504.
+
+Successfully tested by me; before the patch, I would get constant spew, and
+after the patch the messages were suppressed.
+
+Please ACK.
+
+Chris Lalancette
+
+# HG changeset patch
+# User Keir Fraser <keir.fraser@citrix.com>
+# Date 1196957712 0
+# Node ID cbac6d0a78fd17e2729ca3a827c0d5022afec18f
+# Parent  912279dd383616d6031b7f646a3f5e47c76e02d9
+hvm: Only complain about short-period periodic tickers.
+Signed-off-by: Keir Fraser <keir@xensource.com>
+xen-unstable changeset:   15610:ad1c6cf0baafe149c9fe03be3255b95ffef68a34
+xen-unstable date:        Wed Jul 18 11:00:32 2007 +0100
+
+Acked-by: Rik van Riel <riel@redhat.com>
+Acked-by: Markus Armbruster <armbru@redhat.com>
+Acked-by: "Stephen C. Tweedie" <sct@redhat.com>
+
+diff --git a/arch/x86/hvm/vpt.c b/arch/x86/hvm/vpt.c
+index cbd1ffa..5ea7303 100644
+--- a/arch/x86/hvm/vpt.c
++++ b/arch/x86/hvm/vpt.c
+@@ -260,13 +260,15 @@ void create_periodic_time(
+     pt->enabled = 1;
+     pt->pending_intr_nr = 0;
+ 
+-    if ( period < 900000 ) /* < 0.9 ms */
++    /* Periodic timer must be at least 0.9ms. */
++    if ( (period < 900000) && !one_shot )
+     {
+         gdprintk(XENLOG_WARNING,
+                  "HVM_PlatformTime: program too small period %"PRIu64"\n",
+                  period);
+-        period = 900000; /* force to 0.9ms */
++        period = 900000;
+     }
++
+     pt->period = period;
+     pt->vcpu = v;
+     pt->last_plt_gtime = hvm_get_guest_time(pt->vcpu);

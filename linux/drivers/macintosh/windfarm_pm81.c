@@ -131,6 +131,8 @@
 
 static int wf_smu_mach_model;	/* machine model id */
 
+static struct device *wf_smu_dev;
+
 /* Controls & sensors */
 static struct wf_sensor	*sensor_cpu_power;
 static struct wf_sensor	*sensor_cpu_temp;
@@ -394,7 +396,7 @@ static void wf_smu_sys_fans_tick(struct wf_smu_sys_fans_state *st)
 static void wf_smu_create_cpu_fans(void)
 {
 	struct wf_cpu_pid_param pid_param;
-	const struct smu_sdbp_header *hdr;
+	struct smu_sdbp_header *hdr;
 	struct smu_sdbp_cpupiddata *piddata;
 	struct smu_sdbp_fvt *fvt;
 	s32 tmax, tdelta, maxpow, powadj;
@@ -700,7 +702,7 @@ static struct notifier_block wf_smu_events = {
 
 static int wf_init_pm(void)
 {
-	const struct smu_sdbp_header *hdr;
+	struct smu_sdbp_header *hdr;
 
 	hdr = smu_get_sdb_partition(SMU_SDB_SENSORTREE_ID, NULL);
 	if (hdr != 0) {
@@ -715,14 +717,16 @@ static int wf_init_pm(void)
 	return 0;
 }
 
-static int wf_smu_probe(struct platform_device *ddev)
+static int wf_smu_probe(struct device *ddev)
 {
+	wf_smu_dev = ddev;
+
 	wf_register_client(&wf_smu_events);
 
 	return 0;
 }
 
-static int __devexit wf_smu_remove(struct platform_device *ddev)
+static int wf_smu_remove(struct device *ddev)
 {
 	wf_unregister_client(&wf_smu_events);
 
@@ -762,16 +766,16 @@ static int __devexit wf_smu_remove(struct platform_device *ddev)
 	if (wf_smu_cpu_fans)
 		kfree(wf_smu_cpu_fans);
 
+	wf_smu_dev = NULL;
+
 	return 0;
 }
 
-static struct platform_driver wf_smu_driver = {
+static struct device_driver wf_smu_driver = {
+        .name = "windfarm",
+        .bus = &platform_bus_type,
         .probe = wf_smu_probe,
-        .remove = __devexit_p(wf_smu_remove),
-	.driver = {
-		.name = "windfarm",
-		.owner	= THIS_MODULE,
-	},
+        .remove = wf_smu_remove,
 };
 
 
@@ -788,10 +792,9 @@ static int __init wf_smu_init(void)
 		request_module("windfarm_smu_controls");
 		request_module("windfarm_smu_sensors");
 		request_module("windfarm_lm75_sensor");
-		request_module("windfarm_cpufreq_clamp");
 
 #endif /* MODULE */
-		platform_driver_register(&wf_smu_driver);
+		driver_register(&wf_smu_driver);
 	}
 
 	return rc;
@@ -800,7 +803,7 @@ static int __init wf_smu_init(void)
 static void __exit wf_smu_exit(void)
 {
 
-	platform_driver_unregister(&wf_smu_driver);
+	driver_unregister(&wf_smu_driver);
 }
 
 
@@ -810,4 +813,4 @@ module_exit(wf_smu_exit);
 MODULE_AUTHOR("Benjamin Herrenschmidt <benh@kernel.crashing.org>");
 MODULE_DESCRIPTION("Thermal control logic for iMac G5");
 MODULE_LICENSE("GPL");
-MODULE_ALIAS("platform:windfarm");
+

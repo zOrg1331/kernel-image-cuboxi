@@ -1,0 +1,103 @@
+From: Michal Schmidt <mschmidt@redhat.com>
+Date: Wed, 14 Nov 2007 16:13:28 +0100
+Subject: [misc] tux: get rid of O_ATOMICLOOKUP
+Message-id: 20071114161328.6c8529a9@brian.englab.brq.redhat.com
+O-Subject: [RHEL5.2 PATCH] Get rid of Tux's O_ATOMICLOOKUP
+Bugzilla: 358661
+
+BZ: https://bugzilla.redhat.com/show_bug.cgi?id=358661
+
+Description of the problem:
+Ulrich reported a problem with the Tux patch which is included in RHEL.
+Tux introduced a new open() flag O_ATOMICLOOKUP, but it was never
+accepted upstream. Upstream later used the same bit for O_CLOEXEC. The
+problem is there are people using modern glibcs (which attempt to use
+O_CLOEXEC) on our RHEL kernels (which interpret it wrongly as
+O_ATOMICLOOKUP). If the filename is not found in the dentry cache, this
+results in open() returning -EWOULDBLOCKIO. Userspace does not expect
+this. A kernel without support for O_CLOEXEC should just ignore the
+flag and open the file successfully.
+
+Ingo suggested O_ATOMICLOOKUP has only one user - the tux userspace
+daemon. I could not find a single occurence of O_ATOMICLOOKUP in tux's
+sources in RHEL-[345]. Therefore the number of users is closer to zero
+than one. Neither the kernel parts of Tux use it.
+
+Proposed fix:
+The patch removes O_ATOMICLOOKUP completely from the kernel.
+
+Testing:
+I'm running a RHEL5 kernel with this patch, Tux is running and serving
+files over HTTP no problem. Ulrich's testcase (see BZ) is fixed, open()
+returns a valid fd instead of the error -530.
+
+Upstream status:
+The patch removes a piece was code which was never upstream.
+
+Michal
+
+Acked-by: Dave Jones <davej@redhat.com>
+
+diff --git a/fs/namei.c b/fs/namei.c
+index 6920c65..77a8460 100644
+--- a/fs/namei.c
++++ b/fs/namei.c
+@@ -1445,8 +1445,6 @@ static inline int lookup_flags(unsigned int f)
+ 	
+ 	if (f & O_DIRECTORY)
+ 		retval |= LOOKUP_DIRECTORY;
+-	if (f & O_ATOMICLOOKUP)
+-		retval |= LOOKUP_ATOMIC;
+ 
+ 	return retval;
+ }
+diff --git a/include/asm-alpha/fcntl.h b/include/asm-alpha/fcntl.h
+index c3b88df..87f2cf4 100644
+--- a/include/asm-alpha/fcntl.h
++++ b/include/asm-alpha/fcntl.h
+@@ -14,7 +14,6 @@
+ #define O_DIRECTORY	0100000	/* must be a directory */
+ #define O_NOFOLLOW	0200000 /* don't follow links */
+ #define O_LARGEFILE	0400000 /* will be set by the kernel on every open */
+-#define O_ATOMICLOOKUP	01000000 /* do atomic file lookup */
+ #define O_DIRECT	02000000 /* direct disk access - should check with OSF/1 */
+ #define O_NOATIME	04000000
+ 
+diff --git a/include/asm-generic/fcntl.h b/include/asm-generic/fcntl.h
+index 5aa79cd..1e8abef 100644
+--- a/include/asm-generic/fcntl.h
++++ b/include/asm-generic/fcntl.h
+@@ -48,9 +48,6 @@
+ #ifndef O_NOATIME
+ #define O_NOATIME	01000000
+ #endif
+-#ifndef O_ATOMICLOOKUP
+-#define O_ATOMICLOOKUP	02000000	/* do atomic file lookup */
+-#endif
+ 
+ #ifndef O_NDELAY
+ #define O_NDELAY	O_NONBLOCK
+diff --git a/include/asm-sparc/fcntl.h b/include/asm-sparc/fcntl.h
+index 5fcdef6..5db60b5 100644
+--- a/include/asm-sparc/fcntl.h
++++ b/include/asm-sparc/fcntl.h
+@@ -14,7 +14,6 @@
+ #define O_NDELAY	(0x0004 | O_NONBLOCK)
+ #define O_NOCTTY	0x8000	/* not fcntl */
+ #define O_LARGEFILE	0x40000
+-#define O_ATOMICLOOKUP	0x80000 /* do atomic file lookup */
+ #define O_DIRECT        0x100000 /* direct disk access hint */
+ #define O_NOATIME	0x200000
+ 
+diff --git a/include/asm-sparc64/fcntl.h b/include/asm-sparc64/fcntl.h
+index 3fd6b0e..b2aecf0 100644
+--- a/include/asm-sparc64/fcntl.h
++++ b/include/asm-sparc64/fcntl.h
+@@ -14,7 +14,6 @@
+ #define O_NONBLOCK	0x4000
+ #define O_NOCTTY	0x8000	/* not fcntl */
+ #define O_LARGEFILE	0x40000
+-#define O_ATOMICLOOKUP	0x80000 /* do atomic file lookup */
+ #define O_DIRECT        0x100000 /* direct disk access hint */
+ #define O_NOATIME	0x200000
+ 

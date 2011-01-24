@@ -1,0 +1,166 @@
+From: Bhavana Nagendra <bnagendr@redhat.com>
+Subject: Re: RHEL5.1 [PATCH]: C-state divisor not functioning correctly on  Greyhound
+Date: Mon, 21 May 2007 13:06:06 -0400
+Bugzilla: 235404
+Message-Id: <4651D17E.5040705@redhat.com>
+Changelog: [x86_64] C-state divisor not functioning correctly 
+
+
+>>BZ 235404
+>>
+>>Legacy AMD processors support C1 HLT state that allows Power Now! to 
+>>function efficiently.
+>>With the latest processors from AMD, MWAIT instruction was added.   The 
+>>Linux kernel prefers
+>>MWAIT for idle wait, but on the previous AMD platforms this was not an 
+>>issue.  Testing has
+>>shown that the system idles in MWAIT (with no possibility of power 
+>>savings) and does not go
+>>to HLT state for efficient power savings.
+>>
+
+Index: latest/arch/x86_64/kernel/process.c
+===================================================================
+--- latest.orig/arch/x86_64/kernel/process.c
++++ latest/arch/x86_64/kernel/process.c
+@@ -269,10 +269,13 @@ void __cpuinit select_idle_routine(const
+ 
+ static int __init idle_setup (char *str)
+ {
+-	if (!strncmp(str, "poll", 4)) {
++	if (!strcmp(str, "poll")) {
+ 		printk("using polling idle threads.\n");
+ 		pm_idle = poll_idle;
+-	}
++	} else if (!strcmp(str, "mwait"))
++		force_mwait = 1;
++	else
++		return -1;
+ 
+ 	boot_option_idle_override = 1;
+ 	return 1;
+Index: latest/arch/x86_64/kernel/setup.c
+===================================================================
+--- latest.orig/arch/x86_64/kernel/setup.c
++++ latest/arch/x86_64/kernel/setup.c
+@@ -89,6 +89,8 @@ int bootloader_type;
+ 
+ unsigned long saved_video_mode;
+ 
++int force_mwait __initdata;
++
+ /* 
+  * Early DMI memory
+  */
+@@ -897,6 +899,10 @@ static void __init init_amd(struct cpuin
+ 		num_cache_leaves = 4;
+ 	else
+ 		num_cache_leaves = 3;
++
++	/* Family 10 doesn't support C states in MWAIT so don't use it */
++	if (c->x86 == 0x10 && !force_mwait)
++		clear_bit(X86_FEATURE_MWAIT, &c->x86_capability);
+ }
+ 
+ static void __cpuinit detect_ht(struct cpuinfo_x86 *c)
+Index: latest/arch/i386/kernel/process.c
+===================================================================
+--- latest.orig/arch/i386/kernel/process.c
++++ latest/arch/i386/kernel/process.c
+@@ -264,19 +264,19 @@ void __devinit select_idle_routine(const
+ 	}
+ }
+ 
+-static int __init idle_setup (char *str)
++static int __init idle_setup(char *str)
+ {
+-	if (!strncmp(str, "poll", 4)) {
++	if (!strcmp(str, "poll")) {
+ 		printk("using polling idle threads.\n");
+ 		pm_idle = poll_idle;
+ #ifdef CONFIG_X86_SMP
+ 		if (smp_num_siblings > 1)
+ 			printk("WARNING: polling idle and HT enabled, performance may degrade.\n");
+ #endif
+-	} else if (!strncmp(str, "halt", 4)) {
+-		printk("using halt in idle threads.\n");
+-		pm_idle = default_idle;
+-	}
++	} else if (!strcmp(str, "mwait"))
++		force_mwait = 1;
++	else
++		return -1;
+ 
+ 	boot_option_idle_override = 1;
+ 	return 1;
+Index: latest/arch/i386/kernel/cpu/amd.c
+===================================================================
+--- latest.orig/arch/i386/kernel/cpu/amd.c
++++ latest/arch/i386/kernel/cpu/amd.c
+@@ -22,6 +22,8 @@
+ extern void vide(void);
+ __asm__(".align 4\nvide: ret");
+ 
++int force_mwait __initdata;
++
+ static void __init init_amd(struct cpuinfo_x86 *c)
+ {
+ 	u32 l, h;
+@@ -249,6 +251,9 @@ static void __init init_amd(struct cpuin
+ 		else
+ 			num_cache_leaves = 3;
+ 	}
++
++	if ((c->x86 == 0x10 || c->x86 == 0x11) && !force_mwait)
++		clear_bit(X86_FEATURE_MWAIT, &c->x86_capability);
+ }
+ 
+ static unsigned int amd_size_cache(struct cpuinfo_x86 * c, unsigned int size)
+Index: latest/include/asm-i386/processor.h
+===================================================================
+--- latest.orig/include/asm-i386/processor.h
++++ latest/include/asm-i386/processor.h
+@@ -737,4 +737,6 @@ extern unsigned long boot_option_idle_ov
+ extern void enable_sep_cpu(void);
+ extern int sysenter_setup(void);
+ 
++extern int force_mwait;
++
+ #endif /* __ASM_I386_PROCESSOR_H */
+Index: latest/include/asm-x86_64/proto.h
+===================================================================
+--- latest.orig/include/asm-x86_64/proto.h
++++ latest/include/asm-x86_64/proto.h
+@@ -135,6 +135,8 @@ extern int setup_additional_cpus(char *)
+ 
+ extern void smp_local_timer_interrupt(struct pt_regs * regs);
+ 
++extern int force_mwait;
++
+ long do_arch_prctl(struct task_struct *task, int code, unsigned long addr);
+ 
+ #define round_up(x,y) (((x) + (y) - 1) & ~((y)-1))
+Index: latest/Documentation/kernel-parameters.txt
+===================================================================
+--- latest.orig/Documentation/kernel-parameters.txt
++++ latest/Documentation/kernel-parameters.txt
+@@ -651,8 +651,17 @@ running once the system is up.
+ 	idebus=		[HW] (E)IDE subsystem - VLB/PCI bus speed
+ 			See Documentation/ide.txt.
+ 
+-	idle=		[HW]
+-			Format: idle=poll or idle=halt
++	idle=		[X86]
++			Format: idle=poll or idle=mwait
++			Poll forces a polling idle loop that can slightly 
++			improves the performance of waking up a idle CPU,
++			but will use a lot of power and make the run hot.
++			Not recommended.
++			idle=mwait. On systems which support MONITOR/MWAIT
++			but the kernel chose to not use it because it doesn't
++			save as much power as a normal idle loop use the
++			MONITOR/MWAIT idle loop anyways.  Performance should 
++			be the same as idle=poll.
+ 
+ 	ihash_entries=	[KNL]
+ 			Set number of hash buckets for inode cache.

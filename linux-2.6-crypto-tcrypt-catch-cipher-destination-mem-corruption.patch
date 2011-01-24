@@ -1,0 +1,114 @@
+From: Herbert Xu <herbert@gondor.apana.org.au>
+Date: Wed, 27 Aug 2008 10:18:27 +1000
+Subject: [CRYPTO] tcrypt: Catch cipher destination mem corruption
+Message-id: E1KY8jz-0002Gk-00@gondolin.me.apana.org.au
+O-Subject: [PATCH 6/19] [CRYPTO] tcrypt: Catch cipher destination memory corruption
+Bugzilla: 446522
+
+RHEL5 bugzilla #446522
+
+[CRYPTO] tcrypt: Catch cipher destination memory corruption
+
+Check whether the destination buffer is written to beyond the last
+byte contained in the scatterlist.
+
+Also change IDX1 of the cross-page access offsets to a multiple of 4.
+This triggers a corruption in the HIFN driver and doesn't seem to
+negatively impact other testcases.
+
+Signed-off-by: Patrick McHardy <kaber@trash.net>
+Signed-off-by: Herbert Xu <herbert@gondor.apana.org.au>
+
+diff --git a/crypto/tcrypt.c b/crypto/tcrypt.c
+index 06003c8..0a6b43b 100644
+--- a/crypto/tcrypt.c
++++ b/crypto/tcrypt.c
+@@ -43,7 +43,7 @@
+ /*
+  * Indexes into the xbuf to simulate cross-page access.
+  */
+-#define IDX1		37
++#define IDX1		32
+ #define IDX2		32400
+ #define IDX3		1
+ #define IDX4		8193
+@@ -294,7 +294,7 @@ out:
+ static void test_aead(char *algo, int enc, struct aead_testvec *template,
+ 		      unsigned int tcount)
+ {
+-	unsigned int ret, i, j, k, temp;
++	unsigned int ret, i, j, k, n, temp;
+ 	char *q;
+ 	struct crypto_aead *tfm;
+ 	char *key;
+@@ -436,7 +436,6 @@ next_one:
+ 	}
+ 
+ 	printk(KERN_INFO "\ntesting %s %s across pages (chunking)\n", algo, e);
+-	memset(xbuf, 0, XBUFSIZE);
+ 
+ 	for (i = 0, j = 0; i < tcount; i++) {
+ 		if (template[i].np) {
+@@ -463,6 +462,7 @@ next_one:
+ 					goto out;
+ 			}
+ 
++			memset(xbuf, 0, XBUFSIZE);
+ 			sg_init_table(sg, template[i].np);
+ 			for (k = 0, temp = 0; k < template[i].np; k++) {
+ 				memcpy(&xbuf[IDX[k]],
+@@ -534,6 +534,14 @@ next_one:
+ 					       0 : authsize)) ?
+ 				       "fail" : "pass");
+ 
++				for (n = 0; q[template[i].tap[k] + n]; n++)
++					;
++				if (n) {
++					printk("Result buffer corruption %u "
++					       "bytes:\n", n);
++					hexdump(&q[template[i].tap[k]], n);
++				}
++
+ 				temp += template[i].tap[k];
+ 				kunmap(sg_page(&sg[k]));
+ 			}
+@@ -548,7 +556,7 @@ out:
+ static void test_cipher(char *algo, int enc,
+ 			struct cipher_testvec *template, unsigned int tcount)
+ {
+-	unsigned int ret, i, j, k, temp;
++	unsigned int ret, i, j, k, n, temp;
+ 	char *q;
+ 	struct crypto_ablkcipher *tfm;
+ 	struct ablkcipher_request *req;
+@@ -656,7 +664,6 @@ static void test_cipher(char *algo, int enc,
+ 	}
+ 
+ 	printk("\ntesting %s %s across pages (chunking)\n", algo, e);
+-	memset(xbuf, 0, XBUFSIZE);
+ 
+ 	j = 0;
+ 	for (i = 0; i < tcount; i++) {
+@@ -677,6 +684,7 @@ static void test_cipher(char *algo, int enc,
+ 			printk("test %u (%d bit key):\n",
+ 			j, template[i].klen * 8);
+ 
++			memset(xbuf, 0, XBUFSIZE);
+ 			crypto_ablkcipher_clear_flags(tfm, ~0);
+ 			if (template[i].wk)
+ 				crypto_ablkcipher_set_flags(
+@@ -738,6 +746,14 @@ static void test_cipher(char *algo, int enc,
+ 					memcmp(q, template[i].result + temp,
+ 						template[i].tap[k]) ? "fail" :
+ 					"pass");
++
++				for (n = 0; q[template[i].tap[k] + n]; n++)
++					;
++				if (n) {
++					printk("Result buffer corruption %u "
++					       "bytes:\n", n);
++					hexdump(&q[template[i].tap[k]], n);
++				}
+ 				temp += template[i].tap[k];
+ 				kunmap(sg_page(&sg[k]));
+ 			}

@@ -1,0 +1,26 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Subject: [RHEL5.1 PATCH] BZ 226851 : remove __init from noirqdebug_setup
+Date: Tue, 6 Feb 2007 11:33:30 -0500
+Bugzilla: 226851
+Message-Id: <20070206163330.8934.19051.sendpatchset@prarit.boston.redhat.com>
+Changelog: [irq] remove __init from noirqdebug_setup
+
+
+Remove __init from noirqdebug_setup.
+
+Resolves BZ 226851.
+
+Successfully tested by me.
+
+--- linux-2.6.18.i386.orig/kernel/irq/spurious.c	2007-02-01 16:08:21.000000000 -0500
++++ linux-2.6.18.i386/kernel/irq/spurious.c	2007-02-06 11:30:00.000000000 -0500
+@@ -176,7 +176,7 @@ void note_interrupt(unsigned int irq, st
+ 
+ int noirqdebug __read_mostly;
+ 
+-int __init noirqdebug_setup(char *str)
++int noirqdebug_setup(char *str)
+ {
+ 	noirqdebug = 1;
+ 	printk(KERN_INFO "IRQ lockup detection disabled\n");
+

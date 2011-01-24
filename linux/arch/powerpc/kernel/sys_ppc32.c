@@ -22,6 +22,7 @@
 #include <linux/signal.h>
 #include <linux/resource.h>
 #include <linux/times.h>
+#include <linux/utsname.h>
 #include <linux/smp.h>
 #include <linux/smp_lock.h>
 #include <linux/sem.h>
@@ -40,17 +41,74 @@
 #include <linux/compat.h>
 #include <linux/ptrace.h>
 #include <linux/elf.h>
-#include <linux/ipc.h>
 
 #include <asm/ptrace.h>
 #include <asm/types.h>
+#include <asm/ipc.h>
 #include <asm/uaccess.h>
 #include <asm/unistd.h>
+#include <asm/semaphore.h>
 #include <asm/time.h>
 #include <asm/mmu_context.h>
 #include <asm/ppc-pci.h>
-#include <asm/syscalls.h>
 
+/* readdir & getdents */
+#define NAME_OFFSET(de) ((int) ((de)->d_name - (char __user *) (de)))
+#define ROUND_UP(x) (((x)+sizeof(u32)-1) & ~(sizeof(u32)-1))
+
+struct old_linux_dirent32 {
+	u32		d_ino;
+	u32		d_offset;
+	unsigned short	d_namlen;
+	char		d_name[1];
+};
+
+struct readdir_callback32 {
+	struct old_linux_dirent32 __user * dirent;
+	int count;
+};
+
+static int fillonedir(void * __buf, const char * name, int namlen,
+		                  off_t offset, ino_t ino, unsigned int d_type)
+{
+	struct readdir_callback32 * buf = (struct readdir_callback32 *) __buf;
+	struct old_linux_dirent32 __user * dirent;
+
+	if (buf->count)
+		return -EINVAL;
+	buf->count++;
+	dirent = buf->dirent;
+	put_user(ino, &dirent->d_ino);
+	put_user(offset, &dirent->d_offset);
+	put_user(namlen, &dirent->d_namlen);
+	copy_to_user(dirent->d_name, name, namlen);
+	put_user(0, dirent->d_name + namlen);
+	return 0;
+}
+
+asmlinkage int old32_readdir(unsigned int fd, struct old_linux_dirent32 __user *dirent, unsigned int count)
+{
+	int error = -EBADF;
+	struct file * file;
+	struct readdir_callback32 buf;
+
+	file = fget(fd);
+	if (!file)
+		goto out;
+
+	buf.count = 0;
+	buf.dirent = dirent;
+
+	error = vfs_readdir(file, (filldir_t)fillonedir, &buf);
+	if (error < 0)
+		goto out_putf;
+	error = buf.count;
+
+out_putf:
+	fput(file);
+out:
+	return error;
+}
 
 asmlinkage long ppc32_select(u32 n, compat_ulong_t __user *inp,
 		compat_ulong_t __user *outp, compat_ulong_t __user *exp,
@@ -58,6 +116,37 @@ asmlinkage long ppc32_select(u32 n, compat_ulong_t __user *inp,
 {
 	/* sign extend n */
 	return compat_sys_select((int)n, inp, outp, exp, compat_ptr(tvp_x));
+}
+
+int cp_compat_stat(struct kstat *stat, struct compat_stat __user *statbuf)
+{
+	long err;
+
+	if (stat->size > MAX_NON_LFS || !new_valid_dev(stat->dev) ||
+	    !new_valid_dev(stat->rdev))
+		return -EOVERFLOW;
+
+	err  = access_ok(VERIFY_WRITE, statbuf, sizeof(*statbuf)) ? 0 : -EFAULT;
+	err |= __put_user(new_encode_dev(stat->dev), &statbuf->st_dev);
+	err |= __put_user(stat->ino, &statbuf->st_ino);
+	err |= __put_user(stat->mode, &statbuf->st_mode);
+	err |= __put_user(stat->nlink, &statbuf->st_nlink);
+	err |= __put_user(stat->uid, &statbuf->st_uid);
+	err |= __put_user(stat->gid, &statbuf->st_gid);
+	err |= __put_user(new_encode_dev(stat->rdev), &statbuf->st_rdev);
+	err |= __put_user(stat->size, &statbuf->st_size);
+	err |= __put_user(stat->atime.tv_sec, &statbuf->st_atime);
+	err |= __put_user(stat->atime.tv_nsec, &statbuf->st_atime_nsec);
+	err |= __put_user(stat->mtime.tv_sec, &statbuf->st_mtime);
+	err |= __put_user(stat->mtime.tv_nsec, &statbuf->st_mtime_nsec);
+	err |= __put_user(stat->ctime.tv_sec, &statbuf->st_ctime);
+	err |= __put_user(stat->ctime.tv_nsec, &statbuf->st_ctime_nsec);
+	err |= __put_user(stat->blksize, &statbuf->st_blksize);
+	err |= __put_user(stat->blocks, &statbuf->st_blocks);
+	err |= __put_user(0, &statbuf->__unused4[0]);
+	err |= __put_user(0, &statbuf->__unused4[1]);
+
+	return err;
 }
 
 /* Note: it is necessary to treat option as an unsigned int,
@@ -68,6 +157,144 @@ asmlinkage long ppc32_select(u32 n, compat_ulong_t __user *inp,
 asmlinkage long compat_sys_sysfs(u32 option, u32 arg1, u32 arg2)
 {
 	return sys_sysfs((int)option, arg1, arg2);
+}
+
+asmlinkage long compat_sys_pause(void)
+{
+	current->state = TASK_INTERRUPTIBLE;
+	schedule();
+	
+	return -ERESTARTNOHAND;
+}
+
+static inline long get_ts32(struct timespec *o, struct compat_timeval __user *i)
+{
+	long usec;
+
+	if (!access_ok(VERIFY_READ, i, sizeof(*i)))
+		return -EFAULT;
+	if (__get_user(o->tv_sec, &i->tv_sec))
+		return -EFAULT;
+	if (__get_user(usec, &i->tv_usec))
+		return -EFAULT;
+	o->tv_nsec = usec * 1000;
+	return 0;
+}
+
+static inline long put_tv32(struct compat_timeval __user *o, struct timeval *i)
+{
+	return (!access_ok(VERIFY_WRITE, o, sizeof(*o)) ||
+		(__put_user(i->tv_sec, &o->tv_sec) |
+		 __put_user(i->tv_usec, &o->tv_usec)));
+}
+
+struct sysinfo32 {
+        s32 uptime;
+        u32 loads[3];
+        u32 totalram;
+        u32 freeram;
+        u32 sharedram;
+        u32 bufferram;
+        u32 totalswap;
+        u32 freeswap;
+        unsigned short procs;
+	unsigned short pad;
+	u32 totalhigh;
+	u32 freehigh;
+	u32 mem_unit;
+	char _f[20-2*sizeof(int)-sizeof(int)];
+};
+
+asmlinkage long compat_sys_sysinfo(struct sysinfo32 __user *info)
+{
+	struct sysinfo s;
+	int ret, err;
+	int bitcount=0;
+	mm_segment_t old_fs = get_fs ();
+	
+	/* The __user cast is valid due to set_fs() */
+	set_fs (KERNEL_DS);
+	ret = sys_sysinfo((struct sysinfo __user *)&s);
+	set_fs (old_fs);
+
+	/* Check to see if any memory value is too large for 32-bit and
+         * scale down if needed.
+         */
+	if ((s.totalram >> 32) || (s.totalswap >> 32)) {
+	    while (s.mem_unit < PAGE_SIZE) {
+		s.mem_unit <<= 1;
+		bitcount++;
+	    }
+	    s.totalram >>=bitcount;
+	    s.freeram >>= bitcount;
+	    s.sharedram >>= bitcount;
+	    s.bufferram >>= bitcount;
+	    s.totalswap >>= bitcount;
+	    s.freeswap >>= bitcount;
+	    s.totalhigh >>= bitcount;
+	    s.freehigh >>= bitcount;
+	}
+
+	err = put_user (s.uptime, &info->uptime);
+	err |= __put_user (s.loads[0], &info->loads[0]);
+	err |= __put_user (s.loads[1], &info->loads[1]);
+	err |= __put_user (s.loads[2], &info->loads[2]);
+	err |= __put_user (s.totalram, &info->totalram);
+	err |= __put_user (s.freeram, &info->freeram);
+	err |= __put_user (s.sharedram, &info->sharedram);
+	err |= __put_user (s.bufferram, &info->bufferram);
+	err |= __put_user (s.totalswap, &info->totalswap);
+	err |= __put_user (s.freeswap, &info->freeswap);
+	err |= __put_user (s.procs, &info->procs);
+	err |= __put_user (s.totalhigh, &info->totalhigh);
+	err |= __put_user (s.freehigh, &info->freehigh);
+	err |= __put_user (s.mem_unit, &info->mem_unit);
+	if (err)
+		return -EFAULT;
+	
+	return ret;
+}
+
+
+
+
+/* Translations due to time_t size differences.  Which affects all
+   sorts of things, like timeval and itimerval.  */
+extern struct timezone sys_tz;
+
+asmlinkage long compat_sys_gettimeofday(struct compat_timeval __user *tv, struct timezone __user *tz)
+{
+	if (tv) {
+		struct timeval ktv;
+		do_gettimeofday(&ktv);
+		if (put_tv32(tv, &ktv))
+			return -EFAULT;
+	}
+	if (tz) {
+		if (copy_to_user(tz, &sys_tz, sizeof(sys_tz)))
+			return -EFAULT;
+	}
+	
+	return 0;
+}
+
+
+
+asmlinkage long compat_sys_settimeofday(struct compat_timeval __user *tv, struct timezone __user *tz)
+{
+	struct timespec kts;
+	struct timezone ktz;
+	
+ 	if (tv) {
+		if (get_ts32(&kts, tv))
+			return -EFAULT;
+	}
+	if (tz) {
+		if (copy_from_user(&ktz, tz, sizeof(ktz)))
+			return -EFAULT;
+	}
+
+	return do_sys_settimeofday(tv ? &kts : NULL, tz ? &ktz : NULL);
 }
 
 #ifdef CONFIG_SYSVIPC
@@ -202,6 +429,11 @@ long compat_sys_execve(unsigned long a0, unsigned long a1, unsigned long a2,
 
 	error = compat_do_execve(filename, compat_ptr(a1), compat_ptr(a2), regs);
 
+	if (error == 0) {
+		task_lock(current);
+		current->ptrace &= ~PT_DTRACE;
+		task_unlock(current);
+	}
 	putname(filename);
 
 out:
@@ -340,18 +572,6 @@ off_t ppc32_lseek(unsigned int fd, u32 offset, unsigned int origin)
 {
 	/* sign extend n */
 	return sys_lseek(fd, (int)offset, origin);
-}
-
-long compat_sys_truncate(const char __user * path, u32 length)
-{
-	/* sign extend length */
-	return sys_truncate(path, (int)length);
-}
-
-long compat_sys_ftruncate(int fd, u32 length)
-{
-	/* sign extend length */
-	return sys_ftruncate(fd, (int)length);
 }
 
 /* Note: it is necessary to treat bufsiz as an unsigned int,
@@ -520,7 +740,7 @@ asmlinkage long compat_sys_umask(u32 mask)
 	return sys_umask((int)mask);
 }
 
-#ifdef CONFIG_SYSCTL_SYSCALL
+#ifdef CONFIG_SYSCTL
 struct __sysctl_args32 {
 	u32 name;
 	int nlen;
@@ -614,13 +834,6 @@ asmlinkage int compat_sys_truncate64(const char __user * path, u32 reg4,
 	return sys_truncate(path, (high << 32) | low);
 }
 
-asmlinkage long compat_sys_fallocate(int fd, int mode, u32 offhi, u32 offlo,
-				     u32 lenhi, u32 lenlo)
-{
-	return sys_fallocate(fd, mode, ((loff_t)offhi << 32) | offlo,
-			     ((loff_t)lenhi << 32) | lenlo);
-}
-
 asmlinkage int compat_sys_ftruncate64(unsigned int fd, u32 reg4, unsigned long high,
 				 unsigned long low)
 {
@@ -658,12 +871,3 @@ asmlinkage long compat_sys_request_key(const char __user *_type,
 	return sys_request_key(_type, _description, _callout_info, destringid);
 }
 
-asmlinkage long compat_sys_sync_file_range2(int fd, unsigned int flags,
-				   unsigned offset_hi, unsigned offset_lo,
-				   unsigned nbytes_hi, unsigned nbytes_lo)
-{
-	loff_t offset = ((loff_t)offset_hi << 32) | offset_lo;
-	loff_t nbytes = ((loff_t)nbytes_hi << 32) | nbytes_lo;
-
-	return sys_sync_file_range(fd, offset, nbytes, flags);
-}

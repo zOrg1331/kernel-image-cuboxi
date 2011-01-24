@@ -1,0 +1,339 @@
+From: Eric Paris <eparis@redhat.com>
+Date: Wed, 19 Dec 2007 18:05:25 -0500
+Subject: [audit] add session id to easily correlate records
+Message-id: 1198105525.6197.69.camel@localhost.localdomain
+O-Subject: [RHEL5 PATCH] Audit: add session id to audit messages to easily correlate records
+Bugzilla: 242813
+
+BZ 242813
+
+http://www.redhat.com/archives/linux-audit/2007-December/msg00057.html
+
+In order to correlate audit records to an individual login add a session
+id.  This is incremented every time a user logs in and is included in
+almost all messages which currently output the auid.  The field is
+labeled ses=  or oses=
+
+Signed-off-by: Eric Paris <eparis redhat com>
+
+This patch does not currently implement sessionid information for audit
+messages generated from netlink messages.  That means no sessionid will
+be found in things like userspace generated audit messages, audit system
+configuration changes, or changes to labeled networking.  A patch to
+support those messages (and the requisite changes to netlink) will be
+forthcoming upstream but right now I am not sure it will be RHEL5 viable
+and already makes things a lot easier on the audit log inspector.  (and most
+of those already come with a SYSCALL record which has ses)
+
+This patch applies on top of the previous OBJ_PID record changes.
+
+Example records from a RHEL5 system:
+type=SYSCALL msg=audit(1198105361.823:19): arch=c000003e syscall=1 success=yes exit=1256978 a0=4 a1=2aaaaec4f000 a2=132e12 a3=0 items=0 ppid=2584 pid=2618 auid=0 uid=0 gid=0 euid=0 suid=0 fsuid=0 egid=0 sgid=0 fsgid=0 tty=pts0 ses=1 comm="load_policy" exe="/usr/sbin/load_policy" subj=root:system_r:unconfined_t:s0-s0:c0.c1023 key=(null)
+type=LOGIN msg=audit(1198105455.390:24): login pid=2625 uid=0 old auid=4294967295 new auid=0 old ses=4294967295 new ses=3
+type=OBJ_PID msg=audit(1198105444.224:21): opid=1 oauid=-1 ouid=0 oses=-1 obj=system_u:system_r:init_t:s0 ocomm="init"
+
+Acked-by: James Morris <jmorris@redhat.com>
+
+diff --git a/include/linux/audit.h b/include/linux/audit.h
+index 1ab1314..aecb1c4 100644
+--- a/include/linux/audit.h
++++ b/include/linux/audit.h
+@@ -397,6 +397,7 @@ extern void auditsc_get_stamp(struct audit_context *ctx,
+ 			      struct timespec *t, unsigned int *serial);
+ extern int  audit_set_loginuid(struct task_struct *task, uid_t loginuid);
+ extern uid_t audit_get_loginuid(struct audit_context *ctx);
++extern unsigned int audit_get_sessionid(struct audit_context *ctx);
+ extern void audit_log_task_context(struct audit_buffer *ab);
+ extern int __audit_ipc_obj(struct kern_ipc_perm *ipcp);
+ extern int __audit_ipc_set_perm(unsigned long qbytes, uid_t uid, gid_t gid, mode_t mode);
+@@ -469,6 +470,7 @@ extern int audit_signals;
+ #define audit_core_dumps(i) do { ; } while (0)
+ #define auditsc_get_stamp(c,t,s) do { BUG(); } while (0)
+ #define audit_get_loginuid(c) ({ -1; })
++#define audit_get_sessionid(c) ({ -1; })
+ #define audit_log_task_context(b) do { ; } while (0)
+ #define audit_ipc_obj(i) ({ 0; })
+ #define audit_ipc_set_perm(q,u,g,m) ({ 0; })
+diff --git a/kernel/auditsc.c b/kernel/auditsc.c
+index 412a41c..e0fdfbf 100644
+--- a/kernel/auditsc.c
++++ b/kernel/auditsc.c
+@@ -177,6 +177,7 @@ struct audit_aux_data_pids {
+ 	pid_t			target_pid[AUDIT_AUX_PIDS];
+ 	uid_t			target_auid[AUDIT_AUX_PIDS];
+ 	uid_t			target_uid[AUDIT_AUX_PIDS];
++	unsigned int		target_sessionid[AUDIT_AUX_PIDS];
+ 	u32			target_sid[AUDIT_AUX_PIDS];
+ 	char 			target_comm[AUDIT_AUX_PIDS][TASK_COMM_LEN];
+ 	int			pid_count;
+@@ -222,11 +223,14 @@ struct audit_context {
+ 	pid_t		    target_pid;
+ 	uid_t		    target_auid;
+ 	uid_t		    target_uid;
++	unsigned int	    target_sessionid;
+ 	u32		    target_sid;
+ 	char		    target_comm[TASK_COMM_LEN];
+ 
+ 	struct audit_tree_refs *trees, *first_trees;
+ 	int tree_count;
++
++	unsigned int	    sessionid; /* each login gets a session id */
+ #endif
+ 
+ #if AUDIT_DEBUG
+@@ -793,10 +797,12 @@ static inline void audit_zero_context(struct audit_context *context,
+ 				      enum audit_state state)
+ {
+ 	uid_t loginuid = context->loginuid;
++	unsigned int sessionid = context->sessionid;
+ 
+ 	memset(context, 0, sizeof(*context));
+ 	context->state      = state;
+ 	context->loginuid   = loginuid;
++	context->sessionid  = sessionid;
+ }
+ 
+ static inline struct audit_context *audit_alloc_context(enum audit_state state)
+@@ -837,8 +843,11 @@ int audit_alloc(struct task_struct *tsk)
+ 
+ 				/* Preserve login uid */
+ 	context->loginuid = -1;
+-	if (current->audit_context)
++	context->sessionid = -1;
++	if (current->audit_context) {
+ 		context->loginuid = current->audit_context->loginuid;
++		context->sessionid = current->audit_context->sessionid;
++	}
+ 
+ 	tsk->audit_context  = context;
+ 	set_tsk_thread_flag(tsk, TIF_SYSCALL_AUDIT);
+@@ -931,7 +940,8 @@ static void audit_log_task_info(struct audit_buffer *ab, struct task_struct *tsk
+ }
+ 
+ static int audit_log_pid_context(struct audit_context *context, pid_t pid,
+-				 uid_t auid, uid_t uid, u32 sid, char *comm)
++				 uid_t auid, uid_t uid, unsigned int sessionid,
++				 u32 sid, char *comm)
+ {
+ 	struct audit_buffer *ab;
+ 	char *s = NULL;
+@@ -943,7 +953,8 @@ static int audit_log_pid_context(struct audit_context *context, pid_t pid,
+ 	if (!ab)
+ 		return 0;
+ 
+-	audit_log_format(ab, "opid=%d oauid=%d ouid=%d", pid, auid, uid);
++	audit_log_format(ab, "opid=%d oauid=%d ouid=%d oses=%d", pid, auid,
++			 uid, sessionid);
+ 	if (selinux_sid_to_string(sid, &s, &len)) {
+ 		audit_log_format(ab, " obj=(none)");
+ 		rc = 1;
+@@ -1000,7 +1011,7 @@ static void audit_log_exit(struct audit_context *context, struct task_struct *ts
+ 		  " a0=%lx a1=%lx a2=%lx a3=%lx items=%d"
+ 		  " ppid=%d pid=%d auid=%u uid=%u gid=%u"
+ 		  " euid=%u suid=%u fsuid=%u"
+-		  " egid=%u sgid=%u fsgid=%u tty=%s",
++		  " egid=%u sgid=%u fsgid=%u tty=%s ses=%u",
+ 		  context->argv[0],
+ 		  context->argv[1],
+ 		  context->argv[2],
+@@ -1012,7 +1023,8 @@ static void audit_log_exit(struct audit_context *context, struct task_struct *ts
+ 		  context->uid,
+ 		  context->gid,
+ 		  context->euid, context->suid, context->fsuid,
+-		  context->egid, context->sgid, context->fsgid, tty);
++		  context->egid, context->sgid, context->fsgid, tty,
++		  context->sessionid);
+ 
+ 	mutex_unlock(&tty_mutex);
+ 
+@@ -1132,6 +1144,7 @@ static void audit_log_exit(struct audit_context *context, struct task_struct *ts
+ 			if (audit_log_pid_context(context, axs->target_pid[i],
+ 						  axs->target_auid[i],
+ 						  axs->target_uid[i],
++						  axs->target_sessionid[i],
+ 						  axs->target_sid[i],
+ 						  axs->target_comm[i]))
+ 				call_panic = 1;
+@@ -1140,6 +1153,7 @@ static void audit_log_exit(struct audit_context *context, struct task_struct *ts
+ 	if (context->target_pid &&
+ 	    audit_log_pid_context(context, context->target_pid,
+ 				  context->target_auid, context->target_uid,
++				  context->target_sessionid, 
+ 				  context->target_sid, context->target_comm))
+ 			call_panic = 1;
+ 
+@@ -1730,6 +1744,9 @@ void auditsc_get_stamp(struct audit_context *ctx,
+ 	ctx->auditable = 1;
+ }
+ 
++/* global counter which is incremented every time something logs in */
++static atomic_t session_id = ATOMIC_INIT(0);
++
+ /**
+  * audit_set_loginuid - set a task's audit_context loginuid
+  * @task: task whose audit context is being modified
+@@ -1744,6 +1761,7 @@ int audit_set_loginuid(struct task_struct *task, uid_t loginuid)
+ 	struct audit_context *context = task->audit_context;
+ 
+ 	if (context) {
++		unsigned int sessionid = atomic_inc_return(&session_id);
+ 		/* Only log if audit is enabled */
+ 		if (context->in_syscall) {
+ 			struct audit_buffer *ab;
+@@ -1751,13 +1769,16 @@ int audit_set_loginuid(struct task_struct *task, uid_t loginuid)
+ 			ab = audit_log_start(NULL, GFP_KERNEL, AUDIT_LOGIN);
+ 			if (ab) {
+ 				audit_log_format(ab, "login pid=%d uid=%u "
+-					"old auid=%u new auid=%u",
++					"old auid=%u new auid=%u"
++					" old ses=%u new ses=%u",
+ 					task->pid, task->uid,
+-					context->loginuid, loginuid);
++					context->loginuid, loginuid,
++					context->sessionid, sessionid);
+ 				audit_log_end(ab);
+ 			}
+ 		}
+ 		context->loginuid = loginuid;
++		context->sessionid = sessionid;
+ 	}
+ 	return 0;
+ }
+@@ -1775,6 +1796,11 @@ uid_t audit_get_loginuid(struct audit_context *ctx)
+ 
+ EXPORT_SYMBOL(audit_get_loginuid);
+ 
++unsigned int audit_get_sessionid(struct audit_context *ctx)
++{
++	return ctx ? ctx->sessionid : -1;
++}
++
+ /**
+  * __audit_mq_open - record audit data for a POSIX MQ open
+  * @oflag: open flag
+@@ -2130,6 +2156,7 @@ void __audit_ptrace(struct task_struct *t)
+ 	context->target_pid = t->pid;
+ 	context->target_auid = audit_get_loginuid(t->audit_context);
+ 	context->target_uid = t->uid;
++	context->target_sessionid = audit_get_sessionid(t->audit_context);
+ 	selinux_task_ctxid(t, &context->target_sid);
+ 	memcpy(context->target_comm, t->comm, TASK_COMM_LEN);
+ }
+@@ -2170,6 +2197,7 @@ int __audit_signal_info(int sig, struct task_struct *t)
+ 		ctx->target_pid = t->tgid;
+ 		ctx->target_auid = audit_get_loginuid(t->audit_context);
+ 		ctx->target_uid = t->uid;
++		ctx->target_sessionid = audit_get_sessionid(t->audit_context);
+ 		selinux_get_task_sid(t, &ctx->target_sid);
+ 		memcpy(ctx->target_comm, t->comm, TASK_COMM_LEN);
+ 		return 0;
+@@ -2190,6 +2218,7 @@ int __audit_signal_info(int sig, struct task_struct *t)
+ 	axp->target_pid[axp->pid_count] = t->tgid;
+ 	axp->target_auid[axp->pid_count] = audit_get_loginuid(t->audit_context);
+ 	axp->target_uid[axp->pid_count] = t->uid;
++	axp->target_sessionid[axp->pid_count] = audit_get_sessionid(t->audit_context);
+ 	selinux_get_task_sid(t, &axp->target_sid[axp->pid_count]);
+ 	memcpy(axp->target_comm[axp->pid_count], t->comm, TASK_COMM_LEN);
+ 	axp->pid_count++;
+@@ -2207,7 +2236,10 @@ int __audit_signal_info(int sig, struct task_struct *t)
+ void audit_core_dumps(long signr)
+ {
+ 	struct audit_buffer *ab;
++	struct audit_context *ctx = current->audit_context;
+ 	u32 sid;
++	uid_t auid = audit_get_loginuid(ctx);
++	unsigned int sessionid = audit_get_sessionid(ctx);
+ 
+ 	if (!audit_enabled)
+ 		return;
+@@ -2216,9 +2248,8 @@ void audit_core_dumps(long signr)
+ 		return;
+ 
+ 	ab = audit_log_start(NULL, GFP_KERNEL, AUDIT_ANOM_ABEND);
+-	audit_log_format(ab, "auid=%u uid=%u gid=%u",
+-			audit_get_loginuid(current->audit_context),
+-			current->uid, current->gid);
++	audit_log_format(ab, "auid=%u uid=%u gid=%u ses=%u",
++			auid, current->uid, current->gid, sessionid);
+ 	selinux_get_task_sid(current, &sid);
+ 	if (sid) {
+ 		char *ctx = NULL;
+diff --git a/net/core/dev.c b/net/core/dev.c
+index 608c855..489d044 100644
+--- a/net/core/dev.c
++++ b/net/core/dev.c
+@@ -2385,10 +2385,11 @@ void dev_set_promiscuity(struct net_device *dev, int inc)
+ 		       					       "left");
+ 		audit_log(current->audit_context, GFP_ATOMIC,
+ 			AUDIT_ANOM_PROMISCUOUS,
+-			"dev=%s prom=%d old_prom=%d auid=%u",
++			"dev=%s prom=%d old_prom=%d auid=%u ses=%u",
+ 			dev->name, (dev->flags & IFF_PROMISC),
+ 			(old_flags & IFF_PROMISC),
+-			audit_get_loginuid(current->audit_context)); 
++			audit_get_loginuid(current->audit_context),
++			audit_get_sessionid(current->audit_context)); 
+ 	}
+ }
+ 
+diff --git a/security/selinux/selinuxfs.c b/security/selinux/selinuxfs.c
+index bab7b38..7d9e2e1 100644
+--- a/security/selinux/selinuxfs.c
++++ b/security/selinux/selinuxfs.c
+@@ -144,9 +144,10 @@ static ssize_t sel_write_enforce(struct file * file, const char __user * buf,
+ 		if (length)
+ 			goto out;
+ 		audit_log(current->audit_context, GFP_KERNEL, AUDIT_MAC_STATUS,
+-			"enforcing=%d old_enforcing=%d auid=%u", new_value, 
+-			selinux_enforcing,
+-			audit_get_loginuid(current->audit_context));
++			"enforcing=%d old_enforcing=%d auid=%u ses=%u",
++			new_value, selinux_enforcing,
++			audit_get_loginuid(current->audit_context),
++			audit_get_sessionid(current->audit_context));
+ 		selinux_enforcing = new_value;
+ 		if (selinux_enforcing)
+ 			avc_ss_reset(0);
+@@ -198,8 +199,9 @@ static ssize_t sel_write_disable(struct file * file, const char __user * buf,
+ 		if (length < 0)
+ 			goto out;
+ 		audit_log(current->audit_context, GFP_KERNEL, AUDIT_MAC_STATUS,
+-			"selinux=0 auid=%u",
+-			audit_get_loginuid(current->audit_context));
++			"selinux=0 auid=%u ses=%u",
++			audit_get_loginuid(current->audit_context),
++			audit_get_sessionid(current->audit_context));
+ 	}
+ 
+ 	length = count;
+@@ -286,8 +288,9 @@ static ssize_t sel_write_load(struct file * file, const char __user * buf,
+ 	else
+ 		length = count;
+ 	audit_log(current->audit_context, GFP_KERNEL, AUDIT_MAC_POLICY_LOAD,
+-		"policy loaded auid=%u",
+-		audit_get_loginuid(current->audit_context));
++		"policy loaded auid=%u ses=%u",
++		audit_get_loginuid(current->audit_context),
++		audit_get_sessionid(current->audit_context));
+ out:
+ 	mutex_unlock(&sel_mutex);
+ 	vfree(data);
+diff --git a/security/selinux/ss/services.c b/security/selinux/ss/services.c
+index 39b9c89..864515a 100644
+--- a/security/selinux/ss/services.c
++++ b/security/selinux/ss/services.c
+@@ -1783,11 +1783,12 @@ int security_set_bools(int len, int *values)
+ 		if (!!values[i] != policydb.bool_val_to_struct[i]->state) {
+ 			audit_log(current->audit_context, GFP_ATOMIC,
+ 				AUDIT_MAC_CONFIG_CHANGE,
+-				"bool=%s val=%d old_val=%d auid=%u",
++				"bool=%s val=%d old_val=%d auid=%u ses=%u",
+ 				policydb.p_bool_val_to_name[i],
+ 				!!values[i],
+ 				policydb.bool_val_to_struct[i]->state,
+-				audit_get_loginuid(current->audit_context));
++				audit_get_loginuid(current->audit_context),
++				audit_get_sessionid(current->audit_context));
+ 		}
+ 		if (values[i]) {
+ 			policydb.bool_val_to_struct[i]->state = 1;

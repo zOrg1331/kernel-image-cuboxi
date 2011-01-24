@@ -42,7 +42,8 @@ void ack_bad_irq(unsigned int irq)
 #ifdef CONFIG_SMP 
 static char irq_user_affinity[NR_IRQS];
 
-int irq_select_affinity(unsigned int irq)
+int
+select_smp_affinity(unsigned int irq)
 {
 	static int last_cpu;
 	int cpu = last_cpu + 1;
@@ -50,13 +51,12 @@ int irq_select_affinity(unsigned int irq)
 	if (!irq_desc[irq].chip->set_affinity || irq_user_affinity[irq])
 		return 1;
 
-	while (!cpu_possible(cpu) ||
-	       !cpumask_test_cpu(cpu, irq_default_affinity))
+	while (!cpu_possible(cpu))
 		cpu = (cpu < (NR_CPUS-1) ? cpu + 1 : 0);
 	last_cpu = cpu;
 
-	cpumask_copy(irq_desc[irq].affinity, cpumask_of(cpu));
-	irq_desc[irq].chip->set_affinity(irq, cpumask_of(cpu));
+	irq_desc[irq].affinity = cpumask_of_cpu(cpu);
+	irq_desc[irq].chip->set_affinity(irq, cpumask_of_cpu(cpu));
 	return 0;
 }
 #endif /* CONFIG_SMP */
@@ -90,9 +90,9 @@ show_interrupts(struct seq_file *p, void *v)
 		seq_printf(p, "%10u ", kstat_irqs(irq));
 #else
 		for_each_online_cpu(j)
-			seq_printf(p, "%10u ", kstat_irqs_cpu(irq, j));
+			seq_printf(p, "%10u ", kstat_cpu(j).irqs[irq]);
 #endif
-		seq_printf(p, " %14s", irq_desc[irq].chip->name);
+		seq_printf(p, " %14s", irq_desc[irq].chip->typename);
 		seq_printf(p, "  %c%s",
 			(action->flags & IRQF_DISABLED)?'+':' ',
 			action->name);
@@ -127,7 +127,7 @@ unlock:
 #define MAX_ILLEGAL_IRQS 16
 
 void
-handle_irq(int irq)
+handle_irq(int irq, struct pt_regs * regs)
 {	
 	/* 
 	 * We ack quickly, we don't want the irq controller
@@ -157,6 +157,6 @@ handle_irq(int irq)
 	 * at IPL 0.
 	 */
 	local_irq_disable();
-	__do_IRQ(irq);
+	__do_IRQ(irq, regs);
 	irq_exit();
 }

@@ -48,7 +48,7 @@
 #include <linux/arcfb.h>
 #include <linux/platform_device.h>
 
-#include <linux/uaccess.h>
+#include <asm/uaccess.h>
 
 #define floor8(a) (a&(~0x07))
 #define floorXres(a,xres) (a&(~(xres - 1)))
@@ -218,7 +218,8 @@ static int arcfb_pan_display(struct fb_var_screeninfo *var,
 	return -EINVAL;
 }
 
-static irqreturn_t arcfb_interrupt(int vec, void *dev_instance)
+static irqreturn_t arcfb_interrupt(int vec, void *dev_instance,
+		struct pt_regs *regs)
 {
 	struct fb_info *info = dev_instance;
 	unsigned char ctl2status;
@@ -262,8 +263,7 @@ static void arcfb_lcd_update_page(struct arcfb_par *par, unsigned int upper,
 	ks108_set_yaddr(par, chipindex, upper/8);
 
 	linesize = par->info->var.xres/8;
-	src = (unsigned char __force *) par->info->screen_base + (left/8) +
-		(upper * linesize);
+	src = par->info->screen_base + (left/8) + (upper * linesize);
 	ks108_set_xaddr(par, chipindex, left);
 
 	bitmask=1;
@@ -369,7 +369,7 @@ static void arcfb_fillrect(struct fb_info *info,
 {
 	struct arcfb_par *par = info->par;
 
-	sys_fillrect(info, rect);
+	cfb_fillrect(info, rect);
 
 	/* update the physical lcd */
 	arcfb_lcd_update(par, rect->dx, rect->dy, rect->width, rect->height);
@@ -380,7 +380,7 @@ static void arcfb_copyarea(struct fb_info *info,
 {
 	struct arcfb_par *par = info->par;
 
-	sys_copyarea(info, area);
+	cfb_copyarea(info, area);
 
 	/* update the physical lcd */
 	arcfb_lcd_update(par, area->dx, area->dy, area->width, area->height);
@@ -390,7 +390,7 @@ static void arcfb_imageblit(struct fb_info *info, const struct fb_image *image)
 {
 	struct arcfb_par *par = info->par;
 
-	sys_imageblit(info, image);
+	cfb_imageblit(info, image);
 
 	/* update the physical lcd */
 	arcfb_lcd_update(par, image->dx, image->dy, image->width,
@@ -440,11 +440,14 @@ static int arcfb_ioctl(struct fb_info *info,
  * the fb. it's inefficient for them to do anything less than 64*8
  * writes since we update the lcd in each write() anyway.
  */
-static ssize_t arcfb_write(struct fb_info *info, const char __user *buf,
-			   size_t count, loff_t *ppos)
+static ssize_t arcfb_write(struct file *file, const char __user *buf, size_t count,
+				loff_t *ppos)
 {
 	/* modded from epson 1355 */
 
+	struct inode *inode;
+	int fbidx;
+	struct fb_info *info;
 	unsigned long p;
 	int err=-EINVAL;
 	unsigned int fbmemlength,x,y,w,h, bitppos, startpos, endpos, bitcount;
@@ -452,6 +455,13 @@ static ssize_t arcfb_write(struct fb_info *info, const char __user *buf,
 	unsigned int xres;
 
 	p = *ppos;
+	inode = file->f_dentry->d_inode;
+	fbidx = iminor(inode);
+	info = registered_fb[fbidx];
+
+	if (!info || !info->screen_base)
+		return -ENODEV;
+
 	par = info->par;
 	xres = info->var.xres;
 	fbmemlength = (xres * info->var.yres)/8;
@@ -468,7 +478,7 @@ static ssize_t arcfb_write(struct fb_info *info, const char __user *buf,
 	if (count) {
 		char *base_addr;
 
-		base_addr = (char __force *)info->screen_base;
+		base_addr = info->screen_base;
 		count -= copy_from_user(base_addr + p, buf, count);
 		*ppos += count;
 		err = -EFAULT;
@@ -494,7 +504,6 @@ static ssize_t arcfb_write(struct fb_info *info, const char __user *buf,
 static struct fb_ops arcfb_ops = {
 	.owner		= THIS_MODULE,
 	.fb_open	= arcfb_open,
-	.fb_read        = fb_sys_read,
 	.fb_write	= arcfb_write,
 	.fb_release	= arcfb_release,
 	.fb_pan_display	= arcfb_pan_display,
@@ -595,7 +604,7 @@ static int arcfb_remove(struct platform_device *dev)
 
 	if (info) {
 		unregister_framebuffer(info);
-		vfree((void __force *)info->screen_base);
+		vfree(info->screen_base);
 		framebuffer_release(info);
 	}
 	return 0;

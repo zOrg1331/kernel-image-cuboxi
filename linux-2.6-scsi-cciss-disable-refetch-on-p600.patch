@@ -1,0 +1,92 @@
+From: Aron Griffis <agriffis@redhat.com>
+Date: Wed, 17 Oct 2007 13:58:39 -0400
+Subject: [scsi] cciss: disable refetch on P600
+Message-id: 20071017175839.GA9269@redhat.com
+O-Subject: [RHEL5.2 PATCH] BZ 251563 fix cciss mca (2nd try)
+Bugzilla: 251563
+
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=251563
+
+Description
+-----------
+The P600 Smart Array adapter sometimes DMA prefetches too far.  This
+is a bug in the adapter which can cause an MCA on systems with an
+iommu, for example HP ia64 platforms.
+
+This bug rarely shows on bare metal Linux because the driver allocates
+physically contiguous regions for DMA and the iommu isn't involved.
+However under Xen, dom0's pseudo-physical allocations aren't machine
+contiguous, so the iommu is almost always used.  On bare metal, we've
+observed the MCA in the rare condition that the overrun fetches
+a non-populated physical address.
+
+The workaround is to disable "refetch" on the adapter.  Refetch refers
+to retrying a failed prefetch, as I understand it, and disabling
+refetch prevents the bad read.
+
+Test Status
+-----------
+At HP we've been pounding on this for a couple months.  I have a test
+case that exposes the bug very quickly (forcing a PV domain to swap
+seems to be a reliable repeater).  With this driver change, my test
+case survives weekend-long runs where previously the machine would
+crash within minutes.
+
+Upstream Status
+---------------
+Presently in Jens Axboe's for-linux branch:
+http://git.kernel.org/?p=linux/kernel/git/axboe/linux-2.6-block.git;a=commit;h=8bf50f71cbfc7d043f0f135da72b3feefeaa0eb8
+
+Proposed Patch
+--------------
+Please review and ACK for 5.2.  (If only I could retroactively get
+this into 5.1!)
+
+----------------------------------------------------------------------
+
+This patch disables DMA refetch in the PCI bridge. We have disabled DMA
+prefetch for quite some time. Testing with XEN revealed another ASIC bug. If
+dom0 resides on a P600 the board can can an MCA bi accessing invalid memory
+addresses. Apparently, we need to disable both prefetch and refetch.
+My understanding is a refetch operation should not occur but it is a valid
+thing to do if prefetched data is no longer available for whatever reason.
+Please consider this patch for inclusion.
+
+Signed-off-by: Mike Miller <mike.miller@hp.com>
+Signed-off-by: Alex Chiang <achiang@hp.com>
+
+--------------------------------------------------------------------------------
+
+Acked-by: Prarit Bhargava <prarit@redhat.com>
+Acked-by: Jarod Wilson <jwilson@redhat.com>
+Acked-by: Don Dutile <ddutile@redhat.com>
+Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+
+diff --git a/drivers/block/cciss.c b/drivers/block/cciss.c
+index b51ba7c..785078f 100644
+--- a/drivers/block/cciss.c
++++ b/drivers/block/cciss.c
+@@ -2968,15 +2968,20 @@ static int cciss_pci_init(ctlr_info_t *c, struct pci_dev *pdev)
+ 	}
+ #endif
+ 
+-	/* Disabling DMA prefetch for the P600
+-	 * An ASIC bug may result in a prefetch beyond
+-	 * physical memory.
++	/* Disabling DMA prefetch and refetch for the P600.
++	 * An ASIC bug may result in accesses to invalid memory addresses.
++	 * We've disabled prefetch for some time now. Testing with XEN
++	 * kernels revealed a bug in the refetch if dom0 resides on a P600.
+ 	 */
+ 	if(board_id == 0x3225103C) {
+ 		__u32 dma_prefetch;
++		__u32 dma_refetch;
+ 		dma_prefetch = readl(c->vaddr + I2O_DMA1_CFG);
+ 		dma_prefetch |= 0x8000;
+ 		writel(dma_prefetch, c->vaddr + I2O_DMA1_CFG);
++		pci_read_config_dword(pdev, PCI_COMMAND_PARITY, &dma_refetch);
++		dma_refetch |= 0x1;
++		pci_write_config_dword(pdev, PCI_COMMAND_PARITY, dma_refetch);
+ 	}
+ 
+ #ifdef CCISS_DEBUG

@@ -2,7 +2,7 @@
  * linux/net/sunrpc/svcauth.c
  *
  * The generic interface for RPC authentication on the server side.
- *
+ * 
  * Copyright (C) 1995, 1996 Olaf Kirch <okir@monad.swb.de>
  *
  * CHANGES
@@ -10,6 +10,7 @@
  */
 
 #include <linux/types.h>
+#include <linux/sched.h>
 #include <linux/module.h>
 #include <linux/sunrpc/types.h>
 #include <linux/sunrpc/xdr.h>
@@ -34,14 +35,14 @@ static struct auth_ops	*authtab[RPC_AUTH_MAXFLAVOR] = {
 };
 
 int
-svc_authenticate(struct svc_rqst *rqstp, __be32 *authp)
+svc_authenticate(struct svc_rqst *rqstp, u32 *authp)
 {
 	rpc_authflavor_t	flavor;
 	struct auth_ops		*aops;
 
 	*authp = rpc_auth_ok;
 
-	flavor = svc_getnl(&rqstp->rq_arg.head[0]);
+	flavor = ntohl(svc_getu32(&rqstp->rq_arg.head[0]));
 
 	dprintk("svc: svc_authenticate (%d)\n", flavor);
 
@@ -57,16 +58,14 @@ svc_authenticate(struct svc_rqst *rqstp, __be32 *authp)
 	rqstp->rq_authop = aops;
 	return aops->accept(rqstp, authp);
 }
-EXPORT_SYMBOL_GPL(svc_authenticate);
 
 int svc_set_client(struct svc_rqst *rqstp)
 {
 	return rqstp->rq_authop->set_client(rqstp);
 }
-EXPORT_SYMBOL_GPL(svc_set_client);
 
 /* A request, which was authenticated, has now executed.
- * Time to finalise the credentials and verifier
+ * Time to finalise the the credentials and verifier
  * and release and resources
  */
 int svc_authorise(struct svc_rqst *rqstp)
@@ -75,7 +74,7 @@ int svc_authorise(struct svc_rqst *rqstp)
 	int rv = 0;
 
 	rqstp->rq_authop = NULL;
-
+	
 	if (aops) {
 		rv = aops->release(rqstp);
 		module_put(aops->owner);
@@ -95,7 +94,6 @@ svc_auth_register(rpc_authflavor_t flavor, struct auth_ops *aops)
 	spin_unlock(&authtab_lock);
 	return rv;
 }
-EXPORT_SYMBOL_GPL(svc_auth_register);
 
 void
 svc_auth_unregister(rpc_authflavor_t flavor)
@@ -105,7 +103,7 @@ svc_auth_unregister(rpc_authflavor_t flavor)
 		authtab[flavor] = NULL;
 	spin_unlock(&authtab_lock);
 }
-EXPORT_SYMBOL_GPL(svc_auth_unregister);
+EXPORT_SYMBOL(svc_auth_unregister);
 
 /**************************************************
  * 'auth_domains' are stored in a hash table indexed by name.
@@ -121,18 +119,15 @@ EXPORT_SYMBOL_GPL(svc_auth_unregister);
 #define	DN_HASHMASK	(DN_HASHMAX-1)
 
 static struct hlist_head	auth_domain_table[DN_HASHMAX];
-static spinlock_t	auth_domain_lock =
-	__SPIN_LOCK_UNLOCKED(auth_domain_lock);
+static spinlock_t	auth_domain_lock = SPIN_LOCK_UNLOCKED;
 
 void auth_domain_put(struct auth_domain *dom)
 {
 	if (atomic_dec_and_lock(&dom->ref.refcount, &auth_domain_lock)) {
 		hlist_del(&dom->hash);
 		dom->flavour->domain_release(dom);
-		spin_unlock(&auth_domain_lock);
 	}
 }
-EXPORT_SYMBOL_GPL(auth_domain_put);
 
 struct auth_domain *
 auth_domain_lookup(char *name, struct auth_domain *new)
@@ -152,15 +147,15 @@ auth_domain_lookup(char *name, struct auth_domain *new)
 			return hp;
 		}
 	}
-	if (new)
+	if (new) {
 		hlist_add_head(&new->hash, head);
+		kref_get(&new->ref);
+	}
 	spin_unlock(&auth_domain_lock);
 	return new;
 }
-EXPORT_SYMBOL_GPL(auth_domain_lookup);
 
 struct auth_domain *auth_domain_find(char *name)
 {
 	return auth_domain_lookup(name, NULL);
 }
-EXPORT_SYMBOL_GPL(auth_domain_find);

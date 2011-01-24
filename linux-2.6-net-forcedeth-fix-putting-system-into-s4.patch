@@ -1,0 +1,30 @@
+From: Matthew Garrett <mjg@redhat.com>
+Date: Wed, 10 Feb 2010 16:38:14 -0500
+Subject: [net] forcedeth: fix putting system into S4
+Message-id: <1265819894-10631-1-git-send-email-mjg@redhat.com>
+Patchwork-id: 23221
+O-Subject: [PATCH] rhel5.5: [513203] system fails to go into S4
+Bugzilla: 513203
+RH-Acked-by: David S. Miller <davem@redhat.com>
+
+The forcedeth update causes some HP systems to fail to power down when
+entering S4 sleep states. I've traced this down to the explicit PCI
+power state transition, and suspect that this is related to the machine
+in question having a dual-function ethernet chipset. Regardless, earlier
+versions of forcedeth didn't power down the device when shutting down,
+so let's just revert that line and avoid the regression.
+
+Signed-off-by: Matthew Garrett <mjg@redhat.com>
+
+diff --git a/drivers/net/forcedeth.c b/drivers/net/forcedeth.c
+index 06ae3ee..ab94f9e 100644
+--- a/drivers/net/forcedeth.c
++++ b/drivers/net/forcedeth.c
+@@ -6020,7 +6020,6 @@ static void nv_shutdown(struct pci_dev *pdev)
+ 	if (system_state == SYSTEM_POWER_OFF) {
+ 		if (pci_enable_wake(pdev, PCI_D3cold, np->wolenabled))
+ 			pci_enable_wake(pdev, PCI_D3hot, np->wolenabled);
+-		pci_set_power_state(pdev, PCI_D3hot);
+ 	}
+ }
+ #else

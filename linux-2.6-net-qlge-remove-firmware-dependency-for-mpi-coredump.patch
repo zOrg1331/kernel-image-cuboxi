@@ -1,0 +1,111 @@
+From: Chad Dupuis <cdupuis@redhat.com>
+Date: Fri, 6 Aug 2010 14:22:39 -0400
+Subject: [net] qlge: remove firmware dependency for MPI coredump
+Message-id: <20100806141926.2774.93598.sendpatchset@localhost.localdomain>
+Patchwork-id: 27446
+O-Subject: [RHEL 5.6 PATCH 4/10] qlge: Eliminate firmware dependency for MPI
+	coredump.
+Bugzilla: 567402
+
+Bugzilla
+========
+
+567402
+
+Upstream Status
+===============
+
+net-2.6 commit id 966d17cf05e6e760c4fdacb67207354ce017488f
+
+Description
+===========
+
+>From 7eaf02ab587c1e7cc61e309b0297993f0f539eb7 Mon Sep 17 00:00:00 2001
+From: Jitendra Kalsaria <jitendra.kalsaria@qlogic.com>
+Date: Wed, 4 Aug 2010 17:24:16 -0700
+Subject: [PATCH 4/8] 	qlge: Eliminate firmware dependency for MPI coredump.
+
+Signed-off-by: Jitendra Kalsaria <jitendra.kalsaria@qlogic.com>
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/net/qlge/qlge.h b/drivers/net/qlge/qlge.h
+index bf215a7..15c1ba9 100644
+--- a/drivers/net/qlge/qlge.h
++++ b/drivers/net/qlge/qlge.h
+@@ -2120,7 +2120,6 @@ int ql_dump_risc_ram_area(struct ql_adapter *qdev, void *buf,
+ int ql_core_dump(struct ql_adapter *qdev,
+ 		struct ql_mpi_coredump *mpi_coredump);
+ void ql_get_dump(struct ql_adapter *qdev, void *buff);
+-int ql_mb_sys_err(struct ql_adapter *qdev);
+ int ql_mb_about_fw(struct ql_adapter *qdev);
+ int ql_wol(struct ql_adapter *qdev);
+ int ql_mb_wol_set_magic(struct ql_adapter *qdev, u32 enable_wol);
+diff --git a/drivers/net/qlge/qlge_dbg.c b/drivers/net/qlge/qlge_dbg.c
+index e7ee95d..0078efa 100644
+--- a/drivers/net/qlge/qlge_dbg.c
++++ b/drivers/net/qlge/qlge_dbg.c
+@@ -1449,11 +1449,9 @@ static int ql_get_core_dump(struct ql_adapter *qdev)
+ 			"that is up.\n");
+ 		return -EINVAL;
+ 	}
+-	if(ql_mb_sys_err(qdev)) {
+-		QPRINTK(qdev, IFUP, ERR,
+-			"Fail force coredump with ql_mb_sys_err().\n");
+-		return -EINVAL;
+-	}
++
++	/* Start the firmware dump and reset. */
++	queue_delayed_work(qdev->workqueue, &qdev->mpi_reset_work.work, 0);
+ 
+ 	/* Wait for core dump to complete. */
+ 	do {
+diff --git a/drivers/net/qlge/qlge_mpi.c b/drivers/net/qlge/qlge_mpi.c
+index 5b34e74..8669ae5 100644
+--- a/drivers/net/qlge/qlge_mpi.c
++++ b/drivers/net/qlge/qlge_mpi.c
+@@ -669,23 +669,6 @@ end:
+ 	return status;
+ }
+ 
+-int ql_mb_sys_err(struct ql_adapter *qdev)
+-{
+-	struct mbox_params mbc;
+-	struct mbox_params *mbcp = &mbc;
+-	int status;
+-
+-	memset(mbcp, 0, sizeof(struct mbox_params));
+-
+-	mbcp->in_count = 1;
+-	mbcp->out_count = 0;
+-
+-	mbcp->mbox_in[0] = MB_CMD_MAKE_SYS_ERR;
+-
+-	status = ql_mailbox_command(qdev, mbcp);
+-	return status;
+-}
+-
+ /* Get functional state for MPI firmware.
+  * Returns zero on success.
+  */
+@@ -1058,8 +1041,8 @@ int ql_mb_set_mgmnt_traffic_ctl(struct ql_adapter *qdev, u32 control)
+ 		return status;
+ 
+ 	if (mbcp->mbox_out[0] == MB_CMD_STS_INVLD_CMD) {
+-		QPRINTK_DBG(qdev, DRV, ERR,
+-			"Command not supported by firmware.\n");
++		QPRINTK_DBG(qdev, DRV, DEBUG,
++			"Command not supported by firmware version.\n");
+ 		status = -EINVAL;
+ 	} else if (mbcp->mbox_out[0] == MB_CMD_STS_ERR) {
+ 		/* This indicates that the firmware is
+@@ -1097,8 +1080,8 @@ static int ql_mb_get_mgmnt_traffic_ctl(struct ql_adapter *qdev, u32 *control)
+ 	}
+ 
+ 	if (mbcp->mbox_out[0] == MB_CMD_STS_INVLD_CMD) {
+-		QPRINTK_DBG(qdev, DRV, ERR,
+-			"Command not supported by firmware.\n");
++		QPRINTK_DBG(qdev, DRV, DEBUG,
++			"Command not supported by firmware version.\n");
+ 		status = -EINVAL;
+ 	} else if (mbcp->mbox_out[0] == MB_CMD_STS_ERR) {
+ 		QPRINTK(qdev, DRV, ERR,

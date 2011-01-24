@@ -1,5 +1,5 @@
 /*
- * sound/oss/dmabuf.c
+ * sound/dmabuf.c
  *
  * The DMA buffer manager for digitized voice applications
  */
@@ -25,7 +25,6 @@
 #define BE_CONSERVATIVE
 #define SAMPLE_ROUNDUP 0
 
-#include <linux/mm.h>
 #include "sound_config.h"
 
 #define DMAP_FREE_ON_CLOSE      0
@@ -439,7 +438,7 @@ int DMAbuf_sync(int dev)
 			DMAbuf_launch_output(dev, dmap);
 		adev->dmap_out->flags |= DMA_SYNCING;
 		adev->dmap_out->underrun_count = 0;
-		while (!signal_pending(current) && n++ < adev->dmap_out->nbufs &&
+		while (!signal_pending(current) && n++ <= adev->dmap_out->nbufs && 
 		       adev->dmap_out->qlen && adev->dmap_out->underrun_count == 0) {
 			long t = dmabuf_timeout(dmap);
 			spin_unlock_irqrestore(&dmap->lock,flags);
@@ -795,9 +794,9 @@ static int find_output_space(int dev, char **buf, int *size)
 #ifdef BE_CONSERVATIVE
 	active_offs = dmap->byte_counter + dmap->qhead * dmap->fragment_size;
 #else
-	active_offs = max(DMAbuf_get_buffer_pointer(dev, dmap, DMODE_OUTPUT), 0);
+	active_offs = DMAbuf_get_buffer_pointer(dev, dmap, DMODE_OUTPUT);
 	/* Check for pointer wrapping situation */
-	if (active_offs >= dmap->bytes_in_use)
+	if (active_offs < 0 || active_offs >= dmap->bytes_in_use)
 		active_offs = 0;
 	active_offs += dmap->byte_counter;
 #endif
@@ -927,7 +926,6 @@ int DMAbuf_start_dma(int dev, unsigned long physaddr, int count, int dma_mode)
 	sound_start_dma(dmap, physaddr, count, dma_mode);
 	return count;
 }
-EXPORT_SYMBOL(DMAbuf_start_dma);
 
 static int local_start_dma(struct audio_operations *adev, unsigned long physaddr, int count, int dma_mode)
 {
@@ -1057,8 +1055,6 @@ void DMAbuf_outputintr(int dev, int notify_only)
 		do_outputintr(dev, notify_only);
 	spin_unlock_irqrestore(&dmap->lock,flags);
 }
-EXPORT_SYMBOL(DMAbuf_outputintr);
-
 /* called with dmap->lock held in irq context */
 static void do_inputintr(int dev)
 {
@@ -1158,7 +1154,36 @@ void DMAbuf_inputintr(int dev)
 		do_inputintr(dev);
 	spin_unlock_irqrestore(&dmap->lock,flags);
 }
-EXPORT_SYMBOL(DMAbuf_inputintr);
+
+int DMAbuf_open_dma(int dev)
+{
+	/*
+	 *    NOTE!  This routine opens only the primary DMA channel (output).
+	 */
+	struct audio_operations *adev = audio_devs[dev];
+	int err;
+
+	if ((err = open_dmap(adev, OPEN_READWRITE, adev->dmap_out)) < 0)
+		return -EBUSY;
+	dma_init_buffers(adev->dmap_out);
+	adev->dmap_out->flags |= DMA_ALLOC_DONE;
+	adev->dmap_out->fragment_size = adev->dmap_out->buffsize;
+
+	if (adev->dmap_out->dma >= 0) {
+		unsigned long flags;
+
+		flags=claim_dma_lock();
+		clear_dma_ff(adev->dmap_out->dma);
+		disable_dma(adev->dmap_out->dma);
+		release_dma_lock(flags);
+	}
+	return 0;
+}
+
+void DMAbuf_close_dma(int dev)
+{
+	close_dmap(audio_devs[dev], audio_devs[dev]->dmap_out);
+}
 
 void DMAbuf_init(int dev, int dma1, int dma2)
 {
@@ -1166,6 +1191,12 @@ void DMAbuf_init(int dev, int dma1, int dma2)
 	/*
 	 * NOTE! This routine could be called several times.
 	 */
+
+	/* drag in audio_syms.o */
+	{
+		extern char audio_syms_symbol;
+		audio_syms_symbol = 0;
+	}
 
 	if (adev && adev->dmap_out == NULL) {
 		if (adev->d == NULL)

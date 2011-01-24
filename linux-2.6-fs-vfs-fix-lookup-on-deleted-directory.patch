@@ -1,0 +1,79 @@
+From: Eugene Teo <eteo@redhat.com>
+Date: Tue, 5 Aug 2008 14:54:35 +0800
+Subject: [fs] vfs: fix lookup on deleted directory
+Message-id: 20080805065435.GA18714@kernel.sg
+O-Subject: [RHEL5.3 patch] BZ#457866 Linux kernel local filesystem DoS
+Bugzilla: 457866
+RH-Acked-by: Josef Bacik <jbacik@redhat.com>
+CVE: CVE-2008-3275
+
+This is for bz#457866 (CVE-2008-3275).
+
+Backport of upstream commit d70b67c8bc72ee23b55381bd6a884f4796692f77
+
+Lookup can install a child dentry for a deleted directory.  This keeps
+the directory dentry alive, and the inode pinned in the cache and on
+disk, even after all external references have gone away.
+
+This isn't a big problem normally, since memory pressure or umount
+will clear out the directory dentry and its children, releasing the
+inode.  But for UBIFS this causes problems because its orphan area can
+overflow.
+
+Fix this by returning ENOENT for all lookups on a S_DEAD directory
+before creating a child dentry.
+
+Thanks to Zoltan Sogor for noticing this while testing UBIFS, and
+Artem for the excellent analysis of the problem and testing.
+
+Brew build:
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1420810
+
+Test status:
+Booted on x86_64. Tested with reproducer. No reoccurrence of the problem.
+
+Signed-off-by: Eugene Teo <eteo@redhat.com>
+
+diff --git a/fs/namei.c b/fs/namei.c
+index 6b99c47..bb7693c 100644
+--- a/fs/namei.c
++++ b/fs/namei.c
+@@ -485,7 +485,13 @@ static struct dentry * real_lookup(struct dentry * parent, struct qstr * name, s
+ 	 */
+ 	result = d_lookup(parent, name);
+ 	if (!result) {
+-		struct dentry * dentry = d_alloc(parent, name);
++		struct dentry *dentry;
++
++		/* Don't create child dentry for a dead directory. */
++		result = ERR_PTR(-ENOENT);
++		if (IS_DEADDIR(dir))
++			goto out_unlock;
++		dentry = d_alloc(parent, name);
+ 		result = ERR_PTR(-ENOMEM);
+ 		if (dentry) {
+ 			result = dir->i_op->lookup(dir, dentry, nd);
+@@ -494,6 +500,7 @@ static struct dentry * real_lookup(struct dentry * parent, struct qstr * name, s
+ 			else
+ 				result = dentry;
+ 		}
++out_unlock:
+ 		mutex_unlock(&dir->i_mutex);
+ 		return result;
+ 	}
+@@ -1275,7 +1282,14 @@ static struct dentry * __lookup_hash(struct qstr *name, struct dentry * base, st
+ 
+ 	dentry = cached_lookup(base, name, nd);
+ 	if (!dentry) {
+-		struct dentry *new = d_alloc(base, name);
++		struct dentry *new;
++
++		/* Don't create child dentry for a dead directory. */
++		dentry = ERR_PTR(-ENOENT);
++		if (IS_DEADDIR(inode))
++			goto out;
++
++		new = d_alloc(base, name);
+ 		dentry = ERR_PTR(-ENOMEM);
+ 		if (!new)
+ 			goto out;

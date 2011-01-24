@@ -1,0 +1,51 @@
+From: Gerd Hoffmann <kraxel@redhat.com>
+Subject: [RHEL-5.1 PATCH 5/10] xen: blktap: kill bogous flush
+Date: Fri, 15 Jun 2007 10:41:12 +0200
+Bugzilla: 222128
+Message-Id: <467250A8.2060505@redhat.com>
+Changelog: [xen] blktap: kill bogous flush
+
+
+  Hi,
+
+This patch fixes one error path in the blktap driver.
+
+cheers,
+
+  Gerd
+
+# HG changeset patch
+# User kfraser@localhost.localdomain
+# Date 1161332666 -3600
+# Node ID bb76521fdcb34fb10247f335b9e3836d9779321f
+# Parent  1467ae6622288069016fd0a12010fa9e737f6f17
+[BLKTAP]: Kill bogus fast_flush_area
+
+The function dispatch_rw_block_io may call fast_flush_area even before
+a pending request has been initialised.  This patch deletes that call.
+
+Signed-off-by: Herbert Xu <herbert@gondor.apana.org.au>
+
+---
+ drivers/xen/blktap/blktapmain.c |    7 ++++---
+ 1 file changed, 4 insertions(+), 3 deletions(-)
+
+Index: linux-2.6.18.noarch/drivers/xen/blktap/blktapmain.c
+===================================================================
+--- linux-2.6.18.noarch.orig/drivers/xen/blktap/blktapmain.c
++++ linux-2.6.18.noarch/drivers/xen/blktap/blktapmain.c
+@@ -1143,9 +1143,10 @@ static void dispatch_rw_block_io(blkif_t
+ 	int usr_idx = GET_NEXT_REQ(info->idx_map);
+ 	uint16_t mmap_idx = pending_req->mem_idx;
+ 
+-	/*Check we have space on user ring - should never fail*/
+-	if(usr_idx == INVALID_REQ) goto fail_flush;
+-	
++	/* Check we have space on user ring - should never fail. */
++	if (usr_idx == INVALID_REQ)
++		goto fail_response;
++
+ 	/* Check that number of segments is sane. */
+ 	nseg = req->nr_segments;
+ 	if ( unlikely(nseg == 0) || 
+

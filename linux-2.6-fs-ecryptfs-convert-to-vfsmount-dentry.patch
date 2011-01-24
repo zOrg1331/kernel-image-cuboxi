@@ -1,0 +1,63 @@
+From: Eric Sandeen <sandeen@redhat.com>
+Date: Tue, 18 Dec 2007 12:07:32 -0600
+Subject: [fs] ecryptfs: convert to vfsmount/dentry
+Message-id: 47680C64.4030708@redhat.com
+O-Subject: [RHEL 5.2 PATCH] 3/15: backport struct path to vfsmount/dentry
+Bugzilla: 228341
+
+RHEL5 kernels have no "struct path" - convert ecryptfs structs to
+use vfsmount/dentry.
+
+diff --git a/fs/ecryptfs/ecryptfs_kernel.h b/fs/ecryptfs/ecryptfs_kernel.h
+index ce7a5d4..a0f1b74 100644
+--- a/fs/ecryptfs/ecryptfs_kernel.h
++++ b/fs/ecryptfs/ecryptfs_kernel.h
+@@ -31,7 +31,6 @@
+ #include <keys/user-type.h>
+ #include <linux/fs.h>
+ #include <linux/fs_stack.h>
+-#include <linux/namei.h>
+ #include <linux/scatterlist.h>
+ #include <linux/hash.h>
+ 
+@@ -268,7 +267,8 @@ struct ecryptfs_inode_info {
+ /* dentry private data. Each dentry must keep track of a lower
+  * vfsmount too. */
+ struct ecryptfs_dentry_info {
+-	struct path lower_path;
++	struct dentry *wdi_dentry;
++	struct vfsmount *lower_mnt;
+ 	struct ecryptfs_crypt_stat *crypt_stat;
+ };
+ 
+@@ -476,26 +476,26 @@ ecryptfs_set_dentry_private(struct dentry *dentry,
+ static inline struct dentry *
+ ecryptfs_dentry_to_lower(struct dentry *dentry)
+ {
+-	return ((struct ecryptfs_dentry_info *)dentry->d_fsdata)->lower_path.dentry;
++	return ((struct ecryptfs_dentry_info *)dentry->d_fsdata)->wdi_dentry;
+ }
+ 
+ static inline void
+ ecryptfs_set_dentry_lower(struct dentry *dentry, struct dentry *lower_dentry)
+ {
+-	((struct ecryptfs_dentry_info *)dentry->d_fsdata)->lower_path.dentry =
++	((struct ecryptfs_dentry_info *)dentry->d_fsdata)->wdi_dentry =
+ 		lower_dentry;
+ }
+ 
+ static inline struct vfsmount *
+ ecryptfs_dentry_to_lower_mnt(struct dentry *dentry)
+ {
+-	return ((struct ecryptfs_dentry_info *)dentry->d_fsdata)->lower_path.mnt;
++	return ((struct ecryptfs_dentry_info *)dentry->d_fsdata)->lower_mnt;
+ }
+ 
+ static inline void
+ ecryptfs_set_dentry_lower_mnt(struct dentry *dentry, struct vfsmount *lower_mnt)
+ {
+-	((struct ecryptfs_dentry_info *)dentry->d_fsdata)->lower_path.mnt =
++	((struct ecryptfs_dentry_info *)dentry->d_fsdata)->lower_mnt =
+ 		lower_mnt;
+ }
+ 

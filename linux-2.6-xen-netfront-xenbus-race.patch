@@ -1,0 +1,57 @@
+From: Markus Armbruster <armbru@redhat.com>
+Date: Mon, 4 Aug 2008 13:45:19 -0400
+Subject: [xen] netfront xenbus race
+Message-id: m3myjs1xow.fsf@crossbow.pond.sub.org
+O-Subject: [PATCH RHEL-5.3] netfront xenbus race
+Bugzilla: 453574
+RH-Acked-by: Bill Burns <bburns@redhat.com>
+RH-Acked-by: Don Dutile <ddutile@redhat.com>
+
+netfront is the frontend device driver of the Xen paravirtual network
+device.
+
+Xen split device drivers synchronize their startup and teardown
+through xenstore.  That protocol has known issues that can cause event
+channel notifications to get duplicated.  The duplicates need to be
+ignored.  Our netfront doesn't, and gets confused when it happens.
+The device doesn't work then.
+
+Fix backported from xen-unstable.hg cset 13021:79315be2c9b9.
+
+Bug 453574.  Please ACK.
+
+diff --git a/drivers/xen/netfront/netfront.c b/drivers/xen/netfront/netfront.c
+index 41d0178..88ae481 100644
+--- a/drivers/xen/netfront/netfront.c
++++ b/drivers/xen/netfront/netfront.c
+@@ -551,6 +551,8 @@ static void backend_changed(struct xenbus_device *dev,
+ 		break;
+ 
+ 	case XenbusStateInitWait:
++		if (dev->state != XenbusStateInitialising)
++			break;
+ 		if (network_connect(netdev) != 0) {
+ 			netif_free(np);
+ 			break;
+@@ -559,6 +561,8 @@ static void backend_changed(struct xenbus_device *dev,
+ 		break;
+ 
+ 	case XenbusStateClosing:
++		if (dev->state == XenbusStateClosed)
++			break;
+  		xenbus_frontend_closed(dev);
+ 		break;
+ 	}
+diff --git a/drivers/xen/xenbus/xenbus_probe.c b/drivers/xen/xenbus/xenbus_probe.c
+index 2e76c7f..1142c8b 100644
+--- a/drivers/xen/xenbus/xenbus_probe.c
++++ b/drivers/xen/xenbus/xenbus_probe.c
+@@ -651,6 +651,8 @@ static int xenbus_probe_node(struct xen_bus_type *bus,
+ 	if (!xendev)
+ 		return -ENOMEM;
+ 
++	xendev->state = XenbusStateInitialising;
++
+ 	/* Copy the strings into the extra space. */
+ 
+ 	tmpstring = (char *)(xendev + 1);

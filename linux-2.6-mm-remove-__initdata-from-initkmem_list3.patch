@@ -1,0 +1,26 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Subject: [PATCH]: remove __initdata from initkmem_list3
+Date: Tue, 20 Feb 2007 11:33:47 -0500
+Bugzilla: 226865
+Message-Id: <20070220163347.23785.11578.sendpatchset@prarit.boston.redhat.com>
+Changelog: [mm] remove __initdata from initkmem_list3
+
+
+Remove __initdata from initkmem_list3.
+
+Resolves BZ 226865.
+
+Successfully tested by me.
+
+--- linux-2.6.18.x86_64.orig/mm/slab.c	2007-02-19 11:18:14.000000000 -0500
++++ linux-2.6.18.x86_64/mm/slab.c	2007-02-20 11:25:12.000000000 -0500
+@@ -303,7 +303,7 @@ struct kmem_list3 {
+  * Need this for bootstrapping a per node allocator.
+  */
+ #define NUM_INIT_LISTS (2 * MAX_NUMNODES + 1)
+-struct kmem_list3 __initdata initkmem_list3[NUM_INIT_LISTS];
++struct kmem_list3 initkmem_list3[NUM_INIT_LISTS];
+ #define	CACHE_CACHE 0
+ #define	SIZE_AC 1
+ #define	SIZE_L3 (1 + MAX_NUMNODES)
+

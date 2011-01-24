@@ -17,12 +17,12 @@
  *
  * Copyright (C) IBM Corporation, 2004
  *
- * Author: Max Asböck <amax@us.ibm.com>
+ * Author: Max Asböck <amax@us.ibm.com> 
  *
  */
 
 /*
- * Parts of this code are based on an article by Jonathan Corbet
+ * Parts of this code are based on an article by Jonathan Corbet 
  * that appeared in Linux Weekly News.
  */
 
@@ -55,22 +55,22 @@
  * For each service processor the following files are created:
  *
  * command: execute dot commands
- *	write: execute a dot command on the service processor
- *	read: return the result of a previously executed dot command
+ * 	write: execute a dot command on the service processor
+ * 	read: return the result of a previously executed dot command
  *
  * events: listen for service processor events
- *	read: sleep (interruptible) until an event occurs
+ * 	read: sleep (interruptible) until an event occurs
  *      write: wakeup sleeping event listener
  *
  * reverse_heartbeat: send a heartbeat to the service processor
- *	read: sleep (interruptible) until the reverse heartbeat fails
+ * 	read: sleep (interruptible) until the reverse heartbeat fails
  *      write: wakeup sleeping heartbeat listener
  *
  * remote_video/width
  * remote_video/height
  * remote_video/width: control remote display settings
- *	write: set value
- *	read: read value
+ * 	write: set value
+ * 	read: read value
  */
 
 #include <linux/fs.h>
@@ -97,7 +97,7 @@ static int ibmasmfs_get_super(struct file_system_type *fst,
 	return get_sb_single(fst, flags, data, ibmasmfs_fill_super, mnt);
 }
 
-static const struct super_operations ibmasmfs_s_ops = {
+static struct super_operations ibmasmfs_s_ops = {
 	.statfs		= simple_statfs,
 	.drop_inode	= generic_delete_inode,
 };
@@ -146,6 +146,9 @@ static struct inode *ibmasmfs_make_inode(struct super_block *sb, int mode)
 
 	if (ret) {
 		ret->i_mode = mode;
+		ret->i_uid = ret->i_gid = 0;
+		ret->i_blksize = PAGE_CACHE_SIZE;
+		ret->i_blocks = 0;
 		ret->i_atime = ret->i_mtime = ret->i_ctime = CURRENT_TIME;
 	}
 	return ret;
@@ -153,8 +156,8 @@ static struct inode *ibmasmfs_make_inode(struct super_block *sb, int mode)
 
 static struct dentry *ibmasmfs_create_file (struct super_block *sb,
 			struct dentry *parent,
-			const char *name,
-			const struct file_operations *fops,
+		       	const char *name,
+			struct file_operations *fops,
 			void *data,
 			int mode)
 {
@@ -172,7 +175,7 @@ static struct dentry *ibmasmfs_create_file (struct super_block *sb,
 	}
 
 	inode->i_fop = fops;
-	inode->i_private = data;
+	inode->u.generic_ip = data;
 
 	d_add(dentry, inode);
 	return dentry;
@@ -241,7 +244,7 @@ static int command_file_open(struct inode *inode, struct file *file)
 {
 	struct ibmasmfs_command_data *command_data;
 
-	if (!inode->i_private)
+	if (!inode->u.generic_ip)
 		return -ENODEV;
 
 	command_data = kmalloc(sizeof(struct ibmasmfs_command_data), GFP_KERNEL);
@@ -249,7 +252,7 @@ static int command_file_open(struct inode *inode, struct file *file)
 		return -ENOMEM;
 
 	command_data->command = NULL;
-	command_data->sp = inode->i_private;
+	command_data->sp = inode->u.generic_ip;
 	file->private_data = command_data;
 	return 0;
 }
@@ -259,7 +262,7 @@ static int command_file_close(struct inode *inode, struct file *file)
 	struct ibmasmfs_command_data *command_data = file->private_data;
 
 	if (command_data->command)
-		command_put(command_data->command);
+		command_put(command_data->command);	
 
 	kfree(command_data);
 	return 0;
@@ -346,12 +349,12 @@ static ssize_t command_file_write(struct file *file, const char __user *ubuff, s
 static int event_file_open(struct inode *inode, struct file *file)
 {
 	struct ibmasmfs_event_data *event_data;
-	struct service_processor *sp;
+	struct service_processor *sp; 
 
-	if (!inode->i_private)
+	if (!inode->u.generic_ip)
 		return -ENODEV;
 
-	sp = inode->i_private;
+	sp = inode->u.generic_ip;
 
 	event_data = kmalloc(sizeof(struct ibmasmfs_event_data), GFP_KERNEL);
 	if (!event_data)
@@ -436,14 +439,14 @@ static int r_heartbeat_file_open(struct inode *inode, struct file *file)
 {
 	struct ibmasmfs_heartbeat_data *rhbeat;
 
-	if (!inode->i_private)
+	if (!inode->u.generic_ip)
 		return -ENODEV;
 
 	rhbeat = kmalloc(sizeof(struct ibmasmfs_heartbeat_data), GFP_KERNEL);
 	if (!rhbeat)
 		return -ENOMEM;
 
-	rhbeat->sp = inode->i_private;
+	rhbeat->sp = (struct service_processor *)inode->u.generic_ip;
 	rhbeat->active = 0;
 	ibmasm_init_reverse_heartbeat(rhbeat->sp, &rhbeat->heartbeat);
 	file->private_data = rhbeat;
@@ -505,7 +508,7 @@ static ssize_t r_heartbeat_file_write(struct file *file, const char __user *buf,
 
 static int remote_settings_file_open(struct inode *inode, struct file *file)
 {
-	file->private_data = inode->i_private;
+	file->private_data = inode->u.generic_ip;
 	return 0;
 }
 
@@ -561,16 +564,17 @@ static ssize_t remote_settings_file_write(struct file *file, const char __user *
 	if (*offset != 0)
 		return 0;
 
-	buff = kzalloc (count + 1, GFP_KERNEL);
+	buff = kmalloc (count + 1, GFP_KERNEL);
 	if (!buff)
 		return -ENOMEM;
 
+	memset(buff, 0x0, count + 1);
 
 	if (copy_from_user(buff, ubuff, count)) {
 		kfree(buff);
 		return -EFAULT;
 	}
-
+	
 	value = simple_strtoul(buff, NULL, 10);
 	writel(value, address);
 	kfree(buff);
@@ -578,28 +582,28 @@ static ssize_t remote_settings_file_write(struct file *file, const char __user *
 	return count;
 }
 
-static const struct file_operations command_fops = {
+static struct file_operations command_fops = {
 	.open =		command_file_open,
 	.release =	command_file_close,
 	.read =		command_file_read,
 	.write =	command_file_write,
 };
 
-static const struct file_operations event_fops = {
+static struct file_operations event_fops = {
 	.open =		event_file_open,
 	.release =	event_file_close,
 	.read =		event_file_read,
 	.write =	event_file_write,
 };
 
-static const struct file_operations r_heartbeat_fops = {
+static struct file_operations r_heartbeat_fops = {
 	.open =		r_heartbeat_file_open,
 	.release =	r_heartbeat_file_close,
 	.read =		r_heartbeat_file_read,
 	.write =	r_heartbeat_file_write,
 };
 
-static const struct file_operations remote_settings_fops = {
+static struct file_operations remote_settings_fops = {
 	.open =		remote_settings_file_open,
 	.release =	remote_settings_file_close,
 	.read =		remote_settings_file_read,

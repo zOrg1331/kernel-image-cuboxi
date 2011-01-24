@@ -20,6 +20,7 @@
 
 #include <linux/module.h>
 #include <linux/signal.h>
+#include <linux/sched.h>
 #include <linux/ioport.h>
 #include <linux/init.h>
 #include <linux/blkdev.h>
@@ -40,9 +41,9 @@
 #define REAL_DMA
 
 #include "scsi.h"
-#include "initio.h"
 #include <scsi/scsi_host.h>
 #include "sun3_scsi.h"
+#include "NCR5380.h"
 
 extern int sun3_map_test(unsigned long, char *);
 
@@ -66,7 +67,7 @@ extern int sun3_map_test(unsigned long, char *);
 #define ENABLE_IRQ()
 
 
-static irqreturn_t scsi_sun3_intr(int irq, void *dummy);
+static irqreturn_t scsi_sun3_intr(int irq, void *dummy, struct pt_regs *fp);
 static inline unsigned char sun3scsi_read(int reg);
 static inline void sun3scsi_write(int reg, int value);
 
@@ -83,7 +84,7 @@ module_param(setup_use_tagged_queuing, int, 0);
 static int setup_hostid = -1;
 module_param(setup_hostid, int, 0);
 
-static struct scsi_cmnd *sun3_dma_setup_done = NULL;
+static Scsi_Cmnd *sun3_dma_setup_done = NULL;
 
 #define	AFTER_RESET_DELAY	(HZ/2)
 
@@ -230,7 +231,7 @@ static int sun3scsi_detect(struct scsi_host_template * tpnt)
         ((struct NCR5380_hostdata *)instance->hostdata)->ctrl = 0;
 
 	if (request_irq(instance->irq, scsi_sun3_intr,
-			0, "Sun3SCSI-5380VME", instance)) {
+			     0, "Sun3SCSI-5380VME", NULL)) {
 #ifndef REAL_DMA
 		printk("scsi%d: IRQ%d not free, interrupts disabled\n",
 		       instance->host_no, instance->irq);
@@ -279,7 +280,7 @@ static int sun3scsi_detect(struct scsi_host_template * tpnt)
 int sun3scsi_release (struct Scsi_Host *shpnt)
 {
 	if (shpnt->irq != SCSI_IRQ_NONE)
-		free_irq(shpnt->irq, shpnt);
+		free_irq (shpnt->irq, NULL);
 
 	iounmap((void *)sun3_scsi_regp);
 
@@ -339,7 +340,7 @@ static const char * sun3scsi_info (struct Scsi_Host *spnt) {
 // safe bits for the CSR
 #define CSR_GOOD 0x060f
 
-static irqreturn_t scsi_sun3_intr(int irq, void *dummy)
+static irqreturn_t scsi_sun3_intr(int irq, void *dummy, struct pt_regs *fp)
 {
 	unsigned short csr = dregs->csr;
 	int handled = 0;
@@ -370,7 +371,7 @@ static irqreturn_t scsi_sun3_intr(int irq, void *dummy)
 	}
 
 	if(csr & (CSR_SDB_INT | CSR_DMA_INT)) {
-		NCR5380_intr(irq, dummy);
+		NCR5380_intr(irq, dummy, fp);
 		handled = 1;
 	}
 
@@ -454,11 +455,10 @@ static inline unsigned long sun3scsi_dma_residual(struct Scsi_Host *instance)
 	return last_residual;
 }
 
-static inline unsigned long sun3scsi_dma_xfer_len(unsigned long wanted,
-						  struct scsi_cmnd *cmd,
-						  int write_flag)
+static inline unsigned long sun3scsi_dma_xfer_len(unsigned long wanted, Scsi_Cmnd *cmd,
+				    int write_flag)
 {
-	if(blk_fs_request(cmd->request))
+	if(cmd->request->flags & REQ_CMD)
  		return wanted;
 	else
 		return 0;
@@ -582,4 +582,3 @@ static struct scsi_host_template driver_template = {
 
 #include "scsi_module.c"
 
-MODULE_LICENSE("GPL");

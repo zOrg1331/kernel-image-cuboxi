@@ -1,0 +1,1412 @@
+From: Scott Moser <smoser@redhat.com>
+Subject: Re: [RHEL5.1 PATCH] bz228081 [PPC] MSI support for PCI-E [update]
+Date: Thu, 7 Jun 2007 13:19:25 -0400 (EDT)
+Bugzilla: 228081
+Message-Id: <Pine.LNX.4.64.0706071317530.7066@squad5-lp1.lab.boston.redhat.com>
+Changelog: [PPC64] MSI support for PCI-E
+
+
+Below is a patch that does not break the kabi as the previous post did.
+Please consider this for inclusion.
+
+RHBZ#: 228081 [FEATURE]
+------
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=228081
+
+Description:
+------------
+The patch adds PCI-E support to the MSI chipset on powerpc.  This is
+needed to fully support PCI-E and PCI-E adapters present in Power 6, JS21
+and future IBM products.
+
+This patch replaces all previous posts for this bug. Versus the other
+posts, contains minor enhancements and does not break KABI.
+
+RHEL Version Found:
+-------------------
+enhancement to RHEL 5.0
+
+Upstream Status:
+----------------
+MSI support for PCI-E on all architectures is expected to be present in
+2.6.22, and have recently been merged into Linus's git tree.
+
+The changes that will be present in 2.6.22 include somewhat invasive cross
+architecture changes to MSI.  In order to limit the possibility of
+regressions to RHEL, the upstream changes have been pulled into power
+architecture specific code.  The patch will make MSI on power function as
+upstream (expected 2.6.22) without affecting common code.
+
+All of the changes have recently been accepted upstream to Linus's git tree.
+
+the new function is mostly of the following git commits
+  df87ef5508b40fc655b6c4771be31741d8ec1596
+     arch/powerpc/kernel/Makefile  | 1 +
+     arch/powerpc/kernel/msi.c     | 38 +++++++
+     include/asm-powerpc/machdep.h | 8 +++
+  f728b5c3a599d0410a079f447f921a10be7d59d6
+     arch/powerpc/kernel/irq.c     |   27 ---------------------------
+  85f2bf9f60f55b6727ed310ebbaa2df7142326e5
+     arch/powerpc/platforms/pseries/msi.c (named msi-rtas.c here)
+   b3b7cc7b4138f4171da5813b5ec2a14835e02482
+     drivers/pci/msi.c             | 6 ++++--
+   78b7611c4a1e3ff008abc4751b566cb533d68f3d
+     drivers/pci/msi.c             | 6 +++---
+   0dd11f9be47188ce08543ef65e9ece9beb2027dc
+     drivers/pci/msi.c             | 4 ++--
+Additionally
+  - current state of drivers/pci/msi.c is copied into 
+    arch/powerpc/kernel/msi.c
+  - current drivers/pci/msi.h is copied into arch/powerpc/kernel/msi.h
+  - current include/asm-powerpc/msi.h is copied into include/linux/msi.h
+  - there are some backport relevant changes.
+ 
+Test Status:
+------------
+This build has been tested by Michael Ellerman of IBM.  The installed
+PCI-E MSI dependent ethernet card was tested to be working.
+
+Notes:
+-----
+ requires CONFIG_PCI_MSI=y turned on
+
+---
+ arch/powerpc/kernel/Makefile         |    4 
+ arch/powerpc/kernel/irq.c            |   24 -
+ arch/powerpc/kernel/msi-rtas.c       |  268 ++++++++++++
+ arch/powerpc/kernel/msi.c            |  755 +++++++++++++++++++++++++++++++++++
+ arch/powerpc/kernel/msi.h            |   50 ++
+ arch/powerpc/kernel/pci_dn.c         |    3 
+ arch/powerpc/kernel/setup-common.c   |    6 
+ arch/powerpc/platforms/pseries/pci.c |    4 
+ drivers/pci/Kconfig                  |    2 
+ drivers/pci/Makefile                 |    2 
+ include/asm-powerpc/machdep.h        |   12 
+ include/asm-powerpc/msi.h            |   63 ++
+ include/asm-powerpc/pci-bridge.h     |    3 
+ 13 files changed, 1168 insertions(+), 28 deletions(-)
+
+Index: b/arch/powerpc/kernel/Makefile
+===================================================================
+--- a/arch/powerpc/kernel/Makefile
++++ b/arch/powerpc/kernel/Makefile
+@@ -66,6 +66,10 @@ obj-$(CONFIG_PPC_UDBG_16550)	+= legacy_s
+ module-$(CONFIG_PPC64)		+= module_64.o
+ obj-$(CONFIG_MODULES)		+= $(module-y)
+ 
++ifeq ($(CONFIG_PPC_PSERIES),y)
++obj-$(CONFIG_PCI_MSI)		+= msi.o msi-rtas.o
++endif
++
+ pci64-$(CONFIG_PPC64)		+= pci_64.o pci_dn.o pci_iommu.o \
+ 				   pci_direct_iommu.o iomap.o
+ pci32-$(CONFIG_PPC32)		:= pci_32.o
+Index: b/arch/powerpc/kernel/irq.c
+===================================================================
+--- a/arch/powerpc/kernel/irq.c
++++ b/arch/powerpc/kernel/irq.c
+@@ -867,30 +867,6 @@ arch_initcall(irq_late_init);
+ 
+ #endif /* CONFIG_PPC_MERGE */
+ 
+-#ifdef CONFIG_PCI_MSI
+-int pci_enable_msi(struct pci_dev * pdev)
+-{
+-	if (ppc_md.enable_msi)
+-		return ppc_md.enable_msi(pdev);
+-	else
+-		return -1;
+-}
+-
+-void pci_disable_msi(struct pci_dev * pdev)
+-{
+-	if (ppc_md.disable_msi)
+-		ppc_md.disable_msi(pdev);
+-}
+-
+-void pci_scan_msi_device(struct pci_dev *dev) {}
+-int pci_enable_msix(struct pci_dev* dev, struct msix_entry *entries, int nvec) {return -1;}
+-void pci_disable_msix(struct pci_dev *dev) {}
+-void msi_remove_pci_irq_vectors(struct pci_dev *dev) {}
+-void disable_msi_mode(struct pci_dev *dev, int pos, int type) {}
+-void pci_no_msi(void) {}
+-
+-#endif
+-
+ #ifdef CONFIG_PPC64
+ static int __init setup_noirqdistrib(char *str)
+ {
+Index: b/arch/powerpc/kernel/msi-rtas.c
+===================================================================
+--- /dev/null
++++ b/arch/powerpc/kernel/msi-rtas.c
+@@ -0,0 +1,268 @@
++/*
++ * Copyright 2006 Jake Moilanen <moilanen@austin.ibm.com>, IBM Corp.
++ * Copyright 2006 Michael Ellerman, IBM Corp.
++ *
++ * This program is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU General Public License
++ * as published by the Free Software Foundation; version 2 of the
++ * License.
++ *
++ */
++
++#include <linux/device.h>
++#include <linux/irq.h>
++
++#include <asm/rtas.h>
++#include <asm/hw_irq.h>
++#include <asm/pci-bridge.h>
++#include <asm/ppc-pci.h>
++#include <asm/msi.h>
++
++static int query_token, change_token;
++
++#define RTAS_QUERY_FN		0
++#define RTAS_CHANGE_FN		1
++#define RTAS_RESET_FN		2
++#define RTAS_CHANGE_MSI_FN	3
++#define RTAS_CHANGE_MSIX_FN	4
++
++/* RTAS Helpers */
++
++/**
++ * rtas_config_addr - Format a busno, devfn and reg for RTAS.
++ * @busno: The bus number.
++ * @devfn: The device and function number as encoded by PCI_DEVFN().
++ * @reg: The register number.
++ *
++ * This function encodes the given busno, devfn and register number as
++ * required for RTAS calls that take a "config_addr" parameter.
++ * See PAPR requirement 7.3.4-1 for more info.
++*/
++static inline u32 rtas_config_addr(int busno, int devfn, int reg)
++{
++	return ((reg & 0xf00) << 20) | ((busno & 0xff) << 16) |
++			(devfn << 8) | (reg & 0xff);
++}
++
++static int rtas_change_msi(struct pci_dn *pdn, u32 func, u32 num_irqs)
++{
++	u32 addr, seq_num, rtas_ret[3];
++	unsigned long buid;
++	int rc;
++
++	addr = rtas_config_addr(pdn->busno, pdn->devfn, 0);
++	buid = pdn->phb->buid;
++
++	seq_num = 1;
++	do {
++		if (func == RTAS_CHANGE_MSI_FN || func == RTAS_CHANGE_MSIX_FN)
++			rc = rtas_call(change_token, 6, 4, rtas_ret, addr,
++					BUID_HI(buid), BUID_LO(buid),
++					func, num_irqs, seq_num);
++		else
++			rc = rtas_call(change_token, 6, 3, rtas_ret, addr,
++					BUID_HI(buid), BUID_LO(buid),
++					func, num_irqs, seq_num);
++
++		seq_num = rtas_ret[1];
++	} while (rtas_busy_delay(rc));
++
++	if (rc == 0) /* Success */
++		rc = rtas_ret[0];
++
++	pr_debug("rtas_msi: ibm,change_msi(func=%d,num=%d) = (%d)\n",
++		 func, num_irqs, rc);
++
++	return rc;
++}
++
++static void rtas_disable_msi(struct pci_dev *pdev)
++{
++	struct pci_dn *pdn;
++
++	pdn = get_pdn(pdev);
++	if (!pdn)
++		return;
++
++	if (rtas_change_msi(pdn, RTAS_CHANGE_FN, 0) != 0)
++		pr_debug("rtas_msi: Setting MSIs to 0 failed!\n");
++}
++
++static int rtas_query_irq_number(struct pci_dn *pdn, int offset)
++{
++	u32 addr, rtas_ret[2];
++	unsigned long buid;
++	int rc;
++
++	addr = rtas_config_addr(pdn->busno, pdn->devfn, 0);
++	buid = pdn->phb->buid;
++
++	do {
++		rc = rtas_call(query_token, 4, 3, rtas_ret, addr,
++			       BUID_HI(buid), BUID_LO(buid), offset);
++	} while (rtas_busy_delay(rc));
++
++	if (rc) {
++		pr_debug("rtas_msi: error (%d) querying source number\n", rc);
++		return rc;
++	}
++
++	return rtas_ret[0];
++}
++
++static void rtas_teardown_msi_irqs(struct pci_dev *pdev)
++{
++	struct msi_desc *entry;
++	struct pci_dn *pdn = get_pdn(pdev);
++
++	list_for_each_entry(entry, &pdn->msi_list, list) {
++		if (entry->irq == NO_IRQ)
++			continue;
++
++		set_irq_msi(entry->irq, NULL);
++		irq_dispose_mapping(entry->irq);
++	}
++
++	rtas_disable_msi(pdev);
++}
++
++static int check_req_msi(struct pci_dev *pdev, int nvec)
++{
++	struct device_node *dn;
++	struct pci_dn *pdn;
++	const u32 *req_msi;
++
++	pdn = get_pdn(pdev);
++	if (!pdn)
++		return -ENODEV;
++
++	dn = pdn->node;
++
++	req_msi = get_property(dn, "ibm,req#msi", NULL);
++	if (!req_msi) {
++		pr_debug("rtas_msi: No ibm,req#msi on %s\n", dn->full_name);
++		return -ENOENT;
++	}
++
++	if (*req_msi < nvec) {
++		pr_debug("rtas_msi: ibm,req#msi requests < %d MSIs\n", nvec);
++		return -ENOSPC;
++	}
++
++	return 0;
++}
++
++static int rtas_msi_check_device(struct pci_dev *pdev, int nvec, int type)
++{
++	if (type == PCI_CAP_ID_MSIX)
++		pr_debug("rtas_msi: MSI-X untested, trying anyway.\n");
++
++	return check_req_msi(pdev, nvec);
++}
++
++static int rtas_setup_msi_irqs(struct pci_dev *pdev, int nvec, int type)
++{
++	struct pci_dn *pdn;
++	int hwirq, virq, i, rc;
++	struct msi_desc *entry;
++
++	pdn = get_pdn(pdev);
++	if (!pdn)
++		return -ENODEV;
++
++	/*
++	 * Try the new more explicit firmware interface, if that fails fall
++	 * back to the old interface. The old interface is known to never
++	 * return MSI-Xs.
++	 */
++	if (type == PCI_CAP_ID_MSI) {
++		rc = rtas_change_msi(pdn, RTAS_CHANGE_MSI_FN, nvec);
++
++		if (rc != nvec) {
++			pr_debug("rtas_msi: trying the old firmware call.\n");
++			rc = rtas_change_msi(pdn, RTAS_CHANGE_FN, nvec);
++		}
++	} else
++		rc = rtas_change_msi(pdn, RTAS_CHANGE_MSIX_FN, nvec);
++
++	if (rc != nvec) {
++		pr_debug("rtas_msi: rtas_change_msi() failed\n");
++
++		/*
++		 * In case of an error it's not clear whether the device is
++		 * left with MSI enabled or not, so we explicitly disable.
++		 */
++		goto out_free;
++	}
++
++	i = 0;
++	list_for_each_entry(entry, &pdn->msi_list, list) {
++		hwirq = rtas_query_irq_number(pdn, i);
++		if (hwirq < 0) {
++			rc = hwirq;
++			pr_debug("rtas_msi: error (%d) getting hwirq\n", rc);
++			goto out_free;
++		}
++
++		virq = irq_create_mapping(NULL, hwirq);
++
++		if (virq == NO_IRQ) {
++			pr_debug("rtas_msi: Failed mapping hwirq %d\n", hwirq);
++			rc = -ENOSPC;
++			goto out_free;
++		}
++
++		dev_dbg(&pdev->dev, "rtas_msi: allocated virq %d\n", virq);
++		set_irq_msi(virq, entry);
++		unmask_msi_irq(virq);
++	}
++
++	return 0;
++
++ out_free:
++	rtas_teardown_msi_irqs(pdev);
++	return rc;
++}
++
++static void rtas_msi_pci_irq_fixup(struct pci_dev *pdev)
++{
++	/* No LSI -> leave MSIs (if any) configured */
++	if (pdev->irq == NO_IRQ) {
++		dev_dbg(&pdev->dev, "rtas_msi: no LSI, nothing to do.\n");
++		return;
++	}
++
++	/* No MSI -> MSIs can't have been assigned by fw, leave LSI */
++	if (check_req_msi(pdev, 1)) {
++		dev_dbg(&pdev->dev, "rtas_msi: no req#msi, nothing to do.\n");
++		return;
++	}
++
++	dev_dbg(&pdev->dev, "rtas_msi: disabling existing MSI.\n");
++	rtas_disable_msi(pdev);
++}
++
++static int rtas_msi_init(void)
++{
++	query_token  = rtas_token("ibm,query-interrupt-source-number");
++	change_token = rtas_token("ibm,change-msi");
++
++	if ((query_token == RTAS_UNKNOWN_SERVICE) ||
++			(change_token == RTAS_UNKNOWN_SERVICE)) {
++		pr_debug("rtas_msi: no RTAS tokens, no MSI support.\n");
++		return -1;
++	}
++
++	pr_debug("rtas_msi: Registering RTAS MSI callbacks.\n");
++
++	WARN_ON(ppc_msi_md.setup_msi_irqs);
++	ppc_msi_md.setup_msi_irqs = rtas_setup_msi_irqs;
++	ppc_msi_md.teardown_msi_irqs = rtas_teardown_msi_irqs;
++	ppc_msi_md.msi_check_device = rtas_msi_check_device;
++
++	WARN_ON(ppc_msi_md.pci_irq_fixup);
++	ppc_msi_md.pci_irq_fixup = rtas_msi_pci_irq_fixup;
++
++	return 0;
++}
++arch_initcall(rtas_msi_init);
+Index: b/arch/powerpc/kernel/msi.c
+===================================================================
+--- /dev/null
++++ b/arch/powerpc/kernel/msi.c
+@@ -0,0 +1,755 @@
++/*
++ * Copyright (C) 2003-2004 Intel
++ * Copyright (C) Tom Long Nguyen (tom.l.nguyen@intel.com)
++ * Copyright 2006-2007, Michael Ellerman, IBM Corporation.
++ *
++ * This program is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU General Public License
++ * as published by the Free Software Foundation; either version
++ * 2 of the License, or (at your option) any later version.
++ */
++
++#include <linux/kernel.h>
++#include <linux/err.h>
++#include <linux/mm.h>
++#include <linux/irq.h>
++#include <linux/interrupt.h>
++#include <linux/init.h>
++#include <linux/ioport.h>
++#include <linux/smp_lock.h>
++#include <linux/pci.h>
++#include <linux/proc_fs.h>
++
++#include <asm/errno.h>
++#include <asm/io.h>
++#include <asm/smp.h>
++#include <asm/machdep.h>
++#include <asm/msi.h>
++
++#include "msi.h"
++
++
++struct msi_desc *msi_descs[NR_IRQS];
++
++/* Arch hooks */
++
++int arch_msi_check_device(struct pci_dev* dev, int nvec, int type)
++{
++	if (!ppc_msi_md.setup_msi_irqs || !ppc_msi_md.teardown_msi_irqs) {
++		pr_debug("msi: Platform doesn't provide MSI callbacks.\n");
++		return -ENOSYS;
++	}
++
++	if (ppc_msi_md.msi_check_device) {
++		pr_debug("msi: Using platform check routine.\n");
++		return ppc_msi_md.msi_check_device(dev, nvec, type);
++	}
++
++        return 0;
++}
++
++int arch_setup_msi_irqs(struct pci_dev *dev, int nvec, int type)
++{
++	return ppc_msi_md.setup_msi_irqs(dev, nvec, type);
++}
++
++void arch_teardown_msi_irqs(struct pci_dev *dev)
++{
++	return ppc_msi_md.teardown_msi_irqs(dev);
++}
++
++
++/* Generic code */
++
++static int pci_msi_enable = 1;
++
++static void msi_set_enable(struct pci_dev *dev, int enable)
++{
++	int pos;
++	u16 control;
++
++	pos = pci_find_capability(dev, PCI_CAP_ID_MSI);
++	if (pos) {
++		pci_read_config_word(dev, pos + PCI_MSI_FLAGS, &control);
++		control &= ~PCI_MSI_FLAGS_ENABLE;
++		if (enable)
++			control |= PCI_MSI_FLAGS_ENABLE;
++		pci_write_config_word(dev, pos + PCI_MSI_FLAGS, control);
++	}
++}
++
++static void msix_set_enable(struct pci_dev *dev, int enable)
++{
++	int pos;
++	u16 control;
++
++	pos = pci_find_capability(dev, PCI_CAP_ID_MSIX);
++	if (pos) {
++		pci_read_config_word(dev, pos + PCI_MSIX_FLAGS, &control);
++		control &= ~PCI_MSIX_FLAGS_ENABLE;
++		if (enable)
++			control |= PCI_MSIX_FLAGS_ENABLE;
++		pci_write_config_word(dev, pos + PCI_MSIX_FLAGS, control);
++	}
++}
++
++static void msix_flush_writes(unsigned int irq)
++{
++	struct msi_desc *entry;
++
++	entry = get_irq_msi(irq);
++	BUG_ON(!entry || !entry->dev);
++	switch (entry->msi_attrib.type) {
++	case PCI_CAP_ID_MSI:
++		/* nothing to do */
++		break;
++	case PCI_CAP_ID_MSIX:
++	{
++		int offset = entry->msi_attrib.entry_nr * PCI_MSIX_ENTRY_SIZE +
++			PCI_MSIX_ENTRY_VECTOR_CTRL_OFFSET;
++		readl(entry->mask_base + offset);
++		break;
++	}
++	default:
++		BUG();
++		break;
++	}
++}
++
++static void msi_set_mask_bit(unsigned int irq, int flag)
++{
++	struct msi_desc *entry;
++
++	entry = get_irq_msi(irq);
++	BUG_ON(!entry || !entry->dev);
++	switch (entry->msi_attrib.type) {
++	case PCI_CAP_ID_MSI:
++		if (entry->msi_attrib.maskbit) {
++			int pos;
++			u32 mask_bits;
++
++			pos = (long)entry->mask_base;
++			pci_read_config_dword(entry->dev, pos, &mask_bits);
++			mask_bits &= ~(1);
++			mask_bits |= flag;
++			pci_write_config_dword(entry->dev, pos, mask_bits);
++		} else {
++			msi_set_enable(entry->dev, !flag);
++		}
++		break;
++	case PCI_CAP_ID_MSIX:
++	{
++		int offset = entry->msi_attrib.entry_nr * PCI_MSIX_ENTRY_SIZE +
++			PCI_MSIX_ENTRY_VECTOR_CTRL_OFFSET;
++		writel(flag, entry->mask_base + offset);
++		readl(entry->mask_base + offset);
++		break;
++	}
++	default:
++		BUG();
++		break;
++	}
++	entry->msi_attrib.masked = !!flag;
++}
++
++void read_msi_msg(unsigned int irq, struct msi_msg *msg)
++{
++	struct msi_desc *entry = get_irq_msi(irq);
++	switch(entry->msi_attrib.type) {
++	case PCI_CAP_ID_MSI:
++	{
++		struct pci_dev *dev = entry->dev;
++		int pos = entry->msi_attrib.pos;
++		u16 data;
++
++		pci_read_config_dword(dev, msi_lower_address_reg(pos),
++					&msg->address_lo);
++		if (entry->msi_attrib.is_64) {
++			pci_read_config_dword(dev, msi_upper_address_reg(pos),
++						&msg->address_hi);
++			pci_read_config_word(dev, msi_data_reg(pos, 1), &data);
++		} else {
++			msg->address_hi = 0;
++			pci_read_config_word(dev, msi_data_reg(pos, 1), &data);
++		}
++		msg->data = data;
++		break;
++	}
++	case PCI_CAP_ID_MSIX:
++	{
++		void __iomem *base;
++		base = entry->mask_base +
++			entry->msi_attrib.entry_nr * PCI_MSIX_ENTRY_SIZE;
++
++		msg->address_lo = readl(base + PCI_MSIX_ENTRY_LOWER_ADDR_OFFSET);
++		msg->address_hi = readl(base + PCI_MSIX_ENTRY_UPPER_ADDR_OFFSET);
++		msg->data = readl(base + PCI_MSIX_ENTRY_DATA_OFFSET);
++ 		break;
++ 	}
++ 	default:
++		BUG();
++	}
++}
++
++void write_msi_msg(unsigned int irq, struct msi_msg *msg)
++{
++	struct msi_desc *entry = get_irq_msi(irq);
++	switch (entry->msi_attrib.type) {
++	case PCI_CAP_ID_MSI:
++	{
++		struct pci_dev *dev = entry->dev;
++		int pos = entry->msi_attrib.pos;
++
++		pci_write_config_dword(dev, msi_lower_address_reg(pos),
++					msg->address_lo);
++		if (entry->msi_attrib.is_64) {
++			pci_write_config_dword(dev, msi_upper_address_reg(pos),
++						msg->address_hi);
++			pci_write_config_word(dev, msi_data_reg(pos, 1),
++						msg->data);
++		} else {
++			pci_write_config_word(dev, msi_data_reg(pos, 0),
++						msg->data);
++		}
++		break;
++	}
++	case PCI_CAP_ID_MSIX:
++	{
++		void __iomem *base;
++		base = entry->mask_base +
++			entry->msi_attrib.entry_nr * PCI_MSIX_ENTRY_SIZE;
++
++		writel(msg->address_lo,
++			base + PCI_MSIX_ENTRY_LOWER_ADDR_OFFSET);
++		writel(msg->address_hi,
++			base + PCI_MSIX_ENTRY_UPPER_ADDR_OFFSET);
++		writel(msg->data, base + PCI_MSIX_ENTRY_DATA_OFFSET);
++		break;
++	}
++	default:
++		BUG();
++	}
++	entry->msg = *msg;
++}
++
++void mask_msi_irq(unsigned int irq)
++{
++	msi_set_mask_bit(irq, 1);
++	msix_flush_writes(irq);
++}
++
++void unmask_msi_irq(unsigned int irq)
++{
++	msi_set_mask_bit(irq, 0);
++	msix_flush_writes(irq);
++}
++
++static int msi_free_irqs(struct pci_dev* dev);
++
++
++static struct msi_desc* alloc_msi_entry(void)
++{
++	struct msi_desc *entry;
++
++	entry = kzalloc(sizeof(struct msi_desc), GFP_KERNEL);
++	if (!entry)
++		return NULL;
++
++	INIT_LIST_HEAD(&entry->list);
++	entry->irq = 0;
++	entry->dev = NULL;
++
++	return entry;
++}
++
++#ifdef CONFIG_PM
++int pci_save_msi_state(struct pci_dev *dev)
++{
++	return 0;
++}
++
++int pci_save_msix_state(struct pci_dev *dev)
++{
++	return 0;
++}
++
++void pci_restore_msi_state(struct pci_dev *dev)
++{
++	int pos;
++	u16 control;
++	struct msi_desc *entry;
++
++	if (!dev->msi_enabled)
++		return;
++
++	entry = get_irq_msi(dev->irq);
++	pos = entry->msi_attrib.pos;
++
++	pci_intx(dev, 0);		/* disable intx */
++	msi_set_enable(dev, 0);
++	write_msi_msg(dev->irq, &entry->msg);
++	if (entry->msi_attrib.maskbit)
++		msi_set_mask_bit(dev->irq, entry->msi_attrib.masked);
++
++	pci_read_config_word(dev, pos + PCI_MSI_FLAGS, &control);
++	control &= ~(PCI_MSI_FLAGS_QSIZE | PCI_MSI_FLAGS_ENABLE);
++	if (entry->msi_attrib.maskbit || !entry->msi_attrib.masked)
++		control |= PCI_MSI_FLAGS_ENABLE;
++	pci_write_config_word(dev, pos + PCI_MSI_FLAGS, control);
++}
++
++void pci_restore_msix_state(struct pci_dev *dev)
++{
++	int pos;
++	struct msi_desc *entry;
++	u16 control;
++	struct pci_dn *pdn = get_pdn(dev);
++
++	if (!dev->msix_enabled || !pdn)
++		return;
++
++	/* route the table */
++	pci_intx(dev, 0);		/* disable intx */
++	msix_set_enable(dev, 0);
++
++	list_for_each_entry(entry, &pdn->msi_list, list) {
++		write_msi_msg(entry->irq, &entry->msg);
++		msi_set_mask_bit(entry->irq, entry->msi_attrib.masked);
++	}
++
++	BUG_ON(list_empty(&pdn->msi_list));
++	entry = list_entry(pdn->msi_list.next, struct msi_desc, list);
++	pos = entry->msi_attrib.pos;
++	pci_read_config_word(dev, pos + PCI_MSIX_FLAGS, &control);
++	control &= ~PCI_MSIX_FLAGS_MASKALL;
++	control |= PCI_MSIX_FLAGS_ENABLE;
++	pci_write_config_word(dev, pos + PCI_MSIX_FLAGS, control);
++}
++#endif	/* CONFIG_PM */
++
++/**
++ * msi_capability_init - configure device's MSI capability structure
++ * @dev: pointer to the pci_dev data structure of MSI device function
++ *
++ * Setup the MSI capability structure of device function with a single
++ * MSI irq, regardless of device function is capable of handling
++ * multiple messages. A return of zero indicates the successful setup
++ * of an entry zero with the new MSI irq or non-zero for otherwise.
++ **/
++static int msi_capability_init(struct pci_dev *dev)
++{
++	struct msi_desc *entry;
++	int pos, ret;
++	u16 control;
++	struct pci_dn *pdn = get_pdn(dev);
++
++	if (!pdn)
++		return -ENODEV;
++
++	msi_set_enable(dev, 0);	/* Ensure msi is disabled as I set it up */
++
++   	pos = pci_find_capability(dev, PCI_CAP_ID_MSI);
++	pci_read_config_word(dev, msi_control_reg(pos), &control);
++	/* MSI Entry Initialization */
++	entry = alloc_msi_entry();
++	if (!entry)
++		return -ENOMEM;
++
++	entry->msi_attrib.type = PCI_CAP_ID_MSI;
++	entry->msi_attrib.is_64 = is_64bit_address(control);
++	entry->msi_attrib.entry_nr = 0;
++	entry->msi_attrib.maskbit = is_mask_bit_support(control);
++	entry->msi_attrib.masked = 1;
++	entry->msi_attrib.default_irq = dev->irq;	/* Save IOAPIC IRQ */
++	entry->msi_attrib.pos = pos;
++	if (is_mask_bit_support(control)) {
++		entry->mask_base = (void __iomem *)(long)msi_mask_bits_reg(pos,
++				is_64bit_address(control));
++	}
++	entry->dev = dev;
++	if (entry->msi_attrib.maskbit) {
++		unsigned int maskbits, temp;
++		/* All MSIs are unmasked by default, Mask them all */
++		pci_read_config_dword(dev,
++			msi_mask_bits_reg(pos, is_64bit_address(control)),
++			&maskbits);
++		temp = (1 << multi_msi_capable(control));
++		temp = ((temp - 1) & ~temp);
++		maskbits |= temp;
++		pci_write_config_dword(dev,
++			msi_mask_bits_reg(pos, is_64bit_address(control)),
++			maskbits);
++	}
++	list_add_tail(&entry->list, &pdn->msi_list);
++
++	/* Configure MSI capability structure */
++	ret = arch_setup_msi_irqs(dev, 1, PCI_CAP_ID_MSI);
++	if (ret) {
++		msi_free_irqs(dev);
++		return ret;
++	}
++
++	/* Set MSI enabled bits	 */
++	pci_intx(dev, 0);		/* disable intx */
++	msi_set_enable(dev, 1);
++	dev->msi_enabled = 1;
++
++	dev->irq = entry->irq;
++	return 0;
++}
++
++/**
++ * msix_capability_init - configure device's MSI-X capability
++ * @dev: pointer to the pci_dev data structure of MSI-X device function
++ * @entries: pointer to an array of struct msix_entry entries
++ * @nvec: number of @entries
++ *
++ * Setup the MSI-X capability structure of device function with a
++ * single MSI-X irq. A return of zero indicates the successful setup of
++ * requested MSI-X entries with allocated irqs or non-zero for otherwise.
++ **/
++static int msix_capability_init(struct pci_dev *dev,
++				struct msix_entry *entries, int nvec)
++{
++	struct msi_desc *entry;
++	int pos, i, j, nr_entries, ret;
++	unsigned long phys_addr;
++	u32 table_offset;
++ 	u16 control;
++	u8 bir;
++	void __iomem *base;
++	struct pci_dn *pdn = get_pdn(dev);
++
++	msix_set_enable(dev, 0);/* Ensure msix is disabled as I set it up */
++
++   	pos = pci_find_capability(dev, PCI_CAP_ID_MSIX);
++	/* Request & Map MSI-X table region */
++ 	pci_read_config_word(dev, msi_control_reg(pos), &control);
++	nr_entries = multi_msix_capable(control);
++
++ 	pci_read_config_dword(dev, msix_table_offset_reg(pos), &table_offset);
++	bir = (u8)(table_offset & PCI_MSIX_FLAGS_BIRMASK);
++	table_offset &= ~PCI_MSIX_FLAGS_BIRMASK;
++	phys_addr = pci_resource_start (dev, bir) + table_offset;
++	base = ioremap_nocache(phys_addr, nr_entries * PCI_MSIX_ENTRY_SIZE);
++	if (base == NULL)
++		return -ENOMEM;
++
++	/* MSI-X Table Initialization */
++	for (i = 0; i < nvec; i++) {
++		entry = alloc_msi_entry();
++		if (!entry)
++			break;
++
++ 		j = entries[i].entry;
++		entry->msi_attrib.type = PCI_CAP_ID_MSIX;
++		entry->msi_attrib.is_64 = 1;
++		entry->msi_attrib.entry_nr = j;
++		entry->msi_attrib.maskbit = 1;
++		entry->msi_attrib.masked = 1;
++		entry->msi_attrib.default_irq = dev->irq;
++		entry->msi_attrib.pos = pos;
++		entry->dev = dev;
++		entry->mask_base = base;
++
++		list_add_tail(&entry->list, &pdn->msi_list);
++	}
++
++	ret = arch_setup_msi_irqs(dev, nvec, PCI_CAP_ID_MSIX);
++	if (ret) {
++		int avail = 0;
++		list_for_each_entry(entry, &pdn->msi_list, list) {
++			if (entry->irq != 0) {
++				avail++;
++			}
++		}
++
++		msi_free_irqs(dev);
++
++		/* If we had some success report the number of irqs
++		 * we succeeded in setting up.
++		 */
++		if (avail == 0)
++			avail = ret;
++		return avail;
++	}
++
++	i = 0;
++	list_for_each_entry(entry, &pdn->msi_list, list) {
++		entries[i].vector = entry->irq;
++		set_irq_msi(entry->irq, entry);
++		i++;
++	}
++	/* Set MSI-X enabled bits */
++	pci_intx(dev, 0);		/* disable intx */
++	msix_set_enable(dev, 1);
++	dev->msix_enabled = 1;
++
++	return 0;
++}
++
++/**
++ * pci_msi_check_device - check whether MSI may be enabled on a device
++ * @dev: pointer to the pci_dev data structure of MSI device function
++ * @nvec: how many MSIs have been requested ?
++ * @type: are we checking for MSI or MSI-X ?
++ *
++ * Look at global flags, the device itself, and its parent busses
++ * to determine if MSI/-X are supported for the device. If MSI/-X is
++ * supported return 0, else return an error code.
++ **/
++static int pci_msi_check_device(struct pci_dev* dev, int nvec, int type)
++{
++	struct pci_bus *bus;
++	int ret;
++
++	/* MSI must be globally enabled and supported by the device */
++	if (!pci_msi_enable || !dev || dev->no_msi)
++		return -EINVAL;
++
++	/*
++	 * You can't ask to have 0 or less MSIs configured.
++	 *  a) it's stupid ..
++	 *  b) the list manipulation code assumes nvec >= 1.
++	 */
++	if (nvec < 1)
++		return -ERANGE;
++
++	/* Any bridge which does NOT route MSI transactions from it's
++	 * secondary bus to it's primary bus must set NO_MSI flag on
++	 * the secondary pci_bus.
++	 * We expect only arch-specific PCI host bus controller driver
++	 * or quirks for specific PCI bridges to be setting NO_MSI.
++	 */
++	for (bus = dev->bus; bus; bus = bus->parent)
++		if (bus->bus_flags & PCI_BUS_FLAGS_NO_MSI)
++			return -EINVAL;
++
++	ret = arch_msi_check_device(dev, nvec, type);
++	if (ret)
++		return ret;
++
++	if (!pci_find_capability(dev, type))
++		return -EINVAL;
++
++	return 0;
++}
++
++/**
++ * pci_enable_msi - configure device's MSI capability structure
++ * @dev: pointer to the pci_dev data structure of MSI device function
++ *
++ * Setup the MSI capability structure of device function with
++ * a single MSI irq upon its software driver call to request for
++ * MSI mode enabled on its hardware device function. A return of zero
++ * indicates the successful setup of an entry zero with the new MSI
++ * irq or non-zero for otherwise.
++ **/
++int pci_enable_msi(struct pci_dev* dev)
++{
++	int status;
++
++	status = pci_msi_check_device(dev, 1, PCI_CAP_ID_MSI);
++	if (status)
++		return status;
++
++	WARN_ON(!!dev->msi_enabled);
++
++	/* Check whether driver already requested for MSI-X irqs */
++	if (dev->msix_enabled) {
++		printk(KERN_INFO "PCI: %s: Can't enable MSI.  "
++			"Device already has MSI-X enabled\n",
++			pci_name(dev));
++		return -EINVAL;
++	}
++	status = msi_capability_init(dev);
++	return status;
++}
++EXPORT_SYMBOL(pci_enable_msi);
++
++void pci_disable_msi(struct pci_dev* dev)
++{
++	struct msi_desc *entry;
++	int default_irq;
++	struct pci_dn *pdn = get_pdn(dev);
++
++	if (!pci_msi_enable || !dev || !dev->msi_enabled || !pdn)
++		return;
++
++	msi_set_enable(dev, 0);
++	pci_intx(dev, 1);		/* enable intx */
++	dev->msi_enabled = 0;
++
++	BUG_ON(list_empty(&pdn->msi_list));
++	entry = list_entry(pdn->msi_list.next, struct msi_desc, list);
++	if (!entry->dev || entry->msi_attrib.type != PCI_CAP_ID_MSI) {
++		return;
++	}
++
++	default_irq = entry->msi_attrib.default_irq;
++	msi_free_irqs(dev);
++
++	/* Restore dev->irq to its default pin-assertion irq */
++	dev->irq = default_irq;
++}
++EXPORT_SYMBOL(pci_disable_msi);
++
++static int msi_free_irqs(struct pci_dev* dev)
++{
++	struct msi_desc *entry, *tmp;
++	struct pci_dn *pdn = get_pdn(dev);
++
++	list_for_each_entry(entry, &pdn->msi_list, list) {
++		if (entry->irq)
++			BUG_ON(irq_has_action(entry->irq));
++	}
++
++	arch_teardown_msi_irqs(dev);
++
++	list_for_each_entry_safe(entry, tmp, &pdn->msi_list, list) {
++		if (entry->msi_attrib.type == PCI_CAP_ID_MSIX) {
++			writel(1, entry->mask_base + entry->msi_attrib.entry_nr
++				  * PCI_MSIX_ENTRY_SIZE
++				  + PCI_MSIX_ENTRY_VECTOR_CTRL_OFFSET);
++
++			if (list_is_last(&entry->list, &pdn->msi_list))
++				iounmap(entry->mask_base);
++		}
++		list_del(&entry->list);
++		kfree(entry);
++	}
++
++	return 0;
++}
++
++/**
++ * pci_enable_msix - configure device's MSI-X capability structure
++ * @dev: pointer to the pci_dev data structure of MSI-X device function
++ * @entries: pointer to an array of MSI-X entries
++ * @nvec: number of MSI-X irqs requested for allocation by device driver
++ *
++ * Setup the MSI-X capability structure of device function with the number
++ * of requested irqs upon its software driver call to request for
++ * MSI-X mode enabled on its hardware device function. A return of zero
++ * indicates the successful configuration of MSI-X capability structure
++ * with new allocated MSI-X irqs. A return of < 0 indicates a failure.
++ * Or a return of > 0 indicates that driver request is exceeding the number
++ * of irqs available. Driver should use the returned value to re-send
++ * its request.
++ **/
++int pci_enable_msix(struct pci_dev* dev, struct msix_entry *entries, int nvec)
++{
++	int status, pos, nr_entries;
++	int i, j;
++	u16 control;
++	struct pci_dn *pdn = get_pdn(dev);
++
++	if (!entries || !pdn)
++ 		return -EINVAL;
++
++	status = pci_msi_check_device(dev, nvec, PCI_CAP_ID_MSIX);
++	if (status)
++		return status;
++
++	pos = pci_find_capability(dev, PCI_CAP_ID_MSIX);
++	pci_read_config_word(dev, msi_control_reg(pos), &control);
++	nr_entries = multi_msix_capable(control);
++	if (nvec > nr_entries)
++		return -EINVAL;
++
++	/* Check for any invalid entries */
++	for (i = 0; i < nvec; i++) {
++		if (entries[i].entry >= nr_entries)
++			return -EINVAL;		/* invalid entry */
++		for (j = i + 1; j < nvec; j++) {
++			if (entries[i].entry == entries[j].entry)
++				return -EINVAL;	/* duplicate entry */
++		}
++	}
++	WARN_ON(!!dev->msix_enabled);
++
++	/* Check whether driver already requested for MSI irq */
++   	if (dev->msi_enabled) {
++		printk(KERN_INFO "PCI: %s: Can't enable MSI-X.  "
++		       "Device already has an MSI irq assigned\n",
++		       pci_name(dev));
++		return -EINVAL;
++	}
++	status = msix_capability_init(dev, entries, nvec);
++	return status;
++}
++EXPORT_SYMBOL(pci_enable_msix);
++
++static void msix_free_all_irqs(struct pci_dev *dev)
++{
++	msi_free_irqs(dev);
++}
++
++void pci_disable_msix(struct pci_dev* dev)
++{
++	if (!pci_msi_enable || !dev || !dev->msix_enabled)
++		return;
++
++	msix_set_enable(dev, 0);
++	pci_intx(dev, 1);		/* enable intx */
++	dev->msix_enabled = 0;
++
++	msix_free_all_irqs(dev);
++}
++EXPORT_SYMBOL(pci_disable_msix);
++
++/**
++ * msi_remove_pci_irq_vectors - reclaim MSI(X) irqs to unused state
++ * @dev: pointer to the pci_dev data structure of MSI(X) device function
++ *
++ * Being called during hotplug remove, from which the device function
++ * is hot-removed. All previous assigned MSI/MSI-X irqs, if
++ * allocated for this device function, are reclaimed to unused state,
++ * which may be used later on.
++ **/
++void msi_remove_pci_irq_vectors(struct pci_dev* dev)
++{
++	if (!pci_msi_enable || !dev)
++ 		return;
++
++	if (dev->msi_enabled)
++		msi_free_irqs(dev);
++
++	if (dev->msix_enabled)
++		msix_free_all_irqs(dev);
++}
++
++void pci_no_msi(void)
++{
++	pci_msi_enable = 0;
++}
++
++struct pci_dn *get_pdn(struct pci_dev *pdev)
++{
++	struct device_node *dn;
++	struct pci_dn *pdn;
++
++	dn = pci_device_to_OF_node(pdev);
++	if (!dn) {
++		dev_dbg(&pdev->dev, "msi: No OF device node\n");
++		return NULL;
++	}
++
++	pdn = PCI_DN(dn);
++	if (!pdn) {
++		dev_dbg(&pdev->dev, "msi: No PCI DN\n");
++		return NULL;
++	}
++
++	return pdn;
++}
++
++void disable_msi_mode(struct pci_dev *dev, int pos, int type)
++{
++	WARN_ON(1);
++}
++
++void pci_scan_msi_device(struct pci_dev *dev)
++{
++	return;
++}
+Index: b/arch/powerpc/kernel/msi.h
+===================================================================
+--- /dev/null
++++ b/arch/powerpc/kernel/msi.h
+@@ -0,0 +1,50 @@
++/*
++ * Copyright (C) 2003-2004 Intel
++ * Copyright (C) Tom Long Nguyen (tom.l.nguyen@intel.com)
++ */
++
++#ifndef MSI_H
++#define MSI_H
++
++/* MSI-X registers (these are at offset PCI_MSIX_FLAGS) */
++#define PCI_MSIX_FLAGS          2
++#define  PCI_MSIX_FLAGS_QSIZE   0x7FF
++#define  PCI_MSIX_FLAGS_ENABLE  (1 << 15)
++#define  PCI_MSIX_FLAGS_MASKALL (1 << 14)
++#define PCI_MSIX_FLAGS_BIRMASK  (7 << 0)
++#define PCI_MSIX_FLAGS_BITMASK  (1 << 0)
++
++#define PCI_MSIX_ENTRY_SIZE			16
++#define  PCI_MSIX_ENTRY_LOWER_ADDR_OFFSET	0
++#define  PCI_MSIX_ENTRY_UPPER_ADDR_OFFSET	4
++#define  PCI_MSIX_ENTRY_DATA_OFFSET		8
++#define  PCI_MSIX_ENTRY_VECTOR_CTRL_OFFSET	12
++
++#define msi_control_reg(base)		(base + PCI_MSI_FLAGS)
++#define msi_lower_address_reg(base)	(base + PCI_MSI_ADDRESS_LO)
++#define msi_upper_address_reg(base)	(base + PCI_MSI_ADDRESS_HI)
++#define msi_data_reg(base, is64bit)	\
++	( (is64bit == 1) ? base+PCI_MSI_DATA_64 : base+PCI_MSI_DATA_32 )
++#define msi_mask_bits_reg(base, is64bit) \
++	( (is64bit == 1) ? base+PCI_MSI_MASK_BIT : base+PCI_MSI_MASK_BIT-4)
++#define msi_disable(control)		control &= ~PCI_MSI_FLAGS_ENABLE
++#define multi_msi_capable(control) \
++	(1 << ((control & PCI_MSI_FLAGS_QMASK) >> 1))
++#define multi_msi_enable(control, num) \
++	control |= (((num >> 1) << 4) & PCI_MSI_FLAGS_QSIZE);
++#define is_64bit_address(control)	(!!(control & PCI_MSI_FLAGS_64BIT))
++#define is_mask_bit_support(control)	(!!(control & PCI_MSI_FLAGS_MASKBIT))
++#define msi_enable(control, num) multi_msi_enable(control, num); \
++	control |= PCI_MSI_FLAGS_ENABLE
++
++#define msix_table_offset_reg(base)	(base + 0x04)
++#define msix_pba_offset_reg(base)	(base + 0x08)
++#define msix_enable(control)	 	control |= PCI_MSIX_FLAGS_ENABLE
++#define msix_disable(control)	 	control &= ~PCI_MSIX_FLAGS_ENABLE
++#define msix_table_size(control) 	((control & PCI_MSIX_FLAGS_QSIZE)+1)
++#define multi_msix_capable		msix_table_size
++#define msix_unmask(address)	 	(address & ~PCI_MSIX_FLAGS_BITMASK)
++#define msix_mask(address)		(address | PCI_MSIX_FLAGS_BITMASK)
++#define msix_is_pending(address) 	(address & PCI_MSIX_FLAGS_PENDMASK)
++
++#endif /* MSI_H */
+Index: b/arch/powerpc/kernel/pci_dn.c
+===================================================================
+--- a/arch/powerpc/kernel/pci_dn.c
++++ b/arch/powerpc/kernel/pci_dn.c
+@@ -51,6 +51,9 @@ static void * __devinit update_dn_pci_in
+ 	if (pdn == NULL)
+ 		return NULL;
+ 	memset(pdn, 0, sizeof(*pdn));
++#ifdef CONFIG_PCI_MSI
++	INIT_LIST_HEAD(&pdn->msi_list);
++#endif
+ 	dn->data = pdn;
+ 	pdn->node = dn;
+ 	pdn->phb = phb;
+Index: b/arch/powerpc/kernel/setup-common.c
+===================================================================
+--- a/arch/powerpc/kernel/setup-common.c
++++ b/arch/powerpc/kernel/setup-common.c
+@@ -73,6 +73,12 @@ struct machdep_calls ppc_md;
+ EXPORT_SYMBOL(ppc_md);
+ struct machdep_calls *machine_id;
+ EXPORT_SYMBOL(machine_id);
++/*
++ * ppc_msi_md should not be exported
++ */
++#ifdef CONFIG_PCI_MSI
++struct msi_machdep_calls ppc_msi_md;
++#endif /* CONFIG_PCI_MSI */
+ 
+ unsigned long klimit = (unsigned long) _end;
+ 
+Index: b/arch/powerpc/platforms/pseries/pci.c
+===================================================================
+--- a/arch/powerpc/platforms/pseries/pci.c
++++ b/arch/powerpc/platforms/pseries/pci.c
+@@ -87,6 +87,10 @@ void __devinit pSeries_irq_bus_setup(str
+ 					dev->irq);
+ 			}
+ 		}
++#ifdef CONFIG_PCI_MSI
++		if (ppc_msi_md.pci_irq_fixup)
++			ppc_msi_md.pci_irq_fixup(dev);
++#endif /* CONFIG_PCI_MSI */
+ 	}
+ }
+ 
+Index: b/drivers/pci/Kconfig
+===================================================================
+--- a/drivers/pci/Kconfig
++++ b/drivers/pci/Kconfig
+@@ -4,7 +4,7 @@
+ config PCI_MSI
+ 	bool "Message Signaled Interrupts (MSI and MSI-X)"
+ 	depends on PCI
+-	depends on (X86_LOCAL_APIC && X86_IO_APIC) || IA64
++	depends on (X86_LOCAL_APIC && X86_IO_APIC) || IA64 || PPC64
+ 	depends on !XEN
+ 	help
+ 	   This allows device drivers to enable MSI (Message Signaled
+Index: b/drivers/pci/Makefile
+===================================================================
+--- a/drivers/pci/Makefile
++++ b/drivers/pci/Makefile
+@@ -27,10 +27,12 @@ obj-$(CONFIG_PPC64) += setup-bus.o
+ obj-$(CONFIG_MIPS) += setup-bus.o setup-irq.o
+ obj-$(CONFIG_X86_VISWS) += setup-irq.o
+ 
++ifndef CONFIG_PPC_MERGE
+ msiobj-y := msi.o msi-apic.o
+ msiobj-$(CONFIG_IA64_GENERIC) += msi-altix.o
+ msiobj-$(CONFIG_IA64_SGI_SN2) += msi-altix.o
+ obj-$(CONFIG_PCI_MSI) += $(msiobj-y)
++endif
+ 
+ #
+ # ACPI Related PCI FW Functions
+Index: b/include/asm-powerpc/machdep.h
+===================================================================
+--- a/include/asm-powerpc/machdep.h
++++ b/include/asm-powerpc/machdep.h
+@@ -239,13 +239,19 @@ struct machdep_calls {
+ 	 */
+ 	void (*machine_kexec)(struct kimage *image);
+ #endif /* CONFIG_KEXEC */
++};
+ 
+ #ifdef CONFIG_PCI_MSI
+-	int (*enable_msi)(struct pci_dev *pdev);
+-	void (*disable_msi)(struct pci_dev *pdev);
+-#endif /* CONFIG_PCI_MSI */
++struct msi_machdep_calls {
++	void	(*pci_irq_fixup)(struct pci_dev *dev);
++	int	(*msi_check_device)(struct pci_dev* dev, int nvec, int type);
++	int	(*setup_msi_irqs)(struct pci_dev *dev, int nvec, int type);
++	void	(*teardown_msi_irqs)(struct pci_dev *dev);
+ };
+ 
++extern struct msi_machdep_calls ppc_msi_md;
++#endif /* CONFIG_PCI_MSI */
++
+ extern void power4_idle(void);
+ extern void ppc6xx_idle(void);
+ 
+Index: b/include/asm-powerpc/msi.h
+===================================================================
+--- /dev/null
++++ b/include/asm-powerpc/msi.h
+@@ -0,0 +1,63 @@
++#ifndef _POWERPC_MSI_H
++#define _POWERPC_MSI_H
++
++#include <linux/list.h>
++#include <asm/pci-bridge.h>
++
++struct msi_msg {
++	u32	address_lo;	/* low 32 bits of msi message address */
++	u32	address_hi;	/* high 32 bits of msi message address */
++	u32	data;		/* 16 bits of msi message data */
++};
++
++/* Helper functions */
++extern void mask_msi_irq(unsigned int irq);
++extern void unmask_msi_irq(unsigned int irq);
++extern void read_msi_msg(unsigned int irq, struct msi_msg *msg);
++extern void write_msi_msg(unsigned int irq, struct msi_msg *msg);
++
++struct msi_desc {
++	struct {
++		__u8	type	: 5; 	/* {0: unused, 5h:MSI, 11h:MSI-X} */
++		__u8	maskbit	: 1; 	/* mask-pending bit supported ?   */
++		__u8	masked	: 1;
++		__u8	is_64	: 1;	/* Address size: 0=32bit 1=64bit  */
++		__u8	pos;	 	/* Location of the msi capability */
++		__u16	entry_nr;    	/* specific enabled entry 	  */
++		unsigned default_irq;	/* default pre-assigned irq	  */
++	}msi_attrib;
++
++	unsigned int irq;
++	struct list_head list;
++
++	void __iomem *mask_base;
++	struct pci_dev *dev;
++
++	/* Last set MSI message */
++	struct msi_msg msg;
++};
++
++extern struct msi_desc *msi_descs[NR_IRQS];
++
++static inline struct msi_desc *get_irq_msi(unsigned int irq)
++{
++	return msi_descs[irq];
++}
++
++static inline void set_irq_msi(unsigned int irq, struct msi_desc *entry)
++{
++	msi_descs[irq] = entry;
++
++	if (entry)
++		entry->irq = irq;
++}
++
++static inline int irq_has_action(unsigned int irq)
++{
++	struct irq_desc *desc = irq_desc + irq;
++	return desc->action != NULL;
++}
++
++extern struct pci_dn *get_pdn(struct pci_dev *pdev);
++
++#endif /* _POWERPC_MSI_H */
+Index: b/include/asm-powerpc/pci-bridge.h
+===================================================================
+--- a/include/asm-powerpc/pci-bridge.h
++++ b/include/asm-powerpc/pci-bridge.h
+@@ -80,6 +80,9 @@ struct pci_dn {
+ 	struct	pci_dev *pcidev;	/* back-pointer to the pci device */
+ 	struct	device_node *node;	/* back-pointer to the device_node */
+ 	u32	config_space[16];	/* saved PCI config space */
++#ifdef CONFIG_PCI_MSI
++	struct list_head msi_list;
++#endif
+ };
+ 
+ /* Get the pointer to a device_node's pci_dn */
+

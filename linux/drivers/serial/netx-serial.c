@@ -17,6 +17,8 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  */
 
+#include <linux/config.h>
+
 #if defined(CONFIG_SERIAL_NETX_CONSOLE) && defined(CONFIG_MAGIC_SYSRQ)
 #define SUPPORT_SYSRQ
 #endif
@@ -35,12 +37,14 @@
 
 #include <asm/io.h>
 #include <asm/irq.h>
-#include <mach/hardware.h>
-#include <mach/netx-regs.h>
+#include <asm/hardware.h>
+#include <asm/arch/netx-regs.h>
 
 /* We've been assigned a range on the "Low-density serial ports" major */
 #define SERIAL_NX_MAJOR	204
 #define MINOR_START	170
+
+#ifdef CONFIG_SERIAL_NETX_CONSOLE
 
 enum uart_regs {
 	UART_DR              = 0x00,
@@ -140,7 +144,7 @@ static void netx_enable_ms(struct uart_port *port)
 
 static inline void netx_transmit_buffer(struct uart_port *port)
 {
-	struct circ_buf *xmit = &port->state->xmit;
+	struct circ_buf *xmit = &port->info->xmit;
 
 	if (port->x_char) {
 		writel(port->x_char, port->membase + UART_DR);
@@ -185,7 +189,7 @@ static unsigned int netx_tx_empty(struct uart_port *port)
 
 static void netx_txint(struct uart_port *port)
 {
-	struct circ_buf *xmit = &port->state->xmit;
+	struct circ_buf *xmit = &port->info->xmit;
 
 	if (uart_circ_empty(xmit) || uart_tx_stopped(port)) {
 		netx_stop_tx(port);
@@ -198,10 +202,10 @@ static void netx_txint(struct uart_port *port)
 		uart_write_wakeup(port);
 }
 
-static void netx_rxint(struct uart_port *port)
+static void netx_rxint(struct uart_port *port, struct pt_regs *regs)
 {
 	unsigned char rx, flg, status;
-	struct tty_struct *tty = port->state->port.tty;
+	struct tty_struct *tty = port->info->tty;
 
 	while (!(readl(port->membase + UART_FR) & FR_RXFE)) {
 		rx = readl(port->membase + UART_DR);
@@ -233,7 +237,7 @@ static void netx_rxint(struct uart_port *port)
 				flg = TTY_FRAME;
 		}
 
-		if (uart_handle_sysrq_char(port, rx))
+		if (uart_handle_sysrq_char(port, rx, regs))
 			continue;
 
 		uart_insert_char(port, status, SR_OE, rx, flg);
@@ -243,9 +247,9 @@ static void netx_rxint(struct uart_port *port)
 	return;
 }
 
-static irqreturn_t netx_int(int irq, void *dev_id)
+static irqreturn_t netx_int(int irq, void *dev_id, struct pt_regs *regs)
 {
-	struct uart_port *port = dev_id;
+	struct uart_port *port = (struct uart_port *)dev_id;
 	unsigned long flags;
 	unsigned char status;
 
@@ -254,7 +258,7 @@ static irqreturn_t netx_int(int irq, void *dev_id)
 	status = readl(port->membase + UART_IIR) & IIR_MASK;
 	while (status) {
 		if (status & IIR_RIS)
-			netx_rxint(port);
+			netx_rxint(port, regs);
 		if (status & IIR_TIS)
 			netx_txint(port);
 		if (status & IIR_MIS) {
@@ -285,7 +289,6 @@ static void netx_set_mctrl(struct uart_port *port, unsigned int mctrl)
 {
 	unsigned int val;
 
-	/* FIXME: Locking needed ? */
 	if (mctrl & TIOCM_RTS) {
 		val = readl(port->membase + UART_RTS_CR);
 		writel(val | RTS_CR_RTS, port->membase + UART_RTS_CR);
@@ -336,8 +339,8 @@ static void netx_shutdown(struct uart_port *port)
 }
 
 static void
-netx_set_termios(struct uart_port *port, struct ktermios *termios,
-		   struct ktermios *old)
+netx_set_termios(struct uart_port *port, struct termios *termios,
+		   struct termios *old)
 {
 	unsigned int baud, quot;
 	unsigned char old_cr;
@@ -526,8 +529,6 @@ static struct netx_port netx_ports[] = {
 	}
 };
 
-#ifdef CONFIG_SERIAL_NETX_CONSOLE
-
 static void netx_console_putchar(struct uart_port *port, int ch)
 {
 	while (readl(port->membase + UART_FR) & FR_BUSY);
@@ -714,7 +715,6 @@ static struct platform_driver serial_netx_driver = {
 
 	.driver		= {
 		.name   = DRIVER_NAME,
-		.owner	= THIS_MODULE,
 	},
 };
 
@@ -747,4 +747,3 @@ module_exit(netx_serial_exit);
 MODULE_AUTHOR("Sascha Hauer");
 MODULE_DESCRIPTION("NetX serial port driver");
 MODULE_LICENSE("GPL");
-MODULE_ALIAS("platform:" DRIVER_NAME);

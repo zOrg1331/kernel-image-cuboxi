@@ -1,0 +1,51 @@
+From: Jerome Marchand <jmarchan@redhat.com>
+Date: Thu, 20 Aug 2009 14:38:35 +0200
+Subject: [char] fix corrupted intel_rng kernel messages
+Message-id: 4A8D43CB.7000105@redhat.com
+O-Subject: [RHEL5.5 PATCH] BZ477778: fix corrupted intel_rng kernel messages
+Bugzilla: 477778
+RH-Acked-by: Dean Nelson <dnelson@redhat.com>
+RH-Acked-by: Jiri Olsa <jolsa@redhat.com>
+
+Hi,
+
+Bugzilla:
+https://bugzilla.redhat.com/show_bug.cgi?id=477778
+
+Description:
+Someone corrupted some well formatted intel_rng kernel messages while
+cutting code down to 80 columns.
+
+Brew:
+https://brewweb.devel.redhat.com/taskinfo?taskID=1928000
+
+Upstream status:
+commit f3dc8c189a20dc5d115b8f0d07ac620e69eff05c
+
+Test status:
+Built and booted. I haven't actually seen the message.
+
+Regards,
+Jerome
+
+diff --git a/drivers/char/hw_random/intel-rng.c b/drivers/char/hw_random/intel-rng.c
+index 4c16071..0e6edb8 100644
+--- a/drivers/char/hw_random/intel-rng.c
++++ b/drivers/char/hw_random/intel-rng.c
+@@ -296,12 +296,10 @@ static int __init intel_init_hw_struct(struct intel_rng_hw *intel_rng_hw,
+ 	     (BIOS_CNTL_LOCK_ENABLE_MASK|BIOS_CNTL_WRITE_ENABLE_MASK))
+ 	    == BIOS_CNTL_LOCK_ENABLE_MASK) {
+ 		static __initdata /*const*/ char warning[] =
+-			KERN_WARNING PFX "Firmware space is locked read-only. "
+-			KERN_WARNING PFX "If you can't or\n don't want to "
+-			KERN_WARNING PFX "disable this in firmware setup, and "
+-			KERN_WARNING PFX "if\n you are certain that your "
+-			KERN_WARNING PFX "system has a functional\n RNG, try"
+-			KERN_WARNING PFX "using the 'no_fwh_detect' option.\n";
++			KERN_WARNING PFX "Firmware space is locked read-only. If you can't or\n"
++			KERN_WARNING PFX "don't want to disable this in firmware setup, and if\n"
++			KERN_WARNING PFX "you are certain that your system has a functional\n"
++			KERN_WARNING PFX "RNG, try using the 'no_fwh_detect' option.\n";
+ 
+ 		if (no_fwh_detect)
+ 			return -ENODEV;

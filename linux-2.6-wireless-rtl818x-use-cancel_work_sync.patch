@@ -1,0 +1,61 @@
+From: Stanislaw Gruszka <sgruszka@redhat.com>
+Date: Wed, 14 Jul 2010 08:13:32 -0400
+Subject: [wireless] rtl818x: use cancel_work_sync
+Message-id: <20100714081327.4740.8679.send-patch@dhcp-lab-109.englab.brq.redhat.com>
+Patchwork-id: 26881
+O-Subject: [RHEL5 PATCH 7/7] rtl818x: use cancel_work_sync
+Bugzilla: 582191
+RH-Acked-by: John Linville <linville@redhat.com>
+RH-Acked-by: Andy Gospodarek <gospo@redhat.com>
+RH-Acked-by: Jiri Pirko <jpirko@redhat.com>
+RH-Acked-by: Jarod Wilson <jarod@redhat.com>
+
+
+diff --git a/drivers/net/wireless/rtl818x/rtl8187_dev.c b/drivers/net/wireless/rtl818x/rtl8187_dev.c
+index 2e98921..5f68e61 100644
+--- a/drivers/net/wireless/rtl818x/rtl8187_dev.c
++++ b/drivers/net/wireless/rtl818x/rtl8187_dev.c
+@@ -1060,11 +1060,7 @@ static void rtl8187_stop(struct ieee80211_hw *dev)
+ 	mutex_unlock(&priv->conf_mutex);
+ 
+ 	if (!priv->is_rtl8187b)
+-#if 0 /* Not in RHEL5... */
+ 		cancel_delayed_work_sync(&priv->work);
+-#else
+-		ieee80211_cancel_work(dev, &priv->work);
+-#endif
+ }
+ 
+ static int rtl8187_add_interface(struct ieee80211_hw *dev,
+diff --git a/drivers/net/wireless/rtl818x/rtl8187_leds.c b/drivers/net/wireless/rtl818x/rtl8187_leds.c
+index 29abe95..6181821 100644
+--- a/drivers/net/wireless/rtl818x/rtl8187_leds.c
++++ b/drivers/net/wireless/rtl818x/rtl8187_leds.c
+@@ -198,13 +198,8 @@ void rtl8187_leds_init(struct ieee80211_hw *dev, u16 custid)
+ 	rtl8187_unregister_led(&priv->led_tx);
+ error:
+ 	/* If registration of either failed, cancel delayed work */
+-#if 0 /* Not in RHEL5... */
+ 	cancel_delayed_work_sync(&priv->led_off);
+ 	cancel_delayed_work_sync(&priv->led_on);
+-#else
+-	cancel_delayed_work(&priv->led_off);
+-	cancel_delayed_work(&priv->led_on);
+-#endif
+ }
+ 
+ void rtl8187_leds_exit(struct ieee80211_hw *dev)
+@@ -215,13 +210,8 @@ void rtl8187_leds_exit(struct ieee80211_hw *dev)
+ 	ieee80211_queue_delayed_work(dev, &priv->led_off, 0);
+ 	rtl8187_unregister_led(&priv->led_rx);
+ 	rtl8187_unregister_led(&priv->led_tx);
+-#if 0 /* Not in RHEL5... */
+ 	cancel_delayed_work_sync(&priv->led_off);
+ 	cancel_delayed_work_sync(&priv->led_on);
+-#else
+-	cancel_delayed_work(&priv->led_off);
+-	cancel_delayed_work(&priv->led_on);
+-#endif
+ }
+ #endif /* def CONFIG_RTL8187_LED */
+ 

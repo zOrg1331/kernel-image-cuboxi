@@ -1,6 +1,6 @@
 /*
  * net/tipc/bcast.h: Include file for TIPC broadcast code
- *
+ * 
  * Copyright (c) 2003-2006, Ericsson AB
  * Copyright (c) 2005, Wind River Systems
  * All rights reserved.
@@ -41,12 +41,12 @@
 #define WSIZE 32
 
 /**
- * struct tipc_node_map - set of node identifiers
+ * struct node_map - set of node identifiers
  * @count: # of nodes in set
  * @map: bitmap of node identifiers that are in the set
  */
 
-struct tipc_node_map {
+struct node_map {
 	u32 count;
 	u32 map[MAX_NODES / WSIZE];
 };
@@ -68,16 +68,29 @@ struct port_list {
 };
 
 
-struct tipc_node;
+struct node;
 
-extern const char tipc_bclink_name[];
+extern char tipc_bclink_name[];
 
+
+/**
+ * nmap_get - determine if node exists in a node map
+ */
+
+static inline int tipc_nmap_get(struct node_map *nm_ptr, u32 node)
+{
+	int n = tipc_node(node);
+	int w = n / WSIZE;
+	int b = n % WSIZE;
+
+	return nm_ptr->map[w] & (1 << b);
+}
 
 /**
  * nmap_add - add a node to a node map
  */
 
-static inline void tipc_nmap_add(struct tipc_node_map *nm_ptr, u32 node)
+static inline void tipc_nmap_add(struct node_map *nm_ptr, u32 node)
 {
 	int n = tipc_node(node);
 	int w = n / WSIZE;
@@ -89,11 +102,11 @@ static inline void tipc_nmap_add(struct tipc_node_map *nm_ptr, u32 node)
 	}
 }
 
-/**
+/** 
  * nmap_remove - remove a node from a node map
  */
 
-static inline void tipc_nmap_remove(struct tipc_node_map *nm_ptr, u32 node)
+static inline void tipc_nmap_remove(struct node_map *nm_ptr, u32 node)
 {
 	int n = tipc_node(node);
 	int w = n / WSIZE;
@@ -109,7 +122,7 @@ static inline void tipc_nmap_remove(struct tipc_node_map *nm_ptr, u32 node)
  * nmap_equal - test for equality of node maps
  */
 
-static inline int tipc_nmap_equal(struct tipc_node_map *nm_a, struct tipc_node_map *nm_b)
+static inline int tipc_nmap_equal(struct node_map *nm_a, struct node_map *nm_b)
 {
 	return !memcmp(nm_a, nm_b, sizeof(*nm_a));
 }
@@ -121,10 +134,10 @@ static inline int tipc_nmap_equal(struct tipc_node_map *nm_a, struct tipc_node_m
  * @nm_diff: output node map A-B (i.e. nodes of A that are not in B)
  */
 
-static inline void tipc_nmap_diff(struct tipc_node_map *nm_a, struct tipc_node_map *nm_b,
-				  struct tipc_node_map *nm_diff)
+static inline void tipc_nmap_diff(struct node_map *nm_a, struct node_map *nm_b,
+				  struct node_map *nm_diff)
 {
-	int stop = ARRAY_SIZE(nm_a->map);
+	int stop = sizeof(nm_a->map) / sizeof(u32);
 	int w;
 	int b;
 	u32 map;
@@ -177,7 +190,7 @@ static inline void tipc_port_list_add(struct port_list *pl_ptr, u32 port)
 
 /**
  * port_list_free - free dynamically created entries in port_list chain
- *
+ * 
  * Note: First item is on stack, so it doesn't need to be released
  */
 
@@ -195,12 +208,12 @@ static inline void tipc_port_list_free(struct port_list *pl_ptr)
 
 int  tipc_bclink_init(void);
 void tipc_bclink_stop(void);
-void tipc_bclink_acknowledge(struct tipc_node *n_ptr, u32 acked);
+void tipc_bclink_acknowledge(struct node *n_ptr, u32 acked);
 int  tipc_bclink_send_msg(struct sk_buff *buf);
 void tipc_bclink_recv_pkt(struct sk_buff *buf);
 u32  tipc_bclink_get_last_sent(void);
-u32  tipc_bclink_acks_missing(struct tipc_node *n_ptr);
-void tipc_bclink_check_gap(struct tipc_node *n_ptr, u32 seqno);
+u32  tipc_bclink_acks_missing(struct node *n_ptr);
+void tipc_bclink_check_gap(struct node *n_ptr, u32 seqno);
 int  tipc_bclink_stats(char *stats_buf, const u32 buf_size);
 int  tipc_bclink_reset_stats(void);
 int  tipc_bclink_set_queue_limits(u32 limit);

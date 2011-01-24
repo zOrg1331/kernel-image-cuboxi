@@ -1,0 +1,663 @@
+From: John Linville <linville@redhat.com>
+Date: Tue, 1 Dec 2009 20:12:31 -0500
+Subject: [net] wireless support updates from 2.6.32
+Message-id: <20091201201230.GB10409@redhat.com>
+Patchwork-id: 21599
+O-Subject: [RHEL5.5 PATCH] infrastructure updates to support wireless updates
+	from 2.6.32
+Bugzilla: 456943 474328 514661 516859
+RH-Acked-by: David S. Miller <davem@redhat.com>
+
+This patch represents kernel infrastructure changes needed to support
+the backport of wireless bits from upstream kernel 2.6.32.  Highlights
+include krealloc, a number of skb manipulation routines, rol{8,16}
+and ror{8,16}, an implementation of "%pM" support for printk, changes
+to WARN_ON to allow using it within an "if (WARN_ON())" expression,
+support for NETDEV_PRE_UP notification, and definitions for ERFKILL.
+
+BZ456943
+BZ474328
+BZ514661
+BZ516859
+
+ include/asm-alpha/errno.h   |    2
+ include/asm-generic/bug.h   |   11 ++-
+ include/asm-generic/errno.h |    2
+ include/asm-mips/errno.h    |    2
+ include/asm-parisc/errno.h  |    1
+ include/asm-powerpc/bug.h   |   10 ++-
+ include/asm-sparc/errno.h   |    2
+ include/asm-sparc64/errno.h |    2
+ include/asm-xtensa/bug.h    |    6 +-
+ include/linux/bitops.h      |   40 ++++++++++++++
+ include/linux/kernel.h      |    3 +
+ include/linux/notifier.h    |   14 ++++
+ include/linux/pci_ids.h     |    7 ++
+ include/linux/skbuff.h      |  125 ++++++++++++++++++++++++++++++++++++++------
+ include/linux/slab.h        |    2
+ lib/vsprintf.c              |   40 ++++++++++----
+ mm/util.c                   |   60 +++++++++++++++++++++
+ net/core/dev.c              |    5 +
+ 18 files changed, 299 insertions(+), 35 deletions(-)
+
+Patches tested by me, Stanislaw, and a few others with (in my case)
+moderate to heavy usage over the last couple of weeks.
+
+Signed-off-by: Don Zickus <dzickus@redhat.com>
+
+diff --git a/include/asm-alpha/errno.h b/include/asm-alpha/errno.h
+index 69e2655..b6cb4f1 100644
+--- a/include/asm-alpha/errno.h
++++ b/include/asm-alpha/errno.h
+@@ -120,4 +120,6 @@
+ #define	EOWNERDEAD	136	/* Owner died */
+ #define	ENOTRECOVERABLE	137	/* State not recoverable */
+ 
++#define ERFKILL		138	/* Operation not possible due to RF-kill */
++
+ #endif
+diff --git a/include/asm-generic/bug.h b/include/asm-generic/bug.h
+index 8cdf2a7..04be02e 100644
+--- a/include/asm-generic/bug.h
++++ b/include/asm-generic/bug.h
+@@ -20,12 +20,14 @@ extern const char *print_tainted(void);
+ #endif
+ 
+ #ifndef HAVE_ARCH_WARN_ON
+-#define WARN_ON(condition) do { \
++#define WARN_ON(condition) ({ \
++	int __ret_warn_on = !!(condition); \
+ 	if (unlikely((condition)!=0)) { \
+ 		printk("BUG: warning at %s:%d/%s() (%s)\n", __FILE__, __LINE__, __FUNCTION__, print_tainted()); \
+ 		dump_stack(); \
+ 	} \
+-} while (0)
++	unlikely(__ret_warn_on); \
++})
+ #endif
+ 
+ #else /* !CONFIG_BUG */
+@@ -38,7 +40,10 @@ extern const char *print_tainted(void);
+ #endif
+ 
+ #ifndef HAVE_ARCH_WARN_ON
+-#define WARN_ON(condition) do { if (condition) ; } while(0)
++#define WARN_ON(condition) ({ \
++	int __ret_warn_on = !!(condition); \
++	unlikely(__ret_warn_on); \
++})
+ #endif
+ #endif
+ 
+diff --git a/include/asm-generic/errno.h b/include/asm-generic/errno.h
+index e8852c0..28cc03b 100644
+--- a/include/asm-generic/errno.h
++++ b/include/asm-generic/errno.h
+@@ -106,4 +106,6 @@
+ #define	EOWNERDEAD	130	/* Owner died */
+ #define	ENOTRECOVERABLE	131	/* State not recoverable */
+ 
++#define ERFKILL		132	/* Operation not possible due to RF-kill */
++
+ #endif
+diff --git a/include/asm-mips/errno.h b/include/asm-mips/errno.h
+index 3c0d840..e21f01d 100644
+--- a/include/asm-mips/errno.h
++++ b/include/asm-mips/errno.h
+@@ -119,6 +119,8 @@
+ #define	EOWNERDEAD	165	/* Owner died */
+ #define	ENOTRECOVERABLE	166	/* State not recoverable */
+ 
++#define ERFKILL		167	/* Operation not possible due to RF-kill */
++
+ #define EDQUOT		1133	/* Quota exceeded */
+ 
+ #ifdef __KERNEL__
+diff --git a/include/asm-parisc/errno.h b/include/asm-parisc/errno.h
+index e2f3ddc..07f1520 100644
+--- a/include/asm-parisc/errno.h
++++ b/include/asm-parisc/errno.h
+@@ -120,5 +120,6 @@
+ #define EOWNERDEAD	254	/* Owner died */
+ #define ENOTRECOVERABLE	255	/* State not recoverable */
+ 
++#define ERFKILL		256	/* Operation not possible due to RF-kill */
+ 
+ #endif
+diff --git a/include/asm-powerpc/bug.h b/include/asm-powerpc/bug.h
+index f44b529..cce5b59 100644
+--- a/include/asm-powerpc/bug.h
++++ b/include/asm-powerpc/bug.h
+@@ -70,9 +70,10 @@ struct bug_entry *find_bug(unsigned long bugaddr);
+ 		    "i" (__FILE__), "i" (__FUNCTION__));	\
+ } while (0)
+ 
+-#define WARN_ON(x) do {						\
+-	if (__builtin_constant_p(x)) {				\
+-		if (x)						\
++#define WARN_ON(x) ({						\
++	int __ret_warn_on = !!(x);				\
++	if (__builtin_constant_p(__ret_warn_on)) {		\
++		if (__ret_warn_on)				\
+ 			__WARN();				\
+ 	} else {						\
+ 		__asm__ __volatile__(				\
+@@ -84,7 +85,8 @@ struct bug_entry *find_bug(unsigned long bugaddr);
+ 		    "i" (__LINE__ + BUG_WARNING_TRAP),		\
+ 		    "i" (__FILE__), "i" (__FUNCTION__));	\
+ 	}							\
+-} while (0)
++	unlikely(__ret_warn_on);				\
++})
+ 
+ #define HAVE_ARCH_BUG
+ #define HAVE_ARCH_BUG_ON
+diff --git a/include/asm-sparc/errno.h b/include/asm-sparc/errno.h
+index ed41c8b..2ebea34 100644
+--- a/include/asm-sparc/errno.h
++++ b/include/asm-sparc/errno.h
+@@ -111,4 +111,6 @@
+ #define	EOWNERDEAD	132	/* Owner died */
+ #define	ENOTRECOVERABLE	133	/* State not recoverable */
+ 
++#define ERFKILL		134	/* Operation not possible due to RF-kill */
++
+ #endif
+diff --git a/include/asm-sparc64/errno.h b/include/asm-sparc64/errno.h
+index ea3509e..00bb1dc 100644
+--- a/include/asm-sparc64/errno.h
++++ b/include/asm-sparc64/errno.h
+@@ -111,4 +111,6 @@
+ #define	EOWNERDEAD	132	/* Owner died */
+ #define	ENOTRECOVERABLE	133	/* State not recoverable */
+ 
++#define ERFKILL		134	/* Operation not possible due to RF-kill */
++
+ #endif /* !(_SPARC64_ERRNO_H) */
+diff --git a/include/asm-xtensa/bug.h b/include/asm-xtensa/bug.h
+index 5670365..bf36648 100644
+--- a/include/asm-xtensa/bug.h
++++ b/include/asm-xtensa/bug.h
+@@ -31,11 +31,13 @@
+ 
+ #define BUG_ON(condition) do { if (unlikely((condition)!=0)) BUG(); } while(0)
+ #define PAGE_BUG(page) do {  BUG(); } while (0)
+-#define WARN_ON(condition) do {						   \
++#define WARN_ON(condition) ({						   \
++  int __ret_warn_on = !!(condition);					   \
+   if (unlikely((condition)!=0)) {					   \
+     printk ("Warning in %s at %s:%d\n", __FUNCTION__, __FILE__, __LINE__); \
+       dump_stack();							   \
+   }									   \
+-} while (0)
++  unlikely(__ret_warn_on);						   \
++})
+ 
+ #endif	/* _XTENSA_BUG_H */
+diff --git a/include/linux/bitops.h b/include/linux/bitops.h
+index f9e5279..04ea25c 100644
+--- a/include/linux/bitops.h
++++ b/include/linux/bitops.h
+@@ -53,6 +53,46 @@ static inline __u32 ror32(__u32 word, unsigned int shift)
+ 	return (word >> shift) | (word << (32 - shift));
+ }
+ 
++/**
++ * rol16 - rotate a 16-bit value left
++ * @word: value to rotate
++ * @shift: bits to roll
++ */
++static inline __u16 rol16(__u16 word, unsigned int shift)
++{
++	return (word << shift) | (word >> (16 - shift));
++}
++
++/**
++ * ror16 - rotate a 16-bit value right
++ * @word: value to rotate
++ * @shift: bits to roll
++ */
++static inline __u16 ror16(__u16 word, unsigned int shift)
++{
++	return (word >> shift) | (word << (16 - shift));
++}
++
++/**
++ * rol8 - rotate an 8-bit value left
++ * @word: value to rotate
++ * @shift: bits to roll
++ */
++static inline __u8 rol8(__u8 word, unsigned int shift)
++{
++	return (word << shift) | (word >> (8 - shift));
++}
++
++/**
++ * ror8 - rotate an 8-bit value right
++ * @word: value to rotate
++ * @shift: bits to roll
++ */
++static inline __u8 ror8(__u8 word, unsigned int shift)
++{
++	return (word >> shift) | (word << (8 - shift));
++}
++
+ static inline unsigned fls_long(unsigned long l)
+ {
+ 	if (sizeof(l) == 4)
+diff --git a/include/linux/kernel.h b/include/linux/kernel.h
+index aa6c75a..f12cc3e 100644
+--- a/include/linux/kernel.h
++++ b/include/linux/kernel.h
+@@ -19,6 +19,9 @@
+ 
+ extern const char linux_banner[];
+ 
++#define USHORT_MAX	((u16)(~0U))
++#define SHORT_MAX	((s16)(USHORT_MAX>>1))
++#define SHORT_MIN	(-SHORT_MAX - 1)
+ #define INT_MAX		((int)(~0U>>1))
+ #define INT_MIN		(-INT_MAX - 1)
+ #define UINT_MAX	(~0U)
+diff --git a/include/linux/notifier.h b/include/linux/notifier.h
+index 55a2c2f..d3ef3f6 100644
+--- a/include/linux/notifier.h
++++ b/include/linux/notifier.h
+@@ -116,6 +116,19 @@ extern int raw_notifier_call_chain(struct raw_notifier_head *,
+  */
+ #define NOTIFY_STOP		(NOTIFY_OK|NOTIFY_STOP_MASK)
+ 
++/* Encapsulate (negative) errno value (in particular, NOTIFY_BAD <=> EPERM). */
++static inline int notifier_from_errno(int err)
++{
++	return NOTIFY_STOP_MASK | (NOTIFY_OK - err);
++}
++
++/* Restore (negative) errno value from notify return value. */
++static inline int notifier_to_errno(int ret)
++{
++	ret &= ~NOTIFY_STOP_MASK;
++	return ret > NOTIFY_OK ? NOTIFY_OK - ret : 0;
++}
++
+ /*
+  *	Declared notifiers so far. I can imagine quite a few more chains
+  *	over time (eg laptop power reset chains, reboot chain (to clean 
+@@ -140,6 +153,7 @@ extern int raw_notifier_call_chain(struct raw_notifier_head *,
+ #define NETDEV_CHANGENAME	0x000A
+ #define NETDEV_FEAT_CHANGE	0x000B
+ #define NETDEV_BONDING_FAILOVER 0x000C
++#define NETDEV_PRE_UP		0x000D
+ 
+ #define SYS_DOWN	0x0001	/* Notify of system down */
+ #define SYS_RESTART	SYS_DOWN
+diff --git a/include/linux/pci_ids.h b/include/linux/pci_ids.h
+index 15ecf54..742a3f0 100644
+--- a/include/linux/pci_ids.h
++++ b/include/linux/pci_ids.h
+@@ -817,6 +817,7 @@
+ #define PCI_DEVICE_ID_PROMISE_20276	0x5275
+ #define PCI_DEVICE_ID_PROMISE_20277	0x7275
+ 
++#define PCI_VENDOR_ID_FOXCONN           0x105b
+ 
+ #define PCI_VENDOR_ID_UMC		0x1060
+ #define PCI_DEVICE_ID_UMC_UM8673F	0x0101
+@@ -1911,6 +1912,8 @@
+ 
+ #define PCI_VENDOR_ID_SAMSUNG		0x144d
+ 
++#define PCI_VENDOR_ID_AMBIT		0x1468
++
+ #define PCI_VENDOR_ID_MYRICOM		0x14c1
+ 
+ #define PCI_VENDOR_ID_TITAN		0x14D2
+@@ -2128,6 +2131,10 @@
+ #define PCI_DEVICE_ID_JMICRON_JMB366	0x2366
+ #define PCI_DEVICE_ID_JMICRON_JMB368	0x2368
+ 
++#define PCI_VENDOR_ID_QMI		0x1a32
++
++#define PCI_VENDOR_ID_AZWAVE		0x1a3b
++
+ #define PCI_VENDOR_ID_TEKRAM		0x1de1
+ #define PCI_DEVICE_ID_TEKRAM_DC290	0xdc29
+ 
+diff --git a/include/linux/skbuff.h b/include/linux/skbuff.h
+index dfbb024..8f8f35a 100644
+--- a/include/linux/skbuff.h
++++ b/include/linux/skbuff.h
+@@ -619,6 +619,22 @@ static inline __u32 skb_queue_len(const struct sk_buff_head *list_)
+ 	return list_->qlen;
+ }
+ 
++/**
++ *	__skb_queue_head_init - initialize non-spinlock portions of sk_buff_head
++ *	@list: queue to initialize
++ *
++ *	This initializes only the list and queue length aspects of
++ *	an sk_buff_head object.  This allows to initialize the list
++ *	aspects of an sk_buff_head without reinitializing things like
++ *	the spinlock.  It can also be used for on-stack sk_buff_head
++ *	objects where the spinlock is known to not be used.
++ */
++static inline void __skb_queue_head_init(struct sk_buff_head *list)
++{
++	list->prev = list->next = (struct sk_buff *)list;
++	list->qlen = 0;
++}
++
+ /*
+  * This function creates a split out lock class for each invocation;
+  * this is needed for now since a whole lot of users of the skb-queue
+@@ -630,8 +646,7 @@ static inline __u32 skb_queue_len(const struct sk_buff_head *list_)
+ static inline void skb_queue_head_init(struct sk_buff_head *list)
+ {
+ 	spin_lock_init(&list->lock);
+-	list->prev = list->next = (struct sk_buff *)list;
+-	list->qlen = 0;
++	__skb_queue_head_init(list);
+ }
+ 
+ /*
+@@ -640,6 +655,93 @@ static inline void skb_queue_head_init(struct sk_buff_head *list)
+  *	The "__skb_xxxx()" functions are the non-atomic ones that
+  *	can only be called with interrupts disabled.
+  */
++extern void        skb_insert(struct sk_buff *old, struct sk_buff *newsk, struct sk_buff_head *list);
++static inline void __skb_insert(struct sk_buff *newsk,
++				struct sk_buff *prev, struct sk_buff *next,
++				struct sk_buff_head *list)
++{
++	newsk->next = next;
++	newsk->prev = prev;
++	next->prev  = prev->next = newsk;
++	list->qlen++;
++}
++
++static inline void __skb_queue_splice(const struct sk_buff_head *list,
++				      struct sk_buff *prev,
++				      struct sk_buff *next)
++{
++	struct sk_buff *first = list->next;
++	struct sk_buff *last = list->prev;
++
++	first->prev = prev;
++	prev->next = first;
++
++	last->next = next;
++	next->prev = last;
++}
++
++/**
++ *	skb_queue_splice - join two skb lists, this is designed for stacks
++ *	@list: the new list to add
++ *	@head: the place to add it in the first list
++ */
++static inline void skb_queue_splice(const struct sk_buff_head *list,
++				    struct sk_buff_head *head)
++{
++	if (!skb_queue_empty(list)) {
++		__skb_queue_splice(list, (struct sk_buff *) head, head->next);
++		head->qlen += list->qlen;
++	}
++}
++
++/**
++ *	skb_queue_splice - join two skb lists and reinitialise the emptied list
++ *	@list: the new list to add
++ *	@head: the place to add it in the first list
++ *
++ *	The list at @list is reinitialised
++ */
++static inline void skb_queue_splice_init(struct sk_buff_head *list,
++					 struct sk_buff_head *head)
++{
++	if (!skb_queue_empty(list)) {
++		__skb_queue_splice(list, (struct sk_buff *) head, head->next);
++		head->qlen += list->qlen;
++		__skb_queue_head_init(list);
++	}
++}
++
++/**
++ *	skb_queue_splice_tail - join two skb lists, each list being a queue
++ *	@list: the new list to add
++ *	@head: the place to add it in the first list
++ */
++static inline void skb_queue_splice_tail(const struct sk_buff_head *list,
++					 struct sk_buff_head *head)
++{
++	if (!skb_queue_empty(list)) {
++		__skb_queue_splice(list, head->prev, (struct sk_buff *) head);
++		head->qlen += list->qlen;
++	}
++}
++
++/**
++ *	skb_queue_splice_tail - join two skb lists and reinitialise the emptied list
++ *	@list: the new list to add
++ *	@head: the place to add it in the first list
++ *
++ *	Each of the lists is a queue.
++ *	The list at @list is reinitialised
++ */
++static inline void skb_queue_splice_tail_init(struct sk_buff_head *list,
++					      struct sk_buff_head *head)
++{
++	if (!skb_queue_empty(list)) {
++		__skb_queue_splice(list, head->prev, (struct sk_buff *) head);
++		head->qlen += list->qlen;
++		__skb_queue_head_init(list);
++	}
++}
+ 
+ /**
+  *	__skb_queue_after - queue a buffer at the list head
+@@ -736,20 +838,6 @@ static inline struct sk_buff *__skb_dequeue(struct sk_buff_head *list)
+ 
+ 
+ /*
+- *	Insert a packet on a list.
+- */
+-extern void        skb_insert(struct sk_buff *old, struct sk_buff *newsk, struct sk_buff_head *list);
+-static inline void __skb_insert(struct sk_buff *newsk,
+-				struct sk_buff *prev, struct sk_buff *next,
+-				struct sk_buff_head *list)
+-{
+-	newsk->next = next;
+-	newsk->prev = prev;
+-	next->prev  = prev->next = newsk;
+-	list->qlen++;
+-}
+-
+-/*
+  *	Place a packet after a given packet in a list.
+  */
+ extern void	   skb_append(struct sk_buff *old, struct sk_buff *newsk, struct sk_buff_head *list);
+@@ -1451,6 +1539,11 @@ static inline void kunmap_skb_frag(void *vaddr)
+ 		     prefetch(skb->next), (skb != (struct sk_buff *)(queue));	\
+ 		     skb = skb->next)
+ 
++#define skb_queue_walk_safe(queue, skb, tmp)					\
++		for (skb = (queue)->next, tmp = skb->next;			\
++		     skb != (struct sk_buff *)(queue);				\
++		     skb = tmp, tmp = skb->next)
++
+ #define skb_queue_reverse_walk(queue, skb) \
+ 		for (skb = (queue)->prev;					\
+ 		     prefetch(skb->prev), (skb != (struct sk_buff *)(queue));	\
+diff --git a/include/linux/slab.h b/include/linux/slab.h
+index 82b9e62..a3de573 100644
+--- a/include/linux/slab.h
++++ b/include/linux/slab.h
+@@ -214,6 +214,8 @@ static inline void *kmemdup(const void *src, size_t len, gfp_t gfp)
+ 	return p;
+ }
+ 
++extern void * __krealloc(const void *, size_t, gfp_t);
++extern void * krealloc(const void *, size_t, gfp_t);
+ extern void kfree(const void *);
+ extern unsigned int ksize(const void *);
+ extern int slab_is_available(void);
+diff --git a/lib/vsprintf.c b/lib/vsprintf.c
+index bed7229..e1202d0 100644
+--- a/lib/vsprintf.c
++++ b/lib/vsprintf.c
+@@ -26,6 +26,16 @@
+ #include <asm/page.h>		/* for PAGE_SIZE */
+ #include <asm/div64.h>
+ 
++#define MAC_FMT "%02x:%02x:%02x:%02x:%02x:%02x"
++#define MAC_BUF_SIZE 18
++#define DECLARE_MAC_BUF(var) char var[MAC_BUF_SIZE]
++static inline char *print_mac(char *buf, const unsigned char *addr)
++{
++	sprintf(buf, MAC_FMT,
++		addr[0], addr[1], addr[2], addr[3], addr[4], addr[5]);
++	return buf;
++}
++
+ /**
+  * simple_strtoul - convert a string to an unsigned long
+  * @cp: The start of the string
+@@ -271,6 +281,7 @@ int vsnprintf(char *buf, size_t size, const char *fmt, va_list args)
+ 				/* 'z' support added 23/7/1999 S.H.    */
+ 				/* 'z' changed to 'Z' --davidm 1/25/99 */
+ 				/* 't' added for ptrdiff_t */
++	DECLARE_MAC_BUF(mac);
+ 
+ 	/* Reject out-of-range values early.  Large positive sizes are
+ 	   used for unknown buffer sizes. */
+@@ -375,8 +386,27 @@ int vsnprintf(char *buf, size_t size, const char *fmt, va_list args)
+ 				}
+ 				continue;
+ 
++			case 'p':
++				if (field_width == -1) {
++					field_width = 2*sizeof(void *);
++					flags |= ZEROPAD;
++				}
++				if (fmt[1] != 'M') {
++					str = number(str, end,
++							(unsigned long) va_arg(args, void *),
++							16, field_width, precision, flags);
++				} else {
++					print_mac(mac, (unsigned char *)
++						va_arg(args, unsigned char *));
++					s = mac;
++					fmt++;
++					goto mac_addr_output; /* ugly... */
++				}
++				continue;
++
+ 			case 's':
+ 				s = va_arg(args, char *);
++mac_addr_output:
+ 				if ((unsigned long)s < PAGE_SIZE)
+ 					s = "<NULL>";
+ 
+@@ -401,16 +431,6 @@ int vsnprintf(char *buf, size_t size, const char *fmt, va_list args)
+ 				}
+ 				continue;
+ 
+-			case 'p':
+-				if (field_width == -1) {
+-					field_width = 2*sizeof(void *);
+-					flags |= ZEROPAD;
+-				}
+-				str = number(str, end,
+-						(unsigned long) va_arg(args, void *),
+-						16, field_width, precision, flags);
+-				continue;
+-
+ 
+ 			case 'n':
+ 				/* FIXME:
+diff --git a/mm/util.c b/mm/util.c
+index 7368479..83e71a7 100644
+--- a/mm/util.c
++++ b/mm/util.c
+@@ -40,6 +40,66 @@ char *kstrdup(const char *s, gfp_t gfp)
+ }
+ EXPORT_SYMBOL(kstrdup);
+ 
++/**
++ * __krealloc - like krealloc() but don't free @p.
++ * @p: object to reallocate memory for.
++ * @new_size: how many bytes of memory are required.
++ * @flags: the type of memory to allocate.
++ *
++ * This function is like krealloc() except it never frees the originally
++ * allocated buffer. Use this if you don't want to free the buffer immediately
++ * like, for example, with RCU.
++ */
++void *__krealloc(const void *p, size_t new_size, gfp_t flags)
++{
++	void *ret;
++	size_t ks = 0;
++
++	if (unlikely(!new_size))
++		return NULL;
++
++	if (p)
++		ks = ksize(p);
++
++	if (ks >= new_size)
++		return (void *)p;
++
++	ret = kmalloc_track_caller(new_size, flags);
++	if (ret && p)
++		memcpy(ret, p, ks);
++
++	return ret;
++}
++EXPORT_SYMBOL(__krealloc);
++
++/**
++ * krealloc - reallocate memory. The contents will remain unchanged.
++ * @p: object to reallocate memory for.
++ * @new_size: how many bytes of memory are required.
++ * @flags: the type of memory to allocate.
++ *
++ * The contents of the object pointed to are preserved up to the
++ * lesser of the new and old sizes.  If @p is %NULL, krealloc()
++ * behaves exactly like kmalloc().  If @size is 0 and @p is not a
++ * %NULL pointer, the object pointed to is freed.
++ */
++void *krealloc(const void *p, size_t new_size, gfp_t flags)
++{
++	void *ret;
++
++	if (unlikely(!new_size)) {
++		kfree(p);
++		return NULL;
++	}
++
++	ret = __krealloc(p, new_size, flags);
++	if (ret && p != ret)
++		kfree(p);
++
++	return ret;
++}
++EXPORT_SYMBOL(krealloc);
++
+ /*
+  * strndup_user - duplicate an existing string from user space
+  *
+diff --git a/net/core/dev.c b/net/core/dev.c
+index ad4ecb6..adf5434 100644
+--- a/net/core/dev.c
++++ b/net/core/dev.c
+@@ -922,6 +922,11 @@ int dev_open(struct net_device *dev)
+ 	if (!netif_device_present(dev))
+ 		return -ENODEV;
+ 
++	ret = call_netdevice_notifiers(NETDEV_PRE_UP, dev);
++	ret = notifier_to_errno(ret);
++	if (ret)
++		return ret;
++
+ 	/*
+ 	 *	Call device private open method
+ 	 */

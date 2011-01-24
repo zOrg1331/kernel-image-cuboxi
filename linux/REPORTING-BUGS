@@ -10,15 +10,11 @@ bug report. This explains what you should do with the "Oops" information
 to make it useful to the recipient.
 
       Send the output to the maintainer of the kernel area that seems to
-be involved with the problem, and cc the relevant mailing list. Don't
-worry too much about getting the wrong person. If you are unsure send it
-to the person responsible for the code relevant to what you were doing.
-If it occurs repeatably try and describe how to recreate it. That is
-worth even more than the oops itself.  The list of maintainers and
-mailing lists is in the MAINTAINERS file in this directory.  If you
-know the file name that causes the problem you can use the following
-command in this directory to find some of the maintainers of that file:
-     perl scripts/get_maintainer.pl -f <filename>
+be involved with the problem. Don't worry too much about getting the
+wrong person. If you are unsure send it to the person responsible for the
+code relevant to what you were doing. If it occurs repeatably try and
+describe how to recreate it. That is worth even more than the oops itself.
+The list of maintainers is in the MAINTAINERS file in this directory.
 
       If it is a security bug, please copy the Security Contact listed
 in the MAINTAINERS file.  They can help coordinate bugfix and disclosure.
@@ -44,9 +40,7 @@ summary from [1.]>" for easy identification by the developers.
 [1.] One line summary of the problem:
 [2.] Full description of the problem/report:
 [3.] Keywords (i.e., modules, networking, kernel):
-[4.] Kernel information
-[4.1.] Kernel version (from /proc/version):
-[4.2.] Kernel .config file:
+[4.] Kernel version (from /proc/version):
 [5.] Most recent kernel version which did not have the bug:
 [6.] Output of Oops.. message (if applicable) with symbolic information
      resolved (see Documentation/oops-tracing.txt)

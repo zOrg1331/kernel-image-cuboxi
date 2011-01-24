@@ -1,0 +1,175 @@
+From: Rik van Riel <riel@redhat.com>
+Date: Fri, 15 Feb 2008 15:48:54 -0500
+Subject: [x86] mprotect performance improvements
+Message-id: 20080215154854.1cb54999@bree.surriel.com
+O-Subject: [RHEL 5.2 PATCH 2/2] mprotect performance improvements
+Bugzilla: 412731
+
+This patch introduces the kernel code to use the batched page table update
+mechanism in the hypervisor for mprotect.  This brings Xen mprotect performance
+to an acceptable level for SAP.
+
+This changeset is in the upstream Xen codebase and got tested for a week at
+the SAP virt workshop by ourselves and other participants.
+
+Fixes bug 412731
+
+Acked-by: Eduardo Habkost <ehabkost@redhat.com>
+
+diff --git a/arch/i386/mm/hypervisor.c b/arch/i386/mm/hypervisor.c
+index dcb0e5f..d09507b 100644
+--- a/arch/i386/mm/hypervisor.c
++++ b/arch/i386/mm/hypervisor.c
+@@ -456,3 +456,36 @@ int write_ldt_entry(void *ldt, int entry, __u32 entry_a, __u32 entry_b)
+ 		mach_lp, (u64)entry_a | ((u64)entry_b<<32));
+ }
+ #endif
++
++#define MAX_BATCHED_FULL_PTES 32
++
++int xen_change_pte_range(struct mm_struct *mm, pmd_t *pmd,
++			 unsigned long addr, unsigned long end, pgprot_t newprot)
++{
++	int rc = 0, i = 0;
++	mmu_update_t u[MAX_BATCHED_FULL_PTES];
++	pte_t *pte;
++	spinlock_t *ptl;
++
++	if (!xen_feature(XENFEAT_mmu_pt_update_preserve_ad))
++		return 0;
++
++	pte = pte_offset_map_lock(mm, pmd, addr, &ptl);
++	do {
++		if (pte_present(*pte)) {
++			u[i].ptr = virt_to_machine(pte) | MMU_PT_UPDATE_PRESERVE_AD;
++			u[i].val = __pte_val(pte_modify(*pte, newprot));
++			if (++i == MAX_BATCHED_FULL_PTES) {
++				if ((rc = HYPERVISOR_mmu_update(
++					&u[0], i, NULL, DOMID_SELF)) != 0)
++					break;
++				i = 0;
++			}
++		}
++	} while (pte++, addr += PAGE_SIZE, addr != end);
++	if (i)
++		rc = HYPERVISOR_mmu_update( &u[0], i, NULL, DOMID_SELF);
++	pte_unmap_unlock(pte - 1, ptl);
++	BUG_ON(rc && rc != -ENOSYS);
++	return !rc;
++}
+diff --git a/include/asm-generic/pgtable.h b/include/asm-generic/pgtable.h
+index c2059a3..cac50cb 100644
+--- a/include/asm-generic/pgtable.h
++++ b/include/asm-generic/pgtable.h
+@@ -188,6 +188,10 @@ static inline void ptep_set_wrprotect(struct mm_struct *mm, unsigned long addres
+ })
+ #endif
+ 
++#ifndef arch_change_pte_range
++#define arch_change_pte_range(mm, pmd, addr, end, newprot) 0
++#endif
++
+ #ifndef __ASSEMBLY__
+ /*
+  * When walking page tables, we usually want to skip any p?d_none entries;
+diff --git a/include/asm-i386/mach-xen/asm/page.h b/include/asm-i386/mach-xen/asm/page.h
+index 57bb065..b16b28b 100644
+--- a/include/asm-i386/mach-xen/asm/page.h
++++ b/include/asm-i386/mach-xen/asm/page.h
+@@ -99,6 +99,7 @@ static inline unsigned long long pte_val_ma(pte_t x)
+ {
+ 	return ((unsigned long long)x.pte_high << 32) | x.pte_low;
+ }
++#define __pte_val(x) pte_val_ma(x)
+ static inline unsigned long long pte_val(pte_t x)
+ {
+ 	unsigned long long ret = pte_val_ma(x);
+@@ -133,6 +134,7 @@ typedef struct { unsigned long pgprot; } pgprot_t;
+ 			 machine_to_phys((x).pte_low) : \
+ 			 (x).pte_low)
+ #define pte_val_ma(x)	((x).pte_low)
++#define __pte_val(x)	pte_val_ma(x)
+ #define __pte(x) ({ unsigned long _x = (x); \
+     (pte_t) {((_x) & _PAGE_PRESENT) ? phys_to_machine(_x) : (_x)}; })
+ #define __pgd(x) ({ unsigned long _x = (x); \
+diff --git a/include/asm-i386/mach-xen/asm/pgtable.h b/include/asm-i386/mach-xen/asm/pgtable.h
+index 3a404a7..8e03275 100644
+--- a/include/asm-i386/mach-xen/asm/pgtable.h
++++ b/include/asm-i386/mach-xen/asm/pgtable.h
+@@ -491,6 +491,12 @@ int touch_pte_range(struct mm_struct *mm,
+                     unsigned long address,
+                     unsigned long size);
+ 
++int xen_change_pte_range(struct mm_struct *mm, pmd_t *pmd,
++		unsigned long addr, unsigned long end, pgprot_t newprot);
++
++#define arch_change_pte_range(mm, pmd, addr, end, newprot)	\
++		xen_change_pte_range(mm, pmd, addr, end, newprot)
++
+ #define io_remap_pfn_range(vma,from,pfn,size,prot) \
+ direct_remap_pfn_range(vma,from,pfn,size,prot,DOMID_IO)
+ 
+diff --git a/include/asm-x86_64/mach-xen/asm/pgtable.h b/include/asm-x86_64/mach-xen/asm/pgtable.h
+index 0bfa23d..c740ff9 100644
+--- a/include/asm-x86_64/mach-xen/asm/pgtable.h
++++ b/include/asm-x86_64/mach-xen/asm/pgtable.h
+@@ -564,6 +564,12 @@ int touch_pte_range(struct mm_struct *mm,
+                     unsigned long address,
+                     unsigned long size);
+ 
++int xen_change_pte_range(struct mm_struct *mm, pmd_t *pmd,
++		unsigned long addr, unsigned long end, pgprot_t newprot);
++
++#define arch_change_pte_range(mm, pmd, addr, end, newprot)	\
++		xen_change_pte_range(mm, pmd, addr, end, newprot)
++
+ #define io_remap_pfn_range(vma, vaddr, pfn, size, prot)		\
+ 		direct_remap_pfn_range(vma,vaddr,pfn,size,prot,DOMID_IO)
+ 
+diff --git a/include/xen/interface/features.h b/include/xen/interface/features.h
+index c46e3be..52f9cd7 100644
+--- a/include/xen/interface/features.h
++++ b/include/xen/interface/features.h
+@@ -38,6 +38,9 @@
+  */
+ #define XENFEAT_pae_pgdir_above_4gb        4
+ 
++/* x86: Does this Xen host support the MMU_PT_UPDATE_PRESERVE_AD hypercall? */
++#define XENFEAT_mmu_pt_update_preserve_ad  5
++
+ #define XENFEAT_NR_SUBMAPS 1
+ 
+ #endif /* __XEN_PUBLIC_FEATURES_H__ */
+diff --git a/include/xen/interface/xen.h b/include/xen/interface/xen.h
+index dd56fc1..ed18c0e 100644
+--- a/include/xen/interface/xen.h
++++ b/include/xen/interface/xen.h
+@@ -151,9 +151,13 @@
+  * ptr[:2]  -- Machine address within the frame whose mapping to modify.
+  *             The frame must belong to the FD, if one is specified.
+  * val      -- Value to write into the mapping entry.
++ *
++ * ptr[1:0] == MMU_PT_UPDATE_PRESERVE_AD:
++ * As MMU_NORMAL_PT_UPDATE above, but A/D bits in the PTE are preserved (ORed).
+  */
+-#define MMU_NORMAL_PT_UPDATE     0 /* checked '*ptr = val'. ptr is MA.       */
+-#define MMU_MACHPHYS_UPDATE      1 /* ptr = MA of frame to modify entry for  */
++#define MMU_NORMAL_PT_UPDATE      0 /* checked '*ptr = val'. ptr is MA.      */
++#define MMU_MACHPHYS_UPDATE       1 /* ptr = MA of frame to modify entry for */
++#define MMU_PT_UPDATE_PRESERVE_AD 2 /* '*ptr = val', preserve (OR) A/D bits  */
+ 
+ /*
+  * MMU EXTENDED OPERATIONS
+diff --git a/mm/mprotect.c b/mm/mprotect.c
+index f23231f..2889d25 100644
+--- a/mm/mprotect.c
++++ b/mm/mprotect.c
+@@ -86,6 +86,8 @@ static inline void change_pmd_range(struct mm_struct *mm, pud_t *pud,
+ 		next = pmd_addr_end(addr, end);
+ 		if (pmd_none_or_clear_bad(pmd))
+ 			continue;
++		if (arch_change_pte_range(mm, pmd, addr, next, newprot))
++			continue;
+ 		change_pte_range(mm, pmd, addr, next, newprot, dirty_accountable);
+ 	} while (pmd++, addr = next, addr != end);
+ }

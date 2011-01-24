@@ -1,0 +1,72 @@
+Date: Wed, 20 Sep 2006 05:14:03 -0400
+From: Steve Dickson <SteveD@redhat.com>
+Subject: Re: [RHEL5/FC6] [PATCH] kernel BUG at fs/dcache.c:615!
+
+Steve Dickson wrote:
+>An oops occurred when the rpc_pipefs filesystem was unmount
+>after an NFSv4 mount/umount occurred. The oops is being caused
+>by a dentry that is still referenced during the umount.
+>The reason the dentry was not being de-referenced was because a state
+>bit was not being correctly set. This patch fixes that problem and is 
+>already fixed in the -mm kernel.
+>
+>the bz is: https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=206636
+
+After consulting with upstream, here is the complete upstream patch
+which does to a bit more clean up... this is the one we should go with.
+
+steved.
+
+The scheme to indicate which services have been started up appears to be
+seriously broken.
+
+Signed-off-by: Trond Myklebust <Trond.Myklebust@netapp.com>
+---
+
+ fs/nfs/client.c |   10 +++++-----
+ 1 files changed, 5 insertions(+), 5 deletions(-)
+--- linux-2.6.17.i686/fs/nfs/client.c.orig	2006-09-20 04:46:42.000000000 -0400
++++ linux-2.6.17.i686/fs/nfs/client.c	2006-09-20 04:47:23.000000000 -0400
+@@ -112,9 +112,9 @@ static struct nfs_client *nfs_alloc_clie
+ 	if (error < 0) {
+ 		dprintk("%s: couldn't start rpciod! Error = %d\n",
+ 				__FUNCTION__, error);
+-		__set_bit(NFS_CS_RPCIOD, &clp->cl_res_state);
+ 		goto error_1;
+ 	}
++	__set_bit(NFS_CS_RPCIOD, &clp->cl_res_state);
+ 
+ 	if (nfsversion == 4) {
+ 		if (nfs_callback_up() < 0)
+@@ -154,8 +154,8 @@ static struct nfs_client *nfs_alloc_clie
+ 	return clp;
+ 
+ error_3:
+-	nfs_callback_down();
+-	__clear_bit(NFS_CS_CALLBACK, &clp->cl_res_state);
++	if (__test_and_clear_bit(NFS_CS_CALLBACK, &clp->cl_res_state))
++		nfs_callback_down();
+ error_2:
+ 	rpciod_down();
+ 	__clear_bit(NFS_CS_RPCIOD, &clp->cl_res_state);
+@@ -198,7 +198,7 @@ static void nfs_free_client(struct nfs_c
+ 		nfs_callback_down();
+ 
+ 	if (__test_and_clear_bit(NFS_CS_RPCIOD, &clp->cl_res_state))
+-	rpciod_down();
++		rpciod_down();
+ 
+ 	kfree(clp->cl_hostname);
+ 	kfree(clp);
+@@ -884,9 +884,9 @@ static int nfs4_init_client(struct nfs_c
+ 	if (error < 0) {
+ 		dprintk("%s: failed to create idmapper. Error = %d\n",
+ 			__FUNCTION__, error);
+-		__set_bit(NFS_CS_IDMAP, &clp->cl_res_state);
+ 		goto error;
+ 	}
++	__set_bit(NFS_CS_IDMAP, &clp->cl_res_state);
+ 
+ 	nfs_mark_client_ready(clp, NFS_CS_READY);
+ 	return 0;
+

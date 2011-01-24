@@ -45,11 +45,9 @@ struct k_itimer {
 	int it_requeue_pending;		/* waiting to requeue this timer */
 #define REQUEUE_PENDING 1
 	int it_sigev_notify;		/* notify word of sigevent struct */
-	struct signal_struct *it_signal;
-	union {
-		struct pid *it_pid;	/* pid of process to send signal to */
-		struct task_struct *it_process;	/* for clock_nanosleep */
-	};
+	int it_sigev_signo;		/* signo word of sigevent struct */
+	sigval_t it_sigev_value;	/* value word of sigevent struct */
+	struct task_struct *it_process;	/* process to send signal to */
 	struct sigqueue *sigq;		/* signal queue entry. */
 	union {
 		struct {
@@ -74,7 +72,6 @@ struct k_clock {
 	int (*timer_create) (struct k_itimer *timer);
 	int (*nsleep) (const clockid_t which_clock, int flags,
 		       struct timespec *, struct timespec __user *);
-	long (*nsleep_restart) (struct restart_block *restart_block);
 	int (*timer_set) (struct k_itimer * timr, int flags,
 			  struct itimerspec * new_setting,
 			  struct itimerspec * old_setting);
@@ -100,7 +97,6 @@ int posix_cpu_clock_set(const clockid_t which_clock, const struct timespec *ts);
 int posix_cpu_timer_create(struct k_itimer *timer);
 int posix_cpu_nsleep(const clockid_t which_clock, int flags,
 		     struct timespec *rqtp, struct timespec __user *rmtp);
-long posix_cpu_nsleep_restart(struct restart_block *restart_block);
 int posix_cpu_timer_set(struct k_itimer *timer, int flags,
 			struct itimerspec *new, struct itimerspec *old);
 int posix_cpu_timer_del(struct k_itimer *timer);
@@ -114,9 +110,5 @@ void posix_cpu_timers_exit_group(struct task_struct *task);
 
 void set_process_cpu_timer(struct task_struct *task, unsigned int clock_idx,
 			   cputime_t *newval, cputime_t *oldval);
-
-long clock_nanosleep_restart(struct restart_block *restart_block);
-
-void update_rlimit_cpu(struct task_struct *task, unsigned long rlim_new);
 
 #endif

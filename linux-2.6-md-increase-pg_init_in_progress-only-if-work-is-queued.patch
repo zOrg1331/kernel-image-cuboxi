@@ -1,0 +1,90 @@
+From: Jesse Larrew <jlarrew@redhat.com>
+Date: Fri, 12 Jun 2009 13:48:44 -0400
+Subject: [md] increase pg_init_in_progress only if work is queued
+Message-id: 20090612174844.GA18666@squad5-lp1.lab.bos.redhat.com
+O-Subject: [PATCH RHEL5.4 12/12 BZ489582] Increase pg_init_in_progress only if work is queued.
+Bugzilla: 489582
+RH-Acked-by: Mike Christie <mchristi@redhat.com>
+
+RHBZ#:
+======
+https://bugzilla.redhat.com/show_bug.cgi?id=489582
+
+Description:
+===========
+This is a bug fix for all archs.
+
+A race condition was discovered where pg_init_in_progress was being
+incremented when queue_work() returns without actually queuing the work.
+This can lead to an IO hang situation.
+
+This patch fixes the issue by incrementing pg_init_in_progress only when
+queue_work() returns success.
+
+RHEL Version Found:
+================
+RHEL 5.4
+
+kABI Status:
+============
+No symbols were harmed.
+
+Brew:
+=====
+Built on all platforms.
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1840550
+
+Upstream Status:
+================
+This has been posted to dm-devel:
+http://marc.info/?l=dm-devel&m=124424663327710&w=2
+
+Test Status:
+============
+This has been tested by Chandra Seetharaman <sekharan@us.ibm.com> at
+IBM.
+
+===============================================================
+
+Jesse Larrew
+IBM Onsite Partner
+978-392-3183
+jlarrew@redhat.com
+
+Proposed Patch:
+===============
+This patch is based on kernel-2.6.18-153.el5.
+
+diff --git a/drivers/md/dm-mpath.c b/drivers/md/dm-mpath.c
+index 5d875dd..653e544 100644
+--- a/drivers/md/dm-mpath.c
++++ b/drivers/md/dm-mpath.c
+@@ -441,12 +441,12 @@ static void process_queued_ios(void *data)
+ 			m->pg_init_in_progress = 1;
+ 			init_required = 1;
+ 		} else {
+-	 		list_for_each_entry(tmp, &pgpath->pg->pgpaths, list) {
+-				queue_delayed_work(kmpath_handlerd,
++			list_for_each_entry(tmp, &pgpath->pg->pgpaths, list) {
++				if (queue_delayed_work(kmpath_handlerd,
+ 				    &tmp->activate_path, m->pg_init_delay ?
+-					m->pg_init_delay_secs * HZ : 0);
+- 				m->pg_init_in_progress++;
+- 			}
++				    m->pg_init_delay_secs * HZ : 0))
++					m->pg_init_in_progress++;
++			}
+ 		}
+ 		m->pg_init_delay = 0;
+ 	}
+@@ -966,8 +966,8 @@ static int reinstate_path(struct pgpath *pgpath)
+ 		m->current_pgpath = NULL;
+ 		queue_work(kmultipathd, &m->process_queued_ios);
+ 	} else if (m->hw_handler_name && (m->current_pg == pgpath->pg)) {
+- 		m->pg_init_in_progress++;
+-		queue_work(kmpath_handlerd, &pgpath->activate_path);
++		if (queue_work(kmpath_handlerd, &pgpath->activate_path))
++			m->pg_init_in_progress++;
+ 	}
+ 
+ 	dm_path_uevent(DM_UEVENT_PATH_REINSTATED, m->ti,

@@ -8,6 +8,17 @@
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
  * published by the Free Software Foundation.
+ *
+ * Modifications:
+ *     16-May-2003 BJD  Created initial version
+ *     16-Aug-2003 BJD  Fixed header files and copyright, added URL
+ *     05-Sep-2003 BJD  Moved to kernel v2.6
+ *     18-Jan-2004 BJD  Added serial port configuration
+ *     21-Aug-2004 BJD  Added new struct s3c2410_board handler
+ *     28-Sep-2004 BJD  Updates for new serial port bits
+ *     04-Nov-2004 BJD  Updated UART configuration process
+ *     10-Jan-2005 BJD  Removed s3c2410_clock_tick_rate
+ *     13-Aug-2005 DA   Removed UART from initial I/O mappings
 */
 
 #include <linux/kernel.h>
@@ -16,35 +27,33 @@
 #include <linux/list.h>
 #include <linux/timer.h>
 #include <linux/init.h>
-#include <linux/clk.h>
 #include <linux/sysdev.h>
-#include <linux/serial_core.h>
 #include <linux/platform_device.h>
-#include <linux/io.h>
 
 #include <asm/mach/arch.h>
 #include <asm/mach/map.h>
 #include <asm/mach/irq.h>
 
-#include <mach/hardware.h>
+#include <asm/hardware.h>
+#include <asm/io.h>
 #include <asm/irq.h>
 
-#include <plat/cpu-freq.h>
+#include <asm/arch/regs-clock.h>
+#include <asm/arch/regs-serial.h>
 
-#include <mach/regs-clock.h>
-#include <plat/regs-serial.h>
-
-#include <plat/s3c2410.h>
-#include <plat/cpu.h>
-#include <plat/devs.h>
-#include <plat/clock.h>
-#include <plat/pll.h>
+#include "s3c2410.h"
+#include "cpu.h"
+#include "devs.h"
+#include "clock.h"
 
 /* Initial IO mappings */
 
 static struct map_desc s3c2410_iodesc[] __initdata = {
+	IODESC_ENT(USBHOST),
 	IODESC_ENT(CLKPWR),
+	IODESC_ENT(LCD),
 	IODESC_ENT(TIMER),
+	IODESC_ENT(ADC),
 	IODESC_ENT(WATCHDOG),
 };
 
@@ -63,28 +72,25 @@ void __init s3c2410_init_uarts(struct s3c2410_uartcfg *cfg, int no)
  * machine specific initialisation.
 */
 
-void __init s3c2410_map_io(void)
+void __init s3c2410_map_io(struct map_desc *mach_desc, int mach_size)
 {
+	/* register our io-tables */
+
 	iotable_init(s3c2410_iodesc, ARRAY_SIZE(s3c2410_iodesc));
+	iotable_init(mach_desc, mach_size);
 }
 
-void __init_or_cpufreq s3c2410_setup_clocks(void)
+void __init s3c2410_init_clocks(int xtal)
 {
-	struct clk *xtal_clk;
 	unsigned long tmp;
-	unsigned long xtal;
 	unsigned long fclk;
 	unsigned long hclk;
 	unsigned long pclk;
 
-	xtal_clk = clk_get(NULL, "xtal");
-	xtal = clk_get_rate(xtal_clk);
-	clk_put(xtal_clk);
-
 	/* now we've got our machine bits initialised, work out what
 	 * clocks we've got */
 
-	fclk = s3c24xx_get_pll(__raw_readl(S3C2410_MPLLCON), xtal);
+	fclk = s3c2410_get_pll(__raw_readl(S3C2410_MPLLCON), xtal);
 
 	tmp = __raw_readl(S3C2410_CLKDIVN);
 
@@ -102,34 +108,12 @@ void __init_or_cpufreq s3c2410_setup_clocks(void)
 	 * console to use them
 	 */
 
-	s3c24xx_setup_clocks(fclk, hclk, pclk);
-}
-
-/* fake ARMCLK for use with cpufreq, etc. */
-
-static struct clk s3c2410_armclk = {
-	.name	= "armclk",
-	.parent	= &clk_f,
-	.id	= -1,
-};
-
-void __init s3c2410_init_clocks(int xtal)
-{
-	s3c24xx_register_baseclocks(xtal);
-	s3c2410_setup_clocks();
+	s3c24xx_setup_clocks(xtal, fclk, hclk, pclk);
 	s3c2410_baseclk_add();
-	s3c24xx_register_clock(&s3c2410_armclk);
 }
 
 struct sysdev_class s3c2410_sysclass = {
-	.name = "s3c2410-core",
-};
-
-/* Note, we would have liked to name this s3c2410-core, but we cannot
- * register two sysdev_class with the same name.
- */
-struct sysdev_class s3c2410a_sysclass = {
-	.name = "s3c2410a-core",
+	set_kset_name("s3c2410-core"),
 };
 
 static struct sys_device s3c2410_sysdev = {
@@ -138,7 +122,7 @@ static struct sys_device s3c2410_sysdev = {
 
 /* need to register class before we actually register the device, and
  * we also need to ensure that it has been initialised before any of the
- * drivers even try to use it (even if not on an s3c2410 based system)
+ * drivers even try to use it (even if not on an s3c2440 based system)
  * as a driver which may support both 2410 and 2440 may try and use it.
 */
 
@@ -149,22 +133,9 @@ static int __init s3c2410_core_init(void)
 
 core_initcall(s3c2410_core_init);
 
-static int __init s3c2410a_core_init(void)
-{
-	return sysdev_class_register(&s3c2410a_sysclass);
-}
-
-core_initcall(s3c2410a_core_init);
-
 int __init s3c2410_init(void)
 {
 	printk("S3C2410: Initialising architecture\n");
 
 	return sysdev_register(&s3c2410_sysdev);
-}
-
-int __init s3c2410a_init(void)
-{
-	s3c2410_sysdev.cls = &s3c2410a_sysclass;
-	return s3c2410_init();
 }

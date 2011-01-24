@@ -1,0 +1,81 @@
+From: Larry Woodman <lwoodman@redhat.com>
+Date: Thu, 2 Dec 2010 18:18:47 -0500
+Subject: [mm] backport upstream stack guard page /proc reporting
+Message-id: <1291313927.3214.13.camel@dhcp-100-19-198.bos.redhat.com>
+Patchwork-id: 29823
+O-Subject: [RHEL5.6 Patch] Backport upstream/RHEL6 stack guard page reporting
+	through /proc/self/maps
+Bugzilla: 643426
+RH-Acked-by: Johannes Weiner <jweiner@redhat.com>
+
+RHEL5 is missing the logic to properly report the size of the user stack
+and omit only one guard page when the user stack spans multiple vma's
+marked as VM_GROWSDOWN.  The RHEL5 show_map_internal() routine blindly
+omits the first page from any VM_GROWSDOWN vma even if the previous vma
+is also marked VM_GROWSDOWN and is adjacent.  This causes the user stack
+size and bounds reported via /proc/self/maps to be incorrect and
+programs(like LVM) which mlock()/munlock() the address space to do the
+wrong thing.
+
+In RHEL6 /proc/self/map uses show_map_vma() to display VMAs:
+
+--------------------------------------------------------------------------------------
+static void show_map_vma(struct seq_file *m, struct vm_area_struct *vma)
+{
+...
+        /* We don't show the stack guard page in /proc/maps */
+        start = vma->vm_start;
+        if (vma->vm_flags & VM_GROWSDOWN)
+                if (!vma_stack_continue(vma->vm_prev, vma->vm_start))
+                        start += PAGE_SIZE;
+...
+static inline int vma_stack_continue(struct vm_area_struct *vma,
+unsigned long addr)
+{
+        return vma && (vma->vm_end == addr) && (vma->vm_flags &
+VM_GROWSDOWN);
+}
+---------------------------------------------------------------------------------------
+
+In RHEL5 /proc/self/map uses show_map_vma() to display VMAs but it
+doesnt consider adjacent VM_GROWSDOWN VMAs:
+
+---------------------------------------------------------------------------------------
+static int show_map_internal(struct seq_file *m, void *v, struct
+mem_size_stats *mss)
+
+        /* We don't show the stack guard page in /proc/maps */
+        start = vma->vm_start;
+        if (vma->vm_flags & VM_GROWSDOWN) {
+                start += PAGE_SIZE;
+---------------------------------------------------------------------------------------
+
+Since RHEL5 does not have doubly linked VMAs I had to call
+find_vma_prev() in the backport.
+
+Upstream commit 39aa3cb3e8250db9188a6f1e3fb62ffa1a717678, fixes
+BZ643426.
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/fs/proc/task_mmu.c b/fs/proc/task_mmu.c
+index 707cb78..6767d7a 100644
+--- a/fs/proc/task_mmu.c
++++ b/fs/proc/task_mmu.c
+@@ -182,8 +182,14 @@ static int show_map_internal(struct seq_file *m, void *v, struct mem_size_stats
+ 
+ 	/* We don't show the stack guard page in /proc/maps */
+ 	start = vma->vm_start;
+-	if (vma->vm_flags & VM_GROWSDOWN)
+-		start += PAGE_SIZE;
++	if (vma->vm_flags & VM_GROWSDOWN) {
++		struct vm_area_struct *prev;
++
++		/* Is the vma a continuation of the stack vma above it? */
++		find_vma_prev(vma->vm_mm, start, &prev);
++		if (!(prev && prev->vm_end == start && prev->vm_flags & VM_GROWSDOWN))
++			start += PAGE_SIZE;
++	}
+ 
+ 	seq_printf(m, "%08lx-%08lx %c%c%c%c %08lx %02x:%02x %lu %n",
+ 			start,

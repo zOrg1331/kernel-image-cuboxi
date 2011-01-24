@@ -1,0 +1,33 @@
+From: Dean Nelson <dnelson@redhat.com>
+Date: Fri, 12 Feb 2010 17:14:48 -0500
+Subject: [hwmon] smsc47m1: fix data to platform_device_add_data
+Message-id: <20100212171448.3355.41954.send-patch@aqua>
+Patchwork-id: 23261
+O-Subject: [RHEL5.6 PATCH 4/5] hwmon: smsc47m1: fix passing of &sio_data to
+	platform_device_add_data()
+Bugzilla: 560944
+RH-Acked-by: David Milburn <dmilburn@redhat.com>
+RH-Acked-by: Jarod Wilson <jarod@redhat.com>
+
+Resolves RHBZ 560944.
+
+The call to platform_device_add_data() passes '&sio_data' as the second arg.
+This results in an "Unable to handle kernel paging request at ..." type panic
+when a 'modprobe smsc47m1' is executed on a system with the relevant chip.
+
+The upstream version of this driver passes 'sio_data' minus the '&'.
+
+
+diff --git a/drivers/hwmon/smsc47m1.c b/drivers/hwmon/smsc47m1.c
+index cacc046..64da2fe 100644
+--- a/drivers/hwmon/smsc47m1.c
++++ b/drivers/hwmon/smsc47m1.c
+@@ -719,7 +719,7 @@ static int __init smsc47m1_device_add(unsigned short address,
+ 		goto exit_device_put;
+ 	}
+ 
+-	err = platform_device_add_data(pdev, &sio_data,
++	err = platform_device_add_data(pdev, sio_data,
+ 				       sizeof(struct smsc47m1_sio_data));
+ 	if (err) {
+ 		printk(KERN_ERR DRVNAME ": Platform data allocation failed\n");

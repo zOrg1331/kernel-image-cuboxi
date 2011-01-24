@@ -1,0 +1,71 @@
+From: Chad Dupuis <cdupuis@redhat.com>
+Date: Tue, 3 Aug 2010 13:51:37 -0400
+Subject: [net] netxen: fix interrupt for NX2031
+Message-id: <20100803134853.2239.69890.sendpatchset@localhost.localdomain>
+Patchwork-id: 27336
+O-Subject: [RHEL 5.6 PATCH 34/44] netxen: fix interrupt for NX2031
+Bugzilla: 562937
+RH-Acked-by: David S. Miller <davem@redhat.com>
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+
+Bugzilla
+========
+
+562937
+
+Upstream Status
+===============
+
+net-2.6 commit id 083ba279d52bcad20f1dfa3cefd4255cbe82d521
+
+Description
+===========
+
+>From d9491828886eaecb36c5a3cf6141b86f435d03ec Mon Sep 17 00:00:00 2001
+From: Amit Kumar Salecha <amit.salecha@qlogic.com>
+Date: Mon, 29 Mar 2010 02:43:45 +0000
+Subject: [PATCH] netxen: fix interrupt for NX2031
+
+Signed-off-by: Amit Kumar Salecha <amit.salecha@qlogic.com>
+
+For NX2031, msix is supported from fw version > 3.4.336.
+This fw version check should take flash fw in consider instead of
+running fw or fw from file.
+Signed-off-by: David S. Miller <davem@davemloft.net>
+
+diff --git a/drivers/net/netxen/netxen_nic_main.c b/drivers/net/netxen/netxen_nic_main.c
+index e1cf4de..888454e 100644
+--- a/drivers/net/netxen/netxen_nic_main.c
++++ b/drivers/net/netxen/netxen_nic_main.c
+@@ -794,15 +794,22 @@ netxen_check_options(struct netxen_adapter *adapter)
+ 	if (NX_IS_REVISION_P3(adapter->ahw.revision_id)) {
+ 		adapter->msix_supported = !!use_msi_x;
+ 		adapter->rss_supported = !!use_msi_x;
+-	} else if (adapter->fw_version >= NETXEN_VERSION_CODE(3, 4, 336)) {
+-		switch (adapter->ahw.board_type) {
+-		case NETXEN_BRDTYPE_P2_SB31_10G:
+-		case NETXEN_BRDTYPE_P2_SB31_10G_CX4:
+-			adapter->msix_supported = !!use_msi_x;
+-			adapter->rss_supported = !!use_msi_x;
+-			break;
+-		default:
+-			break;
++	} else {
++		u32 flashed_ver = 0;
++		netxen_rom_fast_read(adapter,
++				NX_FW_VERSION_OFFSET, (int *)&flashed_ver);
++		flashed_ver = NETXEN_DECODE_VERSION(flashed_ver);
++
++		if (flashed_ver >= NETXEN_VERSION_CODE(3, 4, 336)) {
++			switch (adapter->ahw.board_type) {
++			case NETXEN_BRDTYPE_P2_SB31_10G:
++			case NETXEN_BRDTYPE_P2_SB31_10G_CX4:
++				adapter->msix_supported = !!use_msi_x;
++				adapter->rss_supported = !!use_msi_x;
++				break;
++			default:
++				break;
++			}
+ 		}
+ 	}
+ 

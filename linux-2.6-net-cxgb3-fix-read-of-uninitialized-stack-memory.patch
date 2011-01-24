@@ -1,0 +1,35 @@
+From: Jay Fenlason <fenlason@redhat.com>
+Date: Thu, 9 Dec 2010 20:57:49 -0500
+Subject: [net] cxgb3: fix read of uninitialized stack memory
+Message-id: <20101209205748.GA744@redhat.com>
+Patchwork-id: 30061
+O-Subject: [PATCH RHEL5] bz633155 CVE-2010-3296 kernel:
+	drivers/net/cxgb3/cxgb3_main.c reading uninitialized stack memory
+Bugzilla: 633155
+CVE: CVE-2010-3296
+RH-Acked-by: Andy Gospodarek <gospo@redhat.com>
+RH-Acked-by: Dean Nelson <dnelson@redhat.com>
+RH-Acked-by: David S. Miller <davem@redhat.com>
+
+The cxgb3 driver does not zero out a structure before sending it to userspace.
+This is a trivial backport of the one-line upstream fix.  Only the line numbers
+differ.
+
+I've compile tested this locally, but I don't have the hardware in question,
+so I can't do further testing.
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/net/cxgb3/cxgb3_main.c b/drivers/net/cxgb3/cxgb3_main.c
+index 2d78754..d6af748 100644
+--- a/drivers/net/cxgb3/cxgb3_main.c
++++ b/drivers/net/cxgb3/cxgb3_main.c
+@@ -2192,6 +2192,8 @@ static int cxgb_extension_ioctl(struct net_device *dev, void __user *useraddr)
+ 	case CHELSIO_GET_QSET_NUM:{
+ 		struct ch_reg edata;
+ 
++		memset(&edata, 0, sizeof(struct ch_reg));
++
+ 		edata.cmd = CHELSIO_GET_QSET_NUM;
+ 		edata.val = pi->nqsets;
+ 		if (copy_to_user(useraddr, &edata, sizeof(edata)))

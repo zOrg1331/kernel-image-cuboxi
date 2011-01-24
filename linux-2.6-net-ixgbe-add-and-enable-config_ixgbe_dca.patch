@@ -1,0 +1,36 @@
+From: Andy Gospodarek <gospo@redhat.com>
+Date: Tue, 1 Dec 2009 17:56:00 -0500
+Subject: [net] ixgbe: add and enable CONFIG_IXGBE_DCA
+Message-id: <20091201175559.GH3259@gospo.rdu.redhat.com>
+Patchwork-id: 21578
+O-Subject: [RHEL5.5 PATCH 2/2] ixgbe: add and enable CONFIG_IXGBE_DCA
+Bugzilla: 514306
+RH-Acked-by: Stefan Assmann <sassmann@redhat.com>
+RH-Acked-by: David S. Miller <davem@redhat.com>
+RH-Acked-by: Ivan Vecera <ivecera@redhat.com>
+
+This adds a new config option to drivers/net/Kconfig and enables it in
+RHEL builds.
+
+This is the last chunk that will resolve RHBZ 514306.
+
+diff --git a/drivers/net/Kconfig b/drivers/net/Kconfig
+index aa748d5..27852d2 100644
+--- a/drivers/net/Kconfig
++++ b/drivers/net/Kconfig
+@@ -2439,6 +2439,15 @@ config IXGBE
+ 	  <file:Documentation/networking/net-modules.txt>.  The module
+ 	  will be called ixgbe.
+ 
++config IXGBE_DCA
++	bool "Direct Cache Access (DCA) Support"
++	default y
++	depends on IXGBE && DCA && !(IXGBE=y && DCA=m)
++	---help---
++	  Say Y here if you want to use Direct Cache Access (DCA) in the
++	  driver.  DCA is a method for warming the CPU cache before data
++	  is used, with the intent of lessening the impact of cache misses.
++
+ config IXGB
+ 	tristate "Intel(R) PRO/10GbE support"
+ 	depends on PCI

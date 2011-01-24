@@ -1,6 +1,6 @@
 /*
  *  ISA DMA support functions
- *  Copyright (c) by Jaroslav Kysela <perex@perex.cz>
+ *  Copyright (c) by Jaroslav Kysela <perex@suse.cz>
  *
  *
  *   This program is free software; you can redistribute it and/or modify
@@ -26,6 +26,7 @@
 
 #undef HAVE_REALLY_SLOW_DMA_CONTROLLER
 
+#include <sound/driver.h>
 #include <sound/core.h>
 #include <asm/dma.h>
 

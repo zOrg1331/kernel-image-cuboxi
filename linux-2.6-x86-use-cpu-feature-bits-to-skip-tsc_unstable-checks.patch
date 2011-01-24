@@ -1,0 +1,48 @@
+From: Chris Lalancette <clalance@redhat.com>
+Date: Fri, 20 Mar 2009 10:24:26 +0100
+Subject: [x86] use CPU feature bits to skip tsc_unstable checks
+Message-id: 49C360CA.3010607@redhat.com
+O-Subject: [RHEL5.4 PATCH 14/14]: x86: use CPU feature bits to skip tsc_unstable checks
+Bugzilla: 463573
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+RH-Acked-by: Brian Maly <bmaly@redhat.com>
+RH-Acked-by: Justin M. Forbes <jforbes@redhat.com>
+
+On AMD's systems TSC is marked as unstable, with the previous patches we used
+to explicitly check for VMware in x86_hyper_vendor, and skip these checks. With
+the new patches we can use the synthetic CPU feature bits for this.
+
+Mainline behavior :
+On mainline in the unsynchronized_tsc check the CONSTANT_TSC bit is checked,
+since I didn't want to change kernel behavior on a native AMD system, I am
+checking for FEATURE_TSC_RELIABLE bit here.
+
+For the verify_tsc_freq case mainline too checks for FEATURE_TSC_RELIABLE bit.
+
+BZ 463573
+
+diff --git a/arch/i386/kernel/tsc.c b/arch/i386/kernel/tsc.c
+index 473c226..711eae4 100644
+--- a/arch/i386/kernel/tsc.c
++++ b/arch/i386/kernel/tsc.c
+@@ -431,6 +431,9 @@ static void verify_tsc_freq(unsigned long unused)
+ 	u64 now_tsc, interval_tsc;
+ 	unsigned long now_jiffies, interval_jiffies;
+ 
++	/* TSC is reliable, no need to verify as it may have false positives */
++	if (boot_cpu_has(X86_FEATURE_TSC_RELIABLE))
++		return;
+ 
+ 	if (check_tsc_unstable())
+ 		return;
+@@ -484,6 +487,10 @@ static __init int unsynchronized_tsc(void)
+  		return 0;
+ 	}
+ 
++	/* TSC is reliable, usually exported by hypervisors */
++	if (boot_cpu_has(X86_FEATURE_TSC_RELIABLE))
++		return 0;
++
+ 	/* assume multi socket systems are not synchronized: */
+  	return num_possible_cpus() > 1;
+ }

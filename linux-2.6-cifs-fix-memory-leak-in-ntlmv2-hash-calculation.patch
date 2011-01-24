@@ -1,0 +1,39 @@
+From: Jeff Layton <jlayton@redhat.com>
+Date: Thu, 19 Nov 2009 14:38:34 -0500
+Subject: [cifs] fix memory leak in ntlmv2 hash calculation
+Message-id: <1258641517-20756-8-git-send-email-jlayton@redhat.com>
+Patchwork-id: 21440
+O-Subject: [RHEL5.5 PATCH 07/10] BZ#500838: cifs: Memory leak in ntlmv2 hash
+	calculation
+Bugzilla: 500838
+RH-Acked-by: Peter Staubach <staubach@redhat.com>
+
+From: Alexander Strakh <strakh@ispras.ru>
+
+(Upstream commit 1b3859bc9e20d764316346665fc93ecea2d2b176)
+
+ in function calc_ntlmv2_hash memory is not released.
+1. If in the line 333 we successfully allocate memory and assign it to
+pctxt variable:
+       pctxt = kmalloc(sizeof(struct HMACMD5Context), GFP_KERNEL);
+then we go to line 376 and exit wihout releasing memory pointed to by pctxt
+variable.
+
+Add a memory  releasing for pctxt variable before exit from function
+calc_ntlmv2_hash.
+
+Signed-off-by: Alexander Strakh <strakh@ispras.ru>
+Signed-off-by: Steve French <sfrench@us.ibm.com>
+
+diff --git a/fs/cifs/cifsencrypt.c b/fs/cifs/cifsencrypt.c
+index 7c98095..7efe174 100644
+--- a/fs/cifs/cifsencrypt.c
++++ b/fs/cifs/cifsencrypt.c
+@@ -373,6 +373,7 @@ calc_exit_2:
+ 	   compare with the NTLM example */
+ 	hmac_md5_final(ses->server->ntlmv2_hash, pctxt);
+ 
++	kfree(pctxt);
+ 	return rc;
+ }
+ 

@@ -58,6 +58,9 @@
 #define SIS_LINUX_KERNEL		/* Linux kernel framebuffer */
 #undef  SIS_XORG_XF86			/* XFree86/X.org */
 
+#undef SIS_LINUX_KERNEL_24
+#undef SIS_LINUX_KERNEL_26
+
 #ifdef OutPortByte
 #undef OutPortByte
 #endif
@@ -87,6 +90,7 @@
 /**********************************************************************/
 
 #ifdef SIS_LINUX_KERNEL
+#include <linux/version.h>
 
 #ifdef CONFIG_FB_SIS_300
 #define SIS300
@@ -94,6 +98,12 @@
 
 #ifdef CONFIG_FB_SIS_315
 #define SIS315H
+#endif
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,5,0)
+#define SIS_LINUX_KERNEL_26
+#else
+#define SIS_LINUX_KERNEL_24
 #endif
 
 #if !defined(SIS300) && !defined(SIS315H)

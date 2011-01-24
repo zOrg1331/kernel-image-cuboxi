@@ -1,0 +1,62 @@
+From: Steve Dickson <SteveD@redhat.com>
+Date: Mon, 30 Aug 2010 17:39:43 -0400
+Subject: [fs] nfsv4: fix bug when server returns NFS4ERR_RESOURCE
+Message-id: <1283189983-10655-6-git-send-email-steved@redhat.com>
+Patchwork-id: 27945
+O-Subject: [RHEL5.5.z PATCH 5/5] NFSv4: Fix a bug when the server returns
+	NFS4ERR_RESOURCE
+Bugzilla: 620502
+RH-Acked-by: Jeff Layton <jlayton@redhat.com>
+RH-Acked-by: J. Bruce Fields <bfields@redhat.com>
+
+From: Trond Myklebust <Trond.Myklebust@netapp.com>
+
+RFC 3530 states that when we recieve the error NFS4ERR_RESOURCE, we are
+supposed to bump the sequence number on OPEN, LOCK, LOCKU, CLOSE, etc
+operations. The problem is that we map that error into EREMOTEIO in the
+layer, and so the NFSv4 middle-layer routines like seqid_mutating_err(),
+and nfs_increment_seqid() don't recognise it.
+
+The fix is to defer the mapping until after the middle layers have
+processed the error.
+
+Signed-off-by: Trond Myklebust <Trond.Myklebust@netapp.com>
+Signed-off-by: Steve Dickson <steved@redhat.com>
+
+diff --git a/fs/nfs/nfs4proc.c b/fs/nfs/nfs4proc.c
+index 1c0dd18..270a02e 100644
+--- a/fs/nfs/nfs4proc.c
++++ b/fs/nfs/nfs4proc.c
+@@ -70,12 +70,17 @@ static int nfs4_wait_clnt_recover(struct rpc_clnt *clnt, struct nfs_client *clp)
+ /* Prevent leaks of NFSv4 errors into userland */
+ int nfs4_map_errors(int err)
+ {
+-	if (err < -1000) {
++	if (err >= -1000)
++		return err;
++	switch (err) {
++	case -NFS4ERR_RESOURCE:
++		return -EREMOTEIO;
++	default:
+ 		dprintk("%s could not handle NFSv4 error %d\n",
+ 				__FUNCTION__, -err);
+-		return -EIO;
++		break;
+ 	}
+-	return err;
++	return -EIO;
+ }
+ 
+ /*
+diff --git a/fs/nfs/nfs4xdr.c b/fs/nfs/nfs4xdr.c
+index 261b710..a3c345b 100644
+--- a/fs/nfs/nfs4xdr.c
++++ b/fs/nfs/nfs4xdr.c
+@@ -4584,7 +4584,6 @@ static struct {
+ 	{ NFS4ERR_SERVERFAULT,	ESERVERFAULT	},
+ 	{ NFS4ERR_BADTYPE,	EBADTYPE	},
+ 	{ NFS4ERR_LOCKED,	EAGAIN		},
+-	{ NFS4ERR_RESOURCE,	EREMOTEIO	},
+ 	{ NFS4ERR_SYMLINK,	ELOOP		},
+ 	{ NFS4ERR_OP_ILLEGAL,	EOPNOTSUPP	},
+ 	{ NFS4ERR_DEADLOCK,	EDEADLK		},

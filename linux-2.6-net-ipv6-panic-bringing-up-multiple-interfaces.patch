@@ -1,0 +1,65 @@
+From: Thomas Graf <tgraf@redhat.com>
+Subject: [RHEL5 BZ218039] panic when bringing up multiple interfaces
+Date: Tue, 9 Jan 2007 22:14:26 +0100
+Bugzilla: 218039
+Message-Id: <20070109211426.GA10683@lsx.localdomain>
+Changelog: ipv6: panic when bringing up multiple interfaces
+
+
+This patch is essential for RHEL 5.0. It fixes a crash when
+multiple interfaces are brought up leading to a situation
+where multiple routes share the same node in the fib tree.
+This bug prevents many big systems from even booting up.
+
+When multiple routes share the same leaf node in a fib tree,
+they are linked together in a NULL terminated list. One of
+the routes is then selected based on its score which is
+basically its metric. The round-robin code executed when no
+route matches the required criteria skips one entry at a time
+assuming the list is implemented as a ring. Unfortunately this
+is not the case and thus once the end of the list is reached,
+the leaf node is overwritten with NULL causing the next lookup
+to crash.
+
+Fixing all of the fib6 code to produce and assume a ring list
+while traversing is not acceptable at this point for 5.0.
+Therefore, I propose to disable the round-robin code for now.
+The code has been practically unused, because any usage would
+have resulted in a crash after a short period of time. Also
+it is not critical to functionality.
+
+The patch was tested on our own and is currently being tested
+by the customer. Systems which trigerred the bug within minutes
+have succesfully been ran for over an hour.
+
+Please ACK.
+
+Index: linux-2.6.18.noarch/net/ipv6/route.c
+===================================================================
+--- linux-2.6.18.noarch.orig/net/ipv6/route.c	2007-01-09 20:10:40.000000000 +0100
++++ linux-2.6.18.noarch/net/ipv6/route.c	2007-01-09 20:11:51.000000000 +0100
+@@ -386,6 +386,15 @@ static struct rt6_info *rt6_select(struc
+ 		}
+ 	}
+ 
++#if 0
++	/*
++	 * The round-robin code below assumes and produces cyclic
++	 * leaf lists. Some code in ip6_fib.c expects and produces
++	 * NULL terminated lists which leads to the current leaf
++	 * head to turn NULL when the end of the list is being
++	 * reached. It's best to disable this code alltogether until
++	 * all of the list management has been fixed.
++	 */
+ 	if (!match &&
+ 	    (strict & RT6_LOOKUP_F_REACHABLE) &&
+ 	    last && last != rt0) {
+@@ -397,6 +406,7 @@ static struct rt6_info *rt6_select(struc
+ 		last->u.next = rt0;
+ 		spin_unlock(&lock);
+ 	}
++#endif
+ 
+ 	RT6_TRACE("%s() => %p, score=%d\n",
+ 		  __FUNCTION__, match, mpri);
+

@@ -12,11 +12,12 @@
 #include <linux/init.h>
 #include <linux/module.h>
 #include <linux/interrupt.h>
+#include <linux/ptrace.h>
 
-#include <mach/hardware.h>
+#include <asm/hardware.h>
 #include <asm/irq.h>
 #include <asm/mach/irq.h>
-#include <mach/irqs.h>
+#include <asm/arch/irqs.h>
 
 #include "common.h"
 
@@ -56,17 +57,18 @@ static struct irq_chip lh7a40x_cpld_chip = {
 	.unmask	= lh7a40x_unmask_cpld_irq,
 };
 
-static void lh7a40x_cpld_handler (unsigned int irq, struct irq_desc *desc)
+static void lh7a40x_cpld_handler (unsigned int irq, struct irqdesc *desc,
+				  struct pt_regs *regs)
 {
 	unsigned int mask = CPLD_INTERRUPTS;
 
 	desc->chip->ack (irq);
 
 	if ((mask & 0x1) == 0)	/* WLAN */
-		generic_handle_irq(IRQ_LPD7A40X_ETH_INT);
+		IRQ_DISPATCH (IRQ_LPD7A40X_ETH_INT);
 
 	if ((mask & 0x2) == 0)	/* Touch */
-		generic_handle_irq(IRQ_LPD7A400_TS);
+		IRQ_DISPATCH (IRQ_LPD7A400_TS);
 
 	desc->chip->unmask (irq); /* Level-triggered need this */
 }
@@ -117,7 +119,7 @@ void __init lh7a40x_init_board_irq (void)
 	for (irq = IRQ_BOARD_START;
 	     irq < IRQ_BOARD_START + NR_IRQ_BOARD; ++irq) {
 		set_irq_chip (irq, &lh7a40x_cpld_chip);
-		set_irq_handler (irq, handle_edge_irq);
+		set_irq_handler (irq, do_edge_IRQ);
 		set_irq_flags (irq, IRQF_VALID);
 	}
 

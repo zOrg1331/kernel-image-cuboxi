@@ -35,7 +35,6 @@ struct serial_card_type {
 struct serial_card_info {
 	unsigned int	num_ports;
 	int		ports[MAX_PORTS];
-	void __iomem *vaddr;
 };
 
 static int __devinit
@@ -45,17 +44,19 @@ serial_card_probe(struct expansion_card *ec, const struct ecard_id *id)
 	struct serial_card_type *type = id->data;
 	struct uart_port port;
 	unsigned long bus_addr;
+	unsigned char __iomem *virt_addr;
 	unsigned int i;
 
-	info = kzalloc(sizeof(struct serial_card_info), GFP_KERNEL);
+	info = kmalloc(sizeof(struct serial_card_info), GFP_KERNEL);
 	if (!info)
 		return -ENOMEM;
 
+	memset(info, 0, sizeof(struct serial_card_info));
 	info->num_ports = type->num_ports;
 
 	bus_addr = ecard_resource_start(ec, type->type);
-	info->vaddr = ecardm_iomap(ec, type->type, 0, 0);
-	if (!info->vaddr) {
+	virt_addr = ioremap(bus_addr, ecard_resource_len(ec, type->type));
+	if (!virt_addr) {
 		kfree(info);
 		return -ENOMEM;
 	}
@@ -71,7 +72,7 @@ serial_card_probe(struct expansion_card *ec, const struct ecard_id *id)
 	port.dev	= &ec->dev;
 
 	for (i = 0; i < info->num_ports; i ++) {
-		port.membase = info->vaddr + type->offset[i];
+		port.membase = virt_addr + type->offset[i];
 		port.mapbase = bus_addr + type->offset[i];
 
 		info->ports[i] = serial8250_register_port(&port);

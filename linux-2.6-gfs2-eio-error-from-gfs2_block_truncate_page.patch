@@ -1,0 +1,29 @@
+From: Wendy Cheng <wcheng@redhat.com>
+Subject: [RHEL5.1 PATCH] 1/4 BZ 243136 GFS2 EIO error 
+Date: Thu, 28 Jun 2007 01:20:56 -0400
+Bugzilla: 243136
+Message-Id: <46834538.6050805@redhat.com>
+Changelog: [gfs2] EIO error from gfs2_block_truncate_page
+
+
+BZ 243136 [patch 1/4] EIO error from gfs2_block_truncate_page
+
+Code segment inside gfs2_block_truncate_page() doesn't set the return 
+code correctly. This causes NFSD erroneously returns EIO back to client 
+with setattr procedure call (truncate error),
+
+-- Wendy
+
+
+
+--- gfs2-nmw/fs/gfs2/bmap.c	2007-06-12 16:32:46.000000000 -0400
++++ gfs2-nfs/fs/gfs2/bmap.c	2007-06-22 14:29:53.000000000 -0400
+@@ -927,6 +927,7 @@ static int gfs2_block_truncate_page(stru
+ 		/* Uhhuh. Read error. Complain and punt. */
+ 		if (!buffer_uptodate(bh))
+ 			goto unlock;
++		err = 0;
+ 	}
+ 
+ 	if (sdp->sd_args.ar_data == GFS2_DATA_ORDERED || gfs2_is_jdata(ip))
+

@@ -1,0 +1,151 @@
+From: Herbert Xu <herbert.xu@redhat.com>
+Date: Thu, 4 Jun 2009 21:15:56 +1000
+Subject: [net] skb_copy_datagram_from_iovec
+Message-id: 20090604111556.GA28526@gondor.apana.org.au
+O-Subject: [RHEL5.4 PATCH 1/2] net: skb_copy_datagram_from_iovec()
+Bugzilla: 503309
+RH-Acked-by: Thomas Graf <tgraf@redhat.com>
+
+RHEL5 bugzilla 503309
+
+On Mon, Jun 01, 2009 at 10:23:05PM +1000, Herbert Xu wrote:
+>
+> tun: Use non-linear packets where possible
+>
+> The tun backport always used linear packets which causes problems
+> when memory becomes fragmented as we can no longer allocate enough
+> contiguous pages for linear packets longer than a page.  This patch
+> backports the current upstream code where we use non-linear packets
+> to avoid this.
+>
+> Signed-off-by: Herbert Xu <herbert@gondor.apana.org.au>
+
+This back was incomplete, here's the corrected version.  First we
+need this patch:
+
+net: skb_copy_datagram_from_iovec()
+
+There's an skb_copy_datagram_iovec() to copy out of a paged skb, but
+nothing the other way around (because we don't do that).
+
+We want to allocate big skbs in tun.c, so let's add the function.
+It's a carbon copy of skb_copy_datagram_iovec() with enough changes to
+be annoying.
+
+Signed-off-by: Rusty Russell <rusty@rustcorp.com.au>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Signed-off-by: Herbert Xu <herbert@gondor.apana.org.au>
+
+diff --git a/include/linux/skbuff.h b/include/linux/skbuff.h
+index a0d942d..8c0b6d3 100644
+--- a/include/linux/skbuff.h
++++ b/include/linux/skbuff.h
+@@ -1455,6 +1455,10 @@ extern int	       skb_copy_datagram_iovec(const struct sk_buff *from,
+ extern int	       skb_copy_and_csum_datagram_iovec(struct sk_buff *skb,
+ 							int hlen,
+ 							struct iovec *iov);
++extern int	       skb_copy_datagram_from_iovec(struct sk_buff *skb,
++						    int offset,
++						    struct iovec *from,
++						    int len);
+ extern void	       skb_free_datagram(struct sock *sk, struct sk_buff *skb);
+ extern void	       skb_kill_datagram(struct sock *sk, struct sk_buff *skb,
+ 					 unsigned int flags);
+diff --git a/net/core/datagram.c b/net/core/datagram.c
+index e968f9f..fa1e8ad 100644
+--- a/net/core/datagram.c
++++ b/net/core/datagram.c
+@@ -339,6 +339,93 @@ fault:
+ 	return -EFAULT;
+ }
+ 
++/**
++ *	skb_copy_datagram_from_iovec - Copy a datagram from an iovec.
++ *	@skb: buffer to copy
++ *	@offset: offset in the buffer to start copying to
++ *	@from: io vector to copy to
++ *	@len: amount of data to copy to buffer from iovec
++ *
++ *	Returns 0 or -EFAULT.
++ *	Note: the iovec is modified during the copy.
++ */
++int skb_copy_datagram_from_iovec(struct sk_buff *skb, int offset,
++				 struct iovec *from, int len)
++{
++	int start = skb_headlen(skb);
++	int i, copy = start - offset;
++
++	/* Copy header. */
++	if (copy > 0) {
++		if (copy > len)
++			copy = len;
++		if (memcpy_fromiovec(skb->data + offset, from, copy))
++			goto fault;
++		if ((len -= copy) == 0)
++			return 0;
++		offset += copy;
++	}
++
++	/* Copy paged appendix. Hmm... why does this look so complicated? */
++	for (i = 0; i < skb_shinfo(skb)->nr_frags; i++) {
++		int end;
++
++		WARN_ON(start > offset + len);
++
++		end = start + skb_shinfo(skb)->frags[i].size;
++		if ((copy = end - offset) > 0) {
++			int err;
++			u8  *vaddr;
++			skb_frag_t *frag = &skb_shinfo(skb)->frags[i];
++			struct page *page = frag->page;
++
++			if (copy > len)
++				copy = len;
++			vaddr = kmap(page);
++			err = memcpy_fromiovec(vaddr + frag->page_offset +
++					       offset - start, from, copy);
++			kunmap(page);
++			if (err)
++				goto fault;
++
++			if (!(len -= copy))
++				return 0;
++			offset += copy;
++		}
++		start = end;
++	}
++
++	if (skb_shinfo(skb)->frag_list) {
++		struct sk_buff *list = skb_shinfo(skb)->frag_list;
++
++		for (; list; list = list->next) {
++			int end;
++
++			WARN_ON(start > offset + len);
++
++			end = start + list->len;
++			if ((copy = end - offset) > 0) {
++				if (copy > len)
++					copy = len;
++				if (skb_copy_datagram_from_iovec(list,
++								 offset - start,
++								 from, copy))
++					goto fault;
++				if ((len -= copy) == 0)
++					return 0;
++				offset += copy;
++			}
++			start = end;
++		}
++	}
++	if (!len)
++		return 0;
++
++fault:
++	return -EFAULT;
++}
++EXPORT_SYMBOL(skb_copy_datagram_from_iovec);
++
+ static int skb_copy_and_csum_datagram(const struct sk_buff *skb, int offset,
+ 				      u8 __user *to, int len,
+ 				      unsigned int *csump)

@@ -1,7 +1,5 @@
-/*
- * Base file for all ieee1394 ioctl's.
- * Linux-1394 has allocated base '#' with a range of 0x00-0x3f.
- */
+/* Base file for all ieee1394 ioctl's. Linux-1394 has allocated base '#'
+ * with a range of 0x00-0x3f. */
 
 #ifndef __IEEE1394_IOCTL_H
 #define __IEEE1394_IOCTL_H
@@ -98,9 +96,8 @@
 	_IOW ('#', 0x27, struct raw1394_iso_packets)
 #define RAW1394_IOC_ISO_XMIT_SYNC		\
 	_IO  ('#', 0x28)
-#define RAW1394_IOC_ISO_RECV_FLUSH		\
+#define RAW1394_IOC_ISO_RECV_FLUSH              \
 	_IO  ('#', 0x29)
-#define RAW1394_IOC_GET_CYCLE_TIMER		\
-	_IOR ('#', 0x30, struct raw1394_cycle_timer)
+
 
 #endif /* __IEEE1394_IOCTL_H */

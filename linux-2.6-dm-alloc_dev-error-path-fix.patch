@@ -1,0 +1,30 @@
+Date: Thu, 21 Sep 2006 16:45:09 +0100
+From: Alasdair G Kergon <agk@redhat.com>
+Subject: [RHEL5 PATCH 06/30] dm: fix alloc_dev error path
+
+While reading the code I found a bug in the error path in alloc_dev in dm.c
+When blk_alloc_queue fails there is no call to free_minor.
+This patch fixes the problem.
+
+Index: linux-2.6.18.noarch/drivers/md/dm.c
+===================================================================
+--- linux-2.6.18.noarch.orig/drivers/md/dm.c
++++ linux-2.6.18.noarch/drivers/md/dm.c
+@@ -943,7 +943,7 @@ static struct mapped_device *alloc_dev(i
+ 
+ 	md->queue = blk_alloc_queue(GFP_KERNEL);
+ 	if (!md->queue)
+-		goto bad1;
++		goto bad1_free_minor;
+ 
+ 	md->queue->queuedata = md;
+ 	md->queue->backing_dev_info.congested_fn = dm_any_congested;
+@@ -993,6 +993,7 @@ static struct mapped_device *alloc_dev(i
+ 	mempool_destroy(md->io_pool);
+  bad2:
+ 	blk_cleanup_queue(md->queue);
++ bad1_free_minor:
+ 	free_minor(minor);
+  bad1:
+ 	module_put(THIS_MODULE);
+

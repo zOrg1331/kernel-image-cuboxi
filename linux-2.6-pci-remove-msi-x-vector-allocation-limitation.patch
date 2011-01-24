@@ -1,0 +1,90 @@
+From: Stefan Assmann <sassmann@redhat.com>
+Date: Fri, 18 Dec 2009 11:58:13 -0500
+Subject: [pci] remove msi-x vector allocation limitation
+Message-id: <4B2B6E55.5010903@redhat.com>
+Patchwork-id: 22125
+O-Subject: [RHEL 5.5 PATCH v3] pci: remove MSI-X vector allocation limitation
+Bugzilla: 531266
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+RH-Acked-by: Don Dutile <ddutile@redhat.com>
+RH-Acked-by: Andy Gospodarek <gospo@redhat.com>
+
+Bugzilla:
+https://bugzilla.redhat.com/show_bug.cgi?id=531266
+
+Description:
+Removing nr_msix_devices from drivers/pci/msi.c along with the check
+that limits the number of MSI-X vectors that can be allocated by a
+driver. This check caused igb not to be able to allocate the requested
+number of MSI-X vectors although there was a huge number of free
+vectors left.
+Check is completely removed as per davem's suggestion.
+v2 addresses prarit's comment to remove nr_msix_devices.
+v3 adding return statement requested by ddutile.
+
+Upstream Status:
+Code is a 2.6.18 legacy no longer present in upstream.
+
+Brew Build:
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=2159067
+
+Test Status:
+Successfully tested-by-me. Unfortunately the main RDU QE lab has some
+trouble and acquiring an IP from DHCP takes around 20s, so udhcpc in the
+kdump initrd bails out long before that. STP is enabled on the
+switch and I suspect this to be the problem. Anyway Evan will follow up
+on this once they found out what's wrong.
+
+  Stefan
+
+
+diff --git a/drivers/pci/msi.c b/drivers/pci/msi.c
+index 046866d..8d05a2f 100644
+--- a/drivers/pci/msi.c
++++ b/drivers/pci/msi.c
+@@ -30,7 +30,6 @@ static int pci_msi_enable = 1;
+ static int last_alloc_vector;
+ static int nr_released_vectors;
+ static int nr_reserved_vectors = NR_HP_RESERVED_VECTORS;
+-static int nr_msix_devices;
+ 
+ #ifndef CONFIG_X86_IO_APIC
+ int vector_irq[NR_VECTORS] = { [0 ... NR_VECTORS - 1] = -1};
+@@ -503,7 +502,7 @@ void pci_scan_msi_device(struct pci_dev *dev)
+ 		return;
+ 
+    	if (pci_find_capability(dev, PCI_CAP_ID_MSIX) > 0)
+-		nr_msix_devices++;
++		return;
+ 	else if (pci_find_capability(dev, PCI_CAP_ID_MSI) > 0)
+ 		nr_reserved_vectors++;
+ }
+@@ -965,9 +964,6 @@ int pci_enable_msi(struct pci_dev* dev)
+ 	if (!status) {
+    		if (!pos)
+ 			nr_reserved_vectors--;	/* Only MSI capable */
+-		else if (nr_msix_devices > 0)
+-			nr_msix_devices--;	/* Both MSI and MSI-X capable,
+-						   but choose enabling MSI */
+ 	}
+ 
+ 	return status;
+@@ -1131,9 +1127,6 @@ int pci_enable_msix(struct pci_dev* dev, struct msix_entry *entries, int nvec)
+ 	   default to avoid any MSI-X driver to take all available
+  	   resources */
+ 	free_vectors -= nr_reserved_vectors;
+-	/* Find the average of free vectors among MSI-X devices */
+-	if (nr_msix_devices > 0)
+-		free_vectors /= nr_msix_devices;
+ 	spin_unlock_irqrestore(&msi_lock, flags);
+ 
+ 	if (nvec > free_vectors) {
+@@ -1144,8 +1137,6 @@ int pci_enable_msix(struct pci_dev* dev, struct msix_entry *entries, int nvec)
+ 	}
+ 
+ 	status = msix_capability_init(dev, entries, nvec);
+-	if (!status && nr_msix_devices > 0)
+-		nr_msix_devices--;
+ 
+ 	return status;
+ }

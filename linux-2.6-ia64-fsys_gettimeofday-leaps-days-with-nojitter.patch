@@ -1,0 +1,86 @@
+From: Luming Yu <luyu@redhat.com>
+Subject: [RHEL 5.2 PATCH] bz 250825: fsys_gettimeofday leaps days if it runs 	with nojitter
+Date: Tue, 07 Aug 2007 11:09:16 +0800
+Bugzilla: 250825
+Message-Id: <46B7E25C.2020808@redhat.com>
+Changelog: [ia64] fsys_gettimeofday leaps days if it runs with nojitter
+
+
+bz 250825
+
+Description of problem:
+
+The ".acq" semantics of the load only apply w.r.t. other data access.
+Reading the clock (ar.itc) isn't a data access so strange things can
+happen here.  Specifically the read of ar.itc can be launched as soon
+as the read of xtime_lock.sequence is ISSUED.  Since this may cache
+miss, and that might cause a thread switch, and there may be cache
+contention for the line containing xtime_lock, it may be a long time
+before the actual value is returned, so the ar.itc value may be very
+stale.
+
+Move the consumption of r28 up before the read of ar.itc to make sure
+that we really have got the current value of xtime_lock.sequence
+before look at ar.itc.
+
+
+
+The upstream patch link:
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff_plain;h=829a9996259e4d0b20ce7b94c49b985d6ba6b760 
+
+
+The back port for rhel 4.6 is attached, and tested by me with a simple 
+gettimeofday test case. It works
+Please ACK.
+
+Thanks,
+Luming
+
+
+
+X-Git-Tag: v2.6.23-rc1~521^2~1
+X-Git-Url: http://git.kernel.org/?p=linux%2Fkernel%2Fgit%2Ftorvalds%2Flinux-2.6.git;a=commitdiff_plain;h=829a9996259e4d0b20ce7b94c49b985d6ba6b760
+
+[IA64] ar.itc access must really be after xtime_lock.sequence has been read
+
+The ".acq" semantics of the load only apply w.r.t. other data access.
+Reading the clock (ar.itc) isn't a data access so strange things can
+happen here.  Specifically the read of ar.itc can be launched as soon
+as the read of xtime_lock.sequence is ISSUED.  Since this may cache
+miss, and that might cause a thread switch, and there may be cache
+contention for the line containing xtime_lock, it may be a long time
+before the actual value is returned, so the ar.itc value may be very
+stale.
+
+Move the consumption of r28 up before the read of ar.itc to make sure
+that we really have got the current value of xtime_lock.sequence
+before look at ar.itc.
+
+Signed-off-by: Hidetoshi Seto <seto.hidetoshi@jp.fujitsu.com>
+Signed-off-by: Tony Luck <tony.luck@intel.com>
+---
+
+diff --git a/arch/ia64/kernel/fsys.S b/arch/ia64/kernel/fsys.S
+index 8589e84..3f926c2 100644
+--- a/arch/ia64/kernel/fsys.S
++++ b/arch/ia64/kernel/fsys.S
+@@ -247,6 +247,9 @@ ENTRY(fsys_gettimeofday)
+ .time_redo:
+ 	.pred.rel.mutex p8,p9,p10
+ 	ld4.acq r28 = [r29]	// xtime_lock.sequence. Must come first for locking purposes
++	;;
++	and r28 = ~1,r28	// Make sequence even to force retry if odd
++	;;
+ (p8)	mov r2 = ar.itc		// CPU_TIMER. 36 clocks latency!!!
+ 	add r22 = IA64_TIME_INTERPOLATOR_LAST_COUNTER_OFFSET,r20
+ (p9)	ld8 r2 = [r30]		// readq(ti->address). Could also have latency issues..
+@@ -284,7 +287,6 @@ EX(.fail_efault, probe.w.fault r31, 3)	// This takes 5 cycles and we have spare
+ (p15)	ld8 r17 = [r19],-IA64_TIMESPEC_TV_NSEC_OFFSET
+ (p7)	cmp.ne p7,p0 = r25,r3	// if cmpxchg not successful redo
+ 	// simulate tbit.nz.or p7,p0 = r28,0
+-	and r28 = ~1,r28	// Make sequence even to force retry if odd
+ 	getf.sig r2 = f8
+ 	mf
+ 	add r8 = r8,r18		// Add time interpolator offset
+
+

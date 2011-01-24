@@ -14,6 +14,7 @@
 #include <asm/bootinfo.h>
 #include <asm/io.h>
 #include <asm/mipsregs.h>
+#include <asm/ptrace.h>
 #include <asm/page.h>
 #include <asm/ip32/crime.h>
 #include <asm/ip32/mace.h>
@@ -35,11 +36,12 @@ void __init crime_init(void)
 	id = crime->id;
 	rev = id & CRIME_ID_REV;
 	id = (id & CRIME_ID_IDBITS) >> 4;
-	printk(KERN_INFO "CRIME id %1x rev %d at 0x%0*lx\n",
-	       id, rev, field, (unsigned long) CRIME_BASE);
+	printk (KERN_INFO "CRIME id %1x rev %d at 0x%0*lx\n",
+		id, rev, field, (unsigned long) CRIME_BASE);
 }
 
-irqreturn_t crime_memerr_intr(unsigned int irq, void *dev_id)
+irqreturn_t
+crime_memerr_intr (unsigned int irq, void *dev_id, struct pt_regs *regs)
 {
 	unsigned long stat, addr;
 	int fatal = 0;
@@ -90,13 +92,14 @@ irqreturn_t crime_memerr_intr(unsigned int irq, void *dev_id)
 	return IRQ_HANDLED;
 }
 
-irqreturn_t crime_cpuerr_intr(unsigned int irq, void *dev_id)
+irqreturn_t
+crime_cpuerr_intr (unsigned int irq, void *dev_id, struct pt_regs *regs)
 {
 	unsigned long stat = crime->cpu_error_stat & CRIME_CPU_ERROR_MASK;
 	unsigned long addr = crime->cpu_error_addr & CRIME_CPU_ERROR_ADDR_MASK;
 
 	addr <<= 2;
-	printk("CRIME CPU error at 0x%09lx status 0x%08lx\n", addr, stat);
+	printk ("CRIME CPU error at 0x%09lx status 0x%08lx\n", addr, stat);
 	crime->cpu_error_stat = 0;
 
 	return IRQ_HANDLED;

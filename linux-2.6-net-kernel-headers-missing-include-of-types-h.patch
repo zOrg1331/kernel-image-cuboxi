@@ -1,0 +1,42 @@
+From: Neil Horman <nhorman@redhat.com>
+Subject: [RHEL 5.1 PATCH] kernel-headers: missing include of types.h
+Date: Thu, 26 Apr 2007 15:19:09 -0400
+Bugzilla: 233934
+Message-Id: <20070426191909.GC20536@hmsendeavour.rdu.redhat.com>
+Changelog: [net] kernel-headers: missing include of types.h
+
+
+hey all-
+	As of kernel kernel-headers-2.6.18-8.1.1.el5, some packages
+(specifically tcpdump fail to build because the kernel-headers if_packet.h
+header file fails to include types.h, which define defines several types that
+the former include uses.  This patch is an upstream backport of the fix, which
+is to simply include the file.  fixes bz 233934
+
+Thanks & Regards
+Neil
+
+
+
+
+--- linux-2.6.18.noarch/include/linux/if_packet.h.orig	2007-03-26 20:16:01.000000000 +1000
++++ linux-2.6.18.noarch/include/linux/if_packet.h	2007-03-26 20:16:13.000000000 +1000
+@@ -1,6 +1,8 @@
+ #ifndef __LINUX_IF_PACKET_H
+ #define __LINUX_IF_PACKET_H
+ 
++#include <linux/types.h>
++
+ struct sockaddr_pkt
+ {
+ 	unsigned short spkt_family;
+-- 
+/***************************************************
+ *Neil Horman
+ *Software Engineer
+ *Red Hat, Inc.
+ *nhorman@redhat.com
+ *gpg keyid: 1024D / 0x92A74FA1
+ *http://pgp.mit.edu
+ ***************************************************/
+

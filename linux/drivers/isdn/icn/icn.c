@@ -12,7 +12,6 @@
 #include "icn.h"
 #include <linux/module.h>
 #include <linux/init.h>
-#include <linux/sched.h>
 
 static int portbase = ICN_BASEADDR;
 static unsigned long membase = ICN_MEMADDR;
@@ -1011,8 +1010,7 @@ icn_readstatus(u_char __user *buf, int len, icn_card * card)
 	for (p = buf, count = 0; count < len; p++, count++) {
 		if (card->msg_buf_read == card->msg_buf_write)
 			return count;
-		if (put_user(*card->msg_buf_read++, p))
-			return -EFAULT;
+		put_user(*card->msg_buf_read++, p);
 		if (card->msg_buf_read > card->msg_buf_end)
 			card->msg_buf_read = card->msg_buf;
 	}
@@ -1302,7 +1300,7 @@ icn_command(isdn_ctrl * c, icn_card * card)
 			}
 			break;
 		case ISDN_CMD_DIAL:
-			if (!(card->flags & ICN_FLAGS_RUNNING))
+			if (!card->flags & ICN_FLAGS_RUNNING)
 				return -ENODEV;
 			if (card->leased)
 				break;
@@ -1328,7 +1326,7 @@ icn_command(isdn_ctrl * c, icn_card * card)
 			}
 			break;
 		case ISDN_CMD_ACCEPTD:
-			if (!(card->flags & ICN_FLAGS_RUNNING))
+			if (!card->flags & ICN_FLAGS_RUNNING)
 				return -ENODEV;
 			if (c->arg < ICN_BCH) {
 				a = c->arg + 1;
@@ -1348,7 +1346,7 @@ icn_command(isdn_ctrl * c, icn_card * card)
 			}
 			break;
 		case ISDN_CMD_ACCEPTB:
-			if (!(card->flags & ICN_FLAGS_RUNNING))
+			if (!card->flags & ICN_FLAGS_RUNNING)
 				return -ENODEV;
 			if (c->arg < ICN_BCH) {
 				a = c->arg + 1;
@@ -1366,7 +1364,7 @@ icn_command(isdn_ctrl * c, icn_card * card)
 			}
 			break;
 		case ISDN_CMD_HANGUP:
-			if (!(card->flags & ICN_FLAGS_RUNNING))
+			if (!card->flags & ICN_FLAGS_RUNNING)
 				return -ENODEV;
 			if (c->arg < ICN_BCH) {
 				a = c->arg + 1;
@@ -1375,7 +1373,7 @@ icn_command(isdn_ctrl * c, icn_card * card)
 			}
 			break;
 		case ISDN_CMD_SETEAZ:
-			if (!(card->flags & ICN_FLAGS_RUNNING))
+			if (!card->flags & ICN_FLAGS_RUNNING)
 				return -ENODEV;
 			if (card->leased)
 				break;
@@ -1391,7 +1389,7 @@ icn_command(isdn_ctrl * c, icn_card * card)
 			}
 			break;
 		case ISDN_CMD_CLREAZ:
-			if (!(card->flags & ICN_FLAGS_RUNNING))
+			if (!card->flags & ICN_FLAGS_RUNNING)
 				return -ENODEV;
 			if (card->leased)
 				break;
@@ -1405,7 +1403,7 @@ icn_command(isdn_ctrl * c, icn_card * card)
 			}
 			break;
 		case ISDN_CMD_SETL2:
-			if (!(card->flags & ICN_FLAGS_RUNNING))
+			if (!card->flags & ICN_FLAGS_RUNNING)
 				return -ENODEV;
 			if ((c->arg & 255) < ICN_BCH) {
 				a = c->arg;
@@ -1424,7 +1422,7 @@ icn_command(isdn_ctrl * c, icn_card * card)
 			}
 			break;
 		case ISDN_CMD_SETL3:
-			if (!(card->flags & ICN_FLAGS_RUNNING))
+			if (!card->flags & ICN_FLAGS_RUNNING)
 				return -ENODEV;
 			return 0;
 		default:
@@ -1471,7 +1469,7 @@ if_writecmd(const u_char __user *buf, int len, int id, int channel)
 	icn_card *card = icn_findcard(id);
 
 	if (card) {
-		if (!(card->flags & ICN_FLAGS_RUNNING))
+		if (!card->flags & ICN_FLAGS_RUNNING)
 			return -ENODEV;
 		return (icn_writecmd(buf, len, 1, card));
 	}
@@ -1486,7 +1484,7 @@ if_readstatus(u_char __user *buf, int len, int id, int channel)
 	icn_card *card = icn_findcard(id);
 
 	if (card) {
-		if (!(card->flags & ICN_FLAGS_RUNNING))
+		if (!card->flags & ICN_FLAGS_RUNNING)
 			return -ENODEV;
 		return (icn_readstatus(buf, len, card));
 	}
@@ -1501,7 +1499,7 @@ if_sendbuf(int id, int channel, int ack, struct sk_buff *skb)
 	icn_card *card = icn_findcard(id);
 
 	if (card) {
-		if (!(card->flags & ICN_FLAGS_RUNNING))
+		if (!card->flags & ICN_FLAGS_RUNNING)
 			return -ENODEV;
 		return (icn_sendbuf(channel, ack, skb, card));
 	}
@@ -1520,11 +1518,12 @@ icn_initcard(int port, char *id)
 	icn_card *card;
 	int i;
 
-	if (!(card = kzalloc(sizeof(icn_card), GFP_KERNEL))) {
+	if (!(card = (icn_card *) kmalloc(sizeof(icn_card), GFP_KERNEL))) {
 		printk(KERN_WARNING
 		       "icn: (%s) Could not allocate card-struct.\n", id);
 		return (icn_card *) 0;
 	}
+	memset((char *) card, 0, sizeof(icn_card));
 	spin_lock_init(&card->lock);
 	card->port = port;
 	card->interface.owner = THIS_MODULE;

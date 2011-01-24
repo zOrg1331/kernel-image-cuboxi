@@ -19,9 +19,9 @@
 
 #include <asm/system.h>
 #include <asm/io.h>
-#include <mach-se/mach/se.h>
+#include <asm/se/se.h>
 #include <asm/machvec.h>
-#ifdef CONFIG_SH_STANDARD_BIOS
+#ifdef CONFIG_SH_STANDARD_BIOS 
 #include <asm/sh_bios.h>
 #endif
 
@@ -60,6 +60,8 @@ static byte stnic_eadr[6] =
 
 static struct net_device *stnic_dev;
 
+static int stnic_open (struct net_device *dev);
+static int stnic_close (struct net_device *dev);
 static void stnic_reset (struct net_device *dev);
 static void stnic_get_hdr (struct net_device *dev, struct e8390_pkt_hdr *hdr,
 			   int ring_page);
@@ -96,7 +98,7 @@ STNIC_WRITE (int reg, byte val)
   *(vhalf *) (PA_83902 + ((reg) << 1)) = ((half) (val) << 8);
   STNIC_DELAY ();
 }
-
+
 static int __init stnic_probe(void)
 {
   struct net_device *dev;
@@ -110,8 +112,9 @@ static int __init stnic_probe(void)
   dev = alloc_ei_netdev();
   if (!dev)
   	return -ENOMEM;
+  SET_MODULE_OWNER(dev);
 
-#ifdef CONFIG_SH_STANDARD_BIOS
+#ifdef CONFIG_SH_STANDARD_BIOS 
   sh_bios_get_node_addr (stnic_eadr);
 #endif
   for (i = 0; i < ETHER_ADDR_LEN; i++)
@@ -120,7 +123,11 @@ static int __init stnic_probe(void)
   /* Set the base address to point to the NIC, not the "real" base! */
   dev->base_addr = 0x1000;
   dev->irq = IRQ_STNIC;
-  dev->netdev_ops = &ei_netdev_ops;
+  dev->open = &stnic_open;
+  dev->stop = &stnic_close;
+#ifdef CONFIG_NET_POLL_CONTROLLER
+  dev->poll_controller = ei_poll;
+#endif
 
   /* Snarf the interrupt now.  There's no point in waiting since we cannot
      share and the board will usually be enabled. */
@@ -133,7 +140,7 @@ static int __init stnic_probe(void)
 
   ei_status.name = dev->name;
   ei_status.word16 = 1;
-#ifdef __LITTLE_ENDIAN__
+#ifdef __LITTLE_ENDIAN__ 
   ei_status.bigendian = 0;
 #else
   ei_status.bigendian = 1;
@@ -159,6 +166,23 @@ static int __init stnic_probe(void)
 
   printk (KERN_INFO "NS ST-NIC 83902A\n");
 
+  return 0;
+}
+
+static int
+stnic_open (struct net_device *dev)
+{
+#if 0
+  printk (KERN_DEBUG "stnic open\n");
+#endif
+  ei_open (dev);
+  return 0;
+}
+
+static int
+stnic_close (struct net_device *dev)
+{
+  ei_close (dev);
   return 0;
 }
 

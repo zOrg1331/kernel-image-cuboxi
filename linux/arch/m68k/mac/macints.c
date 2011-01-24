@@ -114,7 +114,6 @@
  *
  */
 
-#include <linux/module.h>
 #include <linux/types.h>
 #include <linux/kernel.h>
 #include <linux/sched.h>
@@ -127,14 +126,13 @@
 #include <asm/irq.h>
 #include <asm/traps.h>
 #include <asm/bootinfo.h>
+#include <asm/machw.h>
 #include <asm/macintosh.h>
 #include <asm/mac_via.h>
 #include <asm/mac_psc.h>
 #include <asm/hwtest.h>
 #include <asm/errno.h>
 #include <asm/macints.h>
-#include <asm/irq_regs.h>
-#include <asm/mac_oss.h>
 
 #define DEBUG_SPURIOUS
 #define SHUTUP_SONIC
@@ -147,6 +145,7 @@ static int scc_mask;
  * VIA/RBV hooks
  */
 
+extern void via_init(void);
 extern void via_register_interrupts(void);
 extern void via_irq_enable(int);
 extern void via_irq_disable(int);
@@ -157,6 +156,9 @@ extern int  via_irq_pending(int);
  * OSS hooks
  */
 
+extern int oss_present;
+
+extern void oss_init(void);
 extern void oss_register_interrupts(void);
 extern void oss_irq_enable(int);
 extern void oss_irq_disable(int);
@@ -167,6 +169,9 @@ extern int  oss_irq_pending(int);
  * PSC hooks
  */
 
+extern int psc_present;
+
+extern void psc_init(void);
 extern void psc_register_interrupts(void);
 extern void psc_irq_enable(int);
 extern void psc_irq_disable(int);
@@ -185,10 +190,12 @@ extern void iop_register_interrupts(void);
 
 extern int baboon_present;
 
+extern void baboon_init(void);
 extern void baboon_register_interrupts(void);
 extern void baboon_irq_enable(int);
 extern void baboon_irq_disable(int);
 extern void baboon_irq_clear(int);
+extern int  baboon_irq_pending(int);
 
 /*
  * SCC interrupt routines
@@ -201,22 +208,22 @@ static void scc_irq_disable(unsigned int);
  * console_loglevel determines NMI handler function
  */
 
-irqreturn_t mac_nmi_handler(int, void *);
-irqreturn_t mac_debug_handler(int, void *);
+irqreturn_t mac_nmi_handler(int, void *, struct pt_regs *);
+irqreturn_t mac_debug_handler(int, void *, struct pt_regs *);
 
 /* #define DEBUG_MACINTS */
 
-void mac_enable_irq(unsigned int irq);
-void mac_disable_irq(unsigned int irq);
+static void mac_enable_irq(unsigned int irq);
+static void mac_disable_irq(unsigned int irq);
 
 static struct irq_controller mac_irq_controller = {
 	.name		= "mac",
-	.lock		= __SPIN_LOCK_UNLOCKED(mac_irq_controller.lock),
+	.lock		= SPIN_LOCK_UNLOCKED,
 	.enable		= mac_enable_irq,
 	.disable	= mac_disable_irq,
 };
 
-void __init mac_init_IRQ(void)
+void mac_init_IRQ(void)
 {
 #ifdef DEBUG_MACINTS
 	printk("mac_init_IRQ(): Setting things up...\n");
@@ -250,9 +257,8 @@ void __init mac_init_IRQ(void)
 	if (baboon_present)
 		baboon_register_interrupts();
 	iop_register_interrupts();
-	if (request_irq(IRQ_AUTO_7, mac_nmi_handler, 0, "NMI",
-			mac_nmi_handler))
-		pr_err("Couldn't register NMI\n");
+	request_irq(IRQ_AUTO_7, mac_nmi_handler, 0, "NMI",
+			mac_nmi_handler);
 #ifdef DEBUG_MACINTS
 	printk("mac_init_IRQ(): Done!\n");
 #endif
@@ -267,7 +273,7 @@ void __init mac_init_IRQ(void)
  * These routines are just dispatchers to the VIA/OSS/PSC routines.
  */
 
-void mac_enable_irq(unsigned int irq)
+static void mac_enable_irq(unsigned int irq)
 {
 	int irq_src = IRQ_SRC(irq);
 
@@ -300,7 +306,7 @@ void mac_enable_irq(unsigned int irq)
 	}
 }
 
-void mac_disable_irq(unsigned int irq)
+static void mac_disable_irq(unsigned int irq)
 {
 	int irq_src = IRQ_SRC(irq);
 
@@ -384,11 +390,10 @@ int mac_irq_pending(unsigned int irq)
 	}
 	return 0;
 }
-EXPORT_SYMBOL(mac_irq_pending);
 
 static int num_debug[8];
 
-irqreturn_t mac_debug_handler(int irq, void *dev_id)
+irqreturn_t mac_debug_handler(int irq, void *dev_id, struct pt_regs *regs)
 {
 	if (num_debug[irq] < 10) {
 		printk("DEBUG: Unexpected IRQ %d\n", irq);
@@ -400,7 +405,7 @@ irqreturn_t mac_debug_handler(int irq, void *dev_id)
 static int in_nmi;
 static volatile int nmi_hold;
 
-irqreturn_t mac_nmi_handler(int irq, void *dev_id)
+irqreturn_t mac_nmi_handler(int irq, void *dev_id, struct pt_regs *fp)
 {
 	int i;
 	/*
@@ -427,7 +432,6 @@ irqreturn_t mac_nmi_handler(int irq, void *dev_id)
 
 	if (console_loglevel >= 8) {
 #if 0
-		struct pt_regs *fp = get_irq_regs();
 		show_state();
 		printk("PC: %08lx\nSR: %04x  SP: %p\n", fp->pc, fp->sr, fp);
 		printk("d0: %08lx    d1: %08lx    d2: %08lx    d3: %08lx\n",
@@ -475,7 +479,7 @@ static void scc_irq_disable(unsigned int irq)
  * here is cleaner than hacking it into drivers/char/macserial.c.
  */
 
-void mac_scc_dispatch(int irq, void *dev_id)
+void mac_scc_dispatch(int irq, void *dev_id, struct pt_regs *regs)
 {
 	volatile unsigned char *scc = (unsigned char *) mac_bi_data.sccbase + 2;
 	unsigned char reg;
@@ -500,7 +504,7 @@ void mac_scc_dispatch(int irq, void *dev_id)
 	/* pretty much kill the system.                 */
 
 	if (reg & 0x38)
-		m68k_handle_int(IRQ_SCCA);
+		m68k_handle_int(IRQ_SCCA, regs);
 	if (reg & 0x07)
-		m68k_handle_int(IRQ_SCCB);
+		m68k_handle_int(IRQ_SCCB, regs);
 }

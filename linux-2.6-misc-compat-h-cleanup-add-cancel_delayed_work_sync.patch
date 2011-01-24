@@ -1,0 +1,70 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Date: Fri, 28 May 2010 15:04:02 -0400
+Subject: [misc] compat.h cleanup: add cancel_delayed_work_sync
+Message-id: <4BFFDB62.6030301@redhat.com>
+Patchwork-id: 25895
+O-Subject: Re: [RHEL5 PATCH 26/27] compat.h cleanup:
+	add	cancel_delayed_work_sync()
+Bugzilla: 546740
+RH-Acked-by: Oleg Nesterov <oleg@redhat.com>
+
+New "simple" cancel_delayed_work_sync() implementation.
+
+This will be deprecated by Oleg's implementation, but for now maintain
+consistency with previous implementations of the function.
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/include/linux/workqueue.h b/include/linux/workqueue.h
+index bf62923..7ea17c8 100644
+--- a/include/linux/workqueue.h
++++ b/include/linux/workqueue.h
+@@ -19,11 +19,19 @@ struct work_struct {
+ 	void *wq_data;
+ 	struct timer_list timer;
+ };
++typedef void (*work_func_t)(void *data);
+ 
+ struct execute_work {
+ 	struct work_struct work;
+ };
+ 
++struct delayed_work {
++	struct work_struct work;
++#if 0 /* not used in RHEL5 */
++	struct timer_list timer;
++#endif
++};
++
+ #define __WORK_INITIALIZER(n, f, d) {				\
+         .entry	= { &(n).entry, &(n).entry },			\
+ 	.func = (f),						\
+@@ -54,6 +62,9 @@ struct execute_work {
+ 		init_timer(&(_work)->timer);			\
+ 	} while (0)
+ 
++#define INIT_DELAYED_WORK(_work, _func) \
++	INIT_WORK(&(_work)->work, _func, &(_work)->work) /* for RHEL5 */
++
+ extern struct workqueue_struct *__create_workqueue(const char *name,
+ 						    int singlethread);
+ #define create_workqueue(name) __create_workqueue((name), 0)
+@@ -103,4 +114,18 @@ static inline int delayed_work_pending(struct work_struct *work)
+ 	return test_bit(0, &work->pending);
+ }
+ 
++/**
++ * cancel_delayed_work_sync - reliably kill off a delayed work.
++ * @dwork: the delayed work struct
++ */
++
++static inline int cancel_delayed_work_sync(struct delayed_work *dwork)
++{
++	int ret;
++
++	ret = cancel_delayed_work(&dwork->work);
++	if (!ret)
++		flush_scheduled_work();
++	return ret;
++}
+ #endif

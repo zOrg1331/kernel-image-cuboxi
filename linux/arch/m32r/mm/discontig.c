@@ -20,6 +20,7 @@ extern char _end[];
 
 struct pglist_data *node_data[MAX_NUMNODES];
 EXPORT_SYMBOL(node_data);
+static bootmem_data_t node_bdata[MAX_NUMNODES] __initdata;
 
 pg_data_t m32r_node_data[MAX_NUMNODES];
 
@@ -32,9 +33,6 @@ typedef struct {
 } mem_prof_t;
 static mem_prof_t mem_prof[MAX_NUMNODES];
 
-extern unsigned long memory_start;
-extern unsigned long memory_end;
-
 static void __init mem_prof_init(void)
 {
 	unsigned long start_pfn, holes, free_pfn;
@@ -45,7 +43,7 @@ static void __init mem_prof_init(void)
 	/* Node#0 SDRAM */
 	mp = &mem_prof[0];
 	mp->start_pfn = PFN_UP(CONFIG_MEMORY_START);
-	mp->pages = PFN_DOWN(memory_end - memory_start);
+	mp->pages = PFN_DOWN(CONFIG_MEMORY_SIZE);
 	mp->holes = 0;
 	mp->free_pfn = PFN_UP(__pa(_end));
 
@@ -83,7 +81,7 @@ unsigned long __init setup_memory(void)
 	for_each_online_node(nid) {
 		mp = &mem_prof[nid];
 		NODE_DATA(nid)=(pg_data_t *)&m32r_node_data[nid];
-		NODE_DATA(nid)->bdata = &bootmem_node_data[nid];
+		NODE_DATA(nid)->bdata = &node_bdata[nid];
 		min_pfn = mp->start_pfn;
 		max_pfn = mp->start_pfn + mp->pages;
 		bootmap_size = init_bootmem_node(NODE_DATA(nid), mp->free_pfn,
@@ -93,8 +91,7 @@ unsigned long __init setup_memory(void)
 			PFN_PHYS(mp->pages));
 
 		reserve_bootmem_node(NODE_DATA(nid), PFN_PHYS(mp->start_pfn),
-			PFN_PHYS(mp->free_pfn - mp->start_pfn) + bootmap_size,
-			BOOTMEM_DEFAULT);
+			PFN_PHYS(mp->free_pfn - mp->start_pfn) + bootmap_size);
 
 		if (max_low_pfn < max_pfn)
 			max_low_pfn = max_pfn;
@@ -107,16 +104,18 @@ unsigned long __init setup_memory(void)
 	if (LOADER_TYPE && INITRD_START) {
 		if (INITRD_START + INITRD_SIZE <= PFN_PHYS(max_low_pfn)) {
 			reserve_bootmem_node(NODE_DATA(0), INITRD_START,
-				INITRD_SIZE, BOOTMEM_DEFAULT);
-			initrd_start = INITRD_START + PAGE_OFFSET;
+				INITRD_SIZE);
+			initrd_start = INITRD_START ?
+				INITRD_START + PAGE_OFFSET : 0;
+
 			initrd_end = initrd_start + INITRD_SIZE;
 			printk("initrd:start[%08lx],size[%08lx]\n",
 				initrd_start, INITRD_SIZE);
 		} else {
 			printk("initrd extends beyond end of memory "
-				"(0x%08lx > 0x%08llx)\ndisabling initrd\n",
+				"(0x%08lx > 0x%08lx)\ndisabling initrd\n",
 				INITRD_START + INITRD_SIZE,
-			        (unsigned long long)PFN_PHYS(max_low_pfn));
+				PFN_PHYS(max_low_pfn));
 
 			initrd_start = 0;
 		}
@@ -126,7 +125,8 @@ unsigned long __init setup_memory(void)
 	return max_low_pfn;
 }
 
-#define START_PFN(nid)		(NODE_DATA(nid)->bdata->node_min_pfn)
+#define START_PFN(nid)	\
+	(NODE_DATA(nid)->bdata->node_boot_start >> PAGE_SHIFT)
 #define MAX_LOW_PFN(nid)	(NODE_DATA(nid)->bdata->node_low_pfn)
 
 unsigned long __init zone_sizes_init(void)
@@ -149,7 +149,8 @@ unsigned long __init zone_sizes_init(void)
 		zholes_size[ZONE_DMA] = mp->holes;
 		holes += zholes_size[ZONE_DMA];
 
-		free_area_init_node(nid, zones_size, start_pfn, zholes_size);
+		free_area_init_node(nid, NODE_DATA(nid), zones_size,
+			start_pfn, zholes_size);
 	}
 
 	/*
@@ -157,9 +158,10 @@ unsigned long __init zone_sizes_init(void)
 	 *  Use all area of internal RAM.
 	 *  see __alloc_pages()
 	 */
-	NODE_DATA(1)->node_zones->watermark[WMARK_MIN] = 0;
-	NODE_DATA(1)->node_zones->watermark[WMARK_LOW] = 0;
-	NODE_DATA(1)->node_zones->watermark[WMARK_HIGH] = 0;
+	NODE_DATA(1)->node_zones->pages_min = 0;
+	NODE_DATA(1)->node_zones->pages_low = 0;
+	NODE_DATA(1)->node_zones->pages_high = 0;
 
 	return holes;
 }
+

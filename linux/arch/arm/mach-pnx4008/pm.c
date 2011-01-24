@@ -15,14 +15,15 @@
 #include <linux/rtc.h>
 #include <linux/sched.h>
 #include <linux/proc_fs.h>
-#include <linux/suspend.h>
+#include <linux/pm.h>
 #include <linux/delay.h>
 #include <linux/clk.h>
-#include <linux/io.h>
 
+#include <asm/io.h>
+#include <asm/mach-types.h>
 #include <asm/cacheflush.h>
-#include <mach/pm.h>
-#include <mach/clock.h>
+#include <asm/arch/pm.h>
+#include <asm/arch/clock.h>
 
 #define SRAM_VA IO_ADDRESS(PNX4008_IRAM_BASE)
 
@@ -106,19 +107,50 @@ static int pnx4008_pm_enter(suspend_state_t state)
 	case PM_SUSPEND_MEM:
 		pnx4008_suspend();
 		break;
+	case PM_SUSPEND_DISK:
+		return -ENOTSUPP;
+	default:
+		return -EINVAL;
 	}
 	return 0;
 }
 
-static int pnx4008_pm_valid(suspend_state_t state)
+/*
+ * Called after processes are frozen, but before we shut down devices.
+ */
+static int pnx4008_pm_prepare(suspend_state_t state)
 {
-	return (state == PM_SUSPEND_STANDBY) ||
-	       (state == PM_SUSPEND_MEM);
+	switch (state) {
+	case PM_SUSPEND_STANDBY:
+	case PM_SUSPEND_MEM:
+		break;
+
+	case PM_SUSPEND_DISK:
+		return -ENOTSUPP;
+		break;
+
+	default:
+		return -EINVAL;
+		break;
+	}
+	return 0;
 }
 
-static struct platform_suspend_ops pnx4008_pm_ops = {
+/*
+ * Called after devices are re-setup, but before processes are thawed.
+ */
+static int pnx4008_pm_finish(suspend_state_t state)
+{
+	return 0;
+}
+
+/*
+ * Set to PM_DISK_FIRMWARE so we can quickly veto suspend-to-disk.
+ */
+static struct pm_ops pnx4008_pm_ops = {
+	.prepare = pnx4008_pm_prepare,
 	.enter = pnx4008_pm_enter,
-	.valid = pnx4008_pm_valid,
+	.finish = pnx4008_pm_finish,
 };
 
 static int __init pnx4008_pm_init(void)
@@ -145,7 +177,7 @@ static int __init pnx4008_pm_init(void)
 		return -ENOMEM;
 	}
 
-	suspend_set_ops(&pnx4008_pm_ops);
+	pm_set_ops(&pnx4008_pm_ops);
 	return 0;
 }
 

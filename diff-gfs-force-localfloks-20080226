@@ -1,0 +1,17 @@
+--- ../kernel-2_6_18-rhel5-028stab054_2/fs/gfs/ops_fstype.c~orig	2008-02-26 12:31:03.000000000 +0300
++++ ./fs/gfs/ops_fstype.c	2008-02-26 12:34:09.000000000 +0300
+@@ -193,11 +193,11 @@ static int init_locking(struct gfs_sbd *
+ 	if (undo)
+ 		goto fail_live;
+ 
++	/* Always force local [p|f]locks */
++	sdp->sd_args.ar_localflocks = TRUE;
++
+ 	if ((sdp->sd_lockstruct.ls_flags & LM_LSFLAG_LOCAL) &&
+ 	    !sdp->sd_args.ar_ignore_local_fs) {
+-		/* Force local [p|f]locks */
+-		sdp->sd_args.ar_localflocks = TRUE;
+-
+ 		/* Force local read ahead and caching */
+ 		sdp->sd_args.ar_localcaching = TRUE;
+ 

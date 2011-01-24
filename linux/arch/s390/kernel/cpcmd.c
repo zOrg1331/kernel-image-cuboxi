@@ -2,13 +2,10 @@
  *  arch/s390/kernel/cpcmd.c
  *
  *  S390 version
- *    Copyright IBM Corp. 1999,2007
+ *    Copyright (C) 1999,2005 IBM Deutschland Entwicklung GmbH, IBM Corporation
  *    Author(s): Martin Schwidefsky (schwidefsky@de.ibm.com),
  *               Christian Borntraeger (cborntra@de.ibm.com),
  */
-
-#define KMSG_COMPONENT "cpcmd"
-#define pr_fmt(fmt) KMSG_COMPONENT ": " fmt
 
 #include <linux/kernel.h>
 #include <linux/module.h>
@@ -19,108 +16,117 @@
 #include <asm/ebcdic.h>
 #include <asm/cpcmd.h>
 #include <asm/system.h>
-#include <asm/io.h>
 
 static DEFINE_SPINLOCK(cpcmd_lock);
 static char cpcmd_buf[241];
 
-static int diag8_noresponse(int cmdlen)
-{
-	register unsigned long reg2 asm ("2") = (addr_t) cpcmd_buf;
-	register unsigned long reg3 asm ("3") = cmdlen;
-
-	asm volatile(
-#ifndef CONFIG_64BIT
-		"	diag	%1,%0,0x8\n"
-#else /* CONFIG_64BIT */
-		"	sam31\n"
-		"	diag	%1,%0,0x8\n"
-		"	sam64\n"
-#endif /* CONFIG_64BIT */
-		: "+d" (reg3) : "d" (reg2) : "cc");
-	return reg3;
-}
-
-static int diag8_response(int cmdlen, char *response, int *rlen)
-{
-	register unsigned long reg2 asm ("2") = (addr_t) cpcmd_buf;
-	register unsigned long reg3 asm ("3") = (addr_t) response;
-	register unsigned long reg4 asm ("4") = cmdlen | 0x40000000L;
-	register unsigned long reg5 asm ("5") = *rlen;
-
-	asm volatile(
-#ifndef CONFIG_64BIT
-		"	diag	%2,%0,0x8\n"
-		"	brc	8,1f\n"
-		"	ar	%1,%4\n"
-#else /* CONFIG_64BIT */
-		"	sam31\n"
-		"	diag	%2,%0,0x8\n"
-		"	sam64\n"
-		"	brc	8,1f\n"
-		"	agr	%1,%4\n"
-#endif /* CONFIG_64BIT */
-		"1:\n"
-		: "+d" (reg4), "+d" (reg5)
-		: "d" (reg2), "d" (reg3), "d" (*rlen) : "cc");
-	*rlen = reg5;
-	return reg4;
-}
-
 /*
- * __cpcmd has some restrictions over cpcmd
- *  - the response buffer must reside below 2GB (if any)
- *  - __cpcmd is unlocked and therefore not SMP-safe
+ * the caller of __cpcmd has to ensure that the response buffer is below 2 GB
  */
 int  __cpcmd(const char *cmd, char *response, int rlen, int *response_code)
 {
+	const int mask = 0x40000000L;
+	unsigned long flags;
+	int return_code;
+	int return_len;
 	int cmdlen;
-	int rc;
-	int response_len;
 
+	spin_lock_irqsave(&cpcmd_lock, flags);
 	cmdlen = strlen(cmd);
 	BUG_ON(cmdlen > 240);
 	memcpy(cpcmd_buf, cmd, cmdlen);
 	ASCEBC(cpcmd_buf, cmdlen);
 
-	if (response) {
+	if (response != NULL && rlen > 0) {
 		memset(response, 0, rlen);
-		response_len = rlen;
-		rc = diag8_response(cmdlen, response, &rlen);
-		EBCASC(response, response_len);
+#ifndef CONFIG_64BIT
+		asm volatile (	"lra	2,0(%2)\n"
+				"lr	4,%3\n"
+				"o	4,%6\n"
+				"lra	3,0(%4)\n"
+				"lr	5,%5\n"
+				"diag	2,4,0x8\n"
+				"brc	8, 1f\n"
+				"ar	5, %5\n"
+				"1: \n"
+				"lr	%0,4\n"
+				"lr	%1,5\n"
+				: "=d" (return_code), "=d" (return_len)
+				: "a" (cpcmd_buf), "d" (cmdlen),
+				"a" (response), "d" (rlen), "m" (mask)
+				: "cc", "2", "3", "4", "5" );
+#else /* CONFIG_64BIT */
+                asm volatile (	"lrag	2,0(%2)\n"
+				"lgr	4,%3\n"
+				"o	4,%6\n"
+				"lrag	3,0(%4)\n"
+				"lgr	5,%5\n"
+				"sam31\n"
+				"diag	2,4,0x8\n"
+				"sam64\n"
+				"brc	8, 1f\n"
+				"agr	5, %5\n"
+				"1: \n"
+				"lgr	%0,4\n"
+				"lgr	%1,5\n"
+				: "=d" (return_code), "=d" (return_len)
+				: "a" (cpcmd_buf), "d" (cmdlen),
+				"a" (response), "d" (rlen), "m" (mask)
+				: "cc", "2", "3", "4", "5" );
+#endif /* CONFIG_64BIT */
+                EBCASC(response, rlen);
         } else {
-		rc = diag8_noresponse(cmdlen);
+		return_len = 0;
+#ifndef CONFIG_64BIT
+                asm volatile (	"lra	2,0(%1)\n"
+				"lr	3,%2\n"
+				"diag	2,3,0x8\n"
+				"lr	%0,3\n"
+				: "=d" (return_code)
+				: "a" (cpcmd_buf), "d" (cmdlen)
+				: "2", "3"  );
+#else /* CONFIG_64BIT */
+                asm volatile (	"lrag	2,0(%1)\n"
+				"lgr	3,%2\n"
+				"sam31\n"
+				"diag	2,3,0x8\n"
+				"sam64\n"
+				"lgr	%0,3\n"
+				: "=d" (return_code)
+				: "a" (cpcmd_buf), "d" (cmdlen)
+				: "2", "3" );
+#endif /* CONFIG_64BIT */
         }
-	if (response_code)
-		*response_code = rc;
-	return rlen;
+	spin_unlock_irqrestore(&cpcmd_lock, flags);
+	if (response_code != NULL)
+		*response_code = return_code;
+	return return_len;
 }
+
 EXPORT_SYMBOL(__cpcmd);
 
+#ifdef CONFIG_64BIT
 int cpcmd(const char *cmd, char *response, int rlen, int *response_code)
 {
 	char *lowbuf;
 	int len;
-	unsigned long flags;
 
-	if ((virt_to_phys(response) != (unsigned long) response) ||
-			(((unsigned long)response + rlen) >> 31)) {
+	if ((rlen == 0) || (response == NULL)
+	    || !((unsigned long)response >> 31))
+		len = __cpcmd(cmd, response, rlen, response_code);
+	else {
 		lowbuf = kmalloc(rlen, GFP_KERNEL | GFP_DMA);
 		if (!lowbuf) {
-			pr_warning("The cpcmd kernel function failed to "
-				   "allocate a response buffer\n");
+			printk(KERN_WARNING
+				"cpcmd: could not allocate response buffer\n");
 			return -ENOMEM;
 		}
-		spin_lock_irqsave(&cpcmd_lock, flags);
 		len = __cpcmd(cmd, lowbuf, rlen, response_code);
-		spin_unlock_irqrestore(&cpcmd_lock, flags);
 		memcpy(response, lowbuf, rlen);
 		kfree(lowbuf);
-	} else {
-		spin_lock_irqsave(&cpcmd_lock, flags);
-		len = __cpcmd(cmd, response, rlen, response_code);
-		spin_unlock_irqrestore(&cpcmd_lock, flags);
 	}
 	return len;
 }
+
 EXPORT_SYMBOL(cpcmd);
+#endif		/* CONFIG_64BIT */

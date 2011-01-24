@@ -1,0 +1,27 @@
+From: Michal Schmidt <mschmidt@redhat.com>
+Date: Fri, 3 Sep 2010 16:44:07 -0400
+Subject: [net] bnx2x: main netdev does not need ->poll, ->weight
+Message-id: <20100903164407.25415.98219.stgit@brian.englab.brq.redhat.com>
+Patchwork-id: 28109
+O-Subject: [RHEL5.6 BZ572012 PATCH 35/46] bnx2x: main netdev does not need
+	->poll, ->weight.
+Bugzilla: 572012
+RH-Acked-by: David S. Miller <davem@redhat.com>
+RH-Acked-by: Stanislaw Gruszka <sgruszka@redhat.com>
+
+NAPI poll is never scheduled on it, only on the dummy netdevs.
+
+diff --git a/drivers/net/bnx2x/bnx2x_main.c b/drivers/net/bnx2x/bnx2x_main.c
+index dce7f3a..6a09a23 100644
+--- a/drivers/net/bnx2x/bnx2x_main.c
++++ b/drivers/net/bnx2x/bnx2x_main.c
+@@ -13381,9 +13381,6 @@ static int __devinit bnx2x_init_one(struct pci_dev *pdev,
+ 		return rc;
+ 	}
+ 
+-	dev->poll = bnx2x_poll;
+-	dev->weight = 128*4;
+-
+ 	rc = bnx2x_init_bp(bp);
+ 	if (rc)
+ 		goto init_one_exit;

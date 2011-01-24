@@ -1,0 +1,51 @@
+From: Ian Kent <ikent@redhat.com>
+Date: Tue, 12 Aug 2008 12:27:34 +0800
+Subject: [autofs4] check communication pipe is valid for write
+Message-id: 20080812042732.15842.11351.stgit@web.messagingengine.com
+O-Subject: [RHEL 5.3 PATCH 12/20] autofs4 - check kernel communication pipe is valid for write [Realted: bz452139]
+Bugzilla: 452139
+
+This patch is an upstream bug fix and shoud be associated with
+bug 452139.
+
+It is possible for an autofs mount to become catatonic (and for the
+daemon communication pipe to become NULL) after a wait has been
+initiallized but before the request has been sent to the daemon. We
+need to check for this before sending the request packet.
+
+Signed-off-by: Ian Kent <raven@themaw.net>
+
+diff --git a/fs/autofs4/waitq.c b/fs/autofs4/waitq.c
+index 5103f3d..8849768 100644
+--- a/fs/autofs4/waitq.c
++++ b/fs/autofs4/waitq.c
+@@ -96,6 +96,7 @@ static void autofs4_notify_daemon(struct autofs_sb_info *sbi,
+ {
+ 	union autofs_packet_union pkt;
+ 	size_t pktsz;
++	struct file *pipe = NULL;
+ 
+ 	DPRINTK("wait id = 0x%08lx, name = %.*s, type=%d",
+ 		wq->wait_queue_token, wq->name.len, wq->name.name, type);
+@@ -160,8 +161,19 @@ static void autofs4_notify_daemon(struct autofs_sb_info *sbi,
+ 		return;
+ 	}
+ 
+-	if (autofs4_write(sbi->pipe, &pkt, pktsz))
+-		autofs4_catatonic_mode(sbi);
++	/* Check if we have become catatonic */
++	mutex_lock(&sbi->wq_mutex);
++	if (!sbi->catatonic) {
++		pipe = sbi->pipe;
++		get_file(pipe);
++	}
++	mutex_unlock(&sbi->wq_mutex);
++
++	if (pipe) {
++		if (autofs4_write(pipe, &pkt, pktsz))
++			autofs4_catatonic_mode(sbi);
++		fput(pipe);
++	}
+ }
+ 
+ static int autofs4_getpath(struct autofs_sb_info *sbi,

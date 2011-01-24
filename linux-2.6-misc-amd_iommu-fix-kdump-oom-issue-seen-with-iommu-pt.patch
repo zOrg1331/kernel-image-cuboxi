@@ -1,0 +1,63 @@
+From: Bhavna Sarathy <bnagendr@redhat.com>
+Date: Mon, 27 Sep 2010 16:31:36 -0400
+Subject: [misc] amd_iommu: fix kdump OOM issue seen with iommu=pt
+Message-id: <20100927163138.16943.52724.sendpatchset@localhost.localdomain>
+Patchwork-id: 28423
+O-Subject: [RHEL5.6 PATCH] Fix kdump OOM issue seen with iommu=pt
+Bugzilla: 627663
+RH-Acked-by: Chris Wright <chrisw@redhat.com>
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+
+Resolves 627663
+
+This patch fixes the kdump issue introduced by AMD passthrough mode patch.   It
+checks the end_pfn and only sets swiotlb if the end_pfn > MAX_DMA32_PFN.  Note
+that in RHEL6 this check was with max_pfn, but in RHEl5 it is end_pfn.
+In the kdump kernel end_pfn seems to point to the end of the kdump memory which is
+below 4gb and thus swiotlb is now 0 and the 64M are not longer allocated at boot
+of the kdump kernel.
+
+Fixes the OOM issues seen with kdump kernels.
+
+Please note dependencies and apply patches in the following order:
+1) IOMMU passthrough mode support
+2) Change default to iommu=pt
+3) kdump fix to iommu passthrough mode patch
+
+Testing done successfully on Dinar system, the OOM kill was fixed with this patch.
+[ PASS ] kdump works in IOMMU passthrough mode, SWIOTLB is turned off
+
+    1. Installed kexec-tools
+    2. Turned on the kdump init script (chkconfig kdump on)
+    3. Booted the kernel with the parameter 'crashkernel=128M@16M'
+    4. Did an 'echo c > /proc/sysrq-trigger'
+    5. System booted into the crash kernel and saved the state
+    6. No PCI-DMA messages from crash kernel (SWIOTLB is turned off)
+    7. System rebooted itself
+    8. Checked for the presence of a file in /var/crash
+
+Please review and ACK.
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/arch/x86_64/kernel/amd_iommu_init.c b/arch/x86_64/kernel/amd_iommu_init.c
+index 9ddfa5d..6b827bc 100644
+--- a/arch/x86_64/kernel/amd_iommu_init.c
++++ b/arch/x86_64/kernel/amd_iommu_init.c
+@@ -27,6 +27,7 @@
+ #include <asm/pci-direct.h>
+ #include <asm/amd_iommu_types.h>
+ #include <asm/amd_iommu.h>
++#include <asm/dma.h>
+ 
+ /*
+  * definitions for the ACPI scanning code
+@@ -1206,7 +1207,7 @@ void __init amd_iommu_detect(void)
+ 		 */
+ 		iommu_pass_through = amd_iommu_force_nopt ? 0 : 1;
+ 	
+-		if (iommu_pass_through)
++		if (iommu_pass_through && end_pfn > MAX_DMA32_PFN)
+ 			swiotlb = 1;
+ 	}
+ }

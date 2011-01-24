@@ -29,6 +29,8 @@
  * ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
  * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  * SOFTWARE.
+ *
+ * $Id: fmr_pool.c 2730 2005-06-28 16:43:03Z sean.hefty $
  */
 
 #include <linux/errno.h>
@@ -40,8 +42,6 @@
 #include <rdma/ib_fmr_pool.h>
 
 #include "core_priv.h"
-
-#define PFX "fmr_pool: "
 
 enum {
 	IB_FMR_MAX_REMAPS = 32,
@@ -150,13 +150,14 @@ static void ib_fmr_batch_release(struct ib_fmr_pool *pool)
 
 #ifdef DEBUG
 		if (fmr->ref_count !=0) {
-			printk(KERN_WARNING PFX "Unmapping FMR 0x%08x with ref count %d\n",
+			printk(KERN_WARNING "Unmapping FMR 0x%08x with ref count %d",
 			       fmr, fmr->ref_count);
 		}
 #endif
 	}
 
-	list_splice_init(&pool->dirty_list, &unmap_list);
+	list_splice(&pool->dirty_list, &unmap_list);
+	INIT_LIST_HEAD(&pool->dirty_list);
 	pool->dirty_len = 0;
 
 	spin_unlock_irq(&pool->pool_lock);
@@ -167,7 +168,7 @@ static void ib_fmr_batch_release(struct ib_fmr_pool *pool)
 
 	ret = ib_unmap_fmr(&fmr_list);
 	if (ret)
-		printk(KERN_WARNING PFX "ib_unmap_fmr returned %d\n", ret);
+		printk(KERN_WARNING "ib_unmap_fmr returned %d", ret);
 
 	spin_lock_irq(&pool->pool_lock);
 	list_splice(&unmap_list, &pool->free_list);
@@ -179,7 +180,8 @@ static int ib_fmr_cleanup_thread(void *pool_ptr)
 	struct ib_fmr_pool *pool = pool_ptr;
 
 	do {
-		if (atomic_read(&pool->flush_ser) - atomic_read(&pool->req_ser) < 0) {
+		if (pool->dirty_len >= pool->dirty_watermark ||
+		    atomic_read(&pool->flush_ser) - atomic_read(&pool->req_ser) < 0) {
 			ib_fmr_batch_release(pool);
 
 			atomic_inc(&pool->flush_ser);
@@ -190,7 +192,8 @@ static int ib_fmr_cleanup_thread(void *pool_ptr)
 		}
 
 		set_current_state(TASK_INTERRUPTIBLE);
-		if (atomic_read(&pool->flush_ser) - atomic_read(&pool->req_ser) >= 0 &&
+		if (pool->dirty_len < pool->dirty_watermark &&
+		    atomic_read(&pool->flush_ser) - atomic_read(&pool->req_ser) >= 0 &&
 		    !kthread_should_stop())
 			schedule();
 		__set_current_state(TASK_RUNNING);
@@ -223,20 +226,20 @@ struct ib_fmr_pool *ib_create_fmr_pool(struct ib_pd             *pd,
 	device = pd->device;
 	if (!device->alloc_fmr    || !device->dealloc_fmr  ||
 	    !device->map_phys_fmr || !device->unmap_fmr) {
-		printk(KERN_INFO PFX "Device %s does not support FMRs\n",
+		printk(KERN_WARNING "Device %s does not support fast memory regions",
 		       device->name);
 		return ERR_PTR(-ENOSYS);
 	}
 
 	attr = kmalloc(sizeof *attr, GFP_KERNEL);
 	if (!attr) {
-		printk(KERN_WARNING PFX "couldn't allocate device attr struct\n");
+		printk(KERN_WARNING "couldn't allocate device attr struct");
 		return ERR_PTR(-ENOMEM);
 	}
 
 	ret = ib_query_device(device, attr);
 	if (ret) {
-		printk(KERN_WARNING PFX "couldn't query device: %d\n", ret);
+		printk(KERN_WARNING "couldn't query device");
 		kfree(attr);
 		return ERR_PTR(ret);
 	}
@@ -250,7 +253,7 @@ struct ib_fmr_pool *ib_create_fmr_pool(struct ib_pd             *pd,
 
 	pool = kmalloc(sizeof *pool, GFP_KERNEL);
 	if (!pool) {
-		printk(KERN_WARNING PFX "couldn't allocate pool struct\n");
+		printk(KERN_WARNING "couldn't allocate pool struct");
 		return ERR_PTR(-ENOMEM);
 	}
 
@@ -267,7 +270,7 @@ struct ib_fmr_pool *ib_create_fmr_pool(struct ib_pd             *pd,
 			kmalloc(IB_FMR_HASH_SIZE * sizeof *pool->cache_bucket,
 				GFP_KERNEL);
 		if (!pool->cache_bucket) {
-			printk(KERN_WARNING PFX "Failed to allocate cache in pool\n");
+			printk(KERN_WARNING "Failed to allocate cache in pool");
 			ret = -ENOMEM;
 			goto out_free_pool;
 		}
@@ -286,33 +289,30 @@ struct ib_fmr_pool *ib_create_fmr_pool(struct ib_pd             *pd,
 	atomic_set(&pool->flush_ser, 0);
 	init_waitqueue_head(&pool->force_wait);
 
-	pool->thread = kthread_run(ib_fmr_cleanup_thread,
-				   pool,
-				   "ib_fmr(%s)",
-				   device->name);
+	pool->thread = kthread_create(ib_fmr_cleanup_thread,
+				      pool,
+				      "ib_fmr(%s)",
+				      device->name);
 	if (IS_ERR(pool->thread)) {
-		printk(KERN_WARNING PFX "couldn't start cleanup thread\n");
+		printk(KERN_WARNING "couldn't start cleanup thread");
 		ret = PTR_ERR(pool->thread);
 		goto out_free_pool;
 	}
 
 	{
 		struct ib_pool_fmr *fmr;
-		struct ib_fmr_attr fmr_attr = {
+		struct ib_fmr_attr attr = {
 			.max_pages  = params->max_pages_per_fmr,
 			.max_maps   = pool->max_remaps,
 			.page_shift = params->page_shift
 		};
-		int bytes_per_fmr = sizeof *fmr;
-
-		if (pool->cache_bucket)
-			bytes_per_fmr += params->max_pages_per_fmr * sizeof (u64);
 
 		for (i = 0; i < params->pool_size; ++i) {
-			fmr = kmalloc(bytes_per_fmr, GFP_KERNEL);
+			fmr = kmalloc(sizeof *fmr + params->max_pages_per_fmr * sizeof (u64),
+				      GFP_KERNEL);
 			if (!fmr) {
-				printk(KERN_WARNING PFX "failed to allocate fmr "
-				       "struct for FMR %d\n", i);
+				printk(KERN_WARNING "failed to allocate fmr struct "
+				       "for FMR %d", i);
 				goto out_fail;
 			}
 
@@ -321,10 +321,9 @@ struct ib_fmr_pool *ib_create_fmr_pool(struct ib_pd             *pd,
 			fmr->ref_count        = 0;
 			INIT_HLIST_NODE(&fmr->cache_node);
 
-			fmr->fmr = ib_alloc_fmr(pd, params->access, &fmr_attr);
+			fmr->fmr = ib_alloc_fmr(pd, params->access, &attr);
 			if (IS_ERR(fmr->fmr)) {
-				printk(KERN_WARNING PFX "fmr_create failed "
-				       "for FMR %d\n", i);
+				printk(KERN_WARNING "fmr_create failed for FMR %d", i);
 				kfree(fmr);
 				goto out_fail;
 			}
@@ -379,7 +378,7 @@ void ib_destroy_fmr_pool(struct ib_fmr_pool *pool)
 	}
 
 	if (i < pool->pool_size)
-		printk(KERN_WARNING PFX "pool still has %d regions registered\n",
+		printk(KERN_WARNING "pool still has %d regions registered",
 		       pool->pool_size - i);
 
 	kfree(pool->cache_bucket);
@@ -396,26 +395,19 @@ EXPORT_SYMBOL(ib_destroy_fmr_pool);
 int ib_flush_fmr_pool(struct ib_fmr_pool *pool)
 {
 	int serial;
-	struct ib_pool_fmr *fmr, *next;
 
+	atomic_inc(&pool->req_ser);
 	/*
-	 * The free_list holds FMRs that may have been used
-	 * but have not been remapped enough times to be dirty.
-	 * Put them on the dirty list now so that the cleanup
-	 * thread will reap them too.
+	 * It's OK if someone else bumps req_ser again here -- we'll
+	 * just wait a little longer.
 	 */
-	spin_lock_irq(&pool->pool_lock);
-	list_for_each_entry_safe(fmr, next, &pool->free_list, list) {
-		if (fmr->remap_count > 0)
-			list_move(&fmr->list, &pool->dirty_list);
-	}
-	spin_unlock_irq(&pool->pool_lock);
+	serial = atomic_read(&pool->req_ser);
 
-	serial = atomic_inc_return(&pool->req_ser);
 	wake_up_process(pool->thread);
 
 	if (wait_event_interruptible(pool->force_wait,
-				     atomic_read(&pool->flush_ser) - serial >= 0))
+				     atomic_read(&pool->flush_ser) -
+				     atomic_read(&pool->req_ser) >= 0))
 		return -EINTR;
 
 	return 0;
@@ -479,7 +471,8 @@ struct ib_pool_fmr *ib_fmr_pool_map_phys(struct ib_fmr_pool *pool_handle,
 		list_add(&fmr->list, &pool->free_list);
 		spin_unlock_irqrestore(&pool->pool_lock, flags);
 
-		printk(KERN_WARNING PFX "fmr_map returns %d\n", result);
+		printk(KERN_WARNING "fmr_map returns %d\n",
+		       result);
 
 		return ERR_PTR(result);
 	}
@@ -524,16 +517,14 @@ int ib_fmr_pool_unmap(struct ib_pool_fmr *fmr)
 			list_add_tail(&fmr->list, &pool->free_list);
 		} else {
 			list_add_tail(&fmr->list, &pool->dirty_list);
-			if (++pool->dirty_len >= pool->dirty_watermark) {
-				atomic_inc(&pool->req_ser);
-				wake_up_process(pool->thread);
-			}
+			++pool->dirty_len;
+			wake_up_process(pool->thread);
 		}
 	}
 
 #ifdef DEBUG
 	if (fmr->ref_count < 0)
-		printk(KERN_WARNING PFX "FMR %p has ref count %d < 0\n",
+		printk(KERN_WARNING "FMR %p has ref count %d < 0",
 		       fmr, fmr->ref_count);
 #endif
 

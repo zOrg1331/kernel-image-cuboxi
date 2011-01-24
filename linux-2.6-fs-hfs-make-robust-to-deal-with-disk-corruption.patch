@@ -1,0 +1,177 @@
+From: Eric Sandeen <sandeen@redhat.com>
+Date: Tue, 15 Jan 2008 13:38:14 -0600
+Subject: [fs] hfs: make robust to deal with disk corruption
+Message-id: 478D0BA6.9060400@redhat.com
+O-Subject: Re: [RHEL5.2 PATCH] UPDATED: make hfs more robust in the face of disk corruption
+Bugzilla: 213773
+
+For: Bugzilla Bug 213773: fsfuzz hfs oops'es kernel on ppc
+
+(aside: does anyone know *why* we ship hfs in RHEL?)
+
+This patch was sent upstream... today.
+
+hfs seems prone to bad things when it encounters on disk corruption.
+Many values are read from disk, and used as lengths to memcpy, as an
+example.  This patch fixes up several of these problematic cases.
+
+o sanity check the on-disk maximum key lengths on mount
+  (these are set to a defined value at mkfs time and shouldn't differ)
+o check on-disk node keylens against the maximum key length for each tree
+o fix hfs_btree_open so that going out via free_tree: doesn't wind
+  up in hfs_releasepage, which wants to follow the very pointer
+  we were trying to set up:
+        HFS_SB(sb)->cat_tree = hfs_btree_open()
+                ...
+                failure gets to hfs_releasepage and tries
+                to follow HFS_SB(sb)->cat_tree
+
+Tested with the fsfuzzer; it survives more than it used to.
+
+Signed-off-by: Eric Sandeen <sandeen@redhat.com>
+
+Acked-by: Josef Bacik <jbacik@redhat.com>
+Acked-by: Jeff Moyer <jmoyer@redhat.com>
+
+diff --git a/fs/hfs/bfind.c b/fs/hfs/bfind.c
+index f13f149..4129cdb 100644
+--- a/fs/hfs/bfind.c
++++ b/fs/hfs/bfind.c
+@@ -52,6 +52,10 @@ int __hfs_brec_find(struct hfs_bnode *bnode, struct hfs_find_data *fd)
+ 		rec = (e + b) / 2;
+ 		len = hfs_brec_lenoff(bnode, rec, &off);
+ 		keylen = hfs_brec_keylen(bnode, rec);
++		if (keylen == 0) {
++			res = -EINVAL;
++			goto fail;
++		}
+ 		hfs_bnode_read(bnode, fd->key, off, keylen);
+ 		cmpval = bnode->tree->keycmp(fd->key, fd->search_key);
+ 		if (!cmpval) {
+@@ -67,6 +71,10 @@ int __hfs_brec_find(struct hfs_bnode *bnode, struct hfs_find_data *fd)
+ 	if (rec != e && e >= 0) {
+ 		len = hfs_brec_lenoff(bnode, e, &off);
+ 		keylen = hfs_brec_keylen(bnode, e);
++		if (keylen == 0) {
++			res = -EINVAL;
++			goto fail;
++		}
+ 		hfs_bnode_read(bnode, fd->key, off, keylen);
+ 	}
+ done:
+@@ -75,6 +83,7 @@ done:
+ 	fd->keylength = keylen;
+ 	fd->entryoffset = off + keylen;
+ 	fd->entrylength = len - keylen;
++fail:
+ 	return res;
+ }
+ 
+@@ -198,6 +207,10 @@ int hfs_brec_goto(struct hfs_find_data *fd, int cnt)
+ 
+ 	len = hfs_brec_lenoff(bnode, fd->record, &off);
+ 	keylen = hfs_brec_keylen(bnode, fd->record);
++	if (keylen == 0) {
++		res = -EINVAL;
++		goto out;
++	}
+ 	fd->keyoffset = off;
+ 	fd->keylength = keylen;
+ 	fd->entryoffset = off + keylen;
+diff --git a/fs/hfs/brec.c b/fs/hfs/brec.c
+index 5c87cf4..878bf25 100644
+--- a/fs/hfs/brec.c
++++ b/fs/hfs/brec.c
+@@ -44,10 +44,21 @@ u16 hfs_brec_keylen(struct hfs_bnode *node, u16 rec)
+ 		recoff = hfs_bnode_read_u16(node, node->tree->node_size - (rec + 1) * 2);
+ 		if (!recoff)
+ 			return 0;
+-		if (node->tree->attributes & HFS_TREE_BIGKEYS)
++		if (node->tree->attributes & HFS_TREE_BIGKEYS) {
+ 			retval = hfs_bnode_read_u16(node, recoff) + 2;
+-		else
++			if (retval > node->tree->max_key_len + 2) {
++				printk(KERN_ERR "hfs: keylen %d too large\n",
++					retval);
++				retval = 0;
++			}
++		} else {
+ 			retval = (hfs_bnode_read_u8(node, recoff) | 1) + 1;
++			if (retval > node->tree->max_key_len + 1) {
++				printk(KERN_ERR "hfs: keylen %d too large\n",
++					retval);
++				retval = 0;
++			}
++		}
+ 	}
+ 	return retval;
+ }
+diff --git a/fs/hfs/btree.c b/fs/hfs/btree.c
+index 4003579..906de2c 100644
+--- a/fs/hfs/btree.c
++++ b/fs/hfs/btree.c
+@@ -61,7 +61,7 @@ struct hfs_btree *hfs_btree_open(struct super_block *sb, u32 id, btree_keycmp ke
+ 	mapping = tree->inode->i_mapping;
+ 	page = read_mapping_page(mapping, 0, NULL);
+ 	if (IS_ERR(page))
+-		goto free_tree;
++		goto free_inode;
+ 
+ 	/* Load the header */
+ 	head = (struct hfs_btree_header_rec *)(kmap(page) + sizeof(struct hfs_bnode_desc));
+@@ -81,6 +81,25 @@ struct hfs_btree *hfs_btree_open(struct super_block *sb, u32 id, btree_keycmp ke
+ 		goto fail_page;
+ 	if (!tree->node_count)
+ 		goto fail_page;
++	switch (id) {
++	case HFS_EXT_CNID:
++		if (tree->max_key_len != HFS_MAX_EXT_KEYLEN) {
++			printk(KERN_ERR "hfs: invalid extent max_key_len %d\n",
++				tree->max_key_len);
++			goto fail_page;
++		}
++		break;
++	case HFS_CAT_CNID:
++		if (tree->max_key_len != HFS_MAX_CAT_KEYLEN) {
++			printk(KERN_ERR "hfs: invalid catalog max_key_len %d\n",
++				tree->max_key_len);
++			goto fail_page;
++		}
++		break;
++	default:
++		BUG();
++	}
++
+ 	tree->node_size_shift = ffs(size) - 1;
+ 	tree->pages_per_bnode = (tree->node_size + PAGE_CACHE_SIZE - 1) >> PAGE_CACHE_SHIFT;
+ 
+@@ -88,11 +107,12 @@ struct hfs_btree *hfs_btree_open(struct super_block *sb, u32 id, btree_keycmp ke
+ 	page_cache_release(page);
+ 	return tree;
+ 
+- fail_page:
+-	tree->inode->i_mapping->a_ops = &hfs_aops;
++fail_page:
+ 	page_cache_release(page);
+- free_tree:
++free_inode:
++	tree->inode->i_mapping->a_ops = &hfs_aops;
+ 	iput(tree->inode);
++free_tree:
+ 	kfree(tree);
+ 	return NULL;
+ }
+diff --git a/fs/hfs/hfs.h b/fs/hfs/hfs.h
+index 88099ab..c984cf7 100644
+--- a/fs/hfs/hfs.h
++++ b/fs/hfs/hfs.h
+@@ -169,6 +169,9 @@ typedef union hfs_btree_key {
+ 	struct hfs_ext_key ext;
+ } hfs_btree_key;
+ 
++#define HFS_MAX_CAT_KEYLEN	(sizeof(struct hfs_cat_key) - sizeof(u8))
++#define HFS_MAX_EXT_KEYLEN	(sizeof(struct hfs_ext_key) - sizeof(u8))
++
+ typedef union hfs_btree_key btree_key;
+ 
+ struct hfs_extent {

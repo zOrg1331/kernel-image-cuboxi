@@ -1,0 +1,48 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Subject: [RHEL5.1 PATCH] BZ 226875 : apic probe __init fixes
+Date: Mon, 5 Feb 2007 13:27:01 -0500
+Bugzilla: 226875
+Message-Id: <20070205182701.4996.26929.sendpatchset@prarit.boston.redhat.com>
+Changelog: [x86] apic probe __init fixes
+
+
+Backport of
+
+http://marc.theaimsgroup.com/?l=linux-kernel&m=116722052623844&w=2
+
+Resolves BZ 226875.
+
+--- linux-2.6.18.i386.orig/arch/i386/mach-generic/default.c	2007-02-01 16:08:21.000000000 -0500
++++ linux-2.6.18.i386/arch/i386/mach-generic/default.c	2007-02-05 13:06:03.000000000 -0500
+@@ -18,7 +18,7 @@
+ #include <asm/mach-default/mach_mpparse.h>
+ 
+ /* should be called last. */
+-static __init int probe_default(void)
++static int probe_default(void)
+ { 
+ 	return 1;
+ } 
+--- linux-2.6.18.i386.orig/arch/i386/mach-generic/es7000.c	2007-02-05 13:07:58.000000000 -0500
++++ linux-2.6.18.i386/arch/i386/mach-generic/es7000.c	2007-02-05 13:06:03.000000000 -0500
+@@ -18,7 +18,7 @@
+ #include <asm/mach-es7000/mach_mpparse.h>
+ #include <asm/mach-es7000/mach_wakecpu.h>
+ 
+-static __init int probe_es7000(void)
++static int probe_es7000(void)
+ {
+ 	/* probed later in mptable/ACPI hooks */
+ 	return 0;
+--- linux-2.6.18.i386.orig/arch/i386/mach-generic/summit.c	2007-02-01 16:08:21.000000000 -0500
++++ linux-2.6.18.i386/arch/i386/mach-generic/summit.c	2007-02-05 13:06:03.000000000 -0500
+@@ -17,7 +17,7 @@
+ #include <asm/mach-summit/mach_ipi.h>
+ #include <asm/mach-summit/mach_mpparse.h>
+ 
+-static __init int probe_summit(void)
++static int probe_summit(void)
+ { 
+ 	/* probed later in mptable/ACPI hooks */
+ 	return 0;
+

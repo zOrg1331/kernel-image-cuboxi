@@ -1,0 +1,54 @@
+From: Hans-Joachim Picht <hpicht@redhat.com>
+Date: Thu, 6 Nov 2008 15:52:08 +0100
+Subject: [s390] qeth: avoid skb_under_panic for bad inbound data
+Message-id: 20081106145208.GD12027@redhat.com
+O-Subject: [RHEL5 U4 PATCH 4/4] - qeth: avoid skb_under_panic for malformatted inbound data
+Bugzilla: 468075
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+
+Description
+============
+
+To make the qeth driver more robust in case of malformatted inbound
+packets due to hardware problems, an additional check for
+OSN-card-type is added for OSN-type packets.
+
+Bugzilla
+=========
+
+BZ 468075
+https://bugzilla.redhat.com/show_bug.cgi?id=468075
+
+Upstream status of the patch:
+=============================
+
+Included in linux-2.6 as git commit
+
+2d488c2f514a6c5248a0773c78345626abdc1818
+
+Test status:
+============
+
+The patch has been tested and fixes the problem.
+The fix has been verified by the IBM test department.
+
+Please ACK.
+
+With best regards,
+
+	--Hans
+
+diff --git a/drivers/s390/net/qeth_main.c b/drivers/s390/net/qeth_main.c
+index b0c32aa..9e201dc 100644
+--- a/drivers/s390/net/qeth_main.c
++++ b/drivers/s390/net/qeth_main.c
+@@ -2650,7 +2650,8 @@ qeth_process_inbound_buffer(struct qeth_card *card,
+ 				*((__u32 *)skb->cb) = ++card->seqno.pkt_seqno;
+ 		} else if (hdr->hdr.l3.id == QETH_HEADER_TYPE_LAYER3)
+ 			vlan_tag = qeth_rebuild_skb(card, skb, hdr);
+-		else if (hdr->hdr.osn.id == QETH_HEADER_TYPE_OSN) {
++		else if ((hdr->hdr.osn.id == QETH_HEADER_TYPE_OSN) &&
++			 (card->info.type == QETH_CARD_TYPE_OSN)) {
+ 			skb_push(skb, sizeof(struct qeth_hdr));
+ 			memcpy(skb->data, hdr, sizeof(struct qeth_hdr));
+ 		} else { /* unknown header type */

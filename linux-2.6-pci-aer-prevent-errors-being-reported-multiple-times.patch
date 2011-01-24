@@ -1,0 +1,75 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Date: Mon, 7 Dec 2009 15:57:14 -0500
+Subject: [pci] AER: prevent errors being reported multiple times
+Message-id: <20091207155419.32234.70382.sendpatchset@prarit.bos.redhat.com>
+Patchwork-id: 21714
+O-Subject: [RHEL5 PATCH]: Prevent PCI AER errors from being reported multiple
+	times
+Bugzilla: 544923
+RH-Acked-by: Dean Nelson <dnelson@redhat.com>
+RH-Acked-by: Stefan Assmann <sassmann@redhat.com>
+
+Andrew Patterson @HP noticed a slight glitch in the AER code in which non-fatal
+errors could erroneously be re-reported when a fatal error occurred.
+
+To avoid this, unconditionally clear the AER uncorrectable status register
+during error cleanup.
+
+Backport of the patchset http://article.gmane.org/gmane.linux.kernel.pci/6667
+which has been committed to jbarnes' PCI tree.
+
+Successfully tested by me.
+
+Resolves BZ 544923.
+
+Signed-off-by: Don Zickus <dzickus@redhat.com>
+
+diff --git a/drivers/pci/pcie/aer/aerdrv_core.c b/drivers/pci/pcie/aer/aerdrv_core.c
+index eabc438..03a009f 100644
+--- a/drivers/pci/pcie/aer/aerdrv_core.c
++++ b/drivers/pci/pcie/aer/aerdrv_core.c
+@@ -78,41 +78,20 @@ EXPORT_SYMBOL_GPL(pci_disable_pcie_error_reporting);
+ int pci_cleanup_aer_uncorrect_error_status(struct pci_dev *dev)
+ {
+ 	int pos;
+-	u32 status, mask;
++	u32 status;
+ 
+ 	pos = pci_find_ext_capability(dev, PCI_EXT_CAP_ID_ERR);
+ 	if (!pos)
+ 		return -EIO;
+ 
+ 	pci_read_config_dword(dev, pos + PCI_ERR_UNCOR_STATUS, &status);
+-	pci_read_config_dword(dev, pos + PCI_ERR_UNCOR_SEVER, &mask);
+-	if (dev->error_state == pci_channel_io_normal)
+-		status &= ~mask; /* Clear corresponding nonfatal bits */
+-	else
+-		status &= mask; /* Clear corresponding fatal bits */
+-	pci_write_config_dword(dev, pos + PCI_ERR_UNCOR_STATUS, status);
++	if (status)
++		pci_write_config_dword(dev, pos + PCI_ERR_UNCOR_STATUS, status);
+ 
+ 	return 0;
+ }
+ EXPORT_SYMBOL_GPL(pci_cleanup_aer_uncorrect_error_status);
+ 
+-#if 0
+-int pci_cleanup_aer_correct_error_status(struct pci_dev *dev)
+-{
+-	int pos;
+-	u32 status;
+-
+-	pos = pci_find_ext_capability(dev, PCI_EXT_CAP_ID_ERR);
+-	if (!pos)
+-		return -EIO;
+-
+-	pci_read_config_dword(dev, pos + PCI_ERR_COR_STATUS, &status);
+-	pci_write_config_dword(dev, pos + PCI_ERR_COR_STATUS, status);
+-
+-	return 0;
+-}
+-#endif  /*  0  */
+-
+ static int set_device_error_reporting(struct pci_dev *dev, void *data)
+ {
+ 	bool enable = *((bool *)data);

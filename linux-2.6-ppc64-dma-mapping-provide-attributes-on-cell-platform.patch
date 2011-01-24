@@ -1,0 +1,550 @@
+From: AMEET M. PARANJAPE <aparanja@redhat.com>
+Date: Wed, 5 Nov 2008 22:14:46 -0500
+Subject: [ppc64] dma-mapping: provide attributes on cell platform
+Message-id: 20081106031411.3297.3305.sendpatchset@squad5-lp1.lab.bos.redhat.com
+O-Subject: [PATCH RHEL5.3 BZ469902 1/3] dma-mapping: Provide attributes on cell platform
+Bugzilla: 469902
+RH-Acked-by: David Howells <dhowells@redhat.com>
+
+RHBZ#:
+======
+https://bugzilla.redhat.com/show_bug.cgi?id=469902
+
+Description:
+===========
+dma-mapping-provide-attrs-on-cell.patch introduces the same dma_map_sg_attrs
+device driver API that the mainline kernel now uses. On architectures other
+than powerpc, only unused code is added, which makes it fairly safe. On
+powerpc, the iommu_map_sg and tce_build_cell functions are wrapped to allow
+sharing code with the new code path. Any reviewer of those changes should come
+to the conclusion that the existing functionality does not change at all.
+
+The new dma_map_sg_attrs interface behaves exactly like the existing dma_map_sg
+function on all architectures other than powerpc (at compile time), and also on
+all powerpc platforms other than cell (decided at run time). On cell, with a 64
+bit PCI device, it will use the I/O page table to set up a mapping with weak
+ordering if asked to do so, rather than use the pci_fixed DMA mapping.
+The dma_unmap_sg_attrs interface does the respective action for unmapping a DMA
+region.
+
+This patch specifically introduces the dma_map_sg_attrs interface on the cell
+platform in powerpc. On all other platforms, the code does not do anything,
+while on cell, it allows passing the DMA_ATTR_WEAK_ORDERING attribute, which
+will result in a different I/O page table setting.
+
+RHEL Version Found:
+================
+RHEL 5.3 Beta
+
+kABI Status:
+============
+No symbols were harmed.
+
+Brew:
+=====
+Built on all platforms.
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1560071
+
+Upstream Status:
+================
+This is a combination of upstream patches with GIT IDs:
+
+74bc7ceebfa1c84ddd3a843ebfb56df013bf7ef5
+a75b0a2f68d3937f96ed39525e4750601483e3b4
+c8692362db3db3a6f644e05a477161d967430aac
+3affedc4e1ce837033b6c5e9289d2ce2f5a62d31
+7e5f8105030038de94b44a74cd7b64dd000830fc
+3a4c6f0b1540811110a59112b4c83f55c229728c
+4f3dd8a06239c0a19d772a27c2f618dc2faadf4a
+
+Test Status:
+============
+A performance decrease is discovered on RHEL5.3 Beta expecially when executing
+the IMB benchmark (formerly known as Pallas) on InfiniBand connections. The
+performance decrease is up to 50%.
+
+After applying these patches the performance degradation is no longer present.
+
+===============================================================
+Ameet Paranjape 978-392-3903 ext 23903
+IBM on-site partner
+
+Proposed Patch:
+===============
+
+diff --git a/Documentation/DMA-API.txt b/Documentation/DMA-API.txt
+index 2ffb0d6..122adfa 100644
+--- a/Documentation/DMA-API.txt
++++ b/Documentation/DMA-API.txt
+@@ -392,6 +392,71 @@ Notes:  You must do this:
+ 
+ See also dma_map_single().
+ 
++dma_addr_t
++dma_map_single_attrs(struct device *dev, void *cpu_addr, size_t size,
++		     enum dma_data_direction dir,
++		     struct dma_attrs *attrs)
++
++void
++dma_unmap_single_attrs(struct device *dev, dma_addr_t dma_addr,
++		       size_t size, enum dma_data_direction dir,
++		       struct dma_attrs *attrs)
++
++int
++dma_map_sg_attrs(struct device *dev, struct scatterlist *sgl,
++		 int nents, enum dma_data_direction dir,
++		 struct dma_attrs *attrs)
++
++void
++dma_unmap_sg_attrs(struct device *dev, struct scatterlist *sgl,
++		   int nents, enum dma_data_direction dir,
++		   struct dma_attrs *attrs)
++
++The four functions above are just like the counterpart functions
++without the _attrs suffixes, except that they pass an optional
++struct dma_attrs*.
++
++struct dma_attrs encapsulates a set of "dma attributes". For the
++definition of struct dma_attrs see linux/dma-attrs.h.
++
++The interpretation of dma attributes is architecture-specific, and
++each attribute should be documented in Documentation/DMA-attributes.txt.
++
++If struct dma_attrs* is NULL, the semantics of each of these
++functions is identical to those of the corresponding function
++without the _attrs suffix. As a result dma_map_single_attrs()
++can generally replace dma_map_single(), etc.
++
++As an example of the use of the *_attrs functions, here's how
++you could pass an attribute DMA_ATTR_FOO when mapping memory
++for DMA:
++
++#include <linux/dma-attrs.h>
++/* DMA_ATTR_FOO should be defined in linux/dma-attrs.h and
++ * documented in Documentation/DMA-attributes.txt */
++...
++
++	DEFINE_DMA_ATTRS(attrs);
++	dma_set_attr(DMA_ATTR_FOO, &attrs);
++	....
++	n = dma_map_sg_attrs(dev, sg, nents, DMA_TO_DEVICE, &attr);
++	....
++
++Architectures that care about DMA_ATTR_FOO would check for its
++presence in their implementations of the mapping and unmapping
++routines, e.g.:
++
++void whizco_dma_map_sg_attrs(struct device *dev, dma_addr_t dma_addr,
++			     size_t size, enum dma_data_direction dir,
++			     struct dma_attrs *attrs)
++{
++	....
++	int foo =  dma_get_attr(DMA_ATTR_FOO, attrs);
++	....
++	if (foo)
++		/* twizzle the frobnozzle */
++	....
++
+ 
+ Part II - Advanced dma_ usage
+ -----------------------------
+diff --git a/Documentation/DMA-attributes.txt b/Documentation/DMA-attributes.txt
+new file mode 100644
+index 0000000..b768cc0
+--- /dev/null
++++ b/Documentation/DMA-attributes.txt
+@@ -0,0 +1,33 @@
++			DMA attributes
++			==============
++
++This document describes the semantics of the DMA attributes that are
++defined in linux/dma-attrs.h.
++
++DMA_ATTR_WRITE_BARRIER
++----------------------
++
++DMA_ATTR_WRITE_BARRIER is a (write) barrier attribute for DMA.  DMA
++to a memory region with the DMA_ATTR_WRITE_BARRIER attribute forces
++all pending DMA writes to complete, and thus provides a mechanism to
++strictly order DMA from a device across all intervening busses and
++bridges.  This barrier is not specific to a particular type of
++interconnect, it applies to the system as a whole, and so its
++implementation must account for the idiosyncracies of the system all
++the way from the DMA device to memory.
++
++As an example of a situation where DMA_ATTR_WRITE_BARRIER would be
++useful, suppose that a device does a DMA write to indicate that data is
++ready and available in memory.  The DMA of the "completion indication"
++could race with data DMA.  Mapping the memory used for completion
++indications with DMA_ATTR_WRITE_BARRIER would prevent the race.
++
++DMA_ATTR_WEAK_ORDERING
++----------------------
++
++DMA_ATTR_WEAK_ORDERING specifies that reads and writes to the mapping
++may be weakly ordered, that is that reads and writes may pass each other.
++
++Since it is optional for platforms to implement DMA_ATTR_WEAK_ORDERING,
++those that do not will simply ignore the attribute and exhibit default
++behavior.
+diff --git a/arch/powerpc/kernel/dma_64.c b/arch/powerpc/kernel/dma_64.c
+index 24336ec..00b351b 100644
+--- a/arch/powerpc/kernel/dma_64.c
++++ b/arch/powerpc/kernel/dma_64.c
+@@ -7,6 +7,7 @@
+ 
+ #include <linux/device.h>
+ #include <linux/dma-mapping.h>
++#include <linux/dma-attrs.h>
+ /* Include the busses we support */
+ #include <linux/pci.h>
+ #include <asm/vio.h>
+@@ -168,3 +169,33 @@ void dma_unmap_sg(struct device *dev, struct scatterlist *sg, int nhwentries,
+ 		BUG();
+ }
+ EXPORT_SYMBOL(dma_unmap_sg);
++
++#ifdef CONFIG_HAVE_DMA_ATTRS
++int dma_map_sg_attrs(struct device *dev, struct scatterlist *sg, int nents,
++		enum dma_data_direction direction, struct dma_attrs *attrs)
++{
++	struct dma_mapping_ops *dma_ops = get_dma_ops(dev);
++
++	if (dma_get_attr(DMA_ATTR_WEAK_ORDERING, attrs) && (dma_ops == &pci_fixed_ops))
++		return pci_iommu_map_sg_weak(dev, sg, nents, direction);
++	if (dma_ops)
++		return dma_ops->map_sg(dev, sg, nents, direction);
++	BUG();
++	return 0;
++}
++EXPORT_SYMBOL(dma_map_sg_attrs);
++
++void dma_unmap_sg_attrs(struct device *dev, struct scatterlist *sg, int nhwentries,
++		enum dma_data_direction direction, struct dma_attrs *attrs)
++{
++	struct dma_mapping_ops *dma_ops = get_dma_ops(dev);
++
++	if (dma_get_attr(DMA_ATTR_WEAK_ORDERING, attrs) && (dma_ops == &pci_fixed_ops))
++		return pci_iommu_unmap_sg_weak(dev, sg, nhwentries, direction);
++	if (dma_ops)
++		dma_ops->unmap_sg(dev, sg, nhwentries, direction);
++	else
++		BUG();
++}
++EXPORT_SYMBOL(dma_unmap_sg_attrs);
++#endif /* CONFIG_HAVE_DMA_ATTRS */
+diff --git a/arch/powerpc/kernel/iommu.c b/arch/powerpc/kernel/iommu.c
+index f004e7a..1345d48 100644
+--- a/arch/powerpc/kernel/iommu.c
++++ b/arch/powerpc/kernel/iommu.c
+@@ -271,9 +271,10 @@ static void iommu_free(struct iommu_table *tbl, dma_addr_t dma_addr,
+ 	spin_unlock_irqrestore(&(tbl->it_lock), flags);
+ }
+ 
+-int iommu_map_sg(struct device *dev, struct iommu_table *tbl,
++static int __iommu_map_sg(struct device *dev, struct iommu_table *tbl,
+ 		struct scatterlist *sglist, int nelems,
+-		unsigned long mask, enum dma_data_direction direction)
++		unsigned long mask, enum dma_data_direction direction,
++		int weak)
+ {
+ 	dma_addr_t dma_next = 0, dma_addr;
+ 	unsigned long flags;
+@@ -336,7 +337,14 @@ int iommu_map_sg(struct device *dev, struct iommu_table *tbl,
+ 			    npages, entry, dma_addr);
+ 
+ 		/* Insert into HW table */
+-		ppc_md.tce_build(tbl, entry, npages, vaddr & IOMMU_PAGE_MASK, direction);
++#ifdef CONFIG_HAVE_DMA_ATTRS /* Hack */
++		if (weak && machine_is(cell))
++			tce_build_cell_weak(tbl, entry, npages,
++					vaddr & IOMMU_PAGE_MASK, direction);
++		else
++#endif
++			ppc_md.tce_build(tbl, entry, npages,
++					vaddr & IOMMU_PAGE_MASK, direction);
+ 
+ 		/* If we are in an open segment, try merging */
+ 		if (segstart != s) {
+@@ -406,6 +414,21 @@ int iommu_map_sg(struct device *dev, struct iommu_table *tbl,
+ 	return 0;
+ }
+ 
++int iommu_map_sg(struct device *dev, struct iommu_table *tbl,
++		struct scatterlist *sglist, int nelems,
++		unsigned long mask, enum dma_data_direction direction)
++{
++	return __iommu_map_sg(dev, tbl, sglist, nelems, mask, direction, 0);
++}
++
++#ifdef CONFIG_HAVE_DMA_ATTRS
++int iommu_map_sg_weak(struct device *dev, struct iommu_table *tbl,
++		struct scatterlist *sglist, int nelems,
++		unsigned long mask, enum dma_data_direction direction)
++{
++	return __iommu_map_sg(dev, tbl, sglist, nelems, mask, direction, 1);
++}
++#endif
+ 
+ void iommu_unmap_sg(struct iommu_table *tbl, struct scatterlist *sglist,
+ 		int nelems, enum dma_data_direction direction)
+diff --git a/arch/powerpc/kernel/pci_iommu.c b/arch/powerpc/kernel/pci_iommu.c
+index 0688b25..0059413 100644
+--- a/arch/powerpc/kernel/pci_iommu.c
++++ b/arch/powerpc/kernel/pci_iommu.c
+@@ -130,6 +130,21 @@ static void pci_iommu_unmap_sg(struct device *pdev, struct scatterlist *sglist,
+ 	iommu_unmap_sg(device_to_table(pdev), sglist, nelems, direction);
+ }
+ 
++#ifdef CONFIG_HAVE_DMA_ATTRS
++int pci_iommu_map_sg_weak(struct device *pdev, struct scatterlist *sglist,
++		int nelems, enum dma_data_direction direction)
++{
++	return iommu_map_sg_weak(pdev, device_to_table(pdev), sglist,
++			nelems, device_to_mask(pdev), direction);
++}
++
++void pci_iommu_unmap_sg_weak(struct device *pdev, struct scatterlist *sglist,
++		int nelems, enum dma_data_direction direction)
++{
++	iommu_unmap_sg(device_to_table(pdev), sglist, nelems, direction);
++}
++#endif /* CONFIG_HAVE_DMA_ATTRS */
++
+ /* We support DMA to/from any memory page via the iommu */
+ static int pci_iommu_dma_supported(struct device *dev, u64 mask)
+ {
+diff --git a/arch/powerpc/platforms/cell/Kconfig b/arch/powerpc/platforms/cell/Kconfig
+index b8ea38c..dbd7329 100644
+--- a/arch/powerpc/platforms/cell/Kconfig
++++ b/arch/powerpc/platforms/cell/Kconfig
+@@ -89,4 +89,8 @@ config CBE_CPUFREQ_SPU_GOVERNOR
+       If no spu is running on a given cpu, that cpu will be throttled to
+       the minimal possible frequency.
+ 
++config HAVE_DMA_ATTRS
++	def_bool y
++	depends on PPC_CELL
++
+ endmenu
+diff --git a/arch/powerpc/platforms/cell/iommu.c b/arch/powerpc/platforms/cell/iommu.c
+index 38ff0b5..1c459c1 100644
+--- a/arch/powerpc/platforms/cell/iommu.c
++++ b/arch/powerpc/platforms/cell/iommu.c
+@@ -172,8 +172,9 @@ static void invalidate_tce_cache(struct cbe_iommu *iommu, unsigned long *pte,
+ 	}
+ }
+ 
+-static void tce_build_cell(struct iommu_table *tbl, long index, long npages,
+-		unsigned long uaddr, enum dma_data_direction direction)
++static void __tce_build_cell(struct iommu_table *tbl, long index, long npages,
++		unsigned long uaddr, enum dma_data_direction direction,
++		int weak)
+ {
+ 	int i;
+ 	unsigned long *io_pte, base_pte;
+@@ -193,12 +194,15 @@ static void tce_build_cell(struct iommu_table *tbl, long index, long npages,
+ 	const unsigned long prot = 0xc48;
+ 	base_pte =
+ 		((prot << (52 + 4 * direction)) & (IOPTE_PP_W | IOPTE_PP_R))
+-		| IOPTE_M | IOPTE_SO_RW | (window->ioid & IOPTE_IOID_Mask);
++		| IOPTE_M | (window->ioid & IOPTE_IOID_Mask);
+ #else
+-	base_pte = IOPTE_PP_W | IOPTE_PP_R | IOPTE_M | IOPTE_SO_RW |
++	base_pte = IOPTE_PP_W | IOPTE_PP_R | IOPTE_M |
+ 		(window->ioid & IOPTE_IOID_Mask);
+ #endif
+ 
++	if (!weak)
++		base_pte |= IOPTE_SO_RW;
++
+ 	io_pte = (unsigned long *)tbl->it_base + (index - tbl->it_offset);
+ 
+ 	for (i = 0; i < npages; i++, uaddr += IOMMU_PAGE_SIZE)
+@@ -212,6 +216,20 @@ static void tce_build_cell(struct iommu_table *tbl, long index, long npages,
+ 		 index, npages, direction, base_pte);
+ }
+ 
++static void tce_build_cell(struct iommu_table *tbl, long index, long npages,
++		unsigned long uaddr, enum dma_data_direction direction)
++{
++	return __tce_build_cell(tbl, index, npages, uaddr, direction, 0);
++}
++
++#ifdef CONFIG_HAVE_DMA_ATTRS
++void tce_build_cell_weak(struct iommu_table *tbl, long index, long npages,
++		unsigned long uaddr, enum dma_data_direction direction)
++{
++	return __tce_build_cell(tbl, index, npages, uaddr, direction, 1);
++}
++#endif /* CONFIG_HAVE_DMA_ATTRS */
++
+ static void tce_free_cell(struct iommu_table *tbl, long index, long npages)
+ {
+ 
+diff --git a/include/asm-powerpc/dma-mapping.h b/include/asm-powerpc/dma-mapping.h
+index 2ab9baf..f20837e 100644
+--- a/include/asm-powerpc/dma-mapping.h
++++ b/include/asm-powerpc/dma-mapping.h
+@@ -64,6 +64,24 @@ extern int dma_map_sg(struct device *dev, struct scatterlist *sg, int nents,
+ 		enum dma_data_direction direction);
+ extern void dma_unmap_sg(struct device *dev, struct scatterlist *sg,
+ 		int nhwentries, enum dma_data_direction direction);
++#ifdef CONFIG_HAVE_DMA_ATTRS
++struct dma_attrs;
++
++#define dma_map_single_attrs(dev, cpu_addr, size, dir, attrs) \
++	dma_map_single(dev, cpu_addr, size, dir)
++
++#define dma_unmap_single_attrs(dev, dma_addr, size, dir, attrs) \
++	dma_unmap_single(dev, dma_addr, size, dir)
++
++extern int dma_map_sg_attrs(struct device *dev, struct scatterlist *sg,
++		int nents, enum dma_data_direction direction,
++		struct dma_attrs *attrs);
++
++extern void dma_unmap_sg_attrs(struct device *dev, struct scatterlist *sg,
++		int nhwentries, enum dma_data_direction direction,
++		struct dma_attrs *attrs);
++
++#endif /* CONFIG_HAVE_DMA_ATTRS */
+ 
+ #else /* CONFIG_PPC64 */
+ 
+diff --git a/include/asm-powerpc/iommu.h b/include/asm-powerpc/iommu.h
+index 13fa619..58e72dc 100644
+--- a/include/asm-powerpc/iommu.h
++++ b/include/asm-powerpc/iommu.h
+@@ -93,6 +93,25 @@ extern int iommu_map_sg(struct device *dev, struct iommu_table *tbl,
+ extern void iommu_unmap_sg(struct iommu_table *tbl, struct scatterlist *sglist,
+ 		int nelems, enum dma_data_direction direction);
+ 
++#ifdef CONFIG_HAVE_DMA_ATTRS
++/*
++ * Hack: we drill a hole all the way through the powerpc IOMMU support in order
++ *       to pass down the 'weak ordering' flag from struct dma_attrs in a way
++ *       that does not impact the kABI. The mainline kernel has redefined
++ *       all these functions to take an extra struct dma_attrs argument.
++ *       Instead, we defined a minimal set of extra functions.
++ */
++extern int pci_iommu_map_sg_weak(struct device *pdev, struct scatterlist *sglist,
++		int nelems, enum dma_data_direction direction);
++extern void pci_iommu_unmap_sg_weak(struct device *pdev, struct scatterlist *sglist,
++		int nelems, enum dma_data_direction direction);
++extern int iommu_map_sg_weak(struct device *dev, struct iommu_table *tbl,
++		struct scatterlist *sglist, int nelems, unsigned long mask,
++		enum dma_data_direction direction);
++extern void tce_build_cell_weak(struct iommu_table *tbl, long index, long npages,
++	unsigned long uaddr, enum dma_data_direction direction);
++#endif /* CONFIG_HAVE_DMA_ATTRS */
++
+ extern void *iommu_alloc_coherent(struct iommu_table *tbl, size_t size,
+ 		dma_addr_t *dma_handle, unsigned long mask,
+ 		gfp_t flag, int node);
+diff --git a/include/linux/dma-attrs.h b/include/linux/dma-attrs.h
+new file mode 100644
+index 0000000..c8776be
+--- /dev/null
++++ b/include/linux/dma-attrs.h
+@@ -0,0 +1,75 @@
++#ifndef _DMA_ATTR_H
++#define _DMA_ATTR_H
++
++#include <linux/bitmap.h>
++#include <linux/bitops.h>
++#include <asm/bug.h>
++
++/**
++ * an enum dma_attr represents an attribute associated with a DMA
++ * mapping. The semantics of each attribute should be defined in
++ * Documentation/DMA-attributes.txt.
++ */
++enum dma_attr {
++	DMA_ATTR_WRITE_BARRIER,
++	DMA_ATTR_WEAK_ORDERING,
++	DMA_ATTR_MAX,
++};
++
++#define __DMA_ATTRS_LONGS BITS_TO_LONGS(DMA_ATTR_MAX)
++
++/**
++ * struct dma_attrs - an opaque container for DMA attributes
++ * @flags - bitmask representing a collection of enum dma_attr
++ */
++struct dma_attrs {
++	unsigned long flags[__DMA_ATTRS_LONGS];
++};
++
++#define DEFINE_DMA_ATTRS(x) 					\
++	struct dma_attrs x = {					\
++		.flags = { [0 ... __DMA_ATTRS_LONGS-1] = 0 },	\
++	}
++
++static inline void init_dma_attrs(struct dma_attrs *attrs)
++{
++	bitmap_zero(attrs->flags, __DMA_ATTRS_LONGS);
++}
++
++#ifdef CONFIG_HAVE_DMA_ATTRS
++/**
++ * dma_set_attr - set a specific attribute
++ * @attr: attribute to set
++ * @attrs: struct dma_attrs (may be NULL)
++ */
++static inline void dma_set_attr(enum dma_attr attr, struct dma_attrs *attrs)
++{
++	if (attrs == NULL)
++		return;
++	BUG_ON(attr >= DMA_ATTR_MAX);
++	__set_bit(attr, attrs->flags);
++}
++
++/**
++ * dma_get_attr - check for a specific attribute
++ * @attr: attribute to set
++ * @attrs: struct dma_attrs (may be NULL)
++ */
++static inline int dma_get_attr(enum dma_attr attr, struct dma_attrs *attrs)
++{
++	if (attrs == NULL)
++		return 0;
++	BUG_ON(attr >= DMA_ATTR_MAX);
++	return test_bit(attr, attrs->flags);
++}
++#else /* !CONFIG_HAVE_DMA_ATTRS */
++static inline void dma_set_attr(enum dma_attr attr, struct dma_attrs *attrs)
++{
++}
++
++static inline int dma_get_attr(enum dma_attr attr, struct dma_attrs *attrs)
++{
++	return 0;
++}
++#endif /* CONFIG_HAVE_DMA_ATTRS */
++#endif /* _DMA_ATTR_H */
+diff --git a/include/linux/dma-mapping.h b/include/linux/dma-mapping.h
+index 897ad8e..a227f90 100644
+--- a/include/linux/dma-mapping.h
++++ b/include/linux/dma-mapping.h
+@@ -105,4 +105,21 @@ static inline void dmam_release_declared_memory(struct device *dev)
+ }
+ #endif /* ARCH_HAS_DMA_DECLARE_COHERENT_MEMORY */
+ 
++#ifndef CONFIG_HAVE_DMA_ATTRS
++struct dma_attrs;
++
++#define dma_map_single_attrs(dev, cpu_addr, size, dir, attrs) \
++	dma_map_single(dev, cpu_addr, size, dir)
++
++#define dma_unmap_single_attrs(dev, dma_addr, size, dir, attrs) \
++	dma_unmap_single(dev, dma_addr, size, dir)
++
++#define dma_map_sg_attrs(dev, sgl, nents, dir, attrs) \
++	dma_map_sg(dev, sgl, nents, dir)
++
++#define dma_unmap_sg_attrs(dev, sgl, nents, dir, attrs) \
++	dma_unmap_sg(dev, sgl, nents, dir)
++
++#endif /* CONFIG_HAVE_DMA_ATTRS */
++
+ #endif

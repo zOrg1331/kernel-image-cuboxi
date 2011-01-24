@@ -1,0 +1,79 @@
+From: Milan Broz <mbroz@redhat.com>
+Subject: [RHEL 5.1 PATCH] dm: allow invalid snapshots to be activated
+Date: Thu, 28 Jun 2007 20:30:29 +0200
+Bugzilla: 244215
+Message-Id: <4683FE45.9030003@redhat.com>
+Changelog: [dm] allow invalid snapshots to be activated
+
+
+RHEL5.1 device mapper: Allow invalid snapshots to be activated instead of failing.
+
+Resolves:
+ rhbz#244215 (exception+) 
+	- activating of snapshot marked invalid causes incorrect mapping
+ 
+Patch is currently in -mm tree.
+
+This patch allows userspace to reinstate any given snapshot state - 
+for example after an unscheduled reboot.
+
+Currently device mapper does not allow activation of overfilled
+(invalid) snapshot and fails.
+This can lead to reporting incorrect attributes in userspace 
+(e.g. no invalid flag in lvs).
+
+Patch compiled and tested (testcase in bugzilla).
+
+---
+ drivers/md/dm-exception-store.c |   11 ++++++-----
+ drivers/md/dm-snap.c            |    5 ++++-
+ 2 files changed, 10 insertions(+), 6 deletions(-)
+
+Index: linux-2.6.18/drivers/md/dm-exception-store.c
+===================================================================
+--- linux-2.6.18.orig/drivers/md/dm-exception-store.c	2007-06-28 18:34:08.000000000 +0200
++++ linux-2.6.18/drivers/md/dm-exception-store.c	2007-06-28 18:41:49.000000000 +0200
+@@ -456,11 +456,6 @@ static int persistent_read_metadata(stru
+ 		/*
+ 		 * Sanity checks.
+ 		 */
+-		if (!ps->valid) {
+-			DMWARN("snapshot is marked invalid");
+-			return -EINVAL;
+-		}
+-
+ 		if (ps->version != SNAPSHOT_DISK_VERSION) {
+ 			DMWARN("unable to handle snapshot disk version %d",
+ 			       ps->version);
+@@ -468,6 +463,12 @@ static int persistent_read_metadata(stru
+ 		}
+ 
+ 		/*
++		 * Metadata are valid, but snapshot is invalidated
++		 */
++		if (!ps->valid)
++			return 1;
++
++		/*
+ 		 * Read the metadata.
+ 		 */
+ 		r = read_exceptions(ps);
+Index: linux-2.6.18/drivers/md/dm-snap.c
+===================================================================
+--- linux-2.6.18.orig/drivers/md/dm-snap.c	2007-06-28 18:34:03.000000000 +0200
++++ linux-2.6.18/drivers/md/dm-snap.c	2007-06-28 18:41:49.000000000 +0200
+@@ -522,9 +522,12 @@ static int snapshot_ctr(struct dm_target
+ 
+ 	/* Metadata must only be loaded into one table at once */
+ 	r = s->store.read_metadata(&s->store);
+-	if (r) {
++	if (r < 0) {
+ 		ti->error = "Failed to read snapshot metadata";
+ 		goto bad6;
++	} else if (r > 0) {
++		s->valid = 0;
++		DMWARN("Snapshot is marked invalid.");
+ 	}
+ 
+ 	bio_list_init(&s->queued_bios);
+

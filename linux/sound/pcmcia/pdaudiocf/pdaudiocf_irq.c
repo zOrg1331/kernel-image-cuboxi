@@ -1,7 +1,7 @@
 /*
  * Driver for Sound Core PDAudioCF soundcard
  *
- * Copyright (c) 2003 by Jaroslav Kysela <perex@perex.cz>
+ * Copyright (c) 2003 by Jaroslav Kysela <perex@suse.cz>
  *
  *   This program is free software; you can redistribute it and/or modify
  *   it under the terms of the GNU General Public License as published by
@@ -18,15 +18,15 @@
  *   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307 USA
  */
 
+#include <sound/driver.h>
 #include <sound/core.h>
 #include "pdaudiocf.h"
 #include <sound/initval.h>
-#include <asm/irq_regs.h>
 
 /*
  *
  */
-irqreturn_t pdacf_interrupt(int irq, void *dev)
+irqreturn_t pdacf_interrupt(int irq, void *dev, struct pt_regs *regs)
 {
 	struct snd_pdacf *chip = dev;
 	unsigned short stat;
@@ -41,11 +41,11 @@ irqreturn_t pdacf_interrupt(int irq, void *dev)
 		if (stat & PDAUDIOCF_IRQOVR)	/* should never happen */
 			snd_printk(KERN_ERR "PDAUDIOCF SRAM buffer overrun detected!\n");
 		if (chip->pcm_substream)
-			tasklet_schedule(&chip->tq);
+			tasklet_hi_schedule(&chip->tq);
 		if (!(stat & PDAUDIOCF_IRQAKM))
 			stat |= PDAUDIOCF_IRQAKM;	/* check rate */
 	}
-	if (get_irq_regs() != NULL)
+	if (regs != NULL)
 		snd_ak4117_check_rate_and_errors(chip->ak4117, 0);
 	return IRQ_HANDLED;
 }
@@ -269,7 +269,7 @@ void pdacf_tasklet(unsigned long private_data)
 
 	rdp = inw(chip->port + PDAUDIOCF_REG_RDP);
 	wdp = inw(chip->port + PDAUDIOCF_REG_WDP);
-	/* printk(KERN_DEBUG "TASKLET: rdp = %x, wdp = %x\n", rdp, wdp); */
+	// printk("TASKLET: rdp = %x, wdp = %x\n", rdp, wdp);
 	size = wdp - rdp;
 	if (size < 0)
 		size += 0x10000;
@@ -321,5 +321,5 @@ void pdacf_tasklet(unsigned long private_data)
 		spin_lock(&chip->reg_lock);
 	}
 	spin_unlock(&chip->reg_lock);
-	/* printk(KERN_DEBUG "TASKLET: end\n"); */
+	// printk("TASKLET: end\n");
 }

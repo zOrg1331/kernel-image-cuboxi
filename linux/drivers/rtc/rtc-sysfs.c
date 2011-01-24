@@ -12,33 +12,20 @@
 #include <linux/module.h>
 #include <linux/rtc.h>
 
-#include "rtc-core.h"
-
-
 /* device attributes */
 
-/*
- * NOTE:  RTC times displayed in sysfs use the RTC's timezone.  That's
- * ideally UTC.  However, PCs that also boot to MS-Windows normally use
- * the local time and change to match daylight savings time.  That affects
- * attributes including date, time, since_epoch, and wakealarm.
- */
-
-static ssize_t
-rtc_sysfs_show_name(struct device *dev, struct device_attribute *attr,
-		char *buf)
+static ssize_t rtc_sysfs_show_name(struct class_device *dev, char *buf)
 {
 	return sprintf(buf, "%s\n", to_rtc_device(dev)->name);
 }
+static CLASS_DEVICE_ATTR(name, S_IRUGO, rtc_sysfs_show_name, NULL);
 
-static ssize_t
-rtc_sysfs_show_date(struct device *dev, struct device_attribute *attr,
-		char *buf)
+static ssize_t rtc_sysfs_show_date(struct class_device *dev, char *buf)
 {
 	ssize_t retval;
 	struct rtc_time tm;
 
-	retval = rtc_read_time(to_rtc_device(dev), &tm);
+	retval = rtc_read_time(dev, &tm);
 	if (retval == 0) {
 		retval = sprintf(buf, "%04d-%02d-%02d\n",
 			tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday);
@@ -46,15 +33,14 @@ rtc_sysfs_show_date(struct device *dev, struct device_attribute *attr,
 
 	return retval;
 }
+static CLASS_DEVICE_ATTR(date, S_IRUGO, rtc_sysfs_show_date, NULL);
 
-static ssize_t
-rtc_sysfs_show_time(struct device *dev, struct device_attribute *attr,
-		char *buf)
+static ssize_t rtc_sysfs_show_time(struct class_device *dev, char *buf)
 {
 	ssize_t retval;
 	struct rtc_time tm;
 
-	retval = rtc_read_time(to_rtc_device(dev), &tm);
+	retval = rtc_read_time(dev, &tm);
 	if (retval == 0) {
 		retval = sprintf(buf, "%02d:%02d:%02d\n",
 			tm.tm_hour, tm.tm_min, tm.tm_sec);
@@ -62,15 +48,14 @@ rtc_sysfs_show_time(struct device *dev, struct device_attribute *attr,
 
 	return retval;
 }
+static CLASS_DEVICE_ATTR(time, S_IRUGO, rtc_sysfs_show_time, NULL);
 
-static ssize_t
-rtc_sysfs_show_since_epoch(struct device *dev, struct device_attribute *attr,
-		char *buf)
+static ssize_t rtc_sysfs_show_since_epoch(struct class_device *dev, char *buf)
 {
 	ssize_t retval;
 	struct rtc_time tm;
 
-	retval = rtc_read_time(to_rtc_device(dev), &tm);
+	retval = rtc_read_time(dev, &tm);
 	if (retval == 0) {
 		unsigned long time;
 		rtc_tm_to_time(&tm, &time);
@@ -79,170 +64,61 @@ rtc_sysfs_show_since_epoch(struct device *dev, struct device_attribute *attr,
 
 	return retval;
 }
+static CLASS_DEVICE_ATTR(since_epoch, S_IRUGO, rtc_sysfs_show_since_epoch, NULL);
 
-static ssize_t
-rtc_sysfs_show_max_user_freq(struct device *dev, struct device_attribute *attr,
-		char *buf)
-{
-	return sprintf(buf, "%d\n", to_rtc_device(dev)->max_user_freq);
-}
-
-static ssize_t
-rtc_sysfs_set_max_user_freq(struct device *dev, struct device_attribute *attr,
-		const char *buf, size_t n)
-{
-	struct rtc_device *rtc = to_rtc_device(dev);
-	unsigned long val = simple_strtoul(buf, NULL, 0);
-
-	if (val >= 4096 || val == 0)
-		return -EINVAL;
-
-	rtc->max_user_freq = (int)val;
-
-	return n;
-}
-
-static ssize_t
-rtc_sysfs_show_hctosys(struct device *dev, struct device_attribute *attr,
-		char *buf)
-{
-#ifdef CONFIG_RTC_HCTOSYS_DEVICE
-	if (strcmp(dev_name(&to_rtc_device(dev)->dev),
-		   CONFIG_RTC_HCTOSYS_DEVICE) == 0)
-		return sprintf(buf, "1\n");
-	else
-#endif
-		return sprintf(buf, "0\n");
-}
-
-static struct device_attribute rtc_attrs[] = {
-	__ATTR(name, S_IRUGO, rtc_sysfs_show_name, NULL),
-	__ATTR(date, S_IRUGO, rtc_sysfs_show_date, NULL),
-	__ATTR(time, S_IRUGO, rtc_sysfs_show_time, NULL),
-	__ATTR(since_epoch, S_IRUGO, rtc_sysfs_show_since_epoch, NULL),
-	__ATTR(max_user_freq, S_IRUGO | S_IWUSR, rtc_sysfs_show_max_user_freq,
-			rtc_sysfs_set_max_user_freq),
-	__ATTR(hctosys, S_IRUGO, rtc_sysfs_show_hctosys, NULL),
-	{ },
+static struct attribute *rtc_attrs[] = {
+	&class_device_attr_name.attr,
+	&class_device_attr_date.attr,
+	&class_device_attr_time.attr,
+	&class_device_attr_since_epoch.attr,
+	NULL,
 };
 
-static ssize_t
-rtc_sysfs_show_wakealarm(struct device *dev, struct device_attribute *attr,
-		char *buf)
-{
-	ssize_t retval;
-	unsigned long alarm;
-	struct rtc_wkalrm alm;
+static struct attribute_group rtc_attr_group = {
+	.attrs = rtc_attrs,
+};
 
-	/* Don't show disabled alarms.  For uniformity, RTC alarms are
-	 * conceptually one-shot, even though some common RTCs (on PCs)
-	 * don't actually work that way.
-	 *
-	 * NOTE: RTC implementations where the alarm doesn't match an
-	 * exact YYYY-MM-DD HH:MM[:SS] date *must* disable their RTC
-	 * alarms after they trigger, to ensure one-shot semantics.
-	 */
-	retval = rtc_read_alarm(to_rtc_device(dev), &alm);
-	if (retval == 0 && alm.enabled) {
-		rtc_tm_to_time(&alm.time, &alarm);
-		retval = sprintf(buf, "%lu\n", alarm);
-	}
-
-	return retval;
-}
-
-static ssize_t
-rtc_sysfs_set_wakealarm(struct device *dev, struct device_attribute *attr,
-		const char *buf, size_t n)
-{
-	ssize_t retval;
-	unsigned long now, alarm;
-	struct rtc_wkalrm alm;
-	struct rtc_device *rtc = to_rtc_device(dev);
-	char *buf_ptr;
-	int adjust = 0;
-
-	/* Only request alarms that trigger in the future.  Disable them
-	 * by writing another time, e.g. 0 meaning Jan 1 1970 UTC.
-	 */
-	retval = rtc_read_time(rtc, &alm.time);
-	if (retval < 0)
-		return retval;
-	rtc_tm_to_time(&alm.time, &now);
-
-	buf_ptr = (char *)buf;
-	if (*buf_ptr == '+') {
-		buf_ptr++;
-		adjust = 1;
-	}
-	alarm = simple_strtoul(buf_ptr, NULL, 0);
-	if (adjust) {
-		alarm += now;
-	}
-	if (alarm > now) {
-		/* Avoid accidentally clobbering active alarms; we can't
-		 * entirely prevent that here, without even the minimal
-		 * locking from the /dev/rtcN api.
-		 */
-		retval = rtc_read_alarm(rtc, &alm);
-		if (retval < 0)
-			return retval;
-		if (alm.enabled)
-			return -EBUSY;
-
-		alm.enabled = 1;
-	} else {
-		alm.enabled = 0;
-
-		/* Provide a valid future alarm time.  Linux isn't EFI,
-		 * this time won't be ignored when disabling the alarm.
-		 */
-		alarm = now + 300;
-	}
-	rtc_time_to_tm(alarm, &alm.time);
-
-	retval = rtc_set_alarm(rtc, &alm);
-	return (retval < 0) ? retval : n;
-}
-static DEVICE_ATTR(wakealarm, S_IRUGO | S_IWUSR,
-		rtc_sysfs_show_wakealarm, rtc_sysfs_set_wakealarm);
-
-
-/* The reason to trigger an alarm with no process watching it (via sysfs)
- * is its side effect:  waking from a system state like suspend-to-RAM or
- * suspend-to-disk.  So: no attribute unless that side effect is possible.
- * (Userspace may disable that mechanism later.)
- */
-static inline int rtc_does_wakealarm(struct rtc_device *rtc)
-{
-	if (!device_can_wakeup(rtc->dev.parent))
-		return 0;
-	return rtc->ops->set_alarm != NULL;
-}
-
-
-void rtc_sysfs_add_device(struct rtc_device *rtc)
+static int __devinit rtc_sysfs_add_device(struct class_device *class_dev,
+					struct class_interface *class_intf)
 {
 	int err;
 
-	/* not all RTCs support both alarms and wakeup */
-	if (!rtc_does_wakealarm(rtc))
-		return;
+	dev_info(class_dev->dev, "rtc intf: sysfs\n");
 
-	err = device_create_file(&rtc->dev, &dev_attr_wakealarm);
+	err = sysfs_create_group(&class_dev->kobj, &rtc_attr_group);
 	if (err)
-		dev_err(rtc->dev.parent,
-			"failed to create alarm attribute, %d\n", err);
+		dev_err(class_dev->dev,
+			"failed to create sysfs attributes\n");
+
+	return err;
 }
 
-void rtc_sysfs_del_device(struct rtc_device *rtc)
+static void rtc_sysfs_remove_device(struct class_device *class_dev,
+				struct class_interface *class_intf)
 {
-	/* REVISIT did we add it successfully? */
-	if (rtc_does_wakealarm(rtc))
-		device_remove_file(&rtc->dev, &dev_attr_wakealarm);
+	sysfs_remove_group(&class_dev->kobj, &rtc_attr_group);
 }
 
-void __init rtc_sysfs_init(struct class *rtc_class)
+/* interface registration */
+
+static struct class_interface rtc_sysfs_interface = {
+	.add = &rtc_sysfs_add_device,
+	.remove = &rtc_sysfs_remove_device,
+};
+
+static int __init rtc_sysfs_init(void)
 {
-	rtc_class->dev_attrs = rtc_attrs;
+	return rtc_interface_register(&rtc_sysfs_interface);
 }
+
+static void __exit rtc_sysfs_exit(void)
+{
+	class_interface_unregister(&rtc_sysfs_interface);
+}
+
+module_init(rtc_sysfs_init);
+module_exit(rtc_sysfs_exit);
+
+MODULE_AUTHOR("Alessandro Zummo <a.zummo@towertech.it>");
+MODULE_DESCRIPTION("RTC class sysfs interface");
+MODULE_LICENSE("GPL");

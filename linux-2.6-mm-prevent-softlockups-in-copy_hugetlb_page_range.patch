@@ -1,0 +1,34 @@
+From: Larry Woodman <lwoodman@redhat.com>
+Date: Tue, 7 Jul 2009 16:37:25 -0400
+Subject: [mm] prevent softlockups in copy_hugetlb_page_range
+Message-id: 1246999045.31419.56.camel@dhcp-100-19-198.bos.redhat.com
+O-Subject: [RHEL5 patch] prevent softlockups in copy_hugetlb_page_range()
+Bugzilla: 508919
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+RH-Acked-by: Dean Nelson <dnelson@redhat.com>
+
+We made several fixes to copy_hugetlb_page_range(), hugetlb_cow() and
+copy_huge_page() to prevent races.  This involved holding spinlocks and
+preventing reschedules while those lock are held.  Since we removed the
+cond_resched() calls in copy_huge_page() we opened ourselves to
+softlockups if the hugepage range being copied is very large.  To
+prevent this I've added a cond_resched() call in
+copy_hugetlb_page_range() when the pagetable spinlocks have been
+dropped.
+
+Fixes BZ 508919
+
+diff --git a/mm/hugetlb.c b/mm/hugetlb.c
+index 4ac0821..21f2097 100644
+--- a/mm/hugetlb.c
++++ b/mm/hugetlb.c
+@@ -432,6 +432,8 @@ int copy_hugetlb_page_range(struct mm_struct *dst, struct mm_struct *src,
+ 		spin_unlock(&dst->page_table_lock);
+ 		if (oom)
+ 			goto nomem;
++		if (forcecow)
++			cond_resched();
+ 	}
+ 	return 0;
+ 

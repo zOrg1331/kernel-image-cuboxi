@@ -10,6 +10,8 @@
 #define __AOA_H
 #include <asm/prom.h>
 #include <linux/module.h>
+/* So apparently there's a reason for requiring driver.h to be included first! */
+#include <sound/driver.h>
 #include <sound/core.h>
 #include <sound/asound.h>
 #include <sound/control.h>
@@ -97,7 +99,7 @@ struct aoa_fabric {
  * that are not assigned yet are passed to the fabric
  * again for reconsideration. */
 extern int
-aoa_fabric_register(struct aoa_fabric *fabric, struct device *dev);
+aoa_fabric_register(struct aoa_fabric *fabric);
 
 /* it is vital to call this when the fabric exits!
  * When calling, the remove_codec will be called

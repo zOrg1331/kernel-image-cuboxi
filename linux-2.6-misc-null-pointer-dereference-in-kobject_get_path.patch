@@ -1,0 +1,50 @@
+From: Jiri Pirko <jpirko@redhat.com>
+Date: Sat, 2 Aug 2008 13:43:24 +0200
+Subject:  [misc] NULL pointer dereference in kobject_get_path
+Message-id: 20080802134324.30ea9197@psychotron.englab.brq.redhat.com
+O-Subject: [RHEL5.3 patch] BZ455460 kernel NULL pointer dereference in kobject_get_path
+Bugzilla: 455460
+RH-Acked-by: John Feeney <jfeeney@redhat.com>
+RH-Acked-by: Vitaly Mayatskikh <vmayatsk@redhat.com>
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+RH-Acked-by: Anton Arapov <aarapov@redhat.com>
+
+BZ455460
+
+Description:
+Stratus experienced panics during USB device removals on their
+hardware. Their analysis shows the failing code to be taking a strlen of
+a null k_name. k_name is only NULL'd in kobject_cleanup() which calls
+kobject_put() and it calls kref_put(). Here there could be a race
+condition caused by optimization.
+
+Upstream status:
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=f334b60b43a0927f4ab1187cbdb4582f5227c3b1
+
+Brew build:
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1419498
+
+Test status:
+I have performed tests with this kernel that included over 1000 device
+removals.  I was not able to reproduce the problem reported in bug.
+
+Jirka
+
+diff --git a/lib/kref.c b/lib/kref.c
+index 4a467fa..0d07cc3 100644
+--- a/lib/kref.c
++++ b/lib/kref.c
+@@ -52,12 +52,7 @@ int kref_put(struct kref *kref, void (*release)(struct kref *kref))
+ 	WARN_ON(release == NULL);
+ 	WARN_ON(release == (void (*)(struct kref *))kfree);
+ 
+-	/*
+-	 * if current count is one, we are the last user and can release object
+-	 * right now, avoiding an atomic operation on 'refcount'
+-	 */
+-	if ((atomic_read(&kref->refcount) == 1) ||
+-	    (atomic_dec_and_test(&kref->refcount))) {
++	if (atomic_dec_and_test(&kref->refcount)) {
+ 		release(kref);
+ 		return 1;
+ 	}

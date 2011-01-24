@@ -10,35 +10,27 @@
 
 #include <linux/kernel.h>
 #include <linux/init.h>
-#include <linux/mutex.h>
 #include <linux/platform_device.h>
 #include <linux/input.h>
 #include <linux/clk.h>
 
 #include <linux/spi/spi.h>
 #include <linux/spi/ads7846.h>
-#include <linux/workqueue.h>
-#include <linux/delay.h>
 
-#include <mach/hardware.h>
+#include <asm/hardware.h>
 #include <asm/mach-types.h>
 #include <asm/mach/arch.h>
 #include <asm/mach/map.h>
 
-#include <mach/gpio.h>
-#include <mach/mux.h>
-#include <mach/usb.h>
-#include <mach/board.h>
-#include <mach/keypad.h>
-#include <mach/common.h>
-#include <mach/dsp_common.h>
-#include <mach/omapfb.h>
-#include <mach/hwa742.h>
-#include <mach/lcd_mipid.h>
-#include <mach/mmc.h>
-#include <mach/clock.h>
-
-#define ADS7846_PENDOWN_GPIO	15
+#include <asm/arch/gpio.h>
+#include <asm/arch/mux.h>
+#include <asm/arch/usb.h>
+#include <asm/arch/board.h>
+#include <asm/arch/keypad.h>
+#include <asm/arch/common.h>
+#include <asm/arch/dsp_common.h>
+#include <asm/arch/aic23.h>
+#include <asm/arch/gpio.h>
 
 static void __init omap_nokia770_init_irq(void)
 {
@@ -79,11 +71,9 @@ static struct resource nokia770_kp_resources[] = {
 };
 
 static struct omap_kp_platform_data nokia770_kp_data = {
-	.rows		= 8,
-	.cols		= 8,
-	.keymap		= nokia770_keymap,
-	.keymapsize	= ARRAY_SIZE(nokia770_keymap),
-	.delay		= 4,
+	.rows   = 8,
+	.cols   = 8,
+	.keymap = nokia770_keymap
 };
 
 static struct platform_device nokia770_kp_device = {
@@ -97,43 +87,8 @@ static struct platform_device nokia770_kp_device = {
 };
 
 static struct platform_device *nokia770_devices[] __initdata = {
-	&nokia770_kp_device,
+        &nokia770_kp_device,
 };
-
-static void mipid_shutdown(struct mipid_platform_data *pdata)
-{
-	if (pdata->nreset_gpio != -1) {
-		printk(KERN_INFO "shutdown LCD\n");
-		gpio_set_value(pdata->nreset_gpio, 0);
-		msleep(120);
-	}
-}
-
-static struct mipid_platform_data nokia770_mipid_platform_data = {
-	.shutdown = mipid_shutdown,
-};
-
-static void mipid_dev_init(void)
-{
-	const struct omap_lcd_config *conf;
-
-	conf = omap_get_config(OMAP_TAG_LCD, struct omap_lcd_config);
-	if (conf != NULL) {
-		nokia770_mipid_platform_data.nreset_gpio = conf->nreset_gpio;
-		nokia770_mipid_platform_data.data_lines = conf->data_lines;
-	}
-}
-
-static void ads7846_dev_init(void)
-{
-	if (gpio_request(ADS7846_PENDOWN_GPIO, "ADS7846 pendown") < 0)
-		printk(KERN_ERR "can't get ads7846 pen down GPIO\n");
-}
-
-static int ads7846_get_pendown_state(void)
-{
-	return !gpio_get_value(ADS7846_PENDOWN_GPIO);
-}
 
 static struct ads7846_platform_data nokia770_ads7846_platform_data __initdata = {
 	.x_max		= 0x0fff,
@@ -142,17 +97,14 @@ static struct ads7846_platform_data nokia770_ads7846_platform_data __initdata = 
 	.pressure_max	= 255,
 	.debounce_max	= 10,
 	.debounce_tol	= 3,
-	.debounce_rep	= 1,
-	.get_pendown_state	= ads7846_get_pendown_state,
 };
 
 static struct spi_board_info nokia770_spi_board_info[] __initdata = {
 	[0] = {
-		.modalias       = "lcd_mipid",
+		.modalias       = "lcd_lph8923",
 		.bus_num        = 2,
 		.chip_select    = 3,
 		.max_speed_hz   = 12000000,
-		.platform_data	= &nokia770_mipid_platform_data,
 	},
 	[1] = {
 		.modalias       = "ads7846",
@@ -164,15 +116,6 @@ static struct spi_board_info nokia770_spi_board_info[] __initdata = {
 	},
 };
 
-static struct hwa742_platform_data nokia770_hwa742_platform_data = {
-	.te_connected		= 1,
-};
-
-static void hwa742_dev_init(void)
-{
-	clk_add_alias("hwa_sys_ck", NULL, "bclk", NULL);
-	omapfb_set_ctrl_platform_data(&nokia770_hwa742_platform_data);
-}
 
 /* assume no Mini-AB port */
 
@@ -184,65 +127,28 @@ static struct omap_usb_config nokia770_usb_config __initdata = {
 	.pins[0]	= 6,
 };
 
-#if defined(CONFIG_MMC_OMAP) || defined(CONFIG_MMC_OMAP_MODULE)
-
-#define NOKIA770_GPIO_MMC_POWER		41
-#define NOKIA770_GPIO_MMC_SWITCH	23
-
-static int nokia770_mmc_set_power(struct device *dev, int slot, int power_on,
-				int vdd)
-{
-	gpio_set_value(NOKIA770_GPIO_MMC_POWER, power_on);
-	return 0;
-}
-
-static int nokia770_mmc_get_cover_state(struct device *dev, int slot)
-{
-	return gpio_get_value(NOKIA770_GPIO_MMC_SWITCH);
-}
-
-static struct omap_mmc_platform_data nokia770_mmc2_data = {
-	.nr_slots                       = 1,
-	.dma_mask			= 0xffffffff,
-	.max_freq                       = 12000000,
-	.slots[0]       = {
-		.set_power		= nokia770_mmc_set_power,
-		.get_cover_state	= nokia770_mmc_get_cover_state,
-		.ocr_mask               = MMC_VDD_32_33|MMC_VDD_33_34,
-		.name                   = "mmcblk",
+static struct omap_mmc_config nokia770_mmc_config __initdata = {
+	.mmc[0] = {
+		.enabled	= 0,
+		.wire4		= 0,
+		.wp_pin		= -1,
+		.power_pin	= -1,
+		.switch_pin	= -1,
+	},
+	.mmc[1] = {
+		.enabled	= 0,
+		.wire4		= 0,
+		.wp_pin		= -1,
+		.power_pin	= -1,
+		.switch_pin	= -1,
 	},
 };
 
-static struct omap_mmc_platform_data *nokia770_mmc_data[OMAP16XX_NR_MMC];
+static struct omap_board_config_kernel nokia770_config[] = {
+	{ OMAP_TAG_USB,		NULL },
+	{ OMAP_TAG_MMC,		&nokia770_mmc_config },
+};
 
-static void __init nokia770_mmc_init(void)
-{
-	int ret;
-
-	ret = gpio_request(NOKIA770_GPIO_MMC_POWER, "MMC power");
-	if (ret < 0)
-		return;
-	gpio_direction_output(NOKIA770_GPIO_MMC_POWER, 0);
-
-	ret = gpio_request(NOKIA770_GPIO_MMC_SWITCH, "MMC cover");
-	if (ret < 0) {
-		gpio_free(NOKIA770_GPIO_MMC_POWER);
-		return;
-	}
-	gpio_direction_input(NOKIA770_GPIO_MMC_SWITCH);
-
-	/* Only the second MMC controller is used */
-	nokia770_mmc_data[1] = &nokia770_mmc2_data;
-	omap1_init_mmc(nokia770_mmc_data, OMAP16XX_NR_MMC);
-}
-
-#else
-static inline void nokia770_mmc_init(void)
-{
-}
-#endif
-
-#if	defined(CONFIG_OMAP_DSP)
 /*
  * audio power control
  */
@@ -250,7 +156,7 @@ static inline void nokia770_mmc_init(void)
 #define	AMPLIFIER_CTRL_GPIO	58
 
 static struct clk *dspxor_ck;
-static DEFINE_MUTEX(audio_pwr_lock);
+static DECLARE_MUTEX(audio_pwr_sem);
 /*
  * audio_pwr_state
  * +--+-------------------------+---------------------------------------+
@@ -265,67 +171,57 @@ static DEFINE_MUTEX(audio_pwr_lock);
  */
 static int audio_pwr_state = -1;
 
-static inline void aic23_power_up(void)
-{
-}
-static inline void aic23_power_down(void)
-{
-}
-
 /*
- * audio_pwr_up / down should be called under audio_pwr_lock
+ * audio_pwr_up / down should be called under audio_pwr_sem
  */
 static void nokia770_audio_pwr_up(void)
 {
 	clk_enable(dspxor_ck);
 
 	/* Turn on codec */
-	aic23_power_up();
+	tlv320aic23_power_up();
 
-	if (gpio_get_value(HEADPHONE_GPIO))
+	if (omap_get_gpio_datain(HEADPHONE_GPIO))
 		/* HP not connected, turn on amplifier */
-		gpio_set_value(AMPLIFIER_CTRL_GPIO, 1);
+		omap_set_gpio_dataout(AMPLIFIER_CTRL_GPIO, 1);
 	else
 		/* HP connected, do not turn on amplifier */
 		printk("HP connected\n");
 }
 
-static void codec_delayed_power_down(struct work_struct *work)
+static void codec_delayed_power_down(void *arg)
 {
-	mutex_lock(&audio_pwr_lock);
+	down(&audio_pwr_sem);
 	if (audio_pwr_state == -1)
-		aic23_power_down();
+		tlv320aic23_power_down();
 	clk_disable(dspxor_ck);
-	mutex_unlock(&audio_pwr_lock);
+	up(&audio_pwr_sem);
 }
 
-static DECLARE_DELAYED_WORK(codec_power_down_work, codec_delayed_power_down);
+static DECLARE_WORK(codec_power_down_work, codec_delayed_power_down, NULL);
 
 static void nokia770_audio_pwr_down(void)
 {
 	/* Turn off amplifier */
-	gpio_set_value(AMPLIFIER_CTRL_GPIO, 0);
+	omap_set_gpio_dataout(AMPLIFIER_CTRL_GPIO, 0);
 
 	/* Turn off codec: schedule delayed work */
 	schedule_delayed_work(&codec_power_down_work, HZ / 20);	/* 50ms */
 }
 
-static int
-nokia770_audio_pwr_up_request(struct dsp_kfunc_device *kdev, int stage)
+void nokia770_audio_pwr_up_request(int stage)
 {
-	mutex_lock(&audio_pwr_lock);
+	down(&audio_pwr_sem);
 	if (audio_pwr_state == -1)
 		nokia770_audio_pwr_up();
 	/* force audio_pwr_state = 0, even if it was 1. */
 	audio_pwr_state = 0;
-	mutex_unlock(&audio_pwr_lock);
-	return 0;
+	up(&audio_pwr_sem);
 }
 
-static int
-nokia770_audio_pwr_down_request(struct dsp_kfunc_device *kdev, int stage)
+void nokia770_audio_pwr_down_request(int stage)
 {
-	mutex_lock(&audio_pwr_lock);
+	down(&audio_pwr_sem);
 	switch (stage) {
 	case 1:
 		if (audio_pwr_state == 0)
@@ -338,56 +234,22 @@ nokia770_audio_pwr_down_request(struct dsp_kfunc_device *kdev, int stage)
 		}
 		break;
 	}
-	mutex_unlock(&audio_pwr_lock);
-	return 0;
+	up(&audio_pwr_sem);
 }
-
-static struct dsp_kfunc_device nokia770_audio_device = {
-	.name	 = "audio",
-	.type	 = DSP_KFUNC_DEV_TYPE_AUDIO,
-	.enable  = nokia770_audio_pwr_up_request,
-	.disable = nokia770_audio_pwr_down_request,
-};
-
-static __init int omap_dsp_init(void)
-{
-	int ret;
-
-	dspxor_ck = clk_get(0, "dspxor_ck");
-	if (IS_ERR(dspxor_ck)) {
-		printk(KERN_ERR "couldn't acquire dspxor_ck\n");
-		return PTR_ERR(dspxor_ck);
-	}
-
-	ret = dsp_kfunc_device_register(&nokia770_audio_device);
-	if (ret) {
-		printk(KERN_ERR
-		       "KFUNC device registration faild: %s\n",
-		       nokia770_audio_device.name);
-		goto out;
-	}
-	return 0;
- out:
-	return ret;
-}
-#else
-#define omap_dsp_init()		do {} while (0)
-#endif	/* CONFIG_OMAP_DSP */
 
 static void __init omap_nokia770_init(void)
 {
+	nokia770_config[0].data = &nokia770_usb_config;
+
 	platform_add_devices(nokia770_devices, ARRAY_SIZE(nokia770_devices));
 	spi_register_board_info(nokia770_spi_board_info,
 				ARRAY_SIZE(nokia770_spi_board_info));
-	omap_gpio_init();
+	omap_board_config = nokia770_config;
+	omap_board_config_size = ARRAY_SIZE(nokia770_config);
 	omap_serial_init();
-	omap_register_i2c_bus(1, 100, NULL, 0);
-	omap_dsp_init();
-	hwa742_dev_init();
-	ads7846_dev_init();
-	mipid_dev_init();
-	omap_usb_init(&nokia770_usb_config);
-	nokia770_mmc_init();
+	omap_dsp_audio_pwr_up_request = nokia770_audio_pwr_up_request;
+	omap_dsp_audio_pwr_down_request = nokia770_audio_pwr_down_request;
+	dspxor_ck = clk_get(0, "dspxor_ck");
 }
 
 static void __init omap_nokia770_map_io(void)

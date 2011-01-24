@@ -30,18 +30,18 @@ ldflags-$(CONFIG_CPU_H8300H)	:= -mh8300helf
 cflags-$(CONFIG_CPU_H8S)	:= -ms
 ldflags-$(CONFIG_CPU_H8S)	:= -mh8300self
 
-KBUILD_CFLAGS += $(cflags-y)
-KBUILD_CFLAGS += -mint32 -fno-builtin
-KBUILD_CFLAGS += -g
-KBUILD_CFLAGS += -D__linux__
-KBUILD_CFLAGS += -DUTS_SYSNAME=\"uClinux\"
-KBUILD_AFLAGS += -DPLATFORM=$(PLATFORM) -DMODEL=$(MODEL) $(cflags-y)
+CFLAGS += $(cflags-y)
+CFLAGS += -mint32 -fno-builtin
+CFLAGS += -g
+CFLAGS += -D__linux__
+CFLAGS += -DUTS_SYSNAME=\"uClinux\"
+AFLAGS += -DPLATFORM=$(PLATFORM) -DMODEL=$(MODEL) $(cflags-y)
 LDFLAGS += $(ldflags-y)
 
 CROSS_COMPILE = h8300-elf-
-LIBGCC := $(shell $(CROSS-COMPILE)$(CC) $(KBUILD_CFLAGS) -print-libgcc-file-name)
+LIBGCC := $(shell $(CROSS-COMPILE)$(CC) $(CFLAGS) -print-libgcc-file-name)
 
-head-y := arch/$(ARCH)/platform/$(PLATFORM)/$(BOARD)/crt0_$(MODEL).o
+head-y := arch/$(ARCH)/platform/$(platform-y)/$(board-y)/crt0_$(model-y).o
 
 core-y	+= arch/$(ARCH)/kernel/ \
 	   arch/$(ARCH)/mm/
@@ -61,11 +61,10 @@ archmrproper:
 archclean:
 	$(Q)$(MAKE) $(clean)=$(boot)
 
-vmlinux.srec vmlinux.bin zImage: vmlinux
+vmlinux.srec vmlinux.bin: vmlinux
 	$(Q)$(MAKE) $(build)=$(boot) $(boot)/$@
 
 define archhelp
-  @echo  'vmlinux.bin  - Create raw binary'
-  @echo  'vmlinux.srec - Create srec binary'
-  @echo  'zImage       - Compressed kernel image'
+  echo  'vmlinux.bin  - Create raw binary'
+  echo  'vmlinux.srec - Create srec binary'
 endef

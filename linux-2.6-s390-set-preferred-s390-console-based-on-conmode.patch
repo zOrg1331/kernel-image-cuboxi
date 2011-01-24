@@ -1,0 +1,88 @@
+From: Hans-Joachim Picht <hpicht@redhat.com>
+Date: Tue, 22 Sep 2009 22:12:44 +0200
+Subject: [s390] set preferred s390 console based on conmode
+Message-id: 20090922201244.GB32244@blc4eb509856389.ibm.com
+O-Subject: [RHEL5 U5 PATCH 1/1] s390 - kernel: set preferred s390 console based on conmode
+Bugzilla: 520461
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+
+Description
+============
+setup_arch() unconditionally sets the preferred console to ttyS.
+This breaks the use of 3270 devices as the console for displaying
+kernel messages.
+
+Provide a new function to set the default preferred console for s390:
+The preferred console depends on the conmode parameter that is used
+to switch between 3270 and 3215 terminal/console mode.
+
+Bugzilla
+=========
+
+BZ 520461
+https://bugzilla.redhat.com/show_bug.cgi?id=520461
+
+Upstream status of the patch:
+=============================
+
+The patch is upstream as of kernel version 2.6.31
+
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=637952ca689013339b977558061fa4ca8e07e1c1
+
+Test status:
+============
+
+The patch has been tested and fixes the problem.
+The fix has been verified by the IBM test department.
+
+Please ACK.
+
+With best regards,
+
+	Hans
+
+diff --git a/arch/s390/kernel/setup.c b/arch/s390/kernel/setup.c
+index bf01463..f74b846 100644
+--- a/arch/s390/kernel/setup.c
++++ b/arch/s390/kernel/setup.c
+@@ -200,6 +200,14 @@ static int __init condev_setup(char *str)
+ 
+ __setup("condev=", condev_setup);
+ 
++static void __init set_preferred_console(void)
++{
++	if (CONSOLE_IS_3215 || CONSOLE_IS_SCLP)
++		add_preferred_console("ttyS", 0, NULL);
++	if (CONSOLE_IS_3270)
++		add_preferred_console("tty3270", 0, NULL);
++}
++
+ static int __init conmode_setup(char *str)
+ {
+ #if defined(CONFIG_SCLP_CONSOLE)
+@@ -214,6 +222,7 @@ static int __init conmode_setup(char *str)
+ 	if (strncmp(str, "3270", 5) == 0)
+ 		SET_CONSOLE_3270;
+ #endif
++	set_preferred_console();
+         return 1;
+ }
+ 
+@@ -896,9 +905,6 @@ static void __init setup_hwcaps(void)
+ void __init
+ setup_arch(char **cmdline_p)
+ {
+-	/* set up preferred console */
+-	add_preferred_console("ttyS", 0, NULL);
+-
+         /*
+          * print what head.S has found out about the machine
+          */
+@@ -961,6 +967,7 @@ setup_arch(char **cmdline_p)
+ 
+         /* Setup default console */
+ 	conmode_default();
++	set_preferred_console();
+ 
+ 	/* Setup zfcpdump support */
+ 	setup_zfcpdump(console_devno);

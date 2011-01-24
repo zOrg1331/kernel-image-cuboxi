@@ -1,0 +1,509 @@
+Date: Mon, 16 Oct 2006 15:01:18 -0400
+From: Kimball Murray <kmurray@redhat.com>
+Subject: [RHEL5 Patch 1/1 revised patch] x86_64 dirty page tracking feature (BZ-209173)
+
+This patch makes the previous patch obsolete.  The previous patch would have
+called vmalloc at boot time on all x86_64 systems, wasting a tiny bit of
+memory.  Only Stratus servers actually need to do this vmalloc, so I pulled
+it from the initcall.  Please review this patch instead.
+
+Changes from previous patch:
+
+	vmalloc no longer called from initcall function.
+	mm_track_init(...) now takes num_pages as an arg.
+	added mm_track_exit() to vfree the vmalloc'd memory.
+
+	Note: only Stratus will use these mm_track_init/exit functions.
+
+>From previous post:
+------------------
+This patch submission provides the kernel mechanism for the memory-tracking
+functionality (Stratus) that exists in RHEL4.  It has been kept as close as
+possible to the RHEL4 version, except for the following:
+
+1. Macro changes in pgtable.h.  RHEL5 uses different page table macros.
+
+	RHEL4 => pml4 -> pgd -> pmd -> pte
+	RHEL5 => pgd  -> pud -> pmd -> pte
+
+   Luckily, most of the VM changes affect the Stratus module, and not the
+   kernel patch.
+
+2. Moved mm_track functions out of arch/x86_64/mm/init.c and into their own
+   file, arch/x86_64/mm/track.c.
+
+3. Added Stratus copyright info and GPL notice to mm_track.h and track.c.
+
+4. Incorporated upstream feedback:
+
+	Got rid of many #ifdef's
+	Used static inline stub functions for type-checking rather than
+		#defines
+	Removed ability to to replace default tracking functions by
+		changing function pointers.  I felt this made the patch
+		more flexible for other users, but upstream was fussy
+		about this, so out they came.
+
+
+Upstream Status:
+---------------
+
+The first version of this I submitted to lkml triggered responses from both
+Andi Kleen and Andrew Morton.  Andrew Morton provided most of the feedback
+that led to the changes outlined in "4." above.  Andi Kleen said he was
+receptive to this patch in the mainline but only if Stratus was willing to
+migrate some of its module code into the kernel as well.  I am putting that
+together now, but I recognize that it would therefore make the kernel patch
+larger.  From Redhat's risk perspective, my preference would be to make the
+kernel patch as small as possible, and as similar to the RHEL4 patch as
+possible.  But this is at odds with what Andi Kleen is asking for.
+
+So then I hit upon the idea of a 2-layer patch.  The first layer is
+essentially this patch, and the 2nd layer would bring in the Stratus module
+functionality.  I am not now asking for the 2nd layer to be pulled into RHEL5,
+but I believe offering this 2nd layer will satisfy Mr. Kleen.  The 2nd layer
+is harder to develop and test, especially since Stratus is still debugging
+the hardware for it.  If, however, the 2nd layer is eventually pulled back
+into RHEL5 via another snapshot pull, Stratus may at that time elect to use
+the 2nd layer in the kernel, or stay with their current implementation in the
+module.
+
+I also expect that this 2-layer approach would leave an opening for folks to
+do Xen guest OS migrations (or things like it) using the 1st patch, and then
+implementing their own layer 2 on top of it.  As much as possible, I did not
+wish to make this upstream patch Stratus-specific, and the 2-layer approach
+made this easier.  So for now, I am providing layer 1.
+
+
+Testing:
+-------
+
+Given that Stratus is still debugging next-generation hardware, I have not had
+the ability to test that this patch works for Stratus purposes.  All I have
+been able to do is verify through regressions testing that it doesn't seem to
+hurt anybody else.
+
+
+I'm asking that those familiar with the RHEL4 version and purpose of this
+patch, please give it a look and provide feedback/ACKs for RHEL5.
+
+Thanks,
+
+	-Kimball
+
+Revised patch:
+------------------ snip ---------------
+diff -Naur linux-2.6.18-1.2717-orig/arch/x86_64/Kconfig linux-2.6.18-1.2717/arch/x86_64/Kconfig
+--- linux-2.6.18-1.2717-orig/arch/x86_64/Kconfig	2006-10-16 11:25:32.000000000 -0400
++++ linux-2.6.18-1.2717/arch/x86_64/Kconfig	2006-10-16 11:29:03.000000000 -0400
+@@ -416,6 +416,17 @@
+ config ARCH_ENABLE_MEMORY_HOTPLUG
+ 	def_bool y
+ 
++config TRACK_DIRTY_PAGES
++	bool "Enable dirty page tracking"
++	depends on X86_64
++	default n
++	help
++	  Turning this on allows third party modules to use a
++	  kernel interface that can track dirty page generation
++	  in the system.  This can be used to copy/mirror live
++	  memory to another system, or perhaps even a replacement
++	  DIMM.  Most users will say n here.
++
+ config HPET_TIMER
+ 	bool
+ 	depends on !X86_64_XEN
+diff -Naur linux-2.6.18-1.2717-orig/arch/x86_64/mm/Makefile linux-2.6.18-1.2717/arch/x86_64/mm/Makefile
+--- linux-2.6.18-1.2717-orig/arch/x86_64/mm/Makefile	2006-10-16 11:25:26.000000000 -0400
++++ linux-2.6.18-1.2717/arch/x86_64/mm/Makefile	2006-10-16 11:29:03.000000000 -0400
+@@ -7,6 +7,7 @@
+ obj-$(CONFIG_NUMA) += numa.o
+ obj-$(CONFIG_K8_NUMA) += k8topology.o
+ obj-$(CONFIG_ACPI_NUMA) += srat.o
++obj-$(CONFIG_TRACK_DIRTY_PAGES) += track.o
+ 
+ hugetlbpage-y = ../../i386/mm/hugetlbpage.o
+ 
+diff -Naur linux-2.6.18-1.2717-orig/arch/x86_64/mm/track.c linux-2.6.18-1.2717/arch/x86_64/mm/track.c
+--- linux-2.6.18-1.2717-orig/arch/x86_64/mm/track.c	1969-12-31 19:00:00.000000000 -0500
++++ linux-2.6.18-1.2717/arch/x86_64/mm/track.c	2006-10-16 12:56:38.000000000 -0400
+@@ -0,0 +1,160 @@
++/*
++ * Low-level routines for marking dirty pages of a running system in a
++ * bitmap.  Allows memory mirror or migration strategies to be implemented.
++ *
++ * Copyright (C) 2006 Stratus Technologies Bermuda Ltd.
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 2 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program; if not, write to the Free Software
++ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
++ */
++#include <linux/init.h>
++#include <linux/module.h>
++#include <linux/mm.h>
++#include <linux/vmalloc.h>
++#include <asm/atomic.h>
++#include <asm/mm_track.h>
++#include <asm/pgtable.h>
++
++/*
++ * For memory-tracking purposes, see mm_track.h for details.
++ */
++struct mm_tracker mm_tracking_struct = {0, ATOMIC_INIT(0), 0, 0};
++EXPORT_SYMBOL(mm_tracking_struct);
++
++void do_mm_track_pte(void * val)
++{
++	pte_t *ptep = (pte_t*)val;
++	unsigned long pfn;
++
++	if (!pte_present(*ptep))
++		return;
++
++	if (!pte_val(*ptep) & _PAGE_DIRTY)
++		return;
++
++	pfn = pte_pfn(*ptep);
++
++	if (pfn >= mm_tracking_struct.bitcnt)
++		return;
++
++	if (!test_and_set_bit(pfn, mm_tracking_struct.vector))
++		atomic_inc(&mm_tracking_struct.count);
++}
++EXPORT_SYMBOL(do_mm_track_pte);
++
++#define LARGE_PMD_SIZE	(1 << PMD_SHIFT)
++
++void do_mm_track_pmd(void *val)
++{
++	int i;
++	pte_t *pte;
++	pmd_t *pmd = (pmd_t*)val;
++
++	if (!pmd_present(*pmd))
++		return;
++
++	if (unlikely(pmd_large(*pmd))) {
++		unsigned long addr, end;
++
++		if (!pte_val(*(pte_t*)val) & _PAGE_DIRTY)
++			return;
++
++		addr = pte_pfn(*(pte_t*)val) << PAGE_SHIFT;
++		end = addr + LARGE_PMD_SIZE;
++
++		while (addr < end) {
++			do_mm_track_phys((void*)addr);
++			addr +=  PAGE_SIZE;
++		}
++		return;
++	}
++
++	pte = pte_offset_kernel(pmd, 0);
++
++	for (i = 0; i < PTRS_PER_PTE; i++, pte++)
++		do_mm_track_pte(pte);
++}
++EXPORT_SYMBOL(do_mm_track_pmd);
++
++static inline void track_as_pte(void *val) {
++	unsigned long pfn = pte_pfn(*(pte_t*)val);
++	if (pfn >= mm_tracking_struct.bitcnt)
++		return;
++
++	if (!test_and_set_bit(pfn, mm_tracking_struct.vector))
++		atomic_inc(&mm_tracking_struct.count);
++}
++
++void do_mm_track_pud(void *val)
++{
++	track_as_pte(val);
++}
++EXPORT_SYMBOL(do_mm_track_pud);
++
++void do_mm_track_pgd(void *val)
++{
++	track_as_pte(val);
++}
++EXPORT_SYMBOL(do_mm_track_pgd);
++
++void do_mm_track_phys(void *val)
++{
++	unsigned long pfn;
++
++	pfn = (unsigned long)val >> PAGE_SHIFT;
++
++	if (pfn >= mm_tracking_struct.bitcnt)
++		return;
++
++	if (!test_and_set_bit(pfn, mm_tracking_struct.vector))
++		atomic_inc(&mm_tracking_struct.count);
++}
++EXPORT_SYMBOL(do_mm_track_phys);
++
++
++/*
++ * Allocate enough space for the bit vector in the
++ * mm_tracking_struct.
++ */
++int mm_track_init(long num_pages)
++{
++	mm_tracking_struct.vector = vmalloc((num_pages + 7)/8);
++	if (mm_tracking_struct.vector == NULL) {
++		printk("%s: failed to allocate bit vector\n", __func__);
++		return -ENOMEM;
++	}
++
++	mm_tracking_struct.bitcnt = num_pages;
++
++	return 0;
++}
++EXPORT_SYMBOL(mm_track_init);
++
++/*
++ * Turn off tracking, free the bit vector memory.
++ */
++void mm_track_exit(void)
++{
++	/*
++	 * Inhibit the use of the tracking functions.
++	 * This should have already been done, but just in case.
++	 */
++	mm_tracking_struct.active = 0;
++	mm_tracking_struct.bitcnt = 0;
++
++	if (mm_tracking_struct.vector != NULL)
++		vfree(mm_tracking_struct.vector);
++}
++EXPORT_SYMBOL(mm_track_exit);
++
+diff -Naur linux-2.6.18-1.2717-orig/include/asm-x86_64/mm_track.h linux-2.6.18-1.2717/include/asm-x86_64/mm_track.h
+--- linux-2.6.18-1.2717-orig/include/asm-x86_64/mm_track.h	1969-12-31 19:00:00.000000000 -0500
++++ linux-2.6.18-1.2717/include/asm-x86_64/mm_track.h	2006-10-16 11:29:03.000000000 -0400
+@@ -0,0 +1,98 @@
++/*
++ * Routines and structures for building a bitmap of
++ * dirty pages in a live system.  For use in memory mirroring
++ * or migration applications.
++ *
++ * Copyright (C) 2006 Stratus Technologies Bermuda Ltd.
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 2 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program; if not, write to the Free Software
++ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
++ */
++#ifndef __X86_64_MMTRACK_H__
++#define __X86_64_MMTRACK_H__
++
++#ifndef CONFIG_TRACK_DIRTY_PAGES
++
++static inline void mm_track_pte(pte_t *ptep)	{}
++static inline void mm_track_pmd(pmd_t *pmdp)	{}
++static inline void mm_track_pud(pud_t *pudp)	{}
++static inline void mm_track_pgd(pgd_t *pgdp) 	{}
++static inline void mm_track_phys(void *physp)	{}
++
++#else
++
++#include <asm/page.h>
++#include <asm/atomic.h>
++ /*
++  * For memory-tracking purposes, if active is true (non-zero), the other
++  * elements of the structure are available for use.  Each time mm_track_pte
++  * is called, it increments count and sets a bit in the bitvector table.
++  * Each bit in the bitvector represents a physical page in memory.
++  *
++  * This is declared in arch/x86_64/mm/track.c.
++  *
++  * The in_use element is used in the code which drives the memory tracking
++  * environment.  When tracking is complete, the vector may be freed, but 
++  * only after the active flag is set to zero and the in_use count goes to
++  * zero.
++  *
++  * The count element indicates how many pages have been stored in the
++  * bitvector.  This is an optimization to avoid counting the bits in the
++  * vector between harvest operations.
++  */
++struct mm_tracker {
++	int active;		// non-zero if this structure in use
++	atomic_t count;		// number of pages tracked by mm_track()
++	unsigned long * vector;	// bit vector of modified pages
++	unsigned long bitcnt;	// number of bits in vector
++};
++extern struct mm_tracker mm_tracking_struct;
++
++extern void do_mm_track_pte(void *);
++extern void do_mm_track_pmd(void *);
++extern void do_mm_track_pud(void *);
++extern void do_mm_track_pgd(void *);
++extern void do_mm_track_phys(void *);
++
++/*
++ * The mm_track routine is needed by macros in pgtable.h
++ */
++static __inline__ void mm_track_pte(pte_t *ptep)
++{
++	if (unlikely(mm_tracking_struct.active))
++		do_mm_track_pte(ptep);
++}
++static __inline__ void mm_track_pmd(pmd_t *pmdp)
++{
++	if (unlikely(mm_tracking_struct.active))
++		do_mm_track_pmd(pmdp);
++}
++static __inline__ void mm_track_pud(pud_t *pudp)
++{
++	if (unlikely(mm_tracking_struct.active))
++		do_mm_track_pud(pudp);
++}
++static __inline__ void mm_track_pgd(pgd_t *pgdp)
++{
++	if (unlikely(mm_tracking_struct.active))
++		do_mm_track_pgd(pgdp);
++}
++static __inline__ void mm_track_phys(void *physp)
++{
++	if (unlikely(mm_tracking_struct.active))
++		do_mm_track_phys(physp);
++}
++#endif /* CONFIG_TRACK_DIRTY_PAGES */
++
++#endif /* __X86_64_MMTRACK_H__ */
+diff -Naur linux-2.6.18-1.2717-orig/include/asm-x86_64/pgtable.h linux-2.6.18-1.2717/include/asm-x86_64/pgtable.h
+--- linux-2.6.18-1.2717-orig/include/asm-x86_64/pgtable.h	2006-10-16 11:25:32.000000000 -0400
++++ linux-2.6.18-1.2717/include/asm-x86_64/pgtable.h	2006-10-16 11:29:03.000000000 -0400
+@@ -13,6 +13,7 @@
+ #include <asm/bitops.h>
+ #include <linux/threads.h>
+ #include <asm/pda.h>
++#include <asm/mm_track.h>
+ 
+ extern pud_t level3_kernel_pgt[512];
+ extern pud_t level3_ident_pgt[512];
+@@ -77,17 +78,20 @@
+ 
+ static inline void set_pte(pte_t *dst, pte_t val)
+ {
++	mm_track_pte(dst);
+ 	pte_val(*dst) = pte_val(val);
+ } 
+ #define set_pte_at(mm,addr,ptep,pteval) set_pte(ptep,pteval)
+ 
+ static inline void set_pmd(pmd_t *dst, pmd_t val)
+ {
++	mm_track_pmd(dst);
+         pmd_val(*dst) = pmd_val(val); 
+ } 
+ 
+ static inline void set_pud(pud_t *dst, pud_t val)
+ {
++	mm_track_pud(dst);
+ 	pud_val(*dst) = pud_val(val);
+ }
+ 
+@@ -98,6 +102,7 @@
+ 
+ static inline void set_pgd(pgd_t *dst, pgd_t val)
+ {
++	mm_track_pgd(dst);
+ 	pgd_val(*dst) = pgd_val(val); 
+ } 
+ 
+@@ -109,7 +114,11 @@
+ #define pud_page(pud) \
+ ((unsigned long) __va(pud_val(pud) & PHYSICAL_PAGE_MASK))
+ 
+-#define ptep_get_and_clear(mm,addr,xp)	__pte(xchg(&(xp)->pte, 0))
++static inline pte_t ptep_get_and_clear(struct mm_struct *mm, unsigned long addr, pte_t *xp)
++{
++	mm_track_pte(xp);
++	return __pte(xchg(&(xp)->pte, 0));
++}
+ 
+ struct mm_struct;
+ 
+@@ -118,6 +127,7 @@
+ 	pte_t pte;
+ 	if (full) {
+ 		pte = *ptep;
++		mm_track_pte(ptep);
+ 		*ptep = __pte(0);
+ 	} else {
+ 		pte = ptep_get_and_clear(mm, addr, ptep);
+@@ -157,6 +167,7 @@
+ #define _PAGE_BIT_DIRTY		6
+ #define _PAGE_BIT_PSE		7	/* 4 MB (or 2MB) page */
+ #define _PAGE_BIT_GLOBAL	8	/* Global TLB entry PPro+ */
++#define _PAGE_BIT_SOFTDIRTY	9	/* save dirty state when hdw dirty bit cleared */
+ #define _PAGE_BIT_NX           63       /* No execute: only valid after cpuid check */
+ 
+ #define _PAGE_PRESENT	0x001
+@@ -169,6 +180,7 @@
+ #define _PAGE_PSE	0x080	/* 2MB page */
+ #define _PAGE_FILE	0x040	/* nonlinear file mapping, saved PTE; unset:swap */
+ #define _PAGE_GLOBAL	0x100	/* Global TLB entry */
++#define _PAGE_SOFTDIRTY	0x200
+ 
+ #define _PAGE_PROTNONE	0x080	/* If not present */
+ #define _PAGE_NX        (_AC(1,UL)<<_PAGE_BIT_NX)
+@@ -176,7 +188,7 @@
+ #define _PAGE_TABLE	(_PAGE_PRESENT | _PAGE_RW | _PAGE_USER | _PAGE_ACCESSED | _PAGE_DIRTY)
+ #define _KERNPG_TABLE	(_PAGE_PRESENT | _PAGE_RW | _PAGE_ACCESSED | _PAGE_DIRTY)
+ 
+-#define _PAGE_CHG_MASK	(PTE_MASK | _PAGE_ACCESSED | _PAGE_DIRTY)
++#define _PAGE_CHG_MASK	(PTE_MASK | _PAGE_ACCESSED | _PAGE_DIRTY | _PAGE_SOFTDIRTY)
+ 
+ #define PAGE_NONE	__pgprot(_PAGE_PROTNONE | _PAGE_ACCESSED)
+ #define PAGE_SHARED	__pgprot(_PAGE_PRESENT | _PAGE_RW | _PAGE_USER | _PAGE_ACCESSED | _PAGE_NX)
+@@ -277,7 +289,7 @@
+ static inline int pte_user(pte_t pte)		{ return pte_val(pte) & _PAGE_USER; }
+ static inline int pte_read(pte_t pte)		{ return pte_val(pte) & _PAGE_USER; }
+ static inline int pte_exec(pte_t pte)		{ return pte_val(pte) & _PAGE_USER; }
+-static inline int pte_dirty(pte_t pte)		{ return pte_val(pte) & _PAGE_DIRTY; }
++static inline int pte_dirty(pte_t pte)		{ return pte_val(pte) & (_PAGE_DIRTY | _PAGE_SOFTDIRTY); }
+ static inline int pte_young(pte_t pte)		{ return pte_val(pte) & _PAGE_ACCESSED; }
+ static inline int pte_write(pte_t pte)		{ return pte_val(pte) & _PAGE_RW; }
+ static inline int pte_file(pte_t pte)		{ return pte_val(pte) & _PAGE_FILE; }
+@@ -285,7 +297,7 @@
+ 
+ static inline pte_t pte_rdprotect(pte_t pte)	{ set_pte(&pte, __pte(pte_val(pte) & ~_PAGE_USER)); return pte; }
+ static inline pte_t pte_exprotect(pte_t pte)	{ set_pte(&pte, __pte(pte_val(pte) & ~_PAGE_USER)); return pte; }
+-static inline pte_t pte_mkclean(pte_t pte)	{ set_pte(&pte, __pte(pte_val(pte) & ~_PAGE_DIRTY)); return pte; }
++static inline pte_t pte_mkclean(pte_t pte)	{ set_pte(&pte, __pte(pte_val(pte) & ~(_PAGE_SOFTDIRTY|_PAGE_DIRTY))); return pte; }
+ static inline pte_t pte_mkold(pte_t pte)	{ set_pte(&pte, __pte(pte_val(pte) & ~_PAGE_ACCESSED)); return pte; }
+ static inline pte_t pte_wrprotect(pte_t pte)	{ set_pte(&pte, __pte(pte_val(pte) & ~_PAGE_RW)); return pte; }
+ static inline pte_t pte_mkread(pte_t pte)	{ set_pte(&pte, __pte(pte_val(pte) | _PAGE_USER)); return pte; }
+@@ -301,7 +313,9 @@
+ {
+ 	if (!pte_dirty(*ptep))
+ 		return 0;
+-	return test_and_clear_bit(_PAGE_BIT_DIRTY, &ptep->pte);
++	mm_track_pte(ptep);
++	return test_and_clear_bit(_PAGE_BIT_DIRTY, ptep) |
++	       test_and_clear_bit(_PAGE_BIT_SOFTDIRTY, ptep);
+ }
+ 
+ static inline int ptep_test_and_clear_young(struct vm_area_struct *vma, unsigned long addr, pte_t *ptep)
+

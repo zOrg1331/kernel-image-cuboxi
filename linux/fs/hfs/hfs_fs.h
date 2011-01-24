@@ -11,7 +11,6 @@
 
 #include <linux/slab.h>
 #include <linux/types.h>
-#include <linux/mutex.h>
 #include <linux/buffer_head.h>
 #include <linux/fs.h>
 
@@ -54,7 +53,7 @@ struct hfs_inode_info {
 	struct list_head open_dir_list;
 	struct inode *rsrc_inode;
 
-	struct mutex extents_lock;
+	struct semaphore extents_lock;
 
 	u16 alloc_blocks, clump_blocks;
 	sector_t fs_blocks;
@@ -140,7 +139,7 @@ struct hfs_sb_info {
 
 	struct nls_table *nls_io, *nls_disk;
 
-	struct mutex bitmap_lock;
+	struct semaphore bitmap_lock;
 
 	unsigned long flags;
 
@@ -171,7 +170,7 @@ extern void hfs_cat_build_key(struct super_block *, btree_key *, u32, struct qst
 
 /* dir.c */
 extern const struct file_operations hfs_dir_operations;
-extern const struct inode_operations hfs_dir_inode_operations;
+extern struct inode_operations hfs_dir_inode_operations;
 
 /* extent.c */
 extern int hfs_ext_keycmp(const btree_key *, const btree_key *);
@@ -188,7 +187,7 @@ extern const struct address_space_operations hfs_btree_aops;
 
 extern struct inode *hfs_new_inode(struct inode *, struct qstr *, int);
 extern void hfs_inode_write_fork(struct inode *, struct hfs_extent *, __be32 *, __be32 *);
-extern int hfs_write_inode(struct inode *, struct writeback_control *);
+extern int hfs_write_inode(struct inode *, int);
 extern int hfs_inode_setattr(struct dentry *, struct iattr *);
 extern void hfs_inode_read_fork(struct inode *inode, struct hfs_extent *ext,
 			__be32 log_size, __be32 phys_size, u32 clump_size);
@@ -213,7 +212,7 @@ extern void hfs_mdb_put(struct super_block *);
 extern int hfs_part_find(struct super_block *, sector_t *, sector_t *);
 
 /* string.c */
-extern const struct dentry_operations hfs_dentry_operations;
+extern struct dentry_operations hfs_dentry_operations;
 
 extern int hfs_hash_dentry(struct dentry *, struct qstr *);
 extern int hfs_strcmp(const unsigned char *, unsigned int,

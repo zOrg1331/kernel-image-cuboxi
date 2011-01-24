@@ -45,6 +45,9 @@
  */
 	.align	5
 	LEAF(resume)
+#ifndef CONFIG_CPU_HAS_LLSC
+	sw	zero, ll_bit
+#endif
 	mfc0	t1, CP0_STATUS
 	LONG_S	t1, THREAD_STATUS(a0)
 	cpu_save_nonscratch a0
@@ -82,7 +85,7 @@
 	move	$28, a2
 	cpu_restore_nonscratch a1
 
-	PTR_ADDU	t0, $28, _THREAD_SIZE - 32
+	PTR_ADDIU	t0, $28, _THREAD_SIZE - 32
 	set_saved_sp	t0, t1, t2
 #ifdef CONFIG_MIPS_MT_SMTC
 	/* Read-modify-writes of Status must be atomic on a VPE */
@@ -166,7 +169,7 @@ LEAF(_init_fpu)
 	or	t0, t1
 	mtc0	t0, CP0_STATUS
 #endif /* CONFIG_MIPS_MT_SMTC */
-	enable_fpu_hazard
+	fpu_enable_hazard
 
 	li	t1, FPU_DEFAULT
 	ctc1	t1, fcr31

@@ -1,0 +1,63 @@
+From: Hendrik Brueckner <brueckner@redhat.com>
+Date: Tue, 26 Oct 2010 10:05:11 -0400
+Subject: [s390] qeth: portno 1 support for OSM-device insufficient
+Message-id: <20101026100509.GA24860@redhat.com>
+Patchwork-id: 28910
+O-Subject: [RHEL5.6 PATCH 1/1] [s390x] qeth: portno 1 support for OSM-device
+	insufficient
+Bugzilla: 644008
+
+Description
+-----------
+Pings are not successful if OSM-device uses portno 1.
+
+OSA Express 3 cards in OSD and OSM mode offer an additional
+portno 1.  During initialization of an OSA-device the portno
+must be specified in several steps.  Especially OSM-devices
+require portno-definition in 2 further initialization steps.
+
+Add necessary portno definitions to the appropriate
+initialization steps of a qeth device.
+
+Bugzilla
+--------
+BZ 644008
+https://bugzilla.redhat.com/show_bug.cgi?id=644008
+
+Upstream status of the patch
+----------------------------
+The patch is upstream as of kernel version 2.6.26
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=4a71df50047f0db65ea09b1be155852e81a45eba
+
+Test status
+-----------
+The patch has been tested and fixes the problem.
+The fix has been verified by the IBM test department.
+
+
+diff --git a/drivers/s390/net/qeth_main.c b/drivers/s390/net/qeth_main.c
+index a36bf28..157eb38 100644
+--- a/drivers/s390/net/qeth_main.c
++++ b/drivers/s390/net/qeth_main.c
+@@ -2166,9 +2166,8 @@ qeth_ulp_enable(struct qeth_card *card)
+ 	iob = qeth_wait_for_buffer(&card->write);
+ 	memcpy(iob->data, ULP_ENABLE, ULP_ENABLE_SIZE);
+ 
+-	if (card->info.link_type == QETH_LINK_TYPE_ATM_NATIVE)
+-		*(QETH_ULP_ENABLE_LINKNUM(iob->data)) =
+-			(__u8) card->info.portno;
++	*(QETH_ULP_ENABLE_LINKNUM(iob->data)) =
++		(__u8) card->info.portno;
+ 	if (card->options.layer2)
+ 		if (card->info.type == QETH_CARD_TYPE_OSN)
+ 			prot_type = QETH_PROT_OSN2;
+@@ -6296,8 +6295,7 @@ qeth_fill_ipacmd_header(struct qeth_card *card, struct qeth_ipa_cmd *cmd,
+ 	cmd->hdr.initiator = IPA_CMD_INITIATOR_HOST;
+ 	cmd->hdr.seqno = card->seqno.ipa;
+ 	cmd->hdr.adapter_type = qeth_get_ipa_adp_type(card->info.link_type);
+-	if (card->info.link_type == QETH_LINK_TYPE_ATM_NATIVE)
+-		cmd->hdr.rel_adapter_no = (__u8) card->info.portno;
++	cmd->hdr.rel_adapter_no = (__u8) card->info.portno;
+ 	if (card->options.layer2)
+ 		cmd->hdr.prim_version_no = 2;
+ 	else

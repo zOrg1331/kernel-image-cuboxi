@@ -1,0 +1,70 @@
+From: Tetsu Yamamoto <tyamamot@redhat.com>
+Date: Thu, 3 Jan 2008 10:36:20 -0500
+Subject: [Xen] ia64: stop all CPUs on HV panic
+Message-id: 477D00F4.7070107@redhat.com
+O-Subject: [RHEL5.2 PATCH] [Xen] Dom0/DomU may continue to work after hypervisor panic
+Bugzilla: 426129
+
+This patch fixes BZ#426129.
+https://bugzilla.redhat.com/show_bug.cgi?id=426129
+
+This is backported from the upstream to stop all CPUs on hypervisor panic.
+http://xenbits.xensource.com/ext/xen-ia64-unstable.hg?rev/124f7a7f5f84
+
+I've tested these patches with kernel-2.6.18-58.el5, and confirmed that
+Dom0 is stopped on hypervisor panic.
+
+Please review and ACK.
+
+Regards,
+
+Tetsu Yamamoto
+
+# HG changeset patch
+# User Alex Williamson <alex.williamson@hp.com>
+# Date 1197393757 25200
+# Node ID 124f7a7f5f84f69c1d6430ace1affd8f6cc00626
+# Parent  35b2c54f59d5ab9c8fa414be86f2668da4149b6a
+[IA64] Stop all cpus at panic
+
+Current panic() of hypervisor doesn't stop all cpus.
+So domains can work after hypervisor panic (when using
+noreboot option).  If dom0 continues to work after
+xen panic, the system may get into serious problems.
+
+This patch fixes the issue.
+
+I chose cpu_halt() to stop other cpus by smp_send_stop().
+I think it should work fine for kexec.  machine_halt()
+is only spinloop for leaving the panic calltrace.
+
+Signed-off-by: Akio Takebe <takebe_akio@jp.fujitsu.com>
+
+Acked-by: "Stephen C. Tweedie" <sct@redhat.com>
+Acked-by: Jarod Wilson <jwilson@redhat.com>
+Acked-by: Bill Burns <bburns@redhat.com>
+
+diff --git a/arch/ia64/linux-xen/smp.c b/arch/ia64/linux-xen/smp.c
+index f9ae4f2..5ebe45c 100644
+--- a/arch/ia64/linux-xen/smp.c
++++ b/arch/ia64/linux-xen/smp.c
+@@ -122,9 +122,7 @@ stop_this_cpu (void)
+ 	cpu_clear(smp_processor_id(), cpu_online_map);
+ 	max_xtp();
+ 	local_irq_disable();
+-#ifndef XEN
+ 	cpu_halt();
+-#endif
+ }
+ 
+ void
+@@ -132,9 +130,7 @@ cpu_die(void)
+ {
+ 	max_xtp();
+ 	local_irq_disable();
+-#ifndef XEN
+ 	cpu_halt();
+-#endif
+ 	/* Should never be here */
+ 	BUG();
+ 	for (;;);

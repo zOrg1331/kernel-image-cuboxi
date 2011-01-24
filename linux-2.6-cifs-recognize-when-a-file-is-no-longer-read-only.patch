@@ -1,0 +1,57 @@
+From: Jeff Layton <jlayton@redhat.com>
+Subject: [RHEL5.2 PATCH] have cifs client recognize when a file is no longer read-only (BZ 231657)
+Date: Tue, 13 Mar 2007 10:38:42 -0400
+Bugzilla: 231657
+Message-Id: <200703131438.l2DEcg4V004961@dantu.rdu.redhat.com>
+Changelog: [cifs] recognize when a file is no longer read-only
+
+
+This problem and patch were discovered and written by Alan Tyson of HP. The
+problem is this:
+
+When the CIFS client mounts a share that does not have Unix extensions, it
+will turn off the "w" bits in the file mode if it sees that ATTR_READONLY is
+set. It has no corresponding logic, however, to reenable write permissions if
+the ATTR_READONLY flag is later removed. This results in a situation where a
+file gets "stuck" as read-only. The patch below corrects this with the
+following logic:
+
+If unix extensions were not negotiated for the mount, and the server does not
+report ATTR_READONLY being set for the file then check the mode bits on the
+inode. If no write bits are set, then assume that ATTR_READONLY was previously
+set for this file but is not now, and set any write bits allowed by the
+mnt_file_mode.
+
+I've tested the patch and it seems to do the right thing. It's now in the
+upstream CIFS git tree, and should be in -mm soon. This patch fixes
+BZ 231657.
+
+--- linux-2.6.18.noarch/fs/cifs/inode.c.~1~
++++ linux-2.6.18.noarch/fs/cifs/inode.c
+@@ -477,6 +477,12 @@ int cifs_get_inode_info(struct inode **p
+ 			   mode e.g. 555 */
+ 			if (cifsInfo->cifsAttrs & ATTR_READONLY)
+ 				inode->i_mode &= ~(S_IWUGO);
++			else if ((inode->i_mode & S_IWUGO) == 0)
++				/* the ATTR_READONLY flag may have been	*/
++				/* changed on server -- set any w bits	*/
++				/* allowed by mnt_file_mode		*/
++				inode->i_mode |= (S_IWUGO &
++						  cifs_sb->mnt_file_mode);
+ 		/* BB add code here -
+ 		   validate if device or weird share or device type? */
+ 		}
+--- linux-2.6.18.noarch/fs/cifs/readdir.c.~1~
++++ linux-2.6.18.noarch/fs/cifs/readdir.c
+@@ -197,6 +197,10 @@ static void fill_in_inode(struct inode *
+ 		tmp_inode->i_mode |= S_IFREG;
+ 		if (attr & ATTR_READONLY)
+ 			tmp_inode->i_mode &= ~(S_IWUGO);
++		else if ((tmp_inode->i_mode & S_IWUGO) == 0)
++			/* the ATTR_READONLY flag may have been changed on   */
++		   	/* server -- set any w bits allowed by mnt_file_mode */
++			tmp_inode->i_mode |= (S_IWUGO & cifs_sb->mnt_file_mode);
+ 	} /* could add code here - to validate if device or weird share type? */
+ 
+ 	/* can not fill in nlink here as in qpathinfo version and Unx search */
+

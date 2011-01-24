@@ -1,0 +1,37 @@
+From: Michal Schmidt <mschmidt@redhat.com>
+Date: Mon, 14 Dec 2009 14:54:29 -0500
+Subject: [ia64] export cpu_core_map (like i386 and x86_64)
+Message-id: <20091214155429.4e90dfbc@leela>
+Patchwork-id: 21918
+O-Subject: [RHEL5.5 PATCH] ia64: export cpu_core_map (like i386 and x86_64)
+Bugzilla: 448856
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+RH-Acked-by: Jarod Wilson <jarod@redhat.com>
+
+https://bugzilla.redhat.com/show_bug.cgi?id=448856
+
+sfc driver uses topology_core_siblings() which needs cpu_core_map
+to be exported. i386 and x86_64 already export this symbol.
+
+This should fix the depmod problem in sfc Jarod reported in #kernel.
+
+Upstream exports it since 42aca483ddee8888926d913b660e1dd38d748ba9:
+  Author: Robin Holt <holt@sgi.com>
+  Date:   Mon Jul 28 20:36:50 2008 -0500
+
+    [IA64] Fix ia64 build failure when CONFIG_SFC=m
+
+Signed-off-by: Don Zickus <dzickus@redhat.com>
+
+diff --git a/arch/ia64/kernel/smpboot.c b/arch/ia64/kernel/smpboot.c
+index 6203ed4..4fbdd2c 100644
+--- a/arch/ia64/kernel/smpboot.c
++++ b/arch/ia64/kernel/smpboot.c
+@@ -139,6 +139,7 @@ EXPORT_SYMBOL(cpu_possible_map);
+ 
+ cpumask_t cpu_core_map[NR_CPUS] __cacheline_aligned;
+ cpumask_t cpu_sibling_map[NR_CPUS] __cacheline_aligned;
++EXPORT_SYMBOL(cpu_core_map);
+ int smp_num_siblings = 1;
+ int smp_num_cpucores = 1;
+ 

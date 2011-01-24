@@ -1,34 +1,7 @@
-SPIN_LOCK_UNLOCKED and RW_LOCK_UNLOCKED defeat lockdep state tracking and
-are hence deprecated.
+UPDATE March 21 2005 Amit Gud <gud@eth.net>
 
-Please use DEFINE_SPINLOCK()/DEFINE_RWLOCK() or
-__SPIN_LOCK_UNLOCKED()/__RW_LOCK_UNLOCKED() as appropriate for static
-initialization.
-
-Most of the time, you can simply turn:
-
-	static spinlock_t xxx_lock = SPIN_LOCK_UNLOCKED;
-
-into:
-
-	static DEFINE_SPINLOCK(xxx_lock);
-
-Static structure member variables go from:
-
-	struct foo bar {
-		.lock	=	SPIN_LOCK_UNLOCKED;
-	};
-
-to:
-
-	struct foo bar {
-		.lock	=	__SPIN_LOCK_UNLOCKED(bar.lock);
-	};
-
-Declaration of static rw_locks undergo a similar transformation.
-
-Dynamic initialization, when necessary, may be performed as
-demonstrated below.
+Macros SPIN_LOCK_UNLOCKED and RW_LOCK_UNLOCKED are deprecated and will be
+removed soon. So for any new code dynamic initialization should be used:
 
    spinlock_t xxx_lock;
    rwlock_t xxx_rw_lock;
@@ -42,9 +15,12 @@ demonstrated below.
 
    module_init(xxx_init);
 
-The following discussion is still valid, however, with the dynamic
-initialization of spinlocks or with DEFINE_SPINLOCK, etc., used
-instead of SPIN_LOCK_UNLOCKED.
+Reasons for deprecation
+  - it hurts automatic lock validators
+  - it becomes intrusive for the realtime preemption patches
+
+Following discussion is still valid, however, with the dynamic initialization
+of spinlocks instead of static.
 
 -----------------------
 

@@ -1,0 +1,152 @@
+From: Jonathan Lim <jolim@redhat.com>
+Date: Wed, 23 Jan 2008 18:22:05 -0500
+Subject: [ia64] kdump: slave CPUs drop to POD
+Message-id: 20080123232205.GA29185@sgi-desktop.boston.redhat.com
+O-Subject: [RHEL 5.2 PATCH] BZ 429956: slave CPU's drop to POD when booting kdump kernel on IA64
+Bugzilla: 429956
+
+The current implementation of kdump on INIT events would enter kdump processing
+on DIE_INIT_MONARCH_ENTER and DIE_INIT_SLAVE_ENTER events.  Thus, the monarch
+CPU would go ahead and boot up the kdump kernel.
+
+On SN shub2 systems, this out-of-sync situation causes some slave CPU's on
+different nodes to enter POD.
+
+This patch moves kdump entry points to DIE_INIT_MONARCH_LEAVE and
+DIE_INIT_SLAVE_LEAVE.  It also sets the kdump_in_progress variable in the
+DIE_INIT_MONARCH_PROCESS event to not dump all active stack traces to the
+console in the case of kdump.
+
+The patch has been committed upstream:
+
+  http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=311f594dec9b0c8693ec7df75b82c251b6b0e7c2
+
+Following is a diff against the 2.6.18-62.el5 kernel source:
+
+Acked-by: Neil Horman <nhorman@redhat.com>
+
+diff --git a/arch/ia64/kernel/crash.c b/arch/ia64/kernel/crash.c
+index 6aa564b..cf2c1b9 100644
+--- a/arch/ia64/kernel/crash.c
++++ b/arch/ia64/kernel/crash.c
+@@ -24,7 +24,7 @@
+ int kdump_status[NR_CPUS];
+ atomic_t kdump_cpu_freezed;
+ int kdump_on_init = 1;
+-extern int kdump_in_progress;
++atomic_t kdump_in_progress;
+ 
+ ssize_t
+ copy_oldmem_page(unsigned long pfn, char *buf,
+@@ -181,30 +181,36 @@ kdump_init_notifier(struct notifier_block *self, unsigned long val, void *data)
+ 		return NOTIFY_DONE;
+ 	}
+ 
+-	if (val != DIE_INIT_MONARCH_ENTER &&
+-	    val != DIE_INIT_SLAVE_ENTER &&
++	if (val != DIE_INIT_MONARCH_LEAVE &&
++	    val != DIE_INIT_SLAVE_LEAVE &&
++	    val != DIE_INIT_MONARCH_PROCESS &&
+ 	    val != DIE_MCA_RENDZVOUS_LEAVE &&
+ 	    val != DIE_MCA_MONARCH_LEAVE)
+ 		return NOTIFY_DONE;
+ 
+ 	nd = (struct ia64_mca_notify_die *)args->err;
+ 	/* Reason code 1 means machine check rendezous*/
+-	if ((val==DIE_INIT_MONARCH_ENTER || val==DIE_INIT_SLAVE_ENTER) &&
+-	    nd->sos->rv_rc == 1)
++	if ((val == DIE_INIT_MONARCH_LEAVE || val == DIE_INIT_SLAVE_LEAVE
++	    || val == DIE_INIT_MONARCH_PROCESS) && nd->sos->rv_rc == 1)
+ 		return NOTIFY_DONE;
+ 
+ 	if (kdump_sending_init)
+ 		unw_init_running(kdump_cpu_freeze, NULL);
+ 
+ 	switch (val) {
+-		case DIE_INIT_MONARCH_ENTER:
++		case DIE_INIT_MONARCH_PROCESS:
++			atomic_set(&kdump_in_progress, 1);
++			*(nd->monarch_cpu) = -1;
++			break;
++		case DIE_INIT_MONARCH_LEAVE:
+ 			machine_kdump_on_init();
+ 			break;
+-		case DIE_INIT_SLAVE_ENTER:
+-			unw_init_running(kdump_cpu_freeze, NULL);
++		case DIE_INIT_SLAVE_LEAVE:
++			if (atomic_read(&kdump_in_progress))
++				unw_init_running(kdump_cpu_freeze, NULL);
+ 			break;
+ 		case DIE_MCA_RENDZVOUS_LEAVE:
+-			if (kdump_in_progress)
++			if (atomic_read(&kdump_in_progress))
+ 				unw_init_running(kdump_cpu_freeze, NULL);
+ 			break;
+ 		case DIE_MCA_MONARCH_LEAVE:
+@@ -244,8 +250,10 @@ static int
+ machine_crash_setup(void)
+ {
+ 	char *from = strstr(saved_command_line, "elfcorehdr=");
++	/* be notified before default_monarch_init_process */
+ 	static struct notifier_block kdump_init_notifier_nb = {
+ 		.notifier_call = kdump_init_notifier,
++		.priority = 1,
+ 	};
+ 	int ret;
+ 	if (from)
+diff --git a/arch/ia64/kernel/mca.c b/arch/ia64/kernel/mca.c
+index e0bcc7f..a4f8a96 100644
+--- a/arch/ia64/kernel/mca.c
++++ b/arch/ia64/kernel/mca.c
+@@ -83,6 +83,7 @@
+ #include <asm/system.h>
+ #include <asm/sal.h>
+ #include <asm/mca.h>
++#include <asm/kexec.h>
+ 
+ #include <asm/irq.h>
+ #include <asm/hw_irq.h>
+@@ -96,11 +97,6 @@
+ # define IA64_MCA_DEBUG(fmt...)
+ #endif
+ 
+-#ifdef CONFIG_KEXEC
+-/* Used by arch/ia64/kernel/crash.c */
+-int kdump_in_progress;
+-#endif
+-
+ /* Used by mca_asm.S */
+ u32				ia64_mca_serialize;
+ DEFINE_PER_CPU(u64, ia64_mca_data); /* == __per_cpu_mca[smp_processor_id()] */
+@@ -1244,7 +1240,7 @@ ia64_mca_handler(struct pt_regs *regs, struct switch_stack *sw,
+ 		/* Dump buffered message to console */
+ 		ia64_mlogbuf_finish(1);
+ #ifdef CONFIG_KEXEC
+-		kdump_in_progress = 1;
++		atomic_set(&kdump_in_progress, 1);
+ 		/* In the case of (!recover), notify_die(DIE_MCA_MONARCH_LEAVE)
+ 		   will not return. A dump kernel will be booted. Need to set
+ 		   nonarch_cpu here to get slave cpus out of looping in OS.
+@@ -1490,6 +1486,10 @@ default_monarch_init_process(struct notifier_block *self, unsigned long val, voi
+ 	struct task_struct *g, *t;
+ 	if (val != DIE_INIT_MONARCH_PROCESS)
+ 		return NOTIFY_DONE;
++#ifdef CONFIG_KEXEC
++	if (atomic_read(&kdump_in_progress))
++		return NOTIFY_DONE;
++#endif
+ 
+ 	/*
+ 	 * FIXME: mlogbuf will brim over with INIT stack dumps.
+diff --git a/include/asm-ia64/kexec.h b/include/asm-ia64/kexec.h
+index 1c789b1..7bd0963 100644
+--- a/include/asm-ia64/kexec.h
++++ b/include/asm-ia64/kexec.h
+@@ -49,6 +49,7 @@ extern unsigned long kdump_find_rsvd_region(unsigned long size,
+ extern void kdump_cpu_freeze(struct unw_frame_info *info, void *arg);
+ extern int kdump_status[];
+ extern atomic_t kdump_cpu_freezed;
++extern atomic_t kdump_in_progress;
+ extern int kdump_kernel;
+ 
+ #endif /* _ASM_IA64_KEXEC_H */

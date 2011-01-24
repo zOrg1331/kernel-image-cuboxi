@@ -1,0 +1,76 @@
+From: Jiri Olsa <jolsa@redhat.com>
+Date: Thu, 16 Sep 2010 14:15:39 -0400
+Subject: [net] ipv4: prevent chained skb destined to UFO device
+Message-id: <1284646539-8644-1-git-send-email-jolsa@redhat.com>
+Patchwork-id: 28258
+O-Subject: [PATCH RHEL5] BZ 633450 ipv4 - ufo: prevent generation of chained skb
+	destined to UFO device
+Bugzilla: 633450
+RH-Acked-by: Jarod Wilson <jarod@redhat.com>
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+RH-Acked-by: David S. Miller <davem@redhat.com>
+RH-Acked-by: Thomas Graf <tgraf@redhat.com>
+
+Bugzilla: 633450
+Bug 633450 - [RHEL5] connectathon test panics KVM guests on RHEL6 host
+https://bugzilla.redhat.com/show_bug.cgi?id=633450
+
+Description:
+============
+RHEL5 is missing 1st chunk of the upstream commit, resulting in a single
+skb to be queued twice in the socket write queue and causing lockup during
+the socket write queue iteration later.
+
+As virtio_net is one of the few drivers using UFO, this was caught
+on the KVM connectathon test (RHEL6 as the host).
+
+Upstream status:
+================
+- [IPv4] UFO: prevent generation of chained skb destined to UFO device
+  commit be9164e769d57aa10b2bbe15d103edc041b9e7de
+  Author: Kostya B <bkostya@hotmail.com>
+
+Brew:
+=====
+https://brewweb.devel.redhat.com/taskinfo?taskID=2764898
+
+Tested:
+=======
+The connectathon 'general' tests will finish correctly.
+
+wbr,
+jirka
+
+
+diff --git a/net/ipv4/ip_output.c b/net/ipv4/ip_output.c
+index fe8464d..59f1023 100644
+--- a/net/ipv4/ip_output.c
++++ b/net/ipv4/ip_output.c
+@@ -745,23 +745,15 @@ static inline int ip_ufo_append_data(struct sock *sk,
+ 		skb->ip_summed = CHECKSUM_HW;
+ 		skb->csum = 0;
+ 		sk->sk_sndmsg_off = 0;
+-	}
+ 
+-	err = skb_append_datato_frags(sk,skb, getfrag, from,
+-			       (length - transhdrlen));
+-	if (!err) {
+-		/* specify the length of each IP datagram fragment*/
++		/* specify the length of each IP datagram fragment */
+ 		skb_shinfo(skb)->gso_size = mtu - fragheaderlen;
+ 		skb_shinfo(skb)->gso_type = SKB_GSO_UDP;
+ 		__skb_queue_tail(&sk->sk_write_queue, skb);
+-
+-		return 0;
+ 	}
+-	/* There is not enough support do UFO ,
+-	 * so follow normal path
+-	 */
+-	kfree_skb(skb);
+-	return err;
++
++	return skb_append_datato_frags(sk, skb, getfrag, from,
++				       (length - transhdrlen));
+ }
+ 
+ /*

@@ -1,6 +1,6 @@
 /*
  *  Advanced Linux Sound Architecture
- *  Copyright (c) by Jaroslav Kysela <perex@perex.cz>
+ *  Copyright (c) by Jaroslav Kysela <perex@suse.cz>
  *
  *
  *   This program is free software; you can redistribute it and/or modify
@@ -18,6 +18,8 @@
  *   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307 USA
  *
  */
+
+#include <sound/driver.h>
 
 #ifdef CONFIG_SND_OSSEMUL
 
@@ -64,8 +66,7 @@ static int snd_oss_kernel_minor(int type, struct snd_card *card, int dev)
 
 	switch (type) {
 	case SNDRV_OSS_DEVICE_TYPE_MIXER:
-		if (snd_BUG_ON(!card || dev < 0 || dev > 1))
-			return -EINVAL;
+		snd_assert(card != NULL && dev <= 1, return -EINVAL);
 		minor = SNDRV_MINOR_OSS(card->number, (dev ? SNDRV_MINOR_OSS_MIXER1 : SNDRV_MINOR_OSS_MIXER));
 		break;
 	case SNDRV_OSS_DEVICE_TYPE_SEQUENCER:
@@ -75,13 +76,11 @@ static int snd_oss_kernel_minor(int type, struct snd_card *card, int dev)
 		minor = SNDRV_MINOR_OSS_MUSIC;
 		break;
 	case SNDRV_OSS_DEVICE_TYPE_PCM:
-		if (snd_BUG_ON(!card || dev < 0 || dev > 1))
-			return -EINVAL;
+		snd_assert(card != NULL && dev <= 1, return -EINVAL);
 		minor = SNDRV_MINOR_OSS(card->number, (dev ? SNDRV_MINOR_OSS_PCM1 : SNDRV_MINOR_OSS_PCM));
 		break;
 	case SNDRV_OSS_DEVICE_TYPE_MIDI:
-		if (snd_BUG_ON(!card || dev < 0 || dev > 1))
-			return -EINVAL;
+		snd_assert(card != NULL && dev <= 1, return -EINVAL);
 		minor = SNDRV_MINOR_OSS(card->number, (dev ? SNDRV_MINOR_OSS_MIDI1 : SNDRV_MINOR_OSS_MIDI));
 		break;
 	case SNDRV_OSS_DEVICE_TYPE_DMFM:
@@ -93,8 +92,7 @@ static int snd_oss_kernel_minor(int type, struct snd_card *card, int dev)
 	default:
 		return -EINVAL;
 	}
-	if (snd_BUG_ON(minor < 0 || minor >= SNDRV_OSS_MINORS))
-		return -EINVAL;
+	snd_assert(minor >= 0 && minor < SNDRV_OSS_MINORS, return -EINVAL);
 	return minor;
 }
 
@@ -108,7 +106,7 @@ int snd_register_oss_device(int type, struct snd_card *card, int dev,
 	int cidx = SNDRV_MINOR_OSS_CARD(minor);
 	int track2 = -1;
 	int register1 = -1, register2 = -1;
-	struct device *carddev = snd_card_get_device_link(card);
+	struct device *carddev = NULL;
 
 	if (card && card->number >= 8)
 		return 0; /* ignore silently */
@@ -136,6 +134,8 @@ int snd_register_oss_device(int type, struct snd_card *card, int dev,
 		track2 = SNDRV_MINOR_OSS(cidx, SNDRV_MINOR_OSS_DMMIDI1);
 		break;
 	}
+	if (card)
+		carddev = card->dev;
 	register1 = register_sound_special_device(f_ops, minor, carddev);
 	if (register1 != minor)
 		goto __end;
@@ -270,7 +270,8 @@ int __init snd_minor_info_oss_init(void)
 
 int __exit snd_minor_info_oss_done(void)
 {
-	snd_info_free_entry(snd_minor_info_oss_entry);
+	if (snd_minor_info_oss_entry)
+		snd_info_unregister(snd_minor_info_oss_entry);
 	return 0;
 }
 #endif /* CONFIG_PROC_FS */

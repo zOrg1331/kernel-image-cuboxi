@@ -1,7 +1,7 @@
 /*
  *   Generic MIDI synth driver for ALSA sequencer
  *   Copyright (c) 1998 by Frank van de Pol <fvdpol@coil.demon.nl>
- *                         Jaroslav Kysela <perex@perex.cz>
+ *                         Jaroslav Kysela <perex@suse.cz>
  *
  *   This program is free software; you can redistribute it and/or modify
  *   it under the terms of the GNU General Public License as published by
@@ -26,6 +26,7 @@ Possible options for midisynth module:
 */
 
 
+#include <sound/driver.h>
 #include <linux/init.h>
 #include <linux/slab.h>
 #include <linux/errno.h>
@@ -39,7 +40,7 @@ Possible options for midisynth module:
 #include <sound/seq_midi_event.h>
 #include <sound/initval.h>
 
-MODULE_AUTHOR("Frank van de Pol <fvdpol@coil.demon.nl>, Jaroslav Kysela <perex@perex.cz>");
+MODULE_AUTHOR("Frank van de Pol <fvdpol@coil.demon.nl>, Jaroslav Kysela <perex@suse.cz>");
 MODULE_DESCRIPTION("Advanced Linux Sound Architecture sequencer MIDI synth.");
 MODULE_LICENSE("GPL");
 static int output_buffer_size = PAGE_SIZE;
@@ -116,12 +117,10 @@ static int dump_midi(struct snd_rawmidi_substream *substream, const char *buf, i
 	struct snd_rawmidi_runtime *runtime;
 	int tmp;
 
-	if (snd_BUG_ON(!substream || !buf))
-		return -EINVAL;
+	snd_assert(substream != NULL || buf != NULL, return -EINVAL);
 	runtime = substream->runtime;
 	if ((tmp = runtime->avail) < count) {
-		if (printk_ratelimit())
-			snd_printk(KERN_ERR "MIDI output buffer overrun\n");
+		snd_printd("warning, output event was lost (count = %i, available = %i)\n", count, tmp);
 		return -ENOMEM;
 	}
 	if (snd_rawmidi_kernel_write(substream, buf, count) < count)
@@ -137,8 +136,7 @@ static int event_process_midi(struct snd_seq_event *ev, int direct,
 	struct snd_rawmidi_substream *substream;
 	int len;
 
-	if (snd_BUG_ON(!msynth))
-		return -EINVAL;
+	snd_assert(msynth != NULL, return -EINVAL);
 	substream = msynth->output_rfile.output;
 	if (substream == NULL)
 		return -ENODEV;
@@ -213,8 +211,7 @@ static int midisynth_unsubscribe(void *private_data, struct snd_seq_port_subscri
 	int err;
 	struct seq_midisynth *msynth = private_data;
 
-	if (snd_BUG_ON(!msynth->input_rfile.input))
-		return -EINVAL;
+	snd_assert(msynth->input_rfile.input != NULL, return -EINVAL);
 	err = snd_rawmidi_kernel_release(&msynth->input_rfile);
 	return err;
 }
@@ -237,7 +234,6 @@ static int midisynth_use(void *private_data, struct snd_seq_port_subscribe *info
 	memset(&params, 0, sizeof(params));
 	params.avail_min = 1;
 	params.buffer_size = output_buffer_size;
-	params.no_active_sensing = 1;
 	if ((err = snd_rawmidi_output_params(msynth->output_rfile.output, &params)) < 0) {
 		snd_rawmidi_kernel_release(&msynth->output_rfile);
 		return err;
@@ -250,9 +246,11 @@ static int midisynth_use(void *private_data, struct snd_seq_port_subscribe *info
 static int midisynth_unuse(void *private_data, struct snd_seq_port_subscribe *info)
 {
 	struct seq_midisynth *msynth = private_data;
+	unsigned char buf = 0xff; /* MIDI reset */
 
-	if (snd_BUG_ON(!msynth->output_rfile.output))
-		return -EINVAL;
+	snd_assert(msynth->output_rfile.output != NULL, return -EINVAL);
+	/* sending single MIDI reset message to shut the device up */
+	snd_rawmidi_kernel_write(msynth->output_rfile.output, &buf, 1);
 	snd_rawmidi_drain_output(msynth->output_rfile.output);
 	return snd_rawmidi_kernel_release(&msynth->output_rfile);
 }
@@ -288,8 +286,7 @@ snd_seq_midisynth_register_port(struct snd_seq_device *dev)
 	int device = dev->device;
 	unsigned int input_count = 0, output_count = 0;
 
-	if (snd_BUG_ON(!card || device < 0 || device >= SNDRV_RAWMIDI_DEVICES))
-		return -EINVAL;
+	snd_assert(card != NULL && device >= 0 && device < SNDRV_RAWMIDI_DEVICES, return -EINVAL);
 	info = kmalloc(sizeof(*info), GFP_KERNEL);
 	if (! info)
 		return -ENOMEM;

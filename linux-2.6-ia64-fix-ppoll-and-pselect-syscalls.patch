@@ -1,0 +1,46 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Date: Thu, 17 Sep 2009 11:40:23 -0400
+Subject: [ia64] fix ppoll and pselect syscalls
+Message-id: 20090917153358.10812.22682.sendpatchset@prarit.bos.redhat.com
+O-Subject: [RHEL5 PATCH] ia64 fix ppoll and pselect syscalls
+Bugzilla: 520867
+RH-Acked-by: Dean Nelson <dnelson@redhat.com>
+RH-Acked-by: Jarod Wilson <jarod@redhat.com>
+
+syscalls for ppoll and pselect were missing from ia64's unistd.h file.  This
+resulted in glibc not executing ppoll and pselect on ia64.
+
+Tested by doing
+
+1.  compile reproducer with existing glibc.  Test fails.
+
+2.  apply patch to tree, and install kernel-headers.
+
+3.  rebuild glibc rpms
+
+4.  reinstall glibc rpms
+
+5.  compile reproducer.  Test succeeds:
+
+[root@altix4 tmp]# ./doit
+Calling pselect.
+Test succeeded.
+
+Successfully compiled and tested by me.
+
+Resolves BZ 520867.
+
+diff --git a/include/asm-ia64/unistd.h b/include/asm-ia64/unistd.h
+index 47f6932..1b73341 100644
+--- a/include/asm-ia64/unistd.h
++++ b/include/asm-ia64/unistd.h
+@@ -283,7 +283,8 @@
+ #define __NR_readlinkat			1291
+ #define __NR_fchmodat			1292
+ #define __NR_faccessat			1293
+-/* 1294, 1295 reserved for pselect/ppoll */
++#define __NR_pselect6			1294
++#define __NR_ppoll			1295
+ #define __NR_unshare			1296
+ #define __NR_splice			1297
+ #define __NR_set_robust_list		1298

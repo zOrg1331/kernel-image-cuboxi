@@ -1,0 +1,64 @@
+From: Jeff Moyer <jmoyer@redhat.com>
+Date: Fri, 3 Sep 2010 18:37:15 -0400
+Subject: [fs] aio: fix cleanup in io_submit_one
+Message-id: <x49vd6md678.fsf@segfault.boston.devel.redhat.com>
+Patchwork-id: 4467
+O-Subject: [kernel team] [RHEL5 PATCH] AIO: fix cleanup in io_submit_one(...)
+Bugzilla: 631721
+CVE: CVE-2010-3066
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+RH-Acked-by: Jerome Marchand <jmarchan@redhat.com>
+RH-Acked-by: Eugene Teo <eugene@redhat.com>
+
+Hi,
+
+This is a backport of the following upstream commit:
+
+commit 87e2831c3fa39cbf6f7ab676bb5aef039b9659e2
+Author: Yan Zheng <yanzheng@21cn.com>
+Date:   Mon Oct 8 12:16:20 2007 -0700
+
+    AIO: fix cleanup in io_submit_one(...)
+
+    When IOCB_FLAG_RESFD flag is set and iocb->aio_resfd is incorrect,
+    statement 'goto out_put_req' is executed. At label 'out_put_req',
+    aio_put_req(..) is called, which requires 'req->ki_filp' set.
+
+    Signed-off-by: Yan Zheng<yanzheng@21cn.com>
+    Cc: Zach Brown <zach.brown@oracle.com>
+    Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+    Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+
+It's pretty straight-foward.  Quite frankly, I have no clue what
+bugzilla I should reference here (since there are no fewer than nine of
+them, covering two bugs across however many releases), so I'm just going
+to pick one and someone in the know can correct me if I'm wrong.  So,
+fixes bug 629441.
+
+Comments, as always, are appreciated.
+
+Cheers,
+Jeff
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/fs/aio.c b/fs/aio.c
+index e21f7d4..a4386b6 100644
+--- a/fs/aio.c
++++ b/fs/aio.c
+@@ -1737,6 +1737,7 @@ int fastcall io_submit_one(struct kioctx *ctx, struct iocb __user *user_iocb,
+ 		fput(file);
+ 		return -EAGAIN;
+ 	}
++	req->ki_filp = file;
+ 
+ 	if (iocb->aio_flags & IOCB_FLAG_RESFD) {
+ 		/*
+@@ -1751,7 +1752,6 @@ int fastcall io_submit_one(struct kioctx *ctx, struct iocb __user *user_iocb,
+ 		kiocbSetRESFD(req);
+ 	}
+ 
+-	req->ki_filp = file;
+ 	ret = put_user(req->ki_key, &user_iocb->aio_key);
+ 	if (unlikely(ret)) {
+ 		dprintk("EFAULT: aio_key\n");

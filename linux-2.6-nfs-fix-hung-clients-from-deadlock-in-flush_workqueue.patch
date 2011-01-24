@@ -1,0 +1,52 @@
+From: David Jeffery <djeffery@redhat.com>
+Date: Tue, 3 Mar 2009 11:23:46 -0500
+Subject: [nfs] fix hung clients from deadlock in flush_workqueue
+Message-id: 49AD5992.9000107@redhat.com
+O-Subject: [PATCH RHEL 5.4 BZ483627] Deadlock from flush_workqueue() results in hung nfs clients
+Bugzilla: 483627
+RH-Acked-by: Jeff Layton <jlayton@redhat.com>
+RH-Acked-by: Peter Staubach <staubach@redhat.com>
+
+RH BZ: https://bugzilla.redhat.com/show_bug.cgi?id=483627
+
+Description:
+During umount, nfs clients can deadlock by attempting to flush
+workqueues from within a workqueue.  When nfs_release_automount_timer()
+calls flush_scheduled_work() from within a workqueue, if another
+processor has already acquired the workqueue mutex and started another
+flush operation, the two will deadlock and never complete.
+
+This patch is a backport of changes from
+3d39c691ff486142dd9aaeac12f553f4476b7a62 and
+560aef74503e928f44ddbf481b8b02d9cef37dbf upstream.  The
+flush_scheduled_work() is removed from nfs_release_automount_timer() as
+it does not protect anything and only creates deadlocks.
+
+Found:
+RHEL 5.2
+
+kABI status:
+No change
+
+Backport of the nfs3 portions of commits
+3d39c691ff486142dd9aaeac12f553f4476b7a62 and
+560aef74503e928f44ddbf481b8b02d9cef37dbf from upstream
+
+Fixes a deadlock with nfs's use of workqueues.
+
+diff --git a/fs/nfs/namespace.c b/fs/nfs/namespace.c
+index f69d82a..e9dbefd 100644
+--- a/fs/nfs/namespace.c
++++ b/fs/nfs/namespace.c
+@@ -173,10 +173,8 @@ static void nfs_expire_automounts(void *data)
+ 
+ void nfs_release_automount_timer(void)
+ {
+-	if (list_empty(&nfs_automount_list)) {
++	if (list_empty(&nfs_automount_list))
+ 		cancel_delayed_work(&nfs_automount_task);
+-		flush_scheduled_work();
+-	}
+ }
+ 
+ /*

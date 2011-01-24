@@ -1,0 +1,184 @@
+From: Marcus Barrow <mbarrow@redhat.com>
+Date: Fri, 17 Jul 2009 08:52:20 -0400
+Subject: [scsi] qla2xxx: provide reset capability for EEH
+Message-id: 20090717125220.20304.30245.sendpatchset@file.bos.redhat.com
+O-Subject: [rhel 5.4 patch] [V4] qla2xxx - provide fundamental reset capability for EEH
+Bugzilla: 511141
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+RH-Acked-by: Rob Evers <revers@redhat.com>
+
+BZ 511141 qla2xxx - Provide fundamental reset capability for EEH
+
+Version 4 of this patch. The patch has one expression changed to also
+include 4 Gb/S adapters in addition to 8 Gb/S and FCoE. There is a large
+installed base of those cards and testing has shown they work with this.
+
+Version 3 of this patch. This patch has been changed to address concerns
+about kABI. Previously we extended the pci_error_handlers struct to add
+a driver callback, this has been replaced with a bit that is set during
+driver initialization. This bit indicates that a fundamental reset should
+be the reset type during EEH handling.
+
+Both the FC and Ethernet drivers for this board are now updated to request
+the fundamental reset handling.
+
+The version of the drivers is updated,
+ qla2xxx: 8.03.00.10.05.04-k
+ qlge:    1.00.00.20
+
+Applies, builds and tests cleanly with -158
+
+Version 2 of this patch. The patch attached to the Bugzilla was an
+incorrect earlier version. As both IBM and Prarit noticed, there was a
+typo in the call to pci_walk_bus(). This has been corrected along with
+a formatting issue, also pointed out by Prarit.
+
+This patch provides the ability for the EEH code to request a fundamental
+reset of the HBA. This ability to tolerate and recover from hardware
+errors is an important reliability improvement for customers. It can
+prevent systems becoming unusable and protects customer access to their
+in the presense of hardware which has become unreliable.
+
+Testing at IBM and QLogic has shown that sometimes this reset is required
+to return hardware to a known state and continue I/O.
+
+This is the result of intensive testing and it applies and builds cleanly
+with -156. These patches are being submitted upstream.
+
+diff --git a/arch/powerpc/kernel/pci_64.c b/arch/powerpc/kernel/pci_64.c
+index aae5a67..2ef75bc 100644
+--- a/arch/powerpc/kernel/pci_64.c
++++ b/arch/powerpc/kernel/pci_64.c
+@@ -413,6 +413,7 @@ struct pci_dev *of_create_pci_dev(struct device_node *node,
+ 	dev->dev.bus = &pci_bus_type;
+ 	dev->devfn = devfn;
+ 	dev->multifunction = 0;		/* maybe a lie? */
++	dev->fndmntl_rst_rqd = 0;	/* pcie fundamental reset required */
+ 
+ 	dev->vendor = get_int_prop(node, "vendor-id", 0xffff);
+ 	dev->device = get_int_prop(node, "device-id", 0xffff);
+diff --git a/arch/powerpc/platforms/pseries/eeh.c b/arch/powerpc/platforms/pseries/eeh.c
+index 34b87a6..6338810 100644
+--- a/arch/powerpc/platforms/pseries/eeh.c
++++ b/arch/powerpc/platforms/pseries/eeh.c
+@@ -739,7 +739,15 @@ int pcibios_set_pcie_reset_state(struct pci_dev *dev, enum pcie_reset_state stat
+ 
+ static void __rtas_set_slot_reset(struct pci_dn *pdn)
+ {
+-	rtas_pci_slot_reset (pdn, 1);
++	struct pci_dev *dev = pdn->pcidev;
++
++	/* Determine type of EEH reset required by device,
++	 * default hot reset or fundamental reset
++	 */
++	if (dev->fndmntl_rst_rqd)
++		rtas_pci_slot_reset(pdn, 3);
++	else
++		rtas_pci_slot_reset(pdn, 1);
+ 
+ 	/* The PCI bus requires that the reset be held high for at least
+ 	 * a 100 milliseconds. We wait a bit longer 'just in case'.  */
+diff --git a/drivers/net/qlge/qlge.h b/drivers/net/qlge/qlge.h
+index e1506b1..ecbb5b3 100644
+--- a/drivers/net/qlge/qlge.h
++++ b/drivers/net/qlge/qlge.h
+@@ -17,9 +17,9 @@
+  */
+ #define DRV_NAME	"qlge"
+ #define DRV_STRING	"QLogic 10 Gigabit PCI-E Ethernet Driver "
+-#define DRV_VERSION	"1.00.00.19"
+-#define DIS_VERSION	"2.6.16-2.6.18-p19"
+-#define REL_DATE	"090707"
++#define DRV_VERSION	"1.00.00.20"
++#define DIS_VERSION	"2.6.16-2.6.18-p20"
++#define REL_DATE	"090714"
+ 
+ #define PFX "qlge: "
+ #define QPRINTK(qdev, nlevel, klevel, fmt, args...) \
+@@ -1711,19 +1711,19 @@ struct intr_context {
+ 
+ /* adapter flags definitions. */
+ enum {
+-	QL_ADAPTER_UP = (1 << 0),	/* Adapter has been brought up. */
+-	QL_EEH_FATAL = (1 << 1),
+-	QL_LEGACY_ENABLED = (1 << 2),
+-	QL_MSI_ENABLED = (1 << 3),
+-	QL_MSIX_ENABLED = (1 << 4),
+-	QL_DMA64 = (1 << 5),
+-	QL_PROMISCUOUS = (1 << 6),
+-	QL_ALLMULTI = (1 << 7),
+-	QL_PORT_CFG = (1 << 8),
+-	QL_CAM_RT_SET = (1 << 9),
+-	QL_TESTING = (1 << 10),
+-	QL_IN_FW_RST = (1 << 11),
+-	QL_SPOOL_LOG = (1 << 12),
++	QL_ADAPTER_UP = 0,	/* Adapter has been brought up. */
++	QL_EEH_FATAL = 1,
++	QL_LEGACY_ENABLED = 2,
++	QL_MSI_ENABLED = 3,
++	QL_MSIX_ENABLED = 4,
++	QL_DMA64 = 5,
++	QL_PROMISCUOUS = 6,
++	QL_ALLMULTI = 7,
++	QL_PORT_CFG = 8,
++	QL_CAM_RT_SET = 9,
++	QL_TESTING = 10,
++	QL_IN_FW_RST = 11,
++	QL_SPOOL_LOG = 12,
+ };
+ 
+ /* link_status bit definitions */
+diff --git a/drivers/net/qlge/qlge_main.c b/drivers/net/qlge/qlge_main.c
+index ef4e8b6..bb18575 100644
+--- a/drivers/net/qlge/qlge_main.c
++++ b/drivers/net/qlge/qlge_main.c
+@@ -4286,6 +4286,9 @@ static int __devinit qlge_probe(struct pci_dev *pdev,
+ 		return err;
+ 	}
+ 
++	/* Set EEH reset type to fundamental for this device */
++	pdev->fndmntl_rst_rqd = 1;
++
+ 	qdev = netdev_priv(ndev);
+ 	SET_NETDEV_DEV(ndev, &pdev->dev);
+ 	ndev->features = (0
+diff --git a/drivers/scsi/qla2xxx/qla_os.c b/drivers/scsi/qla2xxx/qla_os.c
+index 8175167..e206dd7 100644
+--- a/drivers/scsi/qla2xxx/qla_os.c
++++ b/drivers/scsi/qla2xxx/qla_os.c
+@@ -1794,6 +1794,10 @@ qla2x00_probe_one(struct pci_dev *pdev, const struct pci_device_id *id)
+ 	/* Set ISP-type information. */
+ 	qla2x00_set_isp_flags(ha);
+ 
++	/* Set EEH reset type to fundamental if required by hba  */
++	if (IS_QLA24XX(ha) || IS_QLA25XX(ha) || IS_QLA81XX(ha))
++		pdev->fndmntl_rst_rqd = 1;
++
+ 	/* Configure PCI I/O space */
+ 	ret = qla2x00_iospace_config(ha);
+ 	if (ret)
+diff --git a/drivers/scsi/qla2xxx/qla_version.h b/drivers/scsi/qla2xxx/qla_version.h
+index a59ac08..718ab2a 100644
+--- a/drivers/scsi/qla2xxx/qla_version.h
++++ b/drivers/scsi/qla2xxx/qla_version.h
+@@ -7,7 +7,7 @@
+ /*
+  * Driver version
+  */
+-#define QLA2XXX_VERSION      "8.03.00.09.05.04-k"
++#define QLA2XXX_VERSION      "8.03.00.10.05.04-k"
+ 
+ #define QLA_DRIVER_MAJOR_VER	8
+ #define QLA_DRIVER_MINOR_VER	3
+diff --git a/include/linux/pci.h b/include/linux/pci.h
+index fd5e2a6..6f981a8 100644
+--- a/include/linux/pci.h
++++ b/include/linux/pci.h
+@@ -189,6 +189,7 @@ struct pci_dev {
+ 	unsigned int	is_physfn:1;
+ 	unsigned int	is_virtfn:1;
+ 	unsigned int	is_pcie:1;
++	unsigned int	fndmntl_rst_rqd:1; /* Dev requires fundamental reset */
+ #endif
+ 
+ 	u32		saved_config_space[16]; /* config space saved at suspend time */

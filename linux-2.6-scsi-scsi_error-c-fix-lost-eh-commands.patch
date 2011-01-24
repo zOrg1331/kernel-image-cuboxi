@@ -1,0 +1,313 @@
+From: Chip Coldwell <coldwell@redhat.com>
+Subject: [RHEL-5.1 PATCH] bz227586 scsi_error.c - Error handler assumes  aborting a previous eh command is successful
+Date: Fri, 1 Jun 2007 11:27:39 -0400 (EDT)
+Bugzilla: 227586
+Message-Id: <Pine.LNX.4.64.0706011125210.3766@bogart.boston.redhat.com>
+Changelog: [scsi] scsi_error.c - Fix lost EH commands
+
+
+This is a straightforward backport of the upstream commit below.
+Tested with fault injection using the scsi_debug driver.
+    
+    commit 292148f8bb2b5d120440e046d24de07a739461aa
+    Author: Brian King <brking@linux.vnet.ibm.com>
+    Date:   Tue Jan 30 17:51:17 2007 -0600
+    
+        [SCSI] scsi_error: Fix lost EH commands
+    
+        If an EH command times out today, the LLDD's abort handler
+        will be called to abort the command. It is assumed that this
+        completes successfully, which can result in the command getting
+        completed later resulting in an oops. Improve the current
+        implementation by escalating all the way to host reset if
+        necessary in order to clean up the EH command.
+    
+        Signed-off-by: Brian King <brking@linux.vnet.ibm.com>
+        Signed-off-by: James Bottomley <James.Bottomley@SteelEye.com>
+
+diff --git a/drivers/scsi/scsi_error.c b/drivers/scsi/scsi_error.c
+index 3d355d0..e436d0b 100644
+--- a/drivers/scsi/scsi_error.c
++++ b/drivers/scsi/scsi_error.c
+@@ -453,6 +453,128 @@ static void scsi_eh_done(struct scsi_cmnd *scmd)
+ }
+ 
+ /**
++ * scsi_try_host_reset - ask host adapter to reset itself
++ * @scmd:	SCSI cmd to send hsot reset.
++ **/
++static int scsi_try_host_reset(struct scsi_cmnd *scmd)
++{
++	unsigned long flags;
++	int rtn;
++
++	SCSI_LOG_ERROR_RECOVERY(3, printk("%s: Snd Host RST\n",
++					  __FUNCTION__));
++
++	if (!scmd->device->host->hostt->eh_host_reset_handler)
++		return FAILED;
++
++	rtn = scmd->device->host->hostt->eh_host_reset_handler(scmd);
++
++	if (rtn == SUCCESS) {
++		if (!scmd->device->host->hostt->skip_settle_delay)
++			ssleep(HOST_RESET_SETTLE_TIME);
++		spin_lock_irqsave(scmd->device->host->host_lock, flags);
++		scsi_report_bus_reset(scmd->device->host,
++				      scmd_channel(scmd));
++		spin_unlock_irqrestore(scmd->device->host->host_lock, flags);
++	}
++
++	return rtn;
++}
++
++/**
++ * scsi_try_bus_reset - ask host to perform a bus reset
++ * @scmd:	SCSI cmd to send bus reset.
++ **/
++static int scsi_try_bus_reset(struct scsi_cmnd *scmd)
++{
++	unsigned long flags;
++	int rtn;
++
++	SCSI_LOG_ERROR_RECOVERY(3, printk("%s: Snd Bus RST\n",
++					  __FUNCTION__));
++
++	if (!scmd->device->host->hostt->eh_bus_reset_handler)
++		return FAILED;
++
++	rtn = scmd->device->host->hostt->eh_bus_reset_handler(scmd);
++
++	if (rtn == SUCCESS) {
++		if (!scmd->device->host->hostt->skip_settle_delay)
++			ssleep(BUS_RESET_SETTLE_TIME);
++		spin_lock_irqsave(scmd->device->host->host_lock, flags);
++		scsi_report_bus_reset(scmd->device->host,
++				      scmd_channel(scmd));
++		spin_unlock_irqrestore(scmd->device->host->host_lock, flags);
++	}
++
++	return rtn;
++}
++
++/**
++ * scsi_try_bus_device_reset - Ask host to perform a BDR on a dev
++ * @scmd:	SCSI cmd used to send BDR
++ *
++ * Notes:
++ *    There is no timeout for this operation.  if this operation is
++ *    unreliable for a given host, then the host itself needs to put a
++ *    timer on it, and set the host back to a consistent state prior to
++ *    returning.
++ **/
++static int scsi_try_bus_device_reset(struct scsi_cmnd *scmd)
++{
++	int rtn;
++
++	if (!scmd->device->host->hostt->eh_device_reset_handler)
++		return FAILED;
++
++	rtn = scmd->device->host->hostt->eh_device_reset_handler(scmd);
++	if (rtn == SUCCESS) {
++		scmd->device->was_reset = 1;
++		scmd->device->expecting_cc_ua = 1;
++	}
++
++	return rtn;
++}
++
++static int __scsi_try_to_abort_cmd(struct scsi_cmnd *scmd)
++{
++	if (!scmd->device->host->hostt->eh_abort_handler)
++		return FAILED;
++
++	return scmd->device->host->hostt->eh_abort_handler(scmd);
++}
++
++/**
++ * scsi_try_to_abort_cmd - Ask host to abort a running command.
++ * @scmd:	SCSI cmd to abort from Lower Level.
++ *
++ * Notes:
++ *    This function will not return until the user's completion function
++ *    has been called.  there is no timeout on this operation.  if the
++ *    author of the low-level driver wishes this operation to be timed,
++ *    they can provide this facility themselves.  helper functions in
++ *    scsi_error.c can be supplied to make this easier to do.
++ **/
++static int scsi_try_to_abort_cmd(struct scsi_cmnd *scmd)
++{
++	/*
++	 * scsi_done was called just after the command timed out and before
++	 * we had a chance to process it. (db)
++	 */
++	if (scmd->serial_number == 0)
++		return SUCCESS;
++	return __scsi_try_to_abort_cmd(scmd);
++}
++
++static void scsi_abort_eh_cmnd(struct scsi_cmnd *scmd)
++{
++	if (__scsi_try_to_abort_cmd(scmd) != SUCCESS)
++		if (scsi_try_bus_device_reset(scmd) != SUCCESS)
++			if (scsi_try_bus_reset(scmd) != SUCCESS)
++				scsi_try_host_reset(scmd);
++}
++
++/**
+  * scsi_send_eh_cmnd  - send a cmd to a device as part of error recovery.
+  * @scmd:	SCSI Cmd to send.
+  * @timeout:	Timeout for cmd.
+@@ -564,13 +686,7 @@ static int scsi_send_eh_cmnd(struct scsi_cmnd *scmd, unsigned char *cmnd,
+ 			break;
+ 		}
+ 	} else {
+-		/*
+-		 * FIXME(eric) - we are not tracking whether we could
+-		 * abort a timed out command or not.  not sure how
+-		 * we should treat them differently anyways.
+-		 */
+-		if (shost->hostt->eh_abort_handler)
+-			shost->hostt->eh_abort_handler(scmd);
++		scsi_abort_eh_cmnd(scmd);
+ 		rtn = FAILED;
+ 	}
+ 
+@@ -702,31 +818,6 @@ static int scsi_eh_get_sense(struct list_head *work_q,
+ }
+ 
+ /**
+- * scsi_try_to_abort_cmd - Ask host to abort a running command.
+- * @scmd:	SCSI cmd to abort from Lower Level.
+- *
+- * Notes:
+- *    This function will not return until the user's completion function
+- *    has been called.  there is no timeout on this operation.  if the
+- *    author of the low-level driver wishes this operation to be timed,
+- *    they can provide this facility themselves.  helper functions in
+- *    scsi_error.c can be supplied to make this easier to do.
+- **/
+-static int scsi_try_to_abort_cmd(struct scsi_cmnd *scmd)
+-{
+-	if (!scmd->device->host->hostt->eh_abort_handler)
+-		return FAILED;
+-
+-	/*
+-	 * scsi_done was called just after the command timed out and before
+-	 * we had a chance to process it. (db)
+-	 */
+-	if (scmd->serial_number == 0)
+-		return SUCCESS;
+-	return scmd->device->host->hostt->eh_abort_handler(scmd);
+-}
+-
+-/**
+  * scsi_eh_tur - Send TUR to device.
+  * @scmd:	Scsi cmd to send TUR
+  *
+@@ -800,32 +891,6 @@ static int scsi_eh_abort_cmds(struct list_head *work_q,
+ }
+ 
+ /**
+- * scsi_try_bus_device_reset - Ask host to perform a BDR on a dev
+- * @scmd:	SCSI cmd used to send BDR	
+- *
+- * Notes:
+- *    There is no timeout for this operation.  if this operation is
+- *    unreliable for a given host, then the host itself needs to put a
+- *    timer on it, and set the host back to a consistent state prior to
+- *    returning.
+- **/
+-static int scsi_try_bus_device_reset(struct scsi_cmnd *scmd)
+-{
+-	int rtn;
+-
+-	if (!scmd->device->host->hostt->eh_device_reset_handler)
+-		return FAILED;
+-
+-	rtn = scmd->device->host->hostt->eh_device_reset_handler(scmd);
+-	if (rtn == SUCCESS) {
+-		scmd->device->was_reset = 1;
+-		scmd->device->expecting_cc_ua = 1;
+-	}
+-
+-	return rtn;
+-}
+-
+-/**
+  * scsi_eh_try_stu - Send START_UNIT to device.
+  * @scmd:	Scsi cmd to send START_UNIT
+  *
+@@ -956,64 +1021,6 @@ static int scsi_eh_bus_device_reset(struct Scsi_Host *shost,
+ }
+ 
+ /**
+- * scsi_try_bus_reset - ask host to perform a bus reset
+- * @scmd:	SCSI cmd to send bus reset.
+- **/
+-static int scsi_try_bus_reset(struct scsi_cmnd *scmd)
+-{
+-	unsigned long flags;
+-	int rtn;
+-
+-	SCSI_LOG_ERROR_RECOVERY(3, printk("%s: Snd Bus RST\n",
+-					  __FUNCTION__));
+-
+-	if (!scmd->device->host->hostt->eh_bus_reset_handler)
+-		return FAILED;
+-
+-	rtn = scmd->device->host->hostt->eh_bus_reset_handler(scmd);
+-
+-	if (rtn == SUCCESS) {
+-		if (!scmd->device->host->hostt->skip_settle_delay)
+-			ssleep(BUS_RESET_SETTLE_TIME);
+-		spin_lock_irqsave(scmd->device->host->host_lock, flags);
+-		scsi_report_bus_reset(scmd->device->host,
+-				      scmd_channel(scmd));
+-		spin_unlock_irqrestore(scmd->device->host->host_lock, flags);
+-	}
+-
+-	return rtn;
+-}
+-
+-/**
+- * scsi_try_host_reset - ask host adapter to reset itself
+- * @scmd:	SCSI cmd to send hsot reset.
+- **/
+-static int scsi_try_host_reset(struct scsi_cmnd *scmd)
+-{
+-	unsigned long flags;
+-	int rtn;
+-
+-	SCSI_LOG_ERROR_RECOVERY(3, printk("%s: Snd Host RST\n",
+-					  __FUNCTION__));
+-
+-	if (!scmd->device->host->hostt->eh_host_reset_handler)
+-		return FAILED;
+-
+-	rtn = scmd->device->host->hostt->eh_host_reset_handler(scmd);
+-
+-	if (rtn == SUCCESS) {
+-		if (!scmd->device->host->hostt->skip_settle_delay)
+-			ssleep(HOST_RESET_SETTLE_TIME);
+-		spin_lock_irqsave(scmd->device->host->host_lock, flags);
+-		scsi_report_bus_reset(scmd->device->host,
+-				      scmd_channel(scmd));
+-		spin_unlock_irqrestore(scmd->device->host->host_lock, flags);
+-	}
+-
+-	return rtn;
+-}
+-
+-/**
+  * scsi_eh_bus_reset - send a bus reset 
+  * @shost:	scsi host being recovered.
+  * @eh_done_q:	list_head for processed commands.
+
+
+-- 
+Charles M. "Chip" Coldwell
+Senior Software Engineer
+Red Hat, Inc
+978-392-2426
+

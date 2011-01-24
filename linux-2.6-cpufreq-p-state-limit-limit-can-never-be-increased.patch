@@ -1,0 +1,80 @@
+From: Stanislaw Gruszka <sgruszka@redhat.com>
+Date: Tue, 28 Jul 2009 08:13:17 +0200
+Subject: [cpufreq] P-state limit: limit can never be increased
+Message-id: 20090728081317.464a1485@dhcp-lab-109.englab.brq.redhat.com
+O-Subject: [RHEL5.5 PATCH V2] BZ489566: when booted with P-state limit, limit can never be increased
+Bugzilla: 489566
+RH-Acked-by: Danny Feng <dfeng@redhat.com>
+RH-Acked-by: Jiri Pirko <jpirko@redhat.com>
+RH-Acked-by: Stefan Assmann <sassmann@redhat.com>
+RH-Acked-by: Dean Nelson <dnelson@redhat.com>
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+RH-Acked-by: Anton Arapov <aarapov@redhat.com>
+RH-Acked-by: Jiri Pirko <jpirko@redhat.com>
+
+BZ#489566
+=========
+https://bugzilla.redhat.com/show_bug.cgi?id=489566
+
+Description:
+============
+If cpufreq driver initialize when BIOS limits P-states, cpufreq_set_policy()
+function limits also policy->user_policy.max . User never can increase
+cpu frequency beyond this limit even if BIOS allows to use higher frequencies
+later.
+
+Compering to previous patch we call blocking_notifier_call_chain() after
+the policy->user_policy fields are set, like in upstream.
+
+kABI Status:
+============
+No symbols were harmed.
+
+Brew:
+====
+https://brewweb.devel.redhat.com/taskinfo?taskID=1906929
+
+Upstream Status:
+===============
+This patch is backport of:
+
+commit: 22c970f3468a6766b362d57fa32ebb92cb8cd6db
+Author: Thomas Renninger <trenn@suse.de>
+Date:   Thu Apr 19 15:48:34 2007 +0200
+
+    [CPUFREQ] Fix limited cpufreq when booted on battery
+
+Test Status:
+============
+Tested by me on remote system provided by partner.
+
+diff --git a/drivers/cpufreq/cpufreq.c b/drivers/cpufreq/cpufreq.c
+index 47442d4..25cdd2c 100644
+--- a/drivers/cpufreq/cpufreq.c
++++ b/drivers/cpufreq/cpufreq.c
+@@ -735,6 +735,9 @@ static int cpufreq_add_dev (struct sys_device * sys_dev)
+ 		unlock_policy_rwsem_write(cpu);
+ 		goto err_out;
+ 	}
++	policy->user_policy.min = policy->cpuinfo.min_freq;
++	policy->user_policy.max = policy->cpuinfo.max_freq;
++	policy->user_policy.governor = policy->governor;
+ 
+ 	blocking_notifier_call_chain(&cpufreq_policy_notifier_list,
+ 				     CPUFREQ_START, policy);
+@@ -819,10 +822,13 @@ static int cpufreq_add_dev (struct sys_device * sys_dev)
+ 
+ 	policy->governor = NULL; /* to assure that the starting sequence is
+ 				  * run in cpufreq_set_policy */
+-	unlock_policy_rwsem_write(cpu);
+ 
+ 	/* set default policy */
+-	ret = cpufreq_set_policy(&new_policy);
++	ret = __cpufreq_set_policy(policy, &new_policy);
++	policy->user_policy.policy = policy->policy;
++
++	unlock_policy_rwsem_write(cpu);
++
+ 	if (ret) {
+ 		dprintk("setting policy failed\n");
+ 		goto err_out_unregister;

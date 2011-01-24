@@ -36,7 +36,6 @@
 #include <linux/mutex.h>
 #include <linux/stddef.h>
 #include <linux/string.h>
-#include <linux/kref.h>
 
 #include "et61x251_sensor.h"
 
@@ -135,7 +134,7 @@ struct et61x251_module_param {
 };
 
 static DEFINE_MUTEX(et61x251_sysfs_lock);
-static DECLARE_RWSEM(et61x251_dev_lock);
+static DECLARE_RWSEM(et61x251_disconnect);
 
 struct et61x251_device {
 	struct video_device* v4ldev;
@@ -159,14 +158,12 @@ struct et61x251_device {
 	struct et61x251_sysfs_attr sysfs;
 	struct et61x251_module_param module_param;
 
-	struct kref kref;
 	enum et61x251_dev_state state;
 	u8 users;
 
-	struct completion probe;
-	struct mutex open_mutex, fileop_mutex;
+	struct mutex dev_mutex, fileop_mutex;
 	spinlock_t queue_lock;
-	wait_queue_head_t wait_open, wait_frame, wait_stream;
+	wait_queue_head_t open, wait_frame, wait_stream;
 };
 
 /*****************************************************************************/
@@ -174,13 +171,16 @@ struct et61x251_device {
 struct et61x251_device*
 et61x251_match_id(struct et61x251_device* cam, const struct usb_device_id *id)
 {
-	return usb_match_id(usb_ifnum_to_if(cam->usbdev, 0), id) ? cam : NULL;
+	if (usb_match_id(usb_ifnum_to_if(cam->usbdev, 0), id))
+		return cam;
+
+	return NULL;
 }
 
 
 void
 et61x251_attach_sensor(struct et61x251_device* cam,
-		       const struct et61x251_sensor* sensor)
+		       struct et61x251_sensor* sensor)
 {
 	memcpy(&cam->sensor, sensor, sizeof(struct et61x251_sensor));
 }
@@ -198,8 +198,8 @@ do {                                                                          \
 		else if ((level) == 2)                                        \
 			dev_info(&cam->usbdev->dev, fmt "\n", ## args);       \
 		else if ((level) >= 3)                                        \
-			dev_info(&cam->usbdev->dev, "[%s:%s:%d] " fmt "\n",   \
-				 __FILE__, __func__, __LINE__ , ## args); \
+			dev_info(&cam->usbdev->dev, "[%s:%d] " fmt "\n",      \
+				 __FUNCTION__, __LINE__ , ## args);           \
 	}                                                                     \
 } while (0)
 #	define KDBG(level, fmt, args...)                                      \
@@ -208,8 +208,8 @@ do {                                                                          \
 		if ((level) == 1 || (level) == 2)                             \
 			pr_info("et61x251: " fmt "\n", ## args);              \
 		else if ((level) == 3)                                        \
-			pr_debug("sn9c102: [%s:%s:%d] " fmt "\n", __FILE__,   \
-				 __func__, __LINE__ , ## args);           \
+			pr_debug("et61x251: [%s:%d] " fmt "\n", __FUNCTION__, \
+				 __LINE__ , ## args);                         \
 	}                                                                     \
 } while (0)
 #	define V4LDBG(level, name, cmd)                                       \
@@ -225,8 +225,8 @@ do {                                                                          \
 
 #undef PDBG
 #define PDBG(fmt, args...)                                                    \
-dev_info(&cam->usbdev->dev, "[%s:%s:%d] " fmt "\n", __FILE__, __func__,   \
-	 __LINE__ , ## args)
+dev_info(&cam->usbdev->dev, "[%s:%d] " fmt "\n",                              \
+	 __FUNCTION__, __LINE__ , ## args)
 
 #undef PDBGG
 #define PDBGG(fmt, args...) do {;} while(0) /* placeholder */

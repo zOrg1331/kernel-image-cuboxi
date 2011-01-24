@@ -1,0 +1,83 @@
+From: Hans-Joachim Picht <hpicht@redhat.com>
+Date: Tue, 20 May 2008 13:48:17 +0200
+Subject: [s390] dasd: fix timeout handling in interrupt handler
+Message-id: 20080520114817.GG16866@redhat.com
+O-Subject: [RHEL5 U3 PATCH 2/4] s390 - dasd: fix timeout handling in interrupt handler
+Bugzilla: 447316
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+
+Description
+============
+
+I/O on a DASD blocks for about 5 minutes and then
+continues with the following error message:
+internal error - timeout (300s) expired
+
+When the common I/O layer experiences a timeout it will
+call the dasd_int_handler with an error code of
+-ETIMEDOUT. The associated request will not get any
+further notification and needs to be reset and
+restarted. This handling is missing in the dasd device
+driver and so it will continue to wait for an interrupt
+until the drivers timout of 300 seconds is reached.
+
+Whenever the dasd_int_handler is called with an error
+code instead of an irb, the associated request should be
+restarted.
+
+Bugzilla
+=========
+
+BZ 447316
+https://bugzilla.redhat.com/show_bug.cgi?id=447316
+
+Upstream status of the patch:
+=============================
+
+The patch is included in linux-2.6.26-rc3 as git
+commit f16f5843507ceaea315dae82b9fee29a65b72f24
+
+Test status:
+============
+
+The patch has been tested and fixes the problem.
+The fix was verified by the IBM test team.
+
+Please ACK.
+
+With best regards,
+
+Hans
+
+diff --git a/drivers/s390/block/dasd.c b/drivers/s390/block/dasd.c
+index e707723..59bca30 100644
+--- a/drivers/s390/block/dasd.c
++++ b/drivers/s390/block/dasd.c
+@@ -885,6 +885,8 @@ dasd_handle_killed_request(struct ccw_device *cdev, unsigned long intparm)
+ 	struct dasd_ccw_req *cqr;
+ 	struct dasd_device *device;
+ 
++	if (!intparm)
++		return;
+ 	cqr = (struct dasd_ccw_req *) intparm;
+ 	if (cqr->status != DASD_CQR_IN_IO) {
+ 		MESSAGE(KERN_DEBUG,
+@@ -950,17 +952,16 @@ dasd_int_handler(struct ccw_device *cdev, unsigned long intparm,
+ 	if (IS_ERR(irb)) {
+ 		switch (PTR_ERR(irb)) {
+ 		case -EIO:
+-			dasd_handle_killed_request(cdev, intparm);
+ 			break;
+ 		case -ETIMEDOUT:
+ 			printk(KERN_WARNING"%s(%s): request timed out\n",
+ 			       __FUNCTION__, cdev->dev.bus_id);
+-			//FIXME - dasd uses own timeout interface...
+ 			break;
+ 		default:
+ 			printk(KERN_WARNING"%s(%s): unknown error %ld\n",
+ 			       __FUNCTION__, cdev->dev.bus_id, PTR_ERR(irb));
+ 		}
++		dasd_handle_killed_request(cdev, intparm);
+ 		return;
+ 	}
+ 

@@ -1,0 +1,65 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Date: Mon, 10 May 2010 18:50:49 -0400
+Subject: [net] enic: compat header cleanup
+Message-id: <20100510184834.2781.96474.sendpatchset@prarit.bos.redhat.com>
+Patchwork-id: 24965
+O-Subject: [RHEL5 PATCH 5/27] compat.h cleanup: enic driver changes
+Bugzilla: 546740
+RH-Acked-by: Andy Gospodarek <gospo@redhat.com>
+RH-Acked-by: Ivan Vecera <ivecera@redhat.com>
+
+>From 3e17affa788e00c7351970dcd0d966efcfebdd3b Mon Sep 17 00:00:00 2001
+From: Prarit Bhargava <prarit@redhat.com>
+Date: Mon, 10 May 2010 09:25:41 -0400
+Subject: [PATCH] enic driver changes
+
+Resolves 546740.
+
+diff --git a/drivers/net/enic/enic.h b/drivers/net/enic/enic.h
+index 80f2bac..61042af 100644
+--- a/drivers/net/enic/enic.h
++++ b/drivers/net/enic/enic.h
+@@ -31,7 +31,6 @@
+ #include "vnic_stats.h"
+ #include "vnic_nic.h"
+ #include "vnic_rss.h"
+-#include "enic_compat.h"
+ 
+ #define DRV_NAME		"enic"
+ #define DRV_DESCRIPTION		"Cisco 10G Ethernet Driver"
+diff --git a/drivers/net/enic/enic_compat.h b/drivers/net/enic/enic_compat.h
+deleted file mode 100644
+index 9486ee4..0000000
+--- a/drivers/net/enic/enic_compat.h
++++ /dev/null
+@@ -1,18 +0,0 @@
+-#ifndef __ENIC_COMPAT_H__
+-#define __ENIC_COMPAT_H__
+-
+-#ifndef readq
+-static inline u64 readq(void __iomem *reg)
+-{
+-        return (((u64)readl(reg + 0x4UL) << 32) |
+-                (u64)readl(reg));
+-}
+-
+-static inline void writeq(u64 val, void __iomem *reg)
+-{
+-        writel(val & 0xffffffff, reg);
+-        writel(val >> 32, reg + 0x4UL);
+-}
+-#endif
+-
+-#endif
+diff --git a/drivers/net/enic/vnic_dev.h b/drivers/net/enic/vnic_dev.h
+index 21fafe1..76238b4 100644
+--- a/drivers/net/enic/vnic_dev.h
++++ b/drivers/net/enic/vnic_dev.h
+@@ -22,7 +22,6 @@
+ 
+ #include "vnic_resource.h"
+ #include "vnic_devcmd.h"
+-#include "enic_compat.h"
+ 
+ #ifndef VNIC_PADDR_TARGET
+ #define VNIC_PADDR_TARGET	0x0000000000000000ULL

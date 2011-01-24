@@ -23,6 +23,7 @@
 #include <linux/module.h>
 #include <linux/mm.h>
 #include <asm/byteorder.h>
+#include <asm/scatterlist.h>
 #include <linux/crypto.h>
 #include <linux/types.h>
 
@@ -754,13 +755,19 @@ static const u64 c[KHAZAD_ROUNDS + 1] = {
 };
 
 static int khazad_setkey(struct crypto_tfm *tfm, const u8 *in_key,
-			 unsigned int key_len)
+			 unsigned int key_len, u32 *flags)
 {
 	struct khazad_ctx *ctx = crypto_tfm_ctx(tfm);
 	const __be32 *key = (const __be32 *)in_key;
 	int r;
 	const u64 *S = T7;
 	u64 K2, K1;
+	
+	if (key_len != 16)
+	{
+		*flags |= CRYPTO_TFM_RES_BAD_KEY_LEN;
+		return -EINVAL;
+	}
 
 	/* key is supposed to be 32-bit aligned */
 	K2 = ((u64)be32_to_cpu(key[0]) << 32) | be32_to_cpu(key[1]);
@@ -862,7 +869,7 @@ static struct crypto_alg khazad_alg = {
 	.cia_decrypt		=	khazad_decrypt } }
 };
 
-static int __init khazad_mod_init(void)
+static int __init init(void)
 {
 	int ret = 0;
 	
@@ -870,14 +877,14 @@ static int __init khazad_mod_init(void)
 	return ret;
 }
 
-static void __exit khazad_mod_fini(void)
+static void __exit fini(void)
 {
 	crypto_unregister_alg(&khazad_alg);
 }
 
 
-module_init(khazad_mod_init);
-module_exit(khazad_mod_fini);
+module_init(init);
+module_exit(fini);
 
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("Khazad Cryptographic Algorithm");

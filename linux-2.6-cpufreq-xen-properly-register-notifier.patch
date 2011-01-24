@@ -1,0 +1,37 @@
+From: Bhavana Nagendra <bnagendr@redhat.com>
+Date: Tue, 12 Feb 2008 12:24:38 -0500
+Subject: [cpufreq] xen: properly register notifier
+Message-id: 20080212172436.29440.10846.sendpatchset@localhost.localdomain
+O-Subject: [RHEL5.2 PATCH] Fix cpufreq notifier error message at boottime
+Bugzilla: 430940
+
+Resolves BZ 430940
+
+While booting specific systems the kernel reports an failure "failed to set up
+cpufreq notifier" with Xen configurations.  This was seen on RHTS by Red Hat
+engineers and was reported as a regression.
+
+The fix is trivial as the logic for printing the error is switched.
+cpufreq_register_notifier returns 0 on success and the current code prints
+the error mesage when !cpufreq_register_notifier(). Thus the check fails
+everytime.
+
+Tested on Barcelona Anaheim system, patch gets ride of the eror message.
+
+Please ACK.
+
+Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+diff --git a/arch/i386/kernel/time-xen.c b/arch/i386/kernel/time-xen.c
+index 532ad14..2a6f8e1 100644
+--- a/arch/i386/kernel/time-xen.c
++++ b/arch/i386/kernel/time-xen.c
+@@ -1118,7 +1118,7 @@ static struct notifier_block time_cpufreq_notifier_block = {
+ 
+ static int __init cpufreq_time_setup(void)
+ {
+-	if (!cpufreq_register_notifier(&time_cpufreq_notifier_block,
++	if (cpufreq_register_notifier(&time_cpufreq_notifier_block,
+ 			CPUFREQ_TRANSITION_NOTIFIER)) {
+ 		printk(KERN_ERR "failed to set up cpufreq notifier\n");
+ 		return -ENODEV;

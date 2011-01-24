@@ -1,0 +1,60 @@
+From: Eric Paris <eparis@redhat.com>
+Date: Wed, 12 Dec 2007 11:59:58 -0500
+Subject: [audit] race checking audit_context and loginuid
+Message-id: 1197478798.3005.20.camel@localhost.localdomain
+O-Subject: [RHEL5 PATCH] Audit: close race between audit_syscall_exit and proc_loginuid_read
+Bugzilla: 241728
+
+BZ: 241728
+
+http://www.mail-archive.com/linux-audit@redhat.com/msg01580.html
+
+audit_syscall_exit() calls audit_get_context() which returns the
+tsk->audit_context but then also sets tsk->audit_context=NULL.  A few
+lines later audit_syscall_exit sets the audit_context (either back to
+audit_context or to a different context)
+
+During this window when tsk->audit_context is NULL it is possible that
+another process will try to read /proc/pid/loginuid and will get a -1.
+There does not appear to be a good reason to set audit_context to null
+in the get function so this patch merely leaves the audit_context alone
+so there is no period of time in which audit_context is not pointing to
+a valid context.
+
+Signed-off-by: Eric Paris <eparis@redhat.com>
+
+Acked-by: Steve Grubb <sgrubb@redhat.com>
+Acked-by: James Morris <jmorris@redhat.com>
+
+diff --git a/kernel/auditsc.c b/kernel/auditsc.c
+index 7fec531..387a780 100644
+--- a/kernel/auditsc.c
++++ b/kernel/auditsc.c
+@@ -718,7 +718,6 @@ static inline struct audit_context *audit_get_context(struct task_struct *tsk,
+ 
+ get_context:
+ 
+-	tsk->audit_context = NULL;
+ 	return context;
+ }
+ 
+@@ -1206,6 +1205,8 @@ void audit_free(struct task_struct *tsk)
+ 	if (likely(!context))
+ 		return;
+ 
++	tsk->audit_context = NULL;
++
+ 	/* Check for system calls that do not go through the exit
+ 	 * function (e.g., exit_group), then free context block. 
+ 	 * We use GFP_ATOMIC here because we might be doing this 
+@@ -1337,9 +1338,9 @@ void audit_syscall_exit(int valid, long return_code)
+ 
+ 	if (context->previous) {
+ 		struct audit_context *new_context = context->previous;
++		tsk->audit_context = new_context;
+ 		context->previous  = NULL;
+ 		audit_free_context(context);
+-		tsk->audit_context = new_context;
+ 	} else {
+ 		audit_free_names(context);
+ 		unroll_tree_refs(context, NULL, 0);

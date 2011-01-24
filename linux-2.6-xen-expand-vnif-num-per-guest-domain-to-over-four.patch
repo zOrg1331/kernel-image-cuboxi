@@ -1,0 +1,84 @@
+From: Kei Tokunaga <ktokunag@redhat.com>
+Subject: [RHEL5.1 PATCH 21/21] Expand VNIF number per a guest domain over  four
+Date: Thu, 07 Jun 2007 03:49:41 -0400
+Bugzilla: 223908
+Message-Id: <4667B895.60700@redhat.com>
+Changelog: [xen] Expand VNIF number per guest domain to over four
+
+
+bz223908
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=223908
+
+Backport of cset#14073.
+
+This is to update xencommize_mini_grant_table_op for
+GNTTABOP_query_size.  Without this fix, the number
+of VNIF connections cannot be increased.
+
+Thanks,
+Kei
+
+
+rh bug 242139
+
+# HG changeset patch
+# User awilliam@xenbuild2.aw
+# Date 1172009531 25200
+# Node ID 409e94d0a35babaa945e0406301e151f2550b87a
+# Parent  d907467f08cd4b55604961f4da4224d3ad5fe9d4
+[IA64] Update xencommize_mini_grant_table_op for GNTTABOP_query_size
+
+Signed-off-by: Alex Williamson <alex.williamson@hp.com>
+
+
+---
+
+ linux-2.6.18-21.el5-gerd-order-kei/arch/ia64/xen/xcom_mini.c           |    3 +
+ linux-2.6.18-21.el5-gerd-order-kei/include/xen/interface/grant_table.h |   19 ++++++++++
+ 2 files changed, 22 insertions(+)
+
+diff -puN arch/ia64/xen/xcom_mini.c~14073-IA64_Update_xencommize_mini_grant_table_op_for_GNTTABOP_query_size arch/ia64/xen/xcom_mini.c
+--- linux-2.6.18-21.el5-gerd-order/arch/ia64/xen/xcom_mini.c~14073-IA64_Update_xencommize_mini_grant_table_op_for_GNTTABOP_query_size	2007-06-07 02:44:34.000000000 -0400
++++ linux-2.6.18-21.el5-gerd-order-kei/arch/ia64/xen/xcom_mini.c	2007-06-07 02:44:34.000000000 -0400
+@@ -96,6 +96,9 @@ xencommize_mini_grant_table_op(struct xe
+ 	case GNTTABOP_copy:
+ 		argsize = sizeof(struct gnttab_copy);
+ 		break;
++	case GNTTABOP_query_size:
++		argsize = sizeof(struct gnttab_query_size);
++		break;
+ 	default:
+ 		printk("%s: unknown mini grant table op %d\n", __func__, cmd);
+ 		BUG();
+diff -puN include/xen/interface/grant_table.h~14073-IA64_Update_xencommize_mini_grant_table_op_for_GNTTABOP_query_size include/xen/interface/grant_table.h
+--- linux-2.6.18-21.el5-gerd-order/include/xen/interface/grant_table.h~14073-IA64_Update_xencommize_mini_grant_table_op_for_GNTTABOP_query_size	2007-06-07 02:44:34.000000000 -0400
++++ linux-2.6.18-21.el5-gerd-order-kei/include/xen/interface/grant_table.h	2007-06-07 02:44:34.000000000 -0400
+@@ -291,6 +291,25 @@ typedef struct gnttab_copy {
+ } gnttab_copy_t;
+ DEFINE_XEN_GUEST_HANDLE(gnttab_copy_t);
+ 
++/*
++ * GNTTABOP_query_size: Query the current and maximum sizes of the shared
++ * grant table.
++ * NOTES:
++ *  1. <dom> may be specified as DOMID_SELF.
++ *  2. Only a sufficiently-privileged domain may specify <dom> != DOMID_SELF.
++ */
++#define GNTTABOP_query_size           6
++struct gnttab_query_size {
++    /* IN parameters. */
++    domid_t  dom;
++    /* OUT parameters. */
++    uint32_t nr_frames;
++    uint32_t max_nr_frames;
++    int16_t  status;              /* GNTST_* */
++};
++typedef struct gnttab_query_size gnttab_query_size_t;
++DEFINE_XEN_GUEST_HANDLE(gnttab_query_size_t);
++
+ 
+ /*
+  * Bitfield values for update_pin_status.flags.
+
+_
+

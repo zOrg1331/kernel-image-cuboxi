@@ -1,0 +1,32 @@
+From: Eric Sandeen <sandeen@redhat.com>
+Date: Tue, 23 Sep 2008 16:33:47 -0500
+Subject: [fs] ecryptfs: off-by-one writing null to end of string
+Message-id: 48D960BB.7080803@redhat.com
+O-Subject: [RHEL5.3 PATCH] ecryptfs: fix off-by-one writing null to end of string
+Bugzilla: 463478
+RH-Acked-by: Jarod Wilson <jarod@redhat.com>
+RH-Acked-by: Eric Paris <eparis@redhat.com>
+RH-Acked-by: Eugene Teo <eteo@redhat.com>
+
+For [Bug 463478] RHEL5.3: ecryptfs memory corruption
+
+As noticed by Tomas Henzl, ecryptfs now allocates options_len bytes for a
+string, then sets string[options_len] to '\0' - which is 1 byte past the
+end of the string (and one byte past the memory that belongs to us!)
+
+Thanks,
+-Eric
+
+diff --git a/fs/ecryptfs/main.c b/fs/ecryptfs/main.c
+index 85db664..0ef0ec7 100644
+--- a/fs/ecryptfs/main.c
++++ b/fs/ecryptfs/main.c
+@@ -517,7 +517,7 @@ ecryptfs_validate_lower(const char *dev_name, char *options)
+ 	       goto out;
+        }
+        memcpy(opts_orig, options, options_len);
+-       opts_orig[options_len] = '\0';
++       opts_orig[options_len - 1] = '\0';
+        rc = path_lookup(dev_name, LOOKUP_FOLLOW | LOOKUP_DIRECTORY, &nd);
+        if (rc) {
+ 	       printk(KERN_WARNING

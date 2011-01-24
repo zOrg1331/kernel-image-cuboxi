@@ -1,0 +1,92 @@
+From: Tomas Henzl <thenzl@redhat.com>
+Date: Wed, 19 Dec 2007 16:13:31 +0100
+Subject: [scsi] cciss: support new controllers
+Message-id: 4769351B.4020609@redhat.com
+O-Subject: [RHEL5.2 PATCH 2/8] RHEL 5.2: Cciss driver update: to support new controllers
+Bugzilla: 423851
+
+This patch resolves the bz#423851: Cciss driver update: to support new controllers
+
+Comment from HP:
+This patch adds the new hardware mentioned previously. These 2nd generation
+SAS/SATA controllers are scheduled to ship in June 2008.
+
+Signed-off-by: Mike Miller <mike.miller@hp.com>
+
+ Documentation/cciss.txt |   10 ++++++++++
+ drivers/block/cciss.c   |   21 +++++++++++++++++++++
+ include/linux/pci_ids.h |    1 +
+ 3 files changed, 32 insertions(+)
+
+diff --git a/Documentation/cciss.txt b/Documentation/cciss.txt
+index 160a535..2bcde01 100644
+--- a/Documentation/cciss.txt
++++ b/Documentation/cciss.txt
+@@ -22,6 +22,16 @@ This driver is known to work with the following cards:
+ 	* SA E200i
+ 	* SA E500
+ 	* SA P700m
++	* SA 344
++	* SA 544
++	* SA 380
++	* SA 580
++	* SA 380i
++	* SA 580i
++	* SA 308
++	* SA 508
++	* SA 388
++	* SA 588
+ 
+ If nodes are not already created in the /dev/cciss directory, run as root:
+ 
+diff --git a/drivers/block/cciss.c b/drivers/block/cciss.c
+index 902871e..e25983f 100644
+--- a/drivers/block/cciss.c
++++ b/drivers/block/cciss.c
+@@ -85,6 +85,17 @@ static const struct pci_device_id cciss_pci_device_id[] = {
+ 	{PCI_VENDOR_ID_HP,     PCI_DEVICE_ID_HP_CISSD,     0x103C, 0x3215},
+ 	{PCI_VENDOR_ID_HP,     PCI_DEVICE_ID_HP_CISSC,     0x103C, 0x3237},
+ 	{PCI_VENDOR_ID_HP,     PCI_DEVICE_ID_HP_CISSC,     0x103C, 0x323D},
++	{PCI_VENDOR_ID_HP, 	PCI_DEVICE_ID_HP_CISSC,     0x103c, 0x323D},
++	{PCI_VENDOR_ID_HP,     PCI_DEVICE_ID_HP_CISSE,     0x103C, 0x3240},
++	{PCI_VENDOR_ID_HP,     PCI_DEVICE_ID_HP_CISSE,     0x103C, 0x3241},
++	{PCI_VENDOR_ID_HP,     PCI_DEVICE_ID_HP_CISSE,     0x103C, 0x3242},
++	{PCI_VENDOR_ID_HP,     PCI_DEVICE_ID_HP_CISSE,     0x103C, 0x3243},
++	{PCI_VENDOR_ID_HP,     PCI_DEVICE_ID_HP_CISSE,     0x103C, 0x3244},
++	{PCI_VENDOR_ID_HP,     PCI_DEVICE_ID_HP_CISSE,     0x103C, 0x3245},
++	{PCI_VENDOR_ID_HP,     PCI_DEVICE_ID_HP_CISSE,     0x103C, 0x3246},
++	{PCI_VENDOR_ID_HP,     PCI_DEVICE_ID_HP_CISSE,     0x103C, 0x3247},
++	{PCI_VENDOR_ID_HP,     PCI_DEVICE_ID_HP_CISSE,     0x103C, 0x3248},
++	{PCI_VENDOR_ID_HP,     PCI_DEVICE_ID_HP_CISSE,     0x103C, 0x3249},
+ 	{PCI_VENDOR_ID_HP,     PCI_ANY_ID,      PCI_ANY_ID, PCI_ANY_ID,
+ 		PCI_CLASS_STORAGE_RAID << 8, 0xffff << 8, 0},
+ 	{0,}
+@@ -118,6 +129,16 @@ static struct board_type products[] = {
+ 	{0x3215103C, "Smart Array E200i", &SA5_access, 120},
+ 	{0x3237103C, "Smart Array E500", &SA5_access, 512},
+ 	{0x323D103C, "Smart Array P700m", &SA5_access, 512},
++	{0x3240103C, "Smart Array 344", &SA5_access, 384},
++	{0x3241103C, "Smart Array 544", &SA5_access, 384},
++	{0x3242103C, "Smart Array 380", &SA5_access, 384},
++	{0x3243103C, "Smart Array 580", &SA5_access, 384},
++	{0x3244103C, "Smart Array 380i", &SA5_access, 384},
++	{0x3245103C, "Smart Array 580i", &SA5_access, 384},
++	{0x3246103C, "Smart Array 308", &SA5_access, 384},
++	{0x3247103C, "Smart Array 508", &SA5_access, 384},
++	{0x3248103C, "Smart Array 388", &SA5_access, 384},
++	{0x3249103C, "Smart Array 588", &SA5_access, 384},
+ 	{0xFFFF103C, "Unknown Smart Array", &SA5_access, 120},
+ };
+ 
+diff --git a/include/linux/pci_ids.h b/include/linux/pci_ids.h
+index 1edb2a8..4739299 100644
+--- a/include/linux/pci_ids.h
++++ b/include/linux/pci_ids.h
+@@ -707,6 +707,7 @@
+ #define PCI_DEVICE_ID_HP_CISSA		0x3220
+ #define PCI_DEVICE_ID_HP_CISSC		0x3230
+ #define PCI_DEVICE_ID_HP_CISSD		0x3238
++#define PCI_DEVICE_ID_HP_CISSE		0x323A
+ #define PCI_DEVICE_ID_HP_ZX2_IOC	0x4031
+ 
+ #define PCI_VENDOR_ID_PCTECH		0x1042

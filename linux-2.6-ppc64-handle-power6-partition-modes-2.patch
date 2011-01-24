@@ -1,0 +1,54 @@
+From: Janice M. Girouard <jgirouar@redhat.com>
+Subject: [RHEL 5.1 FEATURE] bz# 228091 2/2 [PPC]: Handle Power6 partition  modes
+Date: Wed, 18 Apr 2007 17:06:26 -0400 (Eastern Daylight Time)
+Bugzilla: 228091
+Message-Id: <Pine.WNT.4.64.0704181703130.7600@IBM-3MTQI3AXJFW>
+Changelog: [PPC64] Handle Power6 partition modes (2)
+
+
+
+RHBZ#:
+------
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=228091
+
+Description:
+------------
+
+2 of 2 patches required to support power6 partition modes.
+
+This patch tells the firmware that we can handle POWER6 compatibile mode.  It adds the 'logical" PVR values that the kernel uses to communicate with the firmware.
+
+RHEL Version Found:
+-------------------
+feature enhancement for cell to be supported in 5.1.
+
+Upstream Status:
+----------------
+This code is accepted upstream and can be viewed in the 2.6.20.7 kernel.
+
+Test Status:
+------------
+Tested by Manoj Iyer of IBM using the at_plat.c code attached to the bz.
+
+This patch is dependent on 31034 (which must be applied first).
+This patch is builds and compiles cleanly using kernel-2.6.18-15.el5.src.rpm.
+
+
+Proposed Patch:
+----------------
+Please review and ACK for RHEL 5.1
+-
+
+diff --git a/arch/powerpc/kernel/prom_init.c b/arch/powerpc/kernel/prom_init.c
+index 396109a..46cf326 100644
+--- a/arch/powerpc/kernel/prom_init.c
++++ b/arch/powerpc/kernel/prom_init.c
+@@ -643,6 +643,7 @@ static void __init early_cmdline_parse(void)
+ static unsigned char ibm_architecture_vec[] = {
+ 	W(0xfffe0000), W(0x003a0000),	/* POWER5/POWER5+ */
+ 	W(0xffff0000), W(0x003e0000),	/* POWER6 */
++	W(0xffffffff), W(0x0f000002),	/* all 2.05-compliant */
+ 	W(0xfffffffe), W(0x0f000001),	/* all 2.04-compliant and earlier */
+ 	5 - 1,				/* 5 option vectors */
+ 
+

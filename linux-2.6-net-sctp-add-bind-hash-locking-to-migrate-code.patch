@@ -1,0 +1,58 @@
+From: Aristeu Rozanski <arozansk@redhat.com>
+Date: Fri, 8 Feb 2008 00:27:42 -0500
+Subject: [net] sctp: add bind hash locking to migrate code
+Message-id: 20080208052742.GE968@redhat.com
+O-Subject: [RHEL5.2 PATCH] sctp: prevent slab corruption on sctp_sock_migrate()
+Bugzilla: 426234
+
+https://bugzilla.redhat.com/show_bug.cgi?id=426234
+
+This patch is resolves a test blocker for gfs/gfs2 test tool when the tool is
+using sctp to communicate between nodes.
+
+Testing: the patch has already been tested by cluster testing group and resolves the problem.
+
+Upstream: f26f7c480555812ca7c4037e0a50fa54afe2cb4a
+
+Brew build id: 1159386
+
+---------
+
+[SCTP]: Add bind hash locking to the migrate code
+
+SCTP accept code tries to add a newliy created socket
+to a bind bucket without holding a lock.   On a really
+busy system, that can causes slab corruptions.
+Add a lock around this code.
+
+Signed-off-by: Vlad Yasevich <vladislav.yasevich@hp.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+
+diff --git a/net/sctp/socket.c b/net/sctp/socket.c
+index ea00465..9adc06f 100644
+--- a/net/sctp/socket.c
++++ b/net/sctp/socket.c
+@@ -5662,6 +5662,7 @@ static void sctp_sock_migrate(struct sock *oldsk, struct sock *newsk,
+ 	struct sctp_endpoint *newep = newsp->ep;
+ 	struct sk_buff *skb, *tmp;
+ 	struct sctp_ulpevent *event;
++	struct sctp_bind_hashbucket *head;
+ 	int flags = 0;
+ 
+ 	/* Migrate socket buffer sizes and all the socket level options to the
+@@ -5679,10 +5680,15 @@ static void sctp_sock_migrate(struct sock *oldsk, struct sock *newsk,
+ 	newsp->hmac = NULL;
+ 
+ 	/* Hook this new socket in to the bind_hash list. */
++	head = &sctp_port_hashtable[sctp_phashfn(inet_sk(oldsk)->num)];
++	sctp_local_bh_disable();
++	sctp_spin_lock(&head->lock);
+ 	pp = sctp_sk(oldsk)->bind_hash;
+ 	sk_add_bind_node(newsk, &pp->owner);
+ 	sctp_sk(newsk)->bind_hash = pp;
+ 	inet_sk(newsk)->num = inet_sk(oldsk)->num;
++	sctp_spin_unlock(&head->lock);
++	sctp_local_bh_enable();
+ 
+ 	/* Copy the bind_addr list from the original endpoint to the new
+ 	 * endpoint so that we can handle restarts properly

@@ -22,7 +22,7 @@
 #define ddprintk(format,args...)
 #endif
 
-static in_cache_entry *in_cache_get(__be32 dst_ip,
+static in_cache_entry *in_cache_get(uint32_t dst_ip,
 				    struct mpoa_client *client)
 {
 	in_cache_entry *entry;
@@ -42,9 +42,9 @@ static in_cache_entry *in_cache_get(__be32 dst_ip,
 	return NULL;
 }
 
-static in_cache_entry *in_cache_get_with_mask(__be32 dst_ip,
+static in_cache_entry *in_cache_get_with_mask(uint32_t dst_ip,
 					      struct mpoa_client *client,
-					      __be32 mask)
+					      uint32_t mask)
 {
 	in_cache_entry *entry;
 
@@ -84,17 +84,19 @@ static in_cache_entry *in_cache_get_by_vcc(struct atm_vcc *vcc,
 	return NULL;
 }
 
-static in_cache_entry *in_cache_add_entry(__be32 dst_ip,
+static in_cache_entry *in_cache_add_entry(uint32_t dst_ip,
 					  struct mpoa_client *client)
 {
-	in_cache_entry *entry = kzalloc(sizeof(in_cache_entry), GFP_KERNEL);
+	unsigned char *ip __attribute__ ((unused)) = (unsigned char *)&dst_ip;
+	in_cache_entry* entry = kmalloc(sizeof(in_cache_entry), GFP_KERNEL);
 
 	if (entry == NULL) {
 		printk("mpoa: mpoa_caches.c: new_in_cache_entry: out of memory\n");
 		return NULL;
 	}
 
-	dprintk("mpoa: mpoa_caches.c: adding an ingress entry, ip = %pI4\n", &dst_ip);
+	dprintk("mpoa: mpoa_caches.c: adding an ingress entry, ip = %u.%u.%u.%u\n", ip[0], ip[1], ip[2], ip[3]);
+	memset(entry,0,sizeof(in_cache_entry));
 
 	atomic_set(&entry->use, 1);
 	dprintk("mpoa: mpoa_caches.c: new_in_cache_entry: about to lock\n");
@@ -150,8 +152,10 @@ static int cache_hit(in_cache_entry *entry, struct mpoa_client *mpc)
 
 	if( entry->count > mpc->parameters.mpc_p1 &&
 	    entry->entry_state == INGRESS_INVALID){
-		dprintk("mpoa: (%s) mpoa_caches.c: threshold exceeded for ip %pI4, sending MPOA res req\n",
-			mpc->dev->name, &entry->ctrl_info.in_dst_ip);
+		unsigned char *ip __attribute__ ((unused)) =
+		    (unsigned char *)&entry->ctrl_info.in_dst_ip;
+
+		dprintk("mpoa: (%s) mpoa_caches.c: threshold exceeded for ip %u.%u.%u.%u, sending MPOA res req\n", mpc->dev->name, ip[0], ip[1], ip[2], ip[3]);
 		entry->entry_state = INGRESS_RESOLVING;
 		msg.type =  SND_MPOA_RES_RQST;
 		memcpy(msg.MPS_ctrl, mpc->mps_ctrl_addr, ATM_ESA_LEN );
@@ -183,10 +187,11 @@ static void in_cache_remove_entry(in_cache_entry *entry,
 {
 	struct atm_vcc *vcc;
 	struct k_message msg;
+	unsigned char *ip;
 
 	vcc = entry->shortcut;
-	dprintk("mpoa: mpoa_caches.c: removing an ingress entry, ip = %pI4\n",
-		&entry->ctrl_info.in_dst_ip);
+	ip = (unsigned char *)&entry->ctrl_info.in_dst_ip;
+	dprintk("mpoa: mpoa_caches.c: removing an ingress entry, ip = %u.%u.%u.%u\n",ip[0], ip[1], ip[2], ip[3]);
 
 	if (entry->prev != NULL)
 		entry->prev->next = entry->next;
@@ -230,8 +235,7 @@ static void clear_count_and_expired(struct mpoa_client *client)
 		next_entry = entry->next;
 		if((now.tv_sec - entry->tv.tv_sec)
 		   > entry->ctrl_info.holding_time){
-			dprintk("mpoa: mpoa_caches.c: holding time expired, ip = %pI4\n",
-				&entry->ctrl_info.in_dst_ip);
+			dprintk("mpoa: mpoa_caches.c: holding time expired, ip = %u.%u.%u.%u\n", NIPQUAD(entry->ctrl_info.in_dst_ip));
 			client->in_ops->remove_entry(entry, client);
 		}
 		entry = next_entry;
@@ -321,7 +325,7 @@ static void in_destroy_cache(struct mpoa_client *mpc)
 	return;
 }
 
-static eg_cache_entry *eg_cache_get_by_cache_id(__be32 cache_id, struct mpoa_client *mpc)
+static eg_cache_entry *eg_cache_get_by_cache_id(uint32_t cache_id, struct mpoa_client *mpc)
 {
 	eg_cache_entry *entry;
 
@@ -341,7 +345,7 @@ static eg_cache_entry *eg_cache_get_by_cache_id(__be32 cache_id, struct mpoa_cli
 }
 
 /* This can be called from any context since it saves CPU flags */
-static eg_cache_entry *eg_cache_get_by_tag(__be32 tag, struct mpoa_client *mpc)
+static eg_cache_entry *eg_cache_get_by_tag(uint32_t tag, struct mpoa_client *mpc)
 {
 	unsigned long flags;
 	eg_cache_entry *entry;
@@ -372,7 +376,7 @@ static eg_cache_entry *eg_cache_get_by_vcc(struct atm_vcc *vcc, struct mpoa_clie
 	while (entry != NULL){
 		if (entry->shortcut == vcc) {
 			atomic_inc(&entry->use);
-			read_unlock_irqrestore(&mpc->egress_lock, flags);
+	       		read_unlock_irqrestore(&mpc->egress_lock, flags);
 			return entry;
 		}
 		entry = entry->next;
@@ -382,7 +386,7 @@ static eg_cache_entry *eg_cache_get_by_vcc(struct atm_vcc *vcc, struct mpoa_clie
 	return NULL;
 }
 
-static eg_cache_entry *eg_cache_get_by_src_ip(__be32 ipaddr, struct mpoa_client *mpc)
+static eg_cache_entry *eg_cache_get_by_src_ip(uint32_t ipaddr, struct mpoa_client *mpc)
 {
 	eg_cache_entry *entry;
 
@@ -391,7 +395,7 @@ static eg_cache_entry *eg_cache_get_by_src_ip(__be32 ipaddr, struct mpoa_client 
 	while(entry != NULL){
 		if(entry->latest_ip_addr == ipaddr) {
 			atomic_inc(&entry->use);
-			read_unlock_irq(&mpc->egress_lock);
+	       		read_unlock_irq(&mpc->egress_lock);
 			return entry;
 		}
 		entry = entry->next;
@@ -449,15 +453,15 @@ static void eg_cache_remove_entry(eg_cache_entry *entry,
 
 static eg_cache_entry *eg_cache_add_entry(struct k_message *msg, struct mpoa_client *client)
 {
-	eg_cache_entry *entry = kzalloc(sizeof(eg_cache_entry), GFP_KERNEL);
+	eg_cache_entry *entry = kmalloc(sizeof(eg_cache_entry), GFP_KERNEL);
 
 	if (entry == NULL) {
 		printk("mpoa: mpoa_caches.c: new_eg_cache_entry: out of memory\n");
 		return NULL;
 	}
 
-	dprintk("mpoa: mpoa_caches.c: adding an egress entry, ip = %pI4, this should be our IP\n",
-		&msg->content.eg_info.eg_dst_ip);
+	dprintk("mpoa: mpoa_caches.c: adding an egress entry, ip = %u.%u.%u.%u, this should be our IP\n", NIPQUAD(msg->content.eg_info.eg_dst_ip));
+	memset(entry, 0, sizeof(eg_cache_entry));
 
 	atomic_set(&entry->use, 1);
 	dprintk("mpoa: mpoa_caches.c: new_eg_cache_entry: about to lock\n");
@@ -473,8 +477,8 @@ static eg_cache_entry *eg_cache_add_entry(struct k_message *msg, struct mpoa_cli
 	do_gettimeofday(&(entry->tv));
 	entry->entry_state = EGRESS_RESOLVED;
 	dprintk("mpoa: mpoa_caches.c: new_eg_cache_entry cache_id %lu\n", ntohl(entry->ctrl_info.cache_id));
-	dprintk("mpoa: mpoa_caches.c: mps_ip = %pI4\n",
-		&entry->ctrl_info.mps_ip);
+	dprintk("mpoa: mpoa_caches.c: mps_ip = %u.%u.%u.%u\n",
+		NIPQUAD(entry->ctrl_info.mps_ip));
 	atomic_inc(&entry->use);
 
 	write_unlock_irq(&client->egress_lock);

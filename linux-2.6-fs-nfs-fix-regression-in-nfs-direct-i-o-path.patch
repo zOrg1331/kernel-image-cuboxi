@@ -1,0 +1,31 @@
+From: Steve Dickson <SteveD@redhat.com>
+Date: Wed, 27 Oct 2010 20:01:20 -0400
+Subject: [fs] nfs: fix regression in NFS Direct I/O path
+Message-id: <1288209680-5543-1-git-send-email-steved@redhat.com>
+Patchwork-id: 28961
+O-Subject: [RHEL5.6 PATCH] [bz 647297] Fixed Regression in NFS Direct I/O path
+Bugzilla: 647297
+RH-Acked-by: Jeff Moyer <jmoyer@redhat.com>
+RH-Acked-by: J. Bruce Fields <bfields@redhat.com>
+RH-Acked-by: Jeff Layton <jlayton@redhat.com>
+RH-Acked-by: David S. Miller <davem@redhat.com>
+
+A typo, introduced by commit f11ac8db, in the nfs_direct_write()
+routine causes writes with O_DIRECT set to fail with a ENOMEM error.
+
+Found-by: Jeff Layton <jlayton@redhat.com>
+Signed-off-by: Steve Dickson <steved@redhat.com>
+
+diff --git a/fs/nfs/direct.c b/fs/nfs/direct.c
+index 034f401..83aaf42 100644
+--- a/fs/nfs/direct.c
++++ b/fs/nfs/direct.c
+@@ -726,7 +726,7 @@ static ssize_t nfs_direct_write(struct kiocb *iocb, unsigned long user_addr, siz
+ 	dreq->inode = inode;
+ 	dreq->ctx = get_nfs_open_context((struct nfs_open_context *)iocb->ki_filp->private_data);
+ 	dreq->l_ctx = nfs_get_lock_context(dreq->ctx);
+-	if (dreq->l_ctx != NULL)
++	if (dreq->l_ctx == NULL)
+ 		goto out_release;
+ 	if (!is_sync_kiocb(iocb))
+ 		dreq->iocb = iocb;

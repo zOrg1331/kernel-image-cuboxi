@@ -1,0 +1,15 @@
+
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=181963
+
+--- linux-2.6.15.noarch/fs/fat/inode.c~	2006-02-20 23:20:12.000000000 -0500
++++ linux-2.6.15.noarch/fs/fat/inode.c	2006-02-20 23:21:42.000000000 -0500
+@@ -952,7 +952,8 @@ static int parse_options(char *options, 
+ 		opts->shortname = 0;
+ 	opts->name_check = 'n';
+ 	opts->quiet = opts->showexec = opts->sys_immutable = opts->dotsOK =  0;
+-	opts->utf8 = opts->unicode_xlate = 0;
++	opts->utf8 = 1;
++	opts->unicode_xlate = 0;
+ 	opts->numtail = 1;
+ 	opts->nocase = 0;
+ 	*debug = 0;

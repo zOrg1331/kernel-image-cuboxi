@@ -17,8 +17,8 @@
 #include <linux/kernel.h>
 #include <linux/sched.h>
 #include <linux/mm.h>
-#include <linux/err.h>
 #include <linux/smp.h>
+#include <linux/smp_lock.h>
 #include <linux/errno.h>
 #include <linux/ptrace.h>
 #include <linux/user.h>
@@ -77,7 +77,7 @@ static int ptrace_read_user(struct task_struct *tsk, unsigned long off,
 	struct user * dummy = NULL;
 #endif
 
-	if ((off & 3) || off > sizeof(struct user) - 3)
+	if ((off & 3) || (off < 0) || (off > sizeof(struct user) - 3))
 		return -EIO;
 
 	off >>= 2;
@@ -139,7 +139,8 @@ static int ptrace_write_user(struct task_struct *tsk, unsigned long off,
 	struct user * dummy = NULL;
 #endif
 
-	if ((off & 3) || off > sizeof(struct user) - 3)
+	if ((off & 3) || off < 0 ||
+	    off > sizeof(struct user) - 3)
 		return -EIO;
 
 	off >>= 2;
@@ -474,7 +475,7 @@ unregister_debug_trap(struct task_struct *child, unsigned long addr,
 		return 0;
 	}
 
-	/* Recover original instruction code. */
+	/* Recover orignal instruction code. */
 	*code = p->insn[i];
 
 	/* Shift debug trap entries. */
@@ -568,7 +569,7 @@ withdraw_debug_trap(struct pt_regs *regs)
 	}
 }
 
-void
+static void
 init_debug_traps(struct task_struct *child)
 {
 	struct debug_trap *p = &child->thread.debug_trap;
@@ -591,9 +592,10 @@ void ptrace_disable(struct task_struct *child)
 	/* nothing to do.. */
 }
 
-long
-arch_ptrace(struct task_struct *child, long request, long addr, long data)
+static int
+do_ptrace(long request, struct task_struct *child, long addr, long data)
 {
+	unsigned long tmp;
 	int ret;
 
 	switch (request) {
@@ -602,7 +604,11 @@ arch_ptrace(struct task_struct *child, long request, long addr, long data)
 	 */
 	case PTRACE_PEEKTEXT:
 	case PTRACE_PEEKDATA:
-		ret = generic_ptrace_peekdata(child, addr, data);
+		ret = access_process_vm(child, addr, &tmp, sizeof(tmp), 0);
+		if (ret == sizeof(tmp))
+			ret = put_user(tmp,(unsigned long __user *) data);
+		else
+			ret = -EIO;
 		break;
 
 	/*
@@ -618,9 +624,15 @@ arch_ptrace(struct task_struct *child, long request, long addr, long data)
 	 */
 	case PTRACE_POKETEXT:
 	case PTRACE_POKEDATA:
-		ret = generic_ptrace_pokedata(child, addr, data);
-		if (ret == 0 && request == PTRACE_POKETEXT)
-			invalidate_cache();
+		ret = access_process_vm(child, addr, &data, sizeof(data), 1);
+		if (ret == sizeof(data)) {
+			ret = 0;
+			if (request == PTRACE_POKETEXT) {
+				invalidate_cache();
+			}
+		} else {
+			ret = -EIO;
+		}
 		break;
 
 	/*
@@ -674,6 +686,10 @@ arch_ptrace(struct task_struct *child, long request, long addr, long data)
 		if (!valid_signal(data))
 			break;
 		clear_tsk_thread_flag(child, TIF_SYSCALL_TRACE);
+		if ((child->ptrace & PT_DTRACE) == 0) {
+			/* Spurious delayed TF traps may occur */
+			child->ptrace |= PT_DTRACE;
+		}
 
 		/* Compute next pc.  */
 		pc = get_stack_long(child, PT_BPC);
@@ -698,6 +714,14 @@ arch_ptrace(struct task_struct *child, long request, long addr, long data)
 		break;
 	}
 
+	/*
+	 * detach a process that was attached.
+	 */
+	case PTRACE_DETACH:
+		ret = 0;
+		ret = ptrace_detach(child, data);
+		break;
+
 	case PTRACE_GETREGS:
 		ret = ptrace_getregs(child, (void __user *)data);
 		break;
@@ -710,6 +734,42 @@ arch_ptrace(struct task_struct *child, long request, long addr, long data)
 		ret = ptrace_request(child, request, addr, data);
 		break;
 	}
+
+	return ret;
+}
+
+asmlinkage long sys_ptrace(long request, long pid, long addr, long data)
+{
+	struct task_struct *child;
+	int ret;
+
+	lock_kernel();
+	if (request == PTRACE_TRACEME) {
+		ret = ptrace_traceme();
+		goto out;
+	}
+
+	child = ptrace_get_task_struct(pid);
+	if (IS_ERR(child)) {
+		ret = PTR_ERR(child);
+		goto out;
+	}
+
+	if (request == PTRACE_ATTACH) {
+		ret = ptrace_attach(child);
+		if (ret == 0)
+			init_debug_traps(child);
+		goto out_tsk;
+	}
+
+	ret = ptrace_check_attach(child, request == PTRACE_KILL);
+	if (ret == 0)
+		ret = do_ptrace(request, child, addr, data);
+
+out_tsk:
+	put_task_struct(child);
+out:
+	unlock_kernel();
 
 	return ret;
 }

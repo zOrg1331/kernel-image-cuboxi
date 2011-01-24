@@ -1,0 +1,101 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Date: Mon, 22 Sep 2008 14:46:13 -0400
+Subject: [x86_64] revert time syscall changes
+Message-id: 48D7E7F5.8050208@redhat.com
+O-Subject: Re: [RHEL5.3 PATCH] Revert time() syscall changes
+Bugzilla: 461184
+RH-Acked-by: Aristeu Rozanski <aris@redhat.com>
+RH-Acked-by: Jeff Moyer <jmoyer@redhat.com>
+RH-Acked-by: Jarod Wilson <jwilson@redhat.com>
+RH-Acked-by: Brian Maly <bmaly@redhat.com>
+
+Revert time() syscall changes made in 250708.
+
+In the past two or three years, RH has not run any gettimeofday() or time()
+tests on the RHEL5 kernel because of what appeared to be HW issues.
+
+I finally upon the real issue behind the problems with gettimeofday() in 250708,
+rounding errors were compounding and returning an occasional "off-by-one"
+result on gettimeofday() queries.
+
+After patching the kernel, I turned on the gettimeofday testsuite in RHTS and
+noted that all tests but one passed.  The test that didn't pass was
+tests/kernel/syscalls/gettimeofday/timedifftest-qa.c
+
+This test does
+
+time()
+gettimeofday()
+time()
+
+and compares the values to determine if "time" is increasing.  If time
+decreases, the test fails.
+
+[Aside: The difference between time() and gettimeofday() is that time() returns
+the # of seconds since Jan 1, 1970 and gettimeofday() returns the # of seconds
+and microseconds since Jan 1, 1970.]
+
+The test failed after my initial patch for 250708 because the value returned in
+time() does not take into account the amount of time since the last timer
+interrupt and "now", whereas gettimeofday() does take this small amount into
+account in the calculation.  This resulted in an occasional error in the value
+that time() reports.
+
+For example,
+
+A timer interrupt is handled.  t(int) = 10001 seconds
+
+time() is called and returns t(time) = t(int) = 10001 seconds
+
+gettimeofday is called and returns t(time) = t(int) + delta(now-t(int)) = 10001
+\+ 1 = 10002 seconds
+
+time() is called again, and returns t(time) = t(int) = 10001 seconds
+
+To fix this problem I changed time() to now call gettimeofday() and return the
+macroscopic portion of the gettimeofday() calculation.  Coincidentally, this
+solution matched upstream.
+
+With the change a call to time() results in a read of the clock which takes
+some time and IMO is responsible for the performance hit.
+
+Without this fix, the timedifftest-qa.c test _will fail_ 100% of the time.
+IIRC, a similar test is performed in the ltp testsuite and it will fail as
+well.
+
+However, jturner noted that performance testing on the new time() syscall
+resulted in a 2200% increase in the amount of time to call time().  This is
+unacceptable so I am reverting this small change which will leave time()
+and gettimeofday() unsynchronized in RHEL5.
+
+Note that this revert does not effect the gettimeofday() syscall modifications.
+
+jburke has already disabled the timedifftest-qa.c test in RHTS.
+
+Resolves BZ 461184.
+
+diff --git a/arch/x86_64/kernel/vsyscall.c b/arch/x86_64/kernel/vsyscall.c
+index e8357cd..69719d6 100644
+--- a/arch/x86_64/kernel/vsyscall.c
++++ b/arch/x86_64/kernel/vsyscall.c
+@@ -137,17 +137,12 @@ int __vsyscall(0) vgettimeofday(struct timeval * tv, struct timezone * tz)
+  * unlikely */
+ time_t __vsyscall(1) vtime(time_t *t)
+ {
+-	struct timeval tv;
+-
+ 	if (!__sysctl_vsyscall)
+ 		return time_syscall(t);
++	else if (t)
++		*t = __xtime.tv_sec;
+ 
+-	do_vgettimeofday(&tv);
+-
+-	if (t)
+-		*t = tv.tv_sec;
+-
+-	return tv.tv_sec;
++	return __xtime.tv_sec;
+ }
+ 
+ /* Fast way to get current CPU and node.

@@ -1,0 +1,46 @@
+From: Miroslav Rezanina <mrezanin@redhat.com>
+Date: Thu, 11 Mar 2010 09:47:11 -0500
+Subject: [misc] xen: fix migration using xen-vnif in smp hvm guest
+Message-id: <1333479563.238831268300831083.JavaMail.root@zmail06.collab.prod.int.phx2.redhat.com>
+Patchwork-id: 23545
+O-Subject: [RHEL5.5 XEN PATCH] xen migration fails when a full virt guest uses
+	the xen-vnif driver
+Bugzilla: 555910
+RH-Acked-by: Don Dutile <ddutile@redhat.com>
+RH-Acked-by: Jarod Wilson <jarod@redhat.com>
+RH-Acked-by: Andrew Jones <drjones@redhat.com>
+
+BZ 555910 (https://bugzilla.redhat.com/show_bug.cgi?id=555910) xen migration fails when a full virt guest uses the xen-vnif driver
+
+Brewbuild: https://brewweb.devel.redhat.com/taskinfo?taskID=2313996
+
+When a guest is using the xen-vnif drivers as a full-virt guest under xen. The guest
+will completely freeze when you save-restore/migrate the guest. This is caused by deadlock
+between xen_suspend kernel thread and the xenbus_thread kernel thread.
+
+Upstream kernel do suspend stuff after freezing processes to prevent daedlock. Our
+code call xenbus_suspend before handling preempting. When we move xenbus_suspend
+after preempt_disable deadlock does not occur.
+
+Patch:
+------
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/xen/core/reboot.c b/drivers/xen/core/reboot.c
+index 929c590..060d4e5 100644
+--- a/drivers/xen/core/reboot.c
++++ b/drivers/xen/core/reboot.c
+@@ -183,10 +183,10 @@ static int __do_suspend(void *ignore)
+ 	if (err)
+ 		return err;
+ 
+-	xenbus_suspend();
+-
+ 	preempt_disable();
+ 
++	xenbus_suspend();
++
+ 	mm_pin_all();
+ 	local_irq_disable();
+ 	preempt_enable();

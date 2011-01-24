@@ -1,0 +1,106 @@
+From: Glauber Costa <glommer@redhat.com>
+Date: Mon, 24 May 2010 20:08:08 -0400
+Subject: [virt] add a global synchronization point for pvclock
+Message-id: <1274731689-21363-5-git-send-email-glommer@redhat.com>
+Patchwork-id: 25798
+O-Subject: [PATCH RHEL5.6/5.5.z v2 4/5] Add a global synchronization point for
+	pvclock
+Bugzilla: 570824
+RH-Acked-by: Zachary Amsden <zamsden@redhat.com>
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+RH-Acked-by: Jes Sorensen <Jes.Sorensen@redhat.com>
+
+RH-Author: Glauber Costa <glommer@redhat.com>
+RH-Bugzilla: 570824 and many, many others
+RH-Upstream-status: kvm/master
+
+In recent stress tests, it was found that pvclock-based systems
+could seriously warp in smp systems. Using ingo's time-warp-test.c,
+I could trigger a scenario as bad as 1.5mi warps a minute in some systems.
+(to be fair, it wasn't that bad in most of them). Investigating further, I
+found out that such warps were caused by the very offset-based calculation
+pvclock is based on.
+
+This happens even on some machines that report constant_tsc in its tsc flags,
+specially on multi-socket ones.
+
+Two reads of the same kernel timestamp at approx the same time, will likely
+have tsc timestamped in different occasions too. This means the delta we
+calculate is unpredictable at best, and can probably be smaller in a cpu
+that is legitimately reading clock in a forward ocasion.
+
+Some adjustments on the host could make this window less likely to happen,
+but still, it pretty much poses as an intrinsic problem of the mechanism.
+
+A while ago, I though about using a shared variable anyway, to hold clock
+last state, but gave up due to the high contention locking was likely
+to introduce, possibly rendering the thing useless on big machines. I argue,
+however, that locking is not necessary.
+
+We do a read-and-return sequence in pvclock, and between read and return,
+the global value can have changed. However, it can only have changed
+by means of an addition of a positive value. So if we detected that our
+clock timestamp is less than the current global, we know that we need to
+return a higher one, even though it is not exactly the one we compared to.
+
+OTOH, if we detect we're greater than the current time source, we atomically
+replace the value with our new readings. This do causes contention on big
+boxes (but big here means *BIG*), but it seems like a good trade off, since
+it provide us with a time source guaranteed to be stable wrt time warps.
+
+After this patch is applied, I don't see a single warp in time during 5 days
+of execution, in any of the machines I saw them before.
+
+Signed-off-by: Glauber Costa <glommer@redhat.com>
+CC: Jeremy Fitzhardinge <jeremy@goop.org>
+CC: Avi Kivity <avi@redhat.com>
+CC: Marcelo Tosatti <mtosatti@redhat.com>
+CC: Zachary Amsden <zamsden@redhat.com>
+
+diff --git a/arch/i386/kernel/pvclock.c b/arch/i386/kernel/pvclock.c
+index dfa8dd8..89f74c5 100644
+--- a/arch/i386/kernel/pvclock.c
++++ b/arch/i386/kernel/pvclock.c
+@@ -124,11 +124,14 @@ unsigned long pvclock_tsc_khz(struct pvclock_vcpu_time_info *src)
+ 	return pv_tsc_khz;
+ }
+ 
++static atomic64_t last_value = ATOMIC64_INIT(0);
++
+ cycle_t pvclock_clocksource_read(struct pvclock_vcpu_time_info *src)
+ {
+ 	struct pvclock_shadow_time shadow;
+ 	unsigned version;
+ 	cycle_t ret, offset;
++	u64 last;
+ 
+ 	do {
+ 		version = pvclock_get_time_values(&shadow, src);
+@@ -138,6 +141,27 @@ cycle_t pvclock_clocksource_read(struct pvclock_vcpu_time_info *src)
+ 		barrier();
+ 	} while (version != src->version);
+ 
++	/*
++	 * Assumption here is that last_value, a global accumulator, always goes
++	 * forward. If we are less than that, we should not be much smaller.
++	 * We assume there is an error marging we're inside, and then the correction
++	 * does not sacrifice accuracy.
++	 *
++	 * For reads: global may have changed between test and return,
++	 * but this means someone else updated poked the clock at a later time.
++	 * We just need to make sure we are not seeing a backwards event.
++	 *
++	 * For updates: last_value = ret is not enough, since two vcpus could be
++	 * updating at the same time, and one of them could be slightly behind,
++	 * making the assumption that last_value always go forward fail to hold.
++	 */
++	last = atomic64_read(&last_value);
++	do {
++		if (ret < last)
++			return last;
++		last = atomic64_cmpxchg(&last_value, last, ret);
++	} while (unlikely(last != ret));
++
+ 	return ret;
+ }
+ 

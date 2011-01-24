@@ -1,0 +1,51 @@
+--- ./configure.proc_all	2008-02-27 19:38:41.000000000 -0500
++++ ./configure	2008-02-27 19:26:42.000000000 -0500
+@@ -7693,7 +7693,7 @@
+ 
+ void conftest(void)
+ {
+-#ifndef for_each_process
++#ifndef for_each_process_all
+ #error for_each_process not defined
+ #endif
+ }
+@@ -7725,7 +7725,7 @@
+ int
+ main ()
+ {
+-#ifndef for_each_process
++#ifndef for_each_process_all
+ #error for_each_process not defined
+ #endif
+   ;
+--- ./src/afs/afs_osi.c.proc_all	2007-04-03 14:57:06.000000000 -0400
++++ ./src/afs/afs_osi.c	2008-02-27 19:48:01.000000000 -0500
+@@ -828,7 +828,7 @@
+ #endif
+ 
+ #ifdef DEFINED_FOR_EACH_PROCESS
+-    for_each_process(p) if (p->pid) {
++    for_each_process_all(p) if (p->pid) {
+ #ifdef STRUCT_TASK_STRUCT_HAS_EXIT_STATE
+ 	if (p->exit_state)
+ 	    continue;
+--- ./configure-libafs.proc_all	2007-12-14 16:48:08.000000000 -0500
++++ ./configure-libafs	2008-02-27 19:46:15.000000000 -0500
+@@ -7693,7 +7693,7 @@
+ 
+ void conftest(void)
+ {
+-#ifndef for_each_process
++#ifndef for_each_process_all
+ #error for_each_process not defined
+ #endif
+ }
+@@ -7725,7 +7725,7 @@
+ int
+ main ()
+ {
+-#ifndef for_each_process
++#ifndef for_each_process_all
+ #error for_each_process not defined
+ #endif
+   ;

@@ -1,0 +1,101 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Date: Wed, 7 Apr 2010 17:41:19 -0400
+Subject: [acpi] warn on hot-add of memory exceeding 4G boundary
+Message-id: <20100407174119.28938.83703.sendpatchset@prarit.bos.redhat.com>
+Patchwork-id: 24039
+O-Subject: [RHEL5 PATCH]: Warn on hot-add of memory exceeding 4G boundary [v2]
+Bugzilla: 571544
+RH-Acked-by: Larry Woodman <lwoodman@redhat.com>
+RH-Acked-by: Dean Nelson <dnelson@redhat.com>
+RH-Acked-by: Stefan Assmann <sassmann@redhat.com>
+
+If you hot-add memory to a system, and it has lt 4G of memory, 32-bit DMA
+devices will have problems because swiotlb is not enabled.  Default enabling
+of swiotlb is not an option because of the performance hit systems take when
+doing so.
+
+1.  Warn the user that they are adding memory which would exceed 4G of memory.
+2.  Stop adding the memory.
+3.  ia64 cleanup
+	- fix the headers to properly include swiotlb.h
+	- remove redefinition of dma_mapping_error in benet driver
+	- remove stale swiotlb extern definition.  int swiotlb is not used
+	in ia64.
+
+Successfully brew built by me, and a similar patch was tested by the customer.
+
+Resolves BZ 571544.
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/acpi/acpi_memhotplug.c b/drivers/acpi/acpi_memhotplug.c
+index ce6329b..c440623 100644
+--- a/drivers/acpi/acpi_memhotplug.c
++++ b/drivers/acpi/acpi_memhotplug.c
+@@ -31,6 +31,7 @@
+ #include <linux/types.h>
+ #include <linux/memory_hotplug.h>
+ #include <acpi/acpi_drivers.h>
++#include <linux/dma-mapping.h>
+ 
+ #define ACPI_MEMORY_DEVICE_COMPONENT		0x08000000UL
+ #define ACPI_MEMORY_DEVICE_CLASS		"memory"
+@@ -240,6 +241,18 @@ static int acpi_memory_enable_device(struct acpi_memory_device *mem_device)
+ 			num_enabled++;
+ 			continue;
+ 		}
++#ifdef CONFIG_X86
++		/* Systems that boot with lt 4G of memory cannot add memory
++		 * to exceed 4G because bounce-buffering is disabled by
++		 * default. */
++		if (!swiotlb &&
++		    (info->start_addr + info->length >= 0x100000000)) {
++			printk(KERN_ERR "Adding memory would exceed the 4G "
++			       "boundary.  If you need to do this, please "
++			       "reboot with 'iommu=soft'.\n");
++			continue;
++		}
++#endif
+ 		if (node < 0)
+ 			node =  memory_add_physaddr_to_nid(info->start_addr);
+ 		result = add_memory(node, info->start_addr, info->length);
+diff --git a/drivers/net/benet/be_compat.h b/drivers/net/benet/be_compat.h
+index b668632..697c5e7 100644
+--- a/drivers/net/benet/be_compat.h
++++ b/drivers/net/benet/be_compat.h
+@@ -77,8 +77,6 @@ extern void be_netdev_ops_init(struct net_device *netdev,
+ 			struct net_device_ops *ops);
+ extern int eth_validate_addr(struct net_device *);
+ 
+-#define dma_mapping_error(dev, map) dma_mapping_error(map)
+-
+ /*
+  * Back port of new NAPI: simulate polling on multiple napi instances
+  * using tasklets
+diff --git a/include/asm-ia64/dma-mapping.h b/include/asm-ia64/dma-mapping.h
+index a85a10c..d7f98af 100644
+--- a/include/asm-ia64/dma-mapping.h
++++ b/include/asm-ia64/dma-mapping.h
+@@ -6,6 +6,7 @@
+  *	David Mosberger-Tang <davidm@hpl.hp.com>
+  */
+ #include <asm/machvec.h>
++#include <asm/swiotlb.h>
+ 
+ #define dma_alloc_coherent      platform_dma_alloc_coherent
+ #define dma_free_coherent       platform_dma_free_coherent
+diff --git a/include/asm-ia64/swiotlb.h b/include/asm-ia64/swiotlb.h
+index cf4ba38..67e602f 100644
+--- a/include/asm-ia64/swiotlb.h
++++ b/include/asm-ia64/swiotlb.h
+@@ -35,10 +35,4 @@ extern void swiotlb_init(void);
+ /* Width of DMA addresses in the IO TLB. 30 bits is a b44 limitation. */
+ #define IO_TLB_DMA_BITS 30
+ 
+-#ifdef CONFIG_SWIOTLB
+-extern int swiotlb;
+-#else
+-#define swiotlb 0
+-#endif
+-
+ #endif

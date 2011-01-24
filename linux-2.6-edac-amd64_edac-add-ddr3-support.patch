@@ -1,0 +1,353 @@
+From: Bhavna Sarathy <bnagendr@redhat.com>
+Date: Tue, 17 Nov 2009 18:12:34 -0500
+Subject: [edac] amd64_edac: add ddr3 support
+Message-id: <20091117181520.4748.61930.sendpatchset@localhost.localdomain>
+Patchwork-id: 21400
+O-Subject: [RHEL5.5 PATCH 2/5] Add DDR3 EDAC support
+Bugzilla: 479070
+RH-Acked-by: Mauro Carvalho Chehab <mchehab@redhat.com>
+
+Resolves BZ 479070
+
+This patch adds the DDR3 support to the AMD64 EDAC driver.
+
+Add cs mode to cs size mapping tables for DDR2 and DDR3 and F10
+and all K8 flavors and remove table of pseudo values. Add a
+low_ops->dbam_to_cs member which is family-specific and replaces
+low_ops->dbam_map_to_pages since the pages calculation is a one liner
+now.
+
+Further cleanups, while at it:
+
+- shorten family name defines
+- align amd64_family_types struct members
+
+diff --git a/drivers/edac/amd64_edac.c b/drivers/edac/amd64_edac.c
+index 39d3661..66fc4f9 100644
+--- a/drivers/edac/amd64_edac.c
++++ b/drivers/edac/amd64_edac.c
+@@ -17,9 +17,26 @@ static struct mem_ctl_info *mci_lookup[EDAC_MAX_NUMNODES];
+ static struct amd64_pvt *pvt_lookup[EDAC_MAX_NUMNODES];
+ 
+ /*
+- * See F2x80 for K8 and F2x[1,0]80 for Fam10 and later. The table below is only
+- * for DDR2 DRAM mapping.
++ * Address to DRAM bank mapping: see F2x[1,0]80 for Fam10 and later.
+  */
++static int ddr2_dbam[] = { [0]		= 128,
++			   [1]		= 256,
++			   [2 ... 4]	= 512,
++			   [5 ... 6]	= 1024,
++			   [7 ... 8]	= 2048,
++			   [9 ... 10]	= 4096,
++			   [11]		= 8192,
++};
++
++static int ddr3_dbam[] = { [0]		= -1,
++			   [1]		= 256,
++			   [2]		= 512,
++			   [3 ... 4]	= -1,
++			   [5 ... 6]	= 1024,
++			   [7 ... 8]	= 2048,
++			   [9 ... 10]	= 4096,
++			   [11]	= 8192,
++};
+ u32 revf_quad_ddr2_shift[] = {
+        0,      /* 0000b NULL DIMM (128mb) */
+        28,     /* 0001b 256mb */
+@@ -42,7 +59,7 @@ u32 revf_quad_ddr2_shift[] = {
+ /* Map from a CSROW entry to the mask entry that operates on it */
+ static inline u32 amd64_map_to_dcs_mask(struct amd64_pvt *pvt, int csrow)
+ {
+-       if (boot_cpu_data.x86 == 0xf && pvt->ext_model < OPTERON_CPU_REV_F)
++       if (boot_cpu_data.x86 == 0xf && pvt->ext_model < K8_REV_F)
+                return csrow;
+        else
+                return csrow >> 1;
+@@ -290,7 +307,7 @@ int amd64_get_dram_hole_info(struct mem_ctl_info *mci, u64 *hole_base,
+        u64 base;
+ 
+        /* only revE and later have the DRAM Hole Address Register */
+-       if (boot_cpu_data.x86 == 0xf && pvt->ext_model < OPTERON_CPU_REV_E) {
++       if (boot_cpu_data.x86 == 0xf && pvt->ext_model < K8_REV_E) {
+                debugf1("  revision %d for node %d does not support DHAR\n",
+                        pvt->ext_model, pvt->mc_node_id);
+                return 1;
+@@ -650,7 +667,7 @@ static void amd64_cpu_display_info(struct amd64_pvt *pvt)
+                edac_printk(KERN_DEBUG, EDAC_MC, "F10h CPU detected\n");
+        else if (boot_cpu_data.x86 == 0xf)
+                edac_printk(KERN_DEBUG, EDAC_MC, "%s detected\n",
+-                       (pvt->ext_model >= OPTERON_CPU_REV_F) ?
++                       (pvt->ext_model >= K8_REV_F) ?
+                        "Rev F or later" : "Rev E or earlier");
+        else
+                /* we'll hardly ever ever get here */
+@@ -666,7 +683,7 @@ static enum edac_type amd64_determine_edac_cap(struct amd64_pvt *pvt)
+        int bit;
+        enum dev_type edac_cap = EDAC_FLAG_NONE;
+ 
+-       bit = (boot_cpu_data.x86 > 0xf || pvt->ext_model >= OPTERON_CPU_REV_F)
++       bit = (boot_cpu_data.x86 > 0xf || pvt->ext_model >= K8_REV_F)
+                ? 19
+                : 17;
+ 
+@@ -816,7 +833,7 @@ err_reg:
+ static void amd64_set_dct_base_and_mask(struct amd64_pvt *pvt)
+ {
+ 
+-       if (boot_cpu_data.x86 == 0xf && pvt->ext_model < OPTERON_CPU_REV_F) {
++       if (boot_cpu_data.x86 == 0xf && pvt->ext_model < K8_REV_F) {
+                pvt->dcsb_base          = REV_E_DCSB_BASE_BITS;
+                pvt->dcsm_mask          = REV_E_DCSM_MASK_BITS;
+                pvt->dcs_mask_notused   = REV_E_DCS_NOTUSED_BITS;
+@@ -902,7 +919,7 @@ static enum mem_type amd64_determine_memory_type(struct amd64_pvt *pvt)
+ {
+        enum mem_type type;
+ 
+-       if (boot_cpu_data.x86 >= 0x10 || pvt->ext_model >= OPTERON_CPU_REV_F) {
++       if (boot_cpu_data.x86 >= 0x10 || pvt->ext_model >= K8_REV_F) {
+                /* Rev F and later */
+                type = (pvt->dclr0 & BIT(16)) ? MEM_DDR2 : MEM_RDDR2;
+        } else {
+@@ -985,9 +1002,16 @@ err_reg:
+ 
+ }
+ 
+-static int f10_dbam_map_to_pages(struct amd64_pvt *pvt, int dram_map)
++static int f10_dbam_to_chip_select(struct amd64_pvt *pvt, int cs_mode)
+ {
+-       return 1 << (revf_quad_ddr2_shift[dram_map] - PAGE_SHIFT);
++	int *dbam_map;
++
++	if (pvt->dchr0 & DDR3_MODE || pvt->dchr1 & DDR3_MODE)
++		dbam_map = ddr3_dbam;
++	else
++		dbam_map = ddr2_dbam;
++
++	return dbam_map[cs_mode];
+ }
+ 
+ /* Enable extended configuration access via 0xCF8 feature */
+@@ -1435,24 +1459,7 @@ static void f10_map_sysaddr_to_csrow(struct mem_ctl_info *mci,
+ }
+ 
+ /*
+- * Input (@index) is the DBAM DIMM value (1 of 4) used as an index into a shift
+- * table (revf_quad_ddr2_shift) which starts at 128MB DIMM size. Index of 0
+- * indicates an empty DIMM slot, as reported by Hardware on empty slots.
+- *
+- * Normalize to 128MB by subracting 27 bit shift.
+- */
+-static int map_dbam_to_csrow_size(int index)
+-{
+-       int mega_bytes = 0;
+-
+-       if (index > 0 && index <= DBAM_MAX_VALUE)
+-               mega_bytes = ((128 << (revf_quad_ddr2_shift[index]-27)));
+-
+-       return mega_bytes;
+-}
+-
+-/*
+- * debug routine to display the memory sizes of a DIMM (ganged or not) and it
++ * debug routine to display the memory sizes of all logical DIMMs and its 
+  * CSROWs as well
+  */
+ static void f10_debug_display_dimm_sizes(int ctrl, struct amd64_pvt *pvt,
+@@ -1462,9 +1469,16 @@ static void f10_debug_display_dimm_sizes(int ctrl, struct amd64_pvt *pvt,
+        u32 dbam;
+        u32 *dcsb;
+ 
+-       debugf1("  dbam%d: 0x%8.08x  CSROW is %s\n", ctrl,
+-                       ctrl ? pvt->dbam1 : pvt->dbam0,
+-                       ganged ? "GANGED - dbam1 not used" : "NON-GANGED");
++	if (boot_cpu_data.x86 == 0xf) {
++		/* K8 families < revF not supported yet */
++	       if (pvt->ext_model < K8_REV_F)
++			return;
++	       else
++		       WARN_ON(ctrl != 0);
++	}
++
++	debugf1("F2x%d80 (DRAM Bank Address Mapping): 0x%08x\n",
++		ctrl, ctrl ? pvt->dbam1 : pvt->dbam0);
+ 
+        dbam = ctrl ? pvt->dbam1 : pvt->dbam0;
+        dcsb = ctrl ? pvt->dcsb1 : pvt->dcsb0;
+@@ -1474,17 +1488,14 @@ static void f10_debug_display_dimm_sizes(int ctrl, struct amd64_pvt *pvt,
+ 
+                size0 = 0;
+                if (dcsb[dimm*2] & K8_DCSB_CS_ENABLE)
+-                       size0 = map_dbam_to_csrow_size(DBAM_DIMM(dimm, dbam));
++			size0 = pvt->ops->dbam_to_cs(pvt, DBAM_DIMM(dimm, dbam));
+ 
+                size1 = 0;
+                if (dcsb[dimm*2 + 1] & K8_DCSB_CS_ENABLE)
+-                       size1 = map_dbam_to_csrow_size(DBAM_DIMM(dimm, dbam));
++			size1 = pvt->ops->dbam_to_cs(pvt, DBAM_DIMM(dimm, dbam));
+ 
+-               debugf1("     CTRL-%d DIMM-%d=%5dMB   CSROW-%d=%5dMB "
+-                               "CSROW-%d=%5dMB\n",
++		debugf1("     CTRL-%d CS%d=%5dMB CS%d=%5dMB\n",
+                                ctrl,
+-                               dimm,
+-                               size0 + size1,
+                                dimm * 2,
+                                size0,
+                                dimm * 2 + 1,
+@@ -1508,8 +1519,8 @@ static int f10_probe_valid_hardware(struct amd64_pvt *pvt)
+         * If we are on a DDR3 machine, we don't know yet if
+         * we support that properly at this time
+         */
+-       if ((pvt->dchr0 & F10_DCHR_Ddr3Mode) ||
+-           (pvt->dchr1 & F10_DCHR_Ddr3Mode)) {
++       if ((pvt->dchr0 & DDR3_MODE) ||
++           (pvt->dchr1 & DDR3_MODE)) {
+ 
+                amd64_printk(KERN_WARNING,
+                        "%s() This machine is running with DDR3 memory. "
+@@ -1545,13 +1556,13 @@ static struct amd64_family_type amd64_family_types[] = {
+                .addr_f1_ctl = PCI_DEVICE_ID_AMD_10H_NB_MAP,
+                .misc_f3_ctl = PCI_DEVICE_ID_AMD_10H_NB_MISC,
+                .ops = {
+-                       .probe_valid_hardware = f10_probe_valid_hardware,
+-                       .early_channel_count = f10_early_channel_count,
+-                       .get_error_address = f10_get_error_address,
+-                       .read_dram_base_limit = f10_read_dram_base_limit,
+-                       .read_dram_ctl_register = f10_read_dram_ctl_register,
+-                       .map_sysaddr_to_csrow = f10_map_sysaddr_to_csrow,
+-                       .dbam_map_to_pages = f10_dbam_map_to_pages,
++			.probe_valid_hardware	= f10_probe_valid_hardware,
++			.early_channel_count	= f10_early_channel_count,
++			.get_error_address	= f10_get_error_address,
++			.read_dram_base_limit	= f10_read_dram_base_limit,
++			.read_dram_ctl_register	= f10_read_dram_ctl_register,
++			.map_sysaddr_to_csrow	= f10_map_sysaddr_to_csrow,
++			.dbam_to_cs		= f10_dbam_to_chip_select,
+                }
+        },
+        [F11_CPUS] = {
+@@ -1559,13 +1570,13 @@ static struct amd64_family_type amd64_family_types[] = {
+                .addr_f1_ctl = PCI_DEVICE_ID_AMD_11H_NB_MAP,
+                .misc_f3_ctl = PCI_DEVICE_ID_AMD_11H_NB_MISC,
+                .ops = {
+-                       .probe_valid_hardware = f10_probe_valid_hardware,
+-                       .early_channel_count = f10_early_channel_count,
+-                       .get_error_address = f10_get_error_address,
+-                       .read_dram_base_limit = f10_read_dram_base_limit,
+-                       .read_dram_ctl_register = f10_read_dram_ctl_register,
+-                       .map_sysaddr_to_csrow = f10_map_sysaddr_to_csrow,
+-                       .dbam_map_to_pages = f10_dbam_map_to_pages,
++			.probe_valid_hardware	= f10_probe_valid_hardware,
++			.early_channel_count	= f10_early_channel_count,
++			.get_error_address	= f10_get_error_address,
++			.read_dram_base_limit	= f10_read_dram_base_limit,
++			.read_dram_ctl_register	= f10_read_dram_ctl_register,
++			.map_sysaddr_to_csrow	= f10_map_sysaddr_to_csrow,
++			.dbam_to_cs		= f10_dbam_to_chip_select,
+                }
+        },
+ };
+@@ -2186,7 +2197,7 @@ err_reg:
+  */
+ static u32 amd64_csrow_nr_pages(int csrow_nr, struct amd64_pvt *pvt)
+ {
+-       u32 dram_map, nr_pages;
++	u32 cs_mode, nr_pages;
+ 
+        /*
+         * The math on this doesn't look right on the surface because x/2*4 can
+@@ -2195,21 +2206,21 @@ static u32 amd64_csrow_nr_pages(int csrow_nr, struct amd64_pvt *pvt)
+         * number of bits to shift the DBAM register to extract the proper CSROW
+         * field.
+         */
+-       dram_map = (pvt->dbam0 >> ((csrow_nr / 2) * 4)) & 0xF;
++	cs_mode = (pvt->dbam0 >> ((csrow_nr / 2) * 4)) & 0xF;
+ 
+-       nr_pages = pvt->ops->dbam_map_to_pages(pvt, dram_map);
++	nr_pages = pvt->ops->dbam_to_cs(pvt, cs_mode) << (20 - PAGE_SHIFT);
+ 
+        /*
+         * If dual channel then double the memory size of single channel.
+         * Channel count is 1 or 2
+         */
+-       nr_pages <<= (pvt->channel_count - 1);
++	nr_pages <<= (pvt->channel_count - 1);
+ 
+-       debugf0("  (csrow=%d) DBAM map index= %d\n", csrow_nr, dram_map);
+-       debugf0("    nr_pages= %u  channel-count = %d\n",
++	debugf0("  (csrow=%d) DBAM map index= %d\n", csrow_nr, cs_mode);
++	debugf0("    nr_pages= %u  channel-count = %d\n",
+                nr_pages, pvt->channel_count);
+ 
+-       return nr_pages;
++	return nr_pages;
+ }
+ 
+ /*
+diff --git a/drivers/edac/amd64_edac.h b/drivers/edac/amd64_edac.h
+index 669e1b0..c2f50f3 100644
+--- a/drivers/edac/amd64_edac.h
++++ b/drivers/edac/amd64_edac.h
+@@ -144,9 +144,9 @@
+ #define EDAC_MAX_NUMNODES              8
+ 
+ /* Extended Model from CPUID, for CPU Revision numbers */
+-#define OPTERON_CPU_LE_REV_C           0
+-#define OPTERON_CPU_REV_D              1
+-#define OPTERON_CPU_REV_E              2
++#define K8_REV_D			1
++#define K8_REV_E			2
++#define K8_REV_F			4
+ 
+ /* NPT processors have the following Extended Models */
+ #define OPTERON_CPU_REV_F              4
+@@ -249,9 +249,9 @@
+ #define F10_DCHR_0                     0x94
+ #define F10_DCHR_1                     0x194
+ 
+-#define F10_DCHR_FOUR_RANK_DIMM                BIT(18)
+-#define F10_DCHR_Ddr3Mode              BIT(8)
+-#define F10_DCHR_MblMode               BIT(6)
++#define F10_DCHR_FOUR_RANK_DIMM		BIT(18)
++#define DDR3_MODE			BIT(8)
++#define F10_DCHR_MblMode		BIT(6)
+ 
+ 
+ #define F10_DCTL_SEL_LOW               0x110
+@@ -512,7 +512,6 @@ struct scrubrate {
+ };
+ 
+ extern struct scrubrate scrubrates[23];
+-extern u32 revf_quad_ddr2_shift[16];
+ extern const char *tt_msgs[4];
+ extern const char *ll_msgs[4];
+ extern const char *rrrr_msgs[16];
+@@ -533,17 +532,16 @@ extern const char *htlink_msgs[8];
+  * functions and per device encoding/decoding logic.
+  */
+ struct low_ops {
+-       int (*probe_valid_hardware)(struct amd64_pvt *pvt);
+-       int (*early_channel_count)(struct amd64_pvt *pvt);
+-
+-       u64 (*get_error_address)(struct mem_ctl_info *mci,
+-                       struct err_regs *info);
+-       void (*read_dram_base_limit)(struct amd64_pvt *pvt, int dram);
+-       void (*read_dram_ctl_register)(struct amd64_pvt *pvt);
+-       void (*map_sysaddr_to_csrow)(struct mem_ctl_info *mci,
+-                                       struct err_regs *info,
+-                                       u64 SystemAddr);
+-       int (*dbam_map_to_pages)(struct amd64_pvt *pvt, int dram_map);
++	int (*probe_valid_hardware)	(struct amd64_pvt *pvt);
++	int (*early_channel_count)	(struct amd64_pvt *pvt);
++
++	u64 (*get_error_address)	(struct mem_ctl_info *mci,
++					 struct err_regs *info);
++	void (*read_dram_base_limit)	(struct amd64_pvt *pvt, int dram);
++	void (*read_dram_ctl_register)	(struct amd64_pvt *pvt);
++	void (*map_sysaddr_to_csrow)	(struct mem_ctl_info *mci,
++					 struct err_regs *info, u64 SystemAddr);
++	int (*dbam_to_cs)		(struct amd64_pvt *pvt, int cs_mode);
+ };
+ 
+ struct amd64_family_type {

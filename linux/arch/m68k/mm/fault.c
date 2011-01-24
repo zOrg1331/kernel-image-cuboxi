@@ -99,7 +99,7 @@ int do_page_fault(struct pt_regs *regs, unsigned long address,
 	 * If we're in an interrupt or have no user
 	 * context, we must not take the fault..
 	 */
-	if (in_atomic() || !mm)
+	if (in_interrupt() || !mm)
 		goto no_context;
 
 	down_read(&mm->mmap_sem);
@@ -144,7 +144,7 @@ good_area:
 		case 1:		/* read, present */
 			goto acc_err;
 		case 0:		/* read, not present */
-			if (!(vma->vm_flags & (VM_READ | VM_EXEC | VM_WRITE)))
+			if (!(vma->vm_flags & (VM_READ | VM_EXEC)))
 				goto acc_err;
 	}
 
@@ -155,21 +155,22 @@ good_area:
 	 */
 
  survive:
-	fault = handle_mm_fault(mm, vma, address, write ? FAULT_FLAG_WRITE : 0);
+	fault = handle_mm_fault(mm, vma, address, write);
 #ifdef DEBUG
 	printk("handle_mm_fault returns %d\n",fault);
 #endif
-	if (unlikely(fault & VM_FAULT_ERROR)) {
-		if (fault & VM_FAULT_OOM)
-			goto out_of_memory;
-		else if (fault & VM_FAULT_SIGBUS)
-			goto bus_err;
-		BUG();
-	}
-	if (fault & VM_FAULT_MAJOR)
-		current->maj_flt++;
-	else
+	switch (fault) {
+	case VM_FAULT_MINOR:
 		current->min_flt++;
+		break;
+	case VM_FAULT_MAJOR:
+		current->maj_flt++;
+		break;
+	case VM_FAULT_SIGBUS:
+		goto bus_err;
+	default:
+		goto out_of_memory;
+	}
 
 	up_read(&mm->mmap_sem);
 	return 0;
@@ -180,7 +181,7 @@ good_area:
  */
 out_of_memory:
 	up_read(&mm->mmap_sem);
-	if (is_global_init(current)) {
+	if (current->pid == 1) {
 		yield();
 		down_read(&mm->mmap_sem);
 		goto survive;
@@ -188,7 +189,7 @@ out_of_memory:
 
 	printk("VM: killing process %s\n", current->comm);
 	if (user_mode(regs))
-		do_group_exit(SIGKILL);
+		do_exit(SIGKILL);
 
 no_context:
 	current->thread.signo = SIGBUS;

@@ -1,0 +1,1066 @@
+From: Bruce Allan <ballan@redhat.com>
+Subject: Re: [RHEL5.1 PATCH] ixgb: update to driver version 1.0.126-k2	(bz223380)
+Date: Wed, 20 Jun 2007 09:57:53 -0700
+Bugzilla: 223380
+Message-Id: <46795C91.8090308@redhat.com>
+Changelog: [net] ixgb: update to driver version 1.0.126-k2
+
+
+This patch updates the ixgb Intel 10GbE driver to version 1.0.126-k2 (as 
+found upstream in 2.6.22-rc4).  The driver has undergone touch testing 
+and is currently going through more intensive testing in Intel LAD 
+Validation labs.  The patch was generated against 2.6.18-21.el5.
+
+Thanks,
+-- 
+Bruce Allan
+Intel LAN Access Division
+2111 NE 25th Avenue
+Hillsboro, OR  97124
+503-712-5943
+
+ ixgb.h         |   46 +++++++----------
+ ixgb_ee.c      |   38 +++++++-------
+ ixgb_ee.h      |   36 ++++++-------
+ ixgb_ethtool.c |   47 ++++++++----------
+ ixgb_hw.c      |   45 ++++++++---------
+ ixgb_hw.h      |   36 ++++++-------
+ ixgb_ids.h     |   36 ++++++-------
+ ixgb_main.c    |  148 +++++++++++++++++++++++++++++++++------------------------
+ ixgb_osdep.h   |   49 ++++++------------
+ ixgb_param.c   |   44 ++++++++--------
+ 11 files changed, 281 insertions(+), 282 deletions(-)
+
+diff -urp linux-2.6.18-29.el5/drivers/net/ixgb/ixgb_ee.c linux-2.6.18-29.el5.bz223380/drivers/net/ixgb/ixgb_ee.c
+--- linux-2.6.18-29.el5/drivers/net/ixgb/ixgb_ee.c	2006-09-19 20:42:06.000000000 -0700
++++ linux-2.6.18-29.el5.bz223380/drivers/net/ixgb/ixgb_ee.c	2007-06-19 15:57:23.000000000 -0700
+@@ -1,27 +1,27 @@
+ /*******************************************************************************
+ 
+-  
+-  Copyright(c) 1999 - 2006 Intel Corporation. All rights reserved.
+-  
+-  This program is free software; you can redistribute it and/or modify it 
+-  under the terms of the GNU General Public License as published by the Free 
+-  Software Foundation; either version 2 of the License, or (at your option) 
+-  any later version.
+-  
+-  This program is distributed in the hope that it will be useful, but WITHOUT 
+-  ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or 
+-  FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for 
++  Intel PRO/10GbE Linux driver
++  Copyright(c) 1999 - 2006 Intel Corporation.
++
++  This program is free software; you can redistribute it and/or modify it
++  under the terms and conditions of the GNU General Public License,
++  version 2, as published by the Free Software Foundation.
++
++  This program is distributed in the hope it will be useful, but WITHOUT
++  ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
++  FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+   more details.
+-  
++
+   You should have received a copy of the GNU General Public License along with
+-  this program; if not, write to the Free Software Foundation, Inc., 59 
+-  Temple Place - Suite 330, Boston, MA  02111-1307, USA.
+-  
+-  The full GNU General Public License is included in this distribution in the
+-  file called LICENSE.
+-  
++  this program; if not, write to the Free Software Foundation, Inc.,
++  51 Franklin St - Fifth Floor, Boston, MA 02110-1301 USA.
++
++  The full GNU General Public License is included in this distribution in
++  the file called "COPYING".
++
+   Contact Information:
+   Linux NICS <linux.nics@intel.com>
++  e1000-devel Mailing List <e1000-devel@lists.sourceforge.net>
+   Intel Corporation, 5200 N.E. Elam Young Parkway, Hillsboro, OR 97124-6497
+ 
+ *******************************************************************************/
+@@ -315,7 +315,7 @@ ixgb_wait_eeprom_command(struct ixgb_hw 
+  * hw - Struct containing variables accessed by shared code
+  *
+  * Reads the first 64 16 bit words of the EEPROM and sums the values read.
+- * If the the sum of the 64 16 bit words is 0xBABA, the EEPROM's checksum is
++ * If the sum of the 64 16 bit words is 0xBABA, the EEPROM's checksum is
+  * valid.
+  *
+  * Returns:
+diff -urp linux-2.6.18-29.el5/drivers/net/ixgb/ixgb_ee.h linux-2.6.18-29.el5.bz223380/drivers/net/ixgb/ixgb_ee.h
+--- linux-2.6.18-29.el5/drivers/net/ixgb/ixgb_ee.h	2006-09-19 20:42:06.000000000 -0700
++++ linux-2.6.18-29.el5.bz223380/drivers/net/ixgb/ixgb_ee.h	2007-06-19 15:57:23.000000000 -0700
+@@ -1,27 +1,27 @@
+ /*******************************************************************************
+ 
+-  
+-  Copyright(c) 1999 - 2006 Intel Corporation. All rights reserved.
+-  
+-  This program is free software; you can redistribute it and/or modify it 
+-  under the terms of the GNU General Public License as published by the Free 
+-  Software Foundation; either version 2 of the License, or (at your option) 
+-  any later version.
+-  
+-  This program is distributed in the hope that it will be useful, but WITHOUT 
+-  ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or 
+-  FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for 
++  Intel PRO/10GbE Linux driver
++  Copyright(c) 1999 - 2006 Intel Corporation.
++
++  This program is free software; you can redistribute it and/or modify it
++  under the terms and conditions of the GNU General Public License,
++  version 2, as published by the Free Software Foundation.
++
++  This program is distributed in the hope it will be useful, but WITHOUT
++  ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
++  FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+   more details.
+-  
++
+   You should have received a copy of the GNU General Public License along with
+-  this program; if not, write to the Free Software Foundation, Inc., 59 
+-  Temple Place - Suite 330, Boston, MA  02111-1307, USA.
+-  
+-  The full GNU General Public License is included in this distribution in the
+-  file called LICENSE.
+-  
++  this program; if not, write to the Free Software Foundation, Inc.,
++  51 Franklin St - Fifth Floor, Boston, MA 02110-1301 USA.
++
++  The full GNU General Public License is included in this distribution in
++  the file called "COPYING".
++
+   Contact Information:
+   Linux NICS <linux.nics@intel.com>
++  e1000-devel Mailing List <e1000-devel@lists.sourceforge.net>
+   Intel Corporation, 5200 N.E. Elam Young Parkway, Hillsboro, OR 97124-6497
+ 
+ *******************************************************************************/
+diff -urp linux-2.6.18-29.el5/drivers/net/ixgb/ixgb_ethtool.c linux-2.6.18-29.el5.bz223380/drivers/net/ixgb/ixgb_ethtool.c
+--- linux-2.6.18-29.el5/drivers/net/ixgb/ixgb_ethtool.c	2007-06-19 15:50:41.000000000 -0700
++++ linux-2.6.18-29.el5.bz223380/drivers/net/ixgb/ixgb_ethtool.c	2007-06-19 15:57:23.000000000 -0700
+@@ -1,27 +1,27 @@
+ /*******************************************************************************
+ 
+-  
+-  Copyright(c) 1999 - 2006 Intel Corporation. All rights reserved.
+-  
+-  This program is free software; you can redistribute it and/or modify it 
+-  under the terms of the GNU General Public License as published by the Free 
+-  Software Foundation; either version 2 of the License, or (at your option) 
+-  any later version.
+-  
+-  This program is distributed in the hope that it will be useful, but WITHOUT 
+-  ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or 
+-  FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for 
++  Intel PRO/10GbE Linux driver
++  Copyright(c) 1999 - 2006 Intel Corporation.
++
++  This program is free software; you can redistribute it and/or modify it
++  under the terms and conditions of the GNU General Public License,
++  version 2, as published by the Free Software Foundation.
++
++  This program is distributed in the hope it will be useful, but WITHOUT
++  ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
++  FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+   more details.
+-  
++
+   You should have received a copy of the GNU General Public License along with
+-  this program; if not, write to the Free Software Foundation, Inc., 59 
+-  Temple Place - Suite 330, Boston, MA  02111-1307, USA.
+-  
+-  The full GNU General Public License is included in this distribution in the
+-  file called LICENSE.
+-  
++  this program; if not, write to the Free Software Foundation, Inc.,
++  51 Franklin St - Fifth Floor, Boston, MA 02110-1301 USA.
++
++  The full GNU General Public License is included in this distribution in
++  the file called "COPYING".
++
+   Contact Information:
+   Linux NICS <linux.nics@intel.com>
++  e1000-devel Mailing List <e1000-devel@lists.sourceforge.net>
+   Intel Corporation, 5200 N.E. Elam Young Parkway, Hillsboro, OR 97124-6497
+ 
+ *******************************************************************************/
+@@ -79,12 +79,11 @@ static struct ixgb_stats ixgb_gstrings_s
+ 	{"tx_window_errors", IXGB_STAT(net_stats.tx_window_errors)},
+ 	{"tx_deferred_ok", IXGB_STAT(stats.dc)},
+ 	{"tx_timeout_count", IXGB_STAT(tx_timeout_count) },
++	{"tx_restart_queue", IXGB_STAT(restart_queue) },
+ 	{"rx_long_length_errors", IXGB_STAT(stats.roc)},
+ 	{"rx_short_length_errors", IXGB_STAT(stats.ruc)},
+-#ifdef NETIF_F_TSO
+ 	{"tx_tcp_seg_good", IXGB_STAT(stats.tsctc)},
+ 	{"tx_tcp_seg_failed", IXGB_STAT(stats.tsctfc)},
+-#endif
+ 	{"rx_flow_control_xon", IXGB_STAT(stats.xonrxc)},
+ 	{"rx_flow_control_xoff", IXGB_STAT(stats.xoffrxc)},
+ 	{"tx_flow_control_xon", IXGB_STAT(stats.xontxc)},
+@@ -239,7 +238,6 @@ ixgb_set_tx_csum(struct net_device *netd
+ 	return 0;
+ }
+ 
+-#ifdef NETIF_F_TSO
+ static int
+ ixgb_set_tso(struct net_device *netdev, uint32_t data)
+ {
+@@ -249,7 +247,6 @@ ixgb_set_tso(struct net_device *netdev, 
+ 		netdev->features &= ~NETIF_F_TSO;
+ 	return 0;
+ } 
+-#endif /* NETIF_F_TSO */
+ 
+ static uint32_t
+ ixgb_get_msglevel(struct net_device *netdev)
+@@ -580,11 +577,11 @@ ixgb_set_ringparam(struct net_device *ne
+ 
+ 	rxdr->count = max(ring->rx_pending,(uint32_t)MIN_RXD);
+ 	rxdr->count = min(rxdr->count,(uint32_t)MAX_RXD);
+-	IXGB_ROUNDUP(rxdr->count, IXGB_REQ_RX_DESCRIPTOR_MULTIPLE); 
++	rxdr->count = ALIGN(rxdr->count, IXGB_REQ_RX_DESCRIPTOR_MULTIPLE);
+ 
+ 	txdr->count = max(ring->tx_pending,(uint32_t)MIN_TXD);
+ 	txdr->count = min(txdr->count,(uint32_t)MAX_TXD);
+-	IXGB_ROUNDUP(txdr->count, IXGB_REQ_TX_DESCRIPTOR_MULTIPLE); 
++	txdr->count = ALIGN(txdr->count, IXGB_REQ_TX_DESCRIPTOR_MULTIPLE);
+ 
+ 	if(netif_running(adapter->netdev)) {
+ 		/* Try to get new resources before deleting old */
+@@ -721,10 +718,8 @@ static struct ethtool_ops ixgb_ethtool_o
+ 	.set_sg	= ethtool_op_set_sg,
+ 	.get_msglevel = ixgb_get_msglevel,
+ 	.set_msglevel = ixgb_set_msglevel,
+-#ifdef NETIF_F_TSO
+ 	.get_tso = ethtool_op_get_tso,
+ 	.set_tso = ixgb_set_tso,
+-#endif
+ 	.get_strings = ixgb_get_strings,
+ 	.phys_id = ixgb_phys_id,
+ 	.get_stats_count = ixgb_get_stats_count,
+diff -urp linux-2.6.18-29.el5/drivers/net/ixgb/ixgb.h linux-2.6.18-29.el5.bz223380/drivers/net/ixgb/ixgb.h
+--- linux-2.6.18-29.el5/drivers/net/ixgb/ixgb.h	2007-06-19 15:50:41.000000000 -0700
++++ linux-2.6.18-29.el5.bz223380/drivers/net/ixgb/ixgb.h	2007-06-19 16:09:01.000000000 -0700
+@@ -1,27 +1,27 @@
+ /*******************************************************************************
+ 
+-  
+-  Copyright(c) 1999 - 2006 Intel Corporation. All rights reserved.
+-  
+-  This program is free software; you can redistribute it and/or modify it 
+-  under the terms of the GNU General Public License as published by the Free 
+-  Software Foundation; either version 2 of the License, or (at your option) 
+-  any later version.
+-  
+-  This program is distributed in the hope that it will be useful, but WITHOUT 
+-  ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or 
+-  FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for 
++  Intel PRO/10GbE Linux driver
++  Copyright(c) 1999 - 2006 Intel Corporation.
++
++  This program is free software; you can redistribute it and/or modify it
++  under the terms and conditions of the GNU General Public License,
++  version 2, as published by the Free Software Foundation.
++
++  This program is distributed in the hope it will be useful, but WITHOUT
++  ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
++  FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+   more details.
+-  
++
+   You should have received a copy of the GNU General Public License along with
+-  this program; if not, write to the Free Software Foundation, Inc., 59 
+-  Temple Place - Suite 330, Boston, MA  02111-1307, USA.
+-  
+-  The full GNU General Public License is included in this distribution in the
+-  file called LICENSE.
+-  
++  this program; if not, write to the Free Software Foundation, Inc.,
++  51 Franklin St - Fifth Floor, Boston, MA 02110-1301 USA.
++
++  The full GNU General Public License is included in this distribution in
++  the file called "COPYING".
++
+   Contact Information:
+   Linux NICS <linux.nics@intel.com>
++  e1000-devel Mailing List <e1000-devel@lists.sourceforge.net>
+   Intel Corporation, 5200 N.E. Elam Young Parkway, Hillsboro, OR 97124-6497
+ 
+ *******************************************************************************/
+@@ -61,9 +61,7 @@
+ #include <net/pkt_sched.h>
+ #include <linux/list.h>
+ #include <linux/reboot.h>
+-#ifdef NETIF_F_TSO
+ #include <net/checksum.h>
+-#endif
+ 
+ #include <linux/ethtool.h>
+ #include <linux/if_vlan.h>
+@@ -111,10 +109,7 @@ struct ixgb_adapter;
+ #define IXGB_RXBUFFER_16384 16384
+ 
+ /* How many Rx Buffers do we bundle into one write to the hardware ? */
+-#define IXGB_RX_BUFFER_WRITE	4	/* Must be power of 2 */
+-
+-/* only works for sizes that are powers of 2 */
+-#define IXGB_ROUNDUP(i, size) ((i) = (((i) + (size) - 1) & ~((size) - 1)))
++#define IXGB_RX_BUFFER_WRITE	8	/* Must be power of 2 */
+ 
+ /* wrapper around a pointer to a socket buffer,
+  * so a DMA handle can be stored along with the buffer */
+@@ -171,6 +166,7 @@ struct ixgb_adapter {
+ 
+ 	/* TX */
+ 	struct ixgb_desc_ring tx_ring ____cacheline_aligned_in_smp;
++	unsigned int restart_queue;
+ 	unsigned long timeo_start;
+ 	uint32_t tx_cmd_type;
+ 	uint64_t hw_csum_tx_good;
+@@ -197,8 +193,6 @@ struct ixgb_adapter {
+ 	u16 msg_enable;
+ 	struct ixgb_hw_stats stats;
+ 	uint32_t alloc_rx_buff_failed;
+-#ifdef CONFIG_PCI_MSI
+ 	boolean_t have_msi;
+-#endif
+ };
+ #endif /* _IXGB_H_ */
+diff -urp linux-2.6.18-29.el5/drivers/net/ixgb/ixgb_hw.c linux-2.6.18-29.el5.bz223380/drivers/net/ixgb/ixgb_hw.c
+--- linux-2.6.18-29.el5/drivers/net/ixgb/ixgb_hw.c	2007-06-19 15:50:41.000000000 -0700
++++ linux-2.6.18-29.el5.bz223380/drivers/net/ixgb/ixgb_hw.c	2007-06-19 16:41:56.000000000 -0700
+@@ -1,27 +1,27 @@
+ /*******************************************************************************
+ 
+-  
+-  Copyright(c) 1999 - 2006 Intel Corporation. All rights reserved.
+-  
+-  This program is free software; you can redistribute it and/or modify it 
+-  under the terms of the GNU General Public License as published by the Free 
+-  Software Foundation; either version 2 of the License, or (at your option) 
+-  any later version.
+-  
+-  This program is distributed in the hope that it will be useful, but WITHOUT 
+-  ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or 
+-  FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for 
++  Intel PRO/10GbE Linux driver
++  Copyright(c) 1999 - 2006 Intel Corporation.
++
++  This program is free software; you can redistribute it and/or modify it
++  under the terms and conditions of the GNU General Public License,
++  version 2, as published by the Free Software Foundation.
++
++  This program is distributed in the hope it will be useful, but WITHOUT
++  ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
++  FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+   more details.
+-  
++
+   You should have received a copy of the GNU General Public License along with
+-  this program; if not, write to the Free Software Foundation, Inc., 59 
+-  Temple Place - Suite 330, Boston, MA  02111-1307, USA.
+-  
+-  The full GNU General Public License is included in this distribution in the
+-  file called LICENSE.
+-  
++  this program; if not, write to the Free Software Foundation, Inc.,
++  51 Franklin St - Fifth Floor, Boston, MA 02110-1301 USA.
++
++  The full GNU General Public License is included in this distribution in
++  the file called "COPYING".
++
+   Contact Information:
+   Linux NICS <linux.nics@intel.com>
++  e1000-devel Mailing List <e1000-devel@lists.sourceforge.net>
+   Intel Corporation, 5200 N.E. Elam Young Parkway, Hillsboro, OR 97124-6497
+ 
+ *******************************************************************************/
+@@ -83,7 +83,7 @@ static uint32_t ixgb_mac_reset(struct ix
+ #endif
+ 
+ 	/* Delay a few ms just to allow the reset to complete */
+-	msec_delay(IXGB_DELAY_AFTER_RESET);
++	msleep(IXGB_DELAY_AFTER_RESET);
+ 	ctrl_reg = IXGB_READ_REG(hw, CTRL0);
+ #ifdef DBG
+ 	/* Make sure the self-clearing global reset bit did self clear */
+@@ -133,7 +133,7 @@ ixgb_adapter_stop(struct ixgb_hw *hw)
+ 	 */
+ 	IXGB_WRITE_REG(hw, RCTL, IXGB_READ_REG(hw, RCTL) & ~IXGB_RCTL_RXEN);
+ 	IXGB_WRITE_REG(hw, TCTL, IXGB_READ_REG(hw, TCTL) & ~IXGB_TCTL_TXEN);
+-	msec_delay(IXGB_DELAY_BEFORE_RESET);
++	msleep(IXGB_DELAY_BEFORE_RESET);
+ 
+ 	/* Issue a global reset to the MAC.  This will reset the chip's
+ 	 * transmit, receive, DMA, and link units.  It will not effect
+@@ -300,7 +300,7 @@ ixgb_init_hw(struct ixgb_hw *hw)
+ #endif
+ 
+ 	/* Delay a few ms just to allow the reset to complete */
+-	msec_delay(IXGB_DELAY_AFTER_EE_RESET);
++	msleep(IXGB_DELAY_AFTER_EE_RESET);
+ 
+ 	if (ixgb_get_eeprom_data(hw) == FALSE) {
+ 		return(FALSE);
+@@ -399,8 +399,9 @@ ixgb_init_rx_addrs(struct ixgb_hw *hw)
+ 	/* Zero out the other 15 receive addresses. */
+ 	DEBUGOUT("Clearing RAR[1-15]\n");
+ 	for(i = 1; i < IXGB_RAR_ENTRIES; i++) {
+-		IXGB_WRITE_REG_ARRAY(hw, RA, (i << 1), 0);
++		/* Write high reg first to disable the AV bit first */
+ 		IXGB_WRITE_REG_ARRAY(hw, RA, ((i << 1) + 1), 0);
++		IXGB_WRITE_REG_ARRAY(hw, RA, (i << 1), 0);
+ 	}
+ 
+ 	return;
+diff -urp linux-2.6.18-29.el5/drivers/net/ixgb/ixgb_hw.h linux-2.6.18-29.el5.bz223380/drivers/net/ixgb/ixgb_hw.h
+--- linux-2.6.18-29.el5/drivers/net/ixgb/ixgb_hw.h	2006-09-19 20:42:06.000000000 -0700
++++ linux-2.6.18-29.el5.bz223380/drivers/net/ixgb/ixgb_hw.h	2007-06-19 15:57:23.000000000 -0700
+@@ -1,27 +1,27 @@
+ /*******************************************************************************
+ 
+-  
+-  Copyright(c) 1999 - 2006 Intel Corporation. All rights reserved.
+-  
+-  This program is free software; you can redistribute it and/or modify it 
+-  under the terms of the GNU General Public License as published by the Free 
+-  Software Foundation; either version 2 of the License, or (at your option) 
+-  any later version.
+-  
+-  This program is distributed in the hope that it will be useful, but WITHOUT 
+-  ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or 
+-  FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for 
++  Intel PRO/10GbE Linux driver
++  Copyright(c) 1999 - 2006 Intel Corporation.
++
++  This program is free software; you can redistribute it and/or modify it
++  under the terms and conditions of the GNU General Public License,
++  version 2, as published by the Free Software Foundation.
++
++  This program is distributed in the hope it will be useful, but WITHOUT
++  ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
++  FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+   more details.
+-  
++
+   You should have received a copy of the GNU General Public License along with
+-  this program; if not, write to the Free Software Foundation, Inc., 59 
+-  Temple Place - Suite 330, Boston, MA  02111-1307, USA.
+-  
+-  The full GNU General Public License is included in this distribution in the
+-  file called LICENSE.
+-  
++  this program; if not, write to the Free Software Foundation, Inc.,
++  51 Franklin St - Fifth Floor, Boston, MA 02110-1301 USA.
++
++  The full GNU General Public License is included in this distribution in
++  the file called "COPYING".
++
+   Contact Information:
+   Linux NICS <linux.nics@intel.com>
++  e1000-devel Mailing List <e1000-devel@lists.sourceforge.net>
+   Intel Corporation, 5200 N.E. Elam Young Parkway, Hillsboro, OR 97124-6497
+ 
+ *******************************************************************************/
+diff -urp linux-2.6.18-29.el5/drivers/net/ixgb/ixgb_ids.h linux-2.6.18-29.el5.bz223380/drivers/net/ixgb/ixgb_ids.h
+--- linux-2.6.18-29.el5/drivers/net/ixgb/ixgb_ids.h	2007-06-19 15:50:41.000000000 -0700
++++ linux-2.6.18-29.el5.bz223380/drivers/net/ixgb/ixgb_ids.h	2007-06-19 15:57:23.000000000 -0700
+@@ -1,27 +1,27 @@
+ /*******************************************************************************
+ 
+-  
+-  Copyright(c) 1999 - 2006 Intel Corporation. All rights reserved.
+-  
+-  This program is free software; you can redistribute it and/or modify it 
+-  under the terms of the GNU General Public License as published by the Free 
+-  Software Foundation; either version 2 of the License, or (at your option) 
+-  any later version.
+-  
+-  This program is distributed in the hope that it will be useful, but WITHOUT 
+-  ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or 
+-  FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for 
++  Intel PRO/10GbE Linux driver
++  Copyright(c) 1999 - 2006 Intel Corporation.
++
++  This program is free software; you can redistribute it and/or modify it
++  under the terms and conditions of the GNU General Public License,
++  version 2, as published by the Free Software Foundation.
++
++  This program is distributed in the hope it will be useful, but WITHOUT
++  ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
++  FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+   more details.
+-  
++
+   You should have received a copy of the GNU General Public License along with
+-  this program; if not, write to the Free Software Foundation, Inc., 59 
+-  Temple Place - Suite 330, Boston, MA  02111-1307, USA.
+-  
+-  The full GNU General Public License is included in this distribution in the
+-  file called LICENSE.
+-  
++  this program; if not, write to the Free Software Foundation, Inc.,
++  51 Franklin St - Fifth Floor, Boston, MA 02110-1301 USA.
++
++  The full GNU General Public License is included in this distribution in
++  the file called "COPYING".
++
+   Contact Information:
+   Linux NICS <linux.nics@intel.com>
++  e1000-devel Mailing List <e1000-devel@lists.sourceforge.net>
+   Intel Corporation, 5200 N.E. Elam Young Parkway, Hillsboro, OR 97124-6497
+ 
+ *******************************************************************************/
+diff -urp linux-2.6.18-29.el5/drivers/net/ixgb/ixgb_main.c linux-2.6.18-29.el5.bz223380/drivers/net/ixgb/ixgb_main.c
+--- linux-2.6.18-29.el5/drivers/net/ixgb/ixgb_main.c	2007-06-19 15:50:41.000000000 -0700
++++ linux-2.6.18-29.el5.bz223380/drivers/net/ixgb/ixgb_main.c	2007-06-19 17:27:08.000000000 -0700
+@@ -1,27 +1,27 @@
+ /*******************************************************************************
+ 
+-  
+-  Copyright(c) 1999 - 2006 Intel Corporation. All rights reserved.
+-  
+-  This program is free software; you can redistribute it and/or modify it 
+-  under the terms of the GNU General Public License as published by the Free 
+-  Software Foundation; either version 2 of the License, or (at your option) 
+-  any later version.
+-  
+-  This program is distributed in the hope that it will be useful, but WITHOUT 
+-  ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or 
+-  FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for 
++  Intel PRO/10GbE Linux driver
++  Copyright(c) 1999 - 2006 Intel Corporation.
++
++  This program is free software; you can redistribute it and/or modify it
++  under the terms and conditions of the GNU General Public License,
++  version 2, as published by the Free Software Foundation.
++
++  This program is distributed in the hope it will be useful, but WITHOUT
++  ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
++  FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+   more details.
+-  
++
+   You should have received a copy of the GNU General Public License along with
+-  this program; if not, write to the Free Software Foundation, Inc., 59 
+-  Temple Place - Suite 330, Boston, MA  02111-1307, USA.
+-  
+-  The full GNU General Public License is included in this distribution in the
+-  file called LICENSE.
+-  
++  this program; if not, write to the Free Software Foundation, Inc.,
++  51 Franklin St - Fifth Floor, Boston, MA 02110-1301 USA.
++
++  The full GNU General Public License is included in this distribution in
++  the file called "COPYING".
++
+   Contact Information:
+   Linux NICS <linux.nics@intel.com>
++  e1000-devel Mailing List <e1000-devel@lists.sourceforge.net>
+   Intel Corporation, 5200 N.E. Elam Young Parkway, Hillsboro, OR 97124-6497
+ 
+ *******************************************************************************/
+@@ -36,7 +36,7 @@ static char ixgb_driver_string[] = "Inte
+ #else
+ #define DRIVERNAPI "-NAPI"
+ #endif
+-#define DRV_VERSION		"1.0.109-k4"DRIVERNAPI
++#define DRV_VERSION		"1.0.126-k2"DRIVERNAPI
+ char ixgb_driver_version[] = DRV_VERSION;
+ static char ixgb_copyright[] = "Copyright (c) 1999-2006 Intel Corporation.";
+ 
+@@ -173,7 +173,7 @@ ixgb_init_module(void)
+ 
+ 	printk(KERN_INFO "%s\n", ixgb_copyright);
+ 
+-	return pci_module_init(&ixgb_driver);
++	return pci_register_driver(&ixgb_driver);
+ }
+ 
+ module_init(ixgb_init_module);
+@@ -227,7 +227,7 @@ int
+ ixgb_up(struct ixgb_adapter *adapter)
+ {
+ 	struct net_device *netdev = adapter->netdev;
+-	int err;
++	int err, irq_flags = IRQF_SHARED;
+ 	int max_frame = netdev->mtu + ENET_HEADER_SIZE + ENET_FCS_LENGTH;
+ 	struct ixgb_hw *hw = &adapter->hw;
+ 
+@@ -246,26 +246,21 @@ ixgb_up(struct ixgb_adapter *adapter)
+ 	/* disable interrupts and get the hardware into a known state */
+ 	IXGB_WRITE_REG(&adapter->hw, IMC, 0xffffffff);
+ 
+-#ifdef CONFIG_PCI_MSI
+-	{
+-	boolean_t pcix = (IXGB_READ_REG(&adapter->hw, STATUS) & 
+-						  IXGB_STATUS_PCIX_MODE) ? TRUE : FALSE;
+-	adapter->have_msi = TRUE;
+-
+-	if (!pcix)
+-	   adapter->have_msi = FALSE;
+-	else if((err = pci_enable_msi(adapter->pdev))) {
+-		DPRINTK(PROBE, ERR,
+-		 "Unable to allocate MSI interrupt Error: %d\n", err);
+-		adapter->have_msi = FALSE;
++	/* only enable MSI if bus is in PCI-X mode */
++	if (IXGB_READ_REG(&adapter->hw, STATUS) & IXGB_STATUS_PCIX_MODE) {
++		err = pci_enable_msi(adapter->pdev);
++		if (!err) {
++			adapter->have_msi = 1;
++			irq_flags = 0;
++		}
+ 		/* proceed to try to request regular interrupt */
+ 	}
+-	}
+ 
+-#endif
+-	if((err = request_irq(adapter->pdev->irq, &ixgb_intr,
+-				  IRQF_SHARED | IRQF_SAMPLE_RANDOM,
+-			          netdev->name, netdev))) {
++	err = request_irq(adapter->pdev->irq, &ixgb_intr, irq_flags,
++	                  netdev->name, netdev);
++	if (err) {
++		if (adapter->have_msi)
++			pci_disable_msi(adapter->pdev);
+ 		DPRINTK(PROBE, ERR,
+ 		 "Unable to allocate interrupt Error: %d\n", err);
+ 		return err;
+@@ -307,11 +302,10 @@ ixgb_down(struct ixgb_adapter *adapter, 
+ 
+ 	ixgb_irq_disable(adapter);
+ 	free_irq(adapter->pdev->irq, netdev);
+-#ifdef CONFIG_PCI_MSI
+-	if(adapter->have_msi == TRUE)
++
++	if (adapter->have_msi)
+ 		pci_disable_msi(adapter->pdev);
+ 
+-#endif
+ 	if(kill_watchdog)
+ 		del_timer_sync(&adapter->watchdog_timer);
+ #ifdef CONFIG_IXGB_NAPI
+@@ -437,7 +431,7 @@ ixgb_probe(struct pci_dev *pdev,
+ 	netdev->poll_controller = ixgb_netpoll;
+ #endif
+ 
+-	strcpy(netdev->name, pci_name(pdev));
++	strncpy(netdev->name, pci_name(pdev), sizeof(netdev->name) - 1);
+ 	netdev->mem_start = mmio_start;
+ 	netdev->mem_end = mmio_start + mmio_len;
+ 	netdev->base_addr = adapter->hw.io_base;
+@@ -456,9 +450,7 @@ ixgb_probe(struct pci_dev *pdev,
+ 			   NETIF_F_HW_VLAN_TX |
+ 			   NETIF_F_HW_VLAN_RX |
+ 			   NETIF_F_HW_VLAN_FILTER;
+-#ifdef NETIF_F_TSO
+ 	netdev->features |= NETIF_F_TSO;
+-#endif
+ #ifdef NETIF_F_LLTX
+ 	netdev->features |= NETIF_F_LLTX;
+ #endif
+@@ -688,7 +680,7 @@ ixgb_setup_tx_resources(struct ixgb_adap
+ 	/* round up to nearest 4K */
+ 
+ 	txdr->size = txdr->count * sizeof(struct ixgb_tx_desc);
+-	IXGB_ROUNDUP(txdr->size, 4096);
++	txdr->size = ALIGN(txdr->size, 4096);
+ 
+ 	txdr->desc = pci_alloc_consistent(pdev, txdr->size, &txdr->dma);
+ 	if(!txdr->desc) {
+@@ -777,7 +769,7 @@ ixgb_setup_rx_resources(struct ixgb_adap
+ 	/* Round up to nearest 4K */
+ 
+ 	rxdr->size = rxdr->count * sizeof(struct ixgb_rx_desc);
+-	IXGB_ROUNDUP(rxdr->size, 4096);
++	rxdr->size = ALIGN(rxdr->size, 4096);
+ 
+ 	rxdr->desc = pci_alloc_consistent(pdev, rxdr->size, &rxdr->dma);
+ 
+@@ -1177,7 +1169,6 @@ ixgb_watchdog(unsigned long data)
+ static int
+ ixgb_tso(struct ixgb_adapter *adapter, struct sk_buff *skb)
+ {
+-#ifdef NETIF_F_TSO
+ 	struct ixgb_context_desc *context_desc;
+ 	unsigned int i;
+ 	uint8_t ipcss, ipcso, tucss, tucso, hdr_len;
+@@ -1186,6 +1177,7 @@ ixgb_tso(struct ixgb_adapter *adapter, s
+ 
+ 	if (likely(skb_is_gso(skb))) {
+ 		struct ixgb_buffer *buffer_info;
++
+ 		if (skb_header_cloned(skb)) {
+ 			err = pskb_expand_head(skb, 0, 0, GFP_ATOMIC);
+ 			if (err)
+@@ -1234,7 +1226,6 @@ ixgb_tso(struct ixgb_adapter *adapter, s
+ 
+ 		return 1;
+ 	}
+-#endif
+ 
+ 	return 0;
+ }
+@@ -1304,6 +1295,7 @@ ixgb_tx_map(struct ixgb_adapter *adapter
+ 		 * in TSO mode.  Append 4-byte sentinel desc */
+ 		if (unlikely(mss && !nr_frags && size == len && size > 8))
+ 			size -= 4;
++
+ 		buffer_info->length = size;
+ 		WARN_ON(buffer_info->dma != 0);
+ 		buffer_info->dma =
+@@ -1330,11 +1322,13 @@ ixgb_tx_map(struct ixgb_adapter *adapter
+ 		while(len) {
+ 			buffer_info = &tx_ring->buffer_info[i];
+ 			size = min(len, IXGB_MAX_DATA_PER_TXD);
++
+ 			/* Workaround for premature desc write-backs
+ 			 * in TSO mode.  Append 4-byte sentinel desc */
+ 			if (unlikely(mss && !nr_frags && size == len
+ 			             && size > 8))
+ 				size -= 4;
++
+ 			buffer_info->length = size;
+ 			buffer_info->dma =
+ 				pci_map_page(adapter->pdev,
+@@ -1409,11 +1403,43 @@ ixgb_tx_queue(struct ixgb_adapter *adapt
+ 	IXGB_WRITE_REG(&adapter->hw, TDT, i);
+ }
+ 
++static int __ixgb_maybe_stop_tx(struct net_device *netdev, int size)
++{
++	struct ixgb_adapter *adapter = netdev_priv(netdev);
++	struct ixgb_desc_ring *tx_ring = &adapter->tx_ring;
++
++	netif_stop_queue(netdev);
++	/* Herbert's original patch had:
++	 *  smp_mb__after_netif_stop_queue();
++	 * but since that doesn't exist yet, just open code it. */
++	smp_mb();
++
++	/* We need to check again in a case another CPU has just
++	 * made room available. */
++	if (likely(IXGB_DESC_UNUSED(tx_ring) < size))
++		return -EBUSY;
++
++	/* A reprieve! */
++	netif_start_queue(netdev);
++	++adapter->restart_queue;
++	return 0;
++}
++
++static int ixgb_maybe_stop_tx(struct net_device *netdev,
++                              struct ixgb_desc_ring *tx_ring, int size)
++{
++	if (likely(IXGB_DESC_UNUSED(tx_ring) >= size))
++		return 0;
++	return __ixgb_maybe_stop_tx(netdev, size);
++}
++
++
+ /* Tx Descriptors needed, worst case */
+ #define TXD_USE_COUNT(S) (((S) >> IXGB_MAX_TXD_PWR) + \
+ 			 (((S) & (IXGB_MAX_DATA_PER_TXD - 1)) ? 1 : 0))
+-#define DESC_NEEDED TXD_USE_COUNT(IXGB_MAX_DATA_PER_TXD) + \
+-	MAX_SKB_FRAGS * TXD_USE_COUNT(PAGE_SIZE) + 1 + 1
++#define DESC_NEEDED TXD_USE_COUNT(IXGB_MAX_DATA_PER_TXD) /* skb->date */ + \
++	MAX_SKB_FRAGS * TXD_USE_COUNT(PAGE_SIZE) + 1 /* for context */ \
++	+ 1 /* one more needed for sentinel TSO workaround */
+ 
+ static int
+ ixgb_xmit_frame(struct sk_buff *skb, struct net_device *netdev)
+@@ -1441,7 +1467,8 @@ ixgb_xmit_frame(struct sk_buff *skb, str
+ 	spin_lock_irqsave(&adapter->tx_lock, flags);
+ #endif
+ 
+-	if(unlikely(IXGB_DESC_UNUSED(&adapter->tx_ring) < DESC_NEEDED)) {
++	if (unlikely(ixgb_maybe_stop_tx(netdev, &adapter->tx_ring,
++                     DESC_NEEDED))) {
+ 		netif_stop_queue(netdev);
+ 		spin_unlock_irqrestore(&adapter->tx_lock, flags);
+ 		return NETDEV_TX_BUSY;
+@@ -1479,8 +1506,7 @@ ixgb_xmit_frame(struct sk_buff *skb, str
+ 
+ #ifdef NETIF_F_LLTX
+ 	/* Make sure there is space in the ring for the next send. */
+-	if(unlikely(IXGB_DESC_UNUSED(&adapter->tx_ring) < DESC_NEEDED))
+-		netif_stop_queue(netdev);
++	ixgb_maybe_stop_tx(netdev, &adapter->tx_ring, DESC_NEEDED);
+ 
+ 	spin_unlock_irqrestore(&adapter->tx_lock, flags);
+ 
+@@ -2064,14 +2090,14 @@ ixgb_alloc_rx_buffers(struct ixgb_adapte
+ 	/* leave three descriptors unused */
+ 	while(--cleancount > 2) {
+ 		/* recycle! its good for you */
+-		if (!(skb = buffer_info->skb))
+-			skb = netdev_alloc_skb(netdev, adapter->rx_buffer_len
+-			                    + NET_IP_ALIGN);
+-		else {
++		skb = buffer_info->skb;
++		if (skb) {
+ 			skb_trim(skb, 0);
+ 			goto map_skb;
+ 		}
+ 
++		skb = netdev_alloc_skb(netdev, adapter->rx_buffer_len
++			               + NET_IP_ALIGN);
+ 		if (unlikely(!skb)) {
+ 			/* Better luck next round */
+ 			adapter->alloc_rx_buff_failed++;
+@@ -2084,8 +2110,6 @@ ixgb_alloc_rx_buffers(struct ixgb_adapte
+ 		 */
+ 		skb_reserve(skb, NET_IP_ALIGN);
+ 
+-		skb->dev = netdev;
+-
+ 		buffer_info->skb = skb;
+ 		buffer_info->length = adapter->rx_buffer_len;
+ map_skb:
+@@ -2243,7 +2267,7 @@ static pci_ers_result_t ixgb_io_error_de
+ 			             enum pci_channel_state state)
+ {
+ 	struct net_device *netdev = pci_get_drvdata(pdev);
+-	struct ixgb_adapter *adapter = netdev->priv;
++	struct ixgb_adapter *adapter = netdev_priv(netdev);
+ 
+ 	if(netif_running(netdev))
+ 		ixgb_down(adapter, TRUE);
+@@ -2266,7 +2290,7 @@ static pci_ers_result_t ixgb_io_error_de
+ static pci_ers_result_t ixgb_io_slot_reset (struct pci_dev *pdev)
+ {
+ 	struct net_device *netdev = pci_get_drvdata(pdev);
+-	struct ixgb_adapter *adapter = netdev->priv;
++	struct ixgb_adapter *adapter = netdev_priv(netdev);
+ 
+ 	if(pci_enable_device(pdev)) {
+ 		DPRINTK(PROBE, ERR, "Cannot re-enable PCI device after reset.\n");
+@@ -2310,7 +2334,7 @@ static pci_ers_result_t ixgb_io_slot_res
+ static void ixgb_io_resume (struct pci_dev *pdev)
+ {
+ 	struct net_device *netdev = pci_get_drvdata(pdev);
+-	struct ixgb_adapter *adapter = netdev->priv;
++	struct ixgb_adapter *adapter = netdev_priv(netdev);
+ 
+ 	pci_set_master(pdev);
+ 
+diff -urp linux-2.6.18-29.el5/drivers/net/ixgb/ixgb_osdep.h linux-2.6.18-29.el5.bz223380/drivers/net/ixgb/ixgb_osdep.h
+--- linux-2.6.18-29.el5/drivers/net/ixgb/ixgb_osdep.h	2006-09-19 20:42:06.000000000 -0700
++++ linux-2.6.18-29.el5.bz223380/drivers/net/ixgb/ixgb_osdep.h	2007-06-19 15:57:23.000000000 -0700
+@@ -1,27 +1,27 @@
+ /*******************************************************************************
+ 
+-  
+-  Copyright(c) 1999 - 2006 Intel Corporation. All rights reserved.
+-  
+-  This program is free software; you can redistribute it and/or modify it 
+-  under the terms of the GNU General Public License as published by the Free 
+-  Software Foundation; either version 2 of the License, or (at your option) 
+-  any later version.
+-  
+-  This program is distributed in the hope that it will be useful, but WITHOUT 
+-  ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or 
+-  FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for 
++  Intel PRO/10GbE Linux driver
++  Copyright(c) 1999 - 2006 Intel Corporation.
++
++  This program is free software; you can redistribute it and/or modify it
++  under the terms and conditions of the GNU General Public License,
++  version 2, as published by the Free Software Foundation.
++
++  This program is distributed in the hope it will be useful, but WITHOUT
++  ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
++  FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+   more details.
+-  
++
+   You should have received a copy of the GNU General Public License along with
+-  this program; if not, write to the Free Software Foundation, Inc., 59 
+-  Temple Place - Suite 330, Boston, MA  02111-1307, USA.
+-  
+-  The full GNU General Public License is included in this distribution in the
+-  file called LICENSE.
+-  
++  this program; if not, write to the Free Software Foundation, Inc.,
++  51 Franklin St - Fifth Floor, Boston, MA 02110-1301 USA.
++
++  The full GNU General Public License is included in this distribution in
++  the file called "COPYING".
++
+   Contact Information:
+   Linux NICS <linux.nics@intel.com>
++  e1000-devel Mailing List <e1000-devel@lists.sourceforge.net>
+   Intel Corporation, 5200 N.E. Elam Young Parkway, Hillsboro, OR 97124-6497
+ 
+ *******************************************************************************/
+@@ -34,24 +34,11 @@
+ #define _IXGB_OSDEP_H_
+ 
+ #include <linux/types.h>
+-#include <linux/pci.h>
+ #include <linux/delay.h>
+ #include <asm/io.h>
+ #include <linux/interrupt.h>
+ #include <linux/sched.h>
+ 
+-#ifndef msec_delay
+-#define msec_delay(x)	do { if(in_interrupt()) { \
+-				/* Don't mdelay in interrupt context! */ \
+-	                	BUG(); \
+-			} else { \
+-				msleep(x); \
+-			} } while(0)
+-#endif
+-
+-#define PCI_COMMAND_REGISTER   PCI_COMMAND
+-#define CMD_MEM_WRT_INVALIDATE PCI_COMMAND_INVALIDATE
+-
+ typedef enum {
+ #undef FALSE
+ 	FALSE = 0,
+diff -urp linux-2.6.18-29.el5/drivers/net/ixgb/ixgb_param.c linux-2.6.18-29.el5.bz223380/drivers/net/ixgb/ixgb_param.c
+--- linux-2.6.18-29.el5/drivers/net/ixgb/ixgb_param.c	2006-09-19 20:42:06.000000000 -0700
++++ linux-2.6.18-29.el5.bz223380/drivers/net/ixgb/ixgb_param.c	2007-06-19 15:57:23.000000000 -0700
+@@ -1,27 +1,27 @@
+ /*******************************************************************************
+ 
+-  
+-  Copyright(c) 1999 - 2006 Intel Corporation. All rights reserved.
+-  
+-  This program is free software; you can redistribute it and/or modify it 
+-  under the terms of the GNU General Public License as published by the Free 
+-  Software Foundation; either version 2 of the License, or (at your option) 
+-  any later version.
+-  
+-  This program is distributed in the hope that it will be useful, but WITHOUT 
+-  ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or 
+-  FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for 
++  Intel PRO/10GbE Linux driver
++  Copyright(c) 1999 - 2006 Intel Corporation.
++
++  This program is free software; you can redistribute it and/or modify it
++  under the terms and conditions of the GNU General Public License,
++  version 2, as published by the Free Software Foundation.
++
++  This program is distributed in the hope it will be useful, but WITHOUT
++  ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
++  FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+   more details.
+-  
++
+   You should have received a copy of the GNU General Public License along with
+-  this program; if not, write to the Free Software Foundation, Inc., 59 
+-  Temple Place - Suite 330, Boston, MA  02111-1307, USA.
+-  
+-  The full GNU General Public License is included in this distribution in the
+-  file called LICENSE.
+-  
++  this program; if not, write to the Free Software Foundation, Inc.,
++  51 Franklin St - Fifth Floor, Boston, MA 02110-1301 USA.
++
++  The full GNU General Public License is included in this distribution in
++  the file called "COPYING".
++
+   Contact Information:
+   Linux NICS <linux.nics@intel.com>
++  e1000-devel Mailing List <e1000-devel@lists.sourceforge.net>
+   Intel Corporation, 5200 N.E. Elam Young Parkway, Hillsboro, OR 97124-6497
+ 
+ *******************************************************************************/
+@@ -245,8 +245,6 @@ ixgb_validate_option(int *value, struct 
+ 	return -1;
+ }
+ 
+-#define LIST_LEN(l) (sizeof(l) / sizeof(l[0]))
+-
+ /**
+  * ixgb_check_options - Range Checking for Command Line Parameters
+  * @adapter: board private structure
+@@ -284,7 +282,7 @@ ixgb_check_options(struct ixgb_adapter *
+ 		} else {
+ 			tx_ring->count = opt.def;
+ 		}
+-		IXGB_ROUNDUP(tx_ring->count, IXGB_REQ_TX_DESCRIPTOR_MULTIPLE);
++		tx_ring->count = ALIGN(tx_ring->count, IXGB_REQ_TX_DESCRIPTOR_MULTIPLE);
+ 	}
+ 	{ /* Receive Descriptor Count */
+ 		struct ixgb_option opt = {
+@@ -303,7 +301,7 @@ ixgb_check_options(struct ixgb_adapter *
+ 		} else {
+ 			rx_ring->count = opt.def;
+ 		}
+-		IXGB_ROUNDUP(rx_ring->count, IXGB_REQ_RX_DESCRIPTOR_MULTIPLE);
++		rx_ring->count = ALIGN(rx_ring->count, IXGB_REQ_RX_DESCRIPTOR_MULTIPLE);
+ 	}
+ 	{ /* Receive Checksum Offload Enable */
+ 		struct ixgb_option opt = {
+@@ -335,7 +333,7 @@ ixgb_check_options(struct ixgb_adapter *
+ 			.name = "Flow Control",
+ 			.err  = "reading default settings from EEPROM",
+ 			.def  = ixgb_fc_tx_pause,
+-			.arg  = { .l = { .nr = LIST_LEN(fc_list),
++			.arg  = { .l = { .nr = ARRAY_SIZE(fc_list),
+ 					 .p = fc_list }}
+ 		};
+ 
+diff -urp linux-2.6.18-29.el5/drivers/net/ixgb/Makefile linux-2.6.18-29.el5.bz223380/drivers/net/ixgb/Makefile
+--- linux-2.6.18-29.el5/drivers/net/ixgb/Makefile	2006-09-19 20:42:06.000000000 -0700
++++ linux-2.6.18-29.el5.bz223380/drivers/net/ixgb/Makefile	2007-06-19 15:57:23.000000000 -0700
+@@ -1,33 +1,33 @@
+ ################################################################################
+ #
+-# 
+-# Copyright(c) 1999 - 2006 Intel Corporation. All rights reserved.
+-# 
+-# This program is free software; you can redistribute it and/or modify it 
+-# under the terms of the GNU General Public License as published by the Free 
+-# Software Foundation; either version 2 of the License, or (at your option) 
+-# any later version.
+-# 
+-# This program is distributed in the hope that it will be useful, but WITHOUT 
+-# ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or 
+-# FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for 
++# Intel PRO/10GbE Linux driver
++# Copyright(c) 1999 - 2006 Intel Corporation.
++#
++# This program is free software; you can redistribute it and/or modify it
++# under the terms and conditions of the GNU General Public License,
++# version 2, as published by the Free Software Foundation.
++#
++# This program is distributed in the hope it will be useful, but WITHOUT
++# ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
++# FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+ # more details.
+-# 
++#
+ # You should have received a copy of the GNU General Public License along with
+-# this program; if not, write to the Free Software Foundation, Inc., 59 
+-# Temple Place - Suite 330, Boston, MA  02111-1307, USA.
+-# 
+-# The full GNU General Public License is included in this distribution in the
+-# file called LICENSE.
+-# 
++# this program; if not, write to the Free Software Foundation, Inc.,
++# 51 Franklin St - Fifth Floor, Boston, MA 02110-1301 USA.
++#
++# The full GNU General Public License is included in this distribution in
++# the file called "COPYING".
++#
+ # Contact Information:
+ # Linux NICS <linux.nics@intel.com>
++# e1000-devel Mailing List <e1000-devel@lists.sourceforge.net>
+ # Intel Corporation, 5200 N.E. Elam Young Parkway, Hillsboro, OR 97124-6497
+ #
+ ################################################################################
+ 
+ #
+-# Makefile for the Intel(R) PRO/10GbE driver
++# Makefile for the Intel(R) PRO/10GbE ethernet driver
+ #
+ 
+ obj-$(CONFIG_IXGB) += ixgb.o
+

@@ -1,0 +1,282 @@
+From: Neil Horman <nhorman@redhat.com>
+Date: Wed, 13 Feb 2008 15:31:20 -0500
+Subject: [net] sctp: socket initialization race
+Message-id: 20080213203120.GA30902@hmsendeavour.rdu.redhat.com
+O-Subject: [RHEL 5.2 PATCH] corrected fix for sctp oops under load (bz 426234)
+Bugzilla: 426234
+
+We recently discovered that bz 426234, which had a patch posted for it, didn't
+actually fix the problem.  While the patch that was posted is good to have in
+place, a bit more research showed that the actuall problem was a race in module
+initialization under heavy use.  Sctp registers itself as an available protocol
+with the inet layer first in its module init routine, so its possible that a
+user space app can try to create an sctp socket before the module is done
+initalizing.  This patch is a backport of upstream commit
+827bf12236fbafc02bc899aec1b37c342c8cf4e5, and closes the race, by moving the
+protocol registration to the end of the init routine, giving the module the
+ability to initalize first.
+
+Tested by Abhijith Das up in the Minneapolis office with successful results.
+
+Regards
+Neil
+
+Acked-by: "David S. Miller" <davem@redhat.com>
+Acked-by: Thomas Graf <tgraf@redhat.com>
+
+diff --git a/include/net/sctp/sctp.h b/include/net/sctp/sctp.h
+index beaac12..b3f06d3 100644
+--- a/include/net/sctp/sctp.h
++++ b/include/net/sctp/sctp.h
+@@ -323,11 +323,15 @@ static inline int sctp_sysctl_jiffies_ms(ctl_table *table, int __user *name, int
+ 
+ int sctp_v6_init(void);
+ void sctp_v6_exit(void);
++int sctp_v6_add_protocol(void);
++void sctp_v6_del_protocol(void);
+ 
+ #else /* #ifdef defined(CONFIG_IPV6) */
+ 
+ static inline int sctp_v6_init(void) { return 0; }
+ static inline void sctp_v6_exit(void) { return; }
++static inline int sctp_v6_add_protocol(void) { return 0; }
++static inline void sctp_v6_del_protocol(void) { return; }
+ 
+ #endif /* #if defined(CONFIG_IPV6) */
+ 
+diff --git a/net/sctp/ipv6.c b/net/sctp/ipv6.c
+index c77deb4..009fa02 100644
+--- a/net/sctp/ipv6.c
++++ b/net/sctp/ipv6.c
+@@ -962,45 +962,52 @@ static struct sctp_pf sctp_pf_inet6_specific = {
+ 	.af            = &sctp_ipv6_specific,
+ };
+ 
+-/* Initialize IPv6 support and register with inet6 stack.  */
++/* Initialize IPv6 support and register with socket layer.  */
+ int sctp_v6_init(void)
+ {
+-	int rc = proto_register(&sctpv6_prot, 1);
++	int rc;
+ 
++	/* Register the SCTP specific PF_INET6 functions. */
++	sctp_register_pf(&sctp_pf_inet6_specific, PF_INET6);
++
++	/* Register the SCTP specific AF_INET6 functions. */
++	sctp_register_af(&sctp_ipv6_specific);
++
++	rc = proto_register(&sctpv6_prot, 1);
+ 	if (rc)
+-		goto out;
+-	/* Register inet6 protocol. */
+-	rc = -EAGAIN;
+-	if (inet6_add_protocol(&sctpv6_protocol, IPPROTO_SCTP) < 0)
+-		goto out_unregister_sctp_proto;
++		return rc;
+ 
+ 	/* Add SCTPv6(UDP and TCP style) to inetsw6 linked list. */
+ 	inet6_register_protosw(&sctpv6_seqpacket_protosw);
+ 	inet6_register_protosw(&sctpv6_stream_protosw);
+ 
+-	/* Register the SCTP specific PF_INET6 functions. */
+-	sctp_register_pf(&sctp_pf_inet6_specific, PF_INET6);
+-
+-	/* Register the SCTP specific AF_INET6 functions. */
+-	sctp_register_af(&sctp_ipv6_specific);
++	return 0;
++}
+ 
++/* Register with inet6 layer. */
++int sctp_v6_add_protocol(void)
++{
+ 	/* Register notifier for inet6 address additions/deletions. */
+ 	register_inet6addr_notifier(&sctp_inet6addr_notifier);
+-	rc = 0;
+-out:
+-	return rc;
+-out_unregister_sctp_proto:
+-	proto_unregister(&sctpv6_prot);
+-	goto out;
++
++	if (inet6_add_protocol(&sctpv6_protocol, IPPROTO_SCTP) < 0)
++		return -EAGAIN;
++
++	return 0;
+ }
+ 
+ /* IPv6 specific exit support. */
+ void sctp_v6_exit(void)
+ {
+-	list_del(&sctp_ipv6_specific.list);
+-	inet6_del_protocol(&sctpv6_protocol, IPPROTO_SCTP);
+ 	inet6_unregister_protosw(&sctpv6_seqpacket_protosw);
+ 	inet6_unregister_protosw(&sctpv6_stream_protosw);
+-	unregister_inet6addr_notifier(&sctp_inet6addr_notifier);
+ 	proto_unregister(&sctpv6_prot);
++	list_del(&sctp_ipv6_specific.list);
++}
++
++/* Unregister with inet6 layer. */
++void sctp_v6_del_protocol(void)
++{
++	inet6_del_protocol(&sctpv6_protocol, IPPROTO_SCTP);
++	unregister_inet6addr_notifier(&sctp_inet6addr_notifier);
+ }
+diff --git a/net/sctp/protocol.c b/net/sctp/protocol.c
+index 43ccaf9..f4ff4e4 100644
+--- a/net/sctp/protocol.c
++++ b/net/sctp/protocol.c
+@@ -995,28 +995,14 @@ SCTP_STATIC __init int sctp_init(void)
+ 	if (!sctp_sanity_check())
+ 		goto out;
+ 
+-	status = proto_register(&sctp_prot, 1);
+-	if (status)
+-		goto out;
+-
+-	/* Add SCTP to inet_protos hash table.  */
+-	status = -EAGAIN;
+-	if (inet_add_protocol(&sctp_protocol, IPPROTO_SCTP) < 0)
+-		goto err_add_protocol;
+-
+-	/* Add SCTP(TCP and UDP style) to inetsw linked list.  */
+-	inet_register_protosw(&sctp_seqpacket_protosw);
+-	inet_register_protosw(&sctp_stream_protosw);
+-
+-	/* Allocate a cache pools. */
++	/* Allocate bind_bucket and chunk caches. */
+ 	status = -ENOBUFS;
+ 	sctp_bucket_cachep = kmem_cache_create("sctp_bind_bucket",
+ 					       sizeof(struct sctp_bind_bucket),
+ 					       0, SLAB_HWCACHE_ALIGN,
+ 					       NULL, NULL);
+-
+ 	if (!sctp_bucket_cachep)
+-		goto err_bucket_cachep;
++		goto out;
+ 
+ 	sctp_chunk_cachep = kmem_cache_create("sctp_chunk",
+ 					       sizeof(struct sctp_chunk),
+@@ -1195,6 +1181,14 @@ SCTP_STATIC __init int sctp_init(void)
+ 	INIT_LIST_HEAD(&sctp_address_families);
+ 	sctp_register_af(&sctp_ipv4_specific);
+ 
++	status = proto_register(&sctp_prot, 1);
++	if (status)
++		goto err_proto_register;
++
++	/* Register SCTP(UDP and TCP style) with socket layer.  */
++	inet_register_protosw(&sctp_seqpacket_protosw);
++	inet_register_protosw(&sctp_stream_protosw);
++
+ 	status = sctp_v6_init();
+ 	if (status)
+ 		goto err_v6_init;
+@@ -1213,15 +1207,37 @@ SCTP_STATIC __init int sctp_init(void)
+ 	/* Register notifier for inet address additions/deletions. */
+ 	register_inetaddr_notifier(&sctp_inetaddr_notifier);
+ 
++	/* Register SCTP with inet layer.  */
++	if (inet_add_protocol(&sctp_protocol, IPPROTO_SCTP) < 0) {
++		status = -EAGAIN;
++		goto err_add_protocol;
++	}
++ 
++	/* Register SCTP with inet6 layer.  */
++	status = sctp_v6_add_protocol();
++	if (status)
++		goto err_v6_add_protocol;
++
++
+ 	sctp_get_local_addr_list();
+ 
+ 	__unsafe(THIS_MODULE);
+ 	status = 0;
+ out:
+ 	return status;
++err_v6_add_protocol:
++	inet_del_protocol(&sctp_protocol, IPPROTO_SCTP);
++	unregister_inetaddr_notifier(&sctp_inetaddr_notifier);
++err_add_protocol:
++	sctp_free_local_addr_list();
++	sock_release(sctp_ctl_socket);
+ err_ctl_sock_init:
+ 	sctp_v6_exit();
+ err_v6_init:
++	inet_unregister_protosw(&sctp_stream_protosw);
++	inet_unregister_protosw(&sctp_seqpacket_protosw);
++	proto_unregister(&sctp_prot);
++err_proto_register:
+ 	sctp_sysctl_unregister();
+ 	list_del(&sctp_ipv4_specific.list);
+ 	free_pages((unsigned long)sctp_port_hashtable,
+@@ -1235,19 +1251,13 @@ err_ehash_alloc:
+ 			     sizeof(struct sctp_hashbucket)));
+ err_ahash_alloc:
+ 	sctp_dbg_objcnt_exit();
+-err_init_proc:
+ 	sctp_proc_exit();
++err_init_proc:
+ 	cleanup_sctp_mibs();
+ err_init_mibs:
+ 	kmem_cache_destroy(sctp_chunk_cachep);
+ err_chunk_cachep:
+ 	kmem_cache_destroy(sctp_bucket_cachep);
+-err_bucket_cachep:
+-	inet_del_protocol(&sctp_protocol, IPPROTO_SCTP);
+-	inet_unregister_protosw(&sctp_seqpacket_protosw);
+-	inet_unregister_protosw(&sctp_stream_protosw);
+-err_add_protocol:
+-	proto_unregister(&sctp_prot);
+ 	goto out;
+ }
+ 
+@@ -1258,8 +1268,9 @@ SCTP_STATIC __exit void sctp_exit(void)
+ 	 * up all the remaining associations and all that memory.
+ 	 */
+ 
+-	/* Unregister notifier for inet address additions/deletions. */
+-	unregister_inetaddr_notifier(&sctp_inetaddr_notifier);
++	/* Unregister with inet6/inet layers. */
++	sctp_v6_del_protocol();
++	inet_del_protocol(&sctp_protocol, IPPROTO_SCTP);
+ 
+ 	/* Free the local address list.  */
+ 	sctp_free_local_addr_list();
+@@ -1267,7 +1278,16 @@ SCTP_STATIC __exit void sctp_exit(void)
+ 	/* Free the control endpoint.  */
+ 	sock_release(sctp_ctl_socket);
+ 
++	/* Cleanup v6 initializations. */
+ 	sctp_v6_exit();
++
++	/* Unregister with socket layer. */
++	inet_unregister_protosw(&sctp_stream_protosw);
++	inet_unregister_protosw(&sctp_seqpacket_protosw);
++
++	/* Unregister notifier for inet address additions/deletions. */
++	unregister_inetaddr_notifier(&sctp_inetaddr_notifier);
++
+ 	sctp_sysctl_unregister();
+ 	list_del(&sctp_ipv4_specific.list);
+ 
+@@ -1279,16 +1299,13 @@ SCTP_STATIC __exit void sctp_exit(void)
+ 		   get_order(sctp_port_hashsize *
+ 			     sizeof(struct sctp_bind_hashbucket)));
+ 
+-	kmem_cache_destroy(sctp_chunk_cachep);
+-	kmem_cache_destroy(sctp_bucket_cachep);
+-
+ 	sctp_dbg_objcnt_exit();
+ 	sctp_proc_exit();
+ 	cleanup_sctp_mibs();
+ 
+-	inet_del_protocol(&sctp_protocol, IPPROTO_SCTP);
+-	inet_unregister_protosw(&sctp_seqpacket_protosw);
+-	inet_unregister_protosw(&sctp_stream_protosw);
++	kmem_cache_destroy(sctp_chunk_cachep);
++	kmem_cache_destroy(sctp_bucket_cachep);
++
+ 	proto_unregister(&sctp_prot);
+ }
+ 

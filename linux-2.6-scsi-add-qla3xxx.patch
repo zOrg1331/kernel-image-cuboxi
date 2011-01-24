@@ -1,0 +1,4852 @@
+Date: Wed, 27 Sep 2006 14:33:06 -0400
+From: Konrad Rzeszutek <konradr@redhat.com>
+Subject: [RHEL5 PATCH] RH BZ# 208182 - Include the qla3xxx networking driver.
+
+RHBZ#:
+------
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=208182
+
+Description:
+------------
+
+The qla3xxx driver provides networking support for customers who
+use the QLogic iSCSI adapters w/o using iSCSI. 
+
+The driver is in 2.6.19 and this is a backport to 2.6.18.
+
+CONFIG_QLA3XXX=m is neccessary to compile this driver.
+
+Test Status:
+------------
+
+Patch has been built on all platforms and is currently going through
+testing at IBM. I will reply to this e-mail with the results. 
+
+Proposed Patch:
+---------------
+
+This patch is against RHEL5 kernel-2.6.18-1.2698 build. 
+Compiled on brew on all platforms.
+
+diff -uNpr linux-2.6.18.i386.orig/Documentation/networking/LICENSE.qla3xxx linux-2.6.18.i386/Documentation/networking/LICENSE.qla3xxx
+--- linux-2.6.18.i386.orig/Documentation/networking/LICENSE.qla3xxx	1969-12-31 19:00:00.000000000 -0500
++++ linux-2.6.18.i386/Documentation/networking/LICENSE.qla3xxx	2006-09-26 15:55:40.000000000 -0400
+@@ -0,0 +1,46 @@
++Copyright (c)  2003-2006 QLogic Corporation
++QLogic Linux Networking HBA Driver
++
++This program includes a device driver for Linux 2.6 that may be
++distributed with QLogic hardware specific firmware binary file.
++You may modify and redistribute the device driver code under the
++GNU General Public License as published by the Free Software
++Foundation (version 2 or a later version).
++
++You may redistribute the hardware specific firmware binary file
++under the following terms:
++
++	1. Redistribution of source code (only if applicable),
++	   must retain the above copyright notice, this list of
++	   conditions and the following disclaimer.
++
++	2. Redistribution in binary form must reproduce the above
++	   copyright notice, this list of conditions and the
++	   following disclaimer in the documentation and/or other
++	   materials provided with the distribution.
++
++	3. The name of QLogic Corporation may not be used to
++	   endorse or promote products derived from this software
++	   without specific prior written permission
++
++REGARDLESS OF WHAT LICENSING MECHANISM IS USED OR APPLICABLE,
++THIS PROGRAM IS PROVIDED BY QLOGIC CORPORATION "AS IS'' AND ANY
++EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
++IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A
++PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE AUTHOR
++BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
++EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED
++TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,
++DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON
++ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
++OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
++OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
++POSSIBILITY OF SUCH DAMAGE.
++
++USER ACKNOWLEDGES AND AGREES THAT USE OF THIS PROGRAM WILL NOT
++CREATE OR GIVE GROUNDS FOR A LICENSE BY IMPLICATION, ESTOPPEL, OR
++OTHERWISE IN ANY INTELLECTUAL PROPERTY RIGHTS (PATENT, COPYRIGHT,
++TRADE SECRET, MASK WORK, OR OTHER PROPRIETARY RIGHT) EMBODIED IN
++ANY OTHER QLOGIC HARDWARE OR SOFTWARE EITHER SOLELY OR IN
++COMBINATION WITH THIS PROGRAM.
++
+diff -uNpr linux-2.6.18.i386.orig/drivers/net/Kconfig linux-2.6.18.i386/drivers/net/Kconfig
+--- linux-2.6.18.i386.orig/drivers/net/Kconfig	2006-09-26 15:51:20.000000000 -0400
++++ linux-2.6.18.i386/drivers/net/Kconfig	2006-09-26 15:54:37.000000000 -0400
+@@ -2290,6 +2290,15 @@ config MV643XX_ETH_2
+ 	  This enables support for Port 2 of the Marvell MV643XX Gigabit
+ 	  Ethernet.
+ 
++config QLA3XXX
++	tristate "QLogic QLA3XXX Network Driver Support"
++	depends on PCI
++	help
++	  This driver supports QLogic ISP3XXX gigabit Ethernet cards.
++
++	  To compile this driver as a module, choose M here: the module
++	  will be called qla3xxx.
++
+ endmenu
+ 
+ #
+diff -uNpr linux-2.6.18.i386.orig/drivers/net/Makefile linux-2.6.18.i386/drivers/net/Makefile
+--- linux-2.6.18.i386.orig/drivers/net/Makefile	2006-09-26 15:51:19.000000000 -0400
++++ linux-2.6.18.i386/drivers/net/Makefile	2006-09-26 15:55:00.000000000 -0400
+@@ -114,6 +114,7 @@ obj-$(CONFIG_FORCEDETH) += forcedeth.o
+ obj-$(CONFIG_NE_H8300) += ne-h8300.o 8390.o
+ 
+ obj-$(CONFIG_MV643XX_ETH) += mv643xx_eth.o
++obj-$(CONFIG_QLA3XXX) += qla3xxx.o
+ 
+ obj-$(CONFIG_PPP) += ppp_generic.o slhc.o
+ obj-$(CONFIG_PPP_ASYNC) += ppp_async.o
+diff -uNpr linux-2.6.18.i386.orig/drivers/net/qla3xxx.c linux-2.6.18.i386/drivers/net/qla3xxx.c
+--- linux-2.6.18.i386.orig/drivers/net/qla3xxx.c	1969-12-31 19:00:00.000000000 -0500
++++ linux-2.6.18.i386/drivers/net/qla3xxx.c	2006-09-26 15:53:17.000000000 -0400
+@@ -0,0 +1,3536 @@
++/*
++ * QLogic QLA3xxx NIC HBA Driver
++ * Copyright (c)  2003-2006 QLogic Corporation
++ *
++ * See LICENSE.qla3xxx for copyright and licensing details.
++ */
++
++#include <linux/kernel.h>
++#include <linux/init.h>
++#include <linux/types.h>
++#include <linux/module.h>
++#include <linux/list.h>
++#include <linux/pci.h>
++#include <linux/dma-mapping.h>
++#include <linux/sched.h>
++#include <linux/slab.h>
++#include <linux/dmapool.h>
++#include <linux/mempool.h>
++#include <linux/spinlock.h>
++#include <linux/kthread.h>
++#include <linux/interrupt.h>
++#include <linux/errno.h>
++#include <linux/ioport.h>
++#include <linux/ip.h>
++#include <linux/if_arp.h>
++#include <linux/if_ether.h>
++#include <linux/netdevice.h>
++#include <linux/etherdevice.h>
++#include <linux/ethtool.h>
++#include <linux/skbuff.h>
++#include <linux/rtnetlink.h>
++#include <linux/if_vlan.h>
++#include <linux/init.h>
++#include <linux/delay.h>
++#include <linux/mm.h>
++
++#include "qla3xxx.h"
++
++#define DRV_NAME  	"qla3xxx"
++#define DRV_STRING 	"QLogic ISP3XXX Network Driver"
++#define DRV_VERSION	"v2.02.00-k36"
++#define PFX		DRV_NAME " "
++
++static const char ql3xxx_driver_name[] = DRV_NAME;
++static const char ql3xxx_driver_version[] = DRV_VERSION;
++
++MODULE_AUTHOR("QLogic Corporation");
++MODULE_DESCRIPTION("QLogic ISP3XXX Network Driver " DRV_VERSION " ");
++MODULE_LICENSE("GPL");
++MODULE_VERSION(DRV_VERSION);
++
++static const u32 default_msg
++    = NETIF_MSG_DRV | NETIF_MSG_PROBE | NETIF_MSG_LINK
++    | NETIF_MSG_IFUP | NETIF_MSG_IFDOWN;
++
++static int debug = -1;		/* defaults above */
++module_param(debug, int, 0);
++MODULE_PARM_DESC(debug, "Debug level (0=none,...,16=all)");
++
++static int msi;
++module_param(msi, int, 0);
++MODULE_PARM_DESC(msi, "Turn on Message Signaled Interrupts.");
++
++static struct pci_device_id ql3xxx_pci_tbl[] __devinitdata = {
++	{PCI_DEVICE(PCI_VENDOR_ID_QLOGIC, QL3022_DEVICE_ID)},
++	/* required last entry */
++	{0,}
++};
++
++MODULE_DEVICE_TABLE(pci, ql3xxx_pci_tbl);
++
++/*
++ * Caller must take hw_lock.
++ */
++static int ql_sem_spinlock(struct ql3_adapter *qdev,
++			    u32 sem_mask, u32 sem_bits)
++{
++	struct ql3xxx_port_registers __iomem *port_regs = qdev->mem_map_registers;
++	u32 value;
++	unsigned int seconds = 3;
++
++	do {
++		writel((sem_mask | sem_bits),
++		       &port_regs->CommonRegs.semaphoreReg);
++		value = readl(&port_regs->CommonRegs.semaphoreReg);
++		if ((value & (sem_mask >> 16)) == sem_bits)
++			return 0;
++		ssleep(1);
++	} while(--seconds);
++	return -1;
++}
++
++static void ql_sem_unlock(struct ql3_adapter *qdev, u32 sem_mask)
++{
++	struct ql3xxx_port_registers __iomem *port_regs = qdev->mem_map_registers;
++	writel(sem_mask, &port_regs->CommonRegs.semaphoreReg);
++	readl(&port_regs->CommonRegs.semaphoreReg);
++}
++
++static int ql_sem_lock(struct ql3_adapter *qdev, u32 sem_mask, u32 sem_bits)
++{
++	struct ql3xxx_port_registers __iomem *port_regs = qdev->mem_map_registers;
++	u32 value;
++
++	writel((sem_mask | sem_bits), &port_regs->CommonRegs.semaphoreReg);
++	value = readl(&port_regs->CommonRegs.semaphoreReg);
++	return ((value & (sem_mask >> 16)) == sem_bits);
++}
++
++/*
++ * Caller holds hw_lock.
++ */
++static int ql_wait_for_drvr_lock(struct ql3_adapter *qdev)
++{
++	int i = 0;
++
++	while (1) {
++		if (!ql_sem_lock(qdev,
++				 QL_DRVR_SEM_MASK,
++				 (QL_RESOURCE_BITS_BASE_CODE | (qdev->mac_index)
++				  * 2) << 1)) {
++			if (i < 10) {
++				ssleep(1);
++				i++;
++			} else {
++				printk(KERN_ERR PFX "%s: Timed out waiting for "
++				       "driver lock...\n",
++				       qdev->ndev->name);
++				return 0;
++			}
++		} else {
++			printk(KERN_DEBUG PFX
++			       "%s: driver lock acquired.\n",
++			       qdev->ndev->name);
++			return 1;
++		}
++	}
++}
++
++static void ql_set_register_page(struct ql3_adapter *qdev, u32 page)
++{
++	struct ql3xxx_port_registers __iomem *port_regs = qdev->mem_map_registers;
++
++	writel(((ISP_CONTROL_NP_MASK << 16) | page),
++			&port_regs->CommonRegs.ispControlStatus);
++	readl(&port_regs->CommonRegs.ispControlStatus);
++	qdev->current_page = page;
++}
++
++static u32 ql_read_common_reg_l(struct ql3_adapter *qdev,
++			      u32 __iomem * reg)
++{
++	u32 value;
++	unsigned long hw_flags;
++
++	spin_lock_irqsave(&qdev->hw_lock, hw_flags);
++	value = readl(reg);
++	spin_unlock_irqrestore(&qdev->hw_lock, hw_flags);
++
++	return value;
++}
++
++static u32 ql_read_common_reg(struct ql3_adapter *qdev,
++			      u32 __iomem * reg)
++{
++	return readl(reg);
++}
++
++static u32 ql_read_page0_reg_l(struct ql3_adapter *qdev, u32 __iomem *reg)
++{
++	u32 value;
++	unsigned long hw_flags;
++
++	spin_lock_irqsave(&qdev->hw_lock, hw_flags);
++
++	if (qdev->current_page != 0)
++		ql_set_register_page(qdev,0);
++	value = readl(reg);
++
++	spin_unlock_irqrestore(&qdev->hw_lock, hw_flags);
++	return value;
++}
++
++static u32 ql_read_page0_reg(struct ql3_adapter *qdev, u32 __iomem *reg)
++{
++	if (qdev->current_page != 0)
++		ql_set_register_page(qdev,0);
++	return readl(reg);
++}
++
++static void ql_write_common_reg_l(struct ql3_adapter *qdev,
++				u32 __iomem *reg, u32 value)
++{
++	unsigned long hw_flags;
++
++	spin_lock_irqsave(&qdev->hw_lock, hw_flags);
++	writel(value, reg);
++	readl(reg);
++	spin_unlock_irqrestore(&qdev->hw_lock, hw_flags);
++	return;
++}
++
++static void ql_write_common_reg(struct ql3_adapter *qdev,
++				u32 __iomem *reg, u32 value)
++{
++	writel(value, reg);
++	readl(reg);
++	return;
++}
++
++static void ql_write_page0_reg(struct ql3_adapter *qdev,
++			       u32 __iomem *reg, u32 value)
++{
++	if (qdev->current_page != 0)
++		ql_set_register_page(qdev,0);
++	writel(value, reg);
++	readl(reg);
++	return;
++}
++
++/*
++ * Caller holds hw_lock. Only called during init.
++ */
++static void ql_write_page1_reg(struct ql3_adapter *qdev,
++			       u32 __iomem *reg, u32 value)
++{
++	if (qdev->current_page != 1)
++		ql_set_register_page(qdev,1);
++	writel(value, reg);
++	readl(reg);
++	return;
++}
++
++/*
++ * Caller holds hw_lock. Only called during init.
++ */
++static void ql_write_page2_reg(struct ql3_adapter *qdev,
++			       u32 __iomem *reg, u32 value)
++{
++	if (qdev->current_page != 2)
++		ql_set_register_page(qdev,2);
++	writel(value, reg);
++	readl(reg);
++	return;
++}
++
++static void ql_disable_interrupts(struct ql3_adapter *qdev)
++{
++	struct ql3xxx_port_registers __iomem *port_regs = qdev->mem_map_registers;
++
++	ql_write_common_reg_l(qdev, &port_regs->CommonRegs.ispInterruptMaskReg,
++			    (ISP_IMR_ENABLE_INT << 16));
++
++}
++
++static void ql_enable_interrupts(struct ql3_adapter *qdev)
++{
++	struct ql3xxx_port_registers __iomem *port_regs = qdev->mem_map_registers;
++
++	ql_write_common_reg_l(qdev, &port_regs->CommonRegs.ispInterruptMaskReg,
++			    ((0xff << 16) | ISP_IMR_ENABLE_INT));
++
++}
++
++static void ql_release_to_lrg_buf_free_list(struct ql3_adapter *qdev,
++					    struct ql_rcv_buf_cb *lrg_buf_cb)
++{
++	u64 map;
++	lrg_buf_cb->next = NULL;
++
++	if (qdev->lrg_buf_free_tail == NULL) {	/* The list is empty  */
++		qdev->lrg_buf_free_head = qdev->lrg_buf_free_tail = lrg_buf_cb;
++	} else {
++		qdev->lrg_buf_free_tail->next = lrg_buf_cb;
++		qdev->lrg_buf_free_tail = lrg_buf_cb;
++	}
++
++	if (!lrg_buf_cb->skb) {
++		lrg_buf_cb->skb = dev_alloc_skb(qdev->lrg_buffer_len);
++		if (unlikely(!lrg_buf_cb->skb)) {
++			printk(KERN_ERR PFX "%s: failed dev_alloc_skb().\n",
++			       qdev->ndev->name);
++			qdev->lrg_buf_skb_check++;
++		} else {
++			/*
++			 * We save some space to copy the ethhdr from first
++			 * buffer
++			 */
++			skb_reserve(lrg_buf_cb->skb, QL_HEADER_SPACE);
++			map = pci_map_single(qdev->pdev,
++					     lrg_buf_cb->skb->data,
++					     qdev->lrg_buffer_len -
++					     QL_HEADER_SPACE,
++					     PCI_DMA_FROMDEVICE);
++			lrg_buf_cb->buf_phy_addr_low =
++			    cpu_to_le32(LS_64BITS(map));
++			lrg_buf_cb->buf_phy_addr_high =
++			    cpu_to_le32(MS_64BITS(map));
++			pci_unmap_addr_set(lrg_buf_cb, mapaddr, map);
++			pci_unmap_len_set(lrg_buf_cb, maplen,
++					  qdev->lrg_buffer_len -
++					  QL_HEADER_SPACE);
++		}
++	}
++
++	qdev->lrg_buf_free_count++;
++}
++
++static struct ql_rcv_buf_cb *ql_get_from_lrg_buf_free_list(struct ql3_adapter
++							   *qdev)
++{
++	struct ql_rcv_buf_cb *lrg_buf_cb;
++
++	if ((lrg_buf_cb = qdev->lrg_buf_free_head) != NULL) {
++		if ((qdev->lrg_buf_free_head = lrg_buf_cb->next) == NULL)
++			qdev->lrg_buf_free_tail = NULL;
++		qdev->lrg_buf_free_count--;
++	}
++
++	return lrg_buf_cb;
++}
++
++static u32 addrBits = EEPROM_NO_ADDR_BITS;
++static u32 dataBits = EEPROM_NO_DATA_BITS;
++
++static void fm93c56a_deselect(struct ql3_adapter *qdev);
++static void eeprom_readword(struct ql3_adapter *qdev, u32 eepromAddr,
++			    unsigned short *value);
++
++/*
++ * Caller holds hw_lock.
++ */
++static void fm93c56a_select(struct ql3_adapter *qdev)
++{
++	struct ql3xxx_port_registers __iomem *port_regs =
++	    		qdev->mem_map_registers;
++
++	qdev->eeprom_cmd_data = AUBURN_EEPROM_CS_1;
++	ql_write_common_reg(qdev, &port_regs->CommonRegs.serialPortInterfaceReg,
++			    ISP_NVRAM_MASK | qdev->eeprom_cmd_data);
++	ql_write_common_reg(qdev, &port_regs->CommonRegs.serialPortInterfaceReg,
++			    ((ISP_NVRAM_MASK << 16) | qdev->eeprom_cmd_data));
++}
++
++/*
++ * Caller holds hw_lock.
++ */
++static void fm93c56a_cmd(struct ql3_adapter *qdev, u32 cmd, u32 eepromAddr)
++{
++	int i;
++	u32 mask;
++	u32 dataBit;
++	u32 previousBit;
++	struct ql3xxx_port_registers __iomem *port_regs =
++	    		qdev->mem_map_registers;
++
++	/* Clock in a zero, then do the start bit */
++	ql_write_common_reg(qdev, &port_regs->CommonRegs.serialPortInterfaceReg,
++			    ISP_NVRAM_MASK | qdev->eeprom_cmd_data |
++			    AUBURN_EEPROM_DO_1);
++	ql_write_common_reg(qdev, &port_regs->CommonRegs.serialPortInterfaceReg,
++			    ISP_NVRAM_MASK | qdev->
++			    eeprom_cmd_data | AUBURN_EEPROM_DO_1 |
++			    AUBURN_EEPROM_CLK_RISE);
++	ql_write_common_reg(qdev, &port_regs->CommonRegs.serialPortInterfaceReg,
++			    ISP_NVRAM_MASK | qdev->
++			    eeprom_cmd_data | AUBURN_EEPROM_DO_1 |
++			    AUBURN_EEPROM_CLK_FALL);
++
++	mask = 1 << (FM93C56A_CMD_BITS - 1);
++	/* Force the previous data bit to be different */
++	previousBit = 0xffff;
++	for (i = 0; i < FM93C56A_CMD_BITS; i++) {
++		dataBit =
++		    (cmd & mask) ? AUBURN_EEPROM_DO_1 : AUBURN_EEPROM_DO_0;
++		if (previousBit != dataBit) {
++			/*
++			 * If the bit changed, then change the DO state to
++			 * match
++			 */
++			ql_write_common_reg(qdev,
++					    &port_regs->CommonRegs.
++					    serialPortInterfaceReg,
++					    ISP_NVRAM_MASK | qdev->
++					    eeprom_cmd_data | dataBit);
++			previousBit = dataBit;
++		}
++		ql_write_common_reg(qdev,
++				    &port_regs->CommonRegs.
++				    serialPortInterfaceReg,
++				    ISP_NVRAM_MASK | qdev->
++				    eeprom_cmd_data | dataBit |
++				    AUBURN_EEPROM_CLK_RISE);
++		ql_write_common_reg(qdev,
++				    &port_regs->CommonRegs.
++				    serialPortInterfaceReg,
++				    ISP_NVRAM_MASK | qdev->
++				    eeprom_cmd_data | dataBit |
++				    AUBURN_EEPROM_CLK_FALL);
++		cmd = cmd << 1;
++	}
++
++	mask = 1 << (addrBits - 1);
++	/* Force the previous data bit to be different */
++	previousBit = 0xffff;
++	for (i = 0; i < addrBits; i++) {
++		dataBit =
++		    (eepromAddr & mask) ? AUBURN_EEPROM_DO_1 :
++		    AUBURN_EEPROM_DO_0;
++		if (previousBit != dataBit) {
++			/*
++			 * If the bit changed, then change the DO state to
++			 * match
++			 */
++			ql_write_common_reg(qdev,
++					    &port_regs->CommonRegs.
++					    serialPortInterfaceReg,
++					    ISP_NVRAM_MASK | qdev->
++					    eeprom_cmd_data | dataBit);
++			previousBit = dataBit;
++		}
++		ql_write_common_reg(qdev,
++				    &port_regs->CommonRegs.
++				    serialPortInterfaceReg,
++				    ISP_NVRAM_MASK | qdev->
++				    eeprom_cmd_data | dataBit |
++				    AUBURN_EEPROM_CLK_RISE);
++		ql_write_common_reg(qdev,
++				    &port_regs->CommonRegs.
++				    serialPortInterfaceReg,
++				    ISP_NVRAM_MASK | qdev->
++				    eeprom_cmd_data | dataBit |
++				    AUBURN_EEPROM_CLK_FALL);
++		eepromAddr = eepromAddr << 1;
++	}
++}
++
++/*
++ * Caller holds hw_lock.
++ */
++static void fm93c56a_deselect(struct ql3_adapter *qdev)
++{
++	struct ql3xxx_port_registers __iomem *port_regs =
++	    		qdev->mem_map_registers;
++	qdev->eeprom_cmd_data = AUBURN_EEPROM_CS_0;
++	ql_write_common_reg(qdev, &port_regs->CommonRegs.serialPortInterfaceReg,
++			    ISP_NVRAM_MASK | qdev->eeprom_cmd_data);
++}
++
++/*
++ * Caller holds hw_lock.
++ */
++static void fm93c56a_datain(struct ql3_adapter *qdev, unsigned short *value)
++{
++	int i;
++	u32 data = 0;
++	u32 dataBit;
++	struct ql3xxx_port_registers __iomem *port_regs =
++	    		qdev->mem_map_registers;
++
++	/* Read the data bits */
++	/* The first bit is a dummy.  Clock right over it. */
++	for (i = 0; i < dataBits; i++) {
++		ql_write_common_reg(qdev,
++				    &port_regs->CommonRegs.
++				    serialPortInterfaceReg,
++				    ISP_NVRAM_MASK | qdev->eeprom_cmd_data |
++				    AUBURN_EEPROM_CLK_RISE);
++		ql_write_common_reg(qdev,
++				    &port_regs->CommonRegs.
++				    serialPortInterfaceReg,
++				    ISP_NVRAM_MASK | qdev->eeprom_cmd_data |
++				    AUBURN_EEPROM_CLK_FALL);
++		dataBit =
++		    (ql_read_common_reg
++		     (qdev,
++		      &port_regs->CommonRegs.
++		      serialPortInterfaceReg) & AUBURN_EEPROM_DI_1) ? 1 : 0;
++		data = (data << 1) | dataBit;
++	}
++	*value = (u16) data;
++}
++
++/*
++ * Caller holds hw_lock.
++ */
++static void eeprom_readword(struct ql3_adapter *qdev,
++			    u32 eepromAddr, unsigned short *value)
++{
++	fm93c56a_select(qdev);
++	fm93c56a_cmd(qdev, (int)FM93C56A_READ, eepromAddr);
++	fm93c56a_datain(qdev, value);
++	fm93c56a_deselect(qdev);
++}
++
++static void ql_swap_mac_addr(u8 * macAddress)
++{
++#ifdef __BIG_ENDIAN
++	u8 temp;
++	temp = macAddress[0];
++	macAddress[0] = macAddress[1];
++	macAddress[1] = temp;
++	temp = macAddress[2];
++	macAddress[2] = macAddress[3];
++	macAddress[3] = temp;
++	temp = macAddress[4];
++	macAddress[4] = macAddress[5];
++	macAddress[5] = temp;
++#endif
++}
++
++static int ql_get_nvram_params(struct ql3_adapter *qdev)
++{
++	u16 *pEEPROMData;
++	u16 checksum = 0;
++	u32 index;
++	unsigned long hw_flags;
++
++	spin_lock_irqsave(&qdev->hw_lock, hw_flags);
++
++	pEEPROMData = (u16 *) & qdev->nvram_data;
++	qdev->eeprom_cmd_data = 0;
++	if(ql_sem_spinlock(qdev, QL_NVRAM_SEM_MASK,
++			(QL_RESOURCE_BITS_BASE_CODE | (qdev->mac_index) *
++			 2) << 10)) {
++		printk(KERN_ERR PFX"%s: Failed ql_sem_spinlock().\n",
++			__func__);
++		spin_unlock_irqrestore(&qdev->hw_lock, hw_flags);
++		return -1;
++	}
++
++	for (index = 0; index < EEPROM_SIZE; index++) {
++		eeprom_readword(qdev, index, pEEPROMData);
++		checksum += *pEEPROMData;
++		pEEPROMData++;
++	}
++	ql_sem_unlock(qdev, QL_NVRAM_SEM_MASK);
++
++	if (checksum != 0) {
++		printk(KERN_ERR PFX "%s: checksum should be zero, is %x!!\n",
++		       qdev->ndev->name, checksum);
++		spin_unlock_irqrestore(&qdev->hw_lock, hw_flags);
++		return -1;
++	}
++
++	/*
++	 * We have a problem with endianness for the MAC addresses
++	 * and the two 8-bit values version, and numPorts.  We
++	 * have to swap them on big endian systems.
++	 */
++	ql_swap_mac_addr(qdev->nvram_data.funcCfg_fn0.macAddress);
++	ql_swap_mac_addr(qdev->nvram_data.funcCfg_fn1.macAddress);
++	ql_swap_mac_addr(qdev->nvram_data.funcCfg_fn2.macAddress);
++	ql_swap_mac_addr(qdev->nvram_data.funcCfg_fn3.macAddress);
++	pEEPROMData = (u16 *) & qdev->nvram_data.version;
++	*pEEPROMData = le16_to_cpu(*pEEPROMData);
++
++	spin_unlock_irqrestore(&qdev->hw_lock, hw_flags);
++	return checksum;
++}
++
++static const u32 PHYAddr[2] = {
++	PORT0_PHY_ADDRESS, PORT1_PHY_ADDRESS
++};
++
++static int ql_wait_for_mii_ready(struct ql3_adapter *qdev)
++{
++	struct ql3xxx_port_registers __iomem *port_regs =
++	    		qdev->mem_map_registers;
++	u32 temp;
++	int count = 1000;
++
++	while (count) {
++		temp = ql_read_page0_reg(qdev, &port_regs->macMIIStatusReg);
++		if (!(temp & MAC_MII_STATUS_BSY))
++			return 0;
++		udelay(10);
++		count--;
++	}
++	return -1;
++}
++
++static void ql_mii_enable_scan_mode(struct ql3_adapter *qdev)
++{
++	struct ql3xxx_port_registers __iomem *port_regs =
++	    		qdev->mem_map_registers;
++	u32 scanControl;
++
++	if (qdev->numPorts > 1) {
++		/* Auto scan will cycle through multiple ports */
++		scanControl = MAC_MII_CONTROL_AS | MAC_MII_CONTROL_SC;
++	} else {
++		scanControl = MAC_MII_CONTROL_SC;
++	}
++
++	/*
++	 * Scan register 1 of PHY/PETBI,
++	 * Set up to scan both devices
++	 * The autoscan starts from the first register, completes
++	 * the last one before rolling over to the first
++	 */
++	ql_write_page0_reg(qdev, &port_regs->macMIIMgmtAddrReg,
++			   PHYAddr[0] | MII_SCAN_REGISTER);
++
++	ql_write_page0_reg(qdev, &port_regs->macMIIMgmtControlReg,
++			   (scanControl) |
++			   ((MAC_MII_CONTROL_SC | MAC_MII_CONTROL_AS) << 16));
++}
++
++static u8 ql_mii_disable_scan_mode(struct ql3_adapter *qdev)
++{
++	u8 ret;
++	struct ql3xxx_port_registers __iomem *port_regs =
++	    				qdev->mem_map_registers;
++
++	/* See if scan mode is enabled before we turn it off */
++	if (ql_read_page0_reg(qdev, &port_regs->macMIIMgmtControlReg) &
++	    (MAC_MII_CONTROL_AS | MAC_MII_CONTROL_SC)) {
++		/* Scan is enabled */
++		ret = 1;
++	} else {
++		/* Scan is disabled */
++		ret = 0;
++	}
++
++	/*
++	 * When disabling scan mode you must first change the MII register
++	 * address
++	 */
++	ql_write_page0_reg(qdev, &port_regs->macMIIMgmtAddrReg,
++			   PHYAddr[0] | MII_SCAN_REGISTER);
++
++	ql_write_page0_reg(qdev, &port_regs->macMIIMgmtControlReg,
++			   ((MAC_MII_CONTROL_SC | MAC_MII_CONTROL_AS |
++			     MAC_MII_CONTROL_RC) << 16));
++
++	return ret;
++}
++
++static int ql_mii_write_reg_ex(struct ql3_adapter *qdev,
++			       u16 regAddr, u16 value, u32 mac_index)
++{
++	struct ql3xxx_port_registers __iomem *port_regs =
++	    		qdev->mem_map_registers;
++	u8 scanWasEnabled;
++
++	scanWasEnabled = ql_mii_disable_scan_mode(qdev);
++
++	if (ql_wait_for_mii_ready(qdev)) {
++		if (netif_msg_link(qdev))
++			printk(KERN_WARNING PFX
++			       "%s Timed out waiting for management port to "
++			       "get free before issuing command.\n",
++			       qdev->ndev->name);
++		return -1;
++	}
++
++	ql_write_page0_reg(qdev, &port_regs->macMIIMgmtAddrReg,
++			   PHYAddr[mac_index] | regAddr);
++
++	ql_write_page0_reg(qdev, &port_regs->macMIIMgmtDataReg, value);
++
++	/* Wait for write to complete 9/10/04 SJP */
++	if (ql_wait_for_mii_ready(qdev)) {
++		if (netif_msg_link(qdev))
++			printk(KERN_WARNING PFX
++			       "%s: Timed out waiting for management port to"
++			       "get free before issuing command.\n",
++			       qdev->ndev->name);
++		return -1;
++	}
++
++	if (scanWasEnabled)
++		ql_mii_enable_scan_mode(qdev);
++
++	return 0;
++}
++
++static int ql_mii_read_reg_ex(struct ql3_adapter *qdev, u16 regAddr,
++			      u16 * value, u32 mac_index)
++{
++	struct ql3xxx_port_registers __iomem *port_regs =
++	    		qdev->mem_map_registers;
++	u8 scanWasEnabled;
++	u32 temp;
++
++	scanWasEnabled = ql_mii_disable_scan_mode(qdev);
++
++	if (ql_wait_for_mii_ready(qdev)) {
++		if (netif_msg_link(qdev))
++			printk(KERN_WARNING PFX
++			       "%s: Timed out waiting for management port to "
++			       "get free before issuing command.\n",
++			       qdev->ndev->name);
++		return -1;
++	}
++
++	ql_write_page0_reg(qdev, &port_regs->macMIIMgmtAddrReg,
++			   PHYAddr[mac_index] | regAddr);
++
++	ql_write_page0_reg(qdev, &port_regs->macMIIMgmtControlReg,
++			   (MAC_MII_CONTROL_RC << 16));
++
++	ql_write_page0_reg(qdev, &port_regs->macMIIMgmtControlReg,
++			   (MAC_MII_CONTROL_RC << 16) | MAC_MII_CONTROL_RC);
++
++	/* Wait for the read to complete */
++	if (ql_wait_for_mii_ready(qdev)) {
++		if (netif_msg_link(qdev))
++			printk(KERN_WARNING PFX
++			       "%s: Timed out waiting for management port to "
++			       "get free after issuing command.\n",
++			       qdev->ndev->name);
++		return -1;
++	}
++
++	temp = ql_read_page0_reg(qdev, &port_regs->macMIIMgmtDataReg);
++	*value = (u16) temp;
++
++	if (scanWasEnabled)
++		ql_mii_enable_scan_mode(qdev);
++
++	return 0;
++}
++
++static int ql_mii_write_reg(struct ql3_adapter *qdev, u16 regAddr, u16 value)
++{
++	struct ql3xxx_port_registers __iomem *port_regs =
++	    		qdev->mem_map_registers;
++
++	ql_mii_disable_scan_mode(qdev);
++
++	if (ql_wait_for_mii_ready(qdev)) {
++		if (netif_msg_link(qdev))
++			printk(KERN_WARNING PFX
++			       "%s: Timed out waiting for management port to "
++			       "get free before issuing command.\n",
++			       qdev->ndev->name);
++		return -1;
++	}
++
++	ql_write_page0_reg(qdev, &port_regs->macMIIMgmtAddrReg,
++			   qdev->PHYAddr | regAddr);
++
++	ql_write_page0_reg(qdev, &port_regs->macMIIMgmtDataReg, value);
++
++	/* Wait for write to complete. */
++	if (ql_wait_for_mii_ready(qdev)) {
++		if (netif_msg_link(qdev))
++			printk(KERN_WARNING PFX
++			       "%s: Timed out waiting for management port to "
++			       "get free before issuing command.\n",
++			       qdev->ndev->name);
++		return -1;
++	}
++
++	ql_mii_enable_scan_mode(qdev);
++
++	return 0;
++}
++
++static int ql_mii_read_reg(struct ql3_adapter *qdev, u16 regAddr, u16 *value)
++{
++	u32 temp;
++	struct ql3xxx_port_registers __iomem *port_regs =
++	    		qdev->mem_map_registers;
++
++	ql_mii_disable_scan_mode(qdev);
++
++	if (ql_wait_for_mii_ready(qdev)) {
++		if (netif_msg_link(qdev))
++			printk(KERN_WARNING PFX
++			       "%s: Timed out waiting for management port to "
++			       "get free before issuing command.\n",
++			       qdev->ndev->name);
++		return -1;
++	}
++
++	ql_write_page0_reg(qdev, &port_regs->macMIIMgmtAddrReg,
++			   qdev->PHYAddr | regAddr);
++
++	ql_write_page0_reg(qdev, &port_regs->macMIIMgmtControlReg,
++			   (MAC_MII_CONTROL_RC << 16));
++
++	ql_write_page0_reg(qdev, &port_regs->macMIIMgmtControlReg,
++			   (MAC_MII_CONTROL_RC << 16) | MAC_MII_CONTROL_RC);
++
++	/* Wait for the read to complete */
++	if (ql_wait_for_mii_ready(qdev)) {
++		if (netif_msg_link(qdev))
++			printk(KERN_WARNING PFX
++			       "%s: Timed out waiting for management port to "
++			       "get free before issuing command.\n",
++			       qdev->ndev->name);
++		return -1;
++	}
++
++	temp = ql_read_page0_reg(qdev, &port_regs->macMIIMgmtDataReg);
++	*value = (u16) temp;
++
++	ql_mii_enable_scan_mode(qdev);
++
++	return 0;
++}
++
++static void ql_petbi_reset(struct ql3_adapter *qdev)
++{
++	ql_mii_write_reg(qdev, PETBI_CONTROL_REG, PETBI_CTRL_SOFT_RESET);
++}
++
++static void ql_petbi_start_neg(struct ql3_adapter *qdev)
++{
++	u16 reg;
++
++	/* Enable Auto-negotiation sense */
++	ql_mii_read_reg(qdev, PETBI_TBI_CTRL, &reg);
++	reg |= PETBI_TBI_AUTO_SENSE;
++	ql_mii_write_reg(qdev, PETBI_TBI_CTRL, reg);
++
++	ql_mii_write_reg(qdev, PETBI_NEG_ADVER,
++			 PETBI_NEG_PAUSE | PETBI_NEG_DUPLEX);
++
++	ql_mii_write_reg(qdev, PETBI_CONTROL_REG,
++			 PETBI_CTRL_AUTO_NEG | PETBI_CTRL_RESTART_NEG |
++			 PETBI_CTRL_FULL_DUPLEX | PETBI_CTRL_SPEED_1000);
++
++}
++
++static void ql_petbi_reset_ex(struct ql3_adapter *qdev, u32 mac_index)
++{
++	ql_mii_write_reg_ex(qdev, PETBI_CONTROL_REG, PETBI_CTRL_SOFT_RESET,
++			    mac_index);
++}
++
++static void ql_petbi_start_neg_ex(struct ql3_adapter *qdev, u32 mac_index)
++{
++	u16 reg;
++
++	/* Enable Auto-negotiation sense */
++	ql_mii_read_reg_ex(qdev, PETBI_TBI_CTRL, &reg, mac_index);
++	reg |= PETBI_TBI_AUTO_SENSE;
++	ql_mii_write_reg_ex(qdev, PETBI_TBI_CTRL, reg, mac_index);
++
++	ql_mii_write_reg_ex(qdev, PETBI_NEG_ADVER,
++			    PETBI_NEG_PAUSE | PETBI_NEG_DUPLEX, mac_index);
++
++	ql_mii_write_reg_ex(qdev, PETBI_CONTROL_REG,
++			    PETBI_CTRL_AUTO_NEG | PETBI_CTRL_RESTART_NEG |
++			    PETBI_CTRL_FULL_DUPLEX | PETBI_CTRL_SPEED_1000,
++			    mac_index);
++}
++
++static void ql_petbi_init(struct ql3_adapter *qdev)
++{
++	ql_petbi_reset(qdev);
++	ql_petbi_start_neg(qdev);
++}
++
++static void ql_petbi_init_ex(struct ql3_adapter *qdev, u32 mac_index)
++{
++	ql_petbi_reset_ex(qdev, mac_index);
++	ql_petbi_start_neg_ex(qdev, mac_index);
++}
++
++static int ql_is_petbi_neg_pause(struct ql3_adapter *qdev)
++{
++	u16 reg;
++
++	if (ql_mii_read_reg(qdev, PETBI_NEG_PARTNER, &reg) < 0)
++		return 0;
++
++	return (reg & PETBI_NEG_PAUSE_MASK) == PETBI_NEG_PAUSE;
++}
++
++static int ql_phy_get_speed(struct ql3_adapter *qdev)
++{
++	u16 reg;
++
++	if (ql_mii_read_reg(qdev, AUX_CONTROL_STATUS, &reg) < 0)
++		return 0;
++
++	reg = (((reg & 0x18) >> 3) & 3);
++
++	if (reg == 2)
++		return SPEED_1000;
++	else if (reg == 1)
++		return SPEED_100;
++	else if (reg == 0)
++		return SPEED_10;
++	else
++		return -1;
++}
++
++static int ql_is_full_dup(struct ql3_adapter *qdev)
++{
++	u16 reg;
++
++	if (ql_mii_read_reg(qdev, AUX_CONTROL_STATUS, &reg) < 0)
++		return 0;
++
++	return (reg & PHY_AUX_DUPLEX_STAT) != 0;
++}
++
++static int ql_is_phy_neg_pause(struct ql3_adapter *qdev)
++{
++	u16 reg;
++
++	if (ql_mii_read_reg(qdev, PHY_NEG_PARTNER, &reg) < 0)
++		return 0;
++
++	return (reg & PHY_NEG_PAUSE) != 0;
++}
++
++/*
++ * Caller holds hw_lock.
++ */
++static void ql_mac_enable(struct ql3_adapter *qdev, u32 enable)
++{
++	struct ql3xxx_port_registers __iomem *port_regs =
++	    		qdev->mem_map_registers;
++	u32 value;
++
++	if (enable)
++		value = (MAC_CONFIG_REG_PE | (MAC_CONFIG_REG_PE << 16));
++	else
++		value = (MAC_CONFIG_REG_PE << 16);
++
++	if (qdev->mac_index)
++		ql_write_page0_reg(qdev, &port_regs->mac1ConfigReg, value);
++	else
++		ql_write_page0_reg(qdev, &port_regs->mac0ConfigReg, value);
++}
++
++/*
++ * Caller holds hw_lock.
++ */
++static void ql_mac_cfg_soft_reset(struct ql3_adapter *qdev, u32 enable)
++{
++	struct ql3xxx_port_registers __iomem *port_regs =
++	    		qdev->mem_map_registers;
++	u32 value;
++
++	if (enable)
++		value = (MAC_CONFIG_REG_SR | (MAC_CONFIG_REG_SR << 16));
++	else
++		value = (MAC_CONFIG_REG_SR << 16);
++
++	if (qdev->mac_index)
++		ql_write_page0_reg(qdev, &port_regs->mac1ConfigReg, value);
++	else
++		ql_write_page0_reg(qdev, &port_regs->mac0ConfigReg, value);
++}
++
++/*
++ * Caller holds hw_lock.
++ */
++static void ql_mac_cfg_gig(struct ql3_adapter *qdev, u32 enable)
++{
++	struct ql3xxx_port_registers __iomem *port_regs =
++	    		qdev->mem_map_registers;
++	u32 value;
++
++	if (enable)
++		value = (MAC_CONFIG_REG_GM | (MAC_CONFIG_REG_GM << 16));
++	else
++		value = (MAC_CONFIG_REG_GM << 16);
++
++	if (qdev->mac_index)
++		ql_write_page0_reg(qdev, &port_regs->mac1ConfigReg, value);
++	else
++		ql_write_page0_reg(qdev, &port_regs->mac0ConfigReg, value);
++}
++
++/*
++ * Caller holds hw_lock.
++ */
++static void ql_mac_cfg_full_dup(struct ql3_adapter *qdev, u32 enable)
++{
++	struct ql3xxx_port_registers __iomem *port_regs =
++	    		qdev->mem_map_registers;
++	u32 value;
++
++	if (enable)
++		value = (MAC_CONFIG_REG_FD | (MAC_CONFIG_REG_FD << 16));
++	else
++		value = (MAC_CONFIG_REG_FD << 16);
++
++	if (qdev->mac_index)
++		ql_write_page0_reg(qdev, &port_regs->mac1ConfigReg, value);
++	else
++		ql_write_page0_reg(qdev, &port_regs->mac0ConfigReg, value);
++}
++
++/*
++ * Caller holds hw_lock.
++ */
++static void ql_mac_cfg_pause(struct ql3_adapter *qdev, u32 enable)
++{
++	struct ql3xxx_port_registers __iomem *port_regs =
++	    		qdev->mem_map_registers;
++	u32 value;
++
++	if (enable)
++		value =
++		    ((MAC_CONFIG_REG_TF | MAC_CONFIG_REG_RF) |
++		     ((MAC_CONFIG_REG_TF | MAC_CONFIG_REG_RF) << 16));
++	else
++		value = ((MAC_CONFIG_REG_TF | MAC_CONFIG_REG_RF) << 16);
++
++	if (qdev->mac_index)
++		ql_write_page0_reg(qdev, &port_regs->mac1ConfigReg, value);
++	else
++		ql_write_page0_reg(qdev, &port_regs->mac0ConfigReg, value);
++}
++
++/*
++ * Caller holds hw_lock.
++ */
++static int ql_is_fiber(struct ql3_adapter *qdev)
++{
++	struct ql3xxx_port_registers __iomem *port_regs =
++	    		qdev->mem_map_registers;
++	u32 bitToCheck = 0;
++	u32 temp;
++
++	switch (qdev->mac_index) {
++	case 0:
++		bitToCheck = PORT_STATUS_SM0;
++		break;
++	case 1:
++		bitToCheck = PORT_STATUS_SM1;
++		break;
++	}
++
++	temp = ql_read_page0_reg(qdev, &port_regs->portStatus);
++	return (temp & bitToCheck) != 0;
++}
++
++static int ql_is_auto_cfg(struct ql3_adapter *qdev)
++{
++	u16 reg;
++	ql_mii_read_reg(qdev, 0x00, &reg);
++	return (reg & 0x1000) != 0;
++}
++
++/*
++ * Caller holds hw_lock.
++ */
++static int ql_is_auto_neg_complete(struct ql3_adapter *qdev)
++{
++	struct ql3xxx_port_registers __iomem *port_regs =
++	    		qdev->mem_map_registers;
++	u32 bitToCheck = 0;
++	u32 temp;
++
++	switch (qdev->mac_index) {
++	case 0:
++		bitToCheck = PORT_STATUS_AC0;
++		break;
++	case 1:
++		bitToCheck = PORT_STATUS_AC1;
++		break;
++	}
++
++	temp = ql_read_page0_reg(qdev, &port_regs->portStatus);
++	if (temp & bitToCheck) {
++		if (netif_msg_link(qdev))
++			printk(KERN_INFO PFX
++			       "%s: Auto-Negotiate complete.\n",
++			       qdev->ndev->name);
++		return 1;
++	} else {
++		if (netif_msg_link(qdev))
++			printk(KERN_WARNING PFX
++			       "%s: Auto-Negotiate incomplete.\n",
++			       qdev->ndev->name);
++		return 0;
++	}
++}
++
++/*
++ *  ql_is_neg_pause() returns 1 if pause was negotiated to be on
++ */
++static int ql_is_neg_pause(struct ql3_adapter *qdev)
++{
++	if (ql_is_fiber(qdev))
++		return ql_is_petbi_neg_pause(qdev);
++	else
++		return ql_is_phy_neg_pause(qdev);
++}
++
++static int ql_auto_neg_error(struct ql3_adapter *qdev)
++{
++	struct ql3xxx_port_registers __iomem *port_regs =
++	    		qdev->mem_map_registers;
++	u32 bitToCheck = 0;
++	u32 temp;
++
++	switch (qdev->mac_index) {
++	case 0:
++		bitToCheck = PORT_STATUS_AE0;
++		break;
++	case 1:
++		bitToCheck = PORT_STATUS_AE1;
++		break;
++	}
++	temp = ql_read_page0_reg(qdev, &port_regs->portStatus);
++	return (temp & bitToCheck) != 0;
++}
++
++static u32 ql_get_link_speed(struct ql3_adapter *qdev)
++{
++	if (ql_is_fiber(qdev))
++		return SPEED_1000;
++	else
++		return ql_phy_get_speed(qdev);
++}
++
++static int ql_is_link_full_dup(struct ql3_adapter *qdev)
++{
++	if (ql_is_fiber(qdev))
++		return 1;
++	else
++		return ql_is_full_dup(qdev);
++}
++
++/*
++ * Caller holds hw_lock.
++ */
++static int ql_link_down_detect(struct ql3_adapter *qdev)
++{
++	struct ql3xxx_port_registers __iomem *port_regs =
++	    		qdev->mem_map_registers;
++	u32 bitToCheck = 0;
++	u32 temp;
++
++	switch (qdev->mac_index) {
++	case 0:
++		bitToCheck = ISP_CONTROL_LINK_DN_0;
++		break;
++	case 1:
++		bitToCheck = ISP_CONTROL_LINK_DN_1;
++		break;
++	}
++
++	temp =
++	    ql_read_common_reg(qdev, &port_regs->CommonRegs.ispControlStatus);
++	return (temp & bitToCheck) != 0;
++}
++
++/*
++ * Caller holds hw_lock.
++ */
++static int ql_link_down_detect_clear(struct ql3_adapter *qdev)
++{
++	struct ql3xxx_port_registers __iomem *port_regs =
++	    		qdev->mem_map_registers;
++
++	switch (qdev->mac_index) {
++	case 0:
++		ql_write_common_reg(qdev,
++				    &port_regs->CommonRegs.ispControlStatus,
++				    (ISP_CONTROL_LINK_DN_0) |
++				    (ISP_CONTROL_LINK_DN_0 << 16));
++		break;
++
++	case 1:
++		ql_write_common_reg(qdev,
++				    &port_regs->CommonRegs.ispControlStatus,
++				    (ISP_CONTROL_LINK_DN_1) |
++				    (ISP_CONTROL_LINK_DN_1 << 16));
++		break;
++
++	default:
++		return 1;
++	}
++
++	return 0;
++}
++
++/*
++ * Caller holds hw_lock.
++ */
++static int ql_this_adapter_controls_port(struct ql3_adapter *qdev,
++					 u32 mac_index)
++{
++	struct ql3xxx_port_registers __iomem *port_regs =
++	    		qdev->mem_map_registers;
++	u32 bitToCheck = 0;
++	u32 temp;
++
++	switch (mac_index) {
++	case 0:
++		bitToCheck = PORT_STATUS_F1_ENABLED;
++		break;
++	case 1:
++		bitToCheck = PORT_STATUS_F3_ENABLED;
++		break;
++	default:
++		break;
++	}
++
++	temp = ql_read_page0_reg(qdev, &port_regs->portStatus);
++	if (temp & bitToCheck) {
++		if (netif_msg_link(qdev))
++			printk(KERN_DEBUG PFX
++			       "%s: is not link master.\n", qdev->ndev->name);
++		return 0;
++	} else {
++		if (netif_msg_link(qdev))
++			printk(KERN_DEBUG PFX
++			       "%s: is link master.\n", qdev->ndev->name);
++		return 1;
++	}
++}
++
++static void ql_phy_reset_ex(struct ql3_adapter *qdev, u32 mac_index)
++{
++	ql_mii_write_reg_ex(qdev, CONTROL_REG, PHY_CTRL_SOFT_RESET, mac_index);
++}
++
++static void ql_phy_start_neg_ex(struct ql3_adapter *qdev, u32 mac_index)
++{
++	u16 reg;
++
++	ql_mii_write_reg_ex(qdev, PHY_NEG_ADVER,
++			    PHY_NEG_PAUSE | PHY_NEG_ADV_SPEED | 1, mac_index);
++
++	ql_mii_read_reg_ex(qdev, CONTROL_REG, &reg, mac_index);
++	ql_mii_write_reg_ex(qdev, CONTROL_REG, reg | PHY_CTRL_RESTART_NEG,
++			    mac_index);
++}
++
++static void ql_phy_init_ex(struct ql3_adapter *qdev, u32 mac_index)
++{
++	ql_phy_reset_ex(qdev, mac_index);
++	ql_phy_start_neg_ex(qdev, mac_index);
++}
++
++/*
++ * Caller holds hw_lock.
++ */
++static u32 ql_get_link_state(struct ql3_adapter *qdev)
++{
++	struct ql3xxx_port_registers __iomem *port_regs =
++	    		qdev->mem_map_registers;
++	u32 bitToCheck = 0;
++	u32 temp, linkState;
++
++	switch (qdev->mac_index) {
++	case 0:
++		bitToCheck = PORT_STATUS_UP0;
++		break;
++	case 1:
++		bitToCheck = PORT_STATUS_UP1;
++		break;
++	}
++	temp = ql_read_page0_reg(qdev, &port_regs->portStatus);
++	if (temp & bitToCheck) {
++		linkState = LS_UP;
++	} else {
++		linkState = LS_DOWN;
++		if (netif_msg_link(qdev))
++			printk(KERN_WARNING PFX
++			       "%s: Link is down.\n", qdev->ndev->name);
++	}
++	return linkState;
++}
++
++static int ql_port_start(struct ql3_adapter *qdev)
++{
++	if(ql_sem_spinlock(qdev, QL_PHY_GIO_SEM_MASK,
++		(QL_RESOURCE_BITS_BASE_CODE | (qdev->mac_index) *
++			 2) << 7))
++		return -1;
++
++	if (ql_is_fiber(qdev)) {
++		ql_petbi_init(qdev);
++	} else {
++		/* Copper port */
++		ql_phy_init_ex(qdev, qdev->mac_index);
++	}
++
++	ql_sem_unlock(qdev, QL_PHY_GIO_SEM_MASK);
++	return 0;
++}
++
++static int ql_finish_auto_neg(struct ql3_adapter *qdev)
++{
++
++	if(ql_sem_spinlock(qdev, QL_PHY_GIO_SEM_MASK,
++		(QL_RESOURCE_BITS_BASE_CODE | (qdev->mac_index) *
++			 2) << 7))
++		return -1;
++
++	if (!ql_auto_neg_error(qdev)) {
++		if (test_bit(QL_LINK_MASTER,&qdev->flags)) {
++			/* configure the MAC */
++			if (netif_msg_link(qdev))
++				printk(KERN_DEBUG PFX
++				       "%s: Configuring link.\n",
++				       qdev->ndev->
++				       name);
++			ql_mac_cfg_soft_reset(qdev, 1);
++			ql_mac_cfg_gig(qdev,
++				       (ql_get_link_speed
++					(qdev) ==
++					SPEED_1000));
++			ql_mac_cfg_full_dup(qdev,
++					    ql_is_link_full_dup
++					    (qdev));
++			ql_mac_cfg_pause(qdev,
++					 ql_is_neg_pause
++					 (qdev));
++			ql_mac_cfg_soft_reset(qdev, 0);
++
++			/* enable the MAC */
++			if (netif_msg_link(qdev))
++				printk(KERN_DEBUG PFX
++				       "%s: Enabling mac.\n",
++				       qdev->ndev->
++					       name);
++			ql_mac_enable(qdev, 1);
++		}
++
++		if (netif_msg_link(qdev))
++			printk(KERN_DEBUG PFX
++			       "%s: Change port_link_state LS_DOWN to LS_UP.\n",
++			       qdev->ndev->name);
++		qdev->port_link_state = LS_UP;
++		netif_start_queue(qdev->ndev);
++		netif_carrier_on(qdev->ndev);
++		if (netif_msg_link(qdev))
++			printk(KERN_INFO PFX
++			       "%s: Link is up at %d Mbps, %s duplex.\n",
++			       qdev->ndev->name,
++			       ql_get_link_speed(qdev),
++			       ql_is_link_full_dup(qdev)
++			       ? "full" : "half");
++
++	} else {	/* Remote error detected */
++
++		if (test_bit(QL_LINK_MASTER,&qdev->flags)) {
++			if (netif_msg_link(qdev))
++				printk(KERN_DEBUG PFX
++				       "%s: Remote error detected. "
++				       "Calling ql_port_start().\n",
++				       qdev->ndev->
++				       name);
++			/*
++			 * ql_port_start() is shared code and needs
++			 * to lock the PHY on it's own.
++			 */
++			ql_sem_unlock(qdev, QL_PHY_GIO_SEM_MASK);
++			if(ql_port_start(qdev))	{/* Restart port */
++				return -1;
++			} else
++				return 0;
++		}
++	}
++	ql_sem_unlock(qdev, QL_PHY_GIO_SEM_MASK);
++	return 0;
++}
++
++static void ql_link_state_machine(struct ql3_adapter *qdev)
++{
++	u32 curr_link_state;
++	unsigned long hw_flags;
++
++	spin_lock_irqsave(&qdev->hw_lock, hw_flags);
++
++	curr_link_state = ql_get_link_state(qdev);
++
++	if (test_bit(QL_RESET_ACTIVE,&qdev->flags)) {
++		if (netif_msg_link(qdev))
++			printk(KERN_INFO PFX
++			       "%s: Reset in progress, skip processing link "
++			       "state.\n", qdev->ndev->name);
++		return;
++	}
++
++	switch (qdev->port_link_state) {
++	default:
++		if (test_bit(QL_LINK_MASTER,&qdev->flags)) {
++			ql_port_start(qdev);
++		}
++		qdev->port_link_state = LS_DOWN;
++		/* Fall Through */
++
++	case LS_DOWN:
++		if (netif_msg_link(qdev))
++			printk(KERN_DEBUG PFX
++			       "%s: port_link_state = LS_DOWN.\n",
++			       qdev->ndev->name);
++		if (curr_link_state == LS_UP) {
++			if (netif_msg_link(qdev))
++				printk(KERN_DEBUG PFX
++				       "%s: curr_link_state = LS_UP.\n",
++				       qdev->ndev->name);
++			if (ql_is_auto_neg_complete(qdev))
++				ql_finish_auto_neg(qdev);
++
++			if (qdev->port_link_state == LS_UP)
++				ql_link_down_detect_clear(qdev);
++
++		}
++		break;
++
++	case LS_UP:
++		/*
++		 * See if the link is currently down or went down and came
++		 * back up
++		 */
++		if ((curr_link_state == LS_DOWN) || ql_link_down_detect(qdev)) {
++			if (netif_msg_link(qdev))
++				printk(KERN_INFO PFX "%s: Link is down.\n",
++				       qdev->ndev->name);
++			qdev->port_link_state = LS_DOWN;
++		}
++		break;
++	}
++	spin_unlock_irqrestore(&qdev->hw_lock, hw_flags);
++}
++
++/*
++ * Caller must take hw_lock and QL_PHY_GIO_SEM.
++ */
++static void ql_get_phy_owner(struct ql3_adapter *qdev)
++{
++	if (ql_this_adapter_controls_port(qdev, qdev->mac_index))
++		set_bit(QL_LINK_MASTER,&qdev->flags);
++	else
++		clear_bit(QL_LINK_MASTER,&qdev->flags);
++}
++
++/*
++ * Caller must take hw_lock and QL_PHY_GIO_SEM.
++ */
++static void ql_init_scan_mode(struct ql3_adapter *qdev)
++{
++	ql_mii_enable_scan_mode(qdev);
++
++	if (test_bit(QL_LINK_OPTICAL,&qdev->flags)) {
++		if (ql_this_adapter_controls_port(qdev, qdev->mac_index))
++			ql_petbi_init_ex(qdev, qdev->mac_index);
++	} else {
++		if (ql_this_adapter_controls_port(qdev, qdev->mac_index))
++			ql_phy_init_ex(qdev, qdev->mac_index);
++	}
++}
++
++/*
++ * MII_Setup needs to be called before taking the PHY out of reset so that the
++ * management interface clock speed can be set properly.  It would be better if
++ * we had a way to disable MDC until after the PHY is out of reset, but we
++ * don't have that capability.
++ */
++static int ql_mii_setup(struct ql3_adapter *qdev)
++{
++	u32 reg;
++	struct ql3xxx_port_registers __iomem *port_regs =
++	    		qdev->mem_map_registers;
++
++	if(ql_sem_spinlock(qdev, QL_PHY_GIO_SEM_MASK,
++			(QL_RESOURCE_BITS_BASE_CODE | (qdev->mac_index) *
++			 2) << 7))
++		return -1;
++
++	/* Divide 125MHz clock by 28 to meet PHY timing requirements */
++	reg = MAC_MII_CONTROL_CLK_SEL_DIV28;
++
++	ql_write_page0_reg(qdev, &port_regs->macMIIMgmtControlReg,
++			   reg | ((MAC_MII_CONTROL_CLK_SEL_MASK) << 16));
++
++	ql_sem_unlock(qdev, QL_PHY_GIO_SEM_MASK);
++	return 0;
++}
++
++static u32 ql_supported_modes(struct ql3_adapter *qdev)
++{
++	u32 supported;
++
++	if (test_bit(QL_LINK_OPTICAL,&qdev->flags)) {
++		supported = SUPPORTED_1000baseT_Full | SUPPORTED_FIBRE
++		    | SUPPORTED_Autoneg;
++	} else {
++		supported = SUPPORTED_10baseT_Half
++		    | SUPPORTED_10baseT_Full
++		    | SUPPORTED_100baseT_Half
++		    | SUPPORTED_100baseT_Full
++		    | SUPPORTED_1000baseT_Half
++		    | SUPPORTED_1000baseT_Full
++		    | SUPPORTED_Autoneg | SUPPORTED_TP;
++	}
++
++	return supported;
++}
++
++static int ql_get_auto_cfg_status(struct ql3_adapter *qdev)
++{
++	int status;
++	unsigned long hw_flags;
++	spin_lock_irqsave(&qdev->hw_lock, hw_flags);
++	if(ql_sem_spinlock(qdev, QL_PHY_GIO_SEM_MASK,
++		(QL_RESOURCE_BITS_BASE_CODE | (qdev->mac_index) *
++			 2) << 7))
++		return 0;
++	status = ql_is_auto_cfg(qdev);
++	ql_sem_unlock(qdev, QL_PHY_GIO_SEM_MASK);
++	spin_unlock_irqrestore(&qdev->hw_lock, hw_flags);
++	return status;
++}
++
++static u32 ql_get_speed(struct ql3_adapter *qdev)
++{
++	u32 status;
++	unsigned long hw_flags;
++	spin_lock_irqsave(&qdev->hw_lock, hw_flags);
++	if(ql_sem_spinlock(qdev, QL_PHY_GIO_SEM_MASK,
++		(QL_RESOURCE_BITS_BASE_CODE | (qdev->mac_index) *
++			 2) << 7))
++		return 0;
++	status = ql_get_link_speed(qdev);
++	ql_sem_unlock(qdev, QL_PHY_GIO_SEM_MASK);
++	spin_unlock_irqrestore(&qdev->hw_lock, hw_flags);
++	return status;
++}
++
++static int ql_get_full_dup(struct ql3_adapter *qdev)
++{
++	int status;
++	unsigned long hw_flags;
++	spin_lock_irqsave(&qdev->hw_lock, hw_flags);
++	if(ql_sem_spinlock(qdev, QL_PHY_GIO_SEM_MASK,
++		(QL_RESOURCE_BITS_BASE_CODE | (qdev->mac_index) *
++			 2) << 7))
++		return 0;
++	status = ql_is_link_full_dup(qdev);
++	ql_sem_unlock(qdev, QL_PHY_GIO_SEM_MASK);
++	spin_unlock_irqrestore(&qdev->hw_lock, hw_flags);
++	return status;
++}
++
++
++static int ql_get_settings(struct net_device *ndev, struct ethtool_cmd *ecmd)
++{
++	struct ql3_adapter *qdev = netdev_priv(ndev);
++
++	ecmd->transceiver = XCVR_INTERNAL;
++	ecmd->supported = ql_supported_modes(qdev);
++
++	if (test_bit(QL_LINK_OPTICAL,&qdev->flags)) {
++		ecmd->port = PORT_FIBRE;
++	} else {
++		ecmd->port = PORT_TP;
++		ecmd->phy_address = qdev->PHYAddr;
++	}
++	ecmd->advertising = ql_supported_modes(qdev);
++	ecmd->autoneg = ql_get_auto_cfg_status(qdev);
++	ecmd->speed = ql_get_speed(qdev);
++	ecmd->duplex = ql_get_full_dup(qdev);
++	return 0;
++}
++
++static void ql_get_drvinfo(struct net_device *ndev,
++			   struct ethtool_drvinfo *drvinfo)
++{
++	struct ql3_adapter *qdev = netdev_priv(ndev);
++	strncpy(drvinfo->driver, ql3xxx_driver_name, 32);
++	strncpy(drvinfo->version, ql3xxx_driver_version, 32);
++	strncpy(drvinfo->fw_version, "N/A", 32);
++	strncpy(drvinfo->bus_info, pci_name(qdev->pdev), 32);
++	drvinfo->n_stats = 0;
++	drvinfo->testinfo_len = 0;
++	drvinfo->regdump_len = 0;
++	drvinfo->eedump_len = 0;
++}
++
++static u32 ql_get_msglevel(struct net_device *ndev)
++{
++	struct ql3_adapter *qdev = netdev_priv(ndev);
++	return qdev->msg_enable;
++}
++
++static void ql_set_msglevel(struct net_device *ndev, u32 value)
++{
++	struct ql3_adapter *qdev = netdev_priv(ndev);
++	qdev->msg_enable = value;
++}
++
++static const struct ethtool_ops ql3xxx_ethtool_ops = {
++	.get_settings = ql_get_settings,
++	.get_drvinfo = ql_get_drvinfo,
++	.get_perm_addr = ethtool_op_get_perm_addr,
++	.get_link = ethtool_op_get_link,
++	.get_msglevel = ql_get_msglevel,
++	.set_msglevel = ql_set_msglevel,
++};
++
++static int ql_populate_free_queue(struct ql3_adapter *qdev)
++{
++	struct ql_rcv_buf_cb *lrg_buf_cb = qdev->lrg_buf_free_head;
++	u64 map;
++
++	while (lrg_buf_cb) {
++		if (!lrg_buf_cb->skb) {
++			lrg_buf_cb->skb = dev_alloc_skb(qdev->lrg_buffer_len);
++			if (unlikely(!lrg_buf_cb->skb)) {
++				printk(KERN_DEBUG PFX
++				       "%s: Failed dev_alloc_skb().\n",
++				       qdev->ndev->name);
++				break;
++			} else {
++				/*
++				 * We save some space to copy the ethhdr from
++				 * first buffer
++				 */
++				skb_reserve(lrg_buf_cb->skb, QL_HEADER_SPACE);
++				map = pci_map_single(qdev->pdev,
++						     lrg_buf_cb->skb->data,
++						     qdev->lrg_buffer_len -
++						     QL_HEADER_SPACE,
++						     PCI_DMA_FROMDEVICE);
++				lrg_buf_cb->buf_phy_addr_low =
++				    cpu_to_le32(LS_64BITS(map));
++				lrg_buf_cb->buf_phy_addr_high =
++				    cpu_to_le32(MS_64BITS(map));
++				pci_unmap_addr_set(lrg_buf_cb, mapaddr, map);
++				pci_unmap_len_set(lrg_buf_cb, maplen,
++						  qdev->lrg_buffer_len -
++						  QL_HEADER_SPACE);
++				--qdev->lrg_buf_skb_check;
++				if (!qdev->lrg_buf_skb_check)
++					return 1;
++			}
++		}
++		lrg_buf_cb = lrg_buf_cb->next;
++	}
++	return 0;
++}
++
++/*
++ * Caller holds hw_lock.
++ */
++static void ql_update_lrg_bufq_prod_index(struct ql3_adapter *qdev)
++{
++	struct bufq_addr_element *lrg_buf_q_ele;
++	int i;
++	struct ql_rcv_buf_cb *lrg_buf_cb;
++	struct ql3xxx_port_registers __iomem *port_regs = qdev->mem_map_registers;
++
++	if ((qdev->lrg_buf_free_count >= 8)
++	    && (qdev->lrg_buf_release_cnt >= 16)) {
++
++		if (qdev->lrg_buf_skb_check)
++			if (!ql_populate_free_queue(qdev))
++				return;
++
++		lrg_buf_q_ele = qdev->lrg_buf_next_free;
++
++		while ((qdev->lrg_buf_release_cnt >= 16)
++		       && (qdev->lrg_buf_free_count >= 8)) {
++
++			for (i = 0; i < 8; i++) {
++				lrg_buf_cb =
++				    ql_get_from_lrg_buf_free_list(qdev);
++				lrg_buf_q_ele->addr_high =
++				    lrg_buf_cb->buf_phy_addr_high;
++				lrg_buf_q_ele->addr_low =
++				    lrg_buf_cb->buf_phy_addr_low;
++				lrg_buf_q_ele++;
++
++				qdev->lrg_buf_release_cnt--;
++			}
++
++			qdev->lrg_buf_q_producer_index++;
++
++			if (qdev->lrg_buf_q_producer_index == NUM_LBUFQ_ENTRIES)
++				qdev->lrg_buf_q_producer_index = 0;
++
++			if (qdev->lrg_buf_q_producer_index ==
++			    (NUM_LBUFQ_ENTRIES - 1)) {
++				lrg_buf_q_ele = qdev->lrg_buf_q_virt_addr;
++			}
++		}
++
++		qdev->lrg_buf_next_free = lrg_buf_q_ele;
++
++		ql_write_common_reg(qdev,
++				    &port_regs->CommonRegs.
++				    rxLargeQProducerIndex,
++				    qdev->lrg_buf_q_producer_index);
++	}
++}
++
++static void ql_process_mac_tx_intr(struct ql3_adapter *qdev,
++				   struct ob_mac_iocb_rsp *mac_rsp)
++{
++	struct ql_tx_buf_cb *tx_cb;
++
++	tx_cb = &qdev->tx_buf[mac_rsp->transaction_id];
++	pci_unmap_single(qdev->pdev,
++			 pci_unmap_addr(tx_cb, mapaddr),
++			 pci_unmap_len(tx_cb, maplen), PCI_DMA_TODEVICE);
++	dev_kfree_skb_irq(tx_cb->skb);
++	qdev->stats.tx_packets++;
++	qdev->stats.tx_bytes += tx_cb->skb->len;
++	tx_cb->skb = NULL;
++	atomic_inc(&qdev->tx_count);
++}
++
++static void ql_process_mac_rx_intr(struct ql3_adapter *qdev,
++				   struct ib_mac_iocb_rsp *ib_mac_rsp_ptr)
++{
++	long int offset;
++	u32 lrg_buf_phy_addr_low = 0;
++	struct ql_rcv_buf_cb *lrg_buf_cb1 = NULL;
++	struct ql_rcv_buf_cb *lrg_buf_cb2 = NULL;
++	u32 *curr_ial_ptr;
++	struct sk_buff *skb;
++	u16 length = le16_to_cpu(ib_mac_rsp_ptr->length);
++
++	/*
++	 * Get the inbound address list (small buffer).
++	 */
++	offset = qdev->small_buf_index * QL_SMALL_BUFFER_SIZE;
++	if (++qdev->small_buf_index == NUM_SMALL_BUFFERS)
++		qdev->small_buf_index = 0;
++
++	curr_ial_ptr = (u32 *) (qdev->small_buf_virt_addr + offset);
++	qdev->last_rsp_offset = qdev->small_buf_phy_addr_low + offset;
++	qdev->small_buf_release_cnt++;
++
++	/* start of first buffer */
++	lrg_buf_phy_addr_low = le32_to_cpu(*curr_ial_ptr);
++	lrg_buf_cb1 = &qdev->lrg_buf[qdev->lrg_buf_index];
++	qdev->lrg_buf_release_cnt++;
++	if (++qdev->lrg_buf_index == NUM_LARGE_BUFFERS)
++		qdev->lrg_buf_index = 0;
++	curr_ial_ptr++;		/* 64-bit pointers require two incs. */
++	curr_ial_ptr++;
++
++	/* start of second buffer */
++	lrg_buf_phy_addr_low = le32_to_cpu(*curr_ial_ptr);
++	lrg_buf_cb2 = &qdev->lrg_buf[qdev->lrg_buf_index];
++
++	/*
++	 * Second buffer gets sent up the stack.
++	 */
++	qdev->lrg_buf_release_cnt++;
++	if (++qdev->lrg_buf_index == NUM_LARGE_BUFFERS)
++		qdev->lrg_buf_index = 0;
++	skb = lrg_buf_cb2->skb;
++
++	qdev->stats.rx_packets++;
++	qdev->stats.rx_bytes += length;
++
++	skb_put(skb, length);
++	pci_unmap_single(qdev->pdev,
++			 pci_unmap_addr(lrg_buf_cb2, mapaddr),
++			 pci_unmap_len(lrg_buf_cb2, maplen),
++			 PCI_DMA_FROMDEVICE);
++	prefetch(skb->data);
++	skb->dev = qdev->ndev;
++	skb->ip_summed = CHECKSUM_NONE;
++	skb->protocol = eth_type_trans(skb, qdev->ndev);
++
++	netif_receive_skb(skb);
++	qdev->ndev->last_rx = jiffies;
++	lrg_buf_cb2->skb = NULL;
++
++	ql_release_to_lrg_buf_free_list(qdev, lrg_buf_cb1);
++	ql_release_to_lrg_buf_free_list(qdev, lrg_buf_cb2);
++}
++
++static void ql_process_macip_rx_intr(struct ql3_adapter *qdev,
++				     struct ib_ip_iocb_rsp *ib_ip_rsp_ptr)
++{
++	long int offset;
++	u32 lrg_buf_phy_addr_low = 0;
++	struct ql_rcv_buf_cb *lrg_buf_cb1 = NULL;
++	struct ql_rcv_buf_cb *lrg_buf_cb2 = NULL;
++	u32 *curr_ial_ptr;
++	struct sk_buff *skb1, *skb2;
++	struct net_device *ndev = qdev->ndev;
++	u16 length = le16_to_cpu(ib_ip_rsp_ptr->length);
++	u16 size = 0;
++
++	/*
++	 * Get the inbound address list (small buffer).
++	 */
++
++	offset = qdev->small_buf_index * QL_SMALL_BUFFER_SIZE;
++	if (++qdev->small_buf_index == NUM_SMALL_BUFFERS)
++		qdev->small_buf_index = 0;
++	curr_ial_ptr = (u32 *) (qdev->small_buf_virt_addr + offset);
++	qdev->last_rsp_offset = qdev->small_buf_phy_addr_low + offset;
++	qdev->small_buf_release_cnt++;
++
++	/* start of first buffer */
++	lrg_buf_phy_addr_low = le32_to_cpu(*curr_ial_ptr);
++	lrg_buf_cb1 = &qdev->lrg_buf[qdev->lrg_buf_index];
++
++	qdev->lrg_buf_release_cnt++;
++	if (++qdev->lrg_buf_index == NUM_LARGE_BUFFERS)
++		qdev->lrg_buf_index = 0;
++	skb1 = lrg_buf_cb1->skb;
++	curr_ial_ptr++;		/* 64-bit pointers require two incs. */
++	curr_ial_ptr++;
++
++	/* start of second buffer */
++	lrg_buf_phy_addr_low = le32_to_cpu(*curr_ial_ptr);
++	lrg_buf_cb2 = &qdev->lrg_buf[qdev->lrg_buf_index];
++	skb2 = lrg_buf_cb2->skb;
++	qdev->lrg_buf_release_cnt++;
++	if (++qdev->lrg_buf_index == NUM_LARGE_BUFFERS)
++		qdev->lrg_buf_index = 0;
++
++	qdev->stats.rx_packets++;
++	qdev->stats.rx_bytes += length;
++
++	/*
++	 * Copy the ethhdr from first buffer to second. This
++	 * is necessary for IP completions.
++	 */
++	if (*((u16 *) skb1->data) != 0xFFFF)
++		size = VLAN_ETH_HLEN;
++	else
++		size = ETH_HLEN;
++
++	skb_put(skb2, length);	/* Just the second buffer length here. */
++	pci_unmap_single(qdev->pdev,
++			 pci_unmap_addr(lrg_buf_cb2, mapaddr),
++			 pci_unmap_len(lrg_buf_cb2, maplen),
++			 PCI_DMA_FROMDEVICE);
++	prefetch(skb2->data);
++
++	memcpy(skb_push(skb2, size), skb1->data + VLAN_ID_LEN, size);
++	skb2->dev = qdev->ndev;
++	skb2->ip_summed = CHECKSUM_NONE;
++	skb2->protocol = eth_type_trans(skb2, qdev->ndev);
++
++	netif_receive_skb(skb2);
++	ndev->last_rx = jiffies;
++	lrg_buf_cb2->skb = NULL;
++
++	ql_release_to_lrg_buf_free_list(qdev, lrg_buf_cb1);
++	ql_release_to_lrg_buf_free_list(qdev, lrg_buf_cb2);
++}
++
++static int ql_tx_rx_clean(struct ql3_adapter *qdev,
++			  int *tx_cleaned, int *rx_cleaned, int work_to_do)
++{
++	struct ql3xxx_port_registers __iomem *port_regs = qdev->mem_map_registers;
++	struct net_rsp_iocb *net_rsp;
++	struct net_device *ndev = qdev->ndev;
++	unsigned long hw_flags;
++
++	/* While there are entries in the completion queue. */
++	while ((cpu_to_le32(*(qdev->prsp_producer_index)) !=
++		qdev->rsp_consumer_index) && (*rx_cleaned < work_to_do)) {
++
++		net_rsp = qdev->rsp_current;
++		switch (net_rsp->opcode) {
++
++		case OPCODE_OB_MAC_IOCB_FN0:
++		case OPCODE_OB_MAC_IOCB_FN2:
++			ql_process_mac_tx_intr(qdev, (struct ob_mac_iocb_rsp *)
++					       net_rsp);
++			(*tx_cleaned)++;
++			break;
++
++		case OPCODE_IB_MAC_IOCB:
++			ql_process_mac_rx_intr(qdev, (struct ib_mac_iocb_rsp *)
++					       net_rsp);
++			(*rx_cleaned)++;
++			break;
++
++		case OPCODE_IB_IP_IOCB:
++			ql_process_macip_rx_intr(qdev, (struct ib_ip_iocb_rsp *)
++						 net_rsp);
++			(*rx_cleaned)++;
++			break;
++		default:
++			{
++				u32 *tmp = (u32 *) net_rsp;
++				printk(KERN_ERR PFX
++				       "%s: Hit default case, not "
++				       "handled!\n"
++				       "	dropping the packet, opcode = "
++				       "%x.\n",
++				       ndev->name, net_rsp->opcode);
++				printk(KERN_ERR PFX
++				       "0x%08lx 0x%08lx 0x%08lx 0x%08lx \n",
++				       (unsigned long int)tmp[0],
++				       (unsigned long int)tmp[1],
++				       (unsigned long int)tmp[2],
++				       (unsigned long int)tmp[3]);
++			}
++		}
++
++		qdev->rsp_consumer_index++;
++
++		if (qdev->rsp_consumer_index == NUM_RSP_Q_ENTRIES) {
++			qdev->rsp_consumer_index = 0;
++			qdev->rsp_current = qdev->rsp_q_virt_addr;
++		} else {
++			qdev->rsp_current++;
++		}
++	}
++
++	spin_lock_irqsave(&qdev->hw_lock, hw_flags);
++
++	ql_update_lrg_bufq_prod_index(qdev);
++
++	if (qdev->small_buf_release_cnt >= 16) {
++		while (qdev->small_buf_release_cnt >= 16) {
++			qdev->small_buf_q_producer_index++;
++
++			if (qdev->small_buf_q_producer_index ==
++			    NUM_SBUFQ_ENTRIES)
++				qdev->small_buf_q_producer_index = 0;
++			qdev->small_buf_release_cnt -= 8;
++		}
++
++		ql_write_common_reg(qdev,
++				    &port_regs->CommonRegs.
++				    rxSmallQProducerIndex,
++				    qdev->small_buf_q_producer_index);
++	}
++
++	ql_write_common_reg(qdev,
++			    &port_regs->CommonRegs.rspQConsumerIndex,
++			    qdev->rsp_consumer_index);
++	spin_unlock_irqrestore(&qdev->hw_lock, hw_flags);
++
++	if (unlikely(netif_queue_stopped(qdev->ndev))) {
++		if (netif_queue_stopped(qdev->ndev) &&
++		    (atomic_read(&qdev->tx_count) > (NUM_REQ_Q_ENTRIES / 4)))
++			netif_wake_queue(qdev->ndev);
++	}
++
++	return *tx_cleaned + *rx_cleaned;
++}
++
++static int ql_poll(struct net_device *ndev, int *budget)
++{
++	struct ql3_adapter *qdev = netdev_priv(ndev);
++	int work_to_do = min(*budget, ndev->quota);
++	int rx_cleaned = 0, tx_cleaned = 0;
++
++	if (!netif_carrier_ok(ndev))
++		goto quit_polling;
++
++	ql_tx_rx_clean(qdev, &tx_cleaned, &rx_cleaned, work_to_do);
++	*budget -= rx_cleaned;
++	ndev->quota -= rx_cleaned;
++
++	if ((!tx_cleaned && !rx_cleaned) || !netif_running(ndev)) {
++quit_polling:
++		netif_rx_complete(ndev);
++		ql_enable_interrupts(qdev);
++		return 0;
++	}
++	return 1;
++}
++
++static irqreturn_t ql3xxx_isr(int irq, void *dev_id, struct pt_regs *regs)
++{
++
++	struct net_device *ndev = dev_id;
++	struct ql3_adapter *qdev = netdev_priv(ndev);
++	struct ql3xxx_port_registers __iomem *port_regs = qdev->mem_map_registers;
++	u32 value;
++	int handled = 1;
++	u32 var;
++
++	port_regs = qdev->mem_map_registers;
++
++	value =
++	    ql_read_common_reg_l(qdev, &port_regs->CommonRegs.ispControlStatus);
++
++	if (value & (ISP_CONTROL_FE | ISP_CONTROL_RI)) {
++		spin_lock(&qdev->adapter_lock);
++		netif_stop_queue(qdev->ndev);
++		netif_carrier_off(qdev->ndev);
++		ql_disable_interrupts(qdev);
++		qdev->port_link_state = LS_DOWN;
++		set_bit(QL_RESET_ACTIVE,&qdev->flags) ;
++
++		if (value & ISP_CONTROL_FE) {
++			/*
++			 * Chip Fatal Error.
++			 */
++			var =
++			    ql_read_page0_reg_l(qdev,
++					      &port_regs->PortFatalErrStatus);
++			printk(KERN_WARNING PFX
++			       "%s: Resetting chip. PortFatalErrStatus "
++			       "register = 0x%x\n", ndev->name, var);
++			set_bit(QL_RESET_START,&qdev->flags) ;
++		} else {
++			/*
++			 * Soft Reset Requested.
++			 */
++			set_bit(QL_RESET_PER_SCSI,&qdev->flags) ;
++			printk(KERN_ERR PFX
++			       "%s: Another function issued a reset to the "
++			       "chip. ISR value = %x.\n", ndev->name, value);
++		}
++		queue_work(qdev->workqueue, &qdev->reset_work);
++		spin_unlock(&qdev->adapter_lock);
++	} else if (value & ISP_IMR_DISABLE_CMPL_INT) {
++		ql_disable_interrupts(qdev);
++		if (likely(netif_rx_schedule_prep(ndev)))
++			__netif_rx_schedule(ndev);
++		else
++			ql_enable_interrupts(qdev);
++	} else {
++		return IRQ_NONE;
++	}
++
++	return IRQ_RETVAL(handled);
++}
++
++static int ql3xxx_send(struct sk_buff *skb, struct net_device *ndev)
++{
++	struct ql3_adapter *qdev = (struct ql3_adapter *)netdev_priv(ndev);
++	struct ql3xxx_port_registers __iomem *port_regs = qdev->mem_map_registers;
++	struct ql_tx_buf_cb *tx_cb;
++	struct ob_mac_iocb_req *mac_iocb_ptr;
++	u64 map;
++
++	if (unlikely(atomic_read(&qdev->tx_count) < 2)) {
++		if (!netif_queue_stopped(ndev))
++			netif_stop_queue(ndev);
++		return NETDEV_TX_BUSY;
++	}
++	tx_cb = &qdev->tx_buf[qdev->req_producer_index] ;
++	mac_iocb_ptr = tx_cb->queue_entry;
++	memset((void *)mac_iocb_ptr, 0, sizeof(struct ob_mac_iocb_req));
++	mac_iocb_ptr->opcode = qdev->mac_ob_opcode;
++	mac_iocb_ptr->flags |= qdev->mb_bit_mask;
++	mac_iocb_ptr->transaction_id = qdev->req_producer_index;
++	mac_iocb_ptr->data_len = cpu_to_le16((u16) skb->len);
++	tx_cb->skb = skb;
++	map = pci_map_single(qdev->pdev, skb->data, skb->len, PCI_DMA_TODEVICE);
++	mac_iocb_ptr->buf_addr0_low = cpu_to_le32(LS_64BITS(map));
++	mac_iocb_ptr->buf_addr0_high = cpu_to_le32(MS_64BITS(map));
++	mac_iocb_ptr->buf_0_len = cpu_to_le32(skb->len | OB_MAC_IOCB_REQ_E);
++	pci_unmap_addr_set(tx_cb, mapaddr, map);
++	pci_unmap_len_set(tx_cb, maplen, skb->len);
++	atomic_dec(&qdev->tx_count);
++
++	qdev->req_producer_index++;
++	if (qdev->req_producer_index == NUM_REQ_Q_ENTRIES)
++		qdev->req_producer_index = 0;
++	wmb();
++	ql_write_common_reg_l(qdev,
++			    &port_regs->CommonRegs.reqQProducerIndex,
++			    qdev->req_producer_index);
++
++	ndev->trans_start = jiffies;
++	if (netif_msg_tx_queued(qdev))
++		printk(KERN_DEBUG PFX "%s: tx queued, slot %d, len %d\n",
++		       ndev->name, qdev->req_producer_index, skb->len);
++
++	return NETDEV_TX_OK;
++}
++static int ql_alloc_net_req_rsp_queues(struct ql3_adapter *qdev)
++{
++	qdev->req_q_size =
++	    (u32) (NUM_REQ_Q_ENTRIES * sizeof(struct ob_mac_iocb_req));
++
++	qdev->req_q_virt_addr =
++	    pci_alloc_consistent(qdev->pdev,
++				 (size_t) qdev->req_q_size,
++				 &qdev->req_q_phy_addr);
++
++	if ((qdev->req_q_virt_addr == NULL) ||
++	    LS_64BITS(qdev->req_q_phy_addr) & (qdev->req_q_size - 1)) {
++		printk(KERN_ERR PFX "%s: reqQ failed.\n",
++		       qdev->ndev->name);
++		return -ENOMEM;
++	}
++
++	qdev->rsp_q_size = NUM_RSP_Q_ENTRIES * sizeof(struct net_rsp_iocb);
++
++	qdev->rsp_q_virt_addr =
++	    pci_alloc_consistent(qdev->pdev,
++				 (size_t) qdev->rsp_q_size,
++				 &qdev->rsp_q_phy_addr);
++
++	if ((qdev->rsp_q_virt_addr == NULL) ||
++	    LS_64BITS(qdev->rsp_q_phy_addr) & (qdev->rsp_q_size - 1)) {
++		printk(KERN_ERR PFX
++		       "%s: rspQ allocation failed\n",
++		       qdev->ndev->name);
++		pci_free_consistent(qdev->pdev, (size_t) qdev->req_q_size,
++				    qdev->req_q_virt_addr,
++				    qdev->req_q_phy_addr);
++		return -ENOMEM;
++	}
++
++	set_bit(QL_ALLOC_REQ_RSP_Q_DONE,&qdev->flags);
++
++	return 0;
++}
++
++static void ql_free_net_req_rsp_queues(struct ql3_adapter *qdev)
++{
++	if (!test_bit(QL_ALLOC_REQ_RSP_Q_DONE,&qdev->flags)) {
++		printk(KERN_INFO PFX
++		       "%s: Already done.\n", qdev->ndev->name);
++		return;
++	}
++
++	pci_free_consistent(qdev->pdev,
++			    qdev->req_q_size,
++			    qdev->req_q_virt_addr, qdev->req_q_phy_addr);
++
++	qdev->req_q_virt_addr = NULL;
++
++	pci_free_consistent(qdev->pdev,
++			    qdev->rsp_q_size,
++			    qdev->rsp_q_virt_addr, qdev->rsp_q_phy_addr);
++
++	qdev->rsp_q_virt_addr = NULL;
++
++	clear_bit(QL_ALLOC_REQ_RSP_Q_DONE,&qdev->flags);
++}
++
++static int ql_alloc_buffer_queues(struct ql3_adapter *qdev)
++{
++	/* Create Large Buffer Queue */
++	qdev->lrg_buf_q_size =
++	    NUM_LBUFQ_ENTRIES * sizeof(struct lrg_buf_q_entry);
++	if (qdev->lrg_buf_q_size < PAGE_SIZE)
++		qdev->lrg_buf_q_alloc_size = PAGE_SIZE;
++	else
++		qdev->lrg_buf_q_alloc_size = qdev->lrg_buf_q_size * 2;
++
++	qdev->lrg_buf_q_alloc_virt_addr =
++	    pci_alloc_consistent(qdev->pdev,
++				 qdev->lrg_buf_q_alloc_size,
++				 &qdev->lrg_buf_q_alloc_phy_addr);
++
++	if (qdev->lrg_buf_q_alloc_virt_addr == NULL) {
++		printk(KERN_ERR PFX
++		       "%s: lBufQ failed\n", qdev->ndev->name);
++		return -ENOMEM;
++	}
++	qdev->lrg_buf_q_virt_addr = qdev->lrg_buf_q_alloc_virt_addr;
++	qdev->lrg_buf_q_phy_addr = qdev->lrg_buf_q_alloc_phy_addr;
++
++	/* Create Small Buffer Queue */
++	qdev->small_buf_q_size =
++	    NUM_SBUFQ_ENTRIES * sizeof(struct lrg_buf_q_entry);
++	if (qdev->small_buf_q_size < PAGE_SIZE)
++		qdev->small_buf_q_alloc_size = PAGE_SIZE;
++	else
++		qdev->small_buf_q_alloc_size = qdev->small_buf_q_size * 2;
++
++	qdev->small_buf_q_alloc_virt_addr =
++	    pci_alloc_consistent(qdev->pdev,
++				 qdev->small_buf_q_alloc_size,
++				 &qdev->small_buf_q_alloc_phy_addr);
++
++	if (qdev->small_buf_q_alloc_virt_addr == NULL) {
++		printk(KERN_ERR PFX
++		       "%s: Small Buffer Queue allocation failed.\n",
++		       qdev->ndev->name);
++		pci_free_consistent(qdev->pdev, qdev->lrg_buf_q_alloc_size,
++				    qdev->lrg_buf_q_alloc_virt_addr,
++				    qdev->lrg_buf_q_alloc_phy_addr);
++		return -ENOMEM;
++	}
++
++	qdev->small_buf_q_virt_addr = qdev->small_buf_q_alloc_virt_addr;
++	qdev->small_buf_q_phy_addr = qdev->small_buf_q_alloc_phy_addr;
++	set_bit(QL_ALLOC_BUFQS_DONE,&qdev->flags);
++	return 0;
++}
++
++static void ql_free_buffer_queues(struct ql3_adapter *qdev)
++{
++	if (!test_bit(QL_ALLOC_BUFQS_DONE,&qdev->flags)) {
++		printk(KERN_INFO PFX
++		       "%s: Already done.\n", qdev->ndev->name);
++		return;
++	}
++
++	pci_free_consistent(qdev->pdev,
++			    qdev->lrg_buf_q_alloc_size,
++			    qdev->lrg_buf_q_alloc_virt_addr,
++			    qdev->lrg_buf_q_alloc_phy_addr);
++
++	qdev->lrg_buf_q_virt_addr = NULL;
++
++	pci_free_consistent(qdev->pdev,
++			    qdev->small_buf_q_alloc_size,
++			    qdev->small_buf_q_alloc_virt_addr,
++			    qdev->small_buf_q_alloc_phy_addr);
++
++	qdev->small_buf_q_virt_addr = NULL;
++
++	clear_bit(QL_ALLOC_BUFQS_DONE,&qdev->flags);
++}
++
++static int ql_alloc_small_buffers(struct ql3_adapter *qdev)
++{
++	int i;
++	struct bufq_addr_element *small_buf_q_entry;
++
++	/* Currently we allocate on one of memory and use it for smallbuffers */
++	qdev->small_buf_total_size =
++	    (QL_ADDR_ELE_PER_BUFQ_ENTRY * NUM_SBUFQ_ENTRIES *
++	     QL_SMALL_BUFFER_SIZE);
++
++	qdev->small_buf_virt_addr =
++	    pci_alloc_consistent(qdev->pdev,
++				 qdev->small_buf_total_size,
++				 &qdev->small_buf_phy_addr);
++
++	if (qdev->small_buf_virt_addr == NULL) {
++		printk(KERN_ERR PFX
++		       "%s: Failed to get small buffer memory.\n",
++		       qdev->ndev->name);
++		return -ENOMEM;
++	}
++
++	qdev->small_buf_phy_addr_low = LS_64BITS(qdev->small_buf_phy_addr);
++	qdev->small_buf_phy_addr_high = MS_64BITS(qdev->small_buf_phy_addr);
++
++	small_buf_q_entry = qdev->small_buf_q_virt_addr;
++
++	qdev->last_rsp_offset = qdev->small_buf_phy_addr_low;
++
++	/* Initialize the small buffer queue. */
++	for (i = 0; i < (QL_ADDR_ELE_PER_BUFQ_ENTRY * NUM_SBUFQ_ENTRIES); i++) {
++		small_buf_q_entry->addr_high =
++		    cpu_to_le32(qdev->small_buf_phy_addr_high);
++		small_buf_q_entry->addr_low =
++		    cpu_to_le32(qdev->small_buf_phy_addr_low +
++				(i * QL_SMALL_BUFFER_SIZE));
++		small_buf_q_entry++;
++	}
++	qdev->small_buf_index = 0;
++	set_bit(QL_ALLOC_SMALL_BUF_DONE,&qdev->flags);
++	return 0;
++}
++
++static void ql_free_small_buffers(struct ql3_adapter *qdev)
++{
++	if (!test_bit(QL_ALLOC_SMALL_BUF_DONE,&qdev->flags)) {
++		printk(KERN_INFO PFX
++		       "%s: Already done.\n", qdev->ndev->name);
++		return;
++	}
++	if (qdev->small_buf_virt_addr != NULL) {
++		pci_free_consistent(qdev->pdev,
++				    qdev->small_buf_total_size,
++				    qdev->small_buf_virt_addr,
++				    qdev->small_buf_phy_addr);
++
++		qdev->small_buf_virt_addr = NULL;
++	}
++}
++
++static void ql_free_large_buffers(struct ql3_adapter *qdev)
++{
++	int i = 0;
++	struct ql_rcv_buf_cb *lrg_buf_cb;
++
++	for (i = 0; i < NUM_LARGE_BUFFERS; i++) {
++		lrg_buf_cb = &qdev->lrg_buf[i];
++		if (lrg_buf_cb->skb) {
++			dev_kfree_skb(lrg_buf_cb->skb);
++			pci_unmap_single(qdev->pdev,
++					 pci_unmap_addr(lrg_buf_cb, mapaddr),
++					 pci_unmap_len(lrg_buf_cb, maplen),
++					 PCI_DMA_FROMDEVICE);
++			memset(lrg_buf_cb, 0, sizeof(struct ql_rcv_buf_cb));
++		} else {
++			break;
++		}
++	}
++}
++
++static void ql_init_large_buffers(struct ql3_adapter *qdev)
++{
++	int i;
++	struct ql_rcv_buf_cb *lrg_buf_cb;
++	struct bufq_addr_element *buf_addr_ele = qdev->lrg_buf_q_virt_addr;
++
++	for (i = 0; i < NUM_LARGE_BUFFERS; i++) {
++		lrg_buf_cb = &qdev->lrg_buf[i];
++		buf_addr_ele->addr_high = lrg_buf_cb->buf_phy_addr_high;
++		buf_addr_ele->addr_low = lrg_buf_cb->buf_phy_addr_low;
++		buf_addr_ele++;
++	}
++	qdev->lrg_buf_index = 0;
++	qdev->lrg_buf_skb_check = 0;
++}
++
++static int ql_alloc_large_buffers(struct ql3_adapter *qdev)
++{
++	int i;
++	struct ql_rcv_buf_cb *lrg_buf_cb;
++	struct sk_buff *skb;
++	u64 map;
++
++	for (i = 0; i < NUM_LARGE_BUFFERS; i++) {
++		skb = dev_alloc_skb(qdev->lrg_buffer_len);
++		if (unlikely(!skb)) {
++			/* Better luck next round */
++			printk(KERN_ERR PFX
++			       "%s: large buff alloc failed, "
++			       "for %d bytes at index %d.\n",
++			       qdev->ndev->name,
++			       qdev->lrg_buffer_len * 2, i);
++			ql_free_large_buffers(qdev);
++			return -ENOMEM;
++		} else {
++
++			lrg_buf_cb = &qdev->lrg_buf[i];
++			memset(lrg_buf_cb, 0, sizeof(struct ql_rcv_buf_cb));
++			lrg_buf_cb->index = i;
++			lrg_buf_cb->skb = skb;
++			/*
++			 * We save some space to copy the ethhdr from first
++			 * buffer
++			 */
++			skb_reserve(skb, QL_HEADER_SPACE);
++			map = pci_map_single(qdev->pdev,
++					     skb->data,
++					     qdev->lrg_buffer_len -
++					     QL_HEADER_SPACE,
++					     PCI_DMA_FROMDEVICE);
++			pci_unmap_addr_set(lrg_buf_cb, mapaddr, map);
++			pci_unmap_len_set(lrg_buf_cb, maplen,
++					  qdev->lrg_buffer_len -
++					  QL_HEADER_SPACE);
++			lrg_buf_cb->buf_phy_addr_low =
++			    cpu_to_le32(LS_64BITS(map));
++			lrg_buf_cb->buf_phy_addr_high =
++			    cpu_to_le32(MS_64BITS(map));
++		}
++	}
++	return 0;
++}
++
++static void ql_create_send_free_list(struct ql3_adapter *qdev)
++{
++	struct ql_tx_buf_cb *tx_cb;
++	int i;
++	struct ob_mac_iocb_req *req_q_curr =
++					qdev->req_q_virt_addr;
++
++	/* Create free list of transmit buffers */
++	for (i = 0; i < NUM_REQ_Q_ENTRIES; i++) {
++		tx_cb = &qdev->tx_buf[i];
++		tx_cb->skb = NULL;
++		tx_cb->queue_entry = req_q_curr;
++		req_q_curr++;
++	}
++}
++
++static int ql_alloc_mem_resources(struct ql3_adapter *qdev)
++{
++	if (qdev->ndev->mtu == NORMAL_MTU_SIZE)
++		qdev->lrg_buffer_len = NORMAL_MTU_SIZE;
++	else if (qdev->ndev->mtu == JUMBO_MTU_SIZE) {
++		qdev->lrg_buffer_len = JUMBO_MTU_SIZE;
++	} else {
++		printk(KERN_ERR PFX
++		       "%s: Invalid mtu size.  Only 1500 and 9000 are accepted.\n",
++		       qdev->ndev->name);
++		return -ENOMEM;
++	}
++	qdev->lrg_buffer_len += VLAN_ETH_HLEN + VLAN_ID_LEN + QL_HEADER_SPACE;
++	qdev->max_frame_size =
++	    (qdev->lrg_buffer_len - QL_HEADER_SPACE) + ETHERNET_CRC_SIZE;
++
++	/*
++	 * First allocate a page of shared memory and use it for shadow
++	 * locations of Network Request Queue Consumer Address Register and
++	 * Network Completion Queue Producer Index Register
++	 */
++	qdev->shadow_reg_virt_addr =
++	    pci_alloc_consistent(qdev->pdev,
++				 PAGE_SIZE, &qdev->shadow_reg_phy_addr);
++
++	if (qdev->shadow_reg_virt_addr != NULL) {
++		qdev->preq_consumer_index = (u16 *) qdev->shadow_reg_virt_addr;
++		qdev->req_consumer_index_phy_addr_high =
++		    MS_64BITS(qdev->shadow_reg_phy_addr);
++		qdev->req_consumer_index_phy_addr_low =
++		    LS_64BITS(qdev->shadow_reg_phy_addr);
++
++		qdev->prsp_producer_index =
++		    (u32 *) (((u8 *) qdev->preq_consumer_index) + 8);
++		qdev->rsp_producer_index_phy_addr_high =
++		    qdev->req_consumer_index_phy_addr_high;
++		qdev->rsp_producer_index_phy_addr_low =
++		    qdev->req_consumer_index_phy_addr_low + 8;
++	} else {
++		printk(KERN_ERR PFX
++		       "%s: shadowReg Alloc failed.\n", qdev->ndev->name);
++		return -ENOMEM;
++	}
++
++	if (ql_alloc_net_req_rsp_queues(qdev) != 0) {
++		printk(KERN_ERR PFX
++		       "%s: ql_alloc_net_req_rsp_queues failed.\n",
++		       qdev->ndev->name);
++		goto err_req_rsp;
++	}
++
++	if (ql_alloc_buffer_queues(qdev) != 0) {
++		printk(KERN_ERR PFX
++		       "%s: ql_alloc_buffer_queues failed.\n",
++		       qdev->ndev->name);
++		goto err_buffer_queues;
++	}
++
++	if (ql_alloc_small_buffers(qdev) != 0) {
++		printk(KERN_ERR PFX
++		       "%s: ql_alloc_small_buffers failed\n", qdev->ndev->name);
++		goto err_small_buffers;
++	}
++
++	if (ql_alloc_large_buffers(qdev) != 0) {
++		printk(KERN_ERR PFX
++		       "%s: ql_alloc_large_buffers failed\n", qdev->ndev->name);
++		goto err_small_buffers;
++	}
++
++	/* Initialize the large buffer queue. */
++	ql_init_large_buffers(qdev);
++	ql_create_send_free_list(qdev);
++
++	qdev->rsp_current = qdev->rsp_q_virt_addr;
++
++	return 0;
++
++err_small_buffers:
++	ql_free_buffer_queues(qdev);
++err_buffer_queues:
++	ql_free_net_req_rsp_queues(qdev);
++err_req_rsp:
++	pci_free_consistent(qdev->pdev,
++			    PAGE_SIZE,
++			    qdev->shadow_reg_virt_addr,
++			    qdev->shadow_reg_phy_addr);
++
++	return -ENOMEM;
++}
++
++static void ql_free_mem_resources(struct ql3_adapter *qdev)
++{
++	ql_free_large_buffers(qdev);
++	ql_free_small_buffers(qdev);
++	ql_free_buffer_queues(qdev);
++	ql_free_net_req_rsp_queues(qdev);
++	if (qdev->shadow_reg_virt_addr != NULL) {
++		pci_free_consistent(qdev->pdev,
++				    PAGE_SIZE,
++				    qdev->shadow_reg_virt_addr,
++				    qdev->shadow_reg_phy_addr);
++		qdev->shadow_reg_virt_addr = NULL;
++	}
++}
++
++static int ql_init_misc_registers(struct ql3_adapter *qdev)
++{
++	struct ql3xxx_local_ram_registers __iomem *local_ram =
++	    (void __iomem *)qdev->mem_map_registers;
++
++	if(ql_sem_spinlock(qdev, QL_DDR_RAM_SEM_MASK,
++			(QL_RESOURCE_BITS_BASE_CODE | (qdev->mac_index) *
++			 2) << 4))
++		return -1;
++
++	ql_write_page2_reg(qdev,
++			   &local_ram->bufletSize, qdev->nvram_data.bufletSize);
++
++	ql_write_page2_reg(qdev,
++			   &local_ram->maxBufletCount,
++			   qdev->nvram_data.bufletCount);
++
++	ql_write_page2_reg(qdev,
++			   &local_ram->freeBufletThresholdLow,
++			   (qdev->nvram_data.tcpWindowThreshold25 << 16) |
++			   (qdev->nvram_data.tcpWindowThreshold0));
++
++	ql_write_page2_reg(qdev,
++			   &local_ram->freeBufletThresholdHigh,
++			   qdev->nvram_data.tcpWindowThreshold50);
++
++	ql_write_page2_reg(qdev,
++			   &local_ram->ipHashTableBase,
++			   (qdev->nvram_data.ipHashTableBaseHi << 16) |
++			   qdev->nvram_data.ipHashTableBaseLo);
++	ql_write_page2_reg(qdev,
++			   &local_ram->ipHashTableCount,
++			   qdev->nvram_data.ipHashTableSize);
++	ql_write_page2_reg(qdev,
++			   &local_ram->tcpHashTableBase,
++			   (qdev->nvram_data.tcpHashTableBaseHi << 16) |
++			   qdev->nvram_data.tcpHashTableBaseLo);
++	ql_write_page2_reg(qdev,
++			   &local_ram->tcpHashTableCount,
++			   qdev->nvram_data.tcpHashTableSize);
++	ql_write_page2_reg(qdev,
++			   &local_ram->ncbBase,
++			   (qdev->nvram_data.ncbTableBaseHi << 16) |
++			   qdev->nvram_data.ncbTableBaseLo);
++	ql_write_page2_reg(qdev,
++			   &local_ram->maxNcbCount,
++			   qdev->nvram_data.ncbTableSize);
++	ql_write_page2_reg(qdev,
++			   &local_ram->drbBase,
++			   (qdev->nvram_data.drbTableBaseHi << 16) |
++			   qdev->nvram_data.drbTableBaseLo);
++	ql_write_page2_reg(qdev,
++			   &local_ram->maxDrbCount,
++			   qdev->nvram_data.drbTableSize);
++	ql_sem_unlock(qdev, QL_DDR_RAM_SEM_MASK);
++	return 0;
++}
++
++static int ql_adapter_initialize(struct ql3_adapter *qdev)
++{
++	u32 value;
++	struct ql3xxx_port_registers __iomem *port_regs = qdev->mem_map_registers;
++	struct ql3xxx_host_memory_registers __iomem *hmem_regs =
++						(void __iomem *)port_regs;
++	u32 delay = 10;
++	int status = 0;
++
++	if(ql_mii_setup(qdev))
++		return -1;
++
++	/* Bring out PHY out of reset */
++	ql_write_common_reg(qdev, &port_regs->CommonRegs.serialPortInterfaceReg,
++			    (ISP_SERIAL_PORT_IF_WE |
++			     (ISP_SERIAL_PORT_IF_WE << 16)));
++
++	qdev->port_link_state = LS_DOWN;
++	netif_carrier_off(qdev->ndev);
++
++	/* V2 chip fix for ARS-39168. */
++	ql_write_common_reg(qdev, &port_regs->CommonRegs.serialPortInterfaceReg,
++			    (ISP_SERIAL_PORT_IF_SDE |
++			     (ISP_SERIAL_PORT_IF_SDE << 16)));
++
++	/* Request Queue Registers */
++	*((u32 *) (qdev->preq_consumer_index)) = 0;
++	atomic_set(&qdev->tx_count,NUM_REQ_Q_ENTRIES);
++	qdev->req_producer_index = 0;
++
++	ql_write_page1_reg(qdev,
++			   &hmem_regs->reqConsumerIndexAddrHigh,
++			   qdev->req_consumer_index_phy_addr_high);
++	ql_write_page1_reg(qdev,
++			   &hmem_regs->reqConsumerIndexAddrLow,
++			   qdev->req_consumer_index_phy_addr_low);
++
++	ql_write_page1_reg(qdev,
++			   &hmem_regs->reqBaseAddrHigh,
++			   MS_64BITS(qdev->req_q_phy_addr));
++	ql_write_page1_reg(qdev,
++			   &hmem_regs->reqBaseAddrLow,
++			   LS_64BITS(qdev->req_q_phy_addr));
++	ql_write_page1_reg(qdev, &hmem_regs->reqLength, NUM_REQ_Q_ENTRIES);
++
++	/* Response Queue Registers */
++	*((u16 *) (qdev->prsp_producer_index)) = 0;
++	qdev->rsp_consumer_index = 0;
++	qdev->rsp_current = qdev->rsp_q_virt_addr;
++
++	ql_write_page1_reg(qdev,
++			   &hmem_regs->rspProducerIndexAddrHigh,
++			   qdev->rsp_producer_index_phy_addr_high);
++
++	ql_write_page1_reg(qdev,
++			   &hmem_regs->rspProducerIndexAddrLow,
++			   qdev->rsp_producer_index_phy_addr_low);
++
++	ql_write_page1_reg(qdev,
++			   &hmem_regs->rspBaseAddrHigh,
++			   MS_64BITS(qdev->rsp_q_phy_addr));
++
++	ql_write_page1_reg(qdev,
++			   &hmem_regs->rspBaseAddrLow,
++			   LS_64BITS(qdev->rsp_q_phy_addr));
++
++	ql_write_page1_reg(qdev, &hmem_regs->rspLength, NUM_RSP_Q_ENTRIES);
++
++	/* Large Buffer Queue */
++	ql_write_page1_reg(qdev,
++			   &hmem_regs->rxLargeQBaseAddrHigh,
++			   MS_64BITS(qdev->lrg_buf_q_phy_addr));
++
++	ql_write_page1_reg(qdev,
++			   &hmem_regs->rxLargeQBaseAddrLow,
++			   LS_64BITS(qdev->lrg_buf_q_phy_addr));
++
++	ql_write_page1_reg(qdev, &hmem_regs->rxLargeQLength, NUM_LBUFQ_ENTRIES);
++
++	ql_write_page1_reg(qdev,
++			   &hmem_regs->rxLargeBufferLength,
++			   qdev->lrg_buffer_len);
++
++	/* Small Buffer Queue */
++	ql_write_page1_reg(qdev,
++			   &hmem_regs->rxSmallQBaseAddrHigh,
++			   MS_64BITS(qdev->small_buf_q_phy_addr));
++
++	ql_write_page1_reg(qdev,
++			   &hmem_regs->rxSmallQBaseAddrLow,
++			   LS_64BITS(qdev->small_buf_q_phy_addr));
++
++	ql_write_page1_reg(qdev, &hmem_regs->rxSmallQLength, NUM_SBUFQ_ENTRIES);
++	ql_write_page1_reg(qdev,
++			   &hmem_regs->rxSmallBufferLength,
++			   QL_SMALL_BUFFER_SIZE);
++
++	qdev->small_buf_q_producer_index = NUM_SBUFQ_ENTRIES - 1;
++	qdev->small_buf_release_cnt = 8;
++	qdev->lrg_buf_q_producer_index = NUM_LBUFQ_ENTRIES - 1;
++	qdev->lrg_buf_release_cnt = 8;
++	qdev->lrg_buf_next_free =
++	    (struct bufq_addr_element *)qdev->lrg_buf_q_virt_addr;
++	qdev->small_buf_index = 0;
++	qdev->lrg_buf_index = 0;
++	qdev->lrg_buf_free_count = 0;
++	qdev->lrg_buf_free_head = NULL;
++	qdev->lrg_buf_free_tail = NULL;
++
++	ql_write_common_reg(qdev,
++			    &port_regs->CommonRegs.
++			    rxSmallQProducerIndex,
++			    qdev->small_buf_q_producer_index);
++	ql_write_common_reg(qdev,
++			    &port_regs->CommonRegs.
++			    rxLargeQProducerIndex,
++			    qdev->lrg_buf_q_producer_index);
++
++	/*
++	 * Find out if the chip has already been initialized.  If it has, then
++	 * we skip some of the initialization.
++	 */
++	clear_bit(QL_LINK_MASTER, &qdev->flags);
++	value = ql_read_page0_reg(qdev, &port_regs->portStatus);
++	if ((value & PORT_STATUS_IC) == 0) {
++
++		/* Chip has not been configured yet, so let it rip. */
++		if(ql_init_misc_registers(qdev)) {
++			status = -1;
++			goto out;
++		}
++
++		if (qdev->mac_index)
++			ql_write_page0_reg(qdev,
++					   &port_regs->mac1MaxFrameLengthReg,
++					   qdev->max_frame_size);
++		else
++			ql_write_page0_reg(qdev,
++					   &port_regs->mac0MaxFrameLengthReg,
++					   qdev->max_frame_size);
++
++		value = qdev->nvram_data.tcpMaxWindowSize;
++		ql_write_page0_reg(qdev, &port_regs->tcpMaxWindow, value);
++
++		value = (0xFFFF << 16) | qdev->nvram_data.extHwConfig;
++
++		if(ql_sem_spinlock(qdev, QL_FLASH_SEM_MASK,
++				(QL_RESOURCE_BITS_BASE_CODE | (qdev->mac_index)
++				 * 2) << 13)) {
++			status = -1;
++			goto out;
++		}
++		ql_write_page0_reg(qdev, &port_regs->ExternalHWConfig, value);
++		ql_write_page0_reg(qdev, &port_regs->InternalChipConfig,
++				   (((INTERNAL_CHIP_SD | INTERNAL_CHIP_WE) <<
++				     16) | (INTERNAL_CHIP_SD |
++					    INTERNAL_CHIP_WE)));
++		ql_sem_unlock(qdev, QL_FLASH_SEM_MASK);
++	}
++
++
++	if(ql_sem_spinlock(qdev, QL_PHY_GIO_SEM_MASK,
++			(QL_RESOURCE_BITS_BASE_CODE | (qdev->mac_index) *
++			 2) << 7)) {
++		status = -1;
++		goto out;
++	}
++
++	ql_init_scan_mode(qdev);
++	ql_get_phy_owner(qdev);
++
++	/* Load the MAC Configuration */
++
++	/* Program lower 32 bits of the MAC address */
++	ql_write_page0_reg(qdev, &port_regs->macAddrIndirectPtrReg,
++			   (MAC_ADDR_INDIRECT_PTR_REG_RP_MASK << 16));
++	ql_write_page0_reg(qdev, &port_regs->macAddrDataReg,
++			   ((qdev->ndev->dev_addr[2] << 24)
++			    | (qdev->ndev->dev_addr[3] << 16)
++			    | (qdev->ndev->dev_addr[4] << 8)
++			    | qdev->ndev->dev_addr[5]));
++
++	/* Program top 16 bits of the MAC address */
++	ql_write_page0_reg(qdev, &port_regs->macAddrIndirectPtrReg,
++			   ((MAC_ADDR_INDIRECT_PTR_REG_RP_MASK << 16) | 1));
++	ql_write_page0_reg(qdev, &port_regs->macAddrDataReg,
++			   ((qdev->ndev->dev_addr[0] << 8)
++			    | qdev->ndev->dev_addr[1]));
++
++	/* Enable Primary MAC */
++	ql_write_page0_reg(qdev, &port_regs->macAddrIndirectPtrReg,
++			   ((MAC_ADDR_INDIRECT_PTR_REG_PE << 16) |
++			    MAC_ADDR_INDIRECT_PTR_REG_PE));
++
++	/* Clear Primary and Secondary IP addresses */
++	ql_write_page0_reg(qdev, &port_regs->ipAddrIndexReg,
++			   ((IP_ADDR_INDEX_REG_MASK << 16) |
++			    (qdev->mac_index << 2)));
++	ql_write_page0_reg(qdev, &port_regs->ipAddrDataReg, 0);
++
++	ql_write_page0_reg(qdev, &port_regs->ipAddrIndexReg,
++			   ((IP_ADDR_INDEX_REG_MASK << 16) |
++			    ((qdev->mac_index << 2) + 1)));
++	ql_write_page0_reg(qdev, &port_regs->ipAddrDataReg, 0);
++
++	ql_sem_unlock(qdev, QL_PHY_GIO_SEM_MASK);
++
++	/* Indicate Configuration Complete */
++	ql_write_page0_reg(qdev,
++			   &port_regs->portControl,
++			   ((PORT_CONTROL_CC << 16) | PORT_CONTROL_CC));
++
++	do {
++		value = ql_read_page0_reg(qdev, &port_regs->portStatus);
++		if (value & PORT_STATUS_IC)
++			break;
++		msleep(500);
++	} while (--delay);
++
++	if (delay == 0) {
++		printk(KERN_ERR PFX
++		       "%s: Hw Initialization timeout.\n", qdev->ndev->name);
++		status = -1;
++		goto out;
++	}
++
++	/* Enable Ethernet Function */
++	value =
++	    (PORT_CONTROL_EF | PORT_CONTROL_ET | PORT_CONTROL_EI |
++	     PORT_CONTROL_HH);
++	ql_write_page0_reg(qdev, &port_regs->portControl,
++			   ((value << 16) | value));
++
++out:
++	return status;
++}
++
++/*
++ * Caller holds hw_lock.
++ */
++static int ql_adapter_reset(struct ql3_adapter *qdev)
++{
++	struct ql3xxx_port_registers __iomem *port_regs = qdev->mem_map_registers;
++	int status = 0;
++	u16 value;
++	int max_wait_time;
++
++	set_bit(QL_RESET_ACTIVE, &qdev->flags);
++	clear_bit(QL_RESET_DONE, &qdev->flags);
++
++	/*
++	 * Issue soft reset to chip.
++	 */
++	printk(KERN_DEBUG PFX
++	       "%s: Issue soft reset to chip.\n",
++	       qdev->ndev->name);
++	ql_write_common_reg(qdev,
++			    &port_regs->CommonRegs.ispControlStatus,
++			    ((ISP_CONTROL_SR << 16) | ISP_CONTROL_SR));
++
++	/* Wait 3 seconds for reset to complete. */
++	printk(KERN_DEBUG PFX
++	       "%s: Wait 10 milliseconds for reset to complete.\n",
++	       qdev->ndev->name);
++
++	/* Wait until the firmware tells us the Soft Reset is done */
++	max_wait_time = 5;
++	do {
++		value =
++		    ql_read_common_reg(qdev,
++				       &port_regs->CommonRegs.ispControlStatus);
++		if ((value & ISP_CONTROL_SR) == 0)
++			break;
++
++		ssleep(1);
++	} while ((--max_wait_time));
++
++	/*
++	 * Also, make sure that the Network Reset Interrupt bit has been
++	 * cleared after the soft reset has taken place.
++	 */
++	value =
++	    ql_read_common_reg(qdev, &port_regs->CommonRegs.ispControlStatus);
++	if (value & ISP_CONTROL_RI) {
++		printk(KERN_DEBUG PFX
++		       "ql_adapter_reset: clearing RI after reset.\n");
++		ql_write_common_reg(qdev,
++				    &port_regs->CommonRegs.
++				    ispControlStatus,
++				    ((ISP_CONTROL_RI << 16) | ISP_CONTROL_RI));
++	}
++
++	if (max_wait_time == 0) {
++		/* Issue Force Soft Reset */
++		ql_write_common_reg(qdev,
++				    &port_regs->CommonRegs.
++				    ispControlStatus,
++				    ((ISP_CONTROL_FSR << 16) |
++				     ISP_CONTROL_FSR));
++		/*
++		 * Wait until the firmware tells us the Force Soft Reset is
++		 * done
++		 */
++		max_wait_time = 5;
++		do {
++			value =
++			    ql_read_common_reg(qdev,
++					       &port_regs->CommonRegs.
++					       ispControlStatus);
++			if ((value & ISP_CONTROL_FSR) == 0) {
++				break;
++			}
++			ssleep(1);
++		} while ((--max_wait_time));
++	}
++	if (max_wait_time == 0)
++		status = 1;
++
++	clear_bit(QL_RESET_ACTIVE, &qdev->flags);
++	set_bit(QL_RESET_DONE, &qdev->flags);
++	return status;
++}
++
++static void ql_set_mac_info(struct ql3_adapter *qdev)
++{
++	struct ql3xxx_port_registers __iomem *port_regs = qdev->mem_map_registers;
++	u32 value, port_status;
++	u8 func_number;
++
++	/* Get the function number */
++	value =
++	    ql_read_common_reg_l(qdev, &port_regs->CommonRegs.ispControlStatus);
++	func_number = (u8) ((value >> 4) & OPCODE_FUNC_ID_MASK);
++	port_status = ql_read_page0_reg(qdev, &port_regs->portStatus);
++	switch (value & ISP_CONTROL_FN_MASK) {
++	case ISP_CONTROL_FN0_NET:
++		qdev->mac_index = 0;
++		qdev->mac_ob_opcode = OUTBOUND_MAC_IOCB | func_number;
++		qdev->tcp_ob_opcode = OUTBOUND_TCP_IOCB | func_number;
++		qdev->update_ob_opcode = UPDATE_NCB_IOCB | func_number;
++		qdev->mb_bit_mask = FN0_MA_BITS_MASK;
++		qdev->PHYAddr = PORT0_PHY_ADDRESS;
++		if (port_status & PORT_STATUS_SM0)
++			set_bit(QL_LINK_OPTICAL,&qdev->flags);
++		else
++			clear_bit(QL_LINK_OPTICAL,&qdev->flags);
++		break;
++
++	case ISP_CONTROL_FN1_NET:
++		qdev->mac_index = 1;
++		qdev->mac_ob_opcode = OUTBOUND_MAC_IOCB | func_number;
++		qdev->tcp_ob_opcode = OUTBOUND_TCP_IOCB | func_number;
++		qdev->update_ob_opcode = UPDATE_NCB_IOCB | func_number;
++		qdev->mb_bit_mask = FN1_MA_BITS_MASK;
++		qdev->PHYAddr = PORT1_PHY_ADDRESS;
++		if (port_status & PORT_STATUS_SM1)
++			set_bit(QL_LINK_OPTICAL,&qdev->flags);
++		else
++			clear_bit(QL_LINK_OPTICAL,&qdev->flags);
++		break;
++
++	case ISP_CONTROL_FN0_SCSI:
++	case ISP_CONTROL_FN1_SCSI:
++	default:
++		printk(KERN_DEBUG PFX
++		       "%s: Invalid function number, ispControlStatus = 0x%x\n",
++		       qdev->ndev->name,value);
++		break;
++	}
++	qdev->numPorts = qdev->nvram_data.numPorts;
++}
++
++static void ql_display_dev_info(struct net_device *ndev)
++{
++	struct ql3_adapter *qdev = (struct ql3_adapter *)netdev_priv(ndev);
++	struct pci_dev *pdev = qdev->pdev;
++
++	printk(KERN_INFO PFX
++	       "\n%s Adapter %d RevisionID %d found on PCI slot %d.\n",
++	       DRV_NAME, qdev->index, qdev->chip_rev_id, qdev->pci_slot);
++	printk(KERN_INFO PFX
++	       "%s Interface.\n",
++	       test_bit(QL_LINK_OPTICAL,&qdev->flags) ? "OPTICAL" : "COPPER");
++
++	/*
++	 * Print PCI bus width/type.
++	 */
++	printk(KERN_INFO PFX
++	       "Bus interface is %s %s.\n",
++	       ((qdev->pci_width == 64) ? "64-bit" : "32-bit"),
++	       ((qdev->pci_x) ? "PCI-X" : "PCI"));
++
++	printk(KERN_INFO PFX
++	       "mem  IO base address adjusted = 0x%p\n",
++	       qdev->mem_map_registers);
++	printk(KERN_INFO PFX "Interrupt number = %d\n", pdev->irq);
++
++	if (netif_msg_probe(qdev))
++		printk(KERN_INFO PFX
++		       "%s: MAC address %02x:%02x:%02x:%02x:%02x:%02x\n",
++		       ndev->name, ndev->dev_addr[0], ndev->dev_addr[1],
++		       ndev->dev_addr[2], ndev->dev_addr[3], ndev->dev_addr[4],
++		       ndev->dev_addr[5]);
++}
++
++static int ql_adapter_down(struct ql3_adapter *qdev, int do_reset)
++{
++	struct net_device *ndev = qdev->ndev;
++	int retval = 0;
++
++	netif_stop_queue(ndev);
++	netif_carrier_off(ndev);
++
++	clear_bit(QL_ADAPTER_UP,&qdev->flags);
++	clear_bit(QL_LINK_MASTER,&qdev->flags);
++
++	ql_disable_interrupts(qdev);
++
++	free_irq(qdev->pdev->irq, ndev);
++
++	if (qdev->msi && test_bit(QL_MSI_ENABLED,&qdev->flags)) {
++		printk(KERN_INFO PFX
++		       "%s: calling pci_disable_msi().\n", qdev->ndev->name);
++		clear_bit(QL_MSI_ENABLED,&qdev->flags);
++		pci_disable_msi(qdev->pdev);
++	}
++
++	del_timer_sync(&qdev->adapter_timer);
++
++	netif_poll_disable(ndev);
++
++	if (do_reset) {
++		int soft_reset;
++		unsigned long hw_flags;
++
++		spin_lock_irqsave(&qdev->hw_lock, hw_flags);
++		if (ql_wait_for_drvr_lock(qdev)) {
++			if ((soft_reset = ql_adapter_reset(qdev))) {
++				printk(KERN_ERR PFX
++				       "%s: ql_adapter_reset(%d) FAILED!\n",
++				       ndev->name, qdev->index);
++			}
++			printk(KERN_ERR PFX
++				"%s: Releaseing driver lock via chip reset.\n",ndev->name);
++		} else {
++			printk(KERN_ERR PFX
++			       "%s: Could not acquire driver lock to do "
++			       "reset!\n", ndev->name);
++			retval = -1;
++		}
++		spin_unlock_irqrestore(&qdev->hw_lock, hw_flags);
++	}
++	ql_free_mem_resources(qdev);
++	return retval;
++}
++
++static int ql_adapter_up(struct ql3_adapter *qdev)
++{
++	struct net_device *ndev = qdev->ndev;
++	int err;
++	unsigned long irq_flags = SA_SAMPLE_RANDOM | SA_SHIRQ;
++	unsigned long hw_flags;
++
++	if (ql_alloc_mem_resources(qdev)) {
++		printk(KERN_ERR PFX
++		       "%s Unable to  allocate buffers.\n", ndev->name);
++		return -ENOMEM;
++	}
++
++	if (qdev->msi) {
++		if (pci_enable_msi(qdev->pdev)) {
++			printk(KERN_ERR PFX
++			       "%s: User requested MSI, but MSI failed to "
++			       "initialize.  Continuing without MSI.\n",
++			       qdev->ndev->name);
++			qdev->msi = 0;
++		} else {
++			printk(KERN_INFO PFX "%s: MSI Enabled...\n", qdev->ndev->name);
++			set_bit(QL_MSI_ENABLED,&qdev->flags);
++			irq_flags &= ~SA_SHIRQ;
++		}
++	}
++
++	if ((err = request_irq(qdev->pdev->irq,
++			       ql3xxx_isr,
++			       irq_flags, ndev->name, ndev))) {
++		printk(KERN_ERR PFX
++		       "%s: Failed to reserve interrupt %d already in use.\n",
++		       ndev->name, qdev->pdev->irq);
++		goto err_irq;
++	}
++
++	spin_lock_irqsave(&qdev->hw_lock, hw_flags);
++
++	if ((err = ql_wait_for_drvr_lock(qdev))) {
++		if ((err = ql_adapter_initialize(qdev))) {
++			printk(KERN_ERR PFX
++			       "%s: Unable to initialize adapter.\n",
++			       ndev->name);
++			goto err_init;
++		}
++		printk(KERN_ERR PFX
++				"%s: Releaseing driver lock.\n",ndev->name);
++		ql_sem_unlock(qdev, QL_DRVR_SEM_MASK);
++	} else {
++		printk(KERN_ERR PFX
++		       "%s: Could not aquire driver lock.\n",
++		       ndev->name);
++		goto err_lock;
++	}
++
++	spin_unlock_irqrestore(&qdev->hw_lock, hw_flags);
++
++	set_bit(QL_ADAPTER_UP,&qdev->flags);
++
++	mod_timer(&qdev->adapter_timer, jiffies + HZ * 1);
++
++	netif_poll_enable(ndev);
++	ql_enable_interrupts(qdev);
++	return 0;
++
++err_init:
++	ql_sem_unlock(qdev, QL_DRVR_SEM_MASK);
++err_lock:
++	free_irq(qdev->pdev->irq, ndev);
++err_irq:
++	if (qdev->msi && test_bit(QL_MSI_ENABLED,&qdev->flags)) {
++		printk(KERN_INFO PFX
++		       "%s: calling pci_disable_msi().\n",
++		       qdev->ndev->name);
++		clear_bit(QL_MSI_ENABLED,&qdev->flags);
++		pci_disable_msi(qdev->pdev);
++	}
++	return err;
++}
++
++static int ql_cycle_adapter(struct ql3_adapter *qdev, int reset)
++{
++	if( ql_adapter_down(qdev,reset) || ql_adapter_up(qdev)) {
++		printk(KERN_ERR PFX
++				"%s: Driver up/down cycle failed, "
++				"closing device\n",qdev->ndev->name);
++		dev_close(qdev->ndev);
++		return -1;
++	}
++	return 0;
++}
++
++static int ql3xxx_close(struct net_device *ndev)
++{
++	struct ql3_adapter *qdev = netdev_priv(ndev);
++
++	/*
++	 * Wait for device to recover from a reset.
++	 * (Rarely happens, but possible.)
++	 */
++	while (!test_bit(QL_ADAPTER_UP,&qdev->flags))
++		msleep(50);
++
++	ql_adapter_down(qdev,QL_DO_RESET);
++	return 0;
++}
++
++static int ql3xxx_open(struct net_device *ndev)
++{
++	struct ql3_adapter *qdev = netdev_priv(ndev);
++	return (ql_adapter_up(qdev));
++}
++
++static struct net_device_stats *ql3xxx_get_stats(struct net_device *dev)
++{
++	struct ql3_adapter *qdev = (struct ql3_adapter *)dev->priv;
++	return &qdev->stats;
++}
++
++static int ql3xxx_change_mtu(struct net_device *ndev, int new_mtu)
++{
++	struct ql3_adapter *qdev = netdev_priv(ndev);
++	printk(KERN_ERR PFX "%s:  new mtu size = %d.\n", ndev->name, new_mtu);
++	if (new_mtu != NORMAL_MTU_SIZE && new_mtu != JUMBO_MTU_SIZE) {
++		printk(KERN_ERR PFX
++		       "%s: mtu size of %d is not valid.  Use exactly %d or "
++		       "%d.\n", ndev->name, new_mtu, NORMAL_MTU_SIZE,
++		       JUMBO_MTU_SIZE);
++		return -EINVAL;
++	}
++
++	if (!netif_running(ndev)) {
++		ndev->mtu = new_mtu;
++		return 0;
++	}
++
++	ndev->mtu = new_mtu;
++	return ql_cycle_adapter(qdev,QL_DO_RESET);
++}
++
++static void ql3xxx_set_multicast_list(struct net_device *ndev)
++{
++	/*
++	 * We are manually parsing the list in the net_device structure.
++	 */
++	return;
++}
++
++static int ql3xxx_set_mac_address(struct net_device *ndev, void *p)
++{
++	struct ql3_adapter *qdev = (struct ql3_adapter *)netdev_priv(ndev);
++	struct ql3xxx_port_registers __iomem *port_regs =
++	    		qdev->mem_map_registers;
++	struct sockaddr *addr = p;
++	unsigned long hw_flags;
++
++	if (netif_running(ndev))
++		return -EBUSY;
++
++	if (!is_valid_ether_addr(addr->sa_data))
++		return -EADDRNOTAVAIL;
++
++	memcpy(ndev->dev_addr, addr->sa_data, ndev->addr_len);
++
++	spin_lock_irqsave(&qdev->hw_lock, hw_flags);
++	/* Program lower 32 bits of the MAC address */
++	ql_write_page0_reg(qdev, &port_regs->macAddrIndirectPtrReg,
++			   (MAC_ADDR_INDIRECT_PTR_REG_RP_MASK << 16));
++	ql_write_page0_reg(qdev, &port_regs->macAddrDataReg,
++			   ((ndev->dev_addr[2] << 24) | (ndev->
++							 dev_addr[3] << 16) |
++			    (ndev->dev_addr[4] << 8) | ndev->dev_addr[5]));
++
++	/* Program top 16 bits of the MAC address */
++	ql_write_page0_reg(qdev, &port_regs->macAddrIndirectPtrReg,
++			   ((MAC_ADDR_INDIRECT_PTR_REG_RP_MASK << 16) | 1));
++	ql_write_page0_reg(qdev, &port_regs->macAddrDataReg,
++			   ((ndev->dev_addr[0] << 8) | ndev->dev_addr[1]));
++	spin_unlock_irqrestore(&qdev->hw_lock, hw_flags);
++
++	return 0;
++}
++
++static void ql3xxx_tx_timeout(struct net_device *ndev)
++{
++	struct ql3_adapter *qdev = (struct ql3_adapter *)netdev_priv(ndev);
++
++	printk(KERN_ERR PFX "%s: Resetting...\n", ndev->name);
++	/*
++	 * Stop the queues, we've got a problem.
++	 */
++	netif_stop_queue(ndev);
++
++	/*
++	 * Wake up the worker to process this event.
++	 */
++	queue_work(qdev->workqueue, &qdev->tx_timeout_work);
++}
++
++static void ql_reset_work(struct ql3_adapter *qdev)
++{
++	struct net_device *ndev = qdev->ndev;
++	u32 value;
++	struct ql_tx_buf_cb *tx_cb;
++	int max_wait_time, i;
++	struct ql3xxx_port_registers __iomem *port_regs = qdev->mem_map_registers;
++	unsigned long hw_flags;
++
++	if (test_bit((QL_RESET_PER_SCSI | QL_RESET_START),&qdev->flags)) {
++		clear_bit(QL_LINK_MASTER,&qdev->flags);
++
++		/*
++		 * Loop through the active list and return the skb.
++		 */
++		for (i = 0; i < NUM_REQ_Q_ENTRIES; i++) {
++			tx_cb = &qdev->tx_buf[i];
++			if (tx_cb->skb) {
++
++				printk(KERN_DEBUG PFX
++				       "%s: Freeing lost SKB.\n",
++				       qdev->ndev->name);
++				pci_unmap_single(qdev->pdev,
++					pci_unmap_addr(tx_cb, mapaddr),
++					pci_unmap_len(tx_cb, maplen), PCI_DMA_TODEVICE);
++				dev_kfree_skb(tx_cb->skb);
++				tx_cb->skb = NULL;
++			}
++		}
++
++		printk(KERN_ERR PFX
++		       "%s: Clearing NRI after reset.\n", qdev->ndev->name);
++		spin_lock_irqsave(&qdev->hw_lock, hw_flags);
++		ql_write_common_reg(qdev,
++				    &port_regs->CommonRegs.
++				    ispControlStatus,
++				    ((ISP_CONTROL_RI << 16) | ISP_CONTROL_RI));
++		/*
++		 * Wait the for Soft Reset to Complete.
++		 */
++		max_wait_time = 10;
++		do {
++			value = ql_read_common_reg(qdev,
++						   &port_regs->CommonRegs.
++
++						   ispControlStatus);
++			if ((value & ISP_CONTROL_SR) == 0) {
++				printk(KERN_DEBUG PFX
++				       "%s: reset completed.\n",
++				       qdev->ndev->name);
++				break;
++			}
++
++			if (value & ISP_CONTROL_RI) {
++				printk(KERN_DEBUG PFX
++				       "%s: clearing NRI after reset.\n",
++				       qdev->ndev->name);
++				ql_write_common_reg(qdev,
++						    &port_regs->
++						    CommonRegs.
++						    ispControlStatus,
++						    ((ISP_CONTROL_RI <<
++						      16) | ISP_CONTROL_RI));
++			}
++
++			ssleep(1);
++		} while (--max_wait_time);
++		spin_unlock_irqrestore(&qdev->hw_lock, hw_flags);
++
++		if (value & ISP_CONTROL_SR) {
++
++			/*
++			 * Set the reset flags and clear the board again.
++			 * Nothing else to do...
++			 */
++			printk(KERN_ERR PFX
++			       "%s: Timed out waiting for reset to "
++			       "complete.\n", ndev->name);
++			printk(KERN_ERR PFX
++			       "%s: Do a reset.\n", ndev->name);
++			clear_bit(QL_RESET_PER_SCSI,&qdev->flags);
++			clear_bit(QL_RESET_START,&qdev->flags);
++			ql_cycle_adapter(qdev,QL_DO_RESET);
++			return;
++		}
++
++		clear_bit(QL_RESET_ACTIVE,&qdev->flags);
++		clear_bit(QL_RESET_PER_SCSI,&qdev->flags);
++		clear_bit(QL_RESET_START,&qdev->flags);
++		ql_cycle_adapter(qdev,QL_NO_RESET);
++	}
++}
++
++static void ql_tx_timeout_work(struct ql3_adapter *qdev)
++{
++	ql_cycle_adapter(qdev,QL_DO_RESET);
++}
++
++static void ql_get_board_info(struct ql3_adapter *qdev)
++{
++	struct ql3xxx_port_registers __iomem *port_regs = qdev->mem_map_registers;
++	u32 value;
++
++	value = ql_read_page0_reg_l(qdev, &port_regs->portStatus);
++
++	qdev->chip_rev_id = ((value & PORT_STATUS_REV_ID_MASK) >> 12);
++	if (value & PORT_STATUS_64)
++		qdev->pci_width = 64;
++	else
++		qdev->pci_width = 32;
++	if (value & PORT_STATUS_X)
++		qdev->pci_x = 1;
++	else
++		qdev->pci_x = 0;
++	qdev->pci_slot = (u8) PCI_SLOT(qdev->pdev->devfn);
++}
++
++static void ql3xxx_timer(unsigned long ptr)
++{
++	struct ql3_adapter *qdev = (struct ql3_adapter *)ptr;
++
++	if (test_bit(QL_RESET_ACTIVE,&qdev->flags)) {
++		printk(KERN_DEBUG PFX
++		       "%s: Reset in progress.\n",
++		       qdev->ndev->name);
++		goto end;
++	}
++
++	ql_link_state_machine(qdev);
++
++	/* Restart timer on 2 second interval. */
++end:
++	mod_timer(&qdev->adapter_timer, jiffies + HZ * 1);
++}
++
++static int __devinit ql3xxx_probe(struct pci_dev *pdev,
++				  const struct pci_device_id *pci_entry)
++{
++	struct net_device *ndev = NULL;
++	struct ql3_adapter *qdev = NULL;
++	static int cards_found = 0;
++	int pci_using_dac, err;
++
++	err = pci_enable_device(pdev);
++	if (err) {
++		printk(KERN_ERR PFX "%s cannot enable PCI device\n",
++		       pci_name(pdev));
++		goto err_out;
++	}
++
++	err = pci_request_regions(pdev, DRV_NAME);
++	if (err) {
++		printk(KERN_ERR PFX "%s cannot obtain PCI resources\n",
++		       pci_name(pdev));
++		goto err_out_disable_pdev;
++	}
++
++	pci_set_master(pdev);
++
++	if (!pci_set_dma_mask(pdev, DMA_64BIT_MASK)) {
++		pci_using_dac = 1;
++		err = pci_set_consistent_dma_mask(pdev, DMA_64BIT_MASK);
++	} else if (!(err = pci_set_dma_mask(pdev, DMA_32BIT_MASK))) {
++		pci_using_dac = 0;
++		err = pci_set_consistent_dma_mask(pdev, DMA_32BIT_MASK);
++	}
++
++	if (err) {
++		printk(KERN_ERR PFX "%s no usable DMA configuration\n",
++		       pci_name(pdev));
++		goto err_out_free_regions;
++	}
++
++	ndev = alloc_etherdev(sizeof(struct ql3_adapter));
++	if (!ndev)
++		goto err_out_free_regions;
++
++	SET_MODULE_OWNER(ndev);
++	SET_NETDEV_DEV(ndev, &pdev->dev);
++
++	ndev->features = NETIF_F_LLTX;
++	if (pci_using_dac)
++		ndev->features |= NETIF_F_HIGHDMA;
++
++	pci_set_drvdata(pdev, ndev);
++
++	qdev = netdev_priv(ndev);
++	qdev->index = cards_found;
++	qdev->ndev = ndev;
++	qdev->pdev = pdev;
++	qdev->port_link_state = LS_DOWN;
++	if (msi)
++		qdev->msi = 1;
++
++	qdev->msg_enable = netif_msg_init(debug, default_msg);
++
++	qdev->mem_map_registers =
++	    ioremap_nocache(pci_resource_start(pdev, 1),
++			    pci_resource_len(qdev->pdev, 1));
++	if (!qdev->mem_map_registers) {
++		printk(KERN_ERR PFX "%s: cannot map device registers\n",
++		       pci_name(pdev));
++		goto err_out_free_ndev;
++	}
++
++	spin_lock_init(&qdev->adapter_lock);
++	spin_lock_init(&qdev->hw_lock);
++
++	/* Set driver entry points */
++	ndev->open = ql3xxx_open;
++	ndev->hard_start_xmit = ql3xxx_send;
++	ndev->stop = ql3xxx_close;
++	ndev->get_stats = ql3xxx_get_stats;
++	ndev->change_mtu = ql3xxx_change_mtu;
++	ndev->set_multicast_list = ql3xxx_set_multicast_list;
++	SET_ETHTOOL_OPS(ndev, &ql3xxx_ethtool_ops);
++	ndev->set_mac_address = ql3xxx_set_mac_address;
++	ndev->tx_timeout = ql3xxx_tx_timeout;
++	ndev->watchdog_timeo = 5 * HZ;
++
++	ndev->poll = &ql_poll;
++	ndev->weight = 64;
++
++	ndev->irq = pdev->irq;
++
++	/* make sure the EEPROM is good */
++	if (ql_get_nvram_params(qdev)) {
++		printk(KERN_ALERT PFX
++		       "ql3xxx_probe: Adapter #%d, Invalid NVRAM parameters.\n",
++		       qdev->index);
++		goto err_out_iounmap;
++	}
++
++	ql_set_mac_info(qdev);
++
++	/* Validate and set parameters */
++	if (qdev->mac_index) {
++		memcpy(ndev->dev_addr, &qdev->nvram_data.funcCfg_fn2.macAddress,
++		       ETH_ALEN);
++	} else {
++		memcpy(ndev->dev_addr, &qdev->nvram_data.funcCfg_fn0.macAddress,
++		       ETH_ALEN);
++	}
++	memcpy(ndev->perm_addr, ndev->dev_addr, ndev->addr_len);
++
++	ndev->tx_queue_len = NUM_REQ_Q_ENTRIES;
++
++	/* Turn off support for multicasting */
++	ndev->flags &= ~IFF_MULTICAST;
++
++	/* Record PCI bus information. */
++	ql_get_board_info(qdev);
++
++	/*
++	 * Set the Maximum Memory Read Byte Count value. We do this to handle
++	 * jumbo frames.
++	 */
++	if (qdev->pci_x) {
++		pci_write_config_word(pdev, (int)0x4e, (u16) 0x0036);
++	}
++
++	err = register_netdev(ndev);
++	if (err) {
++		printk(KERN_ERR PFX "%s: cannot register net device\n",
++		       pci_name(pdev));
++		goto err_out_iounmap;
++	}
++
++	/* we're going to reset, so assume we have no link for now */
++
++	netif_carrier_off(ndev);
++	netif_stop_queue(ndev);
++
++	qdev->workqueue = create_singlethread_workqueue(ndev->name);
++	INIT_WORK(&qdev->reset_work, (void (*)(void *))ql_reset_work, qdev);
++	INIT_WORK(&qdev->tx_timeout_work,
++		  (void (*)(void *))ql_tx_timeout_work, qdev);
++
++	init_timer(&qdev->adapter_timer);
++	qdev->adapter_timer.function = ql3xxx_timer;
++	qdev->adapter_timer.expires = jiffies + HZ * 2;	/* two second delay */
++	qdev->adapter_timer.data = (unsigned long)qdev;
++
++	if(!cards_found) {
++		printk(KERN_ALERT PFX "%s\n", DRV_STRING);
++		printk(KERN_ALERT PFX "Driver name: %s, Version: %s.\n",
++	    	   DRV_NAME, DRV_VERSION);
++	}
++	ql_display_dev_info(ndev);
++
++	cards_found++;
++	return 0;
++
++err_out_iounmap:
++	iounmap(qdev->mem_map_registers);
++err_out_free_ndev:
++	free_netdev(ndev);
++err_out_free_regions:
++	pci_release_regions(pdev);
++err_out_disable_pdev:
++	pci_disable_device(pdev);
++	pci_set_drvdata(pdev, NULL);
++err_out:
++	return err;
++}
++
++static void __devexit ql3xxx_remove(struct pci_dev *pdev)
++{
++	struct net_device *ndev = pci_get_drvdata(pdev);
++	struct ql3_adapter *qdev = netdev_priv(ndev);
++
++	unregister_netdev(ndev);
++	qdev = netdev_priv(ndev);
++
++	ql_disable_interrupts(qdev);
++
++	if (qdev->workqueue) {
++		cancel_delayed_work(&qdev->reset_work);
++		cancel_delayed_work(&qdev->tx_timeout_work);
++		destroy_workqueue(qdev->workqueue);
++		qdev->workqueue = NULL;
++	}
++
++	iounmap(qdev->mem_map_registers);
++	pci_release_regions(pdev);
++	pci_set_drvdata(pdev, NULL);
++	free_netdev(ndev);
++}
++
++static struct pci_driver ql3xxx_driver = {
++
++	.name = DRV_NAME,
++	.id_table = ql3xxx_pci_tbl,
++	.probe = ql3xxx_probe,
++	.remove = __devexit_p(ql3xxx_remove),
++};
++
++static int __init ql3xxx_init_module(void)
++{
++	return pci_register_driver(&ql3xxx_driver);
++}
++
++static void __exit ql3xxx_exit(void)
++{
++	pci_unregister_driver(&ql3xxx_driver);
++}
++
++module_init(ql3xxx_init_module);
++module_exit(ql3xxx_exit);
+diff -uNpr linux-2.6.18.i386.orig/drivers/net/qla3xxx.h linux-2.6.18.i386/drivers/net/qla3xxx.h
+--- linux-2.6.18.i386.orig/drivers/net/qla3xxx.h	1969-12-31 19:00:00.000000000 -0500
++++ linux-2.6.18.i386/drivers/net/qla3xxx.h	2006-09-26 15:53:17.000000000 -0400
+@@ -0,0 +1,1194 @@
++/*
++ * QLogic QLA3xxx NIC HBA Driver
++ * Copyright (c)  2003-2006 QLogic Corporation
++ *
++ * See LICENSE.qla3xxx for copyright and licensing details.
++ */
++#ifndef _QLA3XXX_H_
++#define _QLA3XXX_H_
++
++/*
++ * IOCB Definitions...
++ */
++#pragma pack(1)
++
++#define OPCODE_OB_MAC_IOCB_FN0          0x01
++#define OPCODE_OB_MAC_IOCB_FN2          0x21
++#define OPCODE_OB_TCP_IOCB_FN0          0x03
++#define OPCODE_OB_TCP_IOCB_FN2          0x23
++#define OPCODE_UPDATE_NCB_IOCB_FN0      0x00
++#define OPCODE_UPDATE_NCB_IOCB_FN2      0x20
++
++#define OPCODE_UPDATE_NCB_IOCB      0xF0
++#define OPCODE_IB_MAC_IOCB          0xF9
++#define OPCODE_IB_IP_IOCB           0xFA
++#define OPCODE_IB_TCP_IOCB          0xFB
++#define OPCODE_DUMP_PROTO_IOCB      0xFE
++#define OPCODE_BUFFER_ALERT_IOCB    0xFB
++
++#define OPCODE_FUNC_ID_MASK                 0x30
++#define OUTBOUND_MAC_IOCB                   0x01	/* plus function bits */
++#define OUTBOUND_TCP_IOCB                   0x03	/* plus function bits */
++#define UPDATE_NCB_IOCB                     0x00	/* plus function bits */
++
++#define FN0_MA_BITS_MASK    0x00
++#define FN1_MA_BITS_MASK    0x80
++
++struct ob_mac_iocb_req {
++	u8 opcode;
++	u8 flags;
++#define OB_MAC_IOCB_REQ_MA  0xC0
++#define OB_MAC_IOCB_REQ_F   0x20
++#define OB_MAC_IOCB_REQ_X   0x10
++#define OB_MAC_IOCB_REQ_D   0x02
++#define OB_MAC_IOCB_REQ_I   0x01
++	__le16 reserved0;
++
++	__le32 transaction_id;
++	__le16 data_len;
++	__le16 reserved1;
++	__le32 reserved2;
++	__le32 reserved3;
++	__le32 buf_addr0_low;
++	__le32 buf_addr0_high;
++	__le32 buf_0_len;
++	__le32 buf_addr1_low;
++	__le32 buf_addr1_high;
++	__le32 buf_1_len;
++	__le32 buf_addr2_low;
++	__le32 buf_addr2_high;
++	__le32 buf_2_len;
++	__le32 reserved4;
++	__le32 reserved5;
++};
++/*
++ * The following constants define control bits for buffer
++ * length fields for all IOCB's.
++ */
++#define OB_MAC_IOCB_REQ_E   0x80000000	/* Last valid buffer in list. */
++#define OB_MAC_IOCB_REQ_C   0x40000000	/* points to an OAL. (continuation) */
++#define OB_MAC_IOCB_REQ_L   0x20000000	/* Auburn local address pointer. */
++#define OB_MAC_IOCB_REQ_R   0x10000000	/* 32-bit address pointer. */
++
++struct ob_mac_iocb_rsp {
++	u8 opcode;
++	u8 flags;
++#define OB_MAC_IOCB_RSP_P   0x08
++#define OB_MAC_IOCB_RSP_S   0x02
++#define OB_MAC_IOCB_RSP_I   0x01
++
++	__le16 reserved0;
++	__le32 transaction_id;
++	__le32 reserved1;
++	__le32 reserved2;
++};
++
++struct ib_mac_iocb_rsp {
++	u8 opcode;
++	u8 flags;
++#define IB_MAC_IOCB_RSP_S   0x80
++#define IB_MAC_IOCB_RSP_H1  0x40
++#define IB_MAC_IOCB_RSP_H0  0x20
++#define IB_MAC_IOCB_RSP_B   0x10
++#define IB_MAC_IOCB_RSP_M   0x08
++#define IB_MAC_IOCB_RSP_MA  0x07
++
++	__le16 length;
++	__le32 reserved;
++	__le32 ial_low;
++	__le32 ial_high;
++
++};
++
++struct ob_ip_iocb_req {
++	u8 opcode;
++	__le16 flags;
++#define OB_IP_IOCB_REQ_O        0x100
++#define OB_IP_IOCB_REQ_H        0x008
++#define OB_IP_IOCB_REQ_U        0x004
++#define OB_IP_IOCB_REQ_D        0x002
++#define OB_IP_IOCB_REQ_I        0x001
++
++	u8 reserved0;
++
++	__le32 transaction_id;
++	__le16 data_len;
++	__le16 reserved1;
++	__le32 hncb_ptr_low;
++	__le32 hncb_ptr_high;
++	__le32 buf_addr0_low;
++	__le32 buf_addr0_high;
++	__le32 buf_0_len;
++	__le32 buf_addr1_low;
++	__le32 buf_addr1_high;
++	__le32 buf_1_len;
++	__le32 buf_addr2_low;
++	__le32 buf_addr2_high;
++	__le32 buf_2_len;
++	__le32 reserved2;
++	__le32 reserved3;
++};
++
++/* defines for BufferLength fields above */
++#define OB_IP_IOCB_REQ_E    0x80000000
++#define OB_IP_IOCB_REQ_C    0x40000000
++#define OB_IP_IOCB_REQ_L    0x20000000
++#define OB_IP_IOCB_REQ_R    0x10000000
++
++struct ob_ip_iocb_rsp {
++	u8 opcode;
++	u8 flags;
++#define OB_MAC_IOCB_RSP_E       0x08
++#define OB_MAC_IOCB_RSP_L       0x04
++#define OB_MAC_IOCB_RSP_S       0x02
++#define OB_MAC_IOCB_RSP_I       0x01
++
++	__le16 reserved0;
++	__le32 transaction_id;
++	__le32 reserved1;
++	__le32 reserved2;
++};
++
++struct ob_tcp_iocb_req {
++	u8 opcode;
++
++	u8 flags0;
++#define OB_TCP_IOCB_REQ_P       0x80
++#define OB_TCP_IOCB_REQ_CI      0x20
++#define OB_TCP_IOCB_REQ_H       0x10
++#define OB_TCP_IOCB_REQ_LN      0x08
++#define OB_TCP_IOCB_REQ_K       0x04
++#define OB_TCP_IOCB_REQ_D       0x02
++#define OB_TCP_IOCB_REQ_I       0x01
++
++	u8 flags1;
++#define OB_TCP_IOCB_REQ_OSM     0x40
++#define OB_TCP_IOCB_REQ_URG     0x20
++#define OB_TCP_IOCB_REQ_ACK     0x10
++#define OB_TCP_IOCB_REQ_PSH     0x08
++#define OB_TCP_IOCB_REQ_RST     0x04
++#define OB_TCP_IOCB_REQ_SYN     0x02
++#define OB_TCP_IOCB_REQ_FIN     0x01
++
++	u8 options_len;
++#define OB_TCP_IOCB_REQ_OMASK   0xF0
++#define OB_TCP_IOCB_REQ_SHIFT   4
++
++	__le32 transaction_id;
++	__le32 data_len;
++	__le32 hncb_ptr_low;
++	__le32 hncb_ptr_high;
++	__le32 buf_addr0_low;
++	__le32 buf_addr0_high;
++	__le32 buf_0_len;
++	__le32 buf_addr1_low;
++	__le32 buf_addr1_high;
++	__le32 buf_1_len;
++	__le32 buf_addr2_low;
++	__le32 buf_addr2_high;
++	__le32 buf_2_len;
++	__le32 time_stamp;
++	__le32 reserved1;
++};
++
++struct ob_tcp_iocb_rsp {
++	u8 opcode;
++
++	u8 flags0;
++#define OB_TCP_IOCB_RSP_C       0x20
++#define OB_TCP_IOCB_RSP_H       0x10
++#define OB_TCP_IOCB_RSP_LN      0x08
++#define OB_TCP_IOCB_RSP_K       0x04
++#define OB_TCP_IOCB_RSP_D       0x02
++#define OB_TCP_IOCB_RSP_I       0x01
++
++	u8 flags1;
++#define OB_TCP_IOCB_RSP_E       0x10
++#define OB_TCP_IOCB_RSP_W       0x08
++#define OB_TCP_IOCB_RSP_P       0x04
++#define OB_TCP_IOCB_RSP_T       0x02
++#define OB_TCP_IOCB_RSP_F       0x01
++
++	u8 state;
++#define OB_TCP_IOCB_RSP_SMASK   0xF0
++#define OB_TCP_IOCB_RSP_SHIFT   4
++
++	__le32 transaction_id;
++	__le32 local_ncb_ptr;
++	__le32 reserved0;
++};
++
++struct ib_ip_iocb_rsp {
++	u8 opcode;
++	u8 flags;
++#define IB_IP_IOCB_RSP_S        0x80
++#define IB_IP_IOCB_RSP_H1       0x40
++#define IB_IP_IOCB_RSP_H0       0x20
++#define IB_IP_IOCB_RSP_B        0x10
++#define IB_IP_IOCB_RSP_M        0x08
++#define IB_IP_IOCB_RSP_MA       0x07
++
++	__le16 length;
++	__le16 checksum;
++	__le16 reserved;
++#define IB_IP_IOCB_RSP_R        0x01
++	__le32 ial_low;
++	__le32 ial_high;
++};
++
++struct ib_tcp_iocb_rsp {
++	u8 opcode;
++	u8 flags;
++#define IB_TCP_IOCB_RSP_P       0x80
++#define IB_TCP_IOCB_RSP_T       0x40
++#define IB_TCP_IOCB_RSP_D       0x20
++#define IB_TCP_IOCB_RSP_N       0x10
++#define IB_TCP_IOCB_RSP_IP      0x03
++#define IB_TCP_FLAG_MASK        0xf0
++#define IB_TCP_FLAG_IOCB_SYN    0x00
++
++#define TCP_IB_RSP_FLAGS(x) (x->flags & ~IB_TCP_FLAG_MASK)
++
++	__le16 length;
++	__le32 hncb_ref_num;
++	__le32 ial_low;
++	__le32 ial_high;
++};
++
++struct net_rsp_iocb {
++	u8 opcode;
++	u8 flags;
++	__le16 reserved0;
++	__le32 reserved[3];
++};
++#pragma pack()
++
++/*
++ * Register Definitions...
++ */
++#define PORT0_PHY_ADDRESS   0x1e00
++#define PORT1_PHY_ADDRESS   0x1f00
++
++#define ETHERNET_CRC_SIZE   4
++
++#define MII_SCAN_REGISTER 0x00000001
++
++/* 32-bit ispControlStatus */
++enum {
++	ISP_CONTROL_NP_MASK = 0x0003,
++	ISP_CONTROL_NP_PCSR = 0x0000,
++	ISP_CONTROL_NP_HMCR = 0x0001,
++	ISP_CONTROL_NP_LRAMCR = 0x0002,
++	ISP_CONTROL_NP_PSR = 0x0003,
++	ISP_CONTROL_RI = 0x0008,
++	ISP_CONTROL_CI = 0x0010,
++	ISP_CONTROL_PI = 0x0020,
++	ISP_CONTROL_IN = 0x0040,
++	ISP_CONTROL_BE = 0x0080,
++	ISP_CONTROL_FN_MASK = 0x0700,
++	ISP_CONTROL_FN0_NET = 0x0400,
++	ISP_CONTROL_FN0_SCSI = 0x0500,
++	ISP_CONTROL_FN1_NET = 0x0600,
++	ISP_CONTROL_FN1_SCSI = 0x0700,
++	ISP_CONTROL_LINK_DN_0 = 0x0800,
++	ISP_CONTROL_LINK_DN_1 = 0x1000,
++	ISP_CONTROL_FSR = 0x2000,
++	ISP_CONTROL_FE = 0x4000,
++	ISP_CONTROL_SR = 0x8000,
++};
++
++/* 32-bit ispInterruptMaskReg */
++enum {
++	ISP_IMR_ENABLE_INT = 0x0004,
++	ISP_IMR_DISABLE_RESET_INT = 0x0008,
++	ISP_IMR_DISABLE_CMPL_INT = 0x0010,
++	ISP_IMR_DISABLE_PROC_INT = 0x0020,
++};
++
++/* 32-bit serialPortInterfaceReg */
++enum {
++	ISP_SERIAL_PORT_IF_CLK = 0x0001,
++	ISP_SERIAL_PORT_IF_CS = 0x0002,
++	ISP_SERIAL_PORT_IF_D0 = 0x0004,
++	ISP_SERIAL_PORT_IF_DI = 0x0008,
++	ISP_NVRAM_MASK = (0x000F << 16),
++	ISP_SERIAL_PORT_IF_WE = 0x0010,
++	ISP_SERIAL_PORT_IF_NVR_MASK = 0x001F,
++	ISP_SERIAL_PORT_IF_SCI = 0x0400,
++	ISP_SERIAL_PORT_IF_SC0 = 0x0800,
++	ISP_SERIAL_PORT_IF_SCE = 0x1000,
++	ISP_SERIAL_PORT_IF_SDI = 0x2000,
++	ISP_SERIAL_PORT_IF_SDO = 0x4000,
++	ISP_SERIAL_PORT_IF_SDE = 0x8000,
++	ISP_SERIAL_PORT_IF_I2C_MASK = 0xFC00,
++};
++
++/* semaphoreReg */
++enum {
++	QL_RESOURCE_MASK_BASE_CODE = 0x7,
++	QL_RESOURCE_BITS_BASE_CODE = 0x4,
++	QL_DRVR_SEM_BITS = (QL_RESOURCE_BITS_BASE_CODE << 1),
++	QL_DDR_RAM_SEM_BITS = (QL_RESOURCE_BITS_BASE_CODE << 4),
++	QL_PHY_GIO_SEM_BITS = (QL_RESOURCE_BITS_BASE_CODE << 7),
++	QL_NVRAM_SEM_BITS = (QL_RESOURCE_BITS_BASE_CODE << 10),
++	QL_FLASH_SEM_BITS = (QL_RESOURCE_BITS_BASE_CODE << 13),
++	QL_DRVR_SEM_MASK = (QL_RESOURCE_MASK_BASE_CODE << (1 + 16)),
++	QL_DDR_RAM_SEM_MASK = (QL_RESOURCE_MASK_BASE_CODE << (4 + 16)),
++	QL_PHY_GIO_SEM_MASK = (QL_RESOURCE_MASK_BASE_CODE << (7 + 16)),
++	QL_NVRAM_SEM_MASK = (QL_RESOURCE_MASK_BASE_CODE << (10 + 16)),
++	QL_FLASH_SEM_MASK = (QL_RESOURCE_MASK_BASE_CODE << (13 + 16)),
++};
++
++ /*
++  * QL3XXX memory-mapped registers
++  * QL3XXX has 4 "pages" of registers, each page occupying
++  * 256 bytes.  Each page has a "common" area at the start and then
++  * page-specific registers after that.
++  */
++struct ql3xxx_common_registers {
++	u32 MB0;		/* Offset 0x00 */
++	u32 MB1;		/* Offset 0x04 */
++	u32 MB2;		/* Offset 0x08 */
++	u32 MB3;		/* Offset 0x0c */
++	u32 MB4;		/* Offset 0x10 */
++	u32 MB5;		/* Offset 0x14 */
++	u32 MB6;		/* Offset 0x18 */
++	u32 MB7;		/* Offset 0x1c */
++	u32 flashBiosAddr;
++	u32 flashBiosData;
++	u32 ispControlStatus;
++	u32 ispInterruptMaskReg;
++	u32 serialPortInterfaceReg;
++	u32 semaphoreReg;
++	u32 reqQProducerIndex;
++	u32 rspQConsumerIndex;
++
++	u32 rxLargeQProducerIndex;
++	u32 rxSmallQProducerIndex;
++	u32 arcMadiCommand;
++	u32 arcMadiData;
++};
++
++enum {
++	EXT_HW_CONFIG_SP_MASK = 0x0006,
++	EXT_HW_CONFIG_SP_NONE = 0x0000,
++	EXT_HW_CONFIG_SP_BYTE_PARITY = 0x0002,
++	EXT_HW_CONFIG_SP_ECC = 0x0004,
++	EXT_HW_CONFIG_SP_ECCx = 0x0006,
++	EXT_HW_CONFIG_SIZE_MASK = 0x0060,
++	EXT_HW_CONFIG_SIZE_128M = 0x0000,
++	EXT_HW_CONFIG_SIZE_256M = 0x0020,
++	EXT_HW_CONFIG_SIZE_512M = 0x0040,
++	EXT_HW_CONFIG_SIZE_INVALID = 0x0060,
++	EXT_HW_CONFIG_PD = 0x0080,
++	EXT_HW_CONFIG_FW = 0x0200,
++	EXT_HW_CONFIG_US = 0x0400,
++	EXT_HW_CONFIG_DCS_MASK = 0x1800,
++	EXT_HW_CONFIG_DCS_9MA = 0x0000,
++	EXT_HW_CONFIG_DCS_15MA = 0x0800,
++	EXT_HW_CONFIG_DCS_18MA = 0x1000,
++	EXT_HW_CONFIG_DCS_24MA = 0x1800,
++	EXT_HW_CONFIG_DDS_MASK = 0x6000,
++	EXT_HW_CONFIG_DDS_9MA = 0x0000,
++	EXT_HW_CONFIG_DDS_15MA = 0x2000,
++	EXT_HW_CONFIG_DDS_18MA = 0x4000,
++	EXT_HW_CONFIG_DDS_24MA = 0x6000,
++};
++
++/* InternalChipConfig */
++enum {
++	INTERNAL_CHIP_DM = 0x0001,
++	INTERNAL_CHIP_SD = 0x0002,
++	INTERNAL_CHIP_RAP_MASK = 0x000C,
++	INTERNAL_CHIP_RAP_RR = 0x0000,
++	INTERNAL_CHIP_RAP_NRM = 0x0004,
++	INTERNAL_CHIP_RAP_ERM = 0x0008,
++	INTERNAL_CHIP_RAP_ERMx = 0x000C,
++	INTERNAL_CHIP_WE = 0x0010,
++	INTERNAL_CHIP_EF = 0x0020,
++	INTERNAL_CHIP_FR = 0x0040,
++	INTERNAL_CHIP_FW = 0x0080,
++	INTERNAL_CHIP_FI = 0x0100,
++	INTERNAL_CHIP_FT = 0x0200,
++};
++
++/* portControl */
++enum {
++	PORT_CONTROL_DS = 0x0001,
++	PORT_CONTROL_HH = 0x0002,
++	PORT_CONTROL_EI = 0x0004,
++	PORT_CONTROL_ET = 0x0008,
++	PORT_CONTROL_EF = 0x0010,
++	PORT_CONTROL_DRM = 0x0020,
++	PORT_CONTROL_RLB = 0x0040,
++	PORT_CONTROL_RCB = 0x0080,
++	PORT_CONTROL_MAC = 0x0100,
++	PORT_CONTROL_IPV = 0x0200,
++	PORT_CONTROL_IFP = 0x0400,
++	PORT_CONTROL_ITP = 0x0800,
++	PORT_CONTROL_FI = 0x1000,
++	PORT_CONTROL_DFP = 0x2000,
++	PORT_CONTROL_OI = 0x4000,
++	PORT_CONTROL_CC = 0x8000,
++};
++
++/* portStatus */
++enum {
++	PORT_STATUS_SM0 = 0x0001,
++	PORT_STATUS_SM1 = 0x0002,
++	PORT_STATUS_X = 0x0008,
++	PORT_STATUS_DL = 0x0080,
++	PORT_STATUS_IC = 0x0200,
++	PORT_STATUS_MRC = 0x0400,
++	PORT_STATUS_NL = 0x0800,
++	PORT_STATUS_REV_ID_MASK = 0x7000,
++	PORT_STATUS_REV_ID_1 = 0x1000,
++	PORT_STATUS_REV_ID_2 = 0x2000,
++	PORT_STATUS_REV_ID_3 = 0x3000,
++	PORT_STATUS_64 = 0x8000,
++	PORT_STATUS_UP0 = 0x10000,
++	PORT_STATUS_AC0 = 0x20000,
++	PORT_STATUS_AE0 = 0x40000,
++	PORT_STATUS_UP1 = 0x100000,
++	PORT_STATUS_AC1 = 0x200000,
++	PORT_STATUS_AE1 = 0x400000,
++	PORT_STATUS_F0_ENABLED = 0x1000000,
++	PORT_STATUS_F1_ENABLED = 0x2000000,
++	PORT_STATUS_F2_ENABLED = 0x4000000,
++	PORT_STATUS_F3_ENABLED = 0x8000000,
++};
++
++/* macMIIMgmtControlReg */
++enum {
++	MAC_ADDR_INDIRECT_PTR_REG_RP_MASK = 0x0003,
++	MAC_ADDR_INDIRECT_PTR_REG_RP_PRI_LWR = 0x0000,
++	MAC_ADDR_INDIRECT_PTR_REG_RP_PRI_UPR = 0x0001,
++	MAC_ADDR_INDIRECT_PTR_REG_RP_SEC_LWR = 0x0002,
++	MAC_ADDR_INDIRECT_PTR_REG_RP_SEC_UPR = 0x0003,
++	MAC_ADDR_INDIRECT_PTR_REG_PR = 0x0008,
++	MAC_ADDR_INDIRECT_PTR_REG_SS = 0x0010,
++	MAC_ADDR_INDIRECT_PTR_REG_SE = 0x0020,
++	MAC_ADDR_INDIRECT_PTR_REG_SP = 0x0040,
++	MAC_ADDR_INDIRECT_PTR_REG_PE = 0x0080,
++};
++
++/* macMIIMgmtControlReg */
++enum {
++	MAC_MII_CONTROL_RC = 0x0001,
++	MAC_MII_CONTROL_SC = 0x0002,
++	MAC_MII_CONTROL_AS = 0x0004,
++	MAC_MII_CONTROL_NP = 0x0008,
++	MAC_MII_CONTROL_CLK_SEL_MASK = 0x0070,
++	MAC_MII_CONTROL_CLK_SEL_DIV2 = 0x0000,
++	MAC_MII_CONTROL_CLK_SEL_DIV4 = 0x0010,
++	MAC_MII_CONTROL_CLK_SEL_DIV6 = 0x0020,
++	MAC_MII_CONTROL_CLK_SEL_DIV8 = 0x0030,
++	MAC_MII_CONTROL_CLK_SEL_DIV10 = 0x0040,
++	MAC_MII_CONTROL_CLK_SEL_DIV14 = 0x0050,
++	MAC_MII_CONTROL_CLK_SEL_DIV20 = 0x0060,
++	MAC_MII_CONTROL_CLK_SEL_DIV28 = 0x0070,
++	MAC_MII_CONTROL_RM = 0x8000,
++};
++
++/* macMIIStatusReg */
++enum {
++	MAC_MII_STATUS_BSY = 0x0001,
++	MAC_MII_STATUS_SC = 0x0002,
++	MAC_MII_STATUS_NV = 0x0004,
++};
++
++enum {
++	MAC_CONFIG_REG_PE = 0x0001,
++	MAC_CONFIG_REG_TF = 0x0002,
++	MAC_CONFIG_REG_RF = 0x0004,
++	MAC_CONFIG_REG_FD = 0x0008,
++	MAC_CONFIG_REG_GM = 0x0010,
++	MAC_CONFIG_REG_LB = 0x0020,
++	MAC_CONFIG_REG_SR = 0x8000,
++};
++
++enum {
++	MAC_HALF_DUPLEX_REG_ED = 0x10000,
++	MAC_HALF_DUPLEX_REG_NB = 0x20000,
++	MAC_HALF_DUPLEX_REG_BNB = 0x40000,
++	MAC_HALF_DUPLEX_REG_ALT = 0x80000,
++};
++
++enum {
++	IP_ADDR_INDEX_REG_MASK = 0x000f,
++	IP_ADDR_INDEX_REG_FUNC_0_PRI = 0x0000,
++	IP_ADDR_INDEX_REG_FUNC_0_SEC = 0x0001,
++	IP_ADDR_INDEX_REG_FUNC_1_PRI = 0x0002,
++	IP_ADDR_INDEX_REG_FUNC_1_SEC = 0x0003,
++	IP_ADDR_INDEX_REG_FUNC_2_PRI = 0x0004,
++	IP_ADDR_INDEX_REG_FUNC_2_SEC = 0x0005,
++	IP_ADDR_INDEX_REG_FUNC_3_PRI = 0x0006,
++	IP_ADDR_INDEX_REG_FUNC_3_SEC = 0x0007,
++};
++
++enum {
++	PROBE_MUX_ADDR_REG_MUX_SEL_MASK = 0x003f,
++	PROBE_MUX_ADDR_REG_SYSCLK = 0x0000,
++	PROBE_MUX_ADDR_REG_PCICLK = 0x0040,
++	PROBE_MUX_ADDR_REG_NRXCLK = 0x0080,
++	PROBE_MUX_ADDR_REG_CPUCLK = 0x00C0,
++	PROBE_MUX_ADDR_REG_MODULE_SEL_MASK = 0x3f00,
++	PROBE_MUX_ADDR_REG_UP = 0x4000,
++	PROBE_MUX_ADDR_REG_RE = 0x8000,
++};
++
++enum {
++	STATISTICS_INDEX_REG_MASK = 0x01ff,
++	STATISTICS_INDEX_REG_MAC0_TX_FRAME = 0x0000,
++	STATISTICS_INDEX_REG_MAC0_TX_BYTES = 0x0001,
++	STATISTICS_INDEX_REG_MAC0_TX_STAT1 = 0x0002,
++	STATISTICS_INDEX_REG_MAC0_TX_STAT2 = 0x0003,
++	STATISTICS_INDEX_REG_MAC0_TX_STAT3 = 0x0004,
++	STATISTICS_INDEX_REG_MAC0_TX_STAT4 = 0x0005,
++	STATISTICS_INDEX_REG_MAC0_TX_STAT5 = 0x0006,
++	STATISTICS_INDEX_REG_MAC0_RX_FRAME = 0x0007,
++	STATISTICS_INDEX_REG_MAC0_RX_BYTES = 0x0008,
++	STATISTICS_INDEX_REG_MAC0_RX_STAT1 = 0x0009,
++	STATISTICS_INDEX_REG_MAC0_RX_STAT2 = 0x000a,
++	STATISTICS_INDEX_REG_MAC0_RX_STAT3 = 0x000b,
++	STATISTICS_INDEX_REG_MAC0_RX_ERR_CRC = 0x000c,
++	STATISTICS_INDEX_REG_MAC0_RX_ERR_ENC = 0x000d,
++	STATISTICS_INDEX_REG_MAC0_RX_ERR_LEN = 0x000e,
++	STATISTICS_INDEX_REG_MAC0_RX_STAT4 = 0x000f,
++	STATISTICS_INDEX_REG_MAC1_TX_FRAME = 0x0010,
++	STATISTICS_INDEX_REG_MAC1_TX_BYTES = 0x0011,
++	STATISTICS_INDEX_REG_MAC1_TX_STAT1 = 0x0012,
++	STATISTICS_INDEX_REG_MAC1_TX_STAT2 = 0x0013,
++	STATISTICS_INDEX_REG_MAC1_TX_STAT3 = 0x0014,
++	STATISTICS_INDEX_REG_MAC1_TX_STAT4 = 0x0015,
++	STATISTICS_INDEX_REG_MAC1_TX_STAT5 = 0x0016,
++	STATISTICS_INDEX_REG_MAC1_RX_FRAME = 0x0017,
++	STATISTICS_INDEX_REG_MAC1_RX_BYTES = 0x0018,
++	STATISTICS_INDEX_REG_MAC1_RX_STAT1 = 0x0019,
++	STATISTICS_INDEX_REG_MAC1_RX_STAT2 = 0x001a,
++	STATISTICS_INDEX_REG_MAC1_RX_STAT3 = 0x001b,
++	STATISTICS_INDEX_REG_MAC1_RX_ERR_CRC = 0x001c,
++	STATISTICS_INDEX_REG_MAC1_RX_ERR_ENC = 0x001d,
++	STATISTICS_INDEX_REG_MAC1_RX_ERR_LEN = 0x001e,
++	STATISTICS_INDEX_REG_MAC1_RX_STAT4 = 0x001f,
++	STATISTICS_INDEX_REG_IP_TX_PKTS = 0x0020,
++	STATISTICS_INDEX_REG_IP_TX_BYTES = 0x0021,
++	STATISTICS_INDEX_REG_IP_TX_FRAG = 0x0022,
++	STATISTICS_INDEX_REG_IP_RX_PKTS = 0x0023,
++	STATISTICS_INDEX_REG_IP_RX_BYTES = 0x0024,
++	STATISTICS_INDEX_REG_IP_RX_FRAG = 0x0025,
++	STATISTICS_INDEX_REG_IP_DGRM_REASSEMBLY = 0x0026,
++	STATISTICS_INDEX_REG_IP_V6_RX_PKTS = 0x0027,
++	STATISTICS_INDEX_REG_IP_RX_PKTERR = 0x0028,
++	STATISTICS_INDEX_REG_IP_REASSEMBLY_ERR = 0x0029,
++	STATISTICS_INDEX_REG_TCP_TX_SEG = 0x0030,
++	STATISTICS_INDEX_REG_TCP_TX_BYTES = 0x0031,
++	STATISTICS_INDEX_REG_TCP_RX_SEG = 0x0032,
++	STATISTICS_INDEX_REG_TCP_RX_BYTES = 0x0033,
++	STATISTICS_INDEX_REG_TCP_TIMER_EXP = 0x0034,
++	STATISTICS_INDEX_REG_TCP_RX_ACK = 0x0035,
++	STATISTICS_INDEX_REG_TCP_TX_ACK = 0x0036,
++	STATISTICS_INDEX_REG_TCP_RX_ERR = 0x0037,
++	STATISTICS_INDEX_REG_TCP_RX_WIN_PROBE = 0x0038,
++	STATISTICS_INDEX_REG_TCP_ECC_ERR_CORR = 0x003f,
++};
++
++enum {
++	PORT_FATAL_ERROR_STATUS_OFB_RE_MAC0 = 0x00000001,
++	PORT_FATAL_ERROR_STATUS_OFB_RE_MAC1 = 0x00000002,
++	PORT_FATAL_ERROR_STATUS_OFB_WE = 0x00000004,
++	PORT_FATAL_ERROR_STATUS_IFB_RE = 0x00000008,
++	PORT_FATAL_ERROR_STATUS_IFB_WE_MAC0 = 0x00000010,
++	PORT_FATAL_ERROR_STATUS_IFB_WE_MAC1 = 0x00000020,
++	PORT_FATAL_ERROR_STATUS_ODE_RE = 0x00000040,
++	PORT_FATAL_ERROR_STATUS_ODE_WE = 0x00000080,
++	PORT_FATAL_ERROR_STATUS_IDE_RE = 0x00000100,
++	PORT_FATAL_ERROR_STATUS_IDE_WE = 0x00000200,
++	PORT_FATAL_ERROR_STATUS_SDE_RE = 0x00000400,
++	PORT_FATAL_ERROR_STATUS_SDE_WE = 0x00000800,
++	PORT_FATAL_ERROR_STATUS_BLE = 0x00001000,
++	PORT_FATAL_ERROR_STATUS_SPE = 0x00002000,
++	PORT_FATAL_ERROR_STATUS_EP0 = 0x00004000,
++	PORT_FATAL_ERROR_STATUS_EP1 = 0x00008000,
++	PORT_FATAL_ERROR_STATUS_ICE = 0x00010000,
++	PORT_FATAL_ERROR_STATUS_ILE = 0x00020000,
++	PORT_FATAL_ERROR_STATUS_OPE = 0x00040000,
++	PORT_FATAL_ERROR_STATUS_TA = 0x00080000,
++	PORT_FATAL_ERROR_STATUS_MA = 0x00100000,
++	PORT_FATAL_ERROR_STATUS_SCE = 0x00200000,
++	PORT_FATAL_ERROR_STATUS_RPE = 0x00400000,
++	PORT_FATAL_ERROR_STATUS_MPE = 0x00800000,
++	PORT_FATAL_ERROR_STATUS_OCE = 0x01000000,
++};
++
++/*
++ *  port control and status page - page 0
++ */
++
++struct ql3xxx_port_registers {
++	struct ql3xxx_common_registers CommonRegs;
++
++	u32 ExternalHWConfig;
++	u32 InternalChipConfig;
++	u32 portControl;
++	u32 portStatus;
++	u32 macAddrIndirectPtrReg;
++	u32 macAddrDataReg;
++	u32 macMIIMgmtControlReg;
++	u32 macMIIMgmtAddrReg;
++	u32 macMIIMgmtDataReg;
++	u32 macMIIStatusReg;
++	u32 mac0ConfigReg;
++	u32 mac0IpgIfgReg;
++	u32 mac0HalfDuplexReg;
++	u32 mac0MaxFrameLengthReg;
++	u32 mac0PauseThresholdReg;
++	u32 mac1ConfigReg;
++	u32 mac1IpgIfgReg;
++	u32 mac1HalfDuplexReg;
++	u32 mac1MaxFrameLengthReg;
++	u32 mac1PauseThresholdReg;
++	u32 ipAddrIndexReg;
++	u32 ipAddrDataReg;
++	u32 ipReassemblyTimeout;
++	u32 tcpMaxWindow;
++	u32 currentTcpTimestamp[2];
++	u32 internalRamRWAddrReg;
++	u32 internalRamWDataReg;
++	u32 reclaimedBufferAddrRegLow;
++	u32 reclaimedBufferAddrRegHigh;
++	u32 reserved[2];
++	u32 fpgaRevID;
++	u32 localRamAddr;
++	u32 localRamDataAutoIncr;
++	u32 localRamDataNonIncr;
++	u32 gpOutput;
++	u32 gpInput;
++	u32 probeMuxAddr;
++	u32 probeMuxData;
++	u32 statisticsIndexReg;
++	u32 statisticsReadDataRegAutoIncr;
++	u32 statisticsReadDataRegNoIncr;
++	u32 PortFatalErrStatus;
++};
++
++/*
++ * port host memory config page - page 1
++ */
++struct ql3xxx_host_memory_registers {
++	struct ql3xxx_common_registers CommonRegs;
++
++	u32 reserved[12];
++
++	/* Network Request Queue */
++	u32 reqConsumerIndex;
++	u32 reqConsumerIndexAddrLow;
++	u32 reqConsumerIndexAddrHigh;
++	u32 reqBaseAddrLow;
++	u32 reqBaseAddrHigh;
++	u32 reqLength;
++
++	/* Network Completion Queue */
++	u32 rspProducerIndex;
++	u32 rspProducerIndexAddrLow;
++	u32 rspProducerIndexAddrHigh;
++	u32 rspBaseAddrLow;
++	u32 rspBaseAddrHigh;
++	u32 rspLength;
++
++	/* RX Large Buffer Queue */
++	u32 rxLargeQConsumerIndex;
++	u32 rxLargeQBaseAddrLow;
++	u32 rxLargeQBaseAddrHigh;
++	u32 rxLargeQLength;
++	u32 rxLargeBufferLength;
++
++	/* RX Small Buffer Queue */
++	u32 rxSmallQConsumerIndex;
++	u32 rxSmallQBaseAddrLow;
++	u32 rxSmallQBaseAddrHigh;
++	u32 rxSmallQLength;
++	u32 rxSmallBufferLength;
++
++};
++
++/*
++ *  port local RAM page - page 2
++ */
++struct ql3xxx_local_ram_registers {
++	struct ql3xxx_common_registers CommonRegs;
++	u32 bufletSize;
++	u32 maxBufletCount;
++	u32 currentBufletCount;
++	u32 reserved;
++	u32 freeBufletThresholdLow;
++	u32 freeBufletThresholdHigh;
++	u32 ipHashTableBase;
++	u32 ipHashTableCount;
++	u32 tcpHashTableBase;
++	u32 tcpHashTableCount;
++	u32 ncbBase;
++	u32 maxNcbCount;
++	u32 currentNcbCount;
++	u32 drbBase;
++	u32 maxDrbCount;
++	u32 currentDrbCount;
++};
++
++/*
++ * definitions for Semaphore bits in Semaphore/Serial NVRAM interface register
++ */
++
++#define LS_64BITS(x)    (u32)(0xffffffff & ((u64)x))
++#define MS_64BITS(x)    (u32)(0xffffffff & (((u64)x)>>16>>16) )
++
++/*
++ * I/O register
++ */
++
++enum {
++	CONTROL_REG = 0,
++	STATUS_REG = 1,
++	PHY_STAT_LINK_UP = 0x0004,
++	PHY_CTRL_LOOPBACK = 0x4000,
++
++	PETBI_CONTROL_REG = 0x00,
++	PETBI_CTRL_SOFT_RESET = 0x8000,
++	PETBI_CTRL_AUTO_NEG = 0x1000,
++	PETBI_CTRL_RESTART_NEG = 0x0200,
++	PETBI_CTRL_FULL_DUPLEX = 0x0100,
++	PETBI_CTRL_SPEED_1000 = 0x0040,
++
++	PETBI_STATUS_REG = 0x01,
++	PETBI_STAT_NEG_DONE = 0x0020,
++	PETBI_STAT_LINK_UP = 0x0004,
++
++	PETBI_NEG_ADVER = 0x04,
++	PETBI_NEG_PAUSE = 0x0080,
++	PETBI_NEG_PAUSE_MASK = 0x0180,
++	PETBI_NEG_DUPLEX = 0x0020,
++	PETBI_NEG_DUPLEX_MASK = 0x0060,
++
++	PETBI_NEG_PARTNER = 0x05,
++	PETBI_NEG_ERROR_MASK = 0x3000,
++
++	PETBI_EXPANSION_REG = 0x06,
++	PETBI_EXP_PAGE_RX = 0x0002,
++
++	PETBI_TBI_CTRL = 0x11,
++	PETBI_TBI_RESET = 0x8000,
++	PETBI_TBI_AUTO_SENSE = 0x0100,
++	PETBI_TBI_SERDES_MODE = 0x0010,
++	PETBI_TBI_SERDES_WRAP = 0x0002,
++
++	AUX_CONTROL_STATUS = 0x1c,
++	PHY_AUX_NEG_DONE = 0x8000,
++	PHY_NEG_PARTNER = 5,
++	PHY_AUX_DUPLEX_STAT = 0x0020,
++	PHY_AUX_SPEED_STAT = 0x0018,
++	PHY_AUX_NO_HW_STRAP = 0x0004,
++	PHY_AUX_RESET_STICK = 0x0002,
++	PHY_NEG_PAUSE = 0x0400,
++	PHY_CTRL_SOFT_RESET = 0x8000,
++	PHY_NEG_ADVER = 4,
++	PHY_NEG_ADV_SPEED = 0x01e0,
++	PHY_CTRL_RESTART_NEG = 0x0200,
++};
++enum {
++/* AM29LV Flash definitions	*/
++	FM93C56A_START = 0x1,
++/* Commands */
++	FM93C56A_READ = 0x2,
++	FM93C56A_WEN = 0x0,
++	FM93C56A_WRITE = 0x1,
++	FM93C56A_WRITE_ALL = 0x0,
++	FM93C56A_WDS = 0x0,
++	FM93C56A_ERASE = 0x3,
++	FM93C56A_ERASE_ALL = 0x0,
++/* Command Extentions */
++	FM93C56A_WEN_EXT = 0x3,
++	FM93C56A_WRITE_ALL_EXT = 0x1,
++	FM93C56A_WDS_EXT = 0x0,
++	FM93C56A_ERASE_ALL_EXT = 0x2,
++/* Special Bits */
++	FM93C56A_READ_DUMMY_BITS = 1,
++	FM93C56A_READY = 0,
++	FM93C56A_BUSY = 1,
++	FM93C56A_CMD_BITS = 2,
++/* AM29LV Flash definitions	*/
++	FM93C56A_SIZE_8 = 0x100,
++	FM93C56A_SIZE_16 = 0x80,
++	FM93C66A_SIZE_8 = 0x200,
++	FM93C66A_SIZE_16 = 0x100,
++	FM93C86A_SIZE_16 = 0x400,
++/* Address Bits */
++	FM93C56A_NO_ADDR_BITS_16 = 8,
++	FM93C56A_NO_ADDR_BITS_8 = 9,
++	FM93C86A_NO_ADDR_BITS_16 = 10,
++/* Data Bits */
++	FM93C56A_DATA_BITS_16 = 16,
++	FM93C56A_DATA_BITS_8 = 8,
++};
++enum {
++/* Auburn Bits */
++	    AUBURN_EEPROM_DI = 0x8,
++	AUBURN_EEPROM_DI_0 = 0x0,
++	AUBURN_EEPROM_DI_1 = 0x8,
++	AUBURN_EEPROM_DO = 0x4,
++	AUBURN_EEPROM_DO_0 = 0x0,
++	AUBURN_EEPROM_DO_1 = 0x4,
++	AUBURN_EEPROM_CS = 0x2,
++	AUBURN_EEPROM_CS_0 = 0x0,
++	AUBURN_EEPROM_CS_1 = 0x2,
++	AUBURN_EEPROM_CLK_RISE = 0x1,
++	AUBURN_EEPROM_CLK_FALL = 0x0,
++};
++enum {EEPROM_SIZE = FM93C86A_SIZE_16,
++	EEPROM_NO_ADDR_BITS = FM93C86A_NO_ADDR_BITS_16,
++	EEPROM_NO_DATA_BITS = FM93C56A_DATA_BITS_16,
++};
++
++/*
++ *  MAC Config data structure
++ */
++    struct eeprom_port_cfg {
++	u16 etherMtu_mac;
++	u16 pauseThreshold_mac;
++	u16 resumeThreshold_mac;
++	u16 portConfiguration;
++#define PORT_CONFIG_AUTO_NEG_ENABLED        0x8000
++#define PORT_CONFIG_SYM_PAUSE_ENABLED       0x4000
++#define PORT_CONFIG_FULL_DUPLEX_ENABLED     0x2000
++#define PORT_CONFIG_HALF_DUPLEX_ENABLED     0x1000
++#define PORT_CONFIG_1000MB_SPEED            0x0400
++#define PORT_CONFIG_100MB_SPEED             0x0200
++#define PORT_CONFIG_10MB_SPEED              0x0100
++#define PORT_CONFIG_LINK_SPEED_MASK         0x0F00
++	u16 reserved[12];
++
++};
++
++/*
++ * BIOS data structure
++ */
++struct eeprom_bios_cfg {
++	u16 SpinDlyEn:1, disBios:1, EnMemMap:1, EnSelectBoot:1, Reserved:12;
++
++	u8 bootID0:7, boodID0Valid:1;
++	u8 bootLun0[8];
++
++	u8 bootID1:7, boodID1Valid:1;
++	u8 bootLun1[8];
++
++	u16 MaxLunsTrgt;
++	u8 reserved[10];
++};
++
++/*
++ *  Function Specific Data structure
++ */
++struct eeprom_function_cfg {
++	u8 reserved[30];
++	u8 macAddress[6];
++	u8 macAddressSecondary[6];
++
++	u16 subsysVendorId;
++	u16 subsysDeviceId;
++};
++
++/*
++ *  EEPROM format
++ */
++struct eeprom_data {
++	u8 asicId[4];
++	u8 version;
++	u8 numPorts;
++	u16 boardId;
++
++#define EEPROM_BOARDID_STR_SIZE   16
++#define EEPROM_SERIAL_NUM_SIZE    16
++
++	u8 boardIdStr[16];
++	u8 serialNumber[16];
++	u16 extHwConfig;
++	struct eeprom_port_cfg macCfg_port0;
++	struct eeprom_port_cfg macCfg_port1;
++	u16 bufletSize;
++	u16 bufletCount;
++	u16 tcpWindowThreshold50;
++	u16 tcpWindowThreshold25;
++	u16 tcpWindowThreshold0;
++	u16 ipHashTableBaseHi;
++	u16 ipHashTableBaseLo;
++	u16 ipHashTableSize;
++	u16 tcpHashTableBaseHi;
++	u16 tcpHashTableBaseLo;
++	u16 tcpHashTableSize;
++	u16 ncbTableBaseHi;
++	u16 ncbTableBaseLo;
++	u16 ncbTableSize;
++	u16 drbTableBaseHi;
++	u16 drbTableBaseLo;
++	u16 drbTableSize;
++	u16 reserved_142[4];
++	u16 ipReassemblyTimeout;
++	u16 tcpMaxWindowSize;
++	u16 ipSecurity;
++#define IPSEC_CONFIG_PRESENT 0x0001
++	u8 reserved_156[294];
++	u16 qDebug[8];
++	struct eeprom_function_cfg funcCfg_fn0;
++	u16 reserved_510;
++	u8 oemSpace[432];
++	struct eeprom_bios_cfg biosCfg_fn1;
++	struct eeprom_function_cfg funcCfg_fn1;
++	u16 reserved_1022;
++	u8 reserved_1024[464];
++	struct eeprom_function_cfg funcCfg_fn2;
++	u16 reserved_1534;
++	u8 reserved_1536[432];
++	struct eeprom_bios_cfg biosCfg_fn3;
++	struct eeprom_function_cfg funcCfg_fn3;
++	u16 checksum;
++};
++
++/*
++ * General definitions...
++ */
++
++/*
++ * Below are a number compiler switches for controlling driver behavior.
++ * Some are not supported under certain conditions and are notated as such.
++ */
++
++#define QL3XXX_VENDOR_ID    0x1077
++#define QL3022_DEVICE_ID    0x3022
++
++/* MTU & Frame Size stuff */
++#define NORMAL_MTU_SIZE 		ETH_DATA_LEN
++#define JUMBO_MTU_SIZE 			9000
++#define VLAN_ID_LEN			    2
++
++/* Request Queue Related Definitions */
++#define NUM_REQ_Q_ENTRIES   256	/* so that 64 * 64  = 4096 (1 page) */
++
++/* Response Queue Related Definitions */
++#define NUM_RSP_Q_ENTRIES   256	/* so that 256 * 16  = 4096 (1 page) */
++
++/* Transmit and Receive Buffers */
++#define NUM_LBUFQ_ENTRIES   	128
++#define NUM_SBUFQ_ENTRIES   	64
++#define QL_SMALL_BUFFER_SIZE    32
++#define QL_ADDR_ELE_PER_BUFQ_ENTRY \
++(sizeof(struct lrg_buf_q_entry) / sizeof(struct bufq_addr_element))
++    /* Each send has at least control block.  This is how many we keep. */
++#define NUM_SMALL_BUFFERS     	NUM_SBUFQ_ENTRIES * QL_ADDR_ELE_PER_BUFQ_ENTRY
++#define NUM_LARGE_BUFFERS     	NUM_LBUFQ_ENTRIES * QL_ADDR_ELE_PER_BUFQ_ENTRY
++#define QL_HEADER_SPACE 32	/* make header space at top of skb. */
++/*
++ * Large & Small Buffers for Receives
++ */
++struct lrg_buf_q_entry {
++
++	u32 addr0_lower;
++#define IAL_LAST_ENTRY 0x00000001
++#define IAL_CONT_ENTRY 0x00000002
++#define IAL_FLAG_MASK  0x00000003
++	u32 addr0_upper;
++	u32 addr1_lower;
++	u32 addr1_upper;
++	u32 addr2_lower;
++	u32 addr2_upper;
++	u32 addr3_lower;
++	u32 addr3_upper;
++	u32 addr4_lower;
++	u32 addr4_upper;
++	u32 addr5_lower;
++	u32 addr5_upper;
++	u32 addr6_lower;
++	u32 addr6_upper;
++	u32 addr7_lower;
++	u32 addr7_upper;
++
++};
++
++struct bufq_addr_element {
++	u32 addr_low;
++	u32 addr_high;
++};
++
++#define QL_NO_RESET			0
++#define QL_DO_RESET			1
++
++enum link_state_t {
++	LS_UNKNOWN = 0,
++	LS_DOWN,
++	LS_DEGRADE,
++	LS_RECOVER,
++	LS_UP,
++};
++
++struct ql_rcv_buf_cb {
++	struct ql_rcv_buf_cb *next;
++	struct sk_buff *skb;
++	 DECLARE_PCI_UNMAP_ADDR(mapaddr);
++	 DECLARE_PCI_UNMAP_LEN(maplen);
++	__le32 buf_phy_addr_low;
++	__le32 buf_phy_addr_high;
++	int index;
++};
++
++struct ql_tx_buf_cb {
++	struct sk_buff *skb;
++	struct ob_mac_iocb_req *queue_entry ;
++	 DECLARE_PCI_UNMAP_ADDR(mapaddr);
++	 DECLARE_PCI_UNMAP_LEN(maplen);
++};
++
++/* definitions for type field */
++#define QL_BUF_TYPE_MACIOCB 0x01
++#define QL_BUF_TYPE_IPIOCB  0x02
++#define QL_BUF_TYPE_TCPIOCB 0x03
++
++/* qdev->flags definitions. */
++enum { QL_RESET_DONE = 1,	/* Reset finished. */
++	QL_RESET_ACTIVE = 2,	/* Waiting for reset to finish. */
++	QL_RESET_START = 3,	/* Please reset the chip. */
++	QL_RESET_PER_SCSI = 4,	/* SCSI driver requests reset. */
++	QL_TX_TIMEOUT = 5,	/* Timeout in progress. */
++	QL_LINK_MASTER = 6,	/* This driver controls the link. */
++	QL_ADAPTER_UP = 7,	/* Adapter has been brought up. */
++	QL_THREAD_UP = 8,	/* This flag is available. */
++	QL_LINK_UP = 9,	/* Link Status. */
++	QL_ALLOC_REQ_RSP_Q_DONE = 10,
++	QL_ALLOC_BUFQS_DONE = 11,
++	QL_ALLOC_SMALL_BUF_DONE = 12,
++	QL_LINK_OPTICAL = 13,
++	QL_MSI_ENABLED = 14,
++};
++
++/*
++ * ql3_adapter - The main Adapter structure definition.
++ * This structure has all fields relevant to the hardware.
++ */
++
++struct ql3_adapter {
++	u32 reserved_00;
++	unsigned long flags;
++
++	/* PCI Configuration information for this device */
++	struct pci_dev *pdev;
++	struct net_device *ndev;	/* Parent NET device */
++
++	/* Hardware information */
++	u8 chip_rev_id;
++	u8 pci_slot;
++	u8 pci_width;
++	u8 pci_x;
++	u32 msi;
++	int index;
++	struct timer_list adapter_timer;	/* timer used for various functions */
++
++	spinlock_t adapter_lock;
++	spinlock_t hw_lock;
++
++	/* PCI Bus Relative Register Addresses */
++	u8 __iomem *mmap_virt_base;	/* stores return value from ioremap() */
++	struct ql3xxx_port_registers __iomem *mem_map_registers;
++	u32 current_page;	/* tracks current register page */
++
++	u32 msg_enable;
++	u8 reserved_01[2];
++	u8 reserved_02[2];
++
++	/* Page for Shadow Registers */
++	void *shadow_reg_virt_addr;
++	dma_addr_t shadow_reg_phy_addr;
++
++	/* Net Request Queue */
++	u32 req_q_size;
++	u32 reserved_03;
++	struct ob_mac_iocb_req *req_q_virt_addr;
++	dma_addr_t req_q_phy_addr;
++	u16 req_producer_index;
++	u16 reserved_04;
++	u16 *preq_consumer_index;
++	u32 req_consumer_index_phy_addr_high;
++	u32 req_consumer_index_phy_addr_low;
++	atomic_t tx_count;
++	struct ql_tx_buf_cb tx_buf[NUM_REQ_Q_ENTRIES];
++
++	/* Net Response Queue */
++	u32 rsp_q_size;
++	u32 eeprom_cmd_data;
++	struct net_rsp_iocb *rsp_q_virt_addr;
++	dma_addr_t rsp_q_phy_addr;
++	struct net_rsp_iocb *rsp_current;
++	u16 rsp_consumer_index;
++	u16 reserved_06;
++	u32 *prsp_producer_index;
++	u32 rsp_producer_index_phy_addr_high;
++	u32 rsp_producer_index_phy_addr_low;
++
++	/* Large Buffer Queue */
++	u32 lrg_buf_q_alloc_size;
++	u32 lrg_buf_q_size;
++	void *lrg_buf_q_alloc_virt_addr;
++	void *lrg_buf_q_virt_addr;
++	dma_addr_t lrg_buf_q_alloc_phy_addr;
++	dma_addr_t lrg_buf_q_phy_addr;
++	u32 lrg_buf_q_producer_index;
++	u32 lrg_buf_release_cnt;
++	struct bufq_addr_element *lrg_buf_next_free;
++
++	/* Large (Receive) Buffers */
++	struct ql_rcv_buf_cb lrg_buf[NUM_LARGE_BUFFERS];
++	struct ql_rcv_buf_cb *lrg_buf_free_head;
++	struct ql_rcv_buf_cb *lrg_buf_free_tail;
++	u32 lrg_buf_free_count;
++	u32 lrg_buffer_len;
++	u32 lrg_buf_index;
++	u32 lrg_buf_skb_check;
++
++	/* Small Buffer Queue */
++	u32 small_buf_q_alloc_size;
++	u32 small_buf_q_size;
++	u32 small_buf_q_producer_index;
++	void *small_buf_q_alloc_virt_addr;
++	void *small_buf_q_virt_addr;
++	dma_addr_t small_buf_q_alloc_phy_addr;
++	dma_addr_t small_buf_q_phy_addr;
++	u32 small_buf_index;
++
++	/* Small (Receive) Buffers */
++	void *small_buf_virt_addr;
++	dma_addr_t small_buf_phy_addr;
++	u32 small_buf_phy_addr_low;
++	u32 small_buf_phy_addr_high;
++	u32 small_buf_release_cnt;
++	u32 small_buf_total_size;
++
++	/* ISR related, saves status for DPC. */
++	u32 control_status;
++
++	struct eeprom_data nvram_data;
++	struct timer_list ioctl_timer;
++	u32 port_link_state;
++	u32 last_rsp_offset;
++
++	/* 4022 specific */
++	u32 mac_index;		/* Driver's MAC number can be 0 or 1 for first and second networking functions respectively */
++	u32 PHYAddr;		/* Address of PHY 0x1e00 Port 0 and 0x1f00 Port 1 */
++	u32 mac_ob_opcode;	/* Opcode to use on mac transmission */
++	u32 tcp_ob_opcode;	/* Opcode to use on tcp transmission */
++	u32 update_ob_opcode;	/* Opcode to use for updating NCB */
++	u32 mb_bit_mask;	/* MA Bits mask to use on transmission */
++	u32 numPorts;
++	struct net_device_stats stats;
++	struct workqueue_struct *workqueue;
++	struct work_struct reset_work;
++	struct work_struct tx_timeout_work;
++	u32 max_frame_size;
++};
++
++#endif				/* _QLA3XXX_H_ */
+-- 
+Konrad Rzeszutek 1-(978)-392-3903 or 1-(617)-693-1718
+IBM on-site partner.
+

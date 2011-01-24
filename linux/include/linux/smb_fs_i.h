@@ -9,6 +9,7 @@
 #ifndef _LINUX_SMB_FS_I
 #define _LINUX_SMB_FS_I
 
+#ifdef __KERNEL__
 #include <linux/types.h>
 #include <linux/fs.h>
 
@@ -34,4 +35,5 @@ struct smb_inode_info {
 	struct inode vfs_inode;	/* must be at the end */
 };
 
+#endif
 #endif

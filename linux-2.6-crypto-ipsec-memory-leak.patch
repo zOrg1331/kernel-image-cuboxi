@@ -1,0 +1,67 @@
+From: Vitaly Mayatskikh <vmayatsk@redhat.com>
+Date: Mon, 11 Aug 2008 17:01:12 +0200
+Subject: [crypto] IPsec memory leak
+Message-id: m3abfjtx3b.fsf@gravicappa.englab.brq.redhat.com
+O-Subject: [RHEL-5.3 PATCH] BZ455238 IPsec memory leak
+Bugzilla: 455238
+RH-Acked-by: Herbert Xu <herbert.xu@redhat.com>
+
+Bugzilla: 455238
+https://bugzilla.redhat.com/show_bug.cgi?id=455238
+
+Description:
+============
+This patch is needed to fix a regression caused by the IPsec/crypto
+back-port. When chainiv postpones requests it never calls their
+completion functions. This causes symptoms such as memory leaks when
+IPsec is in use.
+
+Patch was taken from upstream commit
+872ac8743cb400192a9fce4ba2d3ffd7bb309685, only offsets were changed.
+
+Test status of the patch:
+=========================
+Kernel was build on x86_64 w/o issues.
+
+diff --git a/crypto/chainiv.c b/crypto/chainiv.c
+index a1d545a..4ce565e 100644
+--- a/crypto/chainiv.c
++++ b/crypto/chainiv.c
+@@ -117,6 +117,7 @@ static int chainiv_init(struct ncrypto_tfm *tfm)
+ static int async_chainiv_schedule_work(struct async_chainiv_ctx *ctx)
+ {
+ 	int queued;
++	int err = ctx->err;
+ 
+ 	if (!ctx->queue.qlen) {
+ 		smp_mb__before_clear_bit();
+@@ -131,7 +132,7 @@ static int async_chainiv_schedule_work(struct async_chainiv_ctx *ctx)
+ 	BUG_ON(!queued);
+ 
+ out:
+-	return ctx->err;
++	return err;
+ }
+ 
+ static int async_chainiv_postpone_request(struct skcipher_givcrypt_request *req)
+@@ -225,6 +226,7 @@ static void async_chainiv_do_postponed(void *data)
+ 	struct async_chainiv_ctx *ctx = data;
+ 	struct skcipher_givcrypt_request *req;
+ 	struct ablkcipher_request *subreq;
++	int err;
+ 
+ 	/* Only handle one request at a time to avoid hogging keventd. */
+ 	spin_lock_bh(&ctx->lock);
+@@ -239,7 +241,11 @@ static void async_chainiv_do_postponed(void *data)
+ 	subreq = skcipher_givcrypt_reqctx(req);
+ 	subreq->base.flags |= CRYPTO_TFM_REQ_MAY_SLEEP;
+ 
+-	async_chainiv_givencrypt_tail(req);
++	err = async_chainiv_givencrypt_tail(req);
++
++	local_bh_disable();
++	skcipher_givcrypt_complete(req, err);
++	local_bh_enable();
+ }
+ 
+ static int async_chainiv_init(struct ncrypto_tfm *tfm)

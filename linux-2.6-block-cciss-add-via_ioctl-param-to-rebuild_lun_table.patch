@@ -1,0 +1,129 @@
+From: Tomas Henzl <thenzl@redhat.com>
+Date: Sun, 29 Aug 2010 15:49:53 -0400
+Subject: [block] cciss: add via_ioctl param to rebuild_lun_table
+Message-id: <1283097002-3341-55-git-send-email-thenzl@redhat.com>
+Patchwork-id: 27897
+O-Subject: [RHEL6 PATCH 54/63] cciss: Add via_ioctl parameter to
+	rebuild_lun_table
+Bugzilla: 568830
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+
+Add via_ioctl parameter to rebuild_lun_table, et al.
+This is because rebuild_lun_table wants to know if a disk is
+in use before messing with it.  If the ioctl is invoked on
+/dev/cciss/c0d0, then a usage count of 1 means the disk is
+(otherwise) unused -- only the caller of ioctl is using it.
+If rebuild_lun_table is entered another way (e.g: via
+pci_init_one) then the usage count should be zero.
+
+diff --git a/drivers/block/cciss.c b/drivers/block/cciss.c
+index 00d3158..58fd681 100644
+--- a/drivers/block/cciss.c
++++ b/drivers/block/cciss.c
+@@ -165,8 +165,9 @@ static int cciss_ioctl(struct inode *inode, struct file *filep,
+ static int cciss_getgeo(struct block_device *bdev, struct hd_geometry *geo);
+ 
+ static int cciss_revalidate(struct gendisk *disk);
+-static int rebuild_lun_table(ctlr_info_t *h, int first_time);
+-static int deregister_disk(ctlr_info_t *h, int drv_index, int clear_all);
++static int rebuild_lun_table(ctlr_info_t *h, int first_time, int via_ioctl);
++static int deregister_disk(ctlr_info_t *h, int drv_index, int clear_all,
++	int via_ioctl);
+ static void cciss_read_capacity(int ctlr, int logvol, sector_t *total_size,
+ 			unsigned int *block_size);
+ static void cciss_read_capacity_16(int ctlr, int logvol, sector_t *total_size,
+@@ -1364,7 +1365,7 @@ static int cciss_ioctl(struct inode *inode, struct file *filep,
+ 	case CCISS_REGNEWD:
+ 	case CCISS_DEREGDISK:
+ 	case CCISS_REVALIDVOLS:
+-		return rebuild_lun_table(host, 0);
++		return rebuild_lun_table(host, 0, 1);
+ 
+ 	case CCISS_GETLUNINFO:{
+ 			LogvolInfo_struct luninfo;
+@@ -1966,7 +1967,8 @@ init_queue_failure:
+  * is also the controller node.  Any changes to disk 0 will show up on
+  * the next reboot.
+  */
+-static void cciss_update_drive_info(int ctlr, int drv_index, int first_time)
++static void cciss_update_drive_info(int ctlr, int drv_index, int first_time,
++	int via_ioctl)
+ {
+ 	ctlr_info_t *h = hba[ctlr];
+ 	struct gendisk *disk;
+@@ -2045,7 +2047,7 @@ static void cciss_update_drive_info(int ctlr, int drv_index, int first_time)
+ 		/* deregister_disk sets h->drv[drv_index]->queue = NULL */
+ 		/* which keeps the interrupt handler from starting */
+ 		/* the queue. */
+-		ret = deregister_disk(h, drv_index, 0);
++		ret = deregister_disk(h, drv_index, 0, via_ioctl);
+ 	}
+ 
+ 	/* If the disk is in use return */
+@@ -2252,10 +2254,9 @@ error:
+  * without a re-ordering of those drives.
+  * INPUT
+  * h		= The controller to perform the operations on
+- * del_disk	= The disk to remove if specified.  If the value given
+- *		  is NULL then no disk is removed.
+  */
+-static int rebuild_lun_table(ctlr_info_t *h, int first_time)
++static int rebuild_lun_table(ctlr_info_t *h, int first_time,
++	int via_ioctl)
+ {
+ 	int ctlr = h->ctlr;
+ 	int num_luns;
+@@ -2334,7 +2335,7 @@ static int rebuild_lun_table(ctlr_info_t *h, int first_time)
+  			spin_lock_irqsave(CCISS_LOCK(h->ctlr), flags);
+  			h->drv[i]->busy_configuring = 1;
+  			spin_unlock_irqrestore(CCISS_LOCK(h->ctlr), flags);
+- 			return_code = deregister_disk(h, i, 1);
++ 			return_code = deregister_disk(h, i, 1, via_ioctl);
+ 			if (h->drv[i] != NULL)
+ 				h->drv[i]->busy_configuring = 0;
+ 		}
+@@ -2374,7 +2375,8 @@ static int rebuild_lun_table(ctlr_info_t *h, int first_time)
+  			if (drv_index == -1)
+  				goto freeret;
+ 		}
+-		cciss_update_drive_info(ctlr, drv_index, first_time);
++		cciss_update_drive_info(ctlr, drv_index, first_time,
++			via_ioctl);
+  	}		/* end for */
+ 
+ freeret:
+@@ -2423,9 +2425,15 @@ static void cciss_clear_drive_info(drive_info_struct *drive_info)
+  *             the disk in preparation for re-adding it.  In this case
+  *             the highest_lun should be left unchanged and the LunID
+  *             should not be cleared.
++ * via_ioctl
++ *    This indicates whether we've reached this path via ioctl.
++ *    This affects the maximum usage count allowed for c0d0 to be messed with.
++ *    If this path is reached via ioctl(), then the max_usage_count will
++ *    be 1, as the process calling ioctl() has got to have the device open.
++ *    If we get here via sysfs, then the max usage count will be zero.
+ */
+ static int deregister_disk(ctlr_info_t *h, int drv_index,
+-			   int clear_all)
++			   int clear_all, int via_ioctl)
+ {
+ 	int i;
+ 	struct gendisk *disk;
+@@ -2440,7 +2448,7 @@ static int deregister_disk(ctlr_info_t *h, int drv_index,
+ 
+ 	/* make sure logical volume is NOT is use */
+ 	if (clear_all || (h->gendisk[0] == disk)) {
+-		if (drv->usage_count > 1)
++		if (drv->usage_count > via_ioctl)
+ 			return -EBUSY;
+ 	} else if (drv->usage_count > 0)
+ 		return -EBUSY;
+@@ -4264,7 +4272,7 @@ static int __devinit cciss_init_one(struct pci_dev *pdev,
+ 	cciss_procinit(i);
+ 	hba[i]->cciss_sector_size = 8192;
+ 	hba[i]->busy_initializing = 0;
+-	rebuild_lun_table(hba[i], 1);
++	rebuild_lun_table(hba[i], 1, 0);
+ 
+ 	return 1;
+ 

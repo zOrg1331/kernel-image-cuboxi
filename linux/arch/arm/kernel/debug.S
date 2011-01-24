@@ -21,63 +21,6 @@
 
 #if defined(CONFIG_DEBUG_ICEDCC)
 		@@ debug using ARM EmbeddedICE DCC channel
-
-#if defined(CONFIG_CPU_V6)
-
-		.macro	addruart, rx
-		.endm
-
-		.macro	senduart, rd, rx
-		mcr	p14, 0, \rd, c0, c5, 0
-		.endm
-
-		.macro	busyuart, rd, rx
-1001:
-		mrc	p14, 0, \rx, c0, c1, 0
-		tst	\rx, #0x20000000
-		beq	1001b
-		.endm
-
-		.macro	waituart, rd, rx
-		mov	\rd, #0x2000000
-1001:
-		subs	\rd, \rd, #1
-		bmi	1002f
-		mrc	p14, 0, \rx, c0, c1, 0
-		tst	\rx, #0x20000000
-		bne	1001b
-1002:
-		.endm
-
-#elif defined(CONFIG_CPU_XSCALE)
-
-		.macro	addruart, rx
-		.endm
-
-		.macro	senduart, rd, rx
-		mcr	p14, 0, \rd, c8, c0, 0
-		.endm
-
-		.macro	busyuart, rd, rx
-1001:
-		mrc	p14, 0, \rx, c14, c0, 0
-		tst	\rx, #0x10000000
-		beq	1001b
-		.endm
-
-		.macro	waituart, rd, rx
-		mov	\rd, #0x10000000
-1001:
-		subs	\rd, \rd, #1
-		bmi	1002f
-		mrc	p14, 0, \rx, c14, c0, 0
-		tst	\rx, #0x10000000
-		bne	1001b
-1002:
-		.endm
-
-#else
-
 		.macro	addruart, rx
 		.endm
 
@@ -103,12 +46,9 @@
 		bne	1001b
 1002:
 		.endm
-
-#endif	/* CONFIG_CPU_V6 */
-
 #else
-#include <mach/debug-macro.S>
-#endif	/* CONFIG_DEBUG_ICEDCC */
+#include <asm/arch/debug-macro.S>
+#endif
 
 /*
  * Useful debugging routines
@@ -116,12 +56,10 @@
 ENTRY(printhex8)
 		mov	r1, #8
 		b	printhex
-ENDPROC(printhex8)
 
 ENTRY(printhex4)
 		mov	r1, #4
 		b	printhex
-ENDPROC(printhex4)
 
 ENTRY(printhex2)
 		mov	r1, #2
@@ -139,7 +77,6 @@ printhex:	adr	r2, hexbuf
 		bne	1b
 		mov	r0, r2
 		b	printascii
-ENDPROC(printhex2)
 
 		.ltorg
 
@@ -157,13 +94,11 @@ ENTRY(printascii)
 		teqne	r1, #0
 		bne	1b
 		mov	pc, lr
-ENDPROC(printascii)
 
 ENTRY(printch)
 		addruart r3
 		mov	r1, r0
 		mov	r0, #0
 		b	1b
-ENDPROC(printch)
 
 hexbuf:		.space 16

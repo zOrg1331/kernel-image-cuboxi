@@ -1,0 +1,13 @@
+diff --git a/arch/powerpc/kernel/ptrace.c b/arch/powerpc/kernel/ptrace.c
+index dea75d7..cf1d1bc 100644
+--- a/arch/powerpc/kernel/ptrace.c
++++ b/arch/powerpc/kernel/ptrace.c
+@@ -553,7 +553,7 @@ #ifdef CONFIG_PPC32
+ #endif
+ 
+ 	if (unlikely(current->audit_context))
+-		audit_syscall_exit((regs->ccr&0x1000)?AUDITSC_FAILURE:AUDITSC_SUCCESS,
++		audit_syscall_exit((regs->ccr&0x10000000)?AUDITSC_FAILURE:AUDITSC_SUCCESS,
+ 				   regs->result);
+ 
+ 	if ((test_thread_flag(TIF_SYSCALL_TRACE)

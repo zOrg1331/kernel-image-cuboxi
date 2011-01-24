@@ -1,0 +1,40 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Date: Thu, 29 Jul 2010 17:48:39 -0400
+Subject: [pnp] ignore both UNSET and DISABLED ioresources
+Message-id: <20100729174839.28335.16628.sendpatchset@prarit.bos.redhat.com>
+Patchwork-id: 27206
+O-Subject: [RHEL5 BZ 560540 2/2] Ignore both UNSET and DISABLED ioresources
+Bugzilla: 560540
+
+Backport of linux-2.6 commits 4b34fe156455d26ee6ed67b61539f136bf4e439c and
+5a515bcbea580a65ced92405b083299df9003748.
+
+Ignore both UNSET and DISABLED ioresources.
+
+Since the current code looks at DISABLED ioresources, messages of the type
+
+00000000-00000000 : pnp 00:09
+
+are seen in the bootlog and /proc/iomem.  These regions should obviously be
+ignored.
+
+Successfully tested by me.
+
+Resolves BZ 560540.
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/include/linux/pnp.h b/include/linux/pnp.h
+index 96551c7..13606b6 100644
+--- a/include/linux/pnp.h
++++ b/include/linux/pnp.h
+@@ -47,7 +47,8 @@ struct pnp_dev;
+ #define pnp_mem_end(dev,bar)     ((dev)->res.mem_resource[(bar)].end)
+ #define pnp_mem_flags(dev,bar)   ((dev)->res.mem_resource[(bar)].flags)
+ #define pnp_mem_valid(dev,bar) \
+-	((pnp_mem_flags((dev),(bar)) & (IORESOURCE_MEM | IORESOURCE_UNSET)) \
++	((pnp_mem_flags((dev),(bar)) & \
++	 (IORESOURCE_MEM | IORESOURCE_UNSET | IORESOURCE_DISABLED)) \
+ 		== IORESOURCE_MEM)
+ #define pnp_mem_len(dev,bar) \
+ 	((pnp_mem_start((dev),(bar)) == 0 &&	\

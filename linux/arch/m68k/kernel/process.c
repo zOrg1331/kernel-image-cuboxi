@@ -15,7 +15,6 @@
 #include <linux/sched.h>
 #include <linux/kernel.h>
 #include <linux/mm.h>
-#include <linux/fs.h>
 #include <linux/smp.h>
 #include <linux/smp_lock.h>
 #include <linux/stddef.h>
@@ -23,6 +22,7 @@
 #include <linux/ptrace.h>
 #include <linux/slab.h>
 #include <linux/user.h>
+#include <linux/a.out.h>
 #include <linux/reboot.h>
 #include <linux/init_task.h>
 #include <linux/mqueue.h>
@@ -40,11 +40,17 @@
  * alignment requirements and potentially different initial
  * setup.
  */
+static struct fs_struct init_fs = INIT_FS;
+static struct files_struct init_files = INIT_FILES;
 static struct signal_struct init_signals = INIT_SIGNALS(init_signals);
 static struct sighand_struct init_sighand = INIT_SIGHAND(init_sighand);
-union thread_union init_thread_union __init_task_data
-	__attribute__((aligned(THREAD_SIZE))) =
-		{ INIT_THREAD_INFO(init_task) };
+struct mm_struct init_mm = INIT_MM(init_mm);
+
+EXPORT_SYMBOL(init_mm);
+
+union thread_union init_thread_union
+__attribute__((section(".data.init_task"), aligned(THREAD_SIZE)))
+       = { INIT_THREAD_INFO(init_task) };
 
 /* initial task structure */
 struct task_struct init_task = INIT_TASK(init_task);
@@ -73,7 +79,7 @@ unsigned long thread_saved_pc(struct task_struct *tsk)
 static void default_idle(void)
 {
 	if (!need_resched())
-#if defined(MACH_ATARI_ONLY)
+#if defined(MACH_ATARI_ONLY) && !defined(CONFIG_HADES)
 		/* block out HSYNC on the atari (falcon) */
 		__asm__("stop #0x2200" : : : "cc");
 #else
@@ -181,7 +187,6 @@ int kernel_thread(int (*fn)(void *), void * arg, unsigned long flags)
 	set_fs (fs);
 	return pid;
 }
-EXPORT_SYMBOL(kernel_thread);
 
 void flush_thread(void)
 {
@@ -216,20 +221,20 @@ asmlinkage int m68k_clone(struct pt_regs *regs)
 {
 	unsigned long clone_flags;
 	unsigned long newsp;
-	int __user *parent_tidptr, *child_tidptr;
+	int *parent_tidptr, *child_tidptr;
 
 	/* syscall2 puts clone_flags in d1 and usp in d2 */
 	clone_flags = regs->d1;
 	newsp = regs->d2;
-	parent_tidptr = (int __user *)regs->d3;
-	child_tidptr = (int __user *)regs->d4;
+	parent_tidptr = (int *)regs->d3;
+	child_tidptr = (int *)regs->d4;
 	if (!newsp)
 		newsp = rdusp();
 	return do_fork(clone_flags, newsp, regs, 0,
 		       parent_tidptr, child_tidptr);
 }
 
-int copy_thread(unsigned long clone_flags, unsigned long usp,
+int copy_thread(int nr, unsigned long clone_flags, unsigned long usp,
 		 unsigned long unused,
 		 struct task_struct * p, struct pt_regs * regs)
 {
@@ -306,12 +311,57 @@ int dump_fpu (struct pt_regs *regs, struct user_m68kfp_struct *fpu)
 		: "memory");
 	return 1;
 }
-EXPORT_SYMBOL(dump_fpu);
+
+/*
+ * fill in the user structure for a core dump..
+ */
+void dump_thread(struct pt_regs * regs, struct user * dump)
+{
+	struct switch_stack *sw;
+
+/* changed the size calculations - should hopefully work better. lbt */
+	dump->magic = CMAGIC;
+	dump->start_code = 0;
+	dump->start_stack = rdusp() & ~(PAGE_SIZE - 1);
+	dump->u_tsize = ((unsigned long) current->mm->end_code) >> PAGE_SHIFT;
+	dump->u_dsize = ((unsigned long) (current->mm->brk +
+					  (PAGE_SIZE-1))) >> PAGE_SHIFT;
+	dump->u_dsize -= dump->u_tsize;
+	dump->u_ssize = 0;
+
+	if (dump->start_stack < TASK_SIZE)
+		dump->u_ssize = ((unsigned long) (TASK_SIZE - dump->start_stack)) >> PAGE_SHIFT;
+
+	dump->u_ar0 = (struct user_regs_struct *)((int)&dump->regs - (int)dump);
+	sw = ((struct switch_stack *)regs) - 1;
+	dump->regs.d1 = regs->d1;
+	dump->regs.d2 = regs->d2;
+	dump->regs.d3 = regs->d3;
+	dump->regs.d4 = regs->d4;
+	dump->regs.d5 = regs->d5;
+	dump->regs.d6 = sw->d6;
+	dump->regs.d7 = sw->d7;
+	dump->regs.a0 = regs->a0;
+	dump->regs.a1 = regs->a1;
+	dump->regs.a2 = regs->a2;
+	dump->regs.a3 = sw->a3;
+	dump->regs.a4 = sw->a4;
+	dump->regs.a5 = sw->a5;
+	dump->regs.a6 = sw->a6;
+	dump->regs.d0 = regs->d0;
+	dump->regs.orig_d0 = regs->orig_d0;
+	dump->regs.stkadj = regs->stkadj;
+	dump->regs.sr = regs->sr;
+	dump->regs.pc = regs->pc;
+	dump->regs.fmtvec = (regs->format << 12) | regs->vector;
+	/* dump floating point stuff */
+	dump->u_fpvalid = dump_fpu (regs, &dump->m68kfp);
+}
 
 /*
  * sys_execve() executes a new program.
  */
-asmlinkage int sys_execve(char __user *name, char __user * __user *argv, char __user * __user *envp)
+asmlinkage int sys_execve(char *name, char **argv, char **envp)
 {
 	int error;
 	char * filename;

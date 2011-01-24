@@ -205,12 +205,12 @@ static struct pi_protocol comm = {
 
 static int __init comm_init(void)
 {
-	return paride_register(&comm);
+	return pi_register(&comm)-1;
 }
 
 static void __exit comm_exit(void)
 {
-	paride_unregister(&comm);
+	pi_unregister(&comm);
 }
 
 MODULE_LICENSE("GPL");

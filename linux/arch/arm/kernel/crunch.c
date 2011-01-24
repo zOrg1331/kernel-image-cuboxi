@@ -10,14 +10,15 @@
  */
 
 #include <linux/module.h>
+#include <linux/config.h>
 #include <linux/types.h>
 #include <linux/kernel.h>
 #include <linux/signal.h>
 #include <linux/sched.h>
 #include <linux/init.h>
-#include <linux/io.h>
-#include <mach/ep93xx-regs.h>
+#include <asm/arch/ep93xx-regs.h>
 #include <asm/thread_notify.h>
+#include <asm/io.h>
 
 struct crunch_state *crunch_owner;
 
@@ -31,7 +32,7 @@ void crunch_task_release(struct thread_info *thread)
 
 static int crunch_enabled(u32 devcfg)
 {
-	return !!(devcfg & EP93XX_SYSCON_DEVCFG_CPENA);
+	return !!(devcfg & EP93XX_SYSCON_DEVICE_CONFIG_CRUNCH_ENABLE);
 }
 
 static int crunch_do(struct notifier_block *self, unsigned long cmd, void *t)
@@ -56,16 +57,11 @@ static int crunch_do(struct notifier_block *self, unsigned long cmd, void *t)
 		break;
 
 	case THREAD_NOTIFY_SWITCH:
-		devcfg = __raw_readl(EP93XX_SYSCON_DEVCFG);
+		devcfg = __raw_readl(EP93XX_SYSCON_DEVICE_CONFIG);
 		if (crunch_enabled(devcfg) || crunch_owner == crunch_state) {
-			/*
-			 * We don't use ep93xx_syscon_swlocked_write() here
-			 * because we are on the context switch path and
-			 * preemption is already disabled.
-			 */
-			devcfg ^= EP93XX_SYSCON_DEVCFG_CPENA;
+			devcfg ^= EP93XX_SYSCON_DEVICE_CONFIG_CRUNCH_ENABLE;
 			__raw_writel(0xaa, EP93XX_SYSCON_SWLOCK);
-			__raw_writel(devcfg, EP93XX_SYSCON_DEVCFG);
+			__raw_writel(devcfg, EP93XX_SYSCON_DEVICE_CONFIG);
 		}
 		break;
 	}
@@ -80,7 +76,6 @@ static struct notifier_block crunch_notifier_block = {
 static int __init crunch_init(void)
 {
 	thread_register_notifier(&crunch_notifier_block);
-	elf_hwcap |= HWCAP_CRUNCH;
 
 	return 0;
 }

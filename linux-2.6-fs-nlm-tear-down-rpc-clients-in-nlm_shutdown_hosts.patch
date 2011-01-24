@@ -1,0 +1,35 @@
+From: Jeff Layton <jlayton@redhat.com>
+Date: Wed, 28 May 2008 11:07:11 -0400
+Subject: [fs] nlm: tear down RPC clients in nlm_shutdown_hosts
+Message-id: 1211987231-9749-4-git-send-email-jlayton@redhat.com
+O-Subject: [RHEL5.3 PATCH 3/3] BZ#254195: NLM: tear down RPC clients in nlm_shutdown_hosts
+Bugzilla: 254195
+RH-Acked-by: Anton Arapov <aarapov@redhat.com>
+RH-Acked-by: Peter Staubach <staubach@redhat.com>
+
+It's possible for a RPC to outlive the lockd daemon that created it, so
+we need to make sure that all RPC's are killed when lockd is coming down
+or the kernel can end up in a use-after-free situation. When
+nlm_shutdown_hosts is called, kill off all RPC tasks associated with the
+host. Since we need to wait until they have all gone away, we might as
+well just shut down the RPC client altogether.
+
+diff --git a/fs/lockd/host.c b/fs/lockd/host.c
+index 38b0e8a..4810c37 100644
+--- a/fs/lockd/host.c
++++ b/fs/lockd/host.c
+@@ -272,8 +272,13 @@ nlm_shutdown_hosts(void)
+ 	/* First, make all hosts eligible for gc */
+ 	dprintk("lockd: nuking all hosts...\n");
+ 	for (i = 0; i < NLM_HOST_NRHASH; i++) {
+-		for (host = nlm_hosts[i]; host; host = host->h_next)
++		for (host = nlm_hosts[i]; host; host = host->h_next) {
+ 			host->h_expires = jiffies - 1;
++			if (host->h_rpcclnt) {
++				rpc_shutdown_client(host->h_rpcclnt);
++				host->h_rpcclnt = NULL;
++			}
++		}
+ 	}
+ 
+ 	/* Then, perform a garbage collection pass */

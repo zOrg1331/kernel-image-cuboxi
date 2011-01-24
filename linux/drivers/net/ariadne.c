@@ -1,7 +1,7 @@
 /*
  *  Amiga Linux/m68k Ariadne Ethernet Driver
  *
- *  Â© Copyright 1995-2003 by Geert Uytterhoeven (geert@linux-m68k.org)
+ *  © Copyright 1995-2003 by Geert Uytterhoeven (geert@linux-m68k.org)
  *			     Peter De Schrijver (p2@mind.be)
  *
  *  ---------------------------------------------------------------------------
@@ -98,6 +98,7 @@ struct ariadne_private {
     volatile u_short *rx_buff[RX_RING_SIZE];
     int cur_tx, cur_rx;			/* The next free ring entry */
     int dirty_tx;			/* The ring entries to be free()ed. */
+    struct net_device_stats stats;
     char tx_full;
 };
 
@@ -115,12 +116,11 @@ struct lancedata {
 
 static int ariadne_open(struct net_device *dev);
 static void ariadne_init_ring(struct net_device *dev);
-static netdev_tx_t ariadne_start_xmit(struct sk_buff *skb,
-				      struct net_device *dev);
+static int ariadne_start_xmit(struct sk_buff *skb, struct net_device *dev);
 static void ariadne_tx_timeout(struct net_device *dev);
 static int ariadne_rx(struct net_device *dev);
 static void ariadne_reset(struct net_device *dev);
-static irqreturn_t ariadne_interrupt(int irq, void *data);
+static irqreturn_t ariadne_interrupt(int irq, void *data, struct pt_regs *fp);
 static int ariadne_close(struct net_device *dev);
 static struct net_device_stats *ariadne_get_stats(struct net_device *dev);
 #ifdef HAVE_MULTICAST
@@ -156,18 +156,6 @@ static struct zorro_driver ariadne_driver = {
     .remove	= __devexit_p(ariadne_remove_one),
 };
 
-static const struct net_device_ops ariadne_netdev_ops = {
-	.ndo_open		= ariadne_open,
-	.ndo_stop		= ariadne_close,
-	.ndo_start_xmit		= ariadne_start_xmit,
-	.ndo_tx_timeout		= ariadne_tx_timeout,
-	.ndo_get_stats		= ariadne_get_stats,
-	.ndo_set_multicast_list	= set_multicast_list,
-	.ndo_validate_addr	= eth_validate_addr,
-	.ndo_change_mtu		= eth_change_mtu,
-	.ndo_set_mac_address	= eth_mac_addr,
-};
-
 static int __devinit ariadne_init_one(struct zorro_dev *z,
 				      const struct zorro_device_id *ent)
 {
@@ -195,6 +183,7 @@ static int __devinit ariadne_init_one(struct zorro_dev *z,
 	return -ENOMEM;
     }
 
+    SET_MODULE_OWNER(dev);
     priv = netdev_priv(dev);
 
     r1->name = dev->name;
@@ -210,8 +199,13 @@ static int __devinit ariadne_init_one(struct zorro_dev *z,
     dev->mem_start = ZTWO_VADDR(mem_start);
     dev->mem_end = dev->mem_start+ARIADNE_RAM_SIZE;
 
-    dev->netdev_ops = &ariadne_netdev_ops;
+    dev->open = &ariadne_open;
+    dev->stop = &ariadne_close;
+    dev->hard_start_xmit = &ariadne_start_xmit;
+    dev->tx_timeout = &ariadne_tx_timeout;
     dev->watchdog_timeo = 5*HZ;
+    dev->get_stats = &ariadne_get_stats;
+    dev->set_multicast_list = &set_multicast_list;
 
     err = register_netdev(dev);
     if (err) {
@@ -222,8 +216,10 @@ static int __devinit ariadne_init_one(struct zorro_dev *z,
     }
     zorro_set_drvdata(z, dev);
 
-    printk(KERN_INFO "%s: Ariadne at 0x%08lx, Ethernet Address %pM\n",
-           dev->name, board, dev->dev_addr);
+    printk(KERN_INFO "%s: Ariadne at 0x%08lx, Ethernet Address "
+	   "%02x:%02x:%02x:%02x:%02x:%02x\n", dev->name, board,
+	   dev->dev_addr[0], dev->dev_addr[1], dev->dev_addr[2],
+	   dev->dev_addr[3], dev->dev_addr[4], dev->dev_addr[5]);
 
     return 0;
 }
@@ -383,19 +379,20 @@ static void ariadne_init_ring(struct net_device *dev)
 
 static int ariadne_close(struct net_device *dev)
 {
+    struct ariadne_private *priv = netdev_priv(dev);
     volatile struct Am79C960 *lance = (struct Am79C960*)dev->base_addr;
 
     netif_stop_queue(dev);
 
     lance->RAP = CSR112;	/* Missed Frame Count */
-    dev->stats.rx_missed_errors = swapw(lance->RDP);
+    priv->stats.rx_missed_errors = swapw(lance->RDP);
     lance->RAP = CSR0;		/* PCnet-ISA Controller Status */
 
     if (ariadne_debug > 1) {
 	printk(KERN_DEBUG "%s: Shutting down ethercard, status was %2.2x.\n",
 	       dev->name, lance->RDP);
 	printk(KERN_DEBUG "%s: %lu packets missed\n", dev->name,
-	       dev->stats.rx_missed_errors);
+	       priv->stats.rx_missed_errors);
     }
 
     /* We stop the LANCE here -- it occasionally polls memory if we don't. */
@@ -419,7 +416,7 @@ static inline void ariadne_reset(struct net_device *dev)
 }
 
 
-static irqreturn_t ariadne_interrupt(int irq, void *data)
+static irqreturn_t ariadne_interrupt(int irq, void *data, struct pt_regs *fp)
 {
     struct net_device *dev = (struct net_device *)data;
     volatile struct Am79C960 *lance = (struct Am79C960*)dev->base_addr;
@@ -506,16 +503,16 @@ static irqreturn_t ariadne_interrupt(int irq, void *data)
 		if (status & TF_ERR) {
 		    /* There was an major error, log it. */
 		    int err_status = priv->tx_ring[entry]->TMD3;
-		    dev->stats.tx_errors++;
+		    priv->stats.tx_errors++;
 		    if (err_status & EF_RTRY)
-			dev->stats.tx_aborted_errors++;
+			priv->stats.tx_aborted_errors++;
 		    if (err_status & EF_LCAR)
-			dev->stats.tx_carrier_errors++;
+			priv->stats.tx_carrier_errors++;
 		    if (err_status & EF_LCOL)
-			dev->stats.tx_window_errors++;
+			priv->stats.tx_window_errors++;
 		    if (err_status & EF_UFLO) {
 			/* Ackk!  On FIFO errors the Tx unit is turned off! */
-			dev->stats.tx_fifo_errors++;
+			priv->stats.tx_fifo_errors++;
 			/* Remove this verbosity later! */
 			printk(KERN_ERR "%s: Tx FIFO error! Status %4.4x.\n",
 			       dev->name, csr0);
@@ -524,8 +521,8 @@ static irqreturn_t ariadne_interrupt(int irq, void *data)
 		    }
 		} else {
 		    if (status & (TF_MORE|TF_ONE))
-			dev->stats.collisions++;
-		    dev->stats.tx_packets++;
+			priv->stats.collisions++;
+		    priv->stats.tx_packets++;
 		}
 		dirty_tx++;
 	    }
@@ -551,11 +548,11 @@ static irqreturn_t ariadne_interrupt(int irq, void *data)
 	/* Log misc errors. */
 	if (csr0 & BABL) {
 	    handled = 1;
-	    dev->stats.tx_errors++;	/* Tx babble. */
+	    priv->stats.tx_errors++;	/* Tx babble. */
 	}
 	if (csr0 & MISS) {
 	    handled = 1;
-	    dev->stats.rx_errors++;	/* Missed a Rx frame. */
+	    priv->stats.rx_errors++;	/* Missed a Rx frame. */
 	}
 	if (csr0 & MERR) {
 	    handled = 1;
@@ -590,8 +587,7 @@ static void ariadne_tx_timeout(struct net_device *dev)
 }
 
 
-static netdev_tx_t ariadne_start_xmit(struct sk_buff *skb,
-				      struct net_device *dev)
+static int ariadne_start_xmit(struct sk_buff *skb, struct net_device *dev)
 {
     struct ariadne_private *priv = netdev_priv(dev);
     volatile struct Am79C960 *lance = (struct Am79C960*)dev->base_addr;
@@ -612,20 +608,28 @@ static netdev_tx_t ariadne_start_xmit(struct sk_buff *skb,
     if (skb->len < ETH_ZLEN)
     {
     	if (skb_padto(skb, ETH_ZLEN))
-    	    return NETDEV_TX_OK;
+    	    return 0;
     	len = ETH_ZLEN;
     }
 
     /* Fill in a Tx ring entry */
 
 #if 0
-{
-    printk(KERN_DEBUG "TX pkt type 0x%04x from %pM to %pM "
-	   " data 0x%08x len %d\n",
-	   ((u_short *)skb->data)[6],
-	   skb->data + 6, skb->data,
-	   (int)skb->data, (int)skb->len);
-}
+    printk(KERN_DEBUG "TX pkt type 0x%04x from ", ((u_short *)skb->data)[6]);
+    {
+	int i;
+	u_char *ptr = &((u_char *)skb->data)[6];
+	for (i = 0; i < 6; i++)
+	    printk("%02x", ptr[i]);
+    }
+    printk(" to ");
+    {
+	int i;
+	u_char *ptr = (u_char *)skb->data;
+	for (i = 0; i < 6; i++)
+	    printk("%02x", ptr[i]);
+    }
+    printk(" data 0x%08x len %d\n", (int)skb->data, (int)skb->len);
 #endif
 
     local_irq_save(flags);
@@ -673,7 +677,6 @@ static netdev_tx_t ariadne_start_xmit(struct sk_buff *skb,
 	priv->cur_tx -= TX_RING_SIZE;
 	priv->dirty_tx -= TX_RING_SIZE;
     }
-    dev->stats.tx_bytes += len;
 
     /* Trigger an immediate send poll. */
     lance->RAP = CSR0;		/* PCnet-ISA Controller Status */
@@ -687,7 +690,7 @@ static netdev_tx_t ariadne_start_xmit(struct sk_buff *skb,
     }
     local_irq_restore(flags);
 
-    return NETDEV_TX_OK;
+    return 0;
 }
 
 
@@ -708,15 +711,15 @@ static int ariadne_rx(struct net_device *dev)
 		buffers, with only the last correctly noting the error. */
 	    if (status & RF_ENP)
 		/* Only count a general error at the end of a packet.*/
-		dev->stats.rx_errors++;
+		priv->stats.rx_errors++;
 	    if (status & RF_FRAM)
-		dev->stats.rx_frame_errors++;
+		priv->stats.rx_frame_errors++;
 	    if (status & RF_OFLO)
-		dev->stats.rx_over_errors++;
+		priv->stats.rx_over_errors++;
 	    if (status & RF_CRC)
-		dev->stats.rx_crc_errors++;
+		priv->stats.rx_crc_errors++;
 	    if (status & RF_BUFF)
-		dev->stats.rx_fifo_errors++;
+		priv->stats.rx_fifo_errors++;
 	    priv->rx_ring[entry]->RMD1 &= 0xff00|RF_STP|RF_ENP;
 	} else {
 	    /* Malloc up new buffer, compatible with net-3. */
@@ -732,7 +735,7 @@ static int ariadne_rx(struct net_device *dev)
 			break;
 
 		if (i > RX_RING_SIZE-2) {
-		    dev->stats.rx_dropped++;
+		    priv->stats.rx_dropped++;
 		    priv->rx_ring[entry]->RMD1 |= RF_OWN;
 		    priv->cur_rx++;
 		}
@@ -740,30 +743,34 @@ static int ariadne_rx(struct net_device *dev)
 	    }
 
 
+	    skb->dev = dev;
 	    skb_reserve(skb,2);		/* 16 byte align */
 	    skb_put(skb,pkt_len);	/* Make room */
-	    skb_copy_to_linear_data(skb, (char *)priv->rx_buff[entry], pkt_len);
+	    eth_copy_and_sum(skb, (char *)priv->rx_buff[entry], pkt_len,0);
 	    skb->protocol=eth_type_trans(skb,dev);
 #if 0
-{
 	    printk(KERN_DEBUG "RX pkt type 0x%04x from ",
 		   ((u_short *)skb->data)[6]);
 	    {
+		int i;
 		u_char *ptr = &((u_char *)skb->data)[6];
-		printk("%pM", ptr);
+		for (i = 0; i < 6; i++)
+		    printk("%02x", ptr[i]);
 	    }
 	    printk(" to ");
 	    {
+		int i;
 		u_char *ptr = (u_char *)skb->data;
-		printk("%pM", ptr);
+		for (i = 0; i < 6; i++)
+		    printk("%02x", ptr[i]);
 	    }
 	    printk(" data 0x%08x len %d\n", (int)skb->data, (int)skb->len);
-}
 #endif
 
 	    netif_rx(skb);
-	    dev->stats.rx_packets++;
-	    dev->stats.rx_bytes += pkt_len;
+	    dev->last_rx = jiffies;
+	    priv->stats.rx_packets++;
+	    priv->stats.rx_bytes += pkt_len;
 	}
 
 	priv->rx_ring[entry]->RMD1 |= RF_OWN;
@@ -781,6 +788,7 @@ static int ariadne_rx(struct net_device *dev)
 
 static struct net_device_stats *ariadne_get_stats(struct net_device *dev)
 {
+    struct ariadne_private *priv = netdev_priv(dev);
     volatile struct Am79C960 *lance = (struct Am79C960*)dev->base_addr;
     short saved_addr;
     unsigned long flags;
@@ -788,11 +796,11 @@ static struct net_device_stats *ariadne_get_stats(struct net_device *dev)
     local_irq_save(flags);
     saved_addr = lance->RAP;
     lance->RAP = CSR112;		/* Missed Frame Count */
-    dev->stats.rx_missed_errors = swapw(lance->RDP);
+    priv->stats.rx_missed_errors = swapw(lance->RDP);
     lance->RAP = saved_addr;
     local_irq_restore(flags);
 
-    return &dev->stats;
+    return &priv->stats;
 }
 
 
@@ -817,6 +825,8 @@ static void set_multicast_list(struct net_device *dev)
     ariadne_init_ring(dev);
 
     if (dev->flags & IFF_PROMISC) {
+	/* Log any net taps. */
+	printk(KERN_INFO "%s: Promiscuous mode enabled.\n", dev->name);
 	lance->RAP = CSR15;		/* Mode Register */
 	lance->RDP = PROM;		/* Set promiscuous mode */
     } else {

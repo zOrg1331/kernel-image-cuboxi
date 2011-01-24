@@ -1,0 +1,260 @@
+From: Hans-Joachim Picht <hpicht@redhat.com>
+Date: Wed, 9 Jan 2008 17:23:29 +0100
+Subject: [s390] HiperSockets MAC layer routing support
+Message-id: 20080109162329.GB27770@redhat.com
+O-Subject: [RHEL5 U2 PATCH 2/4 ] HiperSockets MAC layer routing support
+Bugzilla: 319001
+
+Description
+============
+
+qeth: System z HiperSockets layer-2 support.
+The existing OSA layer-2 support is utilized to enable
+HiperSockets layer-2, including IPv6 support for
+HiperSockets layer-2.
+
+Bugzilla
+=========
+
+BZ 319001
+https://bugzilla.redhat.com/show_bug.cgi?id=319001
+
+Upstream status of the patch:
+=============================
+
+The code will be submitted upstream soon.
+
+Test status:
+============
+Kernel with patch was built and successfully tested
+
+Please ACK.
+
+With best regards,
+
+Hans
+
+diff --git a/drivers/s390/net/qeth.h b/drivers/s390/net/qeth.h
+index 451e2bb..315b6b3 100644
+--- a/drivers/s390/net/qeth.h
++++ b/drivers/s390/net/qeth.h
+@@ -834,6 +834,10 @@ struct qeth_card {
+ 	int use_hard_stop;
+ 	int (*orig_hard_header)(struct sk_buff *,struct net_device *,
+ 				unsigned short,void *,void *,unsigned);
++	int (*orig_rebuild_header)(struct sk_buff *);
++	int (*orig_hard_header_cache)(struct neighbour *,struct hh_cache *);
++	void (*orig_header_cache_update)(struct hh_cache *,struct net_device *,
++				unsigned char *);
+ 	struct qeth_osn_info osn_info;
+ 	atomic_t force_alloc_skb;
+ };
+@@ -943,7 +947,8 @@ static inline unsigned short
+ qeth_get_netdev_flags(struct qeth_card *card)
+ {
+ 	if (card->options.layer2 &&
+-	   (card->info.type == QETH_CARD_TYPE_OSAE))
++	   ((card->info.type == QETH_CARD_TYPE_OSAE) ||
++		(card->info.type == QETH_CARD_TYPE_IQD)))
+ 		return 0;
+ 	switch (card->info.type) {
+ 	case QETH_CARD_TYPE_IQD:
+diff --git a/drivers/s390/net/qeth_main.c b/drivers/s390/net/qeth_main.c
+index 51f9fd9..e83941b 100644
+--- a/drivers/s390/net/qeth_main.c
++++ b/drivers/s390/net/qeth_main.c
+@@ -6538,6 +6538,58 @@ qeth_init_func_level(struct qeth_card *card)
+ 	}
+ }
+ 
++/* Layer 2 specific stuff */
++#define IGNORE_PARAM_EQ(option,value,reset_value,msg) \
++        if (card->options.option == value) { \
++                PRINT_ERR("%s not supported with layer 2 " \
++                          "functionality, ignoring option on read" \
++			  "channel device %s .\n",msg,CARD_RDEV_ID(card)); \
++                card->options.option = reset_value; \
++        }
++#define IGNORE_PARAM_NEQ(option,value,reset_value,msg) \
++        if (card->options.option != value) { \
++                PRINT_ERR("%s not supported with layer 2 " \
++                          "functionality, ignoring option on read" \
++			  "channel device %s .\n",msg,CARD_RDEV_ID(card)); \
++                card->options.option = reset_value; \
++        }
++
++static void qeth_make_parameters_consistent(struct qeth_card *card)
++{
++
++	if (card->options.layer2 == 0)
++		return;
++	if (card->info.type == QETH_CARD_TYPE_OSN)
++		return;
++	if ((card->info.type == QETH_CARD_TYPE_IQD) &&
++		(card->info.guestlan)) {
++       		PRINT_ERR("Device %s does not support layer 2 functionality." \
++	               	  " Ignoring layer2 option.\n",CARD_BUS_ID(card));
++       		card->options.layer2 = 0;
++		return;
++	}
++       	IGNORE_PARAM_NEQ(route4.type, NO_ROUTER, NO_ROUTER,
++               	         "Routing options are");
++#ifdef CONFIG_QETH_IPV6
++       	IGNORE_PARAM_NEQ(route6.type, NO_ROUTER, NO_ROUTER,
++               	         "Routing options are");
++#endif
++       	IGNORE_PARAM_EQ(checksum_type, HW_CHECKSUMMING,
++                       	QETH_CHECKSUM_DEFAULT,
++               	        "Checksumming options are");
++       	IGNORE_PARAM_NEQ(broadcast_mode, QETH_TR_BROADCAST_ALLRINGS,
++                       	 QETH_TR_BROADCAST_ALLRINGS,
++               	         "Broadcast mode options are");
++       	IGNORE_PARAM_NEQ(macaddr_mode, QETH_TR_MACADDR_NONCANONICAL,
++                       	 QETH_TR_MACADDR_NONCANONICAL,
++               	         "Canonical MAC addr options are");
++       	IGNORE_PARAM_NEQ(fake_broadcast, 0, 0,
++			 "Broadcast faking options are");
++       	IGNORE_PARAM_NEQ(add_hhlen, DEFAULT_ADD_HHLEN,
++       	                 DEFAULT_ADD_HHLEN,"Option add_hhlen is");
++        IGNORE_PARAM_NEQ(fake_ll, 0, 0,"Option fake_ll is");
++}
++
+ /**
+  * hardsetup card, initialize MPC and QDIO stuff
+  */
+@@ -6575,6 +6627,7 @@ retry:
+ 		QETH_DBF_TEXT_(setup, 2, "2err%d", rc);
+ 		return rc;
+ 	}
++	qeth_make_parameters_consistent(card);
+ 	qeth_init_tokens(card);
+ 	qeth_init_func_level(card);
+ 	rc = qeth_idx_activate_channel(&card->read, qeth_idx_read_cb);
+@@ -6605,7 +6658,26 @@ retry:
+ 	}
+ 	/*network device will be recovered*/
+ 	if (card->dev) {
++	if (!card->options.layer2 &&
++	     card->info.type == QETH_CARD_TYPE_IQD) {
++		memset(card->dev->dev_addr,
++		       0x00,
++		       OSA_ADDR_LEN);
++		card->info.mac_bits &= ~QETH_LAYER2_MAC_READ;
++	}
+ 		card->dev->hard_header = card->orig_hard_header;
++	if (qeth_get_netdev_flags(card) & IFF_NOARP) {
++		card->dev->flags |= IFF_NOARP;
++		card->dev->rebuild_header = NULL;
++		card->dev->hard_header = NULL;
++		card->dev->header_cache_update = NULL;
++		card->dev->hard_header_cache = NULL;
++	} else {
++		card->dev->flags &= ~IFF_NOARP;
++		card->dev->rebuild_header = card->orig_rebuild_header;
++		card->dev->header_cache_update = card->orig_header_cache_update;
++		card->dev->hard_header_cache = card->orig_hard_header_cache;
++	}
+ 		if (card->options.fake_ll &&
+ 		    (qeth_get_netdev_flags(card) & IFF_NOARP))
+ 			card->dev->hard_header = qeth_fake_header;
+@@ -6623,6 +6695,9 @@ retry:
+ 	}
+ 	card->dev->priv = card;
+ 	card->orig_hard_header = card->dev->hard_header;
++	card->orig_rebuild_header = card->dev->rebuild_header;
++	card->orig_header_cache_update = card->dev->header_cache_update;
++	card->orig_hard_header_cache = card->dev->hard_header_cache;
+ 	card->dev->type = qeth_get_arphdr_type(card->info.type,
+ 					       card->info.link_type);
+ 	card->dev->init = qeth_netdev_init;
+@@ -6900,6 +6975,8 @@ qeth_send_stoplan(struct qeth_card *card)
+ 	 */
+ 	QETH_DBF_TEXT(trace, 2, "stoplan");
+ 
++	if (card->info.type == QETH_CARD_TYPE_IQD)
++		return 0;
+ 	rc = qeth_send_startstoplan(card, IPA_CMD_STOPLAN, QETH_PROT_IPV4);
+ 	return rc;
+ }
+@@ -7895,57 +7972,6 @@ qeth_start_again(struct qeth_card *card, int recovery_mode)
+ }
+ 
+ 
+-/* Layer 2 specific stuff */
+-#define IGNORE_PARAM_EQ(option,value,reset_value,msg) \
+-        if (card->options.option == value) { \
+-                PRINT_ERR("%s not supported with layer 2 " \
+-                          "functionality, ignoring option on read" \
+-			  "channel device %s .\n",msg,CARD_RDEV_ID(card)); \
+-                card->options.option = reset_value; \
+-        }
+-#define IGNORE_PARAM_NEQ(option,value,reset_value,msg) \
+-        if (card->options.option != value) { \
+-                PRINT_ERR("%s not supported with layer 2 " \
+-                          "functionality, ignoring option on read" \
+-			  "channel device %s .\n",msg,CARD_RDEV_ID(card)); \
+-                card->options.option = reset_value; \
+-        }
+-
+-
+-static void qeth_make_parameters_consistent(struct qeth_card *card)
+-{
+-
+-	if (card->options.layer2 == 0)
+-		return;
+-	if (card->info.type == QETH_CARD_TYPE_OSN)
+-		return;
+-	if (card->info.type == QETH_CARD_TYPE_IQD) {
+-       		PRINT_ERR("Device %s does not support layer 2 functionality." \
+-	               	  " Ignoring layer2 option.\n",CARD_BUS_ID(card));
+-       		card->options.layer2 = 0;
+-		return;
+-	}
+-       	IGNORE_PARAM_NEQ(route4.type, NO_ROUTER, NO_ROUTER,
+-               	         "Routing options are");
+-#ifdef CONFIG_QETH_IPV6
+-       	IGNORE_PARAM_NEQ(route6.type, NO_ROUTER, NO_ROUTER,
+-               	         "Routing options are");
+-#endif
+-       	IGNORE_PARAM_EQ(checksum_type, HW_CHECKSUMMING,
+-                       	QETH_CHECKSUM_DEFAULT,
+-               	        "Checksumming options are");
+-       	IGNORE_PARAM_NEQ(broadcast_mode, QETH_TR_BROADCAST_ALLRINGS,
+-                       	 QETH_TR_BROADCAST_ALLRINGS,
+-               	         "Broadcast mode options are");
+-       	IGNORE_PARAM_NEQ(macaddr_mode, QETH_TR_MACADDR_NONCANONICAL,
+-                       	 QETH_TR_MACADDR_NONCANONICAL,
+-               	         "Canonical MAC addr options are");
+-       	IGNORE_PARAM_NEQ(fake_broadcast, 0, 0,
+-			 "Broadcast faking options are");
+-       	IGNORE_PARAM_NEQ(add_hhlen, DEFAULT_ADD_HHLEN,
+-       	                 DEFAULT_ADD_HHLEN,"Option add_hhlen is");
+-        IGNORE_PARAM_NEQ(fake_ll, 0, 0,"Option fake_ll is");
+-}
+ 
+ 
+ static int
+@@ -7974,8 +8000,6 @@ __qeth_set_online(struct ccwgroup_device *gdev, int recovery_mode)
+ 		return -EIO;
+ 	}
+ 
+-	qeth_make_parameters_consistent(card);
+-
+ 	if ((rc = qeth_hardsetup_card(card))){
+ 		QETH_DBF_TEXT_(setup, 2, "2err%d", rc);
+ 		goto out_remove;
+diff --git a/drivers/s390/net/qeth_sys.c b/drivers/s390/net/qeth_sys.c
+index 5836737..273faad 100644
+--- a/drivers/s390/net/qeth_sys.c
++++ b/drivers/s390/net/qeth_sys.c
+@@ -720,10 +720,6 @@ qeth_dev_layer2_store(struct device *dev, struct device_attribute *attr, const c
+ 
+ 	if (!card)
+ 		return -EINVAL;
+-	if (card->info.type == QETH_CARD_TYPE_IQD) {
+-                PRINT_WARN("Layer2 on Hipersockets is not supported! \n");
+-                return -EPERM;
+-        }
+ 
+ 	if (((card->state != CARD_STATE_DOWN) &&
+ 	     (card->state != CARD_STATE_RECOVER)))

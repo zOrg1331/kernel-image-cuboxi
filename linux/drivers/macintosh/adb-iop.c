@@ -19,6 +19,7 @@
 #include <linux/init.h>
 #include <linux/proc_fs.h>
 
+#include <asm/bootinfo.h> 
 #include <asm/macintosh.h> 
 #include <asm/macints.h> 
 #include <asm/mac_iop.h>
@@ -29,7 +30,7 @@
 
 /*#define DEBUG_ADB_IOP*/
 
-extern void iop_ism_irq(int, void *);
+extern void iop_ism_irq(int, void *, struct pt_regs *);
 
 static struct adb_request *current_req;
 static struct adb_request *last_req;
@@ -77,7 +78,7 @@ static void adb_iop_end_req(struct adb_request *req, int state)
  * This will be called when a packet has been successfully sent.
  */
 
-static void adb_iop_complete(struct iop_msg *msg)
+static void adb_iop_complete(struct iop_msg *msg, struct pt_regs *regs)
 {
 	struct adb_request *req;
 	uint flags;
@@ -99,7 +100,7 @@ static void adb_iop_complete(struct iop_msg *msg)
  * commands or autopoll packets) are received.
  */
 
-static void adb_iop_listen(struct iop_msg *msg)
+static void adb_iop_listen(struct iop_msg *msg, struct pt_regs *regs)
 {
 	struct adb_iopmsg *amsg = (struct adb_iopmsg *) msg->message;
 	struct adb_request *req;
@@ -142,7 +143,7 @@ static void adb_iop_listen(struct iop_msg *msg)
 			req->reply_len = amsg->count + 1;
 			memcpy(req->reply, &amsg->cmd, req->reply_len);
 		} else {
-			adb_input(&amsg->cmd, amsg->count + 1,
+			adb_input(&amsg->cmd, amsg->count + 1, regs,
 				  amsg->flags & ADB_IOP_AUTOPOLL);
 		}
 		memcpy(msg->reply, msg->message, IOP_MSG_LEN);
@@ -265,7 +266,7 @@ int adb_iop_autopoll(int devs)
 void adb_iop_poll(void)
 {
 	if (adb_iop_state == idle) adb_iop_start();
-	iop_ism_irq(0, (void *) ADB_IOP);
+	iop_ism_irq(0, (void *) ADB_IOP, NULL);
 }
 
 int adb_iop_reset_bus(void)

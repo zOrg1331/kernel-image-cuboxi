@@ -1,0 +1,361 @@
+From: Chad Dupuis <cdupuis@redhat.com>
+Date: Tue, 3 Aug 2010 13:49:03 -0400
+Subject: [net] netxen: support pci error handlers
+Message-id: <20100803134619.2239.22351.sendpatchset@localhost.localdomain>
+Patchwork-id: 27311
+O-Subject: [RHEL 5.6 PATCH 9/44] netxen: support pci error handlers
+Bugzilla: 562937
+RH-Acked-by: David S. Miller <davem@redhat.com>
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+
+Bugzilla
+========
+
+562937
+
+Upstream Status
+===============
+
+net-2.6 commit id e87ad5539343366e7c634c940a930157b6fa2aae
+
+Description
+===========
+
+>From a1505bde59cd3f52b3e84cca77b29964d68b266b Mon Sep 17 00:00:00 2001
+From: Amit Kumar Salecha <amit.salecha@qlogic.com>
+Date: Tue, 8 Dec 2009 20:40:56 +0000
+Subject: [PATCH] netxen: support pci error handlers
+
+o Support pci error detection and recovery.
+o Refactor suspend and resume code, to share with io_error_detected,
+  and slot_reset callbacks
+o NX_NEED_AER device state added, to synchronize with firmware
+  recovery.
+
+Signed-off-by: Amit Kumar Salecha <amit.salecha@qlogic.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+
+diff --git a/drivers/net/netxen/netxen_nic_hdr.h b/drivers/net/netxen/netxen_nic_hdr.h
+index d138fc2..6383690 100644
+--- a/drivers/net/netxen/netxen_nic_hdr.h
++++ b/drivers/net/netxen/netxen_nic_hdr.h
+@@ -969,7 +969,8 @@ enum {
+ #define NX_DEV_READY		3
+ #define NX_DEV_NEED_RESET	4
+ #define NX_DEV_NEED_QUISCENT	5
+-#define NX_DEV_FAILED		6
++#define NX_DEV_NEED_AER 	6
++#define NX_DEV_FAILED		7
+ 
+ #define NX_RCODE_DRIVER_INFO		0x20000000
+ #define NX_RCODE_DRIVER_CAN_RELOAD	0x40000000
+diff --git a/drivers/net/netxen/netxen_nic_main.c b/drivers/net/netxen/netxen_nic_main.c
+index 0810f8d..f43b55d 100644
+--- a/drivers/net/netxen/netxen_nic_main.c
++++ b/drivers/net/netxen/netxen_nic_main.c
+@@ -35,6 +35,7 @@
+ #include <linux/ipv6.h>
+ #include <linux/inetdevice.h>
+ #include <linux/sysfs.h>
++#include <linux/aer.h>
+ 
+ MODULE_DESCRIPTION("QLogic/NetXen (1/10) GbE Converged Ethernet Driver");
+ MODULE_LICENSE("GPL");
+@@ -85,6 +86,7 @@ static void netxen_remove_sysfs_entries(struct netxen_adapter *adapter);
+ static void netxen_create_diag_entries(struct netxen_adapter *adapter);
+ static void netxen_remove_diag_entries(struct netxen_adapter *adapter);
+ 
++static int nx_dev_request_aer(struct netxen_adapter *adapter);
+ static int nx_decr_dev_ref_cnt(struct netxen_adapter *adapter);
+ static int netxen_can_start_firmware(struct netxen_adapter *adapter);
+ 
+@@ -1286,6 +1288,9 @@ netxen_nic_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
+ 	if ((err = pci_request_regions(pdev, netxen_nic_driver_name)))
+ 		goto err_out_disable_pdev;
+ 
++	if (NX_IS_REVISION_P3(pdev->revision))
++		pci_enable_pcie_error_reporting(pdev);
++
+ 	pci_set_master(pdev);
+ 
+ 	netdev = alloc_etherdev(sizeof(struct netxen_adapter));
+@@ -1433,17 +1438,19 @@ static void __devexit netxen_nic_remove(struct pci_dev *pdev)
+ 
+ 	netxen_release_firmware(adapter);
+ 
++	if (NX_IS_REVISION_P3(pdev->revision))
++		pci_disable_pcie_error_reporting(pdev);
++
+ 	pci_release_regions(pdev);
+ 	pci_disable_device(pdev);
+ 	pci_set_drvdata(pdev, NULL);
+ 
+ 	free_netdev(netdev);
+ }
+-static int __netxen_nic_shutdown(struct pci_dev *pdev)
++
++static void netxen_nic_detach_func(struct netxen_adapter *adapter)
+ {
+-	struct netxen_adapter *adapter = pci_get_drvdata(pdev);
+ 	struct net_device *netdev = adapter->netdev;
+-	int retval;
+ 
+ 	netif_device_detach(netdev);
+ 
+@@ -1462,43 +1469,9 @@ static int __netxen_nic_shutdown(struct pci_dev *pdev)
+ 	nx_decr_dev_ref_cnt(adapter);
+ 
+ 	clear_bit(__NX_RESETTING, &adapter->state);
+-
+-	retval = pci_save_state(pdev);
+-	if (retval)
+-		return retval;
+-
+-	if (netxen_nic_wol_supported(adapter)) {
+-		pci_enable_wake(pdev, PCI_D3cold, 1);
+-		pci_enable_wake(pdev, PCI_D3hot, 1);
+-	}
+-
+-	return 0;
+-}
+-static void netxen_nic_shutdown(struct pci_dev *pdev)
+-{
+-	if (__netxen_nic_shutdown(pdev))
+-		return;
+-
+-	pci_disable_device(pdev);
+-}
+-#ifdef CONFIG_PM
+-static int
+-netxen_nic_suspend(struct pci_dev *pdev, pm_message_t state)
+-{
+-	int retval;
+-
+-	retval = __netxen_nic_shutdown(pdev);
+-	if (retval)
+-		return retval;
+-
+-	pci_set_power_state(pdev, pci_choose_state(pdev, state));
+-
+-	pci_disable_device(pdev);
+-	return 0;
+ }
+ 
+-static int
+-netxen_nic_resume(struct pci_dev *pdev)
++static int netxen_nic_attach_func(struct pci_dev *pdev)
+ {
+ 	struct netxen_adapter *adapter = pci_get_drvdata(pdev);
+ 	struct net_device *netdev = adapter->netdev;
+@@ -1543,6 +1516,85 @@ err_out:
+ 	nx_decr_dev_ref_cnt(adapter);
+ 	return err;
+ }
++
++static pci_ers_result_t netxen_io_error_detected(struct pci_dev *pdev,
++						pci_channel_state_t state)
++{
++	struct netxen_adapter *adapter = pci_get_drvdata(pdev);
++
++	if (state == pci_channel_io_perm_failure)
++		return PCI_ERS_RESULT_DISCONNECT;
++
++	if (nx_dev_request_aer(adapter))
++		return PCI_ERS_RESULT_RECOVERED;
++
++	netxen_nic_detach_func(adapter);
++
++	pci_disable_device(pdev);
++
++	return PCI_ERS_RESULT_NEED_RESET;
++}
++
++static pci_ers_result_t netxen_io_slot_reset(struct pci_dev *pdev)
++{
++	int err = 0;
++
++	err = netxen_nic_attach_func(pdev);
++
++	return err ? PCI_ERS_RESULT_DISCONNECT : PCI_ERS_RESULT_RECOVERED;
++}
++
++static void netxen_io_resume(struct pci_dev *pdev)
++{
++	pci_cleanup_aer_uncorrect_error_status(pdev);
++}
++
++static void netxen_nic_shutdown(struct pci_dev *pdev)
++{
++	struct netxen_adapter *adapter = pci_get_drvdata(pdev);
++
++	netxen_nic_detach_func(adapter);
++
++	if (pci_save_state(pdev))
++		return;
++
++	if (netxen_nic_wol_supported(adapter)) {
++		pci_enable_wake(pdev, PCI_D3cold, 1);
++		pci_enable_wake(pdev, PCI_D3hot, 1);
++	}
++
++	pci_disable_device(pdev);
++}
++
++#ifdef CONFIG_PM
++static int
++netxen_nic_suspend(struct pci_dev *pdev, pm_message_t state)
++{
++	struct netxen_adapter *adapter = pci_get_drvdata(pdev);
++	int retval;
++
++	netxen_nic_detach_func(adapter);
++
++	retval = pci_save_state(pdev);
++	if (retval)
++		return retval;
++
++	if (netxen_nic_wol_supported(adapter)) {
++		pci_enable_wake(pdev, PCI_D3cold, 1);
++		pci_enable_wake(pdev, PCI_D3hot, 1);
++	}
++
++	pci_disable_device(pdev);
++	pci_set_power_state(pdev, pci_choose_state(pdev, state));
++
++	return 0;
++}
++
++static int
++netxen_nic_resume(struct pci_dev *pdev)
++{
++	return netxen_nic_attach_func(pdev);
++}
+ #endif
+ 
+ static int netxen_nic_open(struct net_device *netdev)
+@@ -2146,20 +2198,49 @@ nx_decr_dev_ref_cnt(struct netxen_adapter *adapter)
+ 	return count;
+ }
+ 
+-static void
++static int
++nx_dev_request_aer(struct netxen_adapter *adapter)
++{
++	u32 state;
++	int ret = -EINVAL;
++
++	if (netxen_api_lock(adapter))
++		return ret;
++
++	state = NXRD32(adapter, NX_CRB_DEV_STATE);
++
++	if (state == NX_DEV_NEED_AER)
++		ret = 0;
++	else if (state == NX_DEV_READY) {
++		NXWR32(adapter, NX_CRB_DEV_STATE, NX_DEV_NEED_AER);
++		ret = 0;
++	}
++
++	netxen_api_unlock(adapter);
++	return ret;
++}
++
++static int
+ nx_dev_request_reset(struct netxen_adapter *adapter)
+ {
+ 	u32 state;
++	int ret = -EINVAL;
+ 
+ 	if (netxen_api_lock(adapter))
+-		return;
++		return ret;
+ 
+ 	state = NXRD32(adapter, NX_CRB_DEV_STATE);
+ 
+-	if (state != NX_DEV_INITALIZING)
++	if (state == NX_DEV_NEED_RESET)
++		ret = 0;
++	else if (state != NX_DEV_INITALIZING && state != NX_DEV_NEED_AER) {
+ 		NXWR32(adapter, NX_CRB_DEV_STATE, NX_DEV_NEED_RESET);
++		ret = 0;
++	}
+ 
+ 	netxen_api_unlock(adapter);
++
++	return ret;
+ }
+ 
+ static int
+@@ -2308,18 +2389,28 @@ netxen_check_health(struct netxen_adapter *adapter)
+ 	u32 state, heartbit;
+ 	struct net_device *netdev = adapter->netdev;
+ 
++	state = NXRD32(adapter, NX_CRB_DEV_STATE);
++	if (state == NX_DEV_NEED_AER)
++		return 0;
++
+ 	if (netxen_nic_check_temp(adapter))
+ 		goto detach;
+ 
+ 	if (adapter->need_fw_reset) {
+-		nx_dev_request_reset(adapter);
++		if (nx_dev_request_reset(adapter))
++			return 0;
+ 		goto detach;
+ 	}
+ 
+-	state = NXRD32(adapter, NX_CRB_DEV_STATE);
++	/* NX_DEV_NEED_RESET, this state can be marked in two cases
++	 * 1. Tx timeout 2. Fw hang
++	 * Send request to destroy context in case of tx timeout only
++	 * and doesn't required in case of Fw hang
++	 */
+ 	if (state == NX_DEV_NEED_RESET) {
+ 		adapter->need_fw_reset = 1;
+-		goto detach;
++		if (NX_IS_REVISION_P2(adapter->ahw.revision_id))
++			goto detach;
+ 	}
+ 
+ 	if (NX_IS_REVISION_P2(adapter->ahw.revision_id))
+@@ -2329,12 +2420,17 @@ netxen_check_health(struct netxen_adapter *adapter)
+ 	if (heartbit != adapter->heartbit) {
+ 		adapter->heartbit = heartbit;
+ 		adapter->fw_fail_cnt = 0;
++		if (adapter->need_fw_reset)
++			goto detach;
+ 		return 0;
+ 	}
+ 
+ 	if (++adapter->fw_fail_cnt < FW_FAIL_THRESH)
+ 		return 0;
+ 
++	if (nx_dev_request_reset(adapter))
++		return 0;
++
+ 	clear_bit(__NX_FW_ATTACHED, &adapter->state);
+ 
+ 	printk("%s: firmware hang detected\n", netdev->name);
+@@ -2765,6 +2861,12 @@ netxen_config_indev_addr(struct net_device *dev, unsigned long event)
+ { }
+ #endif
+ 
++static struct pci_error_handlers netxen_err_handler = {
++	.error_detected = netxen_io_error_detected,
++	.slot_reset = netxen_io_slot_reset,
++	.resume = netxen_io_resume,
++};
++
+ static struct pci_driver netxen_driver = {
+ 	.name = netxen_nic_driver_name,
+ 	.id_table = netxen_pci_tbl,
+@@ -2774,7 +2876,8 @@ static struct pci_driver netxen_driver = {
+ 	.suspend = netxen_nic_suspend,
+ 	.resume = netxen_nic_resume,
+ #endif
+-	.shutdown = netxen_nic_shutdown
++	.shutdown = netxen_nic_shutdown,
++	.err_handler = &netxen_err_handler
+ };
+ 
+ static int __init netxen_init_module(void)

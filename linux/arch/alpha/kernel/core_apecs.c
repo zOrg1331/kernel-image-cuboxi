@@ -387,7 +387,8 @@ apecs_pci_clr_err(void)
 }
 
 void
-apecs_machine_check(unsigned long vector, unsigned long la_ptr)
+apecs_machine_check(unsigned long vector, unsigned long la_ptr,
+		    struct pt_regs * regs)
 {
 	struct el_common *mchk_header;
 	struct el_apecs_procdata *mchk_procdata;
@@ -411,7 +412,7 @@ apecs_machine_check(unsigned long vector, unsigned long la_ptr)
 	wrmces(0x7);		/* reset machine check pending flag */
 	mb();
 
-	process_mcheck_info(vector, la_ptr, "APECS",
+	process_mcheck_info(vector, la_ptr, regs, "APECS",
 			    (mcheck_expected(0)
 			     && (mchk_sysdata->epic_dcsr & 0x0c00UL)));
 }

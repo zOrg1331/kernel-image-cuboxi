@@ -1,0 +1,94 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Date: Tue, 2 Feb 2010 15:06:47 -0500
+Subject: [pci] aer: disable advanced error reporting by default
+Message-id: <4B683F87.4090805@redhat.com>
+Patchwork-id: 23100
+O-Subject: Re: [RHEL5] PCI AER: disable aer by default
+Bugzilla: 559978
+RH-Acked-by: Dean Nelson <dnelson@redhat.com>
+RH-Acked-by: Andy Gospodarek <gospo@redhat.com>
+
+Gary Case noticed this obvious flaw in the PCI AER functionality.  If PCI AER
+registers the ACPI _OSC method early in the boot process, PCI AER takes control
+of the PCIE hotplug functionality.
+
+This then limits the hotplug operations to the pciehp driver, effectively
+disabling the apciphp driver.
+
+By default PCI AER must be disabled in RHEL5 (and only RHEL5) in order to
+maintain backward compatibility of the acpiphp driver for our customers, some
+of which use the acpiphp sysfs files in applications.
+
+Successfully tested by me.
+
+Resolves BZ 559978.
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/Documentation/kernel-parameters.txt b/Documentation/kernel-parameters.txt
+index 5887dd0..e91fbcf 100644
+--- a/Documentation/kernel-parameters.txt
++++ b/Documentation/kernel-parameters.txt
+@@ -1331,9 +1331,9 @@ running once the system is up.
+ 				Mechanism 1.
+ 		conf2		[IA-32] Force use of PCI Configuration
+ 				Mechanism 2.
+-		noaer           [PCIE] If the PCIEAER kernel config parameter is
+-				enabled, this kernel boot option can be used to
+-				disable the use of PCIE advanced error reporting.
++		aer		[PCIE] By default in RHEL5, PCIEAER is disabled.
++				This kernel boot option can be used to enable
++				the use of the PCIE advanced error reporting.
+ 		nommconf	[IA-32,X86_64] Disable use of MMCONFIG for PCI
+ 				Configuration
+ 		nomsi		[MSI] If the PCI_MSI kernel config parameter is
+diff --git a/drivers/pci/pci.c b/drivers/pci/pci.c
+index 6ec14fc..cf4f719 100644
+--- a/drivers/pci/pci.c
++++ b/drivers/pci/pci.c
+@@ -1832,8 +1832,8 @@ static int __devinit pci_setup(char *str)
+ 		if (*str && (str = pcibios_setup(str)) && *str) {
+ 			if (!strcmp(str, "nomsi")) {
+ 				pci_no_msi();
+-			} else if (!strcmp(str, "noaer")) {
+-				pci_no_aer();
++			} else if (!strcmp(str, "aer")) {
++				pci_aer_enable();
+ 			} else {
+ 				printk(KERN_ERR "PCI: Unknown option `%s'\n",
+ 						str);
+diff --git a/drivers/pci/pci.h b/drivers/pci/pci.h
+index 0bf784e..dbf7048 100644
+--- a/drivers/pci/pci.h
++++ b/drivers/pci/pci.h
+@@ -60,9 +60,9 @@ static inline void pci_restore_msix_state(struct pci_dev *dev) {}
+ #endif
+ 
+ #ifdef CONFIG_PCIEAER
+-void pci_no_aer(void);
++void pci_aer_enable(void);
+ #else
+-static inline void pci_no_aer(void) { }
++static inline void pci_aer_enable(void) { }
+ #endif
+ 
+ static inline int pci_no_d1d2(struct pci_dev *dev)
+diff --git a/drivers/pci/pcie/aer/aerdrv.c b/drivers/pci/pcie/aer/aerdrv.c
+index a6fec8a..2bbbfb6 100644
+--- a/drivers/pci/pcie/aer/aerdrv.c
++++ b/drivers/pci/pcie/aer/aerdrv.c
+@@ -72,11 +72,11 @@ static struct pcie_port_service_driver aerdriver = {
+ 	.reset_link	= aer_root_reset,
+ };
+ 
+-static int pcie_aer_disable;
++static int pcie_aer_disable = 1;
+ 
+-void pci_no_aer(void)
++void pci_aer_enable(void)
+ {
+-	pcie_aer_disable = 1;	/* has priority over 'forceload' */
++	pcie_aer_disable = 0;	/* has priority over 'forceload' */
+ }
+ 
+ /**

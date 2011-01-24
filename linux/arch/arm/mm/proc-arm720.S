@@ -36,9 +36,9 @@
 #include <linux/init.h>
 #include <asm/assembler.h>
 #include <asm/asm-offsets.h>
-#include <asm/hwcap.h>
 #include <asm/pgtable-hwdef.h>
 #include <asm/pgtable.h>
+#include <asm/procinfo.h>
 #include <asm/ptrace.h>
 
 #include "proc-macros.S"
@@ -88,17 +88,34 @@ ENTRY(cpu_arm720_switch_mm)
 		mov	pc, lr
 
 /*
- * Function: arm720_set_pte_ext(pte_t *ptep, pte_t pte, unsigned int ext)
+ * Function: arm720_set_pte(pte_t *ptep, pte_t pte)
  * Params  : r0 = Address to set
  *	   : r1 = value to set
  * Purpose : Set a PTE and flush it out of any WB cache
  */
-	.align	5
-ENTRY(cpu_arm720_set_pte_ext)
+		.align	5
+ENTRY(cpu_arm720_set_pte)
 #ifdef CONFIG_MMU
-	armv3_set_pte_ext wc_disable=0
+		str	r1, [r0], #-2048		@ linux version
+
+		eor	r1, r1, #L_PTE_PRESENT | L_PTE_YOUNG | L_PTE_WRITE | L_PTE_DIRTY
+
+		bic	r2, r1, #PTE_SMALL_AP_MASK
+		bic	r2, r2, #PTE_TYPE_MASK
+		orr	r2, r2, #PTE_TYPE_SMALL
+
+		tst	r1, #L_PTE_USER			@ User?
+		orrne	r2, r2, #PTE_SMALL_AP_URO_SRW
+
+		tst	r1, #L_PTE_WRITE | L_PTE_DIRTY	@ Write and Dirty?
+		orreq	r2, r2, #PTE_SMALL_AP_UNO_SRW
+
+		tst	r1, #L_PTE_PRESENT | L_PTE_YOUNG	@ Present and Young
+		movne	r2, #0
+
+		str	r2, [r0]			@ hardware version
 #endif
-	mov	pc, lr
+		mov	pc, lr
 
 /*
  * Function: arm720_reset
@@ -181,14 +198,13 @@ arm720_crval:
 		.type	arm720_processor_functions, #object
 ENTRY(arm720_processor_functions)
 		.word	v4t_late_abort
-		.word	legacy_pabort
 		.word	cpu_arm720_proc_init
 		.word	cpu_arm720_proc_fin
 		.word	cpu_arm720_reset
 		.word	cpu_arm720_do_idle
 		.word	cpu_arm720_dcache_clean_area
 		.word	cpu_arm720_switch_mm
-		.word	cpu_arm720_set_pte_ext
+		.word	cpu_arm720_set_pte
 		.size	arm720_processor_functions, . - arm720_processor_functions
 
 		.section ".rodata"
@@ -214,7 +230,7 @@ cpu_arm720_name:
 		.align
 
 /*
- * See <asm/procinfo.h> for a definition of this structure.
+ * See linux/include/asm-arm/procinfo.h for a definition of this structure.
  */
 	
 		.section ".proc.info.init", #alloc, #execinstr

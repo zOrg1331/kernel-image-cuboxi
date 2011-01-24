@@ -1,0 +1,364 @@
+From: Jonathan Brassow <jbrassow@redhat.com>
+Subject: [PATCH RHEL 5.1] bz236271 1/2  dm-raid1.c: fix EIO on writes after 	log failure
+Date: Tue, 08 May 2007 13:14:30 -0500
+Bugzilla: 236271
+Message-Id: <1178648070.10582.18.camel@hydrogen.msp.redhat.com>
+Changelog: [md] fix EIO on writes after log failure
+
+
+Bug #236271: dm-mirror: Writes to mirror after log failure return EIO
+
+Without the ability to requeue bio's in core device-mapper, mirroring
+was forced to return EIO during writes when the log device died.
+
+Since we can now requeue, we don't need to return EIO.  We can requeue
+the writes and reconfigure the mirror (in userspace).
+
+If a write to the log produces and error, the pending writes are
+put on the "failures" list.  Since the log is marked as failed,
+they will stay on the failures list until a suspend happens.
+
+Suspends come in two phases, presuspend and postsuspend.  We must
+make sure that all the writes on the failures list are requeued
+in the presuspend phase (a requirement of dm core).  This means
+that recovery must be complete
+(because writes may be delayed behind it) and the failures list
+must be requeued before we return from presuspend.
+
+The mechanisms to ensure recovery is complete (or stopped) was
+already in place, but needed to be moved from postsuspend to
+presuspend.  We rely on 'flush_workqueue' to ensure that the
+mirror thread is complete and therefore, has requeued all writes
+in the failures list.
+
+Because we are using flush_workqueue, we must ensure that no
+additional 'queue_work' calls will produce additional I/O
+that we need to requeue (because once we return from
+presuspend, we are unable to do anything about it).  'queue_work'
+is called in response to the following functions:
+- complete_resync_work = NA, recovery is stopped
+- rh_dec (mirror_end_io) = NA, only calls 'queue_work' if it
+                           is ready to recover the region
+                           (recovery is stopped) or it needs
+                           to clear the region in the log*
+                           **this doesn't get called while
+                           suspending**
+- rh_recovery_end = NA, recovery is stopped
+- rh_recovery_start = NA, recovery is stopped
+- write_callback = 1) Writes w/o failures simply call
+                   bio_endio -> mirror_end_io -> rh_dec
+                   (see rh_dec above)
+                   2) Writes with failures are put on
+                   the failures list and queue_work is
+                   called**
+                   ** write_callbacks don't happen
+                   during suspend **
+- do_failures = NA, 'queue_work' not called if suspending
+- add_mirror (initialization) = NA, only done on mirror creation
+- queue_bio = NA, 1) delayed I/O scheduled before flush_workqueue
+              is called.  2) No more I/Os are being issued.
+              3) Re-attempted READs can still be handled.
+              (Write completions are handled through rh_dec/
+              write_callback - mention above - and do not
+              use queue_bio.)
+
+Index: linux-rhel5/drivers/md/dm-raid1.c
+===================================================================
+--- linux-rhel5.orig/drivers/md/dm-raid1.c
++++ linux-rhel5/drivers/md/dm-raid1.c
+@@ -135,6 +135,8 @@ struct mirror_set {
+ 	/* recovery */
+ 	region_t nr_regions;
+ 	int in_sync;
++	int log_failure;
++	atomic_t suspend;
+ 
+ 	struct mirror *default_mirror;	/* Default mirror */
+ 
+@@ -363,9 +365,19 @@ static void complete_resync_work(struct 
+ 	struct region_hash *rh = reg->rh;
+ 
+ 	rh->log->type->set_region_sync(rh->log, reg->key, success);
++
++	/*
++	 * Dispatch the bios before we call 'wake_up_all'.
++	 * This is important because if we are suspending,
++	 * we want to know that recovery is complete and
++	 * the work queue is flushed.  If we wake_up_all
++	 * before we dispatch_bios (queue bios and call wake()),
++	 * then we risk suspending before the work queue
++	 * has been properly flushed.
++	 */
++	dispatch_bios(rh->ms, &reg->delayed_bios);
+ 	if (atomic_dec_and_test(&rh->recovery_in_flight))
+ 		wake_up_all(&recovery_stopped_event);
+-	dispatch_bios(rh->ms, &reg->delayed_bios);
+ 	up(&rh->recovery_count);
+ }
+ 
+@@ -1062,8 +1074,6 @@ static void write_callback(unsigned long
+ 	 * regions with the same code.
+ 	 */
+ 	if (unlikely(error)) {
+-		DMERR("Error during write occurred.");
+-
+ 		/*
+ 		 * If the log is intact, we can play around with trying
+ 		 * to handle the failure.  Otherwise, we have to report
+@@ -1147,7 +1157,7 @@ static void do_write(struct mirror_set *
+ 
+ static void do_writes(struct mirror_set *ms, struct bio_list *writes)
+ {
+-	int state, r;
++	int state;
+ 	struct bio *bio;
+ 	struct bio_list sync, nosync, recover, *this_list = NULL;
+ 	struct bio_list requeue;
+@@ -1209,13 +1219,19 @@ static void do_writes(struct mirror_set 
+ 	rh_inc_pending(&ms->rh, &sync);
+ 	rh_inc_pending(&ms->rh, &nosync);
+ 
+-	r = rh_flush(&ms->rh);
++	ms->log_failure = rh_flush(&ms->rh);
+ 
+ 	/*
+ 	 * Dispatch io.
+ 	 */
+-	while ((bio = bio_list_pop(&sync)))
+-		do_write(ms, bio, r ? 1 : 0);
++	if (ms->log_failure) {
++		spin_lock_irq(&ms->lock);
++		bio_list_merge(&ms->failures, &sync);
++		spin_unlock_irq(&ms->lock);
++	} else {
++		while ((bio = bio_list_pop(&sync)))
++			do_write(ms, bio, 0);
++	}
+ 
+ 	while ((bio = bio_list_pop(&recover)))
+ 		rh_delay(&ms->rh, bio);
+@@ -1234,6 +1250,39 @@ static void do_failures(struct mirror_se
+ 	if (!failures->head)
+ 		return;
+ 
++	if (ms->log_failure) {
++		/*
++		 * If the log has failed, unattempted writes are being
++		 * put on the failures list.  We can't issue those writes
++		 * until a log has been marked, so we must store them.
++		 *
++		 * If a 'noflush' suspend is in progress, we can requeue
++		 * the I/O's to the core.  This give userspace a chance
++		 * to reconfigure the mirror, at which point the core
++		 * will reissue the writes.  If the 'noflush' flag is
++		 * not set, we have no choice but to return errors.
++		 *
++		 * Some writes on the failures list may have been
++		 * submitted before the log failure and represent a
++		 * failure to write to one of the devices.  It is ok
++		 * for us to treat them the same and requeue them
++		 * as well.
++		 */
++		if (dm_noflush_suspending(ms->ti)) {
++			while ((bio = bio_list_pop(failures)))
++				bio_endio(bio, bio->bi_size, DM_ENDIO_REQUEUE);
++		} else if (atomic_read(&ms->suspend)) {
++			while ((bio = bio_list_pop(failures)))
++				bio_endio(bio, bio->bi_size, -EIO);
++		} else {
++			spin_lock_irq(&ms->lock);
++			bio_list_merge(&ms->failures, failures);
++			spin_unlock_irq(&ms->lock);
++			wake(ms);
++		}
++		return;
++	}
++
+ 	if (log->type->get_failure_response(log) == DMLOG_IOERR_BLOCK)
+ 		dm_table_event(ms->ti->table);
+ 
+@@ -1303,6 +1352,8 @@ static struct mirror_set *alloc_context(
+ 	ms->nr_mirrors = nr_mirrors;
+ 	ms->nr_regions = dm_sector_div_up(ti->len, region_size);
+ 	ms->in_sync = 0;
++	ms->log_failure = 0;
++	atomic_set(&ms->suspend, 0);
+ 	ms->read_mirror = &ms->mirror[DEFAULT_MIRROR];
+ 	ms->default_mirror = &ms->mirror[DEFAULT_MIRROR];
+ 
+@@ -1648,6 +1699,25 @@ static void mirror_presuspend(struct dm_
+ 	struct mirror_set *ms = (struct mirror_set *) ti->private;
+ 	struct dirty_log *log = ms->rh.log;
+ 
++	atomic_set(&ms->suspend, 1);
++
++	/*
++	 * We must finish up all the work that we've
++	 * generated (i.e. recovery work).
++	 */
++	rh_stop_recovery(&ms->rh);
++
++	wait_event(recovery_stopped_event,
++		   !atomic_read(&ms->rh.recovery_in_flight));
++
++	/*
++	 * Now that recovery is complete/stopped and the
++	 * delayed bios are queued, we need to wait for
++	 * the worker thread to complete.  This way,
++	 * we know that all of our I/O has been pushed.
++	 */
++	flush_workqueue(ms->kmirrord_wq);
++
+ 	if (log->type->presuspend && log->type->presuspend(log))
+ 		/* FIXME: need better error handling */
+ 		DMWARN("log presuspend failed");
+@@ -1658,12 +1728,6 @@ static void mirror_postsuspend(struct dm
+ 	struct mirror_set *ms = (struct mirror_set *) ti->private;
+ 	struct dirty_log *log = ms->rh.log;
+ 
+-	rh_stop_recovery(&ms->rh);
+-
+-	/* Wait for all I/O we generated to complete */
+-	wait_event(recovery_stopped_event,
+-		   !atomic_read(&ms->rh.recovery_in_flight));
+-
+ 	if (log->type->postsuspend && log->type->postsuspend(log))
+ 		/* FIXME: need better error handling */
+ 		DMWARN("log postsuspend failed");
+@@ -1673,6 +1737,8 @@ static void mirror_resume(struct dm_targ
+ {
+ 	struct mirror_set *ms = (struct mirror_set *) ti->private;
+ 	struct dirty_log *log = ms->rh.log;
++
++	atomic_set(&ms->suspend, 0);
+ 	if (log->type->resume && log->type->resume(log))
+ 		/* FIXME: need better error handling */
+ 		DMWARN("log resume failed");
+
+Index: linux-rhel5/drivers/md/dm-raid1.c
+===================================================================
+--- linux-rhel5.orig/drivers/md/dm-raid1.c
++++ linux-rhel5/drivers/md/dm-raid1.c
+@@ -26,8 +26,6 @@
+ 
+ DECLARE_WAIT_QUEUE_HEAD(recovery_stopped_event);
+ 
+-static int dm_mirror_error_on_log_failure = 1;
+-
+ /*-----------------------------------------------------------------
+  * Region hash
+  *
+@@ -1056,7 +1054,7 @@ static void __bio_mark_nosync(struct mir
+ 		complete_resync_work(reg, 0);
+ }
+ 
+-static void write_callback(unsigned long error, void *context, int log_failure)
++static void write_callback(unsigned long error, void *context)
+ {
+ 	unsigned int i, ret = 0;
+ 	struct bio *bio = (struct bio *) context;
+@@ -1074,18 +1072,11 @@ static void write_callback(unsigned long
+ 	 * regions with the same code.
+ 	 */
+ 	if (unlikely(error)) {
+-		/*
+-		 * If the log is intact, we can play around with trying
+-		 * to handle the failure.  Otherwise, we have to report
+-		 * the I/O as failed.
+-		 */
+-		if (!log_failure) {
+-			for (i = 0; i < ms->nr_mirrors; i++) {
+-				if (test_bit(i, &error))
+-					fail_mirror(ms->mirror + i);
+-				else
+-					uptodate = 1;
+-			}
++		for (i = 0; i < ms->nr_mirrors; i++) {
++			if (test_bit(i, &error))
++				fail_mirror(ms->mirror + i);
++			else
++				uptodate = 1;
+ 		}
+ 
+ 		if (likely(uptodate)) {
+@@ -1112,17 +1103,7 @@ static void write_callback(unsigned long
+ 	bio_endio(bio, bio->bi_size, ret);
+ }
+ 
+-static void write_callback_good_log(unsigned long error, void *context)
+-{
+-	write_callback(error, context, 0);
+-}
+-
+-static void write_callback_bad_log(unsigned long error, void *context)
+-{
+-	write_callback(error, context, 1);
+-}
+-
+-static void do_write(struct mirror_set *ms, struct bio *bio, int log_failure)
++static void do_write(struct mirror_set *ms, struct bio *bio)
+ {
+ 	unsigned int i;
+ 	struct io_region io[ms->nr_mirrors], *dest = io;
+@@ -1131,16 +1112,11 @@ static void do_write(struct mirror_set *
+ 		.bi_rw = WRITE,
+ 		.mem.type = DM_IO_BVEC,
+ 		.mem.ptr.bvec = bio->bi_io_vec + bio->bi_idx,
+-		.notify.fn = NULL,
++		.notify.fn = write_callback,
+ 		.notify.context = bio,
+ 		.client = ms->io_client,
+ 	};
+ 
+-	if (log_failure && dm_mirror_error_on_log_failure) {
+-		bio_endio(bio, bio->bi_size, -EIO);
+-		return;
+-	}
+-
+ 	for (i = 0, m = ms->mirror; i < ms->nr_mirrors; i++, m++)
+ 		map_region(dest++, m, bio);
+ 
+@@ -1150,8 +1126,6 @@ static void do_write(struct mirror_set *
+ 	 * to the mirror set in write_callback().
+ 	 */
+ 	bio_set_m(bio, ms->default_mirror);
+-	io_req.notify.fn = log_failure ? write_callback_bad_log :
+-					 write_callback_good_log;
+ 	(void) dm_io(&io_req, ms->nr_mirrors, io, NULL);
+ }
+ 
+@@ -1230,7 +1204,7 @@ static void do_writes(struct mirror_set 
+ 		spin_unlock_irq(&ms->lock);
+ 	} else {
+ 		while ((bio = bio_list_pop(&sync)))
+-			do_write(ms, bio, 0);
++			do_write(ms, bio);
+ 	}
+ 
+ 	while ((bio = bio_list_pop(&recover)))
+@@ -1811,15 +1785,6 @@ static int __init dm_mirror_init(void)
+ 		DMERR("%s: Failed to register mirror target",
+ 		      mirror_target.name);
+ 		dm_dirty_log_exit();
+-	} else if (!dm_mirror_error_on_log_failure) {
+-		DMWARN("Warning: dm_mirror_error_on_log_failure = 0");
+-		DMWARN("In this mode, the following fault sequence could cause corruption:");
+-		DMWARN("  1) Log device failure");
+-		DMWARN("  2) Write I/O issued");
+-		DMWARN("  3) Machine failure");
+-		DMWARN("  4) Log device restored");
+-		DMWARN("  5) Machine reboots");
+-		DMWARN("If this happens, you must resync your mirror.");
+ 	}
+ 
+ 	return r;
+@@ -1840,8 +1805,6 @@ static void __exit dm_mirror_exit(void)
+ module_init(dm_mirror_init);
+ module_exit(dm_mirror_exit);
+ 
+-module_param(dm_mirror_error_on_log_failure, int, 1);
+-MODULE_PARM_DESC(dm_mirror_error_on_log_failure, "Set to '0' if you want writes to succeed on log device failure");
+ MODULE_DESCRIPTION(DM_NAME " mirror target");
+ MODULE_AUTHOR("Joe Thornber");
+ MODULE_LICENSE("GPL");
+

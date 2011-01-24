@@ -1,0 +1,60 @@
+From: Andy Gospodarek <gospo@redhat.com>
+Date: Thu, 14 Oct 2010 15:43:27 -0400
+Subject: [net] bonding: correctly process non-linear skbs
+Message-id: <20101014154327.GC9803@gospo.rdu.redhat.com>
+Patchwork-id: 28735
+O-Subject: Re: [PATCH RHEL5.6][v2] bonding: correctly process non-linear skbs
+Bugzilla: 619070
+RH-Acked-by: David S. Miller <davem@redhat.com>
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+RH-Acked-by: Jiri Pirko <jpirko@redhat.com>
+
+It was recently brought to my attention that 802.3ad mode bonds would no
+longer form when using some network hardware after a driver update.
+After snooping around I realized that the particular hardware was using
+page-based skbs and found that skb->data did not contain a valid LACPDU
+as it was not stored there.  That explained the inability to form an
+802.3ad-based bond.  For balance-alb mode bonds this was also an issue
+as ARPs would not be properly processed.
+
+This is a backport of upstream commit:
+
+	commit ab12811c89e88f2e66746790b1fe4469ccb7bdd9
+	Author: Andy Gospodarek <andy@greyhouse.net>
+	Date:   Fri Sep 10 11:43:20 2010 +0000
+
+	    bonding: correctly process non-linear skbs
+
+Tested by myself and others with good results.
+
+This will resolve RHBZ 619070.
+
+diff --git a/drivers/net/bonding/bond_3ad.c b/drivers/net/bonding/bond_3ad.c
+index 378910f..afb458c 100644
+--- a/drivers/net/bonding/bond_3ad.c
++++ b/drivers/net/bonding/bond_3ad.c
+@@ -2429,6 +2429,9 @@ int bond_3ad_lacpdu_recv(struct sk_buff *skb, struct net_device *dev, struct pac
+ 	if (!(dev->flags & IFF_MASTER))
+ 		goto out;
+ 
++	if (!pskb_may_pull(skb, sizeof(struct lacpdu)))
++		goto out;
++
+ 	read_lock(&bond->lock);
+ 	slave = bond_get_slave_by_dev((struct bonding *)dev->priv, orig_dev);
+ 	if (!slave)
+diff --git a/drivers/net/bonding/bond_alb.c b/drivers/net/bonding/bond_alb.c
+index 51c3644..552b760 100644
+--- a/drivers/net/bonding/bond_alb.c
++++ b/drivers/net/bonding/bond_alb.c
+@@ -361,6 +361,10 @@ static int rlb_arp_recv(struct sk_buff *skb, struct net_device *bond_dev, struct
+ 		goto out;
+ 	}
+ 
++	if (!pskb_may_pull(skb, sizeof(struct arphdr) +
++				2 * (skb->dev->addr_len + 4)))
++		goto out;
++
+ 	if (skb->len < sizeof(struct arp_pkt)) {
+ 		dprintk("Packet is too small to be an ARP\n");
+ 		goto out;

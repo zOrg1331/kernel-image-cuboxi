@@ -1,0 +1,110 @@
+From: Eric Paris <eparis@redhat.com>
+Subject: [RHEL5 PATCH] BZ 219837 allow NFS nohide and SELinux to work 	together
+Date: Wed, 06 Jun 2007 15:46:25 -0400
+Bugzilla: 219837
+Message-Id: <1181159185.3776.32.camel@dhcp231-215.rdu.redhat.com>
+Changelog: [security] allow NFS nohide and SELinux to work together
+
+
+BZ 219837
+
+This is a terrible aweful ugly hack (I could say more, but I'll let the
+patch/description speak for itself).  Lets just get that out of the way
+up front.  I'm working with upstream for a real solution which is going
+to involve new security hooks and things like that, but it just isn't
+ready for 5.1.  This patch is safe and will work, but I recognize its
+gross.  If possible I'll try to get the upstream solution back for U2
+rather than carry this nastiness forever.
+
+***
+
+When selinux attempts to do its part of mounting a new FS it checks the
+mount data for selinux context information.  For most FS's this is a
+text string but for NFS this is a data blob (struct nfs_mount_data)
+Version 6 and later of this struct have a context field which selinux
+can use to pass context information from userspace to where it is used
+by selinux (security/selinux/hooks.c:try_context_mount())
+
+The problem here is that we have found that exports with the 'nohide'
+option actually get mounted from fs/nfs/namespace.c:nfs_do_submount()
+which uses a struct nfs_clone_mount for its data.  This gets passed down
+into the selinux code 
+
+nfs_do_submount()
+ nfs_do_clone_mount()
+  vfs_kern_mount()
+   security_sb_kern_mount()
+    selinux_sb_kern_mount()
+     superblock_doinit()
+      try_context_mount()
+
+which finds that the fs being mounted is nfs based on:
+
+strcmp(sb->s_type->name, "nfs")
+
+The code in try_context_mount then casts the data to a struct
+nfs_mount_data.  Notice I just said the code cast a nfs_clone_mount to a
+nfs_mount_data.  Next it checks the version to make sure it should have
+the context field.  If so it uses the value in the context field if not
+it goes on.  The problem comes that the first entry in the
+nfs_mount_data is the version but the first entry in the nfs_clone_mount
+is a pointer.  Since the pointer is always bigger than the version we
+need we then try to dereference ->context which is outside of the data
+blob.  Since nfs_clone_data is smaller in size than nfs_mount_data we
+are just getting some stuff off of the stack.  If that data happens to
+be 0 (has been that way on all of my x86ish systems) everything works
+just fine.  If that data is not 0 the selinux code gets angry and
+refuses to mount the FS (which happens for me on other arches like
+ia64).
+
+This gross hack continues the bad cast, and continues to look at
+->version, but checks if it is too big as well as too small.  On every
+arch that we deal with no pointer to a kernel data struct would be > 6
+and < 56 that I know of.
+
+I tested this patch on a number of arches and everything seems to be
+working happily.  Although I admit that the only code path I know how to
+exercise is through nfs_do_submount and I don't know how to exercise the
+nfs_follow_referal code path or even exactly what implications referals
+have on this issue today.  I ask steved if his referrals patches had
+selinux on, but I forgot that x86ish arches seemed to always get 0 for
+the data->context and not have a problem even with the broken logic.  My
+guess is that referals are also busted on ia64, but just a guess.  This
+should fix that issue no matter what.
+
+I plan to get the real fix upstream and I'll pull it into 5.2 if
+possible, but for now I think the gross hack is actually not a bad way
+to go.  What do others think?
+
+-Eric
+
+--- linux-2.6.18.i686/security/selinux/hooks.c.pre.nfs.nohide.hack	2007-06-06 20:04:53.000000000 -0400
++++ linux-2.6.18.i686/security/selinux/hooks.c	2007-06-06 20:16:48.000000000 -0400
+@@ -384,7 +384,25 @@ static int try_context_mount(struct supe
+ 		if (!strcmp(name, "nfs")) {
+ 			struct nfs_mount_data *d = data;
+ 
+-			if (d->version <  NFS_MOUNT_VERSION)
++			/*
++ 			* ***FIX ME**** This is a terrible ugly ugly hack.
++ 			* when try_context_mount comes from changing FS on the
++ 			* server because of nohide (or maybe a referal??) the
++ 			* data is actually struct nfs_clone_mount and so that
++ 			* cast is wrong.  bit for bit the version field from
++ 			* *data lines up with a pointer in the other possible
++ 			* structure.  This hack will make sure the ->version
++ 			* field looks like a version rather than a pointer.
++ 			* If its a pointer bail cleanly and let things keep
++ 			* working.  Should get fixed correctly upstream but the
++ 			* issue isn't simple or straightforward.
++ 			*
++ 			* There have only been 6 nfs_mount_data versions so far
++ 			* so if over one update we increate the version 50 times
++ 			* I think we have other problems.....
++ 			*/
++			if (d->version < NFS_MOUNT_VERSION ||
++			    d->version > NFS_MOUNT_VERSION + 50)
+ 				goto out;
+ 
+ 			if (d->context[0]) {
+

@@ -1,0 +1,85 @@
+From: Brad Peters <bpeters@redhat.com>
+Date: Tue, 1 Apr 2008 14:58:57 -0400
+Subject: [ppc64] SLB shadow buffer error cause random reboots
+Message-id: 47F285F1.7070100@redhat.com
+O-Subject: [RHEL 5.2] SLB shadow buffer error causes random rebooting - Last minute snap4 patch, PLEASE REVIEW
+Bugzilla: 440085
+
+Description:
+------------
+This was a bug introduced with a new feature: "RHBZ 253112 SLB shadow buffer support".  The bug causes frequent, random system reboots on any system with SLB buffering enabled in the firmware.
+
+The patch addresses this problem by invalidating a portion of a new shadow buffer prior to registering it as a new one.  Prior to this, we saw old buffer's with stale entries being used as valid, leading to the witnessed rebooting.
+
+RHBZ#:
+------
+440085
+
+RHEL Version Found:
+------------------
+RHEL 5.2
+
+kABI Status:
+------------
+No symbols were harmed.
+
+Brew:
+-----
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1237642
+
+Kernel binary rpm available at:
+-----
+Will provide a followup email with a link shortly.
+
+Upstream Status:
+----------------
+Upstream in the following patches:
+
+473980a99316c0e788bca50996375a2815124ce1
+[POWERPC] Fix CPU hotplug when using the SLB shadow buffer
+
+dfbe0d3b6be52596b5694b1bb75b19562e769021
+[POWERPC] Fix boot failure on POWER6
+
+Test Status:
+-------------
+Tested as shown to stop rebooting:
+Nathan Lynch, 3/28 <nathanl@austin.ibm.com>
+
+---------------------------------------------------------------
+
+Brad Peters 1-978-392-1000 x 23183
+IBM on-site partner.
+
+Proposed Patch:
+---------------
+This patch is based on 2.6.18-87.el5
+
+Acked-by: Rik van Riel <riel@redhat.com>
+Acked-by: David Howells <dhowells@redhat.com>
+
+diff --git a/arch/powerpc/mm/slb.c b/arch/powerpc/mm/slb.c
+index c1469d6..4deeafe 100644
+--- a/arch/powerpc/mm/slb.c
++++ b/arch/powerpc/mm/slb.c
+@@ -255,6 +255,8 @@ void slb_initialize(void)
+ 
+ 	create_shadowed_slbe(VMALLOC_START, vflags, 1);
+ 
++	slb_shadow_clear(2);
++
+ 	/* We don't bolt the stack for the time being - we're in boot,
+ 	 * so the stack is in the bolted segment.  By the time it goes
+ 	 * elsewhere, we'll call _switch() which will bolt in the new
+diff --git a/arch/powerpc/platforms/pseries/setup.c b/arch/powerpc/platforms/pseries/setup.c
+index 6948f5f..32d59c3 100644
+--- a/arch/powerpc/platforms/pseries/setup.c
++++ b/arch/powerpc/platforms/pseries/setup.c
+@@ -347,6 +347,7 @@ static void pSeries_mach_cpu_die(void)
+ 	local_irq_disable();
+ 	idle_task_exit();
+ 	xics_teardown_cpu();
++	unregister_slb_shadow(hard_smp_processor_id(), __pa(get_slb_shadow()));
+ 	rtas_stop_self();
+ 	/* Should never get here... */
+ 	BUG();

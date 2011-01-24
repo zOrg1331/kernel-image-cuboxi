@@ -1,0 +1,72 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Subject: [RHEL5.1 PATCH]: BZ 206336 Fix softlockup warnings during sysrq-t
+Date: Tue, 3 Apr 2007 11:38:49 -0400
+Bugzilla: 206366
+Message-Id: <20070403153849.3224.12274.sendpatchset@prarit.boston.redhat.com>
+Changelog: [misc] Fix softlockup warnings during sysrq-t
+
+
+Backport of softlockup watchdog fixes.
+
+Avoids bogus softlockup message when doing sysrq-t output.
+
+Currently in -mm tree as add-touch_all_softlockup_watchdogs.patch .
+
+Resolves BZ 206336.
+
+Successfully tested by me.
+
+diff -urNp -X linux-2.6.18.x86_64/Documentation/dontdiff linux-2.6.18.x86_64.orig/include/linux/sched.h linux-2.6.18.x86_64/include/linux/sched.h
+--- linux-2.6.18.x86_64.orig/include/linux/sched.h	2007-03-28 09:53:55.000000000 -0400
++++ linux-2.6.18.x86_64/include/linux/sched.h	2007-04-03 05:24:19.000000000 -0400
+@@ -216,6 +216,7 @@ extern void scheduler_tick(void);
+ extern void softlockup_tick(void);
+ extern void spawn_softlockup_task(void);
+ extern void touch_softlockup_watchdog(void);
++extern void touch_all_softlockup_watchdogs(void);
+ #else
+ static inline void softlockup_tick(void)
+ {
+@@ -226,6 +227,9 @@ static inline void spawn_softlockup_task
+ static inline void touch_softlockup_watchdog(void)
+ {
+ }
++static inline void touch_all_softlockup_watchdogs(void)
++{
++}
+ #endif
+ 
+ 
+diff -urNp -X linux-2.6.18.x86_64/Documentation/dontdiff linux-2.6.18.x86_64.orig/kernel/sched.c linux-2.6.18.x86_64/kernel/sched.c
+--- linux-2.6.18.x86_64.orig/kernel/sched.c	2007-03-28 09:53:54.000000000 -0400
++++ linux-2.6.18.x86_64/kernel/sched.c	2007-04-03 05:24:19.000000000 -0400
+@@ -4803,6 +4803,8 @@ void show_state(void)
+ 		show_task(p);
+ 	} while_each_thread(g, p);
+ 
++	touch_all_softlockup_watchdogs();
++
+ 	read_unlock(&tasklist_lock);
+ 	debug_show_all_locks();
+ }
+diff -urNp -X linux-2.6.18.x86_64/Documentation/dontdiff linux-2.6.18.x86_64.orig/kernel/softlockup.c linux-2.6.18.x86_64/kernel/softlockup.c
+--- linux-2.6.18.x86_64.orig/kernel/softlockup.c	2007-03-28 09:53:54.000000000 -0400
++++ linux-2.6.18.x86_64/kernel/softlockup.c	2007-04-03 05:24:19.000000000 -0400
+@@ -40,6 +40,16 @@ void touch_softlockup_watchdog(void)
+ }
+ EXPORT_SYMBOL(touch_softlockup_watchdog);
+ 
++void touch_all_softlockup_watchdogs(void)
++{
++	int cpu;
++
++	/* Cause each CPU to re-update its timestamp rather than complain */
++	for_each_online_cpu(cpu)
++		per_cpu(touch_timestamp, cpu) = 0;
++}
++EXPORT_SYMBOL(touch_all_softlockup_watchdogs);
++
+ /*
+  * This callback runs from the timer interrupt, and checks
+  * whether the watchdog thread has hung or not:
+

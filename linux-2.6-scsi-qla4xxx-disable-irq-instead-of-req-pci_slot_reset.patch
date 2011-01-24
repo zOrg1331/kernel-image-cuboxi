@@ -1,0 +1,125 @@
+From: Chad Dupuis <cdupuis@redhat.com>
+Date: Thu, 9 Dec 2010 20:54:13 -0500
+Subject: [scsi] qla4xxx: disable irq instead of req pci_slot_reset
+Message-id: <20101209205412.10052.83309.sendpatchset@localhost.localdomain>
+Patchwork-id: 30059
+O-Subject: [RHEL 5.6 PATCH 2/3] qla4xxx: Disable irq instead of request irq
+	pci_slot_reset.
+Bugzilla: 661768
+
+Bugzilla
+--------
+
+Bug 661768 (https://bugzilla.redhat.com/show_bug.cgi?id=661768)
+
+Upstream Status
+---------------
+
+scsi-misc-2.6 commit id 7b3595df0e064c8d85ddb6836aaa2af3956fb2ba
+
+Description
+-----------
+
+This fixes the WARN_ON:
+
+16:54:51 172.35.11.60 scsi8: func 4: qla4xxx_pci_error_detected: error
+detected:state 2 Nov 30 16:54:51 172.35.11.60 scsi9: func 5:
+qla4xxx_pci_error_detected: error detected:state 2 Nov 30 16:54:52 172.35.11.60 Uhhuh. NMI received for unknown reason 20 on CPU 0.
+Nov 30 16:54:52 172.35.11.60 Do you have a strange power saving mode enabled?
+Nov 30 16:54:52 172.35.11.60 Dazed and confused, but trying to
+continue Nov 30 16:54:52 172.35.11.60 scsi8: func 4:
+qla4xxx_pci_slot_reset: slot_reset Nov 30 16:54:52 172.35.11.60
+WARNING: at drivers/pci/msi.c:1107 pci_enable_msix() Nov 30 16:54:52
+172.35.11.60  [<c05033b2>]pci_enable_msix+0xee/0x37f
+Nov 30 16:54:52 172.35.11.60
+[<c052fea9>]acpi_pci_irq_enable+0x1a1/0x1ae
+Nov 30 16:54:52 172.35.11.60
+[<f8dd1bc2>]qla4_8xxx_enable_msix+0x2e/0xd9 [qla4xxx] Nov 30 16:54:52
+172.35.11.60  [<f8dd0470>] qla4xxx_request_irqs+0x2b/0x187 [qla4xxx]
+Nov 30 16:54:52 172.35.11.60  [<f8dc93fd>]
+qla4xxx_pci_slot_reset+0x81/0x38a [qla4xxx] Nov 30 16:54:52
+172.35.11.60  [<c04ff06d>] report_slot_reset+0x1a/0x41 Nov 30 16:54:52
+172.35.11.60  [<c04f7380>]pci_walk_bus_int+0x68/0x8b
+Nov 30 16:54:52 172.35.11.60  [<c04ff053>]report_slot_reset+0x0/0x41
+Nov 30 16:54:52 172.35.11.60  [<c04ff053>]report_slot_reset+0x0/0x41
+Nov 30 16:54:52 172.35.11.60  [<c04ff386>]
+broadcast_error_message+0x90/0x9b Nov 30 16:54:52 172.35.11.60
+[<c04ff7e8>] aer_isr+0x2d6/0x3cc Nov 30 16:54:52 172.35.11.60
+[<c04ff053>] report_slot_reset+0x0/0x41 Nov 30 16:54:52 172.35.11.60
+[<c0433c16>] run_workqueue+0x7f/0xc3 Nov 30 16:54:52 172.35.11.60
+[<c04ff512>] aer_isr+0x0/0x3cc Nov 30 16:54:52 172.35.11.60
+[<c043468a>] worker_thread+0xd9/0x10b Nov 30 16:54:52 172.35.11.60
+[<c041f80f>] default_wake_function+0x0/0xc Nov 30 16:54:52
+172.35.11.60  [<c04345b1>] worker_thread+0x0/0x10b Nov 30 16:54:52
+172.35.11.60  [<c0436ab7>] kthread+0xc0/0xed Nov 30 16:54:52
+172.35.11.60  [<c04369f7>] kthread+0x0/0xed Nov 30 16:54:52
+172.35.11.60  [<c0405c87>] kernel_thread_helper+0x7/0x10 Nov 30
+16:54:52 172.35.11.60  ======================= Nov 30 16:54:52 172.35.11.60 MSI-X: Enabled (0x54).
+Nov 30 16:54:52 172.35.11.60 scsi8 func 4: In qla4_8xxx_error_recovery
+
+>From f8501cf366cca6be63a5bb223d6ffce985dcd774 Mon Sep 17 00:00:00 2001
+From: Prasanna Mumbai <prasanna.mumbai@qlogic.com>
+Date: Wed, 8 Dec 2010 11:00:34 -0800
+Subject: [PATCH 2/3] qla4xxx: Disable irq instead of request irq pci_slot_reset.
+
+Signed-off-by: Prasanna Mumbai <prasanna.mumbai@qlogic.com>
+
+diff --git a/drivers/scsi/qla4xxx/ql4_def.h b/drivers/scsi/qla4xxx/ql4_def.h
+index f6ef52b..8a2ef45 100644
+--- a/drivers/scsi/qla4xxx/ql4_def.h
++++ b/drivers/scsi/qla4xxx/ql4_def.h
+@@ -673,17 +673,11 @@ static inline int is_qla8022(struct scsi_qla_host *ha)
+  * This function needs to be updated when AER/EEH is enabled
+  * for other cards.
+  */
+-#if defined(CONFIG_PCIAER)
++
+ static inline int is_aer_supported(struct scsi_qla_host *ha)
+ {
+ 	return ha->pdev->device == PCI_DEVICE_ID_QLOGIC_ISP8022;
+ }
+-#else
+-static inline int is_aer_supported(struct scsi_qla_host *ha)
+-{
+-	return 0;
+-}
+-#endif
+ 
+ static inline int adapter_up(struct scsi_qla_host *ha)
+ {
+diff --git a/drivers/scsi/qla4xxx/ql4_init.c b/drivers/scsi/qla4xxx/ql4_init.c
+index 2b83568..fed730a 100644
+--- a/drivers/scsi/qla4xxx/ql4_init.c
++++ b/drivers/scsi/qla4xxx/ql4_init.c
+@@ -310,6 +310,14 @@ static int qla4xxx_fw_ready(struct scsi_qla_host *ha)
+ 
+ 		}
+ 
++		if (is_aer_supported(ha) &&
++			test_bit(AF_FW_RECOVERY, &ha->flags)) {
++			DEBUG2(printk(KERN_INFO "scsi%ld: %s: qla8022, "
++			"AER detected firmware hung\n",
++			ha->host_no, __func__));
++			break;
++		}
++
+ 		if (test_bit(AF_FW_RECOVERY, &ha->flags)) {
+ 			DEBUG2(printk("scsi%ld: %s: qla8022, firmware hung -- "
+ 				"mmio_enabled\n", ha->host_no, __func__));
+diff --git a/drivers/scsi/qla4xxx/ql4_os.c b/drivers/scsi/qla4xxx/ql4_os.c
+index ba798a0..06f866b 100644
+--- a/drivers/scsi/qla4xxx/ql4_os.c
++++ b/drivers/scsi/qla4xxx/ql4_os.c
+@@ -2789,11 +2789,7 @@ qla4xxx_pci_slot_reset(struct pci_dev *pdev)
+ 		goto exit_slot_reset;
+ 	}
+ 
+-	if (qla4xxx_request_irqs(ha)) {
+-		dev_warn(&ha->pdev->dev, "Failed to reserve interrupt %d"
+-				" already in use.\n", pdev->irq);
+-		goto exit_slot_reset;
+-	}
++	ha->isp_ops->disable_intrs(ha);
+ 
+ 	if (is_qla8022(ha)) {
+ 		if (qla4_8xxx_error_recovery(ha) == QLA_SUCCESS) {

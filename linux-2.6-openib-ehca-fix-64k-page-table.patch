@@ -1,0 +1,400 @@
+From: Doug Ledford <dledford@redhat.com>
+Subject: [Patch RHEL5] Fix 64k page table problems on ppc specific ehca	driver
+Date: Mon, 13 Nov 2006 15:19:49 -0500
+Bugzilla: 199765
+Message-Id: <1163449189.2023.20.camel@fc6.xsintricity.com>
+Changelog: Fix 64k page table problems on ppc specific ehca driver
+
+
+The ehca driver is specific to ppc hardware (it only exists on the GX
+bus that is part of IBM's ppc architecure).  That driver, which was
+included because it is an Infiniband specific hardware driver on the ppc
+platform is workable, but not specifically in the 64k pagetable case.
+The attached patch is needed to work in the 64k pagetable case (I can't
+test this, I don't have the hardware, but IBM is testing our stuff and
+says this is necessary for it to work).  In addition to this patch, the
+generic config file for ppc64 needs to enable the
+CONFIG_INFINIBAND_EHCA_SCALING option (I had left this turned off
+because it's labeled experimental, but if it's necessary to work with
+64k pagetables, then we don't really have a choice but to enable it).
+I've verified that the patch applies cleanly, but I can't run test this,
+and haven't compile tested it (brew compile power is a precious resource
+in my opinion and testing on x86/x86_64 doesn't help).
+
+So, in order to properly close bz199765, we need the config change and
+this patch.  As mentioned, I can't test it, I just have to assume IBM
+did their job correctly and rely on their test results (we just don't
+have the hardware, period, and although that may change in the future,
+for now IBM is our eyes and ears on the issue).
+
+-- 
+Doug Ledford <dledford@redhat.com>
+              GPG KeyID: CFBFF194
+              http://people.redhat.com/dledford
+
+Infiniband specific RPMs available at
+              http://people.redhat.com/dledford/Infiniband
+
+--- linux-2.6.18.noarch/drivers/infiniband/hw/ehca/ehca_iverbs.h.64k	2006-11-13 15:12:06.000000000 -0500
++++ linux-2.6.18.noarch/drivers/infiniband/hw/ehca/ehca_iverbs.h	2006-11-13 15:16:41.000000000 -0500
+@@ -178,4 +178,12 @@ int ehca_mmap_register(u64 physical,void
+ 
+ int ehca_munmap(unsigned long addr, size_t len);
+ 
++#ifdef CONFIG_PPC_64K_PAGES
++void *ehca_alloc_fw_ctrlblock(void);
++void ehca_free_fw_ctrlblock(void *ptr);
++#else
++#define ehca_alloc_fw_ctrlblock() ((void*)get_zeroed_page(GFP_KERNEL))
++#define ehca_free_fw_ctrlblock(ptr) free_page((unsigned long)(ptr))
++#endif
++
+ #endif
+--- linux-2.6.18.noarch/drivers/infiniband/hw/ehca/ehca_mrmw.c.64k	2006-11-13 15:12:06.000000000 -0500
++++ linux-2.6.18.noarch/drivers/infiniband/hw/ehca/ehca_mrmw.c	2006-11-13 15:16:41.000000000 -0500
+@@ -1013,7 +1013,7 @@ int ehca_reg_mr_rpages(struct ehca_shca 
+ 	u32 i;
+ 	u64 *kpage;
+ 
+-	kpage = kzalloc(H_CB_ALIGNMENT, GFP_KERNEL);
++	kpage = ehca_alloc_fw_ctrlblock();
+ 	if (!kpage) {
+ 		ehca_err(&shca->ib_device, "kpage alloc failed");
+ 		ret = -ENOMEM;
+@@ -1092,7 +1092,7 @@ int ehca_reg_mr_rpages(struct ehca_shca 
+ 
+ 
+ ehca_reg_mr_rpages_exit1:
+-	kfree(kpage);
++	ehca_free_fw_ctrlblock(kpage);
+ ehca_reg_mr_rpages_exit0:
+ 	if (ret)
+ 		ehca_err(&shca->ib_device, "ret=%x shca=%p e_mr=%p pginfo=%p "
+@@ -1124,7 +1124,7 @@ inline int ehca_rereg_mr_rereg1(struct e
+ 	ehca_mrmw_map_acl(acl, &hipz_acl);
+ 	ehca_mrmw_set_pgsize_hipz_acl(&hipz_acl);
+ 
+-	kpage = kzalloc(H_CB_ALIGNMENT, GFP_KERNEL);
++	kpage = ehca_alloc_fw_ctrlblock();
+ 	if (!kpage) {
+ 		ehca_err(&shca->ib_device, "kpage alloc failed");
+ 		ret = -ENOMEM;
+@@ -1181,7 +1181,7 @@ inline int ehca_rereg_mr_rereg1(struct e
+ 	}
+ 
+ ehca_rereg_mr_rereg1_exit1:
+-	kfree(kpage);
++	ehca_free_fw_ctrlblock(kpage);
+ ehca_rereg_mr_rereg1_exit0:
+ 	if ( ret && (ret != -EAGAIN) )
+ 		ehca_err(&shca->ib_device, "ret=%x lkey=%x rkey=%x "
+--- linux-2.6.18.noarch/drivers/infiniband/hw/ehca/ehca_main.c.64k	2006-11-13 15:12:06.000000000 -0500
++++ linux-2.6.18.noarch/drivers/infiniband/hw/ehca/ehca_main.c	2006-11-13 15:16:41.000000000 -0500
+@@ -40,6 +40,9 @@
+  * POSSIBILITY OF SUCH DAMAGE.
+  */
+ 
++#ifdef CONFIG_PPC_64K_PAGES
++#include <linux/slab.h>
++#endif
+ #include "ehca_classes.h"
+ #include "ehca_iverbs.h"
+ #include "ehca_mrmw.h"
+@@ -99,6 +102,25 @@ static spinlock_t shca_list_lock;
+ 
+ static struct timer_list poll_eqs_timer;
+ 
++#ifdef CONFIG_PPC_64K_PAGES
++static struct kmem_cache *ctblk_cache = NULL;
++
++void *ehca_alloc_fw_ctrlblock(void)
++{
++	void *ret = kmem_cache_zalloc(ctblk_cache, SLAB_KERNEL);
++	if (!ret)
++		ehca_gen_err("Out of memory for ctblk");
++	return ret;
++}
++
++void ehca_free_fw_ctrlblock(void *ptr)
++{
++	if (ptr)
++		kmem_cache_free(ctblk_cache, ptr);
++
++}
++#endif
++
+ static int ehca_create_slab_caches(void)
+ {
+ 	int ret;
+@@ -133,6 +155,17 @@ static int ehca_create_slab_caches(void)
+ 		goto create_slab_caches5;
+ 	}
+ 
++#ifdef CONFIG_PPC_64K_PAGES
++	ctblk_cache = kmem_cache_create("ehca_cache_ctblk",
++					EHCA_PAGESIZE, H_CB_ALIGNMENT,
++					SLAB_HWCACHE_ALIGN,
++					NULL, NULL);
++	if (!ctblk_cache) {
++		ehca_gen_err("Cannot create ctblk SLAB cache.");
++		ehca_cleanup_mrmw_cache();
++		goto create_slab_caches5;
++	}
++#endif
+ 	return 0;
+ 
+ create_slab_caches5:
+@@ -157,6 +190,10 @@ static void ehca_destroy_slab_caches(voi
+ 	ehca_cleanup_qp_cache();
+ 	ehca_cleanup_cq_cache();
+ 	ehca_cleanup_pd_cache();
++#ifdef CONFIG_PPC_64K_PAGES
++	if (ctblk_cache)
++		kmem_cache_destroy(ctblk_cache);
++#endif
+ }
+ 
+ #define EHCA_HCAAVER  EHCA_BMASK_IBM(32,39)
+@@ -168,7 +205,7 @@ int ehca_sense_attributes(struct ehca_sh
+ 	u64 h_ret;
+ 	struct hipz_query_hca *rblock;
+ 
+-	rblock = kzalloc(H_CB_ALIGNMENT, GFP_KERNEL);
++	rblock = ehca_alloc_fw_ctrlblock();
+ 	if (!rblock) {
+ 		ehca_gen_err("Cannot allocate rblock memory.");
+ 		return -ENOMEM;
+@@ -211,7 +248,7 @@ int ehca_sense_attributes(struct ehca_sh
+ 	shca->sport[1].rate = IB_RATE_30_GBPS;
+ 
+ num_ports1:
+-	kfree(rblock);
++	ehca_free_fw_ctrlblock(rblock);
+ 	return ret;
+ }
+ 
+@@ -220,7 +257,7 @@ static int init_node_guid(struct ehca_sh
+ 	int ret = 0;
+ 	struct hipz_query_hca *rblock;
+ 
+-	rblock = kzalloc(H_CB_ALIGNMENT, GFP_KERNEL);
++	rblock = ehca_alloc_fw_ctrlblock();
+ 	if (!rblock) {
+ 		ehca_err(&shca->ib_device, "Can't allocate rblock memory.");
+ 		return -ENOMEM;
+@@ -235,7 +272,7 @@ static int init_node_guid(struct ehca_sh
+ 	memcpy(&shca->ib_device.node_guid, &rblock->node_guid, sizeof(u64));
+ 
+ init_node_guid1:
+-	kfree(rblock);
++	ehca_free_fw_ctrlblock(rblock);
+ 	return ret;
+ }
+ 
+@@ -431,7 +468,7 @@ static ssize_t  ehca_show_##name(struct 
+ 									   \
+ 	shca = dev->driver_data;					   \
+ 									   \
+-	rblock = kzalloc(H_CB_ALIGNMENT, GFP_KERNEL);			   \
++	rblock = ehca_alloc_fw_ctrlblock();				   \
+ 	if (!rblock) {						           \
+ 		dev_err(dev, "Can't allocate rblock memory.");		   \
+ 		return 0;						   \
+@@ -439,12 +476,12 @@ static ssize_t  ehca_show_##name(struct 
+ 									   \
+ 	if (hipz_h_query_hca(shca->ipz_hca_handle, rblock) != H_SUCCESS) { \
+ 		dev_err(dev, "Can't query device properties");	   	   \
+-		kfree(rblock);					   	   \
++		ehca_free_fw_ctrlblock(rblock);			   	   \
+ 		return 0;					   	   \
+ 	}								   \
+ 									   \
+ 	data = rblock->name;                                               \
+-	kfree(rblock);                                                     \
++	ehca_free_fw_ctrlblock(rblock);                                    \
+ 									   \
+ 	if ((strcmp(#name, "num_ports") == 0) && (ehca_nr_ports == 1))	   \
+ 		return snprintf(buf, 256, "1\n");			   \
+--- linux-2.6.18.noarch/drivers/infiniband/hw/ehca/Kconfig.64k	2006-11-13 15:12:06.000000000 -0500
++++ linux-2.6.18.noarch/drivers/infiniband/hw/ehca/Kconfig	2006-11-13 15:16:41.000000000 -0500
+@@ -10,6 +10,7 @@ config INFINIBAND_EHCA
+ config INFINIBAND_EHCA_SCALING
+ 	bool "Scaling support (EXPERIMENTAL)"
+ 	depends on IBMEBUS && INFINIBAND_EHCA && HOTPLUG_CPU && EXPERIMENTAL
++	default y
+ 	---help---
+ 	eHCA scaling support schedules the CQ callbacks to different CPUs.
+ 
+--- linux-2.6.18.noarch/drivers/infiniband/hw/ehca/ehca_irq.c.64k	2006-11-13 15:12:06.000000000 -0500
++++ linux-2.6.18.noarch/drivers/infiniband/hw/ehca/ehca_irq.c	2006-11-13 15:16:41.000000000 -0500
+@@ -137,7 +137,7 @@ int ehca_error_data(struct ehca_shca *sh
+ 	u64 *rblock;
+ 	unsigned long block_count;
+ 
+-	rblock = kzalloc(H_CB_ALIGNMENT, GFP_KERNEL);
++	rblock = ehca_alloc_fw_ctrlblock();
+ 	if (!rblock) {
+ 		ehca_err(&shca->ib_device, "Cannot allocate rblock memory.");
+ 		ret = -ENOMEM;
+@@ -158,8 +158,8 @@ int ehca_error_data(struct ehca_shca *sh
+ 
+ 		length = EHCA_BMASK_GET(ERROR_DATA_LENGTH, rblock[0]);
+ 
+-		if (length > PAGE_SIZE)
+-			length = PAGE_SIZE;
++		if (length > EHCA_PAGESIZE)
++			length = EHCA_PAGESIZE;
+ 
+ 		print_error_data(shca, data, rblock, length);
+ 	}
+@@ -168,7 +168,7 @@ int ehca_error_data(struct ehca_shca *sh
+ 			 "Error data could not be fetched: %lx", resource);
+ 	}
+ 
+-	kfree(rblock);
++	ehca_free_fw_ctrlblock(rblock);
+ 
+ error_data1:
+ 	return ret;
+--- linux-2.6.18.noarch/drivers/infiniband/hw/ehca/ehca_hca.c.64k	2006-11-13 15:12:06.000000000 -0500
++++ linux-2.6.18.noarch/drivers/infiniband/hw/ehca/ehca_hca.c	2006-11-13 15:16:41.000000000 -0500
+@@ -40,6 +40,7 @@
+  */
+ 
+ #include "ehca_tools.h"
++#include "ehca_iverbs.h"
+ #include "hcp_if.h"
+ 
+ int ehca_query_device(struct ib_device *ibdev, struct ib_device_attr *props)
+@@ -49,7 +50,7 @@ int ehca_query_device(struct ib_device *
+ 					      ib_device);
+ 	struct hipz_query_hca *rblock;
+ 
+-	rblock = kzalloc(H_CB_ALIGNMENT, GFP_KERNEL);
++	rblock = ehca_alloc_fw_ctrlblock();
+ 	if (!rblock) {
+ 		ehca_err(&shca->ib_device, "Can't allocate rblock memory.");
+ 		return -ENOMEM;
+@@ -96,7 +97,7 @@ int ehca_query_device(struct ib_device *
+ 		= min_t(int, rblock->max_total_mcast_qp_attach, INT_MAX);
+ 
+ query_device1:
+-	kfree(rblock);
++	ehca_free_fw_ctrlblock(rblock);
+ 
+ 	return ret;
+ }
+@@ -109,7 +110,7 @@ int ehca_query_port(struct ib_device *ib
+ 					      ib_device);
+ 	struct hipz_query_port *rblock;
+ 
+-	rblock = kzalloc(H_CB_ALIGNMENT, GFP_KERNEL);
++	rblock = ehca_alloc_fw_ctrlblock();
+ 	if (!rblock) {
+ 		ehca_err(&shca->ib_device, "Can't allocate rblock memory.");
+ 		return -ENOMEM;
+@@ -162,7 +163,7 @@ int ehca_query_port(struct ib_device *ib
+ 	props->active_speed    = 0x1;
+ 
+ query_port1:
+-	kfree(rblock);
++	ehca_free_fw_ctrlblock(rblock);
+ 
+ 	return ret;
+ }
+@@ -178,7 +179,7 @@ int ehca_query_pkey(struct ib_device *ib
+ 		return -EINVAL;
+ 	}
+ 
+-	rblock = kzalloc(H_CB_ALIGNMENT, GFP_KERNEL);
++	rblock = ehca_alloc_fw_ctrlblock();
+ 	if (!rblock) {
+ 		ehca_err(&shca->ib_device,  "Can't allocate rblock memory.");
+ 		return -ENOMEM;
+@@ -193,7 +194,7 @@ int ehca_query_pkey(struct ib_device *ib
+ 	memcpy(pkey, &rblock->pkey_entries + index, sizeof(u16));
+ 
+ query_pkey1:
+-	kfree(rblock);
++	ehca_free_fw_ctrlblock(rblock);
+ 
+ 	return ret;
+ }
+@@ -211,7 +212,7 @@ int ehca_query_gid(struct ib_device *ibd
+ 		return -EINVAL;
+ 	}
+ 
+-	rblock = kzalloc(H_CB_ALIGNMENT, GFP_KERNEL);
++	rblock = ehca_alloc_fw_ctrlblock();
+ 	if (!rblock) {
+ 		ehca_err(&shca->ib_device, "Can't allocate rblock memory.");
+ 		return -ENOMEM;
+@@ -227,7 +228,7 @@ int ehca_query_gid(struct ib_device *ibd
+ 	memcpy(&gid->raw[8], &rblock->guid_entries[index], sizeof(u64));
+ 
+ query_gid1:
+-	kfree(rblock);
++	ehca_free_fw_ctrlblock(rblock);
+ 
+ 	return ret;
+ }
+--- linux-2.6.18.noarch/drivers/infiniband/hw/ehca/ehca_qp.c.64k	2006-11-13 15:12:06.000000000 -0500
++++ linux-2.6.18.noarch/drivers/infiniband/hw/ehca/ehca_qp.c	2006-11-13 15:16:41.000000000 -0500
+@@ -811,7 +811,7 @@ static int internal_modify_qp(struct ib_
+ 	unsigned long spl_flags = 0;
+ 
+ 	/* do query_qp to obtain current attr values */
+-	mqpcb = kzalloc(H_CB_ALIGNMENT, GFP_KERNEL);
++	mqpcb = ehca_alloc_fw_ctrlblock();
+ 	if (mqpcb == NULL) {
+ 		ehca_err(ibqp->device, "Could not get zeroed page for mqpcb "
+ 			 "ehca_qp=%p qp_num=%x ", my_qp, ibqp->qp_num);
+@@ -1225,7 +1225,7 @@ modify_qp_exit2:
+ 	}
+ 
+ modify_qp_exit1:
+-	kfree(mqpcb);
++	ehca_free_fw_ctrlblock(mqpcb);
+ 
+ 	return ret;
+ }
+@@ -1276,7 +1276,7 @@ int ehca_query_qp(struct ib_qp *qp,
+ 		return -EINVAL;
+ 	}
+ 
+-	qpcb = kzalloc(H_CB_ALIGNMENT, GFP_KERNEL );
++	qpcb = ehca_alloc_fw_ctrlblock();
+ 	if (!qpcb) {
+ 		ehca_err(qp->device,"Out of memory for qpcb "
+ 			 "ehca_qp=%p qp_num=%x", my_qp, qp->qp_num);
+@@ -1400,7 +1400,7 @@ int ehca_query_qp(struct ib_qp *qp,
+ 		ehca_dmp(qpcb, 4*70, "qp_num=%x", qp->qp_num);
+ 
+ query_qp_exit1:
+-	kfree(qpcb);
++	ehca_free_fw_ctrlblock(qpcb);
+ 
+ 	return ret;
+ }
+--- linux-2.6.18.noarch/drivers/infiniband/hw/ehca/hcp_phyp.c.64k	2006-11-13 15:12:06.000000000 -0500
++++ linux-2.6.18.noarch/drivers/infiniband/hw/ehca/hcp_phyp.c	2006-11-13 15:16:41.000000000 -0500
+@@ -44,13 +44,14 @@
+ 
+ int hcall_map_page(u64 physaddr, u64 *mapaddr)
+ {
+-	*mapaddr = (u64)(ioremap(physaddr, EHCA_PAGESIZE));
++	*mapaddr = (u64)ioremap((physaddr & PAGE_MASK), PAGE_SIZE) +
++		(physaddr & (~PAGE_MASK));
+ 	return 0;
+ }
+ 
+ int hcall_unmap_page(u64 mapaddr)
+ {
+-	iounmap((volatile void __iomem*)mapaddr);
++	iounmap((void __iomem*)(mapaddr & PAGE_MASK));
+ 	return 0;
+ }
+ 
+
+
+

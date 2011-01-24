@@ -20,22 +20,21 @@
 #include <asm/mipsmtregs.h>
 #endif
 
-#ifndef CONFIG_PREEMPT
-#define resume_kernel	restore_all
+#ifdef CONFIG_PREEMPT
+	.macro	preempt_stop
+	.endm
 #else
-#define __ret_from_irq	ret_from_exception
+	.macro	preempt_stop
+	local_irq_disable
+	.endm
+#define resume_kernel	restore_all
 #endif
 
 	.text
 	.align	5
-#ifndef CONFIG_PREEMPT
 FEXPORT(ret_from_exception)
-	local_irq_disable			# preempt stop
-	b	__ret_from_irq
-#endif
+	preempt_stop
 FEXPORT(ret_from_irq)
-	LONG_S	s0, TI_REGS($28)
-FEXPORT(__ret_from_irq)
 	LONG_L	t0, PT_STATUS(sp)		# returning to kernel mode?
 	andi	t0, t0, KU_USER
 	beqz	t0, resume_kernel
@@ -79,7 +78,9 @@ FEXPORT(syscall_exit)
 
 FEXPORT(restore_all)			# restore full frame
 #ifdef CONFIG_MIPS_MT_SMTC
-#ifdef CONFIG_MIPS_MT_SMTC_IM_BACKSTOP
+/* Detect and execute deferred IPI "interrupts" */
+	move	a0,sp
+	jal	deferred_smtc_ipi
 /* Re-arm any temporarily masked interrupts not explicitly "acked" */
 	mfc0	v0, CP0_TCSTATUS
 	ori	v1, v0, TCSTATUS_IXMT
@@ -106,12 +107,6 @@ FEXPORT(restore_all)			# restore full frame
 	_ehb
 	xor	t0, t0, t3
 	mtc0	t0, CP0_TCCONTEXT
-#endif /* CONFIG_MIPS_MT_SMTC_IM_BACKSTOP */
-/* Detect and execute deferred IPI "interrupts" */
-	LONG_L	s0, TI_REGS($28)
-	LONG_S	sp, TI_REGS($28)
-	jal	deferred_smtc_ipi
-	LONG_S	s0, TI_REGS($28)
 #endif /* CONFIG_MIPS_MT_SMTC */
 	.set	noat
 	RESTORE_TEMP
@@ -123,11 +118,7 @@ FEXPORT(restore_partial)		# restore partial frame
 	SAVE_AT
 	SAVE_TEMP
 	LONG_L	v0, PT_STATUS(sp)
-#if defined(CONFIG_CPU_R3000) || defined(CONFIG_CPU_TX39XX)
-	and	v0, ST0_IEP
-#else
-	and	v0, ST0_IE
-#endif
+	and	v0, 1
 	beqz	v0, 1f
 	jal	trace_hardirqs_on
 	b	2f

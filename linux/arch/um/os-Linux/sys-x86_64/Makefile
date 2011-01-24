@@ -1,9 +1,9 @@
 #
-# Copyright (C) 2000 - 2007 Jeff Dike (jdike@{addtoit,linux.intel}.com)
+# Copyright (C) 2000 Jeff Dike (jdike@karaya.com)
 # Licensed under the GPL
 #
 
-obj-y = registers.o prctl.o signal.o task_size.o
+obj-$(CONFIG_MODE_SKAS) = registers.o
 
 USER_OBJS := $(obj-y)
 

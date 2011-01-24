@@ -17,7 +17,7 @@
 
 #include <linux/init.h>
 #include <linux/spinlock.h>
-#include <linux/timex.h>
+#include <asm/timex.h>
 #include "sound_config.h"
 
 #include "pas2.h"
@@ -85,7 +85,7 @@ static int pcm_set_speed(int arg)
 	 * come from the SDK found on ftp.uwp.edu:/pub/msdos/proaudio/.
 	 *
 	 * I cleared bit 5 of these values, since that bit controls the master
-	 * mute flag. (Olav WÃ¶lfelschneider)
+	 * mute flag. (Olav Wölfelschneider)
 	 *
 	 */
 #if !defined NO_AUTO_FILTER_SET

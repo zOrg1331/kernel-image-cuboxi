@@ -1,0 +1,107 @@
+From: Abhijith Das <adas@redhat.com>
+Date: Mon, 8 Jun 2009 16:27:36 -0500
+Subject: [gfs2] '>>' does not update ctime,mtime on the file
+Message-id: 4A2D8248.6070600@redhat.com
+O-Subject: [RHEL 5.5 PATCH][GFS2] - Bug 496716 - GFS2 ">>" will not update ctime,mtime after appending to the file
+Bugzilla: 496716
+RH-Acked-by: Steven Whitehouse <swhiteho@redhat.com>
+RH-Acked-by: Bob Peterson <rpeterso@redhat.com>
+
+This patch adds code to update timestamps in gfs2_stuffed_write_end,
+gfs2_write_end and gfs2_mmap.
+
+Signed-off-by: Abhijith Das <adas@redhat.com>
+Signed-off-by: Steven Whitehouse <swhiteho@redhat.com>
+
+diff --git a/fs/gfs2/ops_address.c b/fs/gfs2/ops_address.c
+index c288724..81c5393 100644
+--- a/fs/gfs2/ops_address.c
++++ b/fs/gfs2/ops_address.c
+@@ -868,10 +868,12 @@ static int gfs2_stuffed_write_end(struct inode *inode, struct buffer_head *dibh,
+ 	unlock_page(page);
+ 	page_cache_release(page);
+ 
+-	if (inode->i_size < to) {
+-		i_size_write(inode, to);
+-		ip->i_disksize = inode->i_size;
+-		di->di_size = cpu_to_be64(inode->i_size);
++	if (copied) {
++		if (inode->i_size < to) {
++			i_size_write(inode, to);
++			ip->i_disksize = inode->i_size;
++		}
++		gfs2_dinode_out(ip, di);
+ 		mark_inode_dirty(inode);
+ 	}
+ 
+@@ -916,7 +918,6 @@ int gfs2_write_end(struct file *file, struct address_space *mapping,
+ 	struct gfs2_inode *m_ip = GFS2_I(sdp->sd_statfs_inode);
+ 	struct buffer_head *dibh;
+ 	struct gfs2_alloc *al = ip->i_alloc;
+-	struct gfs2_dinode *di;
+ 	unsigned int from = pos & (PAGE_CACHE_SIZE - 1);
+ 	unsigned int to = from + len;
+ 	int ret;
+@@ -939,11 +940,10 @@ int gfs2_write_end(struct file *file, struct address_space *mapping,
+ 		gfs2_page_add_databufs(ip, page, from, to);
+ 
+ 	ret = generic_write_end(file, mapping, pos, len, copied, page, fsdata);
+-
+-	if (likely(ret >= 0) && (inode->i_size > ip->i_disksize)) {
+-		di = (struct gfs2_dinode *)dibh->b_data;
+-		ip->i_disksize = inode->i_size;
+-		di->di_size = cpu_to_be64(inode->i_size);
++	if (ret > 0) {
++		if (inode->i_size > ip->i_disksize)
++			ip->i_disksize = inode->i_size;
++		gfs2_dinode_out(ip, dibh->b_data);
+ 		mark_inode_dirty(inode);
+ 	}
+ 
+diff --git a/fs/gfs2/ops_file.c b/fs/gfs2/ops_file.c
+index d1b54b2..2add8e2 100644
+--- a/fs/gfs2/ops_file.c
++++ b/fs/gfs2/ops_file.c
+@@ -512,27 +512,30 @@ static struct vm_operations_struct gfs2_vm_ops = {
+  * @file: The file to map
+  * @vma: The VMA which described the mapping
+  *
+- * Returns: 0 or error code
++ * There is no need to get a lock here unless we should be updating
++ * atime. We ignore any locking errors since the only consequence is
++ * a missed atime update (which will just be deferred until later).
++ *
++ * Returns: 0
+  */
+ 
+ static int gfs2_mmap(struct file *file, struct vm_area_struct *vma)
+ {
+ 	struct gfs2_inode *ip = GFS2_I(file->f_mapping->host);
+-	struct gfs2_holder i_gh;
+-	int error;
+ 
+-	gfs2_holder_init(ip->i_gl, LM_ST_SHARED, 0, &i_gh);
+-	error = gfs2_glock_nq(&i_gh);
+-	if (error) {
+-		gfs2_holder_uninit(&i_gh);
+-		return error;
+-	}
++	if (!(file->f_flags & O_NOATIME)) {
++		struct gfs2_holder i_gh;
++		int error;
+ 
++		gfs2_holder_init(ip->i_gl, LM_ST_EXCLUSIVE, 0, &i_gh);
++		error = gfs2_glock_nq(&i_gh);
++		file_accessed(file);
++		if (error == 0)
++			gfs2_glock_dq_uninit(&i_gh);
++	}
+ 	vma->vm_ops = &gfs2_vm_ops;
+ 
+-	gfs2_glock_dq_uninit(&i_gh);
+-
+-	return error;
++	return 0;
+ }
+ 
+ /**

@@ -1,0 +1,97 @@
+From: Jiri Pirko <jpirko@redhat.com>
+Date: Thu, 19 Aug 2010 10:07:29 -0400
+Subject: [net] sched: fix some kernel memory leaks
+Message-id: <20100819100729.GE2688@psychotron.redhat.com>
+Patchwork-id: 27709
+O-Subject: [RHEL5.6 patch] BZ624638 net sched: fix some kernel memory leaks
+Bugzilla: 624638
+CVE: CVE-2010-2942
+RH-Acked-by: Thomas Graf <tgraf@redhat.com>
+
+BZ624638
+https://bugzilla.redhat.com/show_bug.cgi?id=624638
+
+Description:
+We leak at least 32bits of kernel memory to user land in tc dump,
+because we dont init all fields (capab ?) of the dumped structure.
+
+Use C99 initializers so that holes and non explicit fields are zeroed.
+
+Upstream:
+http://git.kernel.org/?p=linux/kernel/git/davem/net-2.6.git;a=commitdiff;h=1c40be12f7d8ca1d387510d39787b12e512a7ce8
+
+Brew:
+https://brewweb.devel.redhat.com/taskinfo?taskID=2692564
+
+Jirka
+
+Signed-off-by: Jiri Pirko <jpirko@redhat.com>
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/net/sched/act_gact.c b/net/sched/act_gact.c
+index 5613a98..bc58d16 100644
+--- a/net/sched/act_gact.c
++++ b/net/sched/act_gact.c
+@@ -162,21 +162,24 @@ static int
+ tcf_gact_dump(struct sk_buff *skb, struct tc_action *a, int bind, int ref)
+ {
+ 	unsigned char *b = skb->tail;
+-	struct tc_gact opt;
+ 	struct tcf_gact *p = PRIV(a, gact);
++	struct tc_gact opt = {
++		.index   = p->index,
++		.refcnt  = p->refcnt - ref,
++		.bindcnt = p->bindcnt - bind,
++		.action  = p->action,
++	};
+ 	struct tcf_t t;
+ 
+-	opt.index = p->index;
+-	opt.refcnt = p->refcnt - ref;
+-	opt.bindcnt = p->bindcnt - bind;
+-	opt.action = p->action;
+ 	RTA_PUT(skb, TCA_GACT_PARMS, sizeof(opt), &opt);
+ #ifdef CONFIG_GACT_PROB
+ 	if (p->ptype) {
+-		struct tc_gact_p p_opt;
+-		p_opt.paction = p->paction;
+-		p_opt.pval = p->pval;
+-		p_opt.ptype = p->ptype;
++		struct tc_gact_p p_opt = {
++			.paction = p->paction,
++			.pval    = p->pval,
++			.ptype   = p->ptype,
++		};
++
+ 		RTA_PUT(skb, TCA_GACT_PROB, sizeof(p_opt), &p_opt);
+ 	}
+ #endif
+diff --git a/net/sched/act_mirred.c b/net/sched/act_mirred.c
+index fc56204..36542fd 100644
+--- a/net/sched/act_mirred.c
++++ b/net/sched/act_mirred.c
+@@ -216,16 +216,17 @@ static int
+ tcf_mirred_dump(struct sk_buff *skb, struct tc_action *a, int bind, int ref)
+ {
+ 	unsigned char *b = skb->tail;
+-	struct tc_mirred opt;
+ 	struct tcf_mirred *p = PRIV(a, mirred);
++	struct tc_mirred opt = {
++		.index   = p->index,
++		.action  = p->action,
++		.refcnt  = p->refcnt - ref,
++		.bindcnt = p->bindcnt - bind,
++		.eaction = p->eaction,
++		.ifindex = p->ifindex,
++	};
+ 	struct tcf_t t;
+ 
+-	opt.index = p->index;
+-	opt.action = p->action;
+-	opt.refcnt = p->refcnt - ref;
+-	opt.bindcnt = p->bindcnt - bind;
+-	opt.eaction = p->eaction;
+-	opt.ifindex = p->ifindex;
+ 	DPRINTK("tcf_mirred_dump index %d action %d eaction %d ifindex %d\n",
+ 	         p->index, p->action, p->eaction, p->ifindex);
+ 	RTA_PUT(skb, TCA_MIRRED_PARMS, sizeof(opt), &opt);

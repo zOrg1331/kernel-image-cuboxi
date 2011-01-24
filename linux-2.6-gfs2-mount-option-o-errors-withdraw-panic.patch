@@ -1,0 +1,226 @@
+From: Bob Peterson <rpeterso@redhat.com>
+Date: Fri, 2 Oct 2009 15:50:09 -0400
+Subject: [gfs2] mount option: -o errors=withdraw|panic
+Message-id: 948278168.1019551254513009051.JavaMail.root@zmail06.collab.prod.int.phx2.redhat.com
+O-Subject: [RHEL5.5 PATCH] [GFS2] bz518106 - [RFE] GFS2: New mount option: -o errors=withdraw|panic
+Bugzilla: 518106
+RH-Acked-by: Steven Whitehouse <swhiteho@redhat.com>
+
+Hi,
+
+This patch adds "-o errors=panic" and "-o errors=withdraw" to the
+gfs2 mount options.  The "errors=withdraw" option is today's
+current behaviour, meaning to withdraw from the file system if a
+non-serious gfs2 error occurs.  The new "errors=panic" option
+tells gfs2 to force a kernel panic if a non-serious gfs2 file
+system error occurs.  This may be useful, for example, where
+fabric-level fencing is used that has no way to reboot (such as
+fence_scsi).
+
+This patch is for rhbz#518106.  It was tested on system roth-01
+and found to be correct.  A corresponding patch is already in
+the upstream repo for gfs2.
+
+Regards,
+
+Bob Peterson
+Red Hat GFS
+
+Signed-off-by: Bob Peterson <rpeterso@redhat.com>
+--
+ fs/gfs2/incore.h     |    7 +++++++
+ fs/gfs2/lm.c         |   18 ++++++++++++------
+ fs/gfs2/mount.c      |   20 ++++++++++++++++++++
+ fs/gfs2/ops_fstype.c |    1 +
+ fs/gfs2/ops_super.c  |   16 ++++++++++++++++
+ fs/gfs2/util.c       |   17 ++++++++++++-----
+ 6 files changed, 68 insertions(+), 11 deletions(-)
+
+diff --git a/fs/gfs2/incore.h b/fs/gfs2/incore.h
+index ee47840..0083d92 100644
+--- a/fs/gfs2/incore.h
++++ b/fs/gfs2/incore.h
+@@ -377,6 +377,12 @@ struct gfs2_statfs_change_host {
+ #define GFS2_DATA_WRITEBACK	1
+ #define GFS2_DATA_ORDERED	2
+ 
++#define GFS2_ERRORS_DEFAULT     GFS2_ERRORS_WITHDRAW
++#define GFS2_ERRORS_WITHDRAW    0
++#define GFS2_ERRORS_CONTINUE    1 /* place holder for future feature */
++#define GFS2_ERRORS_RO          2 /* place holder for future feature */
++#define GFS2_ERRORS_PANIC       3
++
+ struct gfs2_args {
+ 	char ar_lockproto[GFS2_LOCKNAME_LEN]; /* Name of the Lock Protocol */
+ 	char ar_locktable[GFS2_LOCKNAME_LEN]; /* Name of the Lock Table */
+@@ -393,6 +399,7 @@ struct gfs2_args {
+ 	int ar_suiddir; /* suiddir support */
+ 	int ar_data; /* ordered/writeback */
+ 	int ar_meta; /* mount metafs */
++	int ar_errors; /* errors=panic|withdraw */
+ };
+ 
+ struct gfs2_tune {
+diff --git a/fs/gfs2/lm.c b/fs/gfs2/lm.c
+index cfcc39b..4152e7a 100644
+--- a/fs/gfs2/lm.c
++++ b/fs/gfs2/lm.c
+@@ -96,21 +96,27 @@ int gfs2_lm_withdraw(struct gfs2_sbd *sdp, char *fmt, ...)
+ {
+ 	va_list args;
+ 
+-	if (test_and_set_bit(SDF_SHUTDOWN, &sdp->sd_flags))
++	if (sdp->sd_args.ar_errors == GFS2_ERRORS_WITHDRAW &&
++	    test_and_set_bit(SDF_SHUTDOWN, &sdp->sd_flags))
+ 		return 0;
+ 
+ 	va_start(args, fmt);
+ 	vprintk(fmt, args);
+ 	va_end(args);
+ 
+-	fs_err(sdp, "about to withdraw this file system\n");
+-	BUG_ON(sdp->sd_args.ar_debug);
++	if (sdp->sd_args.ar_errors == GFS2_ERRORS_WITHDRAW) {
++		fs_err(sdp, "about to withdraw this file system\n");
++		BUG_ON(sdp->sd_args.ar_debug);
+ 
+-	fs_err(sdp, "telling LM to withdraw\n");
+-	gfs2_withdraw_lockproto(&sdp->sd_lockstruct);
+-	fs_err(sdp, "withdrawn\n");
++		fs_err(sdp, "telling LM to withdraw\n");
++		gfs2_withdraw_lockproto(&sdp->sd_lockstruct);
++		fs_err(sdp, "withdrawn\n");
++	}
+ 	dump_stack();
+ 
++	if (sdp->sd_args.ar_errors == GFS2_ERRORS_PANIC)
++		panic("GFS2: fsid=%s: panic requested.\n", sdp->sd_fsname);
++
+ 	return -1;
+ }
+ 
+diff --git a/fs/gfs2/mount.c b/fs/gfs2/mount.c
+index 5af3e97..88679ba 100644
+--- a/fs/gfs2/mount.c
++++ b/fs/gfs2/mount.c
+@@ -45,6 +45,8 @@ enum {
+ 	Opt_data_writeback,
+ 	Opt_data_ordered,
+ 	Opt_meta,
++	Opt_err_withdraw,
++	Opt_err_panic,
+ 	Opt_err,
+ };
+ 
+@@ -72,6 +74,8 @@ static match_table_t tokens = {
+ 	{Opt_data_writeback, "data=writeback"},
+ 	{Opt_data_ordered, "data=ordered"},
+ 	{Opt_meta, "meta"},
++	{Opt_err_withdraw, "errors=withdraw"},
++	{Opt_err_panic, "errors=panic"},
+ 	{Opt_err, NULL}
+ };
+ 
+@@ -126,6 +130,11 @@ int gfs2_mount_args(struct gfs2_sbd *sdp, struct gfs2_args *args, char *options)
+ 			args->ar_localcaching = 1;
+ 			break;
+ 		case Opt_debug:
++			if (args->ar_errors == GFS2_ERRORS_PANIC) {
++				printk(KERN_WARNING "GFS2: -o debug and -o errors=panic "
++				       "are mutually exclusive.\n");
++				return -EINVAL;
++			}
+ 			args->ar_debug = 1;
+ 			break;
+ 		case Opt_nodebug:
+@@ -168,6 +177,17 @@ int gfs2_mount_args(struct gfs2_sbd *sdp, struct gfs2_args *args, char *options)
+ 		case Opt_meta:
+ 			args->ar_meta = 1;
+ 			break;
++		case Opt_err_withdraw:
++			args->ar_errors = GFS2_ERRORS_WITHDRAW;
++			break;
++		case Opt_err_panic:
++			if (args->ar_debug) {
++				printk(KERN_WARNING "GFS2: -o debug and -o errors=panic "
++					"are mutually exclusive.\n");
++				return -EINVAL;
++			}
++			args->ar_errors = GFS2_ERRORS_PANIC;
++			break;
+ 		case Opt_err:
+ 		default:
+ 			fs_info(sdp, "invalid mount option: %s\n", o);
+diff --git a/fs/gfs2/ops_fstype.c b/fs/gfs2/ops_fstype.c
+index b0e9fea..17a2914 100644
+--- a/fs/gfs2/ops_fstype.c
++++ b/fs/gfs2/ops_fstype.c
+@@ -985,6 +985,7 @@ static int fill_super(struct super_block *sb, void *data, int silent)
+ 
+ 	sdp->sd_args.ar_quota = GFS2_QUOTA_DEFAULT;
+ 	sdp->sd_args.ar_data = GFS2_DATA_DEFAULT;
++	sdp->sd_args.ar_errors = GFS2_ERRORS_DEFAULT;
+ 
+ 	error = gfs2_mount_args(sdp, &sdp->sd_args, data);
+ 	if (error) {
+diff --git a/fs/gfs2/ops_super.c b/fs/gfs2/ops_super.c
+index 15d62e4..7aec6d7 100644
+--- a/fs/gfs2/ops_super.c
++++ b/fs/gfs2/ops_super.c
+@@ -480,6 +480,22 @@ static int gfs2_show_options(struct seq_file *s, struct vfsmount *mnt)
+ 		}
+ 		seq_printf(s, ",data=%s", state);
+ 	}
++	if (args->ar_errors != GFS2_ERRORS_DEFAULT) {
++		const char *state;
++
++		switch (args->ar_errors) {
++		case GFS2_ERRORS_WITHDRAW:
++			state = "withdraw";
++			break;
++		case GFS2_ERRORS_PANIC:
++			state = "panic";
++			break;
++		default:
++			state = "unknown";
++			break;
++		}
++		seq_printf(s, ",errors=%s", state);
++	}
+ 
+ 	return 0;
+ }
+diff --git a/fs/gfs2/util.c b/fs/gfs2/util.c
+index 42ee47a..cd13d84 100644
+--- a/fs/gfs2/util.c
++++ b/fs/gfs2/util.c
+@@ -67,17 +67,24 @@ int gfs2_assert_warn_i(struct gfs2_sbd *sdp, char *assertion,
+ 			gfs2_tune_get(sdp, gt_complain_secs) * HZ))
+ 		return -2;
+ 
+-	printk(KERN_WARNING
+-	       "GFS2: fsid=%s: warning: assertion \"%s\" failed\n"
+-	       "GFS2: fsid=%s:   function = %s, file = %s, line = %u\n",
+-	       sdp->sd_fsname, assertion,
+-	       sdp->sd_fsname, function, file, line);
++	if (sdp->sd_args.ar_errors == GFS2_ERRORS_WITHDRAW)
++		printk(KERN_WARNING
++		       "GFS2: fsid=%s: warning: assertion \"%s\" failed\n"
++		       "GFS2: fsid=%s:   function = %s, file = %s, line = %u\n",
++		       sdp->sd_fsname, assertion,
++		       sdp->sd_fsname, function, file, line);
+ 
+ 	if (sdp->sd_args.ar_debug)
+ 		BUG();
+ 	else
+ 		dump_stack();
+ 
++	if (sdp->sd_args.ar_errors == GFS2_ERRORS_PANIC)
++		panic("GFS2: fsid=%s: warning: assertion \"%s\" failed\n"
++		      "GFS2: fsid=%s:   function = %s, file = %s, line = %u\n",
++		      sdp->sd_fsname, assertion,
++		      sdp->sd_fsname, function, file, line);
++
+ 	sdp->sd_last_warning = jiffies;
+ 
+ 	return -1;

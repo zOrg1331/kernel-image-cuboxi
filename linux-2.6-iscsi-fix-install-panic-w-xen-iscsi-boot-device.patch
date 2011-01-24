@@ -1,0 +1,106 @@
+From: Miroslav Rezanina <mrezanin@redhat.com>
+Date: Tue, 15 Dec 2009 14:00:43 -0500
+Subject: [iscsi] fix install panic w/xen iSCSI boot device
+Message-id: <2005263104.1650781260885643859.JavaMail.root@zmail06.collab.prod.int.phx2.redhat.com>
+Patchwork-id: 21953
+O-Subject: [RHEL5.5 Patch] BZ512991 kernel panic during install using iSCSI
+	boot device with Xen
+Bugzilla: 512991
+RH-Acked-by: Andrew Jones <drjones@redhat.com>
+
+BZ512991 - kernel panic during install using iSCSI boot device with Xen
+(https://bugzilla.redhat.com/show_bug.cgi?id=512991)
+
+Problem:
+When booting xen kernel from hw iscsi device using iBFT feature, kernel panics and
+report "No iBFT found". Non-xen kernel boots successfully.
+
+Reason:
+Xen kernel do not scan memory for iBFT (iscsi Boot Firmware Table). This was probably
+removed as scanning cause crash.
+
+Solution:
+In xen kernel, paging inicialization has to be finished to be able scan memory for iBFT.
+Calling scanning function later is done without crash. However, iBFT is still not found.
+This is due to wrong translation function used to get address. isa_bus_to_virt has to be
+used instead of phys_to_virt.
+
+Upstream status:
+Linux upstream commit ed3c661448a1b4b0b07c0a0d3c6e8a19c7d0ffd7 introduce proper address
+translation. Due to different code structure, patch is not applicable to upstream.
+
+Patch:
+------
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/arch/i386/kernel/setup-xen.c b/arch/i386/kernel/setup-xen.c
+index dd676a0..a567e6a 100644
+--- a/arch/i386/kernel/setup-xen.c
++++ b/arch/i386/kernel/setup-xen.c
+@@ -42,6 +42,7 @@
+ #include <linux/efi.h>
+ #include <linux/init.h>
+ #include <linux/edd.h>
++#include <linux/iscsi_ibft.h>
+ #include <linux/nodemask.h>
+ #include <linux/kexec.h>
+ #include <linux/crash_dump.h>
+@@ -1752,6 +1753,7 @@ void __init setup_arch(char **cmdline_p)
+ 	smp_alloc_memory(); /* AP processor realmode stacks in low memory*/
+ #endif
+ 	paging_init();
++	reserve_ibft_region();
+ 	remapped_pgdat_init();
+ 	sparse_init();
+ 	zone_sizes_init();
+diff --git a/arch/x86_64/kernel/setup-xen.c b/arch/x86_64/kernel/setup-xen.c
+index 25c0dad..78cad9f 100644
+--- a/arch/x86_64/kernel/setup-xen.c
++++ b/arch/x86_64/kernel/setup-xen.c
+@@ -37,6 +37,7 @@
+ #include <linux/pci.h>
+ #include <linux/acpi.h>
+ #include <linux/kallsyms.h>
++#include <linux/iscsi_ibft.h>
+ #include <linux/edd.h>
+ #include <linux/mmzone.h>
+ #include <linux/kexec.h>
+@@ -796,6 +797,7 @@ void __init setup_arch(char **cmdline_p)
+ #endif
+ 
+ 	paging_init();
++	reserve_ibft_region();
+ #ifdef CONFIG_X86_LOCAL_APIC
+ 	/*
+ 	 * Find and reserve possible boot-time SMP configuration:
+diff --git a/drivers/firmware/iscsi_ibft.c b/drivers/firmware/iscsi_ibft.c
+index 392d7d6..3d6e274 100644
+--- a/drivers/firmware/iscsi_ibft.c
++++ b/drivers/firmware/iscsi_ibft.c
+@@ -932,7 +932,7 @@ static int __init ibft_init(void)
+ 
+ 	if (ibft_addr) {
+ 		printk(KERN_INFO "iBFT detected at 0x%lx.\n",
+-		       virt_to_phys((void *)ibft_addr));
++		       isa_bus_to_virt((void *)ibft_addr));
+ 
+ 		rc = ibft_check_device();
+ 		if (rc)
+diff --git a/drivers/firmware/iscsi_ibft_find.c b/drivers/firmware/iscsi_ibft_find.c
+index 8ef433a..45a7818 100644
+--- a/drivers/firmware/iscsi_ibft_find.c
++++ b/drivers/firmware/iscsi_ibft_find.c
+@@ -63,10 +63,10 @@ void __init reserve_ibft_region(void)
+ 		 * so skip that area */
+ 		if (pos == VGA_MEM)
+ 			pos += VGA_SIZE;
+-		virt = phys_to_virt(pos);
++		virt = isa_bus_to_virt(pos);
+ 		if (memcmp(virt, IBFT_SIGN, IBFT_SIGN_LEN) == 0) {
+ 			unsigned long *addr =
+-			    (unsigned long *)phys_to_virt(pos + 4);
++			    (unsigned long *)isa_bus_to_virt(pos + 4);
+ 			len = *addr;
+ 			/* if the length of the table extends past 1M,
+ 			 * the table cannot be valid. */

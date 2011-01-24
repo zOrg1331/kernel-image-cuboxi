@@ -1,4 +1,4 @@
-/*
+/*   
  *  Copyright (C) 2003,2004 Aurelien Alleaume <slts@free.fr>
  *
  *  This program is free software; you can redistribute it and/or modify
@@ -15,8 +15,6 @@
  *  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  *
  */
-
-#include <linux/kernel.h>
 
 #include "prismcompat.h"
 #include "islpci_dev.h"
@@ -237,18 +235,22 @@ mgt_init(islpci_private *priv)
 {
 	int i;
 
-	priv->mib = kcalloc(OID_NUM_LAST, sizeof (void *), GFP_KERNEL);
+	priv->mib = kmalloc(OID_NUM_LAST * sizeof (void *), GFP_KERNEL);
 	if (!priv->mib)
 		return -ENOMEM;
+
+	memset(priv->mib, 0, OID_NUM_LAST * sizeof (void *));
 
 	/* Alloc the cache */
 	for (i = 0; i < OID_NUM_LAST; i++) {
 		if (isl_oid[i].flags & OID_FLAG_CACHED) {
-			priv->mib[i] = kzalloc(isl_oid[i].size *
+			priv->mib[i] = kmalloc(isl_oid[i].size *
 					       (isl_oid[i].range + 1),
 					       GFP_KERNEL);
 			if (!priv->mib[i])
 				return -ENOMEM;
+			memset(priv->mib[i], 0,
+			       isl_oid[i].size * (isl_oid[i].range + 1));
 		} else
 			priv->mib[i] = NULL;
 	}
@@ -501,7 +503,7 @@ mgt_set_varlen(islpci_private *priv, enum oid_num_t n, void *data, int extra_len
 		}
 		if (ret || response_op == PIMFOR_OP_ERROR)
 			ret = -EIO;
-	} else
+	} else 
 		ret = -EIO;
 
 	/* re-set given data to what it was */
@@ -692,13 +694,13 @@ mgt_update_addr(islpci_private *priv)
 	return ret;
 }
 
-#define VEC_SIZE(a) ARRAY_SIZE(a)
+#define VEC_SIZE(a) (sizeof(a)/sizeof(a[0]))
 
 int
 mgt_commit(islpci_private *priv)
 {
 	int rvalue;
-	enum oid_num_t u;
+	u32 u;
 
 	if (islpci_get_state(priv) < PRV_STATE_INIT)
 		return 0;
@@ -725,7 +727,7 @@ mgt_commit(islpci_private *priv)
  * MEDIUMLIMIT,BEACONPERIOD,DTIMPERIOD,ATIMWINDOW,LISTENINTERVAL
  * FREQUENCY,EXTENDEDRATES.
  *
- * The way to do this is to set ESSID. Note though that they may get
+ * The way to do this is to set ESSID. Note though that they may get 
  * unlatch before though by setting another OID. */
 #if 0
 void

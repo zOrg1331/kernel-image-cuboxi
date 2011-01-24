@@ -29,6 +29,10 @@
 **
 ** -----------------------------------------------------------------------------
 */
+#ifdef SCCS_LABELS
+static char *_riointr_c_sccs_ = "@(#)riointr.c	1.2";
+#endif
+
 
 #include <linux/module.h>
 #include <linux/slab.h>
@@ -38,6 +42,7 @@
 #include <asm/io.h>
 #include <asm/system.h>
 #include <asm/string.h>
+#include <asm/semaphore.h>
 #include <asm/uaccess.h>
 
 #include <linux/termios.h>
@@ -102,7 +107,7 @@ void RIOTxEnable(char *en)
 
 	PortP = (struct Port *) en;
 	p = (struct rio_info *) PortP->p;
-	tty = PortP->gs.port.tty;
+	tty = PortP->gs.tty;
 
 
 	rio_dprintk(RIO_DEBUG_INTR, "tx port %d: %d chars queued.\n", PortP->PortNum, PortP->gs.xmit_cnt);
@@ -157,8 +162,13 @@ void RIOTxEnable(char *en)
 
 	rio_spin_unlock_irqrestore(&PortP->portSem, flags);
 
-	if (PortP->gs.xmit_cnt <= (PortP->gs.wakeup_chars + 2 * PKT_MAX_DATA_LEN))
-		tty_wakeup(PortP->gs.port.tty);
+	if (PortP->gs.xmit_cnt <= (PortP->gs.wakeup_chars + 2 * PKT_MAX_DATA_LEN)) {
+		rio_dprintk(RIO_DEBUG_INTR, "Waking up.... ldisc:%d (%d/%d)....", (int) (PortP->gs.tty->flags & (1 << TTY_DO_WRITE_WAKEUP)), PortP->gs.wakeup_chars, PortP->gs.xmit_cnt);
+		if ((PortP->gs.tty->flags & (1 << TTY_DO_WRITE_WAKEUP)) && PortP->gs.tty->ldisc.write_wakeup)
+			(PortP->gs.tty->ldisc.write_wakeup) (PortP->gs.tty);
+		rio_dprintk(RIO_DEBUG_INTR, "(%d/%d)\n", PortP->gs.wakeup_chars, PortP->gs.xmit_cnt);
+		wake_up_interruptible(&PortP->gs.tty->write_wait);
+	}
 
 }
 
@@ -171,7 +181,7 @@ static int RupIntr;
 static int RxIntr;
 static int TxIntr;
 
-void RIOServiceHost(struct rio_info *p, struct Host *HostP)
+void RIOServiceHost(struct rio_info *p, struct Host *HostP, int From)
 {
 	rio_spin_lock(&HostP->HostLock);
 	if ((HostP->Flags & RUN_STATE) != RC_RUNNING) {
@@ -241,7 +251,7 @@ void RIOServiceHost(struct rio_info *p, struct Host *HostP)
 			 ** find corresponding tty structure. The process of mapping
 			 ** the ports puts these here.
 			 */
-			ttyP = PortP->gs.port.tty;
+			ttyP = PortP->gs.tty;
 
 			/*
 			 ** Lock the port before we begin working on it.
@@ -335,7 +345,7 @@ void RIOServiceHost(struct rio_info *p, struct Host *HostP)
 			 ** find corresponding tty structure. The process of mapping
 			 ** the ports puts these here.
 			 */
-			ttyP = PortP->gs.port.tty;
+			ttyP = PortP->gs.tty;
 			/* If ttyP is NULL, the port is getting closed. Forget about it. */
 			if (!ttyP) {
 				rio_dprintk(RIO_DEBUG_INTR, "no tty, so skipping.\n");
@@ -397,8 +407,9 @@ void RIOServiceHost(struct rio_info *p, struct Host *HostP)
 					PortP->InUse = NOT_INUSE;
 
 					rio_spin_unlock(&PortP->portSem);
-					if (RIOParam(PortP, RIOC_OPEN, ((PortP->Cor2Copy & (RIOC_COR2_RTSFLOW | RIOC_COR2_CTSFLOW)) == (RIOC_COR2_RTSFLOW | RIOC_COR2_CTSFLOW)) ? 1 : 0, DONT_SLEEP) == RIO_FAIL)
+					if (RIOParam(PortP, OPEN, ((PortP->Cor2Copy & (COR2_RTSFLOW | COR2_CTSFLOW)) == (COR2_RTSFLOW | COR2_CTSFLOW)) ? 1 : 0, DONT_SLEEP) == RIO_FAIL) {
 						continue;	/* with next port */
+					}
 					rio_spin_lock(&PortP->portSem);
 					PortP->MagicFlags &= ~MAGIC_REBOOT;
 				}
@@ -424,7 +435,7 @@ void RIOServiceHost(struct rio_info *p, struct Host *HostP)
 					 */
 					PktCmdP = (struct PktCmd __iomem *) &PacketP->data[0];
 
-					writeb(RIOC_WFLUSH, &PktCmdP->Command);
+					writeb(WFLUSH, &PktCmdP->Command);
 
 					p = PortP->HostPort % (u16) PORTS_PER_RTA;
 
@@ -542,7 +553,7 @@ static void RIOReceive(struct rio_info *p, struct Port *PortP)
 
 	intCount++;
 
-	TtyP = PortP->gs.port.tty;
+	TtyP = PortP->gs.tty;
 	if (!TtyP) {
 		rio_dprintk(RIO_DEBUG_INTR, "RIOReceive: tty is null. \n");
 		return;

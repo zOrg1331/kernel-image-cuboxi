@@ -17,6 +17,7 @@
 #include <asm/prom.h>
 #include <asm/page.h>
 #include <asm/bootx.h>
+#include <asm/bootinfo.h>
 #include <asm/btext.h>
 #include <asm/io.h>
 

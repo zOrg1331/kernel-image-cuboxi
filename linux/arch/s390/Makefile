@@ -15,16 +15,16 @@
 
 ifndef CONFIG_64BIT
 LDFLAGS		:= -m elf_s390
-KBUILD_CFLAGS	+= -m31
-KBUILD_AFLAGS	+= -m31
+CFLAGS		+= -m31
+AFLAGS		+= -m31
 UTS_MACHINE	:= s390
 STACK_SIZE	:= 8192
-CHECKFLAGS	+= -D__s390__ -msize-long
+CHECKFLAGS	+= -D__s390__
 else
 LDFLAGS		:= -m elf64_s390
 MODFLAGS	+= -fpic -D__PIC__
-KBUILD_CFLAGS	+= -m64
-KBUILD_AFLAGS	+= -m64
+CFLAGS		+= -m64
+AFLAGS		+= -m64
 UTS_MACHINE	:= s390x
 STACK_SIZE	:= 16384
 CHECKFLAGS	+= -D__s390__ -D__s390x__
@@ -33,11 +33,6 @@ endif
 cflags-$(CONFIG_MARCH_G5)   += $(call cc-option,-march=g5)
 cflags-$(CONFIG_MARCH_Z900) += $(call cc-option,-march=z900)
 cflags-$(CONFIG_MARCH_Z990) += $(call cc-option,-march=z990)
-cflags-$(CONFIG_MARCH_Z9_109) += $(call cc-option,-march=z9-109)
-cflags-$(CONFIG_MARCH_Z10) += $(call cc-option,-march=z10)
-
-#KBUILD_IMAGE is necessary for make rpm
-KBUILD_IMAGE	:=arch/s390/boot/image
 
 #
 # Prevent tail-call optimizations, to get clearer backtraces:
@@ -68,9 +63,7 @@ endif
 
 ifeq ($(call cc-option-yn,-mstack-size=8192 -mstack-guard=128),y)
 cflags-$(CONFIG_CHECK_STACK) += -mstack-size=$(STACK_SIZE)
-ifneq ($(call cc-option-yn,-mstack-size=8192),y)
 cflags-$(CONFIG_CHECK_STACK) += -mstack-guard=$(CONFIG_STACK_GUARD)
-endif
 endif
 
 ifeq ($(call cc-option-yn,-mwarn-dynamicstack),y)
@@ -78,26 +71,25 @@ cflags-$(CONFIG_WARN_STACK) += -mwarn-dynamicstack
 cflags-$(CONFIG_WARN_STACK) += -mwarn-framesize=$(CONFIG_WARN_STACK_SIZE)
 endif
 
-KBUILD_CFLAGS	+= -mbackchain -msoft-float $(cflags-y)
-KBUILD_CFLAGS	+= -pipe -fno-strength-reduce -Wno-sign-compare
-KBUILD_AFLAGS	+= $(aflags-y)
+CFLAGS		+= -mbackchain -msoft-float $(cflags-y)
+CFLAGS 		+= -pipe -fno-strength-reduce -Wno-sign-compare 
+AFLAGS		+= $(aflags-y)
 
 OBJCOPYFLAGS	:= -O binary
 LDFLAGS_vmlinux := -e start
 
-head-y		:= arch/s390/kernel/head.o arch/s390/kernel/init_task.o
+head-y		:= arch/$(ARCH)/kernel/head.o arch/$(ARCH)/kernel/init_task.o
 
-core-y		+= arch/s390/mm/ arch/s390/kernel/ arch/s390/crypto/ \
-		   arch/s390/appldata/ arch/s390/hypfs/ arch/s390/kvm/
-
-libs-y		+= arch/s390/lib/
+core-y		+= arch/$(ARCH)/mm/ arch/$(ARCH)/kernel/ arch/$(ARCH)/crypto/ \
+		   arch/$(ARCH)/appldata/ arch/$(ARCH)/hypfs/
+libs-y		+= arch/$(ARCH)/lib/
 drivers-y	+= drivers/s390/
-drivers-$(CONFIG_MATHEMU) += arch/s390/math-emu/
+drivers-$(CONFIG_MATHEMU) += arch/$(ARCH)/math-emu/
 
 # must be linked after kernel
 drivers-$(CONFIG_OPROFILE)	+= arch/s390/oprofile/
 
-boot		:= arch/s390/boot
+boot		:= arch/$(ARCH)/boot
 
 all: image
 
@@ -106,15 +98,6 @@ install: vmlinux
 
 image: vmlinux
 	$(Q)$(MAKE) $(build)=$(boot) $(boot)/$@
-
-zfcpdump:
-	$(Q)$(MAKE) $(build)=$(boot) $(boot)/$@
-
-vdso_install:
-ifeq ($(CONFIG_64BIT),y)
-	$(Q)$(MAKE) $(build)=arch/$(ARCH)/kernel/vdso64 $@
-endif
-	$(Q)$(MAKE) $(build)=arch/$(ARCH)/kernel/vdso32 $@
 
 archclean:
 	$(Q)$(MAKE) $(clean)=$(boot)

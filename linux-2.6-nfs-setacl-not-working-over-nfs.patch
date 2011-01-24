@@ -1,0 +1,38 @@
+From: Peter Staubach <staubach@redhat.com>
+Date: Tue, 21 Apr 2009 15:02:51 -0400
+Subject: [nfs] setacl not working over NFS
+Message-id: 49EE185B.20002@redhat.com
+O-Subject: [RHEL-5.4 PATCH] BZ496903 Setacl not working over NFS.
+Bugzilla: 496903
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+RH-Acked-by: Steve Dickson <SteveD@redhat.com>
+
+Hi.
+
+Attached is a patch which address bz496903, "Setacl not working
+over NFS.".  This problem described ends being due to a
+miscalculation for the size of the RPC request being sent which
+occurs when the NFS_ACL SETACL request is being encoded.  This
+patch, from upstream, addresses that problem.
+
+    Thanx...
+
+       ps
+
+diff --git a/fs/nfs/nfs3xdr.c b/fs/nfs/nfs3xdr.c
+index 5cc14d5..fe96734 100644
+--- a/fs/nfs/nfs3xdr.c
++++ b/fs/nfs/nfs3xdr.c
+@@ -713,8 +713,10 @@ nfs3_xdr_setaclargs(struct rpc_rqst *req, u32 *p,
+ 
+ 	if (args->npages != 0)
+ 		xdr_encode_pages(buf, args->pages, 0, args->len);
+-	else
+-		req->rq_slen += args->len;
++	else {
++		req->rq_slen = xdr_adjust_iovec(req->rq_svec,
++				p + XDR_QUADLEN(args->len));
++	}
+ 
+ 	err = nfsacl_encode(buf, base, args->inode,
+ 			    (args->mask & NFS_ACL) ?

@@ -8,7 +8,7 @@
  * USB Bus Glue for Samsung S3C2410
  *
  * Written by Christopher Hoover <ch@hpl.hp.com>
- * Based on fragments of previous driver by Russell King et al.
+ * Based on fragments of previous driver by Rusell King et al.
  *
  * Modified for S3C2410 from ohci-sa1111.c, ohci-omap.c and ohci-lh7a40.c
  *	by Ben Dooks, <ben@simtec.co.uk>
@@ -21,7 +21,9 @@
 
 #include <linux/platform_device.h>
 #include <linux/clk.h>
-#include <plat/usb-control.h>
+
+#include <asm/hardware.h>
+#include <asm/arch/usb-control.h>
 
 #define valid_port(idx) ((idx) == 1 || (idx) == 2)
 
@@ -356,7 +358,7 @@ static int usb_hcd_s3c2410_probe (const struct hc_driver *driver,
 	hcd->rsrc_len   = dev->resource[0].end - dev->resource[0].start + 1;
 
 	if (!request_mem_region(hcd->rsrc_start, hcd->rsrc_len, hcd_name)) {
-		dev_err(&dev->dev, "request_mem_region failed\n");
+		dev_err(&dev->dev, "request_mem_region failed");
 		retval = -EBUSY;
 		goto err_put;
 	}
@@ -368,9 +370,9 @@ static int usb_hcd_s3c2410_probe (const struct hc_driver *driver,
 		goto err_mem;
 	}
 
-	usb_clk = clk_get(&dev->dev, "usb-bus-host");
+	usb_clk = clk_get(&dev->dev, "upll");
 	if (IS_ERR(usb_clk)) {
-		dev_err(&dev->dev, "cannot get usb-bus-host clock\n");
+		dev_err(&dev->dev, "cannot get usb-host clock\n");
 		retval = -ENOENT;
 		goto err_clk;
 	}
@@ -445,7 +447,6 @@ static const struct hc_driver ohci_s3c2410_hc_driver = {
 	 */
 	.start =		ohci_s3c2410_start,
 	.stop =			ohci_stop,
-	.shutdown =		ohci_shutdown,
 
 	/*
 	 * managing i/o requests and associated device resources
@@ -489,7 +490,6 @@ static int ohci_hcd_s3c2410_drv_remove(struct platform_device *pdev)
 static struct platform_driver ohci_hcd_s3c2410_driver = {
 	.probe		= ohci_hcd_s3c2410_drv_probe,
 	.remove		= ohci_hcd_s3c2410_drv_remove,
-	.shutdown	= usb_hcd_platform_shutdown,
 	/*.suspend	= ohci_hcd_s3c2410_drv_suspend, */
 	/*.resume	= ohci_hcd_s3c2410_drv_resume, */
 	.driver		= {
@@ -498,4 +498,15 @@ static struct platform_driver ohci_hcd_s3c2410_driver = {
 	},
 };
 
-MODULE_ALIAS("platform:s3c2410-ohci");
+static int __init ohci_hcd_s3c2410_init (void)
+{
+	return platform_driver_register(&ohci_hcd_s3c2410_driver);
+}
+
+static void __exit ohci_hcd_s3c2410_cleanup (void)
+{
+	platform_driver_unregister(&ohci_hcd_s3c2410_driver);
+}
+
+module_init (ohci_hcd_s3c2410_init);
+module_exit (ohci_hcd_s3c2410_cleanup);

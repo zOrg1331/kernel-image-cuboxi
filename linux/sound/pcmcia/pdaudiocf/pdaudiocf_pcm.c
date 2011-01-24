@@ -3,7 +3,7 @@
  *
  * PCM part
  *
- * Copyright (c) 2003 by Jaroslav Kysela <perex@perex.cz>
+ * Copyright (c) 2003 by Jaroslav Kysela <perex@suse.cz>
  *
  *   This program is free software; you can redistribute it and/or modify
  *   it under the terms of the GNU General Public License as published by
@@ -20,6 +20,7 @@
  *   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307 USA
  */
 
+#include <sound/driver.h>
 #include <linux/slab.h>
 #include <linux/vmalloc.h>
 #include <linux/delay.h>
@@ -51,7 +52,7 @@ static int snd_pcm_alloc_vmalloc_buffer(struct snd_pcm_substream *subs, size_t s
 			return 0; /* already enough large */
 		vfree(runtime->dma_area);
 	}
-	runtime->dma_area = vmalloc_32_user(size);
+	runtime->dma_area = vmalloc_32(size);
 	if (! runtime->dma_area)
 		return -ENOMEM;
 	runtime->dma_bytes = size;
@@ -240,8 +241,7 @@ static int pdacf_pcm_prepare(struct snd_pcm_substream *subs)
 static struct snd_pcm_hardware pdacf_pcm_capture_hw = {
 	.info =			(SNDRV_PCM_INFO_MMAP | SNDRV_PCM_INFO_INTERLEAVED |
 				 SNDRV_PCM_INFO_PAUSE | SNDRV_PCM_INFO_RESUME |
-				 SNDRV_PCM_INFO_MMAP_VALID |
-				 SNDRV_PCM_INFO_BATCH),
+				 SNDRV_PCM_INFO_MMAP_VALID),
 	.formats =		SNDRV_PCM_FMTBIT_S16_LE | SNDRV_PCM_FMTBIT_S16_BE |
 				SNDRV_PCM_FMTBIT_S24_3LE | SNDRV_PCM_FMTBIT_S24_3BE |
 				SNDRV_PCM_FMTBIT_S32_LE | SNDRV_PCM_FMTBIT_S32_BE,

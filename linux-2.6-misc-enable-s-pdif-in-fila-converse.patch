@@ -1,0 +1,198 @@
+From: John Feeney <jfeeney@redhat.com>
+Date: Wed, 19 Dec 2007 15:21:11 -0500
+Subject: Re:  Enable S/PDIF in Fila/Converse
+Message-id: 47697D37.5090205@redhat.com
+O-Subject: Re: [RHEL-5.2 PATCH] Enable S/PDIF in Fila/Converse
+Bugzilla: 240783
+
+bugzilla 240783
+FEAT PPORT: S/PDIF audio out on Fila and Converse
+http://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=240783
+
+Description of problem:
+The Dell Fila and Converse Mobile Precision laptops can't output
+digital audio via the S/PDIF port on a D-Dock.
+
+Solution:
+Sigmatel provided an upstream patch to provide this logic.
+From the ALSA repository comes the following comment:
+
+"hda: Enable SPDIF in/out on some stac9205 boards
+Added support for some boards with SPDIF in/out, and
+cleaned up the GPIO enable function."
+
+Upstream status:
+ALSA commit:
+http://hg-mirror.alsa-project.org/alsa-kernel/diff/67544a207969/pci/hda/patch_sigmatel.c
+And the commit from Linus' git tree:
+87d483630a4bd5af2beb2155c7ae8c408729a1a6
+
+Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+diff --git a/sound/pci/hda/patch_sigmatel.c b/sound/pci/hda/patch_sigmatel.c
+index 12f4cea..12a4205 100644
+--- a/sound/pci/hda/patch_sigmatel.c
++++ b/sound/pci/hda/patch_sigmatel.c
+@@ -44,6 +44,7 @@ enum {
+ 
+ enum {
+ 	STAC_9205_REF,
++	STAC_M43xx,
+ 	STAC_9205_MODELS
+ };
+ 
+@@ -204,7 +205,6 @@ static hda_nid_t stac9205_pin_nids[12] = {
+ 	0x0a, 0x0b, 0x0c, 0x0d, 0x0e,
+ 	0x0f, 0x14, 0x16, 0x17, 0x18,
+ 	0x21, 0x22,
+-	
+ };
+ 
+ static int stac92xx_dmux_enum_info(struct snd_kcontrol *kcontrol,
+@@ -703,7 +703,8 @@ static unsigned int ref9205_pin_configs[12] = {
+ };
+ 
+ static unsigned int *stac9205_brd_tbl[STAC_9205_MODELS] = {
+-	ref9205_pin_configs,
++	[STAC_REF] = ref9205_pin_configs,
++	[STAC_M43xx] = NULL,
+ };
+ 
+ static const char *stac9205_models[STAC_9205_MODELS] = {
+@@ -714,6 +715,10 @@ static struct snd_pci_quirk stac9205_cfg_tbl[] = {
+ 	/* SigmaTel reference board */
+ 	SND_PCI_QUIRK(PCI_VENDOR_ID_INTEL, 0x2668,
+ 		      "DFI LanParty", STAC_9205_REF),
++	SND_PCI_QUIRK(PCI_VENDOR_ID_INTEL, 0x01f8,
++		      "Dell Precision", STAC_M43xx),
++	SND_PCI_QUIRK(PCI_VENDOR_ID_INTEL, 0x01ff,
++		      "Dell Precision", STAC_M43xx),
+ 	{} /* terminator */
+ };
+ 
+@@ -743,33 +748,55 @@ static int stac92xx_save_bios_config_regs(struct hda_codec *codec)
+ 	return 0;
+ }
+ 
++static void stac92xx_set_config_reg(struct hda_codec *codec,
++				     hda_nid_t pin_nid, unsigned int pin_config)
++{
++	int i;
++	snd_hda_codec_write(codec, pin_nid, 0,
++			    AC_VERB_SET_CONFIG_DEFAULT_BYTES_0,
++			    pin_config & 0x000000ff);
++	snd_hda_codec_write(codec, pin_nid, 0,
++			    AC_VERB_SET_CONFIG_DEFAULT_BYTES_1,
++			    (pin_config & 0x0000ff00) >> 8);
++	snd_hda_codec_write(codec, pin_nid, 0,
++			    AC_VERB_SET_CONFIG_DEFAULT_BYTES_2,
++			    (pin_config & 0x00ff0000) >> 16);
++	snd_hda_codec_write(codec, pin_nid, 0,
++			    AC_VERB_SET_CONFIG_DEFAULT_BYTES_3,
++			    pin_config >> 24);
++	i = snd_hda_codec_read(codec, pin_nid, 0,
++			       AC_VERB_GET_CONFIG_DEFAULT,
++			       0x00);
++	snd_printdd(KERN_INFO "hda_codec: pin nid %2.2x pin config %8.8x\n",
++		    pin_nid, i);
++}
++
+ static void stac92xx_set_config_regs(struct hda_codec *codec)
+ {
+ 	int i;
+ 	struct sigmatel_spec *spec = codec->spec;
+-	unsigned int pin_cfg;
+ 
+-	if (! spec->pin_nids || ! spec->pin_configs)
++	if (!spec->pin_configs)
+ 		return;
++	for (i = 0; i < spec->num_pins; i++)
++	     stac92xx_set_config_reg(codec, spec->pin_nids[i],
++				     spec->pin_configs[i]);
++}
+ 
+-	for (i = 0; i < spec->num_pins; i++) {
+-		snd_hda_codec_write(codec, spec->pin_nids[i], 0,
+-				    AC_VERB_SET_CONFIG_DEFAULT_BYTES_0,
+-				    spec->pin_configs[i] & 0x000000ff);
+-		snd_hda_codec_write(codec, spec->pin_nids[i], 0,
+-				    AC_VERB_SET_CONFIG_DEFAULT_BYTES_1,
+-				    (spec->pin_configs[i] & 0x0000ff00) >> 8);
+-		snd_hda_codec_write(codec, spec->pin_nids[i], 0,
+-				    AC_VERB_SET_CONFIG_DEFAULT_BYTES_2,
+-				    (spec->pin_configs[i] & 0x00ff0000) >> 16);
+-		snd_hda_codec_write(codec, spec->pin_nids[i], 0,
+-				    AC_VERB_SET_CONFIG_DEFAULT_BYTES_3,
+-				    spec->pin_configs[i] >> 24);
+-		pin_cfg = snd_hda_codec_read(codec, spec->pin_nids[i], 0,
+-					     AC_VERB_GET_CONFIG_DEFAULT,
+-					     0x00);	
+-		snd_printdd(KERN_INFO "hda_codec: pin nid %2.2x pin config %8.8x\n", spec->pin_nids[i], pin_cfg);
+-	}
++static void stac92xx_enable_gpio_mask(struct hda_codec *codec,
++				       int gpio_mask, int gpio_data)
++{
++	/* Configure GPIOx as output */
++	snd_hda_codec_write(codec, codec->afg, 0,
++			    AC_VERB_SET_GPIO_DIRECTION, gpio_mask);
++	/* Configure GPIOx as CMOS */
++	snd_hda_codec_write(codec, codec->afg, 0, 0x7e7, 0x00000000);
++	/* Assert GPIOx */
++	snd_hda_codec_write(codec, codec->afg, 0,
++			    AC_VERB_SET_GPIO_DATA, gpio_data);
++	/* Enable GPIOx */
++	snd_hda_codec_write(codec, codec->afg, 0,
++			    AC_VERB_SET_GPIO_MASK, gpio_mask);
+ }
+ 
+ /*
+@@ -2067,6 +2094,8 @@ static int patch_stac927x(struct hda_codec *codec)
+ 	}
+ 
+ 	spec->multiout.dac_nids = spec->dac_nids;
++	/* GPIO0 High = Enable EAPD */
++	stac92xx_enable_gpio_mask(codec, 0x00000001, 0x00000001);
+ 
+ 	err = stac92xx_parse_auto_config(codec, 0x1e, 0x20);
+ 	if (!err) {
+@@ -2091,7 +2120,7 @@ static int patch_stac927x(struct hda_codec *codec)
+ static int patch_stac9205(struct hda_codec *codec)
+ {
+ 	struct sigmatel_spec *spec;
+-	int err;
++	int err, gpio_mask, gpio_data;
+ 
+ 	spec  = kzalloc(sizeof(*spec), GFP_KERNEL);
+ 	if (spec == NULL)
+@@ -2129,18 +2158,19 @@ static int patch_stac9205(struct hda_codec *codec)
+ 
+ 	spec->multiout.dac_nids = spec->dac_nids;
+ 
+-	/* Configure GPIO0 as EAPD output */
+-	snd_hda_codec_write(codec, codec->afg, 0,
+-			    AC_VERB_SET_GPIO_DIRECTION, 0x00000001);
+-	/* Configure GPIO0 as CMOS */
+-	snd_hda_codec_write(codec, codec->afg, 0, 0x7e7, 0x00000000);
+-	/* Assert GPIO0 high */
+-	snd_hda_codec_write(codec, codec->afg, 0,
+-			    AC_VERB_SET_GPIO_DATA, 0x00000001);
+-	/* Enable GPIO0 */
+-	snd_hda_codec_write(codec, codec->afg, 0,
+-			    AC_VERB_SET_GPIO_MASK, 0x00000001);
+-
++	if (spec->board_config == STAC_M43xx) {
++	    /* Enable SPDIF in/out */
++	    stac92xx_set_config_reg(codec, 0x1f, 0x01441030);
++	    stac92xx_set_config_reg(codec, 0x20, 0x1c410030);
++
++	    gpio_mask = 0x00000007; /* GPIO0-2 */
++	    /* GPIO0 High = EAPD, GPIO1 Low = DRM,
++	     * GPIO2 High = Headphone Mute
++	     */
++	    gpio_data = 0x00000005;
++	} else
++	    gpio_mask = gpio_data = 0x00000001; /* GPIO0 High = EAPD */
++	stac92xx_enable_gpio_mask(codec, gpio_mask, gpio_data);
+ 	err = stac92xx_parse_auto_config(codec, 0x1f, 0x20);
+ 	if (!err) {
+ 		if (spec->board_config < 0) {

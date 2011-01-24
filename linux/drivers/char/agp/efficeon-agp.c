@@ -59,19 +59,18 @@ static struct _efficeon_private {
 	unsigned long l1_table[EFFICEON_L1_SIZE];
 } efficeon_private;
 
-static const struct gatt_mask efficeon_generic_masks[] =
+static struct gatt_mask efficeon_generic_masks[] =
 {
 	{.mask = 0x00000001, .type = 0}
 };
 
 /* This function does the same thing as mask_memory() for this chipset... */
-static inline unsigned long efficeon_mask_memory(struct page *page)
+static inline unsigned long efficeon_mask_memory(unsigned long addr)
 {
-	unsigned long addr = page_to_phys(page);
 	return addr | 0x00000001;
 }
 
-static const struct aper_size_info_lvl2 efficeon_generic_sizes[4] =
+static struct aper_size_info_lvl2 efficeon_generic_sizes[4] =
 {
 	{256, 65536, 0},
 	{128, 32768, 32},
@@ -222,11 +221,11 @@ static int efficeon_create_gatt_table(struct agp_bridge_data *bridge)
 		SetPageReserved(virt_to_page((char *)page));
 
 		for (offset = 0; offset < PAGE_SIZE; offset += clflush_chunk)
-			clflush((char *)page+offset);
+			asm volatile("clflush %0" : : "m" (*(char *)(page+offset)));
 
 		efficeon_private.l1_table[index] = page;
 
-		value = virt_to_phys((unsigned long *)page) | pati | present | index;
+		value = virt_to_gart((unsigned long *)page) | pati | present | index;
 
 		pci_write_config_dword(agp_bridge->dev,
 			EFFICEON_ATTPAGE, value);
@@ -250,15 +249,15 @@ static int efficeon_insert_memory(struct agp_memory * mem, off_t pg_start, int t
 	if (type != 0 || mem->type != 0)
 		return -EINVAL;
 
-	if (!mem->is_flushed) {
+	if (mem->is_flushed == FALSE) {
 		global_cache_flush();
-		mem->is_flushed = true;
+		mem->is_flushed = TRUE;
 	}
 
 	last_page = NULL;
 	for (i = 0; i < count; i++) {
 		int index = pg_start + i;
-		unsigned long insert = efficeon_mask_memory(mem->pages[i]);
+		unsigned long insert = efficeon_mask_memory(mem->memory[i]);
 
 		page = (unsigned int *) efficeon_private.l1_table[index >> 10];
 
@@ -269,16 +268,15 @@ static int efficeon_insert_memory(struct agp_memory * mem, off_t pg_start, int t
 		*page = insert;
 
 		/* clflush is slow, so don't clflush until we have to */
-		if (last_page &&
-		    (((unsigned long)page^(unsigned long)last_page) &
-		     clflush_mask))
-			clflush(last_page);
+		if ( last_page &&
+		     ((unsigned long)page^(unsigned long)last_page) & clflush_mask )
+		    asm volatile("clflush %0" : : "m" (*last_page));
 
 		last_page = page;
 	}
 
 	if ( last_page )
-		clflush(last_page);
+		asm volatile("clflush %0" : : "m" (*last_page));
 
 	agp_bridge->driver->tlb_flush(mem);
 	return 0;
@@ -311,7 +309,7 @@ static int efficeon_remove_memory(struct agp_memory * mem, off_t pg_start, int t
 }
 
 
-static const struct agp_bridge_driver efficeon_driver = {
+static struct agp_bridge_driver efficeon_driver = {
 	.owner			= THIS_MODULE,
 	.aperture_sizes		= efficeon_generic_sizes,
 	.size_type		= LVL2_APER_SIZE,
@@ -330,17 +328,21 @@ static const struct agp_bridge_driver efficeon_driver = {
 	.free_gatt_table	= efficeon_free_gatt_table,
 	.insert_memory		= efficeon_insert_memory,
 	.remove_memory		= efficeon_remove_memory,
-	.cant_use_aperture	= false,	// true might be faster?
+	.cant_use_aperture	= 0,	// 1 might be faster?
 
 	// Generic
 	.alloc_by_type		= agp_generic_alloc_by_type,
 	.free_by_type		= agp_generic_free_by_type,
 	.agp_alloc_page		= agp_generic_alloc_page,
-	.agp_alloc_pages	= agp_generic_alloc_pages,
 	.agp_destroy_page	= agp_generic_destroy_page,
-	.agp_destroy_pages	= agp_generic_destroy_pages,
-	.agp_type_to_mask_type  = agp_generic_type_to_mask_type,
 };
+
+
+static int agp_efficeon_resume(struct pci_dev *pdev)
+{
+	printk(KERN_DEBUG PFX "agp_efficeon_resume()\n");
+	return efficeon_configure();
+}
 
 static int __devinit agp_efficeon_probe(struct pci_dev *pdev,
 				     const struct pci_device_id *ent)
@@ -379,7 +381,6 @@ static int __devinit agp_efficeon_probe(struct pci_dev *pdev,
 	if (!r->start && r->end) {
 		if (pci_assign_resource(pdev, 0)) {
 			printk(KERN_ERR PFX "could not assign resource 0\n");
-			agp_put_bridge(bridge);
 			return -ENODEV;
 		}
 	}
@@ -391,7 +392,6 @@ static int __devinit agp_efficeon_probe(struct pci_dev *pdev,
 	*/
 	if (pci_enable_device(pdev)) {
 		printk(KERN_ERR PFX "Unable to Enable PCI device\n");
-		agp_put_bridge(bridge);
 		return -ENODEV;
 	}
 
@@ -414,18 +414,11 @@ static void __devexit agp_efficeon_remove(struct pci_dev *pdev)
 	agp_put_bridge(bridge);
 }
 
-#ifdef CONFIG_PM
 static int agp_efficeon_suspend(struct pci_dev *dev, pm_message_t state)
 {
 	return 0;
 }
 
-static int agp_efficeon_resume(struct pci_dev *pdev)
-{
-	printk(KERN_DEBUG PFX "agp_efficeon_resume()\n");
-	return efficeon_configure();
-}
-#endif
 
 static struct pci_device_id agp_efficeon_pci_table[] = {
 	{
@@ -446,10 +439,8 @@ static struct pci_driver agp_efficeon_pci_driver = {
 	.id_table	= agp_efficeon_pci_table,
 	.probe		= agp_efficeon_probe,
 	.remove		= agp_efficeon_remove,
-#ifdef CONFIG_PM
 	.suspend	= agp_efficeon_suspend,
 	.resume		= agp_efficeon_resume,
-#endif
 };
 
 static int __init agp_efficeon_init(void)

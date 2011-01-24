@@ -1,0 +1,59 @@
+From: Jiri Pirko <jpirko@redhat.com>
+Date: Wed, 11 Mar 2009 08:36:47 +0100
+Subject: [net] put_cmsg: may cause application memory overflow
+Message-id: 20090311073646.GA1591@psychotron.englab.brq.redhat.com
+O-Subject: [RHEL5.4 patch] BZ488367 net: Fix function put_cmsg() which may cause usr application memory overflow
+Bugzilla: 488367
+RH-Acked-by: Anton Arapov <aarapov@redhat.com>
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+RH-Acked-by: Tomas Henzl <thenzl@redhat.com>
+
+BZ488367
+https://bugzilla.redhat.com/show_bug.cgi?id=488367
+
+Description:
+When used function put_cmsg() to copy kernel information to user
+application memory, if the memory length given by user application is
+not enough, by the bad length calculate of msg.msg_controllen,
+put_cmsg() function may cause the msg.msg_controllen to be a large
+value, such as 0xFFFFFFF0, so the following put_cmsg() can also write
+data to usr application memory even usr has no valid memory to store
+this. This may cause usr application memory overflow.
+
+Upstream:
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=1ac70e7ad24a88710cf9b6d7ababaefa2b575df0
+
+Brew:
+https://brewweb.devel.redhat.com/taskinfo?taskID=1721390
+
+Test:
+Booted on x86_64 and tested with reproducer.
+
+Jirka
+
+diff --git a/net/compat.c b/net/compat.c
+index 86d3ebc..abea845 100644
+--- a/net/compat.c
++++ b/net/compat.c
+@@ -249,6 +249,8 @@ int put_cmsg_compat(struct msghdr *kmsg, int level, int type, int len, void *dat
+ 	if(copy_to_user(CMSG_COMPAT_DATA(cm), data, cmlen - sizeof(struct compat_cmsghdr)))
+ 		return -EFAULT;
+ 	cmlen = CMSG_COMPAT_SPACE(len);
++	if (kmsg->msg_controllen < cmlen)
++		cmlen = kmsg->msg_controllen;
+ 	kmsg->msg_control += cmlen;
+ 	kmsg->msg_controllen -= cmlen;
+ 	return 0;
+diff --git a/net/core/scm.c b/net/core/scm.c
+index f24b2eb..5e2277b 100644
+--- a/net/core/scm.c
++++ b/net/core/scm.c
+@@ -210,6 +210,8 @@ int put_cmsg(struct msghdr * msg, int level, int type, int len, void *data)
+ 	if (copy_to_user(CMSG_DATA(cm), data, cmlen - sizeof(struct cmsghdr)))
+ 		goto out;
+ 	cmlen = CMSG_SPACE(len);
++	if (msg->msg_controllen < cmlen)
++		cmlen = msg->msg_controllen;
+ 	msg->msg_control += cmlen;
+ 	msg->msg_controllen -= cmlen;
+ 	err = 0;

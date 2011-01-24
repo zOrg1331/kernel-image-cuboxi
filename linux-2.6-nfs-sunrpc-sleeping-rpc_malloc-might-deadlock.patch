@@ -1,0 +1,78 @@
+From: Jeff Layton <jlayton@redhat.com>
+Date: Wed, 9 Jul 2008 09:23:30 -0400
+Subject: [nfs] sunrpc: sleeping rpc_malloc might deadlock
+Message-id: 1215609810-24372-1-git-send-email-jlayton@redhat.com
+O-Subject: [RHEL5.3 PATCH] BZ#451317: sunrpc: prevent deadlock by not allowing rpc_malloc to sleep
+Bugzilla: 451317
+RH-Acked-by: Peter Staubach <staubach@redhat.com>
+
+This problem was originally noticed by a fairly large customer of ours
+with RHEL4, but it appears that RHEL5 has a similar problem.
+
+When the RPC engine allocates a buffers, it uses an allocation that
+can sleep to try and free memory. The problem is that if it ends
+up trying to free dirty NFS pages to allocate a page, then it can
+deadlock. rpciod may be stuck waiting to free up a page that cannot
+be freed until rpciod does some work.
+
+We don't want RPC's sleeping outside of the task scheduler while
+allocating their buffer. Change rpc_malloc from using GFP_NOFS
+to GFP_NOWAIT when allocating memory. In addition to making this
+a non-blocking allocation, it allows the kernel to dip a little
+more deeply into the reserves before giving up and returning
+NULL to a page allocation.
+
+Also, change the printk in call_allocate() to a dprintk since this
+makes it somewhat more likely that it could fire.
+
+Obviously, it's tough to reproduce this situation, but I did test
+this with a fault injection patch that made rpc_malloc return NULL
+on every 10th call. That seemed to have no ill effects other than
+a slight slowdown.
+
+diff --git a/net/sunrpc/clnt.c b/net/sunrpc/clnt.c
+index da81c76..e36cc5d 100644
+--- a/net/sunrpc/clnt.c
++++ b/net/sunrpc/clnt.c
+@@ -729,7 +729,7 @@ call_allocate(struct rpc_task *task)
+ 
+ 	if (xprt->ops->buf_alloc(task, bufsiz << 1) != NULL)
+ 		return;
+-	printk(KERN_INFO "RPC: buffer allocation failed for task %p\n", task); 
++	dprintk("RPC: buffer allocation failed for task %p\n", task); 
+ 
+ 	if (RPC_IS_ASYNC(task) || !signalled()) {
+ 		xprt_release(task);
+diff --git a/net/sunrpc/sched.c b/net/sunrpc/sched.c
+index 7e870ed..68f7e36 100644
+--- a/net/sunrpc/sched.c
++++ b/net/sunrpc/sched.c
+@@ -758,10 +758,16 @@ static void rpc_async_schedule(void *arg)
+  * @task: RPC task that will use this buffer
+  * @size: requested byte size
+  *
+- * We try to ensure that some NFS reads and writes can always proceed
+- * by using a mempool when allocating 'small' buffers.
++ * To prevent rpciod from hanging, this allocator never sleeps,
++ * returning NULL if the request cannot be serviced immediately.
++ * The caller can arrange to sleep in a way that is safe for rpciod.
++ *
++ * Most requests are 'small' (under 2KiB) and can be serviced from a
++ * mempool, ensuring that NFS reads and writes can always proceed,
++ * and that there is good locality of reference for these buffers.
++ *
+  * In order to avoid memory starvation triggering more writebacks of
+- * NFS requests, we use GFP_NOFS rather than GFP_KERNEL.
++ * NFS requests, we avoid using GFP_KERNEL.
+  */
+ void * rpc_malloc(struct rpc_task *task, size_t size)
+ {
+@@ -771,7 +777,7 @@ void * rpc_malloc(struct rpc_task *task, size_t size)
+ 	if (task->tk_flags & RPC_TASK_SWAPPER)
+ 		gfp = GFP_ATOMIC;
+ 	else
+-		gfp = GFP_NOFS;
++		gfp = GFP_NOWAIT;
+ 
+ 	if (size > RPC_BUFFER_MAXSIZE) {
+ 		req->rq_buffer = kmalloc(size, gfp);

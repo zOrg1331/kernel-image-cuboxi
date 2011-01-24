@@ -20,7 +20,6 @@
 
 #include <asm/uaccess.h>
 
-#include <linux/kbd_kern.h>
 #include <linux/vt_kern.h>
 #include <linux/consolemap.h>
 #include <linux/selection.h>
@@ -34,8 +33,7 @@ extern void poke_blanked_console(void);
 
 /* Variables for selection control. */
 /* Use a dynamic buffer, instead of static (Dec 1994) */
-struct vc_data *sel_cons;		/* must not be deallocated */
-static int use_unicode;
+struct vc_data *sel_cons;		/* must not be disallocated */
 static volatile int sel_start = -1; 	/* cleared by clear_selection */
 static int sel_end;
 static int sel_buffer_lth;
@@ -56,11 +54,10 @@ static inline void highlight_pointer(const int where)
 	complement_pos(sel_cons, where);
 }
 
-static u16
+static unsigned char
 sel_pos(int n)
 {
-	return inverse_translate(sel_cons, screen_glyph(sel_cons, n),
-				use_unicode);
+	return inverse_translate(sel_cons, screen_glyph(sel_cons, n));
 }
 
 /* remove the current selection highlight, if any,
@@ -89,8 +86,8 @@ static u32 inwordLut[8]={
   0xFF7FFFFF  /* latin-1 accented letters, not division sign */
 };
 
-static inline int inword(const u16 c) {
-	return c > 0xff || (( inwordLut[c>>5] >> (c & 0x1F) ) & 1);
+static inline int inword(const unsigned char c) {
+	return ( inwordLut[c>>5] >> (c & 0x1F) ) & 1;
 }
 
 /* set inwordLut contents. Invoked by ioctl(). */
@@ -111,36 +108,13 @@ static inline unsigned short limit(const unsigned short v, const unsigned short 
 	return (v > u) ? u : v;
 }
 
-/* stores the char in UTF8 and returns the number of bytes used (1-3) */
-static int store_utf8(u16 c, char *p)
-{
-	if (c < 0x80) {
-		/*  0******* */
-		p[0] = c;
-		return 1;
-	} else if (c < 0x800) {
-		/* 110***** 10****** */
-		p[0] = 0xc0 | (c >> 6);
-		p[1] = 0x80 | (c & 0x3f);
-		return 2;
-    	} else {
-		/* 1110**** 10****** 10****** */
-		p[0] = 0xe0 | (c >> 12);
-		p[1] = 0x80 | ((c >> 6) & 0x3f);
-		p[2] = 0x80 | (c & 0x3f);
-		return 3;
-    	}
-}
-
 /* set the current selection. Invoked by ioctl() or by kernel code. */
 int set_selection(const struct tiocl_selection __user *sel, struct tty_struct *tty)
 {
 	struct vc_data *vc = vc_cons[fg_console].d;
 	int sel_mode, new_sel_start, new_sel_end, spc;
 	char *bp, *obp;
-	int i, ps, pe, multiplier;
-	u16 c;
-	struct kbd_struct *kbd = kbd_table + fg_console;
+	int i, ps, pe;
 
 	poke_blanked_console();
 
@@ -184,7 +158,6 @@ int set_selection(const struct tiocl_selection __user *sel, struct tty_struct *t
 		clear_selection();
 		sel_cons = vc_cons[fg_console].d;
 	}
-	use_unicode = kbd && kbd->kbdmode == VC_UNICODE;
 
 	switch (sel_mode)
 	{
@@ -267,8 +240,7 @@ int set_selection(const struct tiocl_selection __user *sel, struct tty_struct *t
 	sel_end = new_sel_end;
 
 	/* Allocate a new buffer before freeing the old one ... */
-	multiplier = use_unicode ? 3 : 1;  /* chars can take up to 3 bytes */
-	bp = kmalloc(((sel_end-sel_start)/2+1)*multiplier, GFP_KERNEL);
+	bp = kmalloc((sel_end-sel_start)/2+1, GFP_KERNEL);
 	if (!bp) {
 		printk(KERN_WARNING "selection: kmalloc() failed\n");
 		clear_selection();
@@ -279,12 +251,8 @@ int set_selection(const struct tiocl_selection __user *sel, struct tty_struct *t
 
 	obp = bp;
 	for (i = sel_start; i <= sel_end; i += 2) {
-		c = sel_pos(i);
-		if (use_unicode)
-			bp += store_utf8(c, bp);
-		else
-			*bp++ = c;
-		if (!isspace(c))
+		*bp = sel_pos(i);
+		if (!isspace(*bp++))
 			obp = bp;
 		if (! ((i + 2) % vc->vc_size_row)) {
 			/* strip trailing blanks from line and add newline,
@@ -306,7 +274,7 @@ int set_selection(const struct tiocl_selection __user *sel, struct tty_struct *t
  */
 int paste_selection(struct tty_struct *tty)
 {
-	struct vc_data *vc = tty->driver_data;
+	struct vc_data *vc = (struct vc_data *)tty->driver_data;
 	int	pasted = 0;
 	unsigned int count;
 	struct  tty_ldisc *ld;
@@ -327,12 +295,11 @@ int paste_selection(struct tty_struct *tty)
 		}
 		count = sel_buffer_lth - pasted;
 		count = min(count, tty->receive_room);
-		tty->ldisc->ops->receive_buf(tty, sel_buffer + pasted,
-								NULL, count);
+		tty->ldisc.receive_buf(tty, sel_buffer + pasted, NULL, count);
 		pasted += count;
 	}
 	remove_wait_queue(&vc->paste_wait, &wait);
-	__set_current_state(TASK_RUNNING);
+	current->state = TASK_RUNNING;
 
 	tty_ldisc_deref(ld);
 	return 0;

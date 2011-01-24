@@ -1,0 +1,143 @@
+From: Jeff Layton <jlayton@redhat.com>
+Date: Tue, 11 Dec 2007 10:05:55 -0500
+Subject: [fs] cifs: shut down cifsd when signing mount fails
+Message-id: 1197385560-21991-11-git-send-email-jlayton@redhat.com
+O-Subject: [RHEL5.2 PATCH 10/15] BZ#417961: [CIFS] Fix cifsd so shuts down when signing fails during mount
+Bugzilla: 417961
+
+Fixes two problems:
+1) we dropped down to negotiating lanman if we did not recognize the
+mechanism (krb5 e.g.)
+2) we did not stop cifsd (thus will fail when doing rmod cifs with
+slab free errors) when we fail tcon but have a bad session (which is
+the case in which signing is required but we don't allow signing on
+the client)
+
+It also turns on extended security flag in the header when passing
+"sec=krb5" on mount command (although kerberos support is not done of
+course)
+
+Acked-by: Jeff Layton <jlayton@redhat.com>
+CC: Shaggy <shaggy@us.ibm.com>
+Signed-off-by: Steve French <sfrench@us.ibm.com>
+
+diff --git a/fs/cifs/cifs_debug.c b/fs/cifs/cifs_debug.c
+index 56c5d91..73c4c41 100644
+--- a/fs/cifs/cifs_debug.c
++++ b/fs/cifs/cifs_debug.c
+@@ -879,11 +879,16 @@ security_flags_write(struct file *file, const char __user *buffer,
+ 	if (count < 3) {
+ 		/* single char or single char followed by null */
+ 		c = flags_string[0];
+-		if (c == '0' || c == 'n' || c == 'N')
++		if (c == '0' || c == 'n' || c == 'N') {
+ 			extended_security = CIFSSEC_DEF; /* default */
+-		else if (c == '1' || c == 'y' || c == 'Y')
++			return count;
++		} else if (c == '1' || c == 'y' || c == 'Y') {
+ 			extended_security = CIFSSEC_MAX;
+-		return count;
++			return count;
++		} else if (!isdigit(c)) {
++			cERROR(1, ("invalid flag %c", c));
++			return -EINVAL;
++		}
+ 	}
+ 	/* else we have a number */
+ 
+diff --git a/fs/cifs/cifsglob.h b/fs/cifs/cifsglob.h
+index 2cbe966..aa250a6 100644
+--- a/fs/cifs/cifsglob.h
++++ b/fs/cifs/cifsglob.h
+@@ -98,7 +98,8 @@ enum statusEnum {
+ };
+ 
+ enum securityEnum {
+-	LANMAN = 0,             /* Legacy LANMAN auth */
++	PLAINTXT = 0, 		/* Legacy with Plaintext passwords */
++	LANMAN,			/* Legacy LANMAN auth */
+ 	NTLM,			/* Legacy NTLM012 auth with NTLM hash */
+ 	NTLMv2,			/* Legacy NTLM auth with NTLMv2 hash */
+ 	RawNTLMSSP,		/* NTLMSSP without SPNEGO */
+@@ -527,6 +528,7 @@ require use of the stronger protocol */
+ 
+ #define   CIFSSEC_DEF  CIFSSEC_MAY_SIGN | CIFSSEC_MAY_NTLM | CIFSSEC_MAY_NTLMV2
+ #define   CIFSSEC_MAX  CIFSSEC_MUST_SIGN | CIFSSEC_MUST_NTLMV2
++#define   CIFSSEC_AUTH_MASK (CIFSSEC_MAY_NTLM | CIFSSEC_MAY_NTLMV2 | CIFSSEC_MAY_LANMAN | CIFSSEC_MAY_PLNTXT | CIFSSEC_MAY_KRB5)
+ /*
+  *****************************************************************
+  * All constants go here
+diff --git a/fs/cifs/cifssmb.c b/fs/cifs/cifssmb.c
+index ecd8cd0..0f2f789 100644
+--- a/fs/cifs/cifssmb.c
++++ b/fs/cifs/cifssmb.c
+@@ -456,8 +456,13 @@ CIFSSMBNegotiate(unsigned int xid, struct cifsSesInfo *ses)
+ 
+ 	pSMB->hdr.Mid = GetNextMid(server);
+ 	pSMB->hdr.Flags2 |= (SMBFLG2_UNICODE | SMBFLG2_ERR_STATUS);
++
+ 	if ((secFlags & CIFSSEC_MUST_KRB5) == CIFSSEC_MUST_KRB5)
+ 		pSMB->hdr.Flags2 |= SMBFLG2_EXT_SEC;
++	else if ((secFlags & CIFSSEC_AUTH_MASK) == CIFSSEC_MAY_KRB5) {
++		cFYI(1, ("Kerberos only mechanism, enable extended security"));
++		pSMB->hdr.Flags2 |= SMBFLG2_EXT_SEC;
++	}
+ 
+ 	count = 0;
+ 	for (i = 0; i < CIFS_NUM_PROT; i++) {
+@@ -591,7 +596,20 @@ CIFSSMBNegotiate(unsigned int xid, struct cifsSesInfo *ses)
+ 		server->secType = NTLM;
+ 	else if (secFlags & CIFSSEC_MAY_NTLMV2)
+ 		server->secType = NTLMv2;
+-	/* else krb5 ... any others ... */
++	else if (secFlags & CIFSSEC_MAY_KRB5)
++		server->secType = Kerberos;
++	else if (secFlags & CIFSSEC_MAY_LANMAN)
++		server->secType = LANMAN;
++/* #ifdef CONFIG_CIFS_EXPERIMENTAL
++	else if (secFlags & CIFSSEC_MAY_PLNTXT)
++		server->secType = ??
++#endif */
++	else {
++		rc = -EOPNOTSUPP;
++		cERROR(1, ("Invalid security type"));
++		goto neg_err_exit;
++	}
++	/* else ... any others ...? */
+ 
+ 	/* one byte, so no need to convert this or EncryptionKeyLen from
+ 	   little endian */
+@@ -3116,8 +3134,7 @@ CIFSSMBGetCIFSACL(const int xid, struct cifsTconInfo *tcon, __u16 fid,
+ 			goto qsec_out;
+ 		pSMBr = (struct smb_com_ntransact_rsp *)iov[0].iov_base;
+ 
+-		cERROR(1, ("smb %p parm %p data %p",
+-			  pSMBr, parm, psec_desc));  /* BB removeme BB */
++		cFYI(1, ("smb %p parm %p data %p", pSMBr, parm, psec_desc));
+ 
+ 		if (le32_to_cpu(pSMBr->ParameterCount) != 4) {
+ 			rc = -EIO;      /* bad smb */
+diff --git a/fs/cifs/connect.c b/fs/cifs/connect.c
+index 3b0aab6..1396f37 100644
+--- a/fs/cifs/connect.c
++++ b/fs/cifs/connect.c
+@@ -2268,8 +2268,18 @@ cifs_mount(struct super_block *sb, struct cifs_sb_info *cifs_sb,
+ 						if (tsk)
+ 							kthread_stop(tsk);
+ 					}
+-				} else
++				} else {
+ 					cFYI(1, ("No session or bad tcon"));
++					if ((pSesInfo->server) &&
++					    (pSesInfo->server->tsk)) {
++						struct task_struct *tsk;
++						force_sig(SIGKILL,
++							pSesInfo->server->tsk);
++						tsk = pSesInfo->server->tsk;
++						if (tsk)
++							kthread_stop(tsk);
++					}
++				}
+ 				sesInfoFree(pSesInfo);
+ 				/* pSesInfo = NULL; */
+ 			}

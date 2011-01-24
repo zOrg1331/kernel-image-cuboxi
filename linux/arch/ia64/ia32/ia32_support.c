@@ -15,6 +15,7 @@
 #include <linux/kernel.h>
 #include <linux/init.h>
 #include <linux/mm.h>
+#include <linux/personality.h>
 #include <linux/sched.h>
 
 #include <asm/intrinsics.h>
@@ -26,8 +27,9 @@
 
 #include "ia32priv.h"
 
-extern int die_if_kernel (char *str, struct pt_regs *regs, long err);
+extern void die_if_kernel (char *str, struct pt_regs *regs, long err);
 
+struct exec_domain ia32_exec_domain;
 struct page *ia32_shared_page[NR_CPUS];
 unsigned long *ia32_boot_gdt;
 unsigned long *cpu_gdt_table[NR_CPUS];
@@ -215,8 +217,7 @@ ia32_bad_interrupt (unsigned long int_num, struct pt_regs *regs)
 {
 	siginfo_t siginfo;
 
-	if (die_if_kernel("Bad IA-32 interrupt", regs, int_num))
-		return;
+	die_if_kernel("Bad IA-32 interrupt", regs, int_num);
 
 	siginfo.si_signo = SIGTRAP;
 	siginfo.si_errno = int_num;	/* XXX is it OK to abuse si_errno like this? */
@@ -238,13 +239,23 @@ ia32_cpu_init (void)
 static int __init
 ia32_init (void)
 {
+	ia32_exec_domain.name = "Linux/x86";
+	ia32_exec_domain.handler = NULL;
+	ia32_exec_domain.pers_low = PER_LINUX32;
+	ia32_exec_domain.pers_high = PER_LINUX32;
+	ia32_exec_domain.signal_map = default_exec_domain.signal_map;
+	ia32_exec_domain.signal_invmap = default_exec_domain.signal_invmap;
+	register_exec_domain(&ia32_exec_domain);
+
 #if PAGE_SHIFT > IA32_PAGE_SHIFT
 	{
-		extern struct kmem_cache *ia64_partial_page_cachep;
+		extern kmem_cache_t *partial_page_cachep;
 
-		ia64_partial_page_cachep = kmem_cache_create("ia64_partial_page_cache",
-					sizeof(struct ia64_partial_page),
-					0, SLAB_PANIC, NULL);
+		partial_page_cachep = kmem_cache_create("partial_page_cache",
+							sizeof(struct partial_page), 0, 0,
+							NULL, NULL);
+		if (!partial_page_cachep)
+			panic("Cannot create partial page SLAB cache");
 	}
 #endif
 	return 0;

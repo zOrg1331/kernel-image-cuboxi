@@ -24,6 +24,7 @@
 const char *lli_revision = "$Revision: 2.59.2.4 $";
 
 extern struct IsdnCard cards[];
+extern int nrcards;
 
 static int init_b_st(struct Channel *chanp, int incoming);
 static void release_b_st(struct Channel *chanp);
@@ -833,6 +834,8 @@ static struct FsmNode fnlist[] __initdata =
 };
 /* *INDENT-ON* */
 
+#define FNCOUNT (sizeof(fnlist)/sizeof(struct FsmNode))
+
 int __init
 CallcNew(void)
 {
@@ -840,7 +843,7 @@ CallcNew(void)
 	callcfsm.event_count = EVENT_COUNT;
 	callcfsm.strEvent = strEvent;
 	callcfsm.strState = strState;
-	return FsmNew(&callcfsm, fnlist, ARRAY_SIZE(fnlist));
+	return FsmNew(&callcfsm, fnlist, FNCOUNT);
 }
 
 void

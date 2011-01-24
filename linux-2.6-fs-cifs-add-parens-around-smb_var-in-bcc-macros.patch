@@ -1,0 +1,34 @@
+From: Jeff Layton <jlayton@redhat.com>
+Date: Tue, 8 Jun 2010 12:26:13 -0400
+Subject: [fs] cifs: add parens around smb_var in BCC macros
+Message-id: <1275999978-20705-2-git-send-email-jlayton@redhat.com>
+Patchwork-id: 26025
+O-Subject: [RHEL5.6 PATCH 1/6] BZ#527268: cifs: add parens around smb_var in BCC
+	macros
+Bugzilla: 527268
+RH-Acked-by: Steve Dickson <SteveD@redhat.com>
+
+...to remove ambiguity about how these values are interpreted when
+passing in more complex values as arguments.
+
+Signed-off-by: Jeff Layton <jlayton@redhat.com>
+Signed-off-by: Steve French <sfrench@us.ibm.com>
+
+diff --git a/fs/cifs/cifspdu.h b/fs/cifs/cifspdu.h
+index 66d04e7..6a2b8c5 100644
+--- a/fs/cifs/cifspdu.h
++++ b/fs/cifs/cifspdu.h
+@@ -424,10 +424,10 @@ struct smb_hdr {
+ 	__u8 WordCount;
+ } __attribute__((packed));
+ /* given a pointer to an smb_hdr retrieve the value of byte count */
+-#define BCC(smb_var) (*(__u16 *)((char *)smb_var + sizeof(struct smb_hdr) + (2 * smb_var->WordCount)))
+-#define BCC_LE(smb_var) (*(__le16 *)((char *)smb_var + sizeof(struct smb_hdr) + (2 * smb_var->WordCount)))
++#define BCC(smb_var) (*(__u16 *)((char *)(smb_var) + sizeof(struct smb_hdr) + (2 * (smb_var)->WordCount)))
++#define BCC_LE(smb_var) (*(__le16 *)((char *)(smb_var) + sizeof(struct smb_hdr) + (2 * (smb_var)->WordCount)))
+ /* given a pointer to an smb_hdr retrieve the pointer to the byte area */
+-#define pByteArea(smb_var) ((unsigned char *)smb_var + sizeof(struct smb_hdr) + (2 * smb_var->WordCount) + 2)
++#define pByteArea(smb_var) ((unsigned char *)(smb_var) + sizeof(struct smb_hdr) + (2 * (smb_var)->WordCount) + 2)
+ 
+ /*
+  * Computer Name Length (since Netbios name was length 16 with last byte 0x20)

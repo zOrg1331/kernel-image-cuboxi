@@ -1,0 +1,146 @@
+From: Chip Coldwell <coldwell@redhat.com>
+Subject: [RHEL-5.1 PATCH] 2/4:  RAID1 goes 'read-only' after resync
+Date: Mon, 4 Jun 2007 11:58:00 -0400 (EDT)
+Bugzilla: 231040
+Message-Id: <Pine.LNX.4.64.0706041132160.19914@bogart.boston.redhat.com>
+Changelog: [scsi] RAID1 goes 'read-only' after resync
+
+
+
+bz231040
+
+    RAID1 goes 'read-only' after rsync
+    
+    This solves the 'read-only' issue when RAID1 completes resync or
+    when a device is pulled. This bug is due to the fact in RHEL5, we
+    expose the Hidden RAID components. In the per target object, we
+    store the fusion firmware target/channel mapping for all
+    devices. For hidden raid components, the target id is set to the
+    phys_disk_num, which is some zero based index provided by fusion
+    firmware.  The problem comes when the phys_disk_num is mapped to
+    the same value as the raid volume target id.  If they are the
+    same, then when hidden raid component state is changed, for
+    instance a device is pulled, the driver will flush out all the
+    outstanding commands for that device.  If the phys_disk_num
+    match's the target id to the volume, all the outstanding IO is
+    terminated with DID_NO_CONNECT.  With DID_NO_CONNECT returned,
+    some filesystems will remount the device as 'read-only'.
+
+diff --git a/drivers/message/fusion/mptscsih.c b/drivers/message/fusion/mptscsih.c
+index 2a3e9e6..b960c07 100644
+--- a/drivers/message/fusion/mptscsih.c
++++ b/drivers/message/fusion/mptscsih.c
+@@ -465,7 +465,11 @@ mptscsih_issue_sep_command(MPT_ADAPTER *ioc, VirtTarget *vtarget,
+ 	MPT_FRAME_HDR *mf;
+ 	SEPRequest_t 	 *SEPMsg;
+ 
+-	if (ioc->bus_type == FC)
++	if (ioc->bus_type != SAS)
++		return;
++
++	/* not supported for hidden raid components */
++	if (vtarget->tflags & MPT_TARGET_FLAGS_RAID_COMPONENT)
+ 		return;
+ 
+ 	if ((mf = mpt_get_msg_frame(ioc->InternalCtx, ioc)) == NULL) {
+@@ -1026,6 +1030,17 @@ mptscsih_search_running_cmds(MPT_SCSI_HOST *hd, VirtDevice *vdevice)
+ 			mf = (SCSIIORequest_t *)MPT_INDEX_2_MFPTR(hd->ioc, ii);
+ 			if (mf == NULL)
+ 				continue;
++
++			/*
++			 * If the device is a hidden raid component,
++			 * then its expected that
++			 * the function would be raid scsi io
++			 */
++			if (vdevice->vtarget->tflags &
++			    MPT_TARGET_FLAGS_RAID_COMPONENT && mf->Function !=
++			    MPI_FUNCTION_RAID_SCSI_IO_PASSTHROUGH)
++				continue;
++
+ 			int_to_scsilun(vdevice->lun, &lun);
+ 			if ((mf->Bus != vdevice->vtarget->channel) ||
+ 			    (mf->TargetID != vdevice->vtarget->id) ||
+@@ -1817,6 +1832,12 @@ mptscsih_abort(struct scsi_cmnd * SCpnt)
+ 	       hd->ioc->name, SCpnt);
+ 	scsi_print_command(SCpnt);
+ 
++	vdev = SCpnt->device->hostdata;
++	if (vdev->vtarget->tflags & MPT_TARGET_FLAGS_RAID_COMPONENT) {
++		retval = FAILED;
++		goto out;
++	}
++
+ 	/* Most important!  Set TaskMsgContext to SCpnt's MsgContext!
+ 	 * (the IO to be ABORT'd)
+ 	 *
+@@ -1829,7 +1850,6 @@ mptscsih_abort(struct scsi_cmnd * SCpnt)
+ 
+ 	hd->abortSCpnt = SCpnt;
+ 
+-	vdev = SCpnt->device->hostdata;
+ 	retval = mptscsih_TMHandler(hd, MPI_SCSITASKMGMT_TASKTYPE_ABORT_TASK,
+ 		vdev->vtarget->channel, vdev->vtarget->id, vdev->lun,
+ 		ctx2abort, mptscsih_get_tm_timeout(hd->ioc));
+@@ -1838,6 +1858,7 @@ mptscsih_abort(struct scsi_cmnd * SCpnt)
+ 	    SCpnt->serial_number == sn)
+ 		retval = FAILED;
+ 
++ out:
+ 	printk (KERN_WARNING MYNAM ": %s: task abort: %s (sc=%p)\n",
+ 		hd->ioc->name,
+ 		((retval == 0) ? "SUCCESS" : "FAILED" ), SCpnt);
+@@ -1881,10 +1902,16 @@ mptscsih_dev_reset(struct scsi_cmnd * SCpnt)
+ 	scsi_print_command(SCpnt);
+ 
+ 	vdev = SCpnt->device->hostdata;
++	if (vdev->vtarget->tflags & MPT_TARGET_FLAGS_RAID_COMPONENT) {
++		retval = FAILED;
++		goto out;
++	}
++
+ 	retval = mptscsih_TMHandler(hd, MPI_SCSITASKMGMT_TASKTYPE_TARGET_RESET,
+ 		vdev->vtarget->channel, vdev->vtarget->id,
+ 		0, 0, mptscsih_get_tm_timeout(hd->ioc));
+ 
++ out:
+ 	printk (KERN_WARNING MYNAM ": %s: target reset: %s (sc=%p)\n",
+ 		hd->ioc->name,
+ 		((retval == 0) ? "SUCCESS" : "FAILED" ), SCpnt);
+@@ -3161,6 +3188,17 @@ mptscsih_synchronize_cache(MPT_SCSI_HOST *hd, VirtDevice *vdevice)
+ {
+ 	INTERNAL_CMD		 iocmd;
+ 
++	/*
++	 *  don't bother with hidden raid components, this is handled when
++	 *  sent to the volume
++	 */
++	if (vdevice->vtarget->tflags & MPT_TARGET_FLAGS_RAID_COMPONENT)
++		return;
++
++	if (vdevice->vtarget->type != TYPE_DISK || vdevice->vtarget->deleted ||
++	    !vdevice->configured_lun)
++		return;
++
+ 	/* Following parameters will not change
+ 	 * in this routine.
+ 	 */
+@@ -3175,9 +3213,7 @@ mptscsih_synchronize_cache(MPT_SCSI_HOST *hd, VirtDevice *vdevice)
+ 	iocmd.id = vdevice->vtarget->id;
+ 	iocmd.lun = vdevice->lun;
+ 
+-	if ((vdevice->vtarget->type == TYPE_DISK) &&
+-	    (vdevice->configured_lun))
+-		mptscsih_do_cmd(hd, &iocmd);
++	mptscsih_do_cmd(hd, &iocmd);
+ }
+ 
+ EXPORT_SYMBOL(mptscsih_remove);
+
+
+-- 
+Charles M. "Chip" Coldwell
+Senior Software Engineer
+Red Hat, Inc
+978-392-2426
+

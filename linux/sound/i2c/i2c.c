@@ -2,7 +2,7 @@
  *   Generic i2c interface for ALSA
  *
  *   (c) 1998 Gerd Knorr <kraxel@cs.tu-berlin.de>
- *   Modified for the ALSA driver by Jaroslav Kysela <perex@perex.cz>
+ *   Modified for the ALSA driver by Jaroslav Kysela <perex@suse.cz>
  *
  *   This program is free software; you can redistribute it and/or modify
  *   it under the terms of the GNU General Public License as published by
@@ -20,6 +20,7 @@
  *
  */
 
+#include <sound/driver.h>
 #include <linux/init.h>
 #include <linux/slab.h>
 #include <linux/string.h>
@@ -27,7 +28,7 @@
 #include <sound/core.h>
 #include <sound/i2c.h>
 
-MODULE_AUTHOR("Jaroslav Kysela <perex@perex.cz>");
+MODULE_AUTHOR("Jaroslav Kysela <perex@suse.cz>");
 MODULE_DESCRIPTION("Generic i2c interface for ALSA");
 MODULE_LICENSE("GPL");
 
@@ -49,8 +50,7 @@ static int snd_i2c_bus_free(struct snd_i2c_bus *bus)
 	struct snd_i2c_bus *slave;
 	struct snd_i2c_device *device;
 
-	if (snd_BUG_ON(!bus))
-		return -EINVAL;
+	snd_assert(bus != NULL, return -EINVAL);
 	while (!list_empty(&bus->devices)) {
 		device = snd_i2c_device(bus->devices.next);
 		snd_i2c_device_free(device);
@@ -114,8 +114,7 @@ int snd_i2c_device_create(struct snd_i2c_bus *bus, const char *name,
 	struct snd_i2c_device *device;
 
 	*rdevice = NULL;
-	if (snd_BUG_ON(!bus))
-		return -EINVAL;
+	snd_assert(bus != NULL, return -EINVAL);
 	device = kzalloc(sizeof(*device), GFP_KERNEL);
 	if (device == NULL)
 		return -ENOMEM;

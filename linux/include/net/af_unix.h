@@ -9,11 +9,39 @@
 extern void unix_inflight(struct file *fp);
 extern void unix_notinflight(struct file *fp);
 extern void unix_gc(void);
-extern void wait_for_unix_gc(void);
 
 #define UNIX_HASH_SIZE	256
 
-extern unsigned int unix_tot_inflight;
+extern struct hlist_head unix_socket_table[UNIX_HASH_SIZE + 1];
+extern spinlock_t unix_table_lock;
+
+extern atomic_t unix_tot_inflight;
+
+static inline struct sock *first_unix_socket(int *i)
+{
+	for (*i = 0; *i <= UNIX_HASH_SIZE; (*i)++) {
+		if (!hlist_empty(&unix_socket_table[*i]))
+			return __sk_head(&unix_socket_table[*i]);
+	}
+	return NULL;
+}
+
+static inline struct sock *next_unix_socket(int *i, struct sock *s)
+{
+	struct sock *next = sk_next(s);
+	/* More in this chain? */
+	if (next)
+		return next;
+	/* Look for next non-empty chain. */
+	for ((*i)++; *i <= UNIX_HASH_SIZE; (*i)++) {
+		if (!hlist_empty(&unix_socket_table[*i]))
+			return __sk_head(&unix_socket_table[*i]);
+	}
+	return NULL;
+}
+
+#define forall_unix_sockets(i, s) \
+	for (s = first_unix_socket(&(i)); s; s = next_unix_socket(&(i),(s)))
 
 struct unix_address {
 	atomic_t	refcnt;
@@ -34,11 +62,13 @@ struct unix_skb_parms {
 #define UNIXCREDS(skb)	(&UNIXCB((skb)).creds)
 #define UNIXSID(skb)	(&UNIXCB((skb)).secid)
 
-#define unix_state_lock(s)	spin_lock(&unix_sk(s)->lock)
-#define unix_state_unlock(s)	spin_unlock(&unix_sk(s)->lock)
-#define unix_state_lock_nested(s) \
+#define unix_state_rlock(s)	spin_lock(&unix_sk(s)->lock)
+#define unix_state_runlock(s)	spin_unlock(&unix_sk(s)->lock)
+#define unix_state_wlock(s)	spin_lock(&unix_sk(s)->lock)
+#define unix_state_wlock_nested(s) \
 				spin_lock_nested(&unix_sk(s)->lock, \
 				SINGLE_DEPTH_NESTING)
+#define unix_state_wunlock(s)	spin_unlock(&unix_sk(s)->lock)
 
 #ifdef __KERNEL__
 /* The AF_UNIX socket */
@@ -51,21 +81,20 @@ struct unix_sock {
 	struct mutex		readlock;
         struct sock		*peer;
         struct sock		*other;
-	struct list_head	link;
-        atomic_long_t           inflight;
+        struct sock		*gc_tree;
+        atomic_t                inflight;
         spinlock_t		lock;
-	unsigned int		gc_candidate : 1;
-	unsigned int		gc_maybe_cycle : 1;
         wait_queue_head_t       peer_wait;
 };
 #define unix_sk(__sk) ((struct unix_sock *)__sk)
 
 #ifdef CONFIG_SYSCTL
-extern int unix_sysctl_register(struct net *net);
-extern void unix_sysctl_unregister(struct net *net);
+extern int sysctl_unix_max_dgram_qlen;
+extern void unix_sysctl_register(void);
+extern void unix_sysctl_unregister(void);
 #else
-static inline int unix_sysctl_register(struct net *net) { return 0; }
-static inline void unix_sysctl_unregister(struct net *net) {}
+static inline void unix_sysctl_register(void) {}
+static inline void unix_sysctl_unregister(void) {}
 #endif
 #endif
 #endif

@@ -1,0 +1,344 @@
+From: Paolo Bonzini <pbonzini@redhat.com>
+Date: Mon, 30 Aug 2010 16:46:41 -0400
+Subject: [xen] introduce hvm_set_cr3
+Message-id: <1283186802-21009-6-git-send-email-pbonzini@redhat.com>
+Patchwork-id: 27942
+O-Subject: [RHEL5.6 XEN PATCH 5/6] introduce hvm_set_cr3
+Bugzilla: 625903
+
+Bugzilla: https://bugzilla.redhat.com/show_bug.cgi?id=625903
+
+Upstream status: see http://xenbits.xensource.com/xen-unstable.hg/rev/15700
+
+Brew build: https://brewweb.devel.redhat.com/taskinfo?taskID=2719051
+
+Upstream makes the handling of CR3 entirely the same for VMX and SVM
+as part of c/s 15700.  This is too complicated to backport, so
+I'm instead adding a new entry to hvm_funcs.
+---
+	(Other parts of c/s 15700 are nice simplifications and apply well
+	to RHEL5 Xen, but I'm not including them in the series).
+
+ arch/x86/hvm/hvm.c        |    1 +
+ arch/x86/hvm/svm/svm.c    |  117 +++++++++++++++++++++++++--------------------
+ arch/x86/hvm/vmx/vmx.c    |   92 ++++++++++++++++++++---------------
+ include/asm-x86/hvm/hvm.h |   12 +++++
+ 4 files changed, 130 insertions(+), 92 deletions(-)
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/arch/x86/hvm/hvm.c b/arch/x86/hvm/hvm.c
+index 33b8bf4..6f5a3d6 100644
+--- a/arch/x86/hvm/hvm.c
++++ b/arch/x86/hvm/hvm.c
+@@ -658,6 +658,7 @@ int hvm_virtual_to_linear_addr(
+  gpf:
+     return 0;
+ }
++
+ /*
+  * __hvm_copy():
+  *  @buf  = hypervisor buffer
+diff --git a/arch/x86/hvm/svm/svm.c b/arch/x86/hvm/svm/svm.c
+index baaec80..2573983 100644
+--- a/arch/x86/hvm/svm/svm.c
++++ b/arch/x86/hvm/svm/svm.c
+@@ -787,6 +787,67 @@ static void svm_set_segment_register(struct vcpu *v, enum x86_segment seg,
+     }
+ }
+ 
++static int svm_set_cr3(unsigned long value)
++{
++    struct vcpu *v = current;
++    struct vmcb_struct *vmcb = v->arch.hvm_svm.vmcb;
++    unsigned long old_base_mfn, mfn;
++
++    if ( paging_mode_hap(v->domain) )
++    {
++        vmcb->cr3 = v->arch.hvm_svm.cpu_cr3 = value;
++        return X86EMUL_OKAY;
++    }
++
++    /* If paging is not enabled yet, simply copy the value to CR3. */
++    if ( !svm_paging_enabled(v) )
++    {
++        v->arch.hvm_svm.cpu_cr3 = value;
++        return X86EMUL_OKAY;
++    }
++
++    /* We make a new one if the shadow does not exist. */
++    if ( value == v->arch.hvm_svm.cpu_cr3 )
++    {
++        /* 
++         * This is simple TLB flush, implying the guest has 
++         * removed some translation or changed page attributes.
++         * We simply invalidate the shadow.
++         */
++        mfn = get_mfn_from_gpfn(value >> PAGE_SHIFT);
++        if ( mfn != pagetable_get_pfn(v->arch.guest_table) )
++            return X86EMUL_UNHANDLEABLE;
++        paging_update_cr3(v);
++        /* signal paging update to ASID handler */
++        svm_asid_g_mov_to_cr3 (v);
++    }
++    else 
++    {
++        /*
++         * If different, make a shadow. Check if the PDBR is valid
++         * first.
++         */
++        HVM_DBG_LOG(DBG_LEVEL_VMMU, "CR3 value = %lx", value);
++        mfn = get_mfn_from_gpfn(value >> PAGE_SHIFT);
++        if ( !mfn_valid(mfn) || !get_page(mfn_to_page(mfn), v->domain) )
++            return X86EMUL_UNHANDLEABLE;
++
++        old_base_mfn = pagetable_get_pfn(v->arch.guest_table);
++        v->arch.guest_table = pagetable_from_pfn(mfn);
++
++        if ( old_base_mfn )
++            put_page(mfn_to_page(old_base_mfn));
++
++        v->arch.hvm_svm.cpu_cr3 = value;
++        update_cr3(v);
++        HVM_DBG_LOG(DBG_LEVEL_VMMU, "Update CR3 value = %lx", value);
++        /* signal paging update to ASID handler */
++        svm_asid_g_mov_to_cr3 (v);
++    }
++
++    return X86EMUL_OKAY;
++}
++
+ /* Make sure that xen intercepts any FP accesses from current */
+ static void svm_stts(struct vcpu *v) 
+ {
+@@ -1014,6 +1075,7 @@ static struct hvm_function_table svm_function_table = {
+     .set_segment_register = svm_set_segment_register,
+     .update_host_cr3      = svm_update_host_cr3,
+     .update_guest_cr3     = svm_update_guest_cr3,
++    .set_cr3              = svm_set_cr3,
+     .flush_guest_tlbs     = svm_flush_guest_tlbs,
+     .update_vtpr          = svm_update_vtpr,
+     .stts                 = svm_stts,
+@@ -1799,7 +1861,7 @@ static void mov_from_cr(int cr, int gp, struct cpu_user_regs *regs)
+  */
+ static int mov_to_cr(int gpreg, int cr, struct cpu_user_regs *regs)
+ {
+-    unsigned long value, old_cr, old_base_mfn, mfn;
++    unsigned long value, old_cr;
+     struct vcpu *v = current;
+     struct vlapic *vlapic = vcpu_vlapic(v);
+     struct vmcb_struct *vmcb = v->arch.hvm_svm.vmcb;
+@@ -1817,57 +1879,8 @@ static int mov_to_cr(int gpreg, int cr, struct cpu_user_regs *regs)
+         return svm_set_cr0(value);
+ 
+     case 3:
+-        if ( paging_mode_hap(v->domain) )
+-        {
+-            vmcb->cr3 = v->arch.hvm_svm.cpu_cr3 = value;
+-            break;
+-        }
+-
+-        /* If paging is not enabled yet, simply copy the value to CR3. */
+-        if ( !svm_paging_enabled(v) )
+-        {
+-            v->arch.hvm_svm.cpu_cr3 = value;
+-            break;
+-        }
+-
+-        /* We make a new one if the shadow does not exist. */
+-        if ( value == v->arch.hvm_svm.cpu_cr3 )
+-        {
+-            /* 
+-             * This is simple TLB flush, implying the guest has 
+-             * removed some translation or changed page attributes.
+-             * We simply invalidate the shadow.
+-             */
+-            mfn = get_mfn_from_gpfn(value >> PAGE_SHIFT);
+-            if ( mfn != pagetable_get_pfn(v->arch.guest_table) )
+-                goto bad_cr3;
+-            paging_update_cr3(v);
+-            /* signal paging update to ASID handler */
+-            svm_asid_g_mov_to_cr3 (v);
+-        }
+-        else 
+-        {
+-            /*
+-             * If different, make a shadow. Check if the PDBR is valid
+-             * first.
+-             */
+-            HVM_DBG_LOG(DBG_LEVEL_VMMU, "CR3 value = %lx", value);
+-            mfn = get_mfn_from_gpfn(value >> PAGE_SHIFT);
+-            if ( !mfn_valid(mfn) || !get_page(mfn_to_page(mfn), v->domain) )
+-                goto bad_cr3;
+-
+-            old_base_mfn = pagetable_get_pfn(v->arch.guest_table);
+-            v->arch.guest_table = pagetable_from_pfn(mfn);
+-
+-            if ( old_base_mfn )
+-                put_page(mfn_to_page(old_base_mfn));
+-
+-            v->arch.hvm_svm.cpu_cr3 = value;
+-            update_cr3(v);
+-            HVM_DBG_LOG(DBG_LEVEL_VMMU, "Update CR3 value = %lx", value);
+-            /* signal paging update to ASID handler */
+-            svm_asid_g_mov_to_cr3 (v);
+-        }
++	if (svm_set_cr3(value) != X86EMUL_OKAY)
++	    goto bad_cr3;
+         break;
+ 
+     case 4: /* CR4 */
+diff --git a/arch/x86/hvm/vmx/vmx.c b/arch/x86/hvm/vmx/vmx.c
+index 569b570..c7110f4 100644
+--- a/arch/x86/hvm/vmx/vmx.c
++++ b/arch/x86/hvm/vmx/vmx.c
+@@ -1229,6 +1229,54 @@ static void vmx_set_segment_register(struct vcpu *v, enum x86_segment seg,
+     }
+ }
+ 
++static int vmx_set_cr3(unsigned long value)
++{
++    struct vcpu *v = current;
++    unsigned long mfn, old_base_mfn;
++
++    /*
++     * If paging is not enabled yet, simply copy the value to CR3.
++     */
++    if ( !vmx_paging_enabled(v) || paging_mode_hap(v->domain) )
++    {
++	v->arch.hvm_vmx.cpu_cr3 = value;
++	return X86EMUL_OKAY;
++    }
++
++    /*
++     * We make a new one if the shadow does not exist.
++     */
++    if ( value == v->arch.hvm_vmx.cpu_cr3 ) {
++	/*
++	 * This is simple TLB flush, implying the guest has
++	 * removed some translation or changed page attributes.
++	 * We simply invalidate the shadow.
++	 */
++	mfn = get_mfn_from_gpfn(value >> PAGE_SHIFT);
++	if ( mfn != pagetable_get_pfn(v->arch.guest_table) )
++	    return X86EMUL_UNHANDLEABLE;
++	paging_update_cr3(v);
++    } else {
++	/*
++	 * If different, make a shadow. Check if the PDBR is valid
++	 * first.
++	 */
++	HVM_DBG_LOG(DBG_LEVEL_VMMU, "CR3 value = %lx", value);
++	mfn = get_mfn_from_gpfn(value >> PAGE_SHIFT);
++	if ( !mfn_valid(mfn) || !get_page(mfn_to_page(mfn), v->domain) )
++	    return X86EMUL_UNHANDLEABLE;
++	old_base_mfn = pagetable_get_pfn(v->arch.guest_table);
++	v->arch.guest_table = pagetable_from_pfn(mfn);
++	if ( old_base_mfn )
++	    put_page(mfn_to_page(old_base_mfn));
++	v->arch.hvm_vmx.cpu_cr3 = value;
++	update_cr3(v);
++	HVM_DBG_LOG(DBG_LEVEL_VMMU, "Update CR3 value = %lx", value);
++    }
++
++    return X86EMUL_OKAY;
++}
++
+ /* Make sure that xen intercepts any FP accesses from current */
+ static void vmx_stts(struct vcpu *v)
+ {
+@@ -1401,6 +1449,7 @@ static struct hvm_function_table vmx_function_table = {
+     .set_segment_register = vmx_set_segment_register,
+     .update_host_cr3      = vmx_update_host_cr3,
+     .update_guest_cr3     = vmx_update_guest_cr3,
++    .set_cr3              = vmx_set_cr3,
+     .flush_guest_tlbs     = vmx_flush_guest_tlbs,
+     .update_vtpr          = vmx_update_vtpr,
+     .stts                 = vmx_stts,
+@@ -2576,7 +2625,7 @@ static int vmx_set_cr0(unsigned long value)
+  */
+ static int mov_to_cr(int gp, int cr, struct cpu_user_regs *regs)
+ {
+-    unsigned long value, old_cr, old_base_mfn, mfn;
++    unsigned long value, old_cr;
+     struct vcpu *v = current;
+     struct vlapic *vlapic = vcpu_vlapic(v);
+ 
+@@ -2608,45 +2657,8 @@ static int mov_to_cr(int gp, int cr, struct cpu_user_regs *regs)
+         return vmx_set_cr0(value);
+ 
+     case 3:
+-        /*
+-         * If paging is not enabled yet, simply copy the value to CR3.
+-         */
+-        if ( !vmx_paging_enabled(v) || paging_mode_hap(v->domain) )
+-        {
+-            v->arch.hvm_vmx.cpu_cr3 = value;
+-            break;
+-        }
+-
+-        /*
+-         * We make a new one if the shadow does not exist.
+-         */
+-        if ( value == v->arch.hvm_vmx.cpu_cr3 ) {
+-            /*
+-             * This is simple TLB flush, implying the guest has
+-             * removed some translation or changed page attributes.
+-             * We simply invalidate the shadow.
+-             */
+-            mfn = get_mfn_from_gpfn(value >> PAGE_SHIFT);
+-            if ( mfn != pagetable_get_pfn(v->arch.guest_table) )
+-                goto bad_cr3;
+-            paging_update_cr3(v);
+-        } else {
+-            /*
+-             * If different, make a shadow. Check if the PDBR is valid
+-             * first.
+-             */
+-            HVM_DBG_LOG(DBG_LEVEL_VMMU, "CR3 value = %lx", value);
+-            mfn = get_mfn_from_gpfn(value >> PAGE_SHIFT);
+-            if ( !mfn_valid(mfn) || !get_page(mfn_to_page(mfn), v->domain) )
+-                goto bad_cr3;
+-            old_base_mfn = pagetable_get_pfn(v->arch.guest_table);
+-            v->arch.guest_table = pagetable_from_pfn(mfn);
+-            if ( old_base_mfn )
+-                put_page(mfn_to_page(old_base_mfn));
+-            v->arch.hvm_vmx.cpu_cr3 = value;
+-            update_cr3(v);
+-            HVM_DBG_LOG(DBG_LEVEL_VMMU, "Update CR3 value = %lx", value);
+-        }
++	if (vmx_set_cr3(value) != X86EMUL_OKAY)
++	    goto bad_cr3;
+         break;
+ 
+     case 4: /* CR4 */
+diff --git a/include/asm-x86/hvm/hvm.h b/include/asm-x86/hvm/hvm.h
+index c784727..f845e1a 100644
+--- a/include/asm-x86/hvm/hvm.h
++++ b/include/asm-x86/hvm/hvm.h
+@@ -140,6 +140,12 @@ struct hvm_function_table {
+     void (*update_guest_cr3)(struct vcpu *v);
+ 
+     /*
++     * Called to inform the HVM layer that the guest loaded cr3, and setup
++     * page tables accordingly.  Operates on the current VCPU.
++     */
++    int (*set_cr3)(unsigned long value);
++
++    /*
+      * Called to ensure than all guest-specific mappings in a tagged TLB
+      * are flushed; does *not* flush Xen's TLB entries, and on
+      * processors without a tagged TLB it will be a noop.
+@@ -302,6 +308,12 @@ hvm_set_segment_register(struct vcpu *v, enum x86_segment seg,
+     hvm_funcs.set_segment_register(v, seg, reg);
+ }
+ 
++static inline int
++hvm_set_cr3(unsigned long value)
++{
++    return hvm_funcs.set_cr3(value);
++}
++
+ void hvm_cpuid(unsigned int input, unsigned int *eax, unsigned int *ebx,
+                                    unsigned int *ecx, unsigned int *edx);
+ void hvm_stts(struct vcpu *v);

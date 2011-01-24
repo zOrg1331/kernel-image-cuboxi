@@ -1,6 +1,6 @@
 /*
  * net/tipc/zone.c: TIPC zone management routines
- *
+ * 
  * Copyright (c) 2000-2006, Ericsson AB
  * Copyright (c) 2005, Wind River Systems
  * All rights reserved.
@@ -82,7 +82,7 @@ void tipc_zone_attach_cluster(struct _zone *z_ptr, struct cluster *c_ptr)
 
 	assert(c_ptr->addr);
 	assert(c_num <= tipc_max_clusters);
-	assert(z_ptr->clusters[c_num] == NULL);
+	assert(z_ptr->clusters[c_num] == 0);
 	z_ptr->clusters[c_num] = c_ptr;
 }
 
@@ -92,7 +92,7 @@ void tipc_zone_remove_as_router(struct _zone *z_ptr, u32 router)
 
 	for (c_num = 1; c_num <= tipc_max_clusters; c_num++) {
 		if (z_ptr->clusters[c_num]) {
-			tipc_cltr_remove_as_router(z_ptr->clusters[c_num],
+			tipc_cltr_remove_as_router(z_ptr->clusters[c_num], 
 						   router);
 		}
 	}
@@ -111,10 +111,10 @@ void tipc_zone_send_external_routes(struct _zone *z_ptr, u32 dest)
 	}
 }
 
-struct tipc_node *tipc_zone_select_remote_node(struct _zone *z_ptr, u32 addr, u32 ref)
+struct node *tipc_zone_select_remote_node(struct _zone *z_ptr, u32 addr, u32 ref)
 {
 	struct cluster *c_ptr;
-	struct tipc_node *n_ptr;
+	struct node *n_ptr;
 	u32 c_num;
 
 	if (!z_ptr)

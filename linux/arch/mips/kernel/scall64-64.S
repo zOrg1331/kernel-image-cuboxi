@@ -34,7 +34,7 @@ NESTED(handle_sys64, PT_SIZE, sp)
 	 */
 	.set	noat
 	SAVE_SOME
-	TRACE_IRQS_ON_RELOAD
+	TRACE_IRQS_ON
 	STI
 	.set	at
 #endif
@@ -117,12 +117,84 @@ syscall_trace_entry:
 
 illegal_syscall:
 	/* This also isn't a 64-bit syscall, throw an error.  */
-	li	v0, ENOSYS			# error
+	li	v0, -ENOSYS			# error
 	sd	v0, PT_R2(sp)
 	li	t0, 1				# set error flag
 	sd	t0, PT_R7(sp)
 	j	n64_syscall_exit
 	END(handle_sys64)
+
+	LEAF(mips_atomic_set)
+	andi	v0, a1, 3			# must be word aligned
+	bnez	v0, bad_alignment
+
+	LONG_L	v1, TI_ADDR_LIMIT($28)		# in legal address range?
+	LONG_ADDIU	a0, a1, 4
+	or	a0, a0, a1
+	and	a0, a0, v1
+	bltz	a0, bad_address
+
+#ifdef CONFIG_CPU_HAS_LLSC
+	/* Ok, this is the ll/sc case.  World is sane :-)  */
+1:	ll	v0, (a1)
+	move	a0, a2
+2:	sc	a0, (a1)
+#if R10000_LLSC_WAR
+	beqzl	a0, 1b
+#else
+	beqz	a0, 1b
+#endif
+
+	.section __ex_table,"a"
+	PTR	1b, bad_stack
+	PTR	2b, bad_stack
+	.previous
+#else
+	sw	a1, 16(sp)
+	sw	a2, 20(sp)
+
+	move	a0, sp
+	move	a2, a1
+	li	a1, 1
+	jal	do_page_fault
+
+	lw	a1, 16(sp)
+	lw	a2, 20(sp)
+
+	/*
+	 * At this point the page should be readable and writable unless
+	 * there was no more memory available.
+	 */
+1:	lw	v0, (a1)
+2:	sw	a2, (a1)
+
+	.section __ex_table,"a"
+	PTR	1b, no_mem
+	PTR	2b, no_mem
+	.previous
+#endif
+
+	sd	zero, PT_R7(sp)		# success
+	sd	v0, PT_R2(sp)		# result
+
+	j	n64_syscall_exit	# continue like a normal syscall
+
+no_mem:	li	v0, -ENOMEM
+	jr	ra
+
+bad_address:
+	li	v0, -EFAULT
+	jr	ra
+
+bad_alignment:
+	li	v0, -EINVAL
+	jr	ra
+	END(mips_atomic_set)
+
+	LEAF(sys_sysmips)
+	beq	a0, MIPS_ATOMIC_SET, mips_atomic_set
+	j	_sys_sysmips
+	END(sys_sysmips)
 
 	.align	3
 sys_call_table:
@@ -135,7 +207,7 @@ sys_call_table:
 	PTR	sys_newlstat
 	PTR	sys_poll
 	PTR	sys_lseek
-	PTR	sys_mips_mmap
+	PTR	old_mmap
 	PTR	sys_mprotect			/* 5010 */
 	PTR	sys_munmap
 	PTR	sys_brk
@@ -147,7 +219,7 @@ sys_call_table:
 	PTR	sys_readv
 	PTR	sys_writev
 	PTR	sys_access			/* 5020 */
-	PTR	sysm_pipe
+	PTR	sys_pipe
 	PTR	sys_select
 	PTR	sys_sched_yield
 	PTR	sys_mremap
@@ -394,31 +466,3 @@ sys_call_table:
 	PTR	sys_tee				/* 5265 */
 	PTR	sys_vmsplice
 	PTR	sys_move_pages
-	PTR	sys_set_robust_list
-	PTR	sys_get_robust_list
-	PTR	sys_kexec_load			/* 5270 */
-	PTR	sys_getcpu
-	PTR	sys_epoll_pwait
-	PTR	sys_ioprio_set
-	PTR	sys_ioprio_get
-	PTR	sys_utimensat			/* 5275 */
-	PTR	sys_signalfd
-	PTR	sys_ni_syscall
-	PTR	sys_eventfd
-	PTR	sys_fallocate
-	PTR	sys_timerfd_create		/* 5280 */
-	PTR	sys_timerfd_gettime
-	PTR	sys_timerfd_settime
-	PTR	sys_signalfd4
-	PTR	sys_eventfd2
-	PTR	sys_epoll_create1		/* 5285 */
-	PTR	sys_dup3
-	PTR	sys_pipe2
-	PTR	sys_inotify_init1
-	PTR	sys_preadv
-	PTR	sys_pwritev			/* 5390 */
-	PTR	sys_rt_tgsigqueueinfo
-	PTR	sys_perf_event_open
-	PTR	sys_accept4
-	PTR     sys_recvmmsg
-	.size	sys_call_table,.-sys_call_table

@@ -1,0 +1,54 @@
+From: Ed Pollard <epollard@redhat.com>
+Date: Tue, 8 Apr 2008 14:21:24 -0400
+Subject: [pci] revert 'PCI: remove transparent bridge sizing'
+Message-id: 47FBB7A4.4060207@redhat.com
+O-Subject: [RHEL5.2 PATCH] RHBZ #252260 pci: revert "PCI: remove transparent bridge sizing"
+Bugzilla: 252260
+
+bugzilla:
+https://bugzilla.redhat.com/show_bug.cgi?id=252260
+
+Description:
+   This patch reverts a previously accepted upstream patch that was then found to cause a regression
+between 2.6.24 and 2.6.25 as detailed in the following thread: http://lkml.org/lkml/2008/3/26/176
+
+   The best description is why this needs to be reverted is from: http://lkml.org/lkml/2008/3/26/94
+Date	Wed, 26 Mar 2008 13:14:50 +0300
+From	Ivan Kokshaysky
+----quote---
+Yeah, it's resource issue for sure. The 00:1e.0 is a transparent bridge,
+ so I blame commit 8fa5913d54f3b1e09948e6a0db34da887e05ff1f
+ (PCI: remove transparent bridge sizing). It's wrong for two reasons:
+ - we cannot ignore standard windows of a transparent bridge as they
+   always positive decode, so they are potential source of address conflicts;
+ - that patch just broke whole bridge setup logic in unpredictable way.
+---end quote---
+
+   This reverts part of a patch that Konrad posted here:
+http://post-office.corp.redhat.com/archives/rhkernel-list/2007-October/msg00521.html
+After testing at IBM the original issue that these patches were submitted to address
+is still fixed/working with this reverted.
+
+Please review.
+
+-------
+
+Acked-by: Peter Martuccelli <peterm@redhat.com>
+
+diff --git a/drivers/pci/setup-bus.c b/drivers/pci/setup-bus.c
+index 0bba74c..8f7bcf5 100644
+--- a/drivers/pci/setup-bus.c
++++ b/drivers/pci/setup-bus.c
+@@ -487,12 +487,7 @@ pci_bus_size_bridges(struct pci_bus *bus)
+ 		break;
+ 
+ 	case PCI_CLASS_BRIDGE_PCI:
+-		/* don't size subtractive decoding (transparent)
+-		 * PCI-to-PCI bridges */
+-		if (bus->self->transparent)
+-			break;
+ 		pci_bridge_check_ranges(bus);
+-		/* fall through */
+ 	default:
+ 		pbus_size_io(bus);
+ 		/* If the bridge supports prefetchable range, size it

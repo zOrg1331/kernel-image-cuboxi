@@ -1,0 +1,228 @@
+From: Steve Dickson <SteveD@redhat.com>
+Subject: [RHEL5.1] [PATCH] NFS version 2 over UDP is not working properly
+Date: Wed, 14 Mar 2007 15:57:11 -0400
+Bugzilla: 227718
+Message-Id: <45F85397.70900@RedHat.com>
+Changelog: [NFS] version 2 over UDP is not working properly
+
+
+This backport of an upstream patch allows the special section
+of the NFS Connectathon test suite to pass when using version 2.
+
+This was one of the first problems I noticed at this year's
+connectathon and it turns out the reason QE didn't find this
+was because there a bug in their tests script which was causing
+only version 3 to be tests... Once this test script bug was
+fixed, this failure became very apparent...
+
+Please ACK...
+
+steved.
+
+commit 0b67130149b006628389ff3e8f46be9957af98aa
+Author: Trond Myklebust <Trond.Myklebust@netapp.com>
+
+    NFS: Fix asynchronous read error handling
+    
+    We must always call ->read_done() before we truncate the page data, or
+    decide to flag an error. The reasons are that
+    	in NFSv2, ->read_done() is where the eof flag gets set.
+    	in NFSv3/v4 ->read_done() handles EJUKEBOX-type errors, and
+    		  v4 state recovery.
+    
+    However, we need to mark the pages as uptodate before we deal with short
+    read errors, since we may need to modify the nfs_read_data arguments.
+    
+    We therefore split the current nfs_readpage_result() into two parts:
+    nfs_readpage_result(), which calls ->read_done() etc, and
+    nfs_readpage_retry(), which subsequently handles short reads.
+    
+    Note: Removing the code that retries in case of a short read also fixes a
+    bug in nfs_direct_read_result(), which used to return a corrupted number of
+    bytes.
+    
+    Signed-off-by: Trond Myklebust <Trond.Myklebust@netapp.com>
+
+--- linux-2.6.18.i686/fs/nfs/read.c.orig	2007-03-02 08:13:40.000000000 -0500
++++ linux-2.6.18.i686/fs/nfs/read.c	2007-03-14 15:38:23.000000000 -0400
+@@ -473,6 +473,55 @@ nfs_pagein_list(struct list_head *head, 
+ }
+ 
+ /*
++ * This is the callback from RPC telling us whether a reply was
++ * received or some error occurred (timeout or socket shutdown).
++ */
++int nfs_readpage_result(struct rpc_task *task, struct nfs_read_data *data)
++{
++	int status;
++
++	dprintk("%s: %4d, (status %d)\n", __FUNCTION__, task->tk_pid,
++			task->tk_status);
++
++	status = NFS_PROTO(data->inode)->read_done(task, data);
++	if (status != 0)
++		return status;
++
++	nfs_add_stats(data->inode, NFSIOS_SERVERREADBYTES, data->res.count);
++
++	if (task->tk_status == -ESTALE) {
++		set_bit(NFS_INO_STALE, &NFS_FLAGS(data->inode));
++		nfs_mark_for_revalidate(data->inode);
++	}
++	spin_lock(&data->inode->i_lock);
++	NFS_I(data->inode)->cache_validity |= NFS_INO_INVALID_ATIME;
++	spin_unlock(&data->inode->i_lock);
++	return 0;
++}
++
++static int nfs_readpage_retry(struct rpc_task *task, struct nfs_read_data *data)
++{
++	struct nfs_readargs *argp = &data->args;
++	struct nfs_readres *resp = &data->res;
++
++	if (resp->eof || resp->count == argp->count)
++		return 0;
++
++	/* This is a short read! */
++	nfs_inc_stats(data->inode, NFSIOS_SHORTREAD);
++	/* Has the server at least made some progress? */
++	if (resp->count == 0)
++		return 0;
++
++	/* Yes, so retry the read at the end of the data */
++	argp->offset += resp->count;
++	argp->pgbase += resp->count;
++	argp->count -= resp->count;
++	rpc_restart_call(task);
++	return -EAGAIN;
++}
++
++/*
+  * Handle a read reply that fills part of a page.
+  */
+ static void nfs_readpage_result_partial(struct rpc_task *task, void *calldata)
+@@ -481,12 +530,16 @@ static void nfs_readpage_result_partial(
+ 	struct nfs_page *req = data->req;
+ 	struct page *page = req->wb_page;
+  
+-	if (likely(task->tk_status >= 0))
+-		nfs_readpage_truncate_uninitialised_page(data);
+-	else
+-		SetPageError(page);
+ 	if (nfs_readpage_result(task, data) != 0)
+ 		return;
++
++	if (likely(task->tk_status >= 0)) {
++		nfs_readpage_truncate_uninitialised_page(data);
++		if (nfs_readpage_retry(task, data) != 0)
++			return;
++	}
++	if (unlikely(task->tk_status < 0))
++		SetPageError(page);
+ 	if (atomic_dec_and_test(&req->wb_complete)) {
+ 		if (!PageError(page))
+ 			SetPageUptodate(page);
+@@ -514,25 +567,13 @@ static void nfs_readpage_set_pages_uptod
+ 	count += base;
+ 	for (;count >= PAGE_CACHE_SIZE; count -= PAGE_CACHE_SIZE, pages++)
+ 		SetPageUptodate(*pages);
+-	if (count != 0)
++	if (count == 0)
++		return;
++	/* Was this a short read? */
++	if (data->res.eof || data->res.count == data->args.count)
+ 		SetPageUptodate(*pages);
+ }
+ 
+-static void nfs_readpage_set_pages_error(struct nfs_read_data *data)
+-{
+-	unsigned int count = data->args.count;
+-	unsigned int base = data->args.pgbase;
+-	struct page **pages;
+-
+-	pages = &data->args.pages[base >> PAGE_CACHE_SHIFT];
+-	base &= ~PAGE_CACHE_MASK;
+-	count += base;
+-	for (;count >= PAGE_CACHE_SIZE; count -= PAGE_CACHE_SIZE, pages++)
+-		SetPageError(*pages);
+-	if (count != 0)
+-		SetPageError(*pages);
+-}
+-
+ /*
+  * This is the callback from RPC telling us whether a reply was
+  * received or some error occurred (timeout or socket shutdown).
+@@ -541,19 +582,20 @@ static void nfs_readpage_result_full(str
+ {
+ 	struct nfs_read_data *data = calldata;
+ 
++	if (nfs_readpage_result(task, data) != 0)
++		return;
+ 	/*
+-	 * Note: nfs_readpage_result may change the values of
++	 * Note: nfs_readpage_retry may change the values of
+ 	 * data->args. In the multi-page case, we therefore need
+-	 * to ensure that we call the next nfs_readpage_set_page_uptodate()
+-	 * first in the multi-page case.
++	 * to ensure that we call nfs_readpage_set_pages_uptodate()
++	 * first.
+ 	 */
+ 	if (likely(task->tk_status >= 0)) {
+ 		nfs_readpage_truncate_uninitialised_page(data);
+ 		nfs_readpage_set_pages_uptodate(data);
+-	} else
+-		nfs_readpage_set_pages_error(data);
+-	if (nfs_readpage_result(task, data) != 0)
+-		return;
++		if (nfs_readpage_retry(task, data) != 0)
++			return;
++	}
+ 	while (!list_empty(&data->pages)) {
+ 		struct nfs_page *req = nfs_list_entry(data->pages.next);
+ 
+@@ -567,44 +609,6 @@ static const struct rpc_call_ops nfs_rea
+ 	.rpc_release = nfs_readdata_release,
+ };
+ 
+-/*
+- * This is the callback from RPC telling us whether a reply was
+- * received or some error occurred (timeout or socket shutdown).
+- */
+-int nfs_readpage_result(struct rpc_task *task, struct nfs_read_data *data)
+-{
+-	struct nfs_readargs *argp = &data->args;
+-	struct nfs_readres *resp = &data->res;
+-	int status;
+-
+-	dprintk("NFS: %4d nfs_readpage_result, (status %d)\n",
+-		task->tk_pid, task->tk_status);
+-
+-	status = NFS_PROTO(data->inode)->read_done(task, data);
+-	if (status != 0)
+-		return status;
+-
+-	nfs_add_stats(data->inode, NFSIOS_SERVERREADBYTES, resp->count);
+-
+-	/* Is this a short read? */
+-	if (task->tk_status >= 0 && resp->count < argp->count && !resp->eof) {
+-		nfs_inc_stats(data->inode, NFSIOS_SHORTREAD);
+-		/* Has the server at least made some progress? */
+-		if (resp->count != 0) {
+-			/* Yes, so retry the read at the end of the data */
+-			argp->offset += resp->count;
+-			argp->pgbase += resp->count;
+-			argp->count -= resp->count;
+-			rpc_restart_call(task);
+-			return -EAGAIN;
+-		}
+-		task->tk_status = -EIO;
+-	}
+-	spin_lock(&data->inode->i_lock);
+-	NFS_I(data->inode)->cache_validity |= NFS_INO_INVALID_ATIME;
+-	spin_unlock(&data->inode->i_lock);
+-	return 0;
+-}
+ 
+ /*
+  * Read a page over NFS.
+

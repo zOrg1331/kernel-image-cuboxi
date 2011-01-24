@@ -1,0 +1,29 @@
+From: Neil Horman <nhorman@redhat.com>
+Date: Wed, 23 Jan 2008 14:20:34 -0500
+Subject: [net] ipv6: use correct seed to compute ehash index
+Message-id: 20080123192034.GE377@hmsendeavour.rdu.redhat.com
+O-Subject: [PATCH RHEL 5.2] use appropriate seed for computing ehash index in ipv6 (bz248052)
+Bugzilla: 248052
+
+Hey-
+	Backport of commit 6e1d9d04c4004361fb327abcbde74a20e8dca2ff.  Currently
+in RHEL5 __inet6_check_established uses the wrong seed value when finding the
+hash for ipv6 sockets.  The result is that occasionally ipv6 connection requests
+are refused, or reset.  This patch has been tested and confirmed to fix that, as
+described in bz 248052.
+Regards
+Neil
+
+diff --git a/net/ipv6/inet6_hashtables.c b/net/ipv6/inet6_hashtables.c
+index 7d8a190..aa85f1a 100644
+--- a/net/ipv6/inet6_hashtables.c
++++ b/net/ipv6/inet6_hashtables.c
+@@ -172,7 +172,7 @@ static int __inet6_check_established(struct inet_timewait_death_row *death_row,
+ 	const struct in6_addr *saddr = &np->daddr;
+ 	const int dif = sk->sk_bound_dev_if;
+ 	const u32 ports = INET_COMBINED_PORTS(inet->dport, lport);
+-	const unsigned int hash = inet6_ehashfn(daddr, inet->num, saddr,
++	const unsigned int hash = inet6_ehashfn(daddr, lport, saddr,
+ 						inet->dport);
+ 	struct inet_ehash_bucket *head = inet_ehash_bucket(hinfo, hash);
+ 	struct sock *sk2;

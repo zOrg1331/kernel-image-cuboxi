@@ -1,7 +1,7 @@
 /*
  *  Driver for NEC VR4100 series Serial Interface Unit.
  *
- *  Copyright (C) 2004-2008  Yoichi Yuasa <yuasa@linux-mips.org>
+ *  Copyright (C) 2004-2005  Yoichi Yuasa <yoichi_yuasa@tripeaks.co.jp>
  *
  *  Based on drivers/serial/8250.c, by Russell King.
  *
@@ -25,12 +25,12 @@
 #endif
 
 #include <linux/console.h>
-#include <linux/errno.h>
+#include <linux/platform_device.h>
+#include <linux/err.h>
+#include <linux/ioport.h>
 #include <linux/init.h>
 #include <linux/interrupt.h>
-#include <linux/ioport.h>
 #include <linux/module.h>
-#include <linux/platform_device.h>
 #include <linux/serial.h>
 #include <linux/serial_core.h>
 #include <linux/serial_reg.h>
@@ -38,9 +38,11 @@
 #include <linux/tty_flip.h>
 
 #include <asm/io.h>
+#include <asm/vr41xx/irq.h>
 #include <asm/vr41xx/siu.h>
 #include <asm/vr41xx/vr41xx.h>
 
+#define SIU_PORTS_MAX	2
 #define SIU_BAUD_BASE	1152000
 #define SIU_MAJOR	204
 #define SIU_MINOR_BASE	82
@@ -58,16 +60,33 @@
  #define IRUSESEL	0x02
  #define SIRSEL		0x01
 
-static struct uart_port siu_uart_ports[SIU_PORTS_MAX] = {
-	[0 ... SIU_PORTS_MAX-1] = {
-		.lock	= __SPIN_LOCK_UNLOCKED(siu_uart_ports->lock),
-		.irq	= -1,
-	},
+struct siu_port {
+	unsigned int type;
+	unsigned int irq;
+	unsigned long start;
 };
 
-#ifdef CONFIG_SERIAL_VR41XX_CONSOLE
+static const struct siu_port siu_type1_ports[] = {
+	{	.type		= PORT_VR41XX_SIU,
+		.irq		= SIU_IRQ,
+		.start		= 0x0c000000UL,		},
+};
+
+#define SIU_TYPE1_NR_PORTS	(sizeof(siu_type1_ports) / sizeof(struct siu_port))
+
+static const struct siu_port siu_type2_ports[] = {
+	{	.type		= PORT_VR41XX_SIU,
+		.irq		= SIU_IRQ,
+		.start		= 0x0f000800UL,		},
+	{	.type		= PORT_VR41XX_DSIU,
+		.irq		= DSIU_IRQ,
+		.start		= 0x0f000820UL,		},
+};
+
+#define SIU_TYPE2_NR_PORTS	(sizeof(siu_type2_ports) / sizeof(struct siu_port))
+
+static struct uart_port siu_uart_ports[SIU_PORTS_MAX];
 static uint8_t lsr_break_flag[SIU_PORTS_MAX];
-#endif
 
 #define siu_read(port, offset)		readb((port)->membase + (offset))
 #define siu_write(port, offset, value)	writeb((value), (port)->membase + (offset))
@@ -91,6 +110,7 @@ void vr41xx_select_siu_interface(siu_interface_t interface)
 
 	spin_unlock_irqrestore(&port->lock, flags);
 }
+
 EXPORT_SYMBOL_GPL(vr41xx_select_siu_interface);
 
 void vr41xx_use_irda(irda_use_t use)
@@ -112,6 +132,7 @@ void vr41xx_use_irda(irda_use_t use)
 
 	spin_unlock_irqrestore(&port->lock, flags);
 }
+
 EXPORT_SYMBOL_GPL(vr41xx_use_irda);
 
 void vr41xx_select_irda_module(irda_module_t module, irda_speed_t speed)
@@ -145,6 +166,7 @@ void vr41xx_select_irda_module(irda_module_t module, irda_speed_t speed)
 
 	spin_unlock_irqrestore(&port->lock, flags);
 }
+
 EXPORT_SYMBOL_GPL(vr41xx_select_irda_module);
 
 static inline void siu_clear_fifo(struct uart_port *port)
@@ -153,6 +175,21 @@ static inline void siu_clear_fifo(struct uart_port *port)
 	siu_write(port, UART_FCR, UART_FCR_ENABLE_FIFO | UART_FCR_CLEAR_RCVR |
 	                          UART_FCR_CLEAR_XMIT);
 	siu_write(port, UART_FCR, 0);
+}
+
+static inline int siu_probe_ports(void)
+{
+	switch (current_cpu_data.cputype) {
+	case CPU_VR4111:
+	case CPU_VR4121:
+		return SIU_TYPE1_NR_PORTS;
+	case CPU_VR4122:
+	case CPU_VR4131:
+	case CPU_VR4133:
+		return SIU_TYPE2_NR_PORTS;
+	}
+
+	return 0;
 }
 
 static inline unsigned long siu_port_size(struct uart_port *port)
@@ -169,10 +206,21 @@ static inline unsigned long siu_port_size(struct uart_port *port)
 
 static inline unsigned int siu_check_type(struct uart_port *port)
 {
-	if (port->line == 0)
-		return PORT_VR41XX_SIU;
-	if (port->line == 1 && port->irq != -1)
-		return PORT_VR41XX_DSIU;
+	switch (current_cpu_data.cputype) {
+	case CPU_VR4111:
+	case CPU_VR4121:
+		if (port->line == 0)
+			return PORT_VR41XX_SIU;
+		break;
+	case CPU_VR4122:
+	case CPU_VR4131:
+	case CPU_VR4133:
+		if (port->line == 0)
+			return PORT_VR41XX_SIU;
+		else if (port->line == 1)
+			return PORT_VR41XX_DSIU;
+		break;
+	}
 
 	return PORT_UNKNOWN;
 }
@@ -311,14 +359,15 @@ static void siu_break_ctl(struct uart_port *port, int ctl)
 	spin_unlock_irqrestore(&port->lock, flags);
 }
 
-static inline void receive_chars(struct uart_port *port, uint8_t *status)
+static inline void receive_chars(struct uart_port *port, uint8_t *status,
+                                 struct pt_regs *regs)
 {
 	struct tty_struct *tty;
 	uint8_t lsr, ch;
 	char flag;
 	int max_count = RX_MAX_COUNT;
 
-	tty = port->state->port.tty;
+	tty = port->info->tty;
 	lsr = *status;
 
 	do {
@@ -356,7 +405,7 @@ static inline void receive_chars(struct uart_port *port, uint8_t *status)
 				flag = TTY_PARITY;
 		}
 
-		if (uart_handle_sysrq_char(port, ch))
+		if (uart_handle_sysrq_char(port, ch, regs))
 			goto ignore_char;
 
 		uart_insert_char(port, lsr, UART_LSR_OE, ch, flag);
@@ -386,7 +435,7 @@ static inline void check_modem_status(struct uart_port *port)
 	if (msr & UART_MSR_DCTS)
 		uart_handle_cts_change(port, msr & UART_MSR_CTS);
 
-	wake_up_interruptible(&port->state->port.delta_msr_wait);
+	wake_up_interruptible(&port->info->delta_msr_wait);
 }
 
 static inline void transmit_chars(struct uart_port *port)
@@ -394,7 +443,7 @@ static inline void transmit_chars(struct uart_port *port)
 	struct circ_buf *xmit;
 	int max_count = TX_MAX_COUNT;
 
-	xmit = &port->state->xmit;
+	xmit = &port->info->xmit;
 
 	if (port->x_char) {
 		siu_write(port, UART_TX, port->x_char);
@@ -423,7 +472,7 @@ static inline void transmit_chars(struct uart_port *port)
 		siu_stop_tx(port);
 }
 
-static irqreturn_t siu_interrupt(int irq, void *dev_id)
+static irqreturn_t siu_interrupt(int irq, void *dev_id, struct pt_regs *regs)
 {
 	struct uart_port *port;
 	uint8_t iir, lsr;
@@ -436,7 +485,7 @@ static irqreturn_t siu_interrupt(int irq, void *dev_id)
 
 	lsr = siu_read(port, UART_LSR);
 	if (lsr & UART_LSR_DR)
-		receive_chars(port, &lsr);
+		receive_chars(port, &lsr, regs);
 
 	check_modem_status(port);
 
@@ -514,8 +563,8 @@ static void siu_shutdown(struct uart_port *port)
 	free_irq(port->irq, port);
 }
 
-static void siu_set_termios(struct uart_port *port, struct ktermios *new,
-                            struct ktermios *old)
+static void siu_set_termios(struct uart_port *port, struct termios *new,
+                            struct termios *old)
 {
 	tcflag_t c_cflag, c_iflag;
 	uint8_t lcr, fcr, ier;
@@ -703,34 +752,44 @@ static struct uart_ops siu_uart_ops = {
 	.verify_port	= siu_verify_port,
 };
 
-static int siu_init_ports(struct platform_device *pdev)
+static int siu_init_ports(void)
 {
+	const struct siu_port *siu;
 	struct uart_port *port;
-	struct resource *res;
-	int *type = pdev->dev.platform_data;
-	int i;
+	int i, num;
 
-	if (!type)
+	switch (current_cpu_data.cputype) {
+	case CPU_VR4111:
+	case CPU_VR4121:
+		siu = siu_type1_ports;
+		break;
+	case CPU_VR4122:
+	case CPU_VR4131:
+	case CPU_VR4133:
+		siu = siu_type2_ports;
+		break;
+	default:
 		return 0;
+	}
 
 	port = siu_uart_ports;
-	for (i = 0; i < SIU_PORTS_MAX; i++) {
-		port->type = type[i];
-		if (port->type == PORT_UNKNOWN)
-			continue;
-		port->irq = platform_get_irq(pdev, i);
+	num = siu_probe_ports();
+	for (i = 0; i < num; i++) {
+		spin_lock_init(&port->lock);
+		port->irq = siu->irq;
 		port->uartclk = SIU_BAUD_BASE * 16;
 		port->fifosize = 16;
 		port->regshift = 0;
 		port->iotype = UPIO_MEM;
 		port->flags = UPF_IOREMAP | UPF_BOOT_AUTOCONF;
+		port->type = siu->type;
 		port->line = i;
-		res = platform_get_resource(pdev, IORESOURCE_MEM, i);
-		port->mapbase = res->start;
+		port->mapbase = siu->start;
+		siu++;
 		port++;
 	}
 
-	return i;
+	return num;
 }
 
 #ifdef CONFIG_SERIAL_VR41XX_CONSOLE
@@ -784,7 +843,7 @@ static void siu_console_write(struct console *con, const char *s, unsigned count
 	siu_write(port, UART_IER, ier);
 }
 
-static int __init siu_console_setup(struct console *con, char *options)
+static int siu_console_setup(struct console *con, char *options)
 {
 	struct uart_port *port;
 	int baud = 9600;
@@ -802,8 +861,7 @@ static int __init siu_console_setup(struct console *con, char *options)
 		port->membase = ioremap(port->mapbase, siu_port_size(port));
 	}
 
-	if (port->type == PORT_VR41XX_SIU)
-		vr41xx_select_siu_interface(SIU_INTERFACE_RS232C);
+	vr41xx_select_siu_interface(SIU_INTERFACE_RS232C);
 
 	if (options != NULL)
 		uart_parse_options(options, &baud, &parity, &bits, &flow);
@@ -826,9 +884,13 @@ static struct console siu_console = {
 static int __devinit siu_console_init(void)
 {
 	struct uart_port *port;
-	int i;
+	int num, i;
 
-	for (i = 0; i < SIU_PORTS_MAX; i++) {
+	num = siu_init_ports();
+	if (num <= 0)
+		return -ENODEV;
+
+	for (i = 0; i < num; i++) {
 		port = &siu_uart_ports[i];
 		port->ops = &siu_uart_ops;
 	}
@@ -839,19 +901,6 @@ static int __devinit siu_console_init(void)
 }
 
 console_initcall(siu_console_init);
-
-void __init vr41xx_siu_early_setup(struct uart_port *port)
-{
-	if (port->type == PORT_UNKNOWN)
-		return;
-
-	siu_uart_ports[port->line].line = port->line;
-	siu_uart_ports[port->line].type = port->type;
-	siu_uart_ports[port->line].uartclk = SIU_BAUD_BASE * 16;
-	siu_uart_ports[port->line].mapbase = port->mapbase;
-	siu_uart_ports[port->line].mapbase = port->mapbase;
-	siu_uart_ports[port->line].ops = &siu_uart_ops;
-}
 
 #define SERIAL_VR41XX_CONSOLE	&siu_console
 #else
@@ -872,7 +921,7 @@ static int __devinit siu_probe(struct platform_device *dev)
 	struct uart_port *port;
 	int num, i, retval;
 
-	num = siu_init_ports(dev);
+	num = siu_init_ports();
 	if (num <= 0)
 		return -ENODEV;
 
@@ -950,6 +999,8 @@ static int siu_resume(struct platform_device *dev)
 	return 0;
 }
 
+static struct platform_device *siu_platform_device;
+
 static struct platform_driver siu_device_driver = {
 	.probe		= siu_probe,
 	.remove		= __devexit_p(siu_remove),
@@ -963,16 +1014,30 @@ static struct platform_driver siu_device_driver = {
 
 static int __init vr41xx_siu_init(void)
 {
-	return platform_driver_register(&siu_device_driver);
+	int retval;
+
+	siu_platform_device = platform_device_alloc("SIU", -1);
+	if (!siu_platform_device)
+		return -ENOMEM;
+
+	retval = platform_device_add(siu_platform_device);
+	if (retval < 0) {
+		platform_device_put(siu_platform_device);
+		return retval;
+	}
+
+	retval = platform_driver_register(&siu_device_driver);
+	if (retval < 0)
+		platform_device_unregister(siu_platform_device);
+
+	return retval;
 }
 
 static void __exit vr41xx_siu_exit(void)
 {
 	platform_driver_unregister(&siu_device_driver);
+	platform_device_unregister(siu_platform_device);
 }
 
 module_init(vr41xx_siu_init);
 module_exit(vr41xx_siu_exit);
-
-MODULE_LICENSE("GPL");
-MODULE_ALIAS("platform:SIU");

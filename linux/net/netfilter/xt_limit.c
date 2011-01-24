@@ -1,5 +1,12 @@
-/* (C) 1999 JÃ©rÃ´me de Vivie <devivie@info.enserb.u-bordeaux.fr>
- * (C) 1999 HervÃ© Eychenne <eychenne@info.enserb.u-bordeaux.fr>
+/* Kernel module to control the rate
+ *
+ * 2 September 1999: Changed from the target RATE to the match
+ *                   `limit', removed logging.  Did I mention that
+ *                   Alexey is a fucking genius?
+ *                   Rusty Russell (rusty@rustcorp.com.au).  */
+
+/* (C) 1999 Jérôme de Vivie <devivie@info.enserb.u-bordeaux.fr>
+ * (C) 1999 Hervé Eychenne <eychenne@info.enserb.u-bordeaux.fr>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
@@ -14,14 +21,9 @@
 #include <linux/netfilter/x_tables.h>
 #include <linux/netfilter/xt_limit.h>
 
-struct xt_limit_priv {
-	unsigned long prev;
-	uint32_t credit;
-};
-
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Herve Eychenne <rv@wallfire.org>");
-MODULE_DESCRIPTION("Xtables: rate-limit match");
+MODULE_DESCRIPTION("iptables rate limit match");
 MODULE_ALIAS("ipt_limit");
 MODULE_ALIAS("ip6t_limit");
 
@@ -62,27 +64,33 @@ static DEFINE_SPINLOCK(limit_lock);
 
 #define CREDITS_PER_JIFFY POW2_BELOW32(MAX_CPJ)
 
-static bool
-limit_mt(const struct sk_buff *skb, const struct xt_match_param *par)
+static int
+ipt_limit_match(const struct sk_buff *skb,
+		const struct net_device *in,
+		const struct net_device *out,
+		const struct xt_match *match,
+		const void *matchinfo,
+		int offset,
+		unsigned int protoff,
+		int *hotdrop)
 {
-	const struct xt_rateinfo *r = par->matchinfo;
-	struct xt_limit_priv *priv = r->master;
+	struct xt_rateinfo *r = ((struct xt_rateinfo *)matchinfo)->master;
 	unsigned long now = jiffies;
 
 	spin_lock_bh(&limit_lock);
-	priv->credit += (now - xchg(&priv->prev, now)) * CREDITS_PER_JIFFY;
-	if (priv->credit > r->credit_cap)
-		priv->credit = r->credit_cap;
+	r->credit += (now - xchg(&r->prev, now)) * CREDITS_PER_JIFFY;
+	if (r->credit > r->credit_cap)
+		r->credit = r->credit_cap;
 
-	if (priv->credit >= r->cost) {
+	if (r->credit >= r->cost) {
 		/* We're not limited. */
-		priv->credit -= r->cost;
+		r->credit -= r->cost;
 		spin_unlock_bh(&limit_lock);
-		return true;
+		return 1;
 	}
 
-	spin_unlock_bh(&limit_lock);
-	return false;
+       	spin_unlock_bh(&limit_lock);
+	return 0;
 }
 
 /* Precision saver. */
@@ -97,112 +105,74 @@ user2credits(u_int32_t user)
 	return (user * HZ * CREDITS_PER_JIFFY) / XT_LIMIT_SCALE;
 }
 
-static bool limit_mt_check(const struct xt_mtchk_param *par)
+static int
+ipt_limit_checkentry(const char *tablename,
+		     const void *inf,
+		     const struct xt_match *match,
+		     void *matchinfo,
+		     unsigned int matchsize,
+		     unsigned int hook_mask)
 {
-	struct xt_rateinfo *r = par->matchinfo;
-	struct xt_limit_priv *priv;
+	struct xt_rateinfo *r = matchinfo;
 
 	/* Check for overflow. */
 	if (r->burst == 0
 	    || user2credits(r->avg * r->burst) < user2credits(r->avg)) {
 		printk("Overflow in xt_limit, try lower: %u/%u\n",
 		       r->avg, r->burst);
-		return false;
+		return 0;
 	}
 
-	priv = kmalloc(sizeof(*priv), GFP_KERNEL);
-	if (priv == NULL)
-		return false;
+	/* User avg in seconds * XT_LIMIT_SCALE: convert to jiffies *
+	   128. */
+	r->prev = jiffies;
+	r->credit = user2credits(r->avg * r->burst);	 /* Credits full. */
+	r->credit_cap = user2credits(r->avg * r->burst); /* Credits full. */
+	r->cost = user2credits(r->avg);
 
-	/* For SMP, we only want to use one set of state. */
-	r->master = priv;
-	if (r->cost == 0) {
-		/* User avg in seconds * XT_LIMIT_SCALE: convert to jiffies *
-		   128. */
-		priv->prev = jiffies;
-		priv->credit = user2credits(r->avg * r->burst); /* Credits full. */
-		r->credit_cap = user2credits(r->avg * r->burst); /* Credits full. */
-		r->cost = user2credits(r->avg);
-	}
-	return true;
+	/* For SMP, we only want to use one set of counters. */
+	r->master = r;
+
+	return 1;
 }
 
-static void limit_mt_destroy(const struct xt_mtdtor_param *par)
-{
-	const struct xt_rateinfo *info = par->matchinfo;
-
-	kfree(info->master);
-}
-
-#ifdef CONFIG_COMPAT
-struct compat_xt_rateinfo {
-	u_int32_t avg;
-	u_int32_t burst;
-
-	compat_ulong_t prev;
-	u_int32_t credit;
-	u_int32_t credit_cap, cost;
-
-	u_int32_t master;
+static struct xt_match ipt_limit_reg = {
+	.name		= "limit",
+	.match		= ipt_limit_match,
+	.matchsize	= sizeof(struct xt_rateinfo),
+	.checkentry	= ipt_limit_checkentry,
+	.family		= AF_INET,
+	.me		= THIS_MODULE,
+};
+static struct xt_match limit6_reg = {
+	.name		= "limit",
+	.match		= ipt_limit_match,
+	.matchsize	= sizeof(struct xt_rateinfo),
+	.checkentry	= ipt_limit_checkentry,
+	.family		= AF_INET6,
+	.me		= THIS_MODULE,
 };
 
-/* To keep the full "prev" timestamp, the upper 32 bits are stored in the
- * master pointer, which does not need to be preserved. */
-static void limit_mt_compat_from_user(void *dst, void *src)
+static int __init xt_limit_init(void)
 {
-	const struct compat_xt_rateinfo *cm = src;
-	struct xt_rateinfo m = {
-		.avg		= cm->avg,
-		.burst		= cm->burst,
-		.prev		= cm->prev | (unsigned long)cm->master << 32,
-		.credit		= cm->credit,
-		.credit_cap	= cm->credit_cap,
-		.cost		= cm->cost,
-	};
-	memcpy(dst, &m, sizeof(m));
+	int ret;
+	
+	ret = xt_register_match(&ipt_limit_reg);
+	if (ret)
+		return ret;
+	
+	ret = xt_register_match(&limit6_reg);
+	if (ret)
+		xt_unregister_match(&ipt_limit_reg);
+
+	return ret;
 }
 
-static int limit_mt_compat_to_user(void __user *dst, void *src)
+static void __exit xt_limit_fini(void)
 {
-	const struct xt_rateinfo *m = src;
-	struct compat_xt_rateinfo cm = {
-		.avg		= m->avg,
-		.burst		= m->burst,
-		.prev		= m->prev,
-		.credit		= m->credit,
-		.credit_cap	= m->credit_cap,
-		.cost		= m->cost,
-		.master		= m->prev >> 32,
-	};
-	return copy_to_user(dst, &cm, sizeof(cm)) ? -EFAULT : 0;
-}
-#endif /* CONFIG_COMPAT */
-
-static struct xt_match limit_mt_reg __read_mostly = {
-	.name             = "limit",
-	.revision         = 0,
-	.family           = NFPROTO_UNSPEC,
-	.match            = limit_mt,
-	.checkentry       = limit_mt_check,
-	.destroy          = limit_mt_destroy,
-	.matchsize        = sizeof(struct xt_rateinfo),
-#ifdef CONFIG_COMPAT
-	.compatsize       = sizeof(struct compat_xt_rateinfo),
-	.compat_from_user = limit_mt_compat_from_user,
-	.compat_to_user   = limit_mt_compat_to_user,
-#endif
-	.me               = THIS_MODULE,
-};
-
-static int __init limit_mt_init(void)
-{
-	return xt_register_match(&limit_mt_reg);
+	xt_unregister_match(&ipt_limit_reg);
+	xt_unregister_match(&limit6_reg);
 }
 
-static void __exit limit_mt_exit(void)
-{
-	xt_unregister_match(&limit_mt_reg);
-}
-
-module_init(limit_mt_init);
-module_exit(limit_mt_exit);
+module_init(xt_limit_init);
+module_exit(xt_limit_fini);

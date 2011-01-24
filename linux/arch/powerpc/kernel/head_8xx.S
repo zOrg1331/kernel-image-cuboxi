@@ -19,7 +19,6 @@
  *
  */
 
-#include <linux/init.h>
 #include <asm/processor.h>
 #include <asm/page.h>
 #include <asm/mmu.h>
@@ -39,9 +38,12 @@
 #else
 #define DO_8xx_CPU6(val, reg)
 #endif
-	__HEAD
-_ENTRY(_stext);
-_ENTRY(_start);
+	.text
+	.globl	_stext
+_stext:
+	.text
+	.globl	_start
+_start:
 
 /* MPC8xx
  * This port was done on an MBX board with an 860.  Right now I only
@@ -110,8 +112,8 @@ turn_on_mmu:
  * task's thread_struct.
  */
 #define EXCEPTION_PROLOG	\
-	mtspr	SPRN_SPRG_SCRATCH0,r10;	\
-	mtspr	SPRN_SPRG_SCRATCH1,r11;	\
+	mtspr	SPRN_SPRG0,r10;	\
+	mtspr	SPRN_SPRG1,r11;	\
 	mfcr	r10;		\
 	EXCEPTION_PROLOG_1;	\
 	EXCEPTION_PROLOG_2
@@ -121,7 +123,7 @@ turn_on_mmu:
 	andi.	r11,r11,MSR_PR;	\
 	tophys(r11,r1);			/* use tophys(r1) if kernel */ \
 	beq	1f;		\
-	mfspr	r11,SPRN_SPRG_THREAD;	\
+	mfspr	r11,SPRN_SPRG3;	\
 	lwz	r11,THREAD_INFO-THREAD(r11);	\
 	addi	r11,r11,THREAD_SIZE;	\
 	tophys(r11,r11);	\
@@ -133,9 +135,9 @@ turn_on_mmu:
 	stw	r10,_CCR(r11);		/* save registers */ \
 	stw	r12,GPR12(r11);	\
 	stw	r9,GPR9(r11);	\
-	mfspr	r10,SPRN_SPRG_SCRATCH0;	\
+	mfspr	r10,SPRN_SPRG0;	\
 	stw	r10,GPR10(r11);	\
-	mfspr	r12,SPRN_SPRG_SCRATCH1;	\
+	mfspr	r12,SPRN_SPRG1;	\
 	stw	r12,GPR11(r11);	\
 	mflr	r10;		\
 	stw	r10,_LINK(r11);	\
@@ -299,12 +301,6 @@ InstructionTLBMiss:
 	stw	r10, 0(r0)
 	stw	r11, 4(r0)
 	mfspr	r10, SPRN_SRR0	/* Get effective address of fault */
-#ifdef CONFIG_8xx_CPU15
-	addi	r11, r10, 0x1000
-	tlbie	r11
-	addi	r11, r10, -0x1000
-	tlbie	r11
-#endif
 	DO_8xx_CPU6(0x3780, r3)
 	mtspr	SPRN_MD_EPN, r10	/* Have to use MD_EPN for walk, MI_EPN can't */
 	mfspr	r10, SPRN_M_TWB	/* Get level 1 table entry address */
@@ -333,18 +329,8 @@ InstructionTLBMiss:
 	mfspr	r11, SPRN_MD_TWC	/* ....and get the pte address */
 	lwz	r10, 0(r11)	/* Get the pte */
 
-#ifdef CONFIG_SWAP
-	/* do not set the _PAGE_ACCESSED bit of a non-present page */
-	andi.	r11, r10, _PAGE_PRESENT
-	beq	4f
-	ori	r10, r10, _PAGE_ACCESSED
-	mfspr	r11, SPRN_MD_TWC	/* get the pte address again */
-	stw	r10, 0(r11)
-4:
-#else
 	ori	r10, r10, _PAGE_ACCESSED
 	stw	r10, 0(r11)
-#endif
 
 	/* The Linux PTE won't go exactly into the MMU TLB.
 	 * Software indicator bits 21, 22 and 28 must be clear.
@@ -409,17 +395,8 @@ DataStoreTLBMiss:
 	DO_8xx_CPU6(0x3b80, r3)
 	mtspr	SPRN_MD_TWC, r11
 
-#ifdef CONFIG_SWAP
-	/* do not set the _PAGE_ACCESSED bit of a non-present page */
-	andi.	r11, r10, _PAGE_PRESENT
-	beq	4f
-	ori	r10, r10, _PAGE_ACCESSED
-4:
-	/* and update pte in table */
-#else
-	ori	r10, r10, _PAGE_ACCESSED
-#endif
 	mfspr	r11, SPRN_MD_TWC	/* get the pte address again */
+	ori	r10, r10, _PAGE_ACCESSED
 	stw	r10, 0(r11)
 
 	/* The Linux PTE won't go exactly into the MMU TLB.
@@ -527,16 +504,7 @@ DataTLBError:
 
 	/* Update 'changed', among others.
 	*/
-#ifdef CONFIG_SWAP
-	ori	r10, r10, _PAGE_DIRTY|_PAGE_HWWRITE
-	/* do not set the _PAGE_ACCESSED bit of a non-present page */
-	andi.	r11, r10, _PAGE_PRESENT
-	beq	4f
-	ori	r10, r10, _PAGE_ACCESSED
-4:
-#else
 	ori	r10, r10, _PAGE_DIRTY|_PAGE_ACCESSED|_PAGE_HWWRITE
-#endif
 	mfspr	r11, SPRN_MD_TWC		/* Get pte address again */
 	stw	r10, 0(r11)		/* and update pte in table */
 
@@ -603,9 +571,8 @@ start_here:
 	/* ptr to phys current thread */
 	tophys(r4,r2)
 	addi	r4,r4,THREAD	/* init task's THREAD */
-	mtspr	SPRN_SPRG_THREAD,r4
+	mtspr	SPRN_SPRG3,r4
 	li	r3,0
-	/* XXX What is that for ? SPRG2 appears otherwise unused on 8xx */
 	mtspr	SPRN_SPRG2,r3	/* 0 => r1 has kernel sp */
 
 	/* stack */
@@ -763,13 +730,13 @@ initial_mmu:
 	mtspr	SPRN_MD_TWC, r9
 	li	r11, MI_BOOTINIT	/* Create RPN for address 0 */
 	addis	r11, r11, 0x0080	/* Add 8M */
-	mtspr	SPRN_MD_RPN, r11
+	mtspr	SPRN_MD_RPN, r8
 
 	addis	r8, r8, 0x0080		/* Add 8M */
 	mtspr	SPRN_MD_EPN, r8
 	mtspr	SPRN_MD_TWC, r9
 	addis	r11, r11, 0x0080	/* Add 8M */
-	mtspr	SPRN_MD_RPN, r11
+	mtspr	SPRN_MD_RPN, r8
 #endif
 
 	/* Since the cache is enabled according to the information we
@@ -867,6 +834,14 @@ empty_zero_page:
 	.globl	swapper_pg_dir
 swapper_pg_dir:
 	.space	4096
+
+/*
+ * This space gets a copy of optional info passed to us by the bootstrap
+ * Used to pass parameters into the kernel like root=/dev/sda1, etc.
+ */
+	.globl	cmd_line
+cmd_line:
+	.space	512
 
 /* Room for two PTE table poiners, usually the kernel and current user
  * pointer to their respective root page table (pgdir).

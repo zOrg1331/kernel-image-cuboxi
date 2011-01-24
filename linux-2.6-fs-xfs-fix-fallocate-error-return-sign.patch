@@ -1,0 +1,66 @@
+From: Eric Sandeen <sandeen@redhat.com>
+Date: Thu, 10 Dec 2009 03:24:58 -0500
+Subject: [fs] xfs: fix fallocate error return sign
+Message-id: <4B206A0A.4070207@redhat.com>
+Patchwork-id: 21833
+O-Subject: [PATCH RHEL5.5] xfs: fix fallocate error return sign
+Bugzilla: 544349
+RH-Acked-by: Anton Arapov <Anton@redhat.com>
+
+This is for
+Bug 544349 - RHEL5: fallocate on XFS returns incorrect value on ENOSPC
+
+When issuing an fallocate call on xfs which results in insufficient space to
+complete, XFS will return "28" instead of "ENOSPC" - xfs uses positive errnos
+internally, and flips them before returning; but in this case it was missed.
+
+This is a simple backport of a commit in sgi's tree which will go upstream.
+
+There is also a testcase for this in xfstests, now, though it relies
+on newer glibc's fallocate; it could just as well call posix_fallocate
+on xfs though for rhel5.
+
+Thanks,
+-Eric
+
+From: Jason Gunthorpe <jgunthorpe@obsidianresearch.com>
+Date: Tue, 24 Nov 2009 21:52:53 +0000 (+0000)
+Subject: xfs: Fix error return for fallocate() on XFS
+X-Git-Url: http://oss.sgi.com/cgi-bin/gitweb.cgi?p=xfs%2Fxfs.git;a=commitdiff_plain;h=629186c0b8641979eb43d9dd7bc57ebd268711f9
+
+xfs: Fix error return for fallocate() on XFS
+
+Noticed that through glibc fallocate would return 28 rather than -1
+and errno = 28 for ENOSPC. The xfs routines uses XFS_ERROR format
+positive return error codes while the syscalls use negative return
+codes.  Fixup the two cases in xfs_vn_fallocate syscall to convert to
+negative.
+
+Signed-off-by: Jason Gunthorpe <jgunthorpe@obsidianresearch.com>
+Reviewed-by: Eric Sandeen <sandeen@sandeen.net>
+Signed-off-by: Alex Elder <aelder@sgi.com>
+
+diff --git a/fs/xfs/linux-2.6/xfs_iops.c b/fs/xfs/linux-2.6/xfs_iops.c
+index ca0fd4e..6e30372 100644
+--- a/fs/xfs/linux-2.6/xfs_iops.c
++++ b/fs/xfs/linux-2.6/xfs_iops.c
+@@ -650,8 +650,8 @@ xfs_vn_fallocate(
+ 	bf.l_len = len;
+ 
+ 	xfs_ilock(ip, XFS_IOLOCK_EXCL);
+-	error = xfs_change_file_space(ip, XFS_IOC_RESVSP, &bf,
+-				      0, NULL, XFS_ATTR_NOLOCK);
++	error = -xfs_change_file_space(ip, XFS_IOC_RESVSP, &bf,
++				       0, NULL, XFS_ATTR_NOLOCK);
+ 	if (!error && !(mode & FALLOC_FL_KEEP_SIZE) &&
+ 	    offset + len > i_size_read(inode))
+ 		new_size = offset + len;
+@@ -662,7 +662,7 @@ xfs_vn_fallocate(
+ 
+ 		iattr.ia_valid = ATTR_SIZE;
+ 		iattr.ia_size = new_size;
+-		error = xfs_setattr(ip, &iattr, XFS_ATTR_NOLOCK, NULL);
++		error = -xfs_setattr(ip, &iattr, XFS_ATTR_NOLOCK, NULL);
+ 	}
+ 
+ 	xfs_iunlock(ip, XFS_IOLOCK_EXCL);

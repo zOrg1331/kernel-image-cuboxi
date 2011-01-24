@@ -1,0 +1,153 @@
+From: Josef Bacik <jbacik@redhat.com>
+Date: Wed, 21 May 2008 11:27:04 -0400
+Subject: [fs] jbd: fix journal overflow issues
+Message-id: 20080521152704.GD3162@unused.rdu.redhat.com
+O-Subject: [RHEL5.3 PATCH] JBD: fix journal overflow issues
+Bugzilla: 439193
+RH-Acked-by: Eric Sandeen <sandeen@redhat.com>
+
+Hello,
+
+This is in reference to bz 439193.  RHEL5 jbd will overflow the journal due to a
+miscounting of the buffers that are currently destined to be written to the
+journal.  This patch is already in RHEL4, and is the combination of the
+following two upstream commits
+
+5b9a499d77e9dd39c9e6611ea10c56a31604f274
+5bc833feaa8b2236265764e7e81f44937be46eda
+
+Thank you,
+
+Josef
+
+ fs/jbd/commit.c      |   19 +++----------------
+ fs/jbd/transaction.c |   34 +++++++++++++++++++++++++++++++---
+ 2 files changed, 34 insertions(+), 19 deletions(-)
+
+diff --git a/fs/jbd/commit.c b/fs/jbd/commit.c
+index 28a4954..664a740 100644
+--- a/fs/jbd/commit.c
++++ b/fs/jbd/commit.c
+@@ -409,22 +409,6 @@ void journal_commit_transaction(journal_t *journal)
+ 	jbd_debug (3, "JBD: commit phase 2\n");
+ 
+ 	/*
+-	 * First, drop modified flag: all accesses to the buffers
+-	 * will be tracked for a new trasaction only -bzzz
+-	 */
+-	spin_lock(&journal->j_list_lock);
+-	if (commit_transaction->t_buffers) {
+-		new_jh = jh = commit_transaction->t_buffers->b_tnext;
+-		do {
+-			J_ASSERT_JH(new_jh, new_jh->b_modified == 1 ||
+-					new_jh->b_modified == 0);
+-			new_jh->b_modified = 0;
+-			new_jh = new_jh->b_tnext;
+-		} while (new_jh != jh);
+-	}
+-	spin_unlock(&journal->j_list_lock);
+-
+-	/*
+ 	 * Now start flushing things to disk, in the order they appear
+ 	 * on the transaction lists.  Data blocks go first.
+ 	 */
+@@ -490,6 +474,9 @@ void journal_commit_transaction(journal_t *journal)
+ 	 */
+ 	commit_transaction->t_state = T_COMMIT;
+ 
++	J_ASSERT(commit_transaction->t_nr_buffers <=
++		 commit_transaction->t_outstanding_credits);
++
+ 	descriptor = NULL;
+ 	bufs = 0;
+ 	while (commit_transaction->t_buffers) {
+diff --git a/fs/jbd/transaction.c b/fs/jbd/transaction.c
+index bda661a..68eb45c 100644
+--- a/fs/jbd/transaction.c
++++ b/fs/jbd/transaction.c
+@@ -600,6 +600,12 @@ repeat:
+ 		goto done;
+ 
+ 	/*
++	 * this is the first time this transaction is touching this buffer,
++	 * reset the modified flag
++	 */
++	jh->b_modified = 0;
++
++	/*
+ 	 * If there is already a copy-out version of this buffer, then we don't
+ 	 * need to make another one
+ 	 */
+@@ -811,9 +817,16 @@ int journal_get_create_access(handle_t *handle, struct buffer_head *bh)
+ 
+ 	if (jh->b_transaction == NULL) {
+ 		jh->b_transaction = transaction;
++
++		/* first access by this transaction */
++		jh->b_modified = 0;
++
+ 		JBUFFER_TRACE(jh, "file as BJ_Reserved");
+ 		__journal_file_buffer(jh, transaction, BJ_Reserved);
+ 	} else if (jh->b_transaction == journal->j_committing_transaction) {
++		/* first access by this transaction */
++		jh->b_modified = 0;
++
+ 		JBUFFER_TRACE(jh, "set next transaction");
+ 		jh->b_next_transaction = transaction;
+ 	}
+@@ -1212,6 +1225,7 @@ int journal_forget (handle_t *handle, struct buffer_head *bh)
+ 	struct journal_head *jh;
+ 	int drop_reserve = 0;
+ 	int err = 0;
++	int was_modified = 0;
+ 
+ 	BUFFER_TRACE(bh, "entry");
+ 
+@@ -1230,6 +1244,9 @@ int journal_forget (handle_t *handle, struct buffer_head *bh)
+ 		goto not_jbd;
+ 	}
+ 
++	/* keep track of wether or not this transaction modified us */
++	was_modified = jh->b_modified;
++
+ 	/*
+ 	 * The buffer's going from the transaction, we must drop
+ 	 * all references -bzzz
+@@ -1247,7 +1264,12 @@ int journal_forget (handle_t *handle, struct buffer_head *bh)
+ 
+ 		JBUFFER_TRACE(jh, "belongs to current transaction: unfile");
+ 
+-		drop_reserve = 1;
++		/*
++		 * we only want to drop a reference if this transaction
++		 * modified the buffer
++		 */
++		if (was_modified)
++			drop_reserve = 1;
+ 
+ 		/* 
+ 		 * We are no longer going to journal this buffer.
+@@ -1287,7 +1309,13 @@ int journal_forget (handle_t *handle, struct buffer_head *bh)
+ 		if (jh->b_next_transaction) {
+ 			J_ASSERT(jh->b_next_transaction == transaction);
+ 			jh->b_next_transaction = NULL;
+-			drop_reserve = 1;
++
++			/*
++			 * only drop a reference if this transaction modified
++			 * the buffer
++			 */
++			if (was_modified)
++				drop_reserve = 1;
+ 		}
+ 	}
+ 
+@@ -2056,7 +2084,7 @@ void __journal_refile_buffer(struct journal_head *jh)
+ 	jh->b_transaction = jh->b_next_transaction;
+ 	jh->b_next_transaction = NULL;
+ 	__journal_file_buffer(jh, jh->b_transaction,
+-				was_dirty ? BJ_Metadata : BJ_Reserved);
++				jh->b_modified ? BJ_Metadata : BJ_Reserved);
+ 	J_ASSERT_JH(jh, jh->b_transaction->t_state == T_RUNNING);
+ 
+ 	if (was_dirty)

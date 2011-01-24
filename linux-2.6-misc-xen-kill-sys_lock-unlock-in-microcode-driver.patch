@@ -1,0 +1,110 @@
+From: Gerd Hoffmann <kraxel@redhat.com>
+Subject: [RHEL5.1 patch] xen, bug 219652: kill sys_{lock,unlock} dependency  on microcode driver
+Date: Fri, 11 May 2007 15:22:57 +0200
+Bugzilla: 219652
+Message-Id: <46446E31.5080007@redhat.com>
+Changelog: [misc] xen: kill sys_{lock,unlock} dependency on microcode driver
+
+
+  Hi folks,
+
+bug 219652
+
+The attached patch fixes the xen microcode driver to not depend on 
+sys_mlock and sys_munlock symbols any more.  This allows to build 
+kernel-xen with a modular microcode driver.
+
+Together with that patch the CONFIG_MICROCODE should be changed from "y" 
+to "m" for xen kernels, so xen and native kernel are configured the same 
+way.
+
+Patch is backported from xen-3.1 and rediffed to apply cleanly to the 
+current rhel-5 kernel.
+
+cheers,
+  Gerd
+
+# HG changeset patch
+# User kfraser@localhost.localdomain
+# Date 1161189696 -3600
+# Node ID 9943e06e966e24773459c654975310f36ba5daa2
+# Parent  7f861cd3d0c3508612c9e5cf92ec8ff362645cb7
+[LINUX] Eliminate microcode driver's dependency on sys_m{,un}lock as
+well as the needless use of static variables.
+
+Signed-off-by: Jan Beulich <jbeulich@novell.com>
+
+---
+ arch/i386/kernel/microcode-xen.c |   37 ++++++++++++++++---------------------
+ 1 file changed, 16 insertions(+), 21 deletions(-)
+
+Index: linux-2.6.18.noarch/arch/i386/kernel/microcode-xen.c
+===================================================================
+--- linux-2.6.18.noarch.orig/arch/i386/kernel/microcode-xen.c
++++ linux-2.6.18.noarch/arch/i386/kernel/microcode-xen.c
+@@ -52,8 +52,6 @@ MODULE_LICENSE("GPL");
+ /* no concurrent ->write()s are allowed on /dev/cpu/microcode */
+ static DEFINE_MUTEX(microcode_mutex);
+ 
+-static void __user *user_buffer;	/* user area microcode data buffer */
+-static unsigned int user_buffer_size;	/* it's size */
+ 				
+ static int microcode_open (struct inode *unused1, struct file *unused2)
+ {
+@@ -61,21 +59,26 @@ static int microcode_open (struct inode 
+ }
+ 
+ 
+-static int do_microcode_update (void)
++static int do_microcode_update (const void __user *ubuf, size_t len)
+ {
+ 	int err;
+-	dom0_op_t op;
++	void *kbuf;
+ 
+-	err = sys_mlock((unsigned long)user_buffer, user_buffer_size);
+-	if (err != 0)
+-		return err;
++	kbuf = vmalloc(len);
++	if (!kbuf)
++		return -ENOMEM;
+ 
+-	op.cmd = DOM0_MICROCODE;
+-	set_xen_guest_handle(op.u.microcode.data, user_buffer);
+-	op.u.microcode.length = user_buffer_size;
+-	err = HYPERVISOR_dom0_op(&op);
++	if (copy_from_user(kbuf, ubuf, len) == 0) {
++		dom0_op_t op;
+ 
+-	(void)sys_munlock((unsigned long)user_buffer, user_buffer_size);
++		op.cmd = DOM0_MICROCODE;
++		set_xen_guest_handle(op.u.microcode.data, kbuf);
++		op.u.microcode.length = len;
++		err = HYPERVISOR_dom0_op(&op);
++	} else
++		err = -EFAULT;
++
++	vfree(kbuf);
+ 
+ 	return err;
+ }
+@@ -89,17 +92,9 @@ static ssize_t microcode_write (struct f
+ 		return -EINVAL;
+ 	}
+ 
+-	if ((len >> PAGE_SHIFT) > num_physpages) {
+-		printk(KERN_ERR "microcode: too much data (max %ld pages)\n", num_physpages);
+-		return -EINVAL;
+-	}
+-
+ 	mutex_lock(&microcode_mutex);
+ 
+-	user_buffer = (void __user *) buf;
+-	user_buffer_size = (int) len;
+-
+-	ret = do_microcode_update();
++	ret = do_microcode_update(buf, len);
+ 	if (!ret)
+ 		ret = (ssize_t)len;
+ 
+

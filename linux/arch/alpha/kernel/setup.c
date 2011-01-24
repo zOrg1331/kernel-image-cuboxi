@@ -18,8 +18,10 @@
 #include <linux/ptrace.h>
 #include <linux/slab.h>
 #include <linux/user.h>
+#include <linux/a.out.h>
 #include <linux/screen_info.h>
 #include <linux/delay.h>
+#include <linux/config.h>	/* CONFIG_ALPHA_LCA etc */
 #include <linux/mc146818rtc.h>
 #include <linux/console.h>
 #include <linux/cpu.h>
@@ -42,7 +44,6 @@
 #include <linux/notifier.h>
 #include <asm/setup.h>
 #include <asm/io.h>
-#include <linux/log2.h>
 
 extern struct atomic_notifier_head panic_notifier_list;
 static int alpha_panic_event(struct notifier_block *, unsigned long, void *);
@@ -57,6 +58,7 @@ static struct notifier_block alpha_panic_block = {
 #include <asm/system.h>
 #include <asm/hwrpb.h>
 #include <asm/dma.h>
+#include <asm/io.h>
 #include <asm/mmu_context.h>
 #include <asm/console.h>
 
@@ -65,7 +67,6 @@ static struct notifier_block alpha_panic_block = {
 
 
 struct hwrpb_struct *hwrpb;
-EXPORT_SYMBOL(hwrpb);
 unsigned long srm_hae;
 
 int alpha_l1i_cacheshape;
@@ -77,11 +78,6 @@ int alpha_l3_cacheshape;
 /* 0=minimum, 1=verbose, 2=all */
 /* These can be overridden via the command line, ie "verbose_mcheck=2") */
 unsigned long alpha_verbose_mcheck = CONFIG_VERBOSE_MCHECK_ON;
-#endif
-
-#ifdef CONFIG_NUMA
-struct cpumask node_to_cpumask_map[MAX_NUMNODES] __read_mostly;
-EXPORT_SYMBOL(node_to_cpumask_map);
 #endif
 
 /* Which processor we booted from.  */
@@ -116,7 +112,6 @@ unsigned long alpha_agpgart_size = DEFAULT_AGP_APER_SIZE;
 #ifdef CONFIG_ALPHA_GENERIC
 struct alpha_machine_vector alpha_mv;
 int alpha_using_srm;
-EXPORT_SYMBOL(alpha_using_srm);
 #endif
 
 static struct alpha_machine_vector *get_sysvec(unsigned long, unsigned long,
@@ -126,7 +121,7 @@ static void get_sysnames(unsigned long, unsigned long, unsigned long,
 			 char **, char **);
 static void determine_cpu_caches (unsigned int);
 
-static char __initdata command_line[COMMAND_LINE_SIZE];
+static char command_line[COMMAND_LINE_SIZE];
 
 /*
  * The format of "screen_info" is strange, and due to early
@@ -143,8 +138,6 @@ struct screen_info screen_info = {
 	.orig_video_points = 16
 };
 
-EXPORT_SYMBOL(screen_info);
-
 /*
  * The direct map I/O window, if any.  This should be the same
  * for all busses, since it's used by virt_to_bus.
@@ -152,8 +145,6 @@ EXPORT_SYMBOL(screen_info);
 
 unsigned long __direct_map_base;
 unsigned long __direct_map_size;
-EXPORT_SYMBOL(__direct_map_base);
-EXPORT_SYMBOL(__direct_map_size);
 
 /*
  * Declare all of the machine vectors.
@@ -252,9 +243,9 @@ reserve_std_resources(void)
 }
 
 #define PFN_MAX		PFN_DOWN(0x80000000)
-#define for_each_mem_cluster(memdesc, _cluster, i)		\
-	for ((_cluster) = (memdesc)->cluster, (i) = 0;		\
-	     (i) < (memdesc)->numclusters; (i)++, (_cluster)++)
+#define for_each_mem_cluster(memdesc, cluster, i)		\
+	for ((cluster) = (memdesc)->cluster, (i) = 0;		\
+	     (i) < (memdesc)->numclusters; (i)++, (cluster)++)
 
 static unsigned long __init
 get_mem_size_limit(char *s)
@@ -432,8 +423,7 @@ setup_memory(void *kernel_end)
 	}
 
 	/* Reserve the bootmap memory.  */
-	reserve_bootmem(PFN_PHYS(bootmap_start), bootmap_size,
-			BOOTMEM_DEFAULT);
+	reserve_bootmem(PFN_PHYS(bootmap_start), bootmap_size);
 	printk("reserving pages %ld:%ld\n", bootmap_start, bootmap_start+PFN_UP(bootmap_size));
 
 #ifdef CONFIG_BLK_DEV_INITRD
@@ -451,7 +441,7 @@ setup_memory(void *kernel_end)
 				       phys_to_virt(PFN_PHYS(max_low_pfn)));
 		} else {
 			reserve_bootmem(virt_to_phys((void *)initrd_start),
-					INITRD_SIZE, BOOTMEM_DEFAULT);
+					INITRD_SIZE);
 		}
 	}
 #endif /* CONFIG_BLK_DEV_INITRD */
@@ -552,7 +542,7 @@ setup_arch(char **cmdline_p)
 	} else {
 		strlcpy(command_line, COMMAND_LINE, sizeof command_line);
 	}
-	strcpy(boot_command_line, command_line);
+	strcpy(saved_command_line, command_line);
 	*cmdline_p = command_line;
 
 	/* 
@@ -594,7 +584,7 @@ setup_arch(char **cmdline_p)
 	}
 
 	/* Replace the command line, now that we've killed it with strsep.  */
-	strcpy(command_line, boot_command_line);
+	strcpy(command_line, saved_command_line);
 
 	/* If we want SRM console printk echoing early, do it now. */
 	if (alpha_using_srm && srmcons_output) {
@@ -747,6 +737,15 @@ setup_arch(char **cmdline_p)
 	setup_smp();
 #endif
 	paging_init();
+}
+
+void __init
+disable_early_printk(void)
+{
+	if (alpha_using_srm && srmcons_output) {
+		unregister_srm_console();
+		srmcons_output = 0;
+	}
 }
 
 static char sys_unknown[] = "Unknown";
@@ -1255,7 +1254,7 @@ show_cpuinfo(struct seq_file *f, void *slot)
 		       platform_string(), nr_processors);
 
 #ifdef CONFIG_SMP
-	seq_printf(f, "cpus active\t\t: %u\n"
+	seq_printf(f, "cpus active\t\t: %d\n"
 		      "cpu active mask\t\t: %016lx\n",
 		       num_online_cpus(), cpus_addr(cpu_possible_map)[0]);
 #endif
@@ -1308,7 +1307,7 @@ external_cache_probe(int minsize, int width)
 	long size = minsize, maxsize = MAX_BCACHE_SIZE * 2;
 
 	if (maxsize > (max_low_pfn + 1) << PAGE_SHIFT)
-		maxsize = 1 << (ilog2(max_low_pfn + 1) + PAGE_SHIFT);
+		maxsize = 1 << (floor_log2(max_low_pfn + 1) + PAGE_SHIFT);
 
 	/* Get the first block cached. */
 	read_mem_block(__va(0), stride, size);
@@ -1476,7 +1475,7 @@ c_stop(struct seq_file *f, void *v)
 {
 }
 
-const struct seq_operations cpuinfo_op = {
+struct seq_operations cpuinfo_op = {
 	.start	= c_start,
 	.next	= c_next,
 	.stop	= c_stop,

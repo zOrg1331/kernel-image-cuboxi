@@ -1,0 +1,24 @@
+From: Jeff Layton <jlayton@redhat.com>
+Date: Thu, 19 Nov 2009 14:38:37 -0500
+Subject: [cifs] update cifs version number
+Message-id: <1258641517-20756-11-git-send-email-jlayton@redhat.com>
+Patchwork-id: 21439
+O-Subject: [RHEL5.5 PATCH 10/10] BZ#500838: cifs: update cifs version number
+Bugzilla: 500838
+RH-Acked-by: Peter Staubach <staubach@redhat.com>
+
+From: Steve French <sfrench@us.ibm.com>
+
+Signed-off-by: Steve French <sfrench@us.ibm.com>
+
+diff --git a/fs/cifs/cifsfs.h b/fs/cifs/cifsfs.h
+index 7259240..24aa218 100644
+--- a/fs/cifs/cifsfs.h
++++ b/fs/cifs/cifsfs.h
+@@ -164,5 +164,5 @@ extern int cifs_ioctl(struct inode *inode, struct file *filep,
+ extern struct export_operations cifs_export_ops;
+ #endif /* EXPERIMENTAL */
+ 
+-#define CIFS_VERSION   "1.57RH"
++#define CIFS_VERSION   "1.60RH"
+ #endif				/* _CIFSFS_H */

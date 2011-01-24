@@ -1,0 +1,1443 @@
+From: John W. Linville <linville@redhat.com>
+Date: Tue, 18 Dec 2007 17:42:11 -0500
+Subject: [net] cfg80211 updates to support mac80211/iwl4965
+Message-id: 20071218224211.GE11328@redhat.com
+O-Subject: [RHEL5.2 PATCH 2/4] cfg80211 updates to support mac80211/iwl4965
+Bugzilla: 252981
+
+This patch updates the cfg80211 component, enabling the mac80211, and
+iwlwifi update patches which follow.  It aids the following bugzillas:
+
+BZ252981
+BZ253015
+BZ253027
+BZ253067
+BZ256001
+
+Lot of testing by me on Dell m4300 laptop equipped w/ iwl4965 hardware.
+I also tested with a large swatch of my suite of mac80211-supported
+cardbus and usb devices.
+
+Acked-by: "David S. Miller" <davem@redhat.com>
+
+diff --git a/include/linux/nl80211.h b/include/linux/nl80211.h
+index 9a30ba2..538ee1d 100644
+--- a/include/linux/nl80211.h
++++ b/include/linux/nl80211.h
+@@ -7,7 +7,97 @@
+  */
+ 
+ /**
++ * enum nl80211_commands - supported nl80211 commands
++ *
++ * @NL80211_CMD_UNSPEC: unspecified command to catch errors
++ *
++ * @NL80211_CMD_GET_WIPHY: request information about a wiphy or dump request
++ *	to get a list of all present wiphys.
++ * @NL80211_CMD_SET_WIPHY: set wiphy name, needs %NL80211_ATTR_WIPHY and
++ *	%NL80211_ATTR_WIPHY_NAME.
++ * @NL80211_CMD_NEW_WIPHY: Newly created wiphy, response to get request
++ *	or rename notification. Has attributes %NL80211_ATTR_WIPHY and
++ *	%NL80211_ATTR_WIPHY_NAME.
++ * @NL80211_CMD_DEL_WIPHY: Wiphy deleted. Has attributes
++ *	%NL80211_ATTR_WIPHY and %NL80211_ATTR_WIPHY_NAME.
++ *
++ * @NL80211_CMD_GET_INTERFACE: Request an interface's configuration;
++ *	either a dump request on a %NL80211_ATTR_WIPHY or a specific get
++ *	on an %NL80211_ATTR_IFINDEX is supported.
++ * @NL80211_CMD_SET_INTERFACE: Set type of a virtual interface, requires
++ *	%NL80211_ATTR_IFINDEX and %NL80211_ATTR_IFTYPE.
++ * @NL80211_CMD_NEW_INTERFACE: Newly created virtual interface or response
++ *	to %NL80211_CMD_GET_INTERFACE. Has %NL80211_ATTR_IFINDEX,
++ *	%NL80211_ATTR_WIPHY and %NL80211_ATTR_IFTYPE attributes. Can also
++ *	be sent from userspace to request creation of a new virtual interface,
++ *	then requires attributes %NL80211_ATTR_WIPHY, %NL80211_ATTR_IFTYPE and
++ *	%NL80211_ATTR_IFNAME.
++ * @NL80211_CMD_DEL_INTERFACE: Virtual interface was deleted, has attributes
++ *	%NL80211_ATTR_IFINDEX and %NL80211_ATTR_WIPHY. Can also be sent from
++ *	userspace to request deletion of a virtual interface, then requires
++ *	attribute %NL80211_ATTR_IFINDEX.
++ *
++ * @NL80211_CMD_MAX: highest used command number
++ * @__NL80211_CMD_AFTER_LAST: internal use
++ */
++enum nl80211_commands {
++/* don't change the order or add anything inbetween, this is ABI! */
++	NL80211_CMD_UNSPEC,
++
++	NL80211_CMD_GET_WIPHY,		/* can dump */
++	NL80211_CMD_SET_WIPHY,
++	NL80211_CMD_NEW_WIPHY,
++	NL80211_CMD_DEL_WIPHY,
++
++	NL80211_CMD_GET_INTERFACE,	/* can dump */
++	NL80211_CMD_SET_INTERFACE,
++	NL80211_CMD_NEW_INTERFACE,
++	NL80211_CMD_DEL_INTERFACE,
++
++	/* add commands here */
++
++	/* used to define NL80211_CMD_MAX below */
++	__NL80211_CMD_AFTER_LAST,
++	NL80211_CMD_MAX = __NL80211_CMD_AFTER_LAST - 1
++};
++
++
++/**
++ * enum nl80211_attrs - nl80211 netlink attributes
++ *
++ * @NL80211_ATTR_UNSPEC: unspecified attribute to catch errors
++ *
++ * @NL80211_ATTR_WIPHY: index of wiphy to operate on, cf.
++ *	/sys/class/ieee80211/<phyname>/index
++ * @NL80211_ATTR_WIPHY_NAME: wiphy name (used for renaming)
++ *
++ * @NL80211_ATTR_IFINDEX: network interface index of the device to operate on
++ * @NL80211_ATTR_IFNAME: network interface name
++ * @NL80211_ATTR_IFTYPE: type of virtual interface, see &enum nl80211_iftype
++ *
++ * @NL80211_ATTR_MAX: highest attribute number currently defined
++ * @__NL80211_ATTR_AFTER_LAST: internal use
++ */
++enum nl80211_attrs {
++/* don't change the order or add anything inbetween, this is ABI! */
++	NL80211_ATTR_UNSPEC,
++
++	NL80211_ATTR_WIPHY,
++	NL80211_ATTR_WIPHY_NAME,
++
++	NL80211_ATTR_IFINDEX,
++	NL80211_ATTR_IFNAME,
++	NL80211_ATTR_IFTYPE,
++
++	/* add attributes here, update the policy in nl80211.c */
++
++	__NL80211_ATTR_AFTER_LAST,
++	NL80211_ATTR_MAX = __NL80211_ATTR_AFTER_LAST - 1
++};
++
++/**
+  * enum nl80211_iftype - (virtual) interface types
++ *
+  * @NL80211_IFTYPE_UNSPECIFIED: unspecified type, driver decides
+  * @NL80211_IFTYPE_ADHOC: independent BSS member
+  * @NL80211_IFTYPE_STATION: managed BSS member
+@@ -15,9 +105,10 @@
+  * @NL80211_IFTYPE_AP_VLAN: VLAN interface for access points
+  * @NL80211_IFTYPE_WDS: wireless distribution interface
+  * @NL80211_IFTYPE_MONITOR: monitor interface receiving all frames
++ * @NL80211_IFTYPE_MAX: highest interface type number currently defined
+  * @__NL80211_IFTYPE_AFTER_LAST: internal use
+  *
+- * These values are used with the NL80211_ATTR_IFTYPE
++ * These values are used with the %NL80211_ATTR_IFTYPE
+  * to set the type of an interface.
+  *
+  */
+@@ -31,8 +122,8 @@ enum nl80211_iftype {
+ 	NL80211_IFTYPE_MONITOR,
+ 
+ 	/* keep last */
+-	__NL80211_IFTYPE_AFTER_LAST
++	__NL80211_IFTYPE_AFTER_LAST,
++	NL80211_IFTYPE_MAX = __NL80211_IFTYPE_AFTER_LAST - 1
+ };
+-#define NL80211_IFTYPE_MAX (__NL80211_IFTYPE_AFTER_LAST - 1)
+ 
+ #endif /* __LINUX_NL80211_H */
+diff --git a/include/net/cfg80211.h b/include/net/cfg80211.h
+index 88171f8..d30960e 100644
+--- a/include/net/cfg80211.h
++++ b/include/net/cfg80211.h
+@@ -3,14 +3,52 @@
+ 
+ #include <linux/netlink.h>
+ #include <linux/skbuff.h>
++#include <linux/nl80211.h>
+ #include <net/genetlink.h>
+ 
+ /*
+  * 802.11 configuration in-kernel interface
+  *
+- * Copyright 2006 Johannes Berg <johannes@sipsolutions.net>
++ * Copyright 2006, 2007	Johannes Berg <johannes@sipsolutions.net>
+  */
+ 
++/* Radiotap header iteration
++ *   implemented in net/wireless/radiotap.c
++ *   docs in Documentation/networking/radiotap-headers.txt
++ */
++/**
++ * struct ieee80211_radiotap_iterator - tracks walk thru present radiotap args
++ * @rtheader: pointer to the radiotap header we are walking through
++ * @max_length: length of radiotap header in cpu byte ordering
++ * @this_arg_index: IEEE80211_RADIOTAP_... index of current arg
++ * @this_arg: pointer to current radiotap arg
++ * @arg_index: internal next argument index
++ * @arg: internal next argument pointer
++ * @next_bitmap: internal pointer to next present u32
++ * @bitmap_shifter: internal shifter for curr u32 bitmap, b0 set == arg present
++ */
++
++struct ieee80211_radiotap_iterator {
++	struct ieee80211_radiotap_header *rtheader;
++	int max_length;
++	int this_arg_index;
++	u8 *this_arg;
++
++	int arg_index;
++	u8 *arg;
++	__le32 *next_bitmap;
++	u32 bitmap_shifter;
++};
++
++extern int ieee80211_radiotap_iterator_init(
++   struct ieee80211_radiotap_iterator *iterator,
++   struct ieee80211_radiotap_header *radiotap_header,
++   int max_length);
++
++extern int ieee80211_radiotap_iterator_next(
++   struct ieee80211_radiotap_iterator *iterator);
++
++
+ /* from net/wireless.h */
+ struct wiphy;
+ 
+@@ -30,11 +68,16 @@ struct wiphy;
+  * @add_virtual_intf: create a new virtual interface with the given name
+  *
+  * @del_virtual_intf: remove the virtual interface determined by ifindex.
++ *
++ * @change_virtual_intf: change type of virtual interface
++ *
+  */
+ struct cfg80211_ops {
+ 	int	(*add_virtual_intf)(struct wiphy *wiphy, char *name,
+-				    unsigned int type);
++				    enum nl80211_iftype type);
+ 	int	(*del_virtual_intf)(struct wiphy *wiphy, int ifindex);
++	int	(*change_virtual_intf)(struct wiphy *wiphy, int ifindex,
++				       enum nl80211_iftype type);
+ };
+ 
+ #endif /* __NET_CFG80211_H */
+diff --git a/include/net/ieee80211_radiotap.h b/include/net/ieee80211_radiotap.h
+index 429b738..a0c2b41 100644
+--- a/include/net/ieee80211_radiotap.h
++++ b/include/net/ieee80211_radiotap.h
+@@ -66,7 +66,9 @@
+  */
+ #define IEEE80211_RADIOTAP_HDRLEN	64
+ 
+-/* The radio capture header precedes the 802.11 header. */
++/* The radio capture header precedes the 802.11 header.
++ * All data in the header is little endian on all platforms.
++ */
+ struct ieee80211_radiotap_header {
+ 	u8 it_version;		/* Version 0. Only increases
+ 				 * for drastic changes,
+@@ -74,12 +76,12 @@ struct ieee80211_radiotap_header {
+ 				 * new fields does not count.
+ 				 */
+ 	u8 it_pad;
+-	u16 it_len;		/* length of the whole
++	__le16 it_len;		/* length of the whole
+ 				 * header in bytes, including
+ 				 * it_version, it_pad,
+ 				 * it_len, and data fields.
+ 				 */
+-	u32 it_present;		/* A bitmap telling which
++	__le32 it_present;	/* A bitmap telling which
+ 				 * fields are present. Set bit 31
+ 				 * (0x80000000) to extend the
+ 				 * bitmap by another 32 bits.
+@@ -88,89 +90,102 @@ struct ieee80211_radiotap_header {
+ 				 */
+ };
+ 
+-/* Name                                 Data type       Units
+- * ----                                 ---------       -----
++/* Name                                 Data type    Units
++ * ----                                 ---------    -----
+  *
+- * IEEE80211_RADIOTAP_TSFT              u64       microseconds
++ * IEEE80211_RADIOTAP_TSFT              __le64       microseconds
+  *
+  *      Value in microseconds of the MAC's 64-bit 802.11 Time
+  *      Synchronization Function timer when the first bit of the
+  *      MPDU arrived at the MAC. For received frames, only.
+  *
+- * IEEE80211_RADIOTAP_CHANNEL           2 x u16   MHz, bitmap
++ * IEEE80211_RADIOTAP_CHANNEL           2 x __le16   MHz, bitmap
+  *
+  *      Tx/Rx frequency in MHz, followed by flags (see below).
+  *
+- * IEEE80211_RADIOTAP_FHSS              u16       see below
++ * IEEE80211_RADIOTAP_FHSS              __le16       see below
+  *
+  *      For frequency-hopping radios, the hop set (first byte)
+  *      and pattern (second byte).
+  *
+- * IEEE80211_RADIOTAP_RATE              u8        500kb/s
++ * IEEE80211_RADIOTAP_RATE              u8           500kb/s
+  *
+  *      Tx/Rx data rate
+  *
+- * IEEE80211_RADIOTAP_DBM_ANTSIGNAL     int8_t          decibels from
+- *                                                      one milliwatt (dBm)
++ * IEEE80211_RADIOTAP_DBM_ANTSIGNAL     s8           decibels from
++ *                                                   one milliwatt (dBm)
+  *
+  *      RF signal power at the antenna, decibel difference from
+  *      one milliwatt.
+  *
+- * IEEE80211_RADIOTAP_DBM_ANTNOISE      int8_t          decibels from
+- *                                                      one milliwatt (dBm)
++ * IEEE80211_RADIOTAP_DBM_ANTNOISE      s8           decibels from
++ *                                                   one milliwatt (dBm)
+  *
+  *      RF noise power at the antenna, decibel difference from one
+  *      milliwatt.
+  *
+- * IEEE80211_RADIOTAP_DB_ANTSIGNAL      u8        decibel (dB)
++ * IEEE80211_RADIOTAP_DB_ANTSIGNAL      u8           decibel (dB)
+  *
+  *      RF signal power at the antenna, decibel difference from an
+  *      arbitrary, fixed reference.
+  *
+- * IEEE80211_RADIOTAP_DB_ANTNOISE       u8        decibel (dB)
++ * IEEE80211_RADIOTAP_DB_ANTNOISE       u8           decibel (dB)
+  *
+  *      RF noise power at the antenna, decibel difference from an
+  *      arbitrary, fixed reference point.
+  *
+- * IEEE80211_RADIOTAP_LOCK_QUALITY      u16       unitless
++ * IEEE80211_RADIOTAP_LOCK_QUALITY      __le16       unitless
+  *
+  *      Quality of Barker code lock. Unitless. Monotonically
+  *      nondecreasing with "better" lock strength. Called "Signal
+  *      Quality" in datasheets.  (Is there a standard way to measure
+  *      this?)
+  *
+- * IEEE80211_RADIOTAP_TX_ATTENUATION    u16       unitless
++ * IEEE80211_RADIOTAP_TX_ATTENUATION    __le16       unitless
+  *
+  *      Transmit power expressed as unitless distance from max
+  *      power set at factory calibration.  0 is max power.
+  *      Monotonically nondecreasing with lower power levels.
+  *
+- * IEEE80211_RADIOTAP_DB_TX_ATTENUATION u16       decibels (dB)
++ * IEEE80211_RADIOTAP_DB_TX_ATTENUATION __le16       decibels (dB)
+  *
+  *      Transmit power expressed as decibel distance from max power
+  *      set at factory calibration.  0 is max power.  Monotonically
+  *      nondecreasing with lower power levels.
+  *
+- * IEEE80211_RADIOTAP_DBM_TX_POWER      int8_t          decibels from
+- *                                                      one milliwatt (dBm)
++ * IEEE80211_RADIOTAP_DBM_TX_POWER      s8           decibels from
++ *                                                   one milliwatt (dBm)
+  *
+  *      Transmit power expressed as dBm (decibels from a 1 milliwatt
+  *      reference). This is the absolute power level measured at
+  *      the antenna port.
+  *
+- * IEEE80211_RADIOTAP_FLAGS             u8        bitmap
++ * IEEE80211_RADIOTAP_FLAGS             u8           bitmap
+  *
+  *      Properties of transmitted and received frames. See flags
+  *      defined below.
+  *
+- * IEEE80211_RADIOTAP_ANTENNA           u8        antenna index
++ * IEEE80211_RADIOTAP_ANTENNA           u8           antenna index
+  *
+  *      Unitless indication of the Rx/Tx antenna for this packet.
+  *      The first antenna is antenna 0.
+  *
+- * IEEE80211_RADIOTAP_FCS           	u32       data
++ * IEEE80211_RADIOTAP_RX_FLAGS          __le16       bitmap
++ *
++ *     Properties of received frames. See flags defined below.
++ *
++ * IEEE80211_RADIOTAP_TX_FLAGS          __le16       bitmap
++ *
++ *     Properties of transmitted frames. See flags defined below.
++ *
++ * IEEE80211_RADIOTAP_RTS_RETRIES       u8           data
++ *
++ *     Number of rts retries a transmitted frame used.
++ *
++ * IEEE80211_RADIOTAP_DATA_RETRIES      u8           data
++ *
++ *     Number of unicast retries a transmitted frame used.
+  *
+- *	FCS from frame in network byte order.
+  */
+ enum ieee80211_radiotap_type {
+ 	IEEE80211_RADIOTAP_TSFT = 0,
+@@ -187,7 +202,11 @@ enum ieee80211_radiotap_type {
+ 	IEEE80211_RADIOTAP_ANTENNA = 11,
+ 	IEEE80211_RADIOTAP_DB_ANTSIGNAL = 12,
+ 	IEEE80211_RADIOTAP_DB_ANTNOISE = 13,
+-	IEEE80211_RADIOTAP_EXT = 31,
++	IEEE80211_RADIOTAP_RX_FLAGS = 14,
++	IEEE80211_RADIOTAP_TX_FLAGS = 15,
++	IEEE80211_RADIOTAP_RTS_RETRIES = 16,
++	IEEE80211_RADIOTAP_DATA_RETRIES = 17,
++	IEEE80211_RADIOTAP_EXT = 31
+ };
+ 
+ /* Channel flags. */
+@@ -219,6 +238,14 @@ enum ieee80211_radiotap_type {
+ 						 * 802.11 header and payload
+ 						 * (to 32-bit boundary)
+ 						 */
++/* For IEEE80211_RADIOTAP_RX_FLAGS */
++#define IEEE80211_RADIOTAP_F_RX_BADFCS	0x0001	/* frame failed crc check */
++
++/* For IEEE80211_RADIOTAP_TX_FLAGS */
++#define IEEE80211_RADIOTAP_F_TX_FAIL	0x0001	/* failed due to excessive
++						 * retries */
++#define IEEE80211_RADIOTAP_F_TX_CTS	0x0002	/* used cts 'protection' */
++#define IEEE80211_RADIOTAP_F_TX_RTS	0x0004	/* used rts/cts handshake */
+ 
+ /* Ugly macro to convert literal channel numbers into their mhz equivalents
+  * There are certianly some conditions that will break this (like feeding it '30')
+diff --git a/net/wireless/Kconfig b/net/wireless/Kconfig
+index 1863c0b..7602ddd 100644
+--- a/net/wireless/Kconfig
++++ b/net/wireless/Kconfig
+@@ -1,6 +1,19 @@
+ config CFG80211
+         tristate "Improved wireless configuration API"
+ 
++config NL80211
++	bool "nl80211 new netlink interface support"
++	depends on CFG80211
++	default y
++	---help---
++         This option turns on the new netlink interface
++         (nl80211) support in cfg80211.
++
++         If =n, drivers using mac80211 will be configured via
++         wireless extension support provided by that subsystem.
++
++         If unsure, say Y.
++
+ config WIRELESS_EXT
+ 	bool "Wireless extensions"
+ 	default n
+@@ -10,7 +23,9 @@ config WIRELESS_EXT
+ 
+ 	  Wireless extensions will be replaced by cfg80211 and
+ 	  will be required only by legacy drivers that implement
+-	  wireless extension handlers.
++	  wireless extension handlers. This option does not
++	  affect the wireless-extension backward compatibility
++	  code in cfg80211.
+ 
+ 	  Say N (if you can) unless you know you need wireless
+ 	  extensions for external modules.
+diff --git a/net/wireless/Makefile b/net/wireless/Makefile
+index 3f082ff..5664c2c 100644
+--- a/net/wireless/Makefile
++++ b/net/wireless/Makefile
+@@ -1,3 +1,4 @@
+ obj-$(CONFIG_CFG80211) += cfg80211.o
+ 
+-cfg80211-y += core.o sysfs.o
++cfg80211-y += core.o sysfs.o radiotap.o
++cfg80211-$(CONFIG_NL80211) += nl80211.o
+diff --git a/net/wireless/core.c b/net/wireless/core.c
+index 3719b7d..bdeddb1 100644
+--- a/net/wireless/core.c
++++ b/net/wireless/core.c
+@@ -16,6 +16,7 @@
+ #include <net/genetlink.h>
+ #include <net/cfg80211.h>
+ #include <net/wireless.h>
++#include "nl80211.h"
+ #include "core.h"
+ #include "sysfs.h"
+ 
+@@ -36,6 +37,156 @@ static int wiphy_counter;
+ /* for debugfs */
+ static struct dentry *ieee80211_debugfs_dir;
+ 
++/* requires cfg80211_drv_mutex to be held! */
++static struct cfg80211_registered_device *cfg80211_drv_by_wiphy(int wiphy)
++{
++	struct cfg80211_registered_device *result = NULL, *drv;
++
++	list_for_each_entry(drv, &cfg80211_drv_list, list) {
++		if (drv->idx == wiphy) {
++			result = drv;
++			break;
++		}
++	}
++
++	return result;
++}
++
++/* requires cfg80211_drv_mutex to be held! */
++static struct cfg80211_registered_device *
++__cfg80211_drv_from_info(struct genl_info *info)
++{
++	int ifindex;
++	struct cfg80211_registered_device *bywiphy = NULL, *byifidx = NULL;
++	struct net_device *dev;
++	int err = -EINVAL;
++
++	if (info->attrs[NL80211_ATTR_WIPHY]) {
++		bywiphy = cfg80211_drv_by_wiphy(
++				nla_get_u32(info->attrs[NL80211_ATTR_WIPHY]));
++		err = -ENODEV;
++	}
++
++	if (info->attrs[NL80211_ATTR_IFINDEX]) {
++		ifindex = nla_get_u32(info->attrs[NL80211_ATTR_IFINDEX]);
++#if 0 /* Not in RHEL5 */
++		dev = dev_get_by_index(&init_net, ifindex);
++#else
++		dev = dev_get_by_index(ifindex);
++#endif
++		if (dev) {
++			if (dev->ieee80211_ptr)
++				byifidx =
++					wiphy_to_dev(dev->ieee80211_ptr->wiphy);
++			dev_put(dev);
++		}
++		err = -ENODEV;
++	}
++
++	if (bywiphy && byifidx) {
++		if (bywiphy != byifidx)
++			return ERR_PTR(-EINVAL);
++		else
++			return bywiphy; /* == byifidx */
++	}
++	if (bywiphy)
++		return bywiphy;
++
++	if (byifidx)
++		return byifidx;
++
++	return ERR_PTR(err);
++}
++
++struct cfg80211_registered_device *
++cfg80211_get_dev_from_info(struct genl_info *info)
++{
++	struct cfg80211_registered_device *drv;
++
++	mutex_lock(&cfg80211_drv_mutex);
++	drv = __cfg80211_drv_from_info(info);
++
++	/* if it is not an error we grab the lock on
++	 * it to assure it won't be going away while
++	 * we operate on it */
++	if (!IS_ERR(drv))
++		mutex_lock(&drv->mtx);
++
++	mutex_unlock(&cfg80211_drv_mutex);
++
++	return drv;
++}
++
++struct cfg80211_registered_device *
++cfg80211_get_dev_from_ifindex(int ifindex)
++{
++	struct cfg80211_registered_device *drv = ERR_PTR(-ENODEV);
++	struct net_device *dev;
++
++	mutex_lock(&cfg80211_drv_mutex);
++#if 0 /* Not in RHEL5 */
++	dev = dev_get_by_index(&init_net, ifindex);
++#else
++	dev = dev_get_by_index(ifindex);
++#endif
++	if (!dev)
++		goto out;
++	if (dev->ieee80211_ptr) {
++		drv = wiphy_to_dev(dev->ieee80211_ptr->wiphy);
++		mutex_lock(&drv->mtx);
++	} else
++		drv = ERR_PTR(-ENODEV);
++	dev_put(dev);
++ out:
++	mutex_unlock(&cfg80211_drv_mutex);
++	return drv;
++}
++
++void cfg80211_put_dev(struct cfg80211_registered_device *drv)
++{
++	BUG_ON(IS_ERR(drv));
++	mutex_unlock(&drv->mtx);
++}
++
++#if 0 /* Not in RHEL5 */
++int cfg80211_dev_rename(struct cfg80211_registered_device *rdev,
++			char *newname)
++{
++	int idx, taken = -1, result, digits;
++
++	/* prohibit calling the thing phy%d when %d is not its number */
++	sscanf(newname, PHY_NAME "%d%n", &idx, &taken);
++	if (taken == strlen(newname) && idx != rdev->idx) {
++		/* count number of places needed to print idx */
++		digits = 1;
++		while (idx /= 10)
++			digits++;
++		/*
++		 * deny the name if it is phy<idx> where <idx> is printed
++		 * without leading zeroes. taken == strlen(newname) here
++		 */
++		if (taken == strlen(PHY_NAME) + digits)
++			return -EINVAL;
++	}
++
++	/* this will check for collisions */
++	result = device_rename(&rdev->wiphy.dev, newname);
++	if (result)
++		return result;
++
++	if (!debugfs_rename(rdev->wiphy.debugfsdir->d_parent,
++			    rdev->wiphy.debugfsdir,
++			    rdev->wiphy.debugfsdir->d_parent,
++			    newname))
++		printk(KERN_ERR "cfg80211: failed to rename debugfs dir to %s!\n",
++		       newname);
++
++	nl80211_notify_dev_rename(rdev);
++
++	return 0;
++}
++#endif
++
+ /* exported functions */
+ 
+ struct wiphy *wiphy_new(struct cfg80211_ops *ops, int sizeof_priv)
+@@ -205,20 +356,27 @@ static int cfg80211_init(void)
+ 	if (err)
+ 		goto out_fail_notifier;
+ 
++	err = nl80211_init();
++	if (err)
++		goto out_fail_nl80211;
++
+ 	ieee80211_debugfs_dir = debugfs_create_dir("ieee80211", NULL);
+ 
+ 	return 0;
+ 
++out_fail_nl80211:
++	unregister_netdevice_notifier(&cfg80211_netdev_notifier);
+ out_fail_notifier:
+ 	wiphy_sysfs_exit();
+ out_fail_sysfs:
+ 	return err;
+ }
+-module_init(cfg80211_init);
++subsys_initcall(cfg80211_init);
+ 
+ static void cfg80211_exit(void)
+ {
+ 	debugfs_remove(ieee80211_debugfs_dir);
++	nl80211_exit();
+ 	unregister_netdevice_notifier(&cfg80211_netdev_notifier);
+ 	wiphy_sysfs_exit();
+ }
+diff --git a/net/wireless/core.h b/net/wireless/core.h
+index 158db1e..eb0f846 100644
+--- a/net/wireless/core.h
++++ b/net/wireless/core.h
+@@ -43,7 +43,39 @@ struct cfg80211_registered_device *wiphy_to_dev(struct wiphy *wiphy)
+ extern struct mutex cfg80211_drv_mutex;
+ extern struct list_head cfg80211_drv_list;
+ 
++/*
++ * This function returns a pointer to the driver
++ * that the genl_info item that is passed refers to.
++ * If successful, it returns non-NULL and also locks
++ * the driver's mutex!
++ *
++ * This means that you need to call cfg80211_put_dev()
++ * before being allowed to acquire &cfg80211_drv_mutex!
++ *
++ * This is necessary because we need to lock the global
++ * mutex to get an item off the list safely, and then
++ * we lock the drv mutex so it doesn't go away under us.
++ *
++ * We don't want to keep cfg80211_drv_mutex locked
++ * for all the time in order to allow requests on
++ * other interfaces to go through at the same time.
++ *
++ * The result of this can be a PTR_ERR and hence must
++ * be checked with IS_ERR() for errors.
++ */
++extern struct cfg80211_registered_device *
++cfg80211_get_dev_from_info(struct genl_info *info);
++
++/* identical to cfg80211_get_dev_from_info but only operate on ifindex */
++extern struct cfg80211_registered_device *
++cfg80211_get_dev_from_ifindex(int ifindex);
++
++extern void cfg80211_put_dev(struct cfg80211_registered_device *drv);
++
+ /* free object */
+ extern void cfg80211_dev_free(struct cfg80211_registered_device *drv);
+ 
++extern int cfg80211_dev_rename(struct cfg80211_registered_device *drv,
++			       char *newname);
++
+ #endif /* __NET_WIRELESS_CORE_H */
+diff --git a/net/wireless/nl80211.c b/net/wireless/nl80211.c
+new file mode 100644
+index 0000000..0ae63a6
+--- /dev/null
++++ b/net/wireless/nl80211.c
+@@ -0,0 +1,431 @@
++/*
++ * This is the new netlink-based wireless configuration interface.
++ *
++ * Copyright 2006, 2007	Johannes Berg <johannes@sipsolutions.net>
++ */
++
++#include <linux/if.h>
++#include <linux/module.h>
++#include <linux/err.h>
++#include <linux/mutex.h>
++#include <linux/list.h>
++#include <linux/if_ether.h>
++#include <linux/ieee80211.h>
++#include <linux/nl80211.h>
++#include <linux/rtnetlink.h>
++#include <linux/netlink.h>
++#include <net/genetlink.h>
++#include <net/cfg80211.h>
++#include "core.h"
++#include "nl80211.h"
++
++/* the netlink family */
++static struct genl_family nl80211_fam = {
++	.id = GENL_ID_GENERATE,	/* don't bother with a hardcoded ID */
++	.name = "nl80211",	/* have users key off the name instead */
++	.hdrsize = 0,		/* no private header */
++	.version = 1,		/* no particular meaning now */
++	.maxattr = NL80211_ATTR_MAX,
++};
++
++/* internal helper: get drv and dev */
++static int get_drv_dev_by_info_ifindex(struct genl_info *info,
++				       struct cfg80211_registered_device **drv,
++				       struct net_device **dev)
++{
++	int ifindex;
++
++	if (!info->attrs[NL80211_ATTR_IFINDEX])
++		return -EINVAL;
++
++	ifindex = nla_get_u32(info->attrs[NL80211_ATTR_IFINDEX]);
++#if 0 /* Not in RHEL5 */
++	*dev = dev_get_by_index(&init_net, ifindex);
++#else
++	*dev = dev_get_by_index(ifindex);
++#endif
++	if (!*dev)
++		return -ENODEV;
++
++	*drv = cfg80211_get_dev_from_ifindex(ifindex);
++	if (IS_ERR(*drv)) {
++		dev_put(*dev);
++		return PTR_ERR(*drv);
++	}
++
++	return 0;
++}
++
++/* policy for the attributes */
++static struct nla_policy nl80211_policy[NL80211_ATTR_MAX+1] __read_mostly = {
++	[NL80211_ATTR_WIPHY] = { .type = NLA_U32 },
++	[NL80211_ATTR_WIPHY_NAME] = { .type = NLA_NUL_STRING,
++				      .len = BUS_ID_SIZE-1 },
++
++	[NL80211_ATTR_IFTYPE] = { .type = NLA_U32 },
++	[NL80211_ATTR_IFINDEX] = { .type = NLA_U32 },
++	[NL80211_ATTR_IFNAME] = { .type = NLA_NUL_STRING, .len = IFNAMSIZ-1 },
++};
++
++/* message building helper */
++static inline void *nl80211hdr_put(struct sk_buff *skb, u32 pid, u32 seq,
++				   int flags, u8 cmd)
++{
++	/* since there is no private header just add the generic one */
++	return genlmsg_put(skb, pid, seq, nl80211_fam.id, nl80211_fam.hdrsize,
++				flags, cmd, nl80211_fam.version);
++}
++
++/* netlink command implementations */
++
++static int nl80211_send_wiphy(struct sk_buff *msg, u32 pid, u32 seq, int flags,
++			      struct cfg80211_registered_device *dev)
++{
++	void *hdr;
++
++	hdr = nl80211hdr_put(msg, pid, seq, flags, NL80211_CMD_NEW_WIPHY);
++	if (!hdr)
++		return -1;
++
++	NLA_PUT_U32(msg, NL80211_ATTR_WIPHY, dev->idx);
++	NLA_PUT_STRING(msg, NL80211_ATTR_WIPHY_NAME, wiphy_name(&dev->wiphy));
++	return genlmsg_end(msg, hdr);
++
++ nla_put_failure:
++	return genlmsg_cancel(msg, hdr);
++}
++
++static int nl80211_dump_wiphy(struct sk_buff *skb, struct netlink_callback *cb)
++{
++	int idx = 0;
++	int start = cb->args[0];
++	struct cfg80211_registered_device *dev;
++
++	mutex_lock(&cfg80211_drv_mutex);
++	list_for_each_entry(dev, &cfg80211_drv_list, list) {
++		if (++idx < start)
++			continue;
++		if (nl80211_send_wiphy(skb, NETLINK_CB(cb->skb).pid,
++				       cb->nlh->nlmsg_seq, NLM_F_MULTI,
++				       dev) < 0)
++			break;
++	}
++	mutex_unlock(&cfg80211_drv_mutex);
++
++	cb->args[0] = idx;
++
++	return skb->len;
++}
++
++static int nl80211_get_wiphy(struct sk_buff *skb, struct genl_info *info)
++{
++	struct sk_buff *msg;
++	struct cfg80211_registered_device *dev;
++
++	dev = cfg80211_get_dev_from_info(info);
++	if (IS_ERR(dev))
++		return PTR_ERR(dev);
++
++	msg = nlmsg_new(NLMSG_GOODSIZE, GFP_KERNEL);
++	if (!msg)
++		goto out_err;
++
++	if (nl80211_send_wiphy(msg, info->snd_pid, info->snd_seq, 0, dev) < 0)
++		goto out_free;
++
++	cfg80211_put_dev(dev);
++
++	return genlmsg_unicast(msg, info->snd_pid);
++
++ out_free:
++	nlmsg_free(msg);
++ out_err:
++	cfg80211_put_dev(dev);
++	return -ENOBUFS;
++}
++
++#if 0 /* Not in RHEL5... */
++static int nl80211_set_wiphy(struct sk_buff *skb, struct genl_info *info)
++{
++	struct cfg80211_registered_device *rdev;
++	int result;
++
++	if (!info->attrs[NL80211_ATTR_WIPHY_NAME])
++		return -EINVAL;
++
++	rdev = cfg80211_get_dev_from_info(info);
++	if (IS_ERR(rdev))
++		return PTR_ERR(rdev);
++
++	result = cfg80211_dev_rename(rdev, nla_data(info->attrs[NL80211_ATTR_WIPHY_NAME]));
++
++	cfg80211_put_dev(rdev);
++	return result;
++}
++#endif
++
++
++static int nl80211_send_iface(struct sk_buff *msg, u32 pid, u32 seq, int flags,
++			      struct net_device *dev)
++{
++	void *hdr;
++
++	hdr = nl80211hdr_put(msg, pid, seq, flags, NL80211_CMD_NEW_INTERFACE);
++	if (!hdr)
++		return -1;
++
++	NLA_PUT_U32(msg, NL80211_ATTR_IFINDEX, dev->ifindex);
++	NLA_PUT_STRING(msg, NL80211_ATTR_IFNAME, dev->name);
++	/* TODO: interface type */
++	return genlmsg_end(msg, hdr);
++
++ nla_put_failure:
++	return genlmsg_cancel(msg, hdr);
++}
++
++static int nl80211_dump_interface(struct sk_buff *skb, struct netlink_callback *cb)
++{
++	int wp_idx = 0;
++	int if_idx = 0;
++	int wp_start = cb->args[0];
++	int if_start = cb->args[1];
++	struct cfg80211_registered_device *dev;
++	struct wireless_dev *wdev;
++
++	mutex_lock(&cfg80211_drv_mutex);
++	list_for_each_entry(dev, &cfg80211_drv_list, list) {
++		if (++wp_idx < wp_start)
++			continue;
++		if_idx = 0;
++
++		mutex_lock(&dev->devlist_mtx);
++		list_for_each_entry(wdev, &dev->netdev_list, list) {
++			if (++if_idx < if_start)
++				continue;
++			if (nl80211_send_iface(skb, NETLINK_CB(cb->skb).pid,
++					       cb->nlh->nlmsg_seq, NLM_F_MULTI,
++					       wdev->netdev) < 0)
++				break;
++		}
++		mutex_unlock(&dev->devlist_mtx);
++	}
++	mutex_unlock(&cfg80211_drv_mutex);
++
++	cb->args[0] = wp_idx;
++	cb->args[1] = if_idx;
++
++	return skb->len;
++}
++
++static int nl80211_get_interface(struct sk_buff *skb, struct genl_info *info)
++{
++	struct sk_buff *msg;
++	struct cfg80211_registered_device *dev;
++	struct net_device *netdev;
++	int err;
++
++	err = get_drv_dev_by_info_ifindex(info, &dev, &netdev);
++	if (err)
++		return err;
++
++	msg = nlmsg_new(NLMSG_GOODSIZE, GFP_KERNEL);
++	if (!msg)
++		goto out_err;
++
++	if (nl80211_send_iface(msg, info->snd_pid, info->snd_seq, 0, netdev) < 0)
++		goto out_free;
++
++	dev_put(netdev);
++	cfg80211_put_dev(dev);
++
++	return genlmsg_unicast(msg, info->snd_pid);
++
++ out_free:
++	nlmsg_free(msg);
++ out_err:
++	dev_put(netdev);
++	cfg80211_put_dev(dev);
++	return -ENOBUFS;
++}
++
++static int nl80211_set_interface(struct sk_buff *skb, struct genl_info *info)
++{
++	struct cfg80211_registered_device *drv;
++	int err, ifindex;
++	enum nl80211_iftype type;
++	struct net_device *dev;
++
++	if (info->attrs[NL80211_ATTR_IFTYPE]) {
++		type = nla_get_u32(info->attrs[NL80211_ATTR_IFTYPE]);
++		if (type > NL80211_IFTYPE_MAX)
++			return -EINVAL;
++	} else
++		return -EINVAL;
++
++	err = get_drv_dev_by_info_ifindex(info, &drv, &dev);
++	if (err)
++		return err;
++	ifindex = dev->ifindex;
++	dev_put(dev);
++
++	if (!drv->ops->change_virtual_intf) {
++		err = -EOPNOTSUPP;
++		goto unlock;
++	}
++
++	rtnl_lock();
++	err = drv->ops->change_virtual_intf(&drv->wiphy, ifindex, type);
++	rtnl_unlock();
++
++ unlock:
++	cfg80211_put_dev(drv);
++	return err;
++}
++
++static int nl80211_new_interface(struct sk_buff *skb, struct genl_info *info)
++{
++	struct cfg80211_registered_device *drv;
++	int err;
++	enum nl80211_iftype type = NL80211_IFTYPE_UNSPECIFIED;
++
++	if (!info->attrs[NL80211_ATTR_IFNAME])
++		return -EINVAL;
++
++	if (info->attrs[NL80211_ATTR_IFTYPE]) {
++		type = nla_get_u32(info->attrs[NL80211_ATTR_IFTYPE]);
++		if (type > NL80211_IFTYPE_MAX)
++			return -EINVAL;
++	}
++
++	drv = cfg80211_get_dev_from_info(info);
++	if (IS_ERR(drv))
++		return PTR_ERR(drv);
++
++	if (!drv->ops->add_virtual_intf) {
++		err = -EOPNOTSUPP;
++		goto unlock;
++	}
++
++	rtnl_lock();
++	err = drv->ops->add_virtual_intf(&drv->wiphy,
++		nla_data(info->attrs[NL80211_ATTR_IFNAME]), type);
++	rtnl_unlock();
++
++ unlock:
++	cfg80211_put_dev(drv);
++	return err;
++}
++
++static int nl80211_del_interface(struct sk_buff *skb, struct genl_info *info)
++{
++	struct cfg80211_registered_device *drv;
++	int ifindex, err;
++	struct net_device *dev;
++
++	err = get_drv_dev_by_info_ifindex(info, &drv, &dev);
++	if (err)
++		return err;
++	ifindex = dev->ifindex;
++	dev_put(dev);
++
++	if (!drv->ops->del_virtual_intf) {
++		err = -EOPNOTSUPP;
++		goto out;
++	}
++
++	rtnl_lock();
++	err = drv->ops->del_virtual_intf(&drv->wiphy, ifindex);
++	rtnl_unlock();
++
++ out:
++	cfg80211_put_dev(drv);
++	return err;
++}
++
++static struct genl_ops nl80211_ops[] = {
++	{
++		.cmd = NL80211_CMD_GET_WIPHY,
++		.doit = nl80211_get_wiphy,
++		.dumpit = nl80211_dump_wiphy,
++		.policy = nl80211_policy,
++		/* can be retrieved by unprivileged users */
++	},
++#if 0 /* Not in RHEL5... */
++	{
++		.cmd = NL80211_CMD_SET_WIPHY,
++		.doit = nl80211_set_wiphy,
++		.policy = nl80211_policy,
++		.flags = GENL_ADMIN_PERM,
++	},
++#endif
++	{
++		.cmd = NL80211_CMD_GET_INTERFACE,
++		.doit = nl80211_get_interface,
++		.dumpit = nl80211_dump_interface,
++		.policy = nl80211_policy,
++		/* can be retrieved by unprivileged users */
++	},
++	{
++		.cmd = NL80211_CMD_SET_INTERFACE,
++		.doit = nl80211_set_interface,
++		.policy = nl80211_policy,
++		.flags = GENL_ADMIN_PERM,
++	},
++	{
++		.cmd = NL80211_CMD_NEW_INTERFACE,
++		.doit = nl80211_new_interface,
++		.policy = nl80211_policy,
++		.flags = GENL_ADMIN_PERM,
++	},
++	{
++		.cmd = NL80211_CMD_DEL_INTERFACE,
++		.doit = nl80211_del_interface,
++		.policy = nl80211_policy,
++		.flags = GENL_ADMIN_PERM,
++	},
++};
++
++/* notification functions */
++
++void nl80211_notify_dev_rename(struct cfg80211_registered_device *rdev)
++{
++	struct sk_buff *msg;
++
++	msg = nlmsg_new(NLMSG_GOODSIZE, GFP_KERNEL);
++	if (!msg)
++		return;
++
++	if (nl80211_send_wiphy(msg, 0, 0, 0, rdev) < 0) {
++		nlmsg_free(msg);
++		return;
++	}
++
++	genlmsg_multicast(msg, 0, NL80211_GROUP_CONFIG);
++}
++
++/* initialisation/exit functions */
++
++int nl80211_init(void)
++{
++	int err, i;
++
++	err = genl_register_family(&nl80211_fam);
++	if (err)
++		return err;
++
++	for (i = 0; i < ARRAY_SIZE(nl80211_ops); i++) {
++		err = genl_register_ops(&nl80211_fam, &nl80211_ops[i]);
++		if (err)
++			goto err_out;
++	}
++
++	return 0;
++ err_out:
++	genl_unregister_family(&nl80211_fam);
++	return err;
++}
++
++void nl80211_exit(void)
++{
++	genl_unregister_family(&nl80211_fam);
++}
+diff --git a/net/wireless/nl80211.h b/net/wireless/nl80211.h
+new file mode 100644
+index 0000000..26266f2
+--- /dev/null
++++ b/net/wireless/nl80211.h
+@@ -0,0 +1,41 @@
++#ifndef __NET_WIRELESS_NL80211_H
++#define __NET_WIRELESS_NL80211_H
++
++#include "core.h"
++
++#ifdef CONFIG_NL80211
++
++/**
++ * enum nl80211_multicast_groups - multicast groups for nl80211
++ * @NL80211_GROUP_CONFIG: members of this group are notified of
++ *     configuration changes
++ */
++enum nl80211_multicast_groups {
++	/* be notified of configuration changes like wiphy renames */
++	NL80211_GROUP_CONFIG,
++
++	/* add groups here */
++
++	/* keep last */
++	__NL80211_GROUP_AFTER_LAST
++};
++#define NL80211_GROUP_MAX (__NL80211_GROUP_AFTER_LAST - 1)
++
++extern int nl80211_init(void);
++extern void nl80211_exit(void);
++extern void nl80211_notify_dev_rename(struct cfg80211_registered_device *rdev);
++#else
++static inline int nl80211_init(void)
++{
++	return 0;
++}
++static inline void nl80211_exit(void)
++{
++}
++static inline void nl80211_notify_dev_rename(
++	struct cfg80211_registered_device *rdev)
++{
++}
++#endif /* CONFIG_NL80211 */
++
++#endif /* __NET_WIRELESS_NL80211_H */
+diff --git a/net/wireless/radiotap.c b/net/wireless/radiotap.c
+new file mode 100644
+index 0000000..28fbd0b
+--- /dev/null
++++ b/net/wireless/radiotap.c
+@@ -0,0 +1,261 @@
++/*
++ * Radiotap parser
++ *
++ * Copyright 2007		Andy Green <andy@warmcat.com>
++ */
++
++#include <net/cfg80211.h>
++#include <net/ieee80211_radiotap.h>
++#include <asm/unaligned.h>
++
++/* function prototypes and related defs are in include/net/cfg80211.h */
++
++/**
++ * ieee80211_radiotap_iterator_init - radiotap parser iterator initialization
++ * @iterator: radiotap_iterator to initialize
++ * @radiotap_header: radiotap header to parse
++ * @max_length: total length we can parse into (eg, whole packet length)
++ *
++ * Returns: 0 or a negative error code if there is a problem.
++ *
++ * This function initializes an opaque iterator struct which can then
++ * be passed to ieee80211_radiotap_iterator_next() to visit every radiotap
++ * argument which is present in the header.  It knows about extended
++ * present headers and handles them.
++ *
++ * How to use:
++ * call __ieee80211_radiotap_iterator_init() to init a semi-opaque iterator
++ * struct ieee80211_radiotap_iterator (no need to init the struct beforehand)
++ * checking for a good 0 return code.  Then loop calling
++ * __ieee80211_radiotap_iterator_next()... it returns either 0,
++ * -ENOENT if there are no more args to parse, or -EINVAL if there is a problem.
++ * The iterator's @this_arg member points to the start of the argument
++ * associated with the current argument index that is present, which can be
++ * found in the iterator's @this_arg_index member.  This arg index corresponds
++ * to the IEEE80211_RADIOTAP_... defines.
++ *
++ * Radiotap header length:
++ * You can find the CPU-endian total radiotap header length in
++ * iterator->max_length after executing ieee80211_radiotap_iterator_init()
++ * successfully.
++ *
++ * Alignment Gotcha:
++ * You must take care when dereferencing iterator.this_arg
++ * for multibyte types... the pointer is not aligned.  Use
++ * get_unaligned((type *)iterator.this_arg) to dereference
++ * iterator.this_arg for type "type" safely on all arches.
++ *
++ * Example code:
++ * See Documentation/networking/radiotap-headers.txt
++ */
++
++int ieee80211_radiotap_iterator_init(
++    struct ieee80211_radiotap_iterator *iterator,
++    struct ieee80211_radiotap_header *radiotap_header,
++    int max_length)
++{
++	/* Linux only supports version 0 radiotap format */
++	if (radiotap_header->it_version)
++		return -EINVAL;
++
++	/* sanity check for allowed length and radiotap length field */
++	if (max_length < le16_to_cpu(get_unaligned(&radiotap_header->it_len)))
++		return -EINVAL;
++
++	iterator->rtheader = radiotap_header;
++	iterator->max_length = le16_to_cpu(get_unaligned(
++						&radiotap_header->it_len));
++	iterator->arg_index = 0;
++	iterator->bitmap_shifter = le32_to_cpu(get_unaligned(
++						&radiotap_header->it_present));
++	iterator->arg = (u8 *)radiotap_header + sizeof(*radiotap_header);
++	iterator->this_arg = NULL;
++
++	/* find payload start allowing for extended bitmap(s) */
++
++	if (unlikely(iterator->bitmap_shifter & (1<<IEEE80211_RADIOTAP_EXT))) {
++		while (le32_to_cpu(get_unaligned((__le32 *)iterator->arg)) &
++				   (1<<IEEE80211_RADIOTAP_EXT)) {
++			iterator->arg += sizeof(u32);
++
++			/*
++			 * check for insanity where the present bitmaps
++			 * keep claiming to extend up to or even beyond the
++			 * stated radiotap header length
++			 */
++
++			if (((ulong)iterator->arg -
++			     (ulong)iterator->rtheader) > iterator->max_length)
++				return -EINVAL;
++		}
++
++		iterator->arg += sizeof(u32);
++
++		/*
++		 * no need to check again for blowing past stated radiotap
++		 * header length, because ieee80211_radiotap_iterator_next
++		 * checks it before it is dereferenced
++		 */
++	}
++
++	/* we are all initialized happily */
++
++	return 0;
++}
++EXPORT_SYMBOL(ieee80211_radiotap_iterator_init);
++
++
++/**
++ * ieee80211_radiotap_iterator_next - return next radiotap parser iterator arg
++ * @iterator: radiotap_iterator to move to next arg (if any)
++ *
++ * Returns: 0 if there is an argument to handle,
++ * -ENOENT if there are no more args or -EINVAL
++ * if there is something else wrong.
++ *
++ * This function provides the next radiotap arg index (IEEE80211_RADIOTAP_*)
++ * in @this_arg_index and sets @this_arg to point to the
++ * payload for the field.  It takes care of alignment handling and extended
++ * present fields.  @this_arg can be changed by the caller (eg,
++ * incremented to move inside a compound argument like
++ * IEEE80211_RADIOTAP_CHANNEL).  The args pointed to are in
++ * little-endian format whatever the endianess of your CPU.
++ *
++ * Alignment Gotcha:
++ * You must take care when dereferencing iterator.this_arg
++ * for multibyte types... the pointer is not aligned.  Use
++ * get_unaligned((type *)iterator.this_arg) to dereference
++ * iterator.this_arg for type "type" safely on all arches.
++ */
++
++int ieee80211_radiotap_iterator_next(
++    struct ieee80211_radiotap_iterator *iterator)
++{
++
++	/*
++	 * small length lookup table for all radiotap types we heard of
++	 * starting from b0 in the bitmap, so we can walk the payload
++	 * area of the radiotap header
++	 *
++	 * There is a requirement to pad args, so that args
++	 * of a given length must begin at a boundary of that length
++	 * -- but note that compound args are allowed (eg, 2 x u16
++	 * for IEEE80211_RADIOTAP_CHANNEL) so total arg length is not
++	 * a reliable indicator of alignment requirement.
++	 *
++	 * upper nybble: content alignment for arg
++	 * lower nybble: content length for arg
++	 */
++
++	static const u8 rt_sizes[] = {
++		[IEEE80211_RADIOTAP_TSFT] = 0x88,
++		[IEEE80211_RADIOTAP_FLAGS] = 0x11,
++		[IEEE80211_RADIOTAP_RATE] = 0x11,
++		[IEEE80211_RADIOTAP_CHANNEL] = 0x24,
++		[IEEE80211_RADIOTAP_FHSS] = 0x22,
++		[IEEE80211_RADIOTAP_DBM_ANTSIGNAL] = 0x11,
++		[IEEE80211_RADIOTAP_DBM_ANTNOISE] = 0x11,
++		[IEEE80211_RADIOTAP_LOCK_QUALITY] = 0x22,
++		[IEEE80211_RADIOTAP_TX_ATTENUATION] = 0x22,
++		[IEEE80211_RADIOTAP_DB_TX_ATTENUATION] = 0x22,
++		[IEEE80211_RADIOTAP_DBM_TX_POWER] = 0x11,
++		[IEEE80211_RADIOTAP_ANTENNA] = 0x11,
++		[IEEE80211_RADIOTAP_DB_ANTSIGNAL] = 0x11,
++		[IEEE80211_RADIOTAP_DB_ANTNOISE] = 0x11,
++		[IEEE80211_RADIOTAP_RX_FLAGS] = 0x22,
++		[IEEE80211_RADIOTAP_TX_FLAGS] = 0x22,
++		[IEEE80211_RADIOTAP_RTS_RETRIES] = 0x11,
++		[IEEE80211_RADIOTAP_DATA_RETRIES] = 0x11,
++		/*
++		 * add more here as they are defined in
++		 * include/net/ieee80211_radiotap.h
++		 */
++	};
++
++	/*
++	 * for every radiotap entry we can at
++	 * least skip (by knowing the length)...
++	 */
++
++	while (iterator->arg_index < sizeof(rt_sizes)) {
++		int hit = 0;
++		int pad;
++
++		if (!(iterator->bitmap_shifter & 1))
++			goto next_entry; /* arg not present */
++
++		/*
++		 * arg is present, account for alignment padding
++		 *  8-bit args can be at any alignment
++		 * 16-bit args must start on 16-bit boundary
++		 * 32-bit args must start on 32-bit boundary
++		 * 64-bit args must start on 64-bit boundary
++		 *
++		 * note that total arg size can differ from alignment of
++		 * elements inside arg, so we use upper nybble of length
++		 * table to base alignment on
++		 *
++		 * also note: these alignments are ** relative to the
++		 * start of the radiotap header **.  There is no guarantee
++		 * that the radiotap header itself is aligned on any
++		 * kind of boundary.
++		 *
++		 * the above is why get_unaligned() is used to dereference
++		 * multibyte elements from the radiotap area
++		 */
++
++		pad = (((ulong)iterator->arg) -
++			((ulong)iterator->rtheader)) &
++			((rt_sizes[iterator->arg_index] >> 4) - 1);
++
++		if (pad)
++			iterator->arg +=
++				(rt_sizes[iterator->arg_index] >> 4) - pad;
++
++		/*
++		 * this is what we will return to user, but we need to
++		 * move on first so next call has something fresh to test
++		 */
++		iterator->this_arg_index = iterator->arg_index;
++		iterator->this_arg = iterator->arg;
++		hit = 1;
++
++		/* internally move on the size of this arg */
++		iterator->arg += rt_sizes[iterator->arg_index] & 0x0f;
++
++		/*
++		 * check for insanity where we are given a bitmap that
++		 * claims to have more arg content than the length of the
++		 * radiotap section.  We will normally end up equalling this
++		 * max_length on the last arg, never exceeding it.
++		 */
++
++		if (((ulong)iterator->arg - (ulong)iterator->rtheader) >
++		    iterator->max_length)
++			return -EINVAL;
++
++	next_entry:
++		iterator->arg_index++;
++		if (unlikely((iterator->arg_index & 31) == 0)) {
++			/* completed current u32 bitmap */
++			if (iterator->bitmap_shifter & 1) {
++				/* b31 was set, there is more */
++				/* move to next u32 bitmap */
++				iterator->bitmap_shifter = le32_to_cpu(
++					get_unaligned(iterator->next_bitmap));
++				iterator->next_bitmap++;
++			} else
++				/* no more bitmaps: end */
++				iterator->arg_index = sizeof(rt_sizes);
++		} else /* just try the next bit */
++			iterator->bitmap_shifter >>= 1;
++
++		/* if we found a valid arg earlier, return it now */
++		if (hit)
++			return 0;
++	}
++
++	/* we don't know how to handle any more args, we're done */
++	return -ENOENT;
++}
++EXPORT_SYMBOL(ieee80211_radiotap_iterator_next);

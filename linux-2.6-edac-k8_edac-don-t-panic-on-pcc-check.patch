@@ -1,0 +1,37 @@
+From: Aristeu Rozanski <arozansk@redhat.com>
+Subject: [PATCH RHEL5.1] k8_edac: don't panic on PCC check
+Date: Mon, 4 Jun 2007 10:16:27 -0400
+Bugzilla: 237950
+Message-Id: <20070604141627.GB31131@redhat.com>
+Changelog: [edac] k8_edac: don't panic on PCC check
+
+
+Processor Context Corrupt check (PCC) is part of the generic machine
+check infrastructure and it defines that the check handler doesn't has
+enough information to resume the instruction stream. Currently, the EDAC
+layer checks for errors using polling and panics if PCC bit is set. The
+problem is that PCC bit doesn't has the same meaning if read outside a
+machine check handler.
+This patch makes k8_edac driver to print a warning instead of calling 
+panic(). IBM is hitting this problem while using kdump in BZ#237950. 
+This problem has been discussed on:
+	http://sourceforge.net/mailarchive/message.php?msg_id=461B2D2C.40301%40in.ibm.com
+	and
+	http://sourceforge.net/mailarchive/forum.php?thread_name=20070424100935.GA3039%40in.ibm.com&forum_name=bluesmoke-devel
+And it was commited to bluesmoke CVS (k8_edac is not upstream yet):
+	http://bluesmoke.cvs.sourceforge.net/bluesmoke/bluesmoke/edac/patches/driver-edac-new-k8-rev-f.patch?r1=1.1.2.7&r2=1.1.2.8&pathrev=edac
+
+Please ACK
+
+--- linux-2.6.18.noarch.orig/drivers/edac/k8_edac.c	2007-05-07 15:39:45.000000000 -0400
++++ linux-2.6.18.noarch/drivers/edac/k8_edac.c	2007-05-07 15:49:39.000000000 -0400
+@@ -1750,7 +1750,7 @@
+ 	}
+ 
+ 	if (regs->nbsh & BIT(25))
+-		panic("MC%d: processor context corrupt", mci->mc_idx);
++		k8_mc_printk(mci, KERN_CRIT, "processor context corrupt\n");
+ 
+ 	return 1;
+ }
+

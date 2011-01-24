@@ -17,11 +17,10 @@
 
 #include <asm/system.h>
 #include <asm/paca.h>
-#include <asm/firmware.h>
 #include <asm/iseries/it_lp_queue.h>
 #include <asm/iseries/hv_lp_event.h>
 #include <asm/iseries/hv_call_event.h>
-#include "it_lp_naca.h"
+#include <asm/iseries/it_lp_naca.h>
 
 /*
  * The LpQueue is used to pass event data from the hypervisor to
@@ -117,11 +116,10 @@ static void hvlpevent_clear_valid(struct HvLpEvent * event)
 	hvlpevent_invalidate(event);
 }
 
-void process_hvlpevents(void)
+void process_hvlpevents(struct pt_regs *regs)
 {
 	struct HvLpEvent * event;
 
- restart:
 	/* If we have recursed, just return */
 	if (!spin_trylock(&hvlpevent_queue.hq_lock))
 		return;
@@ -146,21 +144,9 @@ void process_hvlpevents(void)
 				__get_cpu_var(hvlpevent_counts)[event->xType]++;
 			if (event->xType < HvLpEvent_Type_NumTypes &&
 					lpEventHandler[event->xType])
-				lpEventHandler[event->xType](event);
-			else {
-				u8 type = event->xType;
-
-				/*
-				 * Don't printk in the spinlock as printk
-				 * may require ack events form the HV to send
-				 * any characters there.
-				 */
-				hvlpevent_clear_valid(event);
-				spin_unlock(&hvlpevent_queue.hq_lock);
-				printk(KERN_INFO
-					"Unexpected Lp Event type=%d\n", type);
-				goto restart;
-			}
+				lpEventHandler[event->xType](event, regs);
+			else
+				printk(KERN_INFO "Unexpected Lp Event type=%d\n", event->xType );
 
 			hvlpevent_clear_valid(event);
 		} else if (hvlpevent_queue.hq_overflow_pending)
@@ -195,7 +181,7 @@ static int set_spread_lpevents(char *str)
 }
 __setup("spread_lpevents=", set_spread_lpevents);
 
-void __init setup_hvlpevent_queue(void)
+void setup_hvlpevent_queue(void)
 {
 	void *eventStack;
 
@@ -239,7 +225,7 @@ int HvLpEvent_unregisterHandler(HvLpEvent_Type eventType)
 			 * other CPUs, and that the deleted handler isn't
 			 * still running on another CPU when we return.
 			 */
-			synchronize_sched();
+			synchronize_rcu();
 			return 0;
 		}
 	}
@@ -321,7 +307,7 @@ static int proc_lpevents_open(struct inode *inode, struct file *file)
 	return single_open(file, proc_lpevents_show, NULL);
 }
 
-static const struct file_operations proc_lpevents_operations = {
+static struct file_operations proc_lpevents_operations = {
 	.open		= proc_lpevents_open,
 	.read		= seq_read,
 	.llseek		= seq_lseek,
@@ -330,11 +316,12 @@ static const struct file_operations proc_lpevents_operations = {
 
 static int __init proc_lpevents_init(void)
 {
-	if (!firmware_has_feature(FW_FEATURE_ISERIES))
-		return 0;
+	struct proc_dir_entry *e;
 
-	proc_create("iSeries/lpevents", S_IFREG|S_IRUGO, NULL,
-		    &proc_lpevents_operations);
+	e = create_proc_entry("iSeries/lpevents", S_IFREG|S_IRUGO, NULL);
+	if (e)
+		e->proc_fops = &proc_lpevents_operations;
+
 	return 0;
 }
 __initcall(proc_lpevents_init);

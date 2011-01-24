@@ -22,20 +22,25 @@ enum raw1394_iso_state { RAW1394_ISO_INACTIVE = 0,
 struct file_info {
         struct list_head list;
 
-	struct mutex state_mutex;
         enum { opened, initialized, connected } state;
         unsigned int protocol_version;
 
         struct hpsb_host *host;
 
-        struct list_head req_pending;	/* protected by reqlists_lock */
-        struct list_head req_complete;	/* protected by reqlists_lock */
+        struct list_head req_pending;
+        struct list_head req_complete;
+        struct semaphore complete_sem;
         spinlock_t reqlists_lock;
-        wait_queue_head_t wait_complete;
+        wait_queue_head_t poll_wait_complete;
 
-        struct list_head addr_list;	/* protected by host_info_lock */
+        struct list_head addr_list;
 
         u8 __user *fcp_buffer;
+
+	/* old ISO API */
+        u64 listen_channels;
+        quadlet_t __user *iso_buffer;
+        size_t iso_buffer_length;
 
         u8 notification; /* (busreset-notification) RAW1394_NOTIFY_OFF/ON */
 
@@ -59,7 +64,7 @@ struct arm_addr {
         u8     client_transactions;
         u64    recvb;
         u16    rec_length;
-        u8     *addr_space_buffer; /* accessed by read/write/lock requests */
+        u8     *addr_space_buffer; /* accessed by read/write/lock */
 };
 
 struct pending_request {
@@ -75,7 +80,7 @@ struct pending_request {
 struct host_info {
         struct list_head list;
         struct hpsb_host *host;
-        struct list_head file_info_list;  /* protected by host_info_lock */
+        struct list_head file_info_list;
 };
 
 #endif  /* IEEE1394_RAW1394_PRIVATE_H */

@@ -1,0 +1,63 @@
+From: Peter Staubach <staubach@redhat.com>
+Date: Tue, 21 Apr 2009 14:07:40 -0400
+Subject: [nfs] large writes rejected when sec=krb5i/p specified
+Message-id: 49EE0B6C.6050406@redhat.com
+O-Subject: [RHEL-5.4 PATCH] BZ486756 nfs server rejecting large writes when sec=krb5i/p is specified
+Bugzilla: 486756
+RH-Acked-by: Jeff Layton <jlayton@redhat.com>
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+
+Hi.
+
+Attached is a patch to address bz486756, "nfs server rejecting
+large writes when sec=krb5i/p is specified".  This is a problem
+which was introduced by some slightly overzealous checking to
+ensure that the amount of data in an NFS WRITE request matches
+the amount of data that should be contained in the NFS WRITE
+request.  The original checking worked for AUTH_SYS authenticated
+requests, but does not work for RPCSEC_GSS authenticated requests
+because they pad the request differently.
+
+This was tested using the Connectathon testsuite to generate
+WRITE requests against the modified server.
+
+    Thanx...
+
+       ps
+
+diff --git a/fs/nfsd/nfs3xdr.c b/fs/nfsd/nfs3xdr.c
+index 57d91b0..a35ab34 100644
+--- a/fs/nfsd/nfs3xdr.c
++++ b/fs/nfsd/nfs3xdr.c
+@@ -401,8 +401,12 @@ nfs3svc_decode_writeargs(struct svc_rqst *rqstp, u32 *p,
+ 	 * Round the length of the data which was specified up to
+ 	 * the next multiple of XDR units and then compare that
+ 	 * against the length which was actually received.
++	 *
++	 * Note that when RPCSEC/GSS (for example) is used, the
++	 * data buffer can be padded so dlen might be larger
++	 * than required.  It must never be smaller.
+ 	 */
+-	if (dlen != XDR_QUADLEN(len) * 4)
++	if (dlen < XDR_QUADLEN(len) * 4)
+ 		return 0;
+ 
+ 	if (args->count > NFSSVC_MAXBLKSIZE) {
+diff --git a/fs/nfsd/nfsxdr.c b/fs/nfsd/nfsxdr.c
+index 8d8c85a..913e161 100644
+--- a/fs/nfsd/nfsxdr.c
++++ b/fs/nfsd/nfsxdr.c
+@@ -304,8 +304,12 @@ nfssvc_decode_writeargs(struct svc_rqst *rqstp, u32 *p,
+ 	 * Round the length of the data which was specified up to
+ 	 * the next multiple of XDR units and then compare that
+ 	 * against the length which was actually received.
++	 *
++	 * Note that when RPCSEC/GSS (for example) is used, the
++	 * data buffer can be padded so dlen might be larger
++	 * than required.  It must never be smaller.
+ 	 */
+-	if (dlen != XDR_QUADLEN(len) * 4)
++	if (dlen < XDR_QUADLEN(len) * 4)
+ 		return 0;
+ 
+ 	args->vec[0].iov_base = (void*)p;

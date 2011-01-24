@@ -1,7 +1,6 @@
 /* ld script to make m68k Linux kernel */
 
 #include <asm-generic/vmlinux.lds.h>
-#include <asm/page.h>
 
 OUTPUT_FORMAT("elf32-m68k", "elf32-m68k", "elf32-m68k")
 OUTPUT_ARCH(m68k)
@@ -12,15 +11,12 @@ SECTIONS
   . = 0x1000;
   _text = .;			/* Text and read-only data */
   .text : {
-	HEAD_TEXT
-	TEXT_TEXT
+	*(.text)
 	SCHED_TEXT
 	LOCK_TEXT
 	*(.fixup)
 	*(.gnu.warning)
 	} :text = 0x4e75
-
-  _etext = .;			/* End of text section */
 
   . = ALIGN(16);		/* Exception table */
   __start___ex_table = .;
@@ -29,58 +25,65 @@ SECTIONS
 
   RODATA
 
+  _etext = .;			/* End of text section */
+
   .data : {			/* Data */
-	DATA_DATA
+	*(.data)
 	CONSTRUCTORS
 	}
 
-  . = ALIGN(16);
-  .data.cacheline_aligned : { *(.data.cacheline_aligned) }
-
   .bss : { *(.bss) }		/* BSS */
+
+  . = ALIGN(16);
+  .data.cacheline_aligned : { *(.data.cacheline_aligned) } :data
 
   _edata = .;			/* End of data section */
 
   /* will be freed after init */
-  . = ALIGN(PAGE_SIZE);		/* Init code and data */
+  . = ALIGN(4096);		/* Init code and data */
   __init_begin = .;
   .init.text : {
 	_sinittext = .;
-	INIT_TEXT
+	*(.init.text)
 	_einittext = .;
-  } :data
-  .init.data : { INIT_DATA }
+  }
+  .init.data : { *(.init.data) }
   . = ALIGN(16);
   __setup_start = .;
   .init.setup : { *(.init.setup) }
   __setup_end = .;
   __initcall_start = .;
   .initcall.init : {
-	INITCALLS
+	*(.initcall1.init)
+	*(.initcall2.init)
+	*(.initcall3.init)
+	*(.initcall4.init)
+	*(.initcall5.init)
+	*(.initcall6.init)
+	*(.initcall7.init)
   }
   __initcall_end = .;
   __con_initcall_start = .;
   .con_initcall.init : { *(.con_initcall.init) }
   __con_initcall_end = .;
-  .m68k_fixup : {
-	__start_fixup = .;
-	*(.m68k_fixup)
-	__stop_fixup = .;
-  }
   SECURITY_INIT
-#ifdef CONFIG_BLK_DEV_INITRD
   . = ALIGN(8192);
   __initramfs_start = .;
   .init.ramfs : { *(.init.ramfs) }
   __initramfs_end = .;
-#endif
-  NOTES
   . = ALIGN(8192);
   __init_end = .;
 
   .data.init_task : { *(.data.init_task) }	/* The initial task and kernel stack */
 
   _end = . ;
+
+  /* Sections to be discarded */
+  /DISCARD/ : {
+	*(.exit.text)
+	*(.exit.data)
+	*(.exitcall.exit)
+	}
 
   /* Stabs debugging sections.  */
   .stab 0 : { *(.stab) }
@@ -90,7 +93,4 @@ SECTIONS
   .stab.index 0 : { *(.stab.index) }
   .stab.indexstr 0 : { *(.stab.indexstr) }
   .comment 0 : { *(.comment) }
-
-  /* Sections to be discarded */
-  DISCARDS
 }

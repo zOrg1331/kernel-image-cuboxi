@@ -1,0 +1,42 @@
+From: David Milburn <dmilburn@redhat.com>
+Date: Mon, 6 Oct 2008 12:00:51 -0500
+Subject: [ata] libata: ata_piix sata/ide combined mode fix
+Message-id: 20081006170051.GA15138@dhcp-210.hsv.redhat.com
+O-Subject: [RHEL5.3 PATCH] libata: ata_piix sata/ide combined mode fix
+Bugzilla: 463716
+RH-Acked-by: Alan Cox <alan@redhat.com>
+
+Intel has reported a crash during initialization of the ata_piix
+driver after changing the BIOS setting for the sata controller
+from ahci to ide mode. I was able to reproduce this problem, the
+ata_piix driver is recognizing that a port is busy since the
+ide driver is controlling the port. And RHEL5 sets the ata port
+operations for this port to a set of dummy ops in ata_init_legacy_host.
+But, during piix_init_one in between ata_pci_sff_prepare_host and
+ata_pci_sff_activate_host the ata_piix driver is resetting the
+ops for this port in piix_init_sidpr eventually causing a crash
+in ata_sff_check_status since the registers have not been mapped
+in for the busy port. This patch is specific to RHEL5 in order to
+support combined mode where one port maybe driver by libata and
+another port driven by drivers/ide. This patch has been verified
+on -117.el5 internally and by Intel. This resolves BZ 463716
+and an exception has been requested. Please review and ack.
+
+Thanks,
+David
+
+diff --git a/drivers/ata/ata_piix.c b/drivers/ata/ata_piix.c
+index f8ce185..5a8e371 100644
+--- a/drivers/ata/ata_piix.c
++++ b/drivers/ata/ata_piix.c
+@@ -1368,6 +1368,10 @@ static void __devinit piix_init_sidpr(struct ata_host *host)
+ 		if (hpriv->map[i] == IDE)
+ 			return;
+ 
++	if (ata_port_is_dummy(host->ports[0]) ||
++	    ata_port_is_dummy(host->ports[1]))
++		return;
++
+ 	if (!(host->ports[0]->flags & PIIX_FLAG_SIDPR))
+ 		return;
+ 

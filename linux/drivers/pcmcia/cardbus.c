@@ -30,13 +30,17 @@
 #include <asm/irq.h>
 #include <asm/io.h>
 
+#define IN_CARD_SERVICES
 #include <pcmcia/cs_types.h>
 #include <pcmcia/ss.h>
 #include <pcmcia/cs.h>
+#include <pcmcia/bulkmem.h>
 #include <pcmcia/cistpl.h>
 #include "cs_internal.h"
 
 /*====================================================================*/
+
+#define FIND_FIRST_BIT(n)	((n) - ((n) & ((n)-1)))
 
 /* Offsets in the Expansion ROM Image Header */
 #define ROM_SIGNATURE		0x0000	/* 2 bytes */
@@ -134,23 +138,20 @@ int read_cb_mem(struct pcmcia_socket * s, int space, u_int addr, u_int len, void
 
 	cs_dbg(s, 3, "read_cb_mem(%d, %#x, %u)\n", space, addr, len);
 
-	dev = pci_get_slot(s->cb_dev->subordinate, 0);
+	dev = pci_find_slot(s->cb_dev->subordinate->number, 0);
 	if (!dev)
 		goto fail;
 
 	/* Config space? */
 	if (space == 0) {
 		if (addr + len > 0x100)
-			goto failput;
+			goto fail;
 		for (; len; addr++, ptr++, len--)
 			pci_read_config_byte(dev, addr, ptr);
 		return 0;
 	}
 
 	res = dev->resource + space - 1;
-
-	pci_dev_put(dev);
-
 	if (!res->flags)
 		goto fail;
 
@@ -169,8 +170,6 @@ int read_cb_mem(struct pcmcia_socket * s, int space, u_int addr, u_int len, void
 	memcpy_fromio(ptr, s->cb_cis_virt + addr, len);
 	return 0;
 
-failput:
-	pci_dev_put(dev);
 fail:
 	memset(ptr, 0xff, len);
 	return -1;
@@ -207,14 +206,14 @@ static void cardbus_assign_irqs(struct pci_bus *bus, int irq)
 	}
 }
 
-int __ref cb_alloc(struct pcmcia_socket * s)
+int cb_alloc(struct pcmcia_socket * s)
 {
 	struct pci_bus *bus = s->cb_dev->subordinate;
 	struct pci_dev *dev;
 	unsigned int max, pass;
 
 	s->functions = pci_scan_slot(bus, PCI_DEVFN(0, 0));
-	pci_fixup_cardbus(bus);
+//	pcibios_fixup_bus(bus);
 
 	max = bus->secondary;
 	for (pass = 0; pass < 2; pass++)
@@ -238,7 +237,7 @@ int __ref cb_alloc(struct pcmcia_socket * s)
 	pci_bus_add_devices(bus);
 
 	s->irq.AssignedIRQ = s->pci_irq;
-	return 0;
+	return CS_SUCCESS;
 }
 
 void cb_free(struct pcmcia_socket * s)

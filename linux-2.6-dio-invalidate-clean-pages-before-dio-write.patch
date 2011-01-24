@@ -1,0 +1,142 @@
+From: Jeff Moyer <jmoyer@redhat.com>
+Subject: [rhel5 patch] dio: invalidate clean pages before dio write
+Date: Fri, 01 Jun 2007 14:36:06 -0400
+Bugzilla: 232715
+Message-Id: <x491wgv4j55.fsf@segfault.boston.devel.redhat.com>
+Changelog: [dio] invalidate clean pages before dio write
+
+
+Hi,
+
+The attached upstream patch addresses bugzilla bug #232715: fix double
+AIO completion due to invalidate_inode_pages2 failure.  We ran into
+this bug in our test environment since we import the autotest tests,
+and Zach added a test for this particular bug into autotest.  Without
+the patch, the system will oops.  With the patch applied, I've
+successfully run the test dozens of times without failure.  This patch
+has been in my dio test kernels for some time, and so undergoes the
+usual pounding associated therewith (aio-stress runs, fio, and
+autotest).
+
+Comments, as always, are encouraged.
+
+Thanks!
+
+Jeff
+
+To: linux-aio@kvack.org, linux-kernel@vger.kernel.org
+Cc: Jeff Moyer <jmoyer@redhat.com>, Andrew Morton <akpm@linux-foundation.org>,
+        Linus Torvalds <torvalds@linux-foundation.org>
+Message-Id: <20070309223557.29256.4572.sendpatchset@tetsuo.zabbo.net>
+X-RedHat-Spam-Score: -100 
+
+dio: invalidate clean pages before dio write
+
+This patch fixes a user-triggerable oops that was reported by Leonid Ananiev as
+archived at http://lkml.org/lkml/2007/2/8/337.
+
+dio writes invalidate clean pages that intersect the written region so that
+subsequent buffered reads go to disk to read the new data.  If this fails the
+interface tries to tell the caller that the cache is inconsistent by returning
+EIO.
+
+Before this patch we had the problem where this invalidation failure would
+clobber -EIOCBQUEUED as it made its way from fs/direct-io.c to fs/aio.c.  Both
+fs/aio.c and bio completion call aio_complete() and we reference freed memory,
+usually oopsing.
+
+This patch addresses this problem by invalidating before the write so that we
+can cleanly return -EIO before ->direct_IO() has had a chance to return
+-EIOCBQUEUED.
+
+There is a compromise here.  During the dio write we can fault in mmap()ed
+pages which intersect the written range with get_user_pages() if the user
+provided them for the source buffer.  This is a crazy thing to do, but we can
+make it mostly work in most cases by trying the invalidation again.   The
+compromise is that we won't return an error if this second invalidation fails
+if it's an AIO write and we have -EIOCBQUEUED.
+
+This was tested by having two processes race performing large O_DIRECT and
+buffered ordered writes.  Within minutes ext3 would see a race between
+ext3_releasepage() and jbd holding a reference on ordered data buffers and
+would cause invalidation to fail, panicing the box.  The test can be found in
+the 'aio_dio_bugs' test group in test.kernel.org/autotest.  After this patch
+the test passes.
+
+Signed-off-by: Zach Brown <zach.brown@oracle.com>
+---
+
+ mm/filemap.c |   48 ++++++++++++++++++++++++++++++++++++------------
+ 1 file changed, 36 insertions(+), 12 deletions(-)
+
+--- a/mm/filemap.c	Wed Feb 28 06:00:13 2007 +0000
++++ b/mm/filemap.c	Thu Mar 08 17:48:58 2007 -0800
+@@ -2379,7 +2379,8 @@ generic_file_direct_IO(int rw, struct ki
+ 	struct file *file = iocb->ki_filp;
+ 	struct address_space *mapping = file->f_mapping;
+ 	ssize_t retval;
+-	size_t write_len = 0;
++	size_t write_len;
++	pgoff_t end = 0; /* silence gcc */
+ 
+ 	/*
+ 	 * If it's a write, unmap all mmappings of the file up-front.  This
+@@ -2388,23 +2389,46 @@ generic_file_direct_IO(int rw, struct ki
+ 	 */
+ 	if (rw == WRITE) {
+ 		write_len = iov_length(iov, nr_segs);
++		end = (offset + write_len - 1) >> PAGE_CACHE_SHIFT;
+ 	       	if (mapping_mapped(mapping))
+ 			unmap_mapping_range(mapping, offset, write_len, 0);
+ 	}
+ 
+ 	retval = filemap_write_and_wait(mapping);
+-	if (retval == 0) {
+-		retval = mapping->a_ops->direct_IO(rw, iocb, iov,
+-						offset, nr_segs);
+-		if (rw == WRITE && mapping->nrpages) {
+-			pgoff_t end = (offset + write_len - 1)
+-						>> PAGE_CACHE_SHIFT;
+-			int err = invalidate_inode_pages2_range(mapping,
++	if (retval)
++		goto out;
++
++	/*
++	 * After a write we want buffered reads to be sure to go to disk to get
++	 * the new data.  We invalidate clean cached page from the region we're
++	 * about to write.  We do this *before* the write so that we can return
++	 * -EIO without clobbering -EIOCBQUEUED from ->direct_IO().
++	 */
++	if (rw == WRITE && mapping->nrpages) {
++		retval = invalidate_inode_pages2_range(mapping,
+ 					offset >> PAGE_CACHE_SHIFT, end);
+-			if (err)
+-				retval = err;
+-		}
+-	}
++		if (retval)
++			goto out;
++	}
++
++	retval = mapping->a_ops->direct_IO(rw, iocb, iov, offset, nr_segs);
++	if (retval)
++		goto out;
++
++	/* 
++	 * Finally, try again to invalidate clean pages which might have been
++	 * faulted in by get_user_pages() if the source of the write was an
++	 * mmap()ed region of the file we're writing.  That's a pretty crazy
++	 * thing to do, so we don't support it 100%.  If this invalidation
++	 * fails and we have -EIOCBQUEUED we ignore the failure.
++	 */
++	if (rw == WRITE && mapping->nrpages) {
++		int err = invalidate_inode_pages2_range(mapping,
++					      offset >> PAGE_CACHE_SHIFT, end);
++		if (err && retval >= 0)
++			retval = err;
++	}
++out:
+ 	return retval;
+ }
+ 
+

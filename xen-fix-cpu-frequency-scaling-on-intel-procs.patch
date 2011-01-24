@@ -1,0 +1,40 @@
+From: Christopher Lalancette <clalance@redhat.com>
+Date: Thu, 7 Jan 2010 20:21:17 -0500
+Subject: [xen] fix cpu frequency scaling on Intel procs
+Message-id: <4B46423D.3060302@redhat.com>
+Patchwork-id: 22345
+O-Subject: [RHEL5.5 PATCH Xen]: Fix cpu frequency scaling on Intel
+Bugzilla: 553324
+RH-Acked-by: Jarod Wilson <jarod@redhat.com>
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+RH-Acked-by: Don Dutile <ddutile@redhat.com>
+
+All,
+     The patch I submitted to fix BZ 502826 broke CPU frequency scaling
+on Xen on Intel hosts.  Thanks to Matthew Garrett who pointed out that
+I mistakenly masked out the EST flag from dom0, meaning that the dom0
+kernel now thinks that CPU frequency scaling is not supported.
+     The very simple fix is to stop masking this bit.  This part of the
+patch is *not* upstream; I suspect upstream Xen doesn't have/doesn't
+notice this problem because frequency scaling is done in the
+hypervisor instead of the dom0, but I haven't confirmed.
+     Tested by me.  Before this patch, frequency scaling on Intel
+hosts would not start.  After this patch, I was able to start frequency
+scaling and see the frequency change during load.  This should resolve
+BZ 553324.  Please review and ACK.
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/arch/x86/traps.c b/arch/x86/traps.c
+index ffc6267..4afc4a1 100644
+--- a/arch/x86/traps.c
++++ b/arch/x86/traps.c
+@@ -634,7 +634,6 @@ static int emulate_forced_invalid_op(struct cpu_user_regs *regs)
+         clear_bit(X86_FEATURE_DSCPL % 32, &c);
+         clear_bit(X86_FEATURE_VMXE % 32, &c);
+         clear_bit(X86_FEATURE_SMXE % 32, &c);
+-        clear_bit(X86_FEATURE_EST % 32, &c);
+         clear_bit(X86_FEATURE_TM2 % 32, &c);
+         if ( is_pv_32bit_vcpu(current) )
+             clear_bit(X86_FEATURE_CX16 % 32, &c);

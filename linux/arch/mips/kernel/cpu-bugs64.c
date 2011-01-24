@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2003, 2004, 2007  Maciej W. Rozycki
+ * Copyright (C) 2003, 2004  Maciej W. Rozycki
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -18,15 +18,6 @@
 #include <asm/mipsregs.h>
 #include <asm/system.h>
 
-static char bug64hit[] __initdata =
-	"reliable operation impossible!\n%s";
-static char nowar[] __initdata =
-	"Please report to <linux-mips@linux-mips.org>.";
-static char r4kwar[] __initdata =
-	"Enable CPU_R4000_WORKAROUNDS to rectify.";
-static char daddiwar[] __initdata =
-	"Enable CPU_DADDI_WORKAROUNDS to rectify.";
-
 static inline void align_mod(const int align, const int mod)
 {
 	asm volatile(
@@ -38,7 +29,7 @@ static inline void align_mod(const int align, const int mod)
 		".endr\n\t"
 		".set	pop"
 		:
-		: GCC_IMM_ASM() (align), GCC_IMM_ASM() (mod));
+		: "n" (align), "n" (mod));
 }
 
 static inline void mult_sh_align_mod(long *v1, long *v2, long *w,
@@ -164,10 +155,16 @@ static inline void check_mult_sh(void)
 	}
 
 	printk("no.\n");
-	panic(bug64hit, !R4000_WAR ? r4kwar : nowar);
+	panic("Reliable operation impossible!\n"
+#ifndef CONFIG_CPU_R4000
+	      "Configure for R4000 to enable the workaround."
+#else
+	      "Please report to <linux-mips@linux-mips.org>."
+#endif
+	      );
 }
 
-static volatile int daddi_ov __cpuinitdata;
+static volatile int daddi_ov __initdata = 0;
 
 asmlinkage void __init do_daddi_ov(struct pt_regs *regs)
 {
@@ -236,10 +233,14 @@ static inline void check_daddi(void)
 	}
 
 	printk("no.\n");
-	panic(bug64hit, !DADDI_WAR ? daddiwar : nowar);
+	panic("Reliable operation impossible!\n"
+#if !defined(CONFIG_CPU_R4000) && !defined(CONFIG_CPU_R4400)
+	      "Configure for R4000 or R4400 to enable the workaround."
+#else
+	      "Please report to <linux-mips@linux-mips.org>."
+#endif
+	      );
 }
-
-int daddiu_bug __cpuinitdata = -1;
 
 static inline void check_daddiu(void)
 {
@@ -280,9 +281,7 @@ static inline void check_daddiu(void)
 		: "=&r" (v), "=&r" (w), "=&r" (tmp)
 		: "I" (0xffffffffffffdb9aUL), "I" (0x1234));
 
-	daddiu_bug = v != w;
-
-	if (!daddiu_bug) {
+	if (v == w) {
 		printk("no.\n");
 		return;
 	}
@@ -304,16 +303,18 @@ static inline void check_daddiu(void)
 	}
 
 	printk("no.\n");
-	panic(bug64hit, !DADDI_WAR ? daddiwar : nowar);
-}
-
-void __init check_bugs64_early(void)
-{
-	check_mult_sh();
-	check_daddiu();
+	panic("Reliable operation impossible!\n"
+#if !defined(CONFIG_CPU_R4000) && !defined(CONFIG_CPU_R4400)
+	      "Configure for R4000 or R4400 to enable the workaround."
+#else
+	      "Please report to <linux-mips@linux-mips.org>."
+#endif
+	      );
 }
 
 void __init check_bugs64(void)
 {
+	check_mult_sh();
 	check_daddi();
+	check_daddiu();
 }

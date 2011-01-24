@@ -290,7 +290,7 @@ static void adi_poll(struct gameport *gameport)
 
 static int adi_open(struct input_dev *dev)
 {
-	struct adi_port *port = input_get_drvdata(dev);
+	struct adi_port *port = dev->private;
 
 	gameport_start_polling(port->gameport);
 	return 0;
@@ -302,7 +302,7 @@ static int adi_open(struct input_dev *dev)
 
 static void adi_close(struct input_dev *dev)
 {
-	struct adi_port *port = input_get_drvdata(dev);
+	struct adi_port *port = dev->private;
 
 	gameport_stop_polling(port->gameport);
 }
@@ -424,14 +424,13 @@ static int adi_init_input(struct adi *adi, struct adi_port *port, int half)
 	input_dev->id.vendor = GAMEPORT_ID_VENDOR_LOGITECH;
 	input_dev->id.product = adi->id;
 	input_dev->id.version = 0x0100;
-	input_dev->dev.parent = &port->gameport->dev;
-
-	input_set_drvdata(input_dev, port);
+	input_dev->cdev.dev = &port->gameport->dev;
+	input_dev->private = port;
 
 	input_dev->open = adi_open;
 	input_dev->close = adi_close;
 
-	input_dev->evbit[0] = BIT_MASK(EV_KEY) | BIT_MASK(EV_ABS);
+	input_dev->evbit[0] = BIT(EV_KEY) | BIT(EV_ABS);
 
 	for (i = 0; i < adi->axes10 + adi->axes8 + (adi->hats + (adi->pad != -1)) * 2; i++)
 		set_bit(adi->abs[i], input_dev->absbit);
@@ -522,19 +521,11 @@ static int adi_connect(struct gameport *gameport, struct gameport_driver *drv)
 	for (i = 0; i < 2; i++)
 		if (port->adi[i].length > 0) {
 			adi_init_center(port->adi + i);
-			err = input_register_device(port->adi[i].dev);
-			if (err)
-				goto fail3;
+			input_register_device(port->adi[i].dev);
 		}
 
 	return 0;
 
- fail3: while (--i >= 0) {
-		if (port->adi[i].length > 0) {
-			input_unregister_device(port->adi[i].dev);
-			port->adi[i].dev = NULL;
-		}
-	}
  fail2:	for (i = 0; i < 2; i++)
 		if (port->adi[i].dev)
 			input_free_device(port->adi[i].dev);
@@ -572,7 +563,8 @@ static struct gameport_driver adi_drv = {
 
 static int __init adi_init(void)
 {
-	return gameport_register_driver(&adi_drv);
+	gameport_register_driver(&adi_drv);
+	return 0;
 }
 
 static void __exit adi_exit(void)

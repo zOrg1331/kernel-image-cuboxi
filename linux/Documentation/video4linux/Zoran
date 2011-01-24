@@ -144,7 +144,7 @@ tv broadcast formats all aver the world.
 
 The CCIR defines parameters needed for broadcasting the signal.
 The CCIR has defined different standards: A,B,D,E,F,G,D,H,I,K,K1,L,M,N,...
-The CCIR says not much about the colorsystem used !!!
+The CCIR says not much about about the colorsystem used !!!
 And talking about a colorsystem says not to much about how it is broadcast.
 
 The CCIR standards A,E,F are not used any more.
@@ -242,7 +242,7 @@ can generate: PAL , NTSC , SECAM
 
 Conexant bt866 TV encoder
 is used in AVS6EYES, and
-can generate: NTSC/PAL, PALÂ­M, PALÂ­N
+can generate: NTSC/PAL, PAL­M, PAL­N
 
 The adv717x, should be able to produce PAL N. But you find nothing PAL N
 specific in the registers. Seem that you have to reuse a other standard
@@ -339,9 +339,9 @@ Information - video4linux/mjpeg extensions:
 (also see below)
 
 Information - video4linux2:
-http://linuxtv.org
-http://v4l2spec.bytesex.org/
+http://www.thedirks.org/v4l2/
 /usr/include/linux/videodev2.h
+http://www.bytesex.org/v4l/
 
 More information on the video4linux/mjpeg extensions, by Serguei
 Miridonovi and Rainer Johanni:
@@ -401,7 +401,8 @@ Additional notes for software developers:
    first set the correct norm. Well, it seems logically correct: TV
    standard is "more constant" for current country than geometry
    settings of a variety of TV capture cards which may work in ITU or
-   square pixel format.
+   square pixel format. Remember that users now can lock the norm to
+   avoid any ambiguity.
 --
 Please note that lavplay/lavrec are also included in the MJPEG-tools
 (http://mjpeg.sf.net/).

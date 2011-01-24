@@ -1,0 +1,98 @@
+From: Christopher Lalancette <clalance@redhat.com>
+Date: Wed, 2 Dec 2009 10:47:27 -0500
+Subject: [xen] fix SRAT check for discontiguous memory
+Message-id: <4B1645BF.3080308@redhat.com>
+Patchwork-id: 21645
+O-Subject: [RHEL5.5 PATCH Xen]: Fix SRAT check for discontiguous memory
+Bugzilla: 519225
+RH-Acked-by: Don Dutile <ddutile@redhat.com>
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+
+All,
+     Attached is a patch to fix a bug when booting the Xen hypervisor with numa=on.
+I think the upstream change says it best, so I'll just cut-n-paste it here:
+
+We currently compare the sum of the pages found in the SRAT table to
+the address of the highest memory page found via the e820 table to
+validate the SRAT. This is completely bogus if there's any kind of
+discontiguous memory, where the sum of the pages could be much smaller
+than the address of the highest page. I think all that's necessary is
+to validate that each usable memory range in the e820 is covered by an
+SRAT entry. This might not be the most efficient way to do it, but
+there are usually a relatively small number of entries on each side.
+
+This is a backport of xen-unstable c/s 20120 and 20136.  It worked in basic smoke
+testing on my NUMA platforms; I'm waiting to hear test results from the reporter
+to make sure it works on the problematic platform.
+
+This should resolve BZ 519225.  Please review and ACK.
+
+Signed-off-by: Don Zickus <dzickus@redhat.com>
+
+diff --git a/arch/x86/srat.c b/arch/x86/srat.c
+index ea462e2..ea1845d 100644
+--- a/arch/x86/srat.c
++++ b/arch/x86/srat.c
+@@ -17,6 +17,7 @@
+ #include <xen/nodemask.h>
+ #include <xen/acpi.h>
+ #include <xen/numa.h>
++#include <asm/e820.h>
+ #include <asm/page.h>
+ 
+ static struct acpi_table_slit *acpi_slit;
+@@ -217,23 +218,39 @@ acpi_numa_memory_affinity_init(struct acpi_table_memory_affinity *ma)
+ static int nodes_cover_memory(void)
+ {
+ 	int i;
+-	u64 pxmram, e820ram;
+ 
+-	pxmram = 0;
+-	for_each_node_mask(i, nodes_parsed) {
+-		u64 s = nodes[i].start >> PAGE_SHIFT;
+-		u64 e = nodes[i].end >> PAGE_SHIFT;
+-		pxmram += e - s;
+-	}
++	for (i = 0; i < e820.nr_map; i++) {
++		int j, found;
++		unsigned long long start, end;
++
++		if (e820.map[i].type != E820_RAM) {
++			continue;
++		}
++
++		start = e820.map[i].addr;
++		end = e820.map[i].addr + e820.map[i].size - 1;
+ 
+-	e820ram = max_page;
+-	/* We seem to lose 3 pages somewhere. Allow a bit of slack. */
+-	if ((long)(e820ram - pxmram) >= 1*1024*1024) {
+-		printk(KERN_ERR "SRAT: PXMs only cover %"PRIu64"MB of your %"
+-			PRIu64"MB e820 RAM. Not used.\n",
+-			(pxmram << PAGE_SHIFT) >> 20,
+-			(e820ram << PAGE_SHIFT) >> 20);
+-		return 0;
++		do {
++			found = 0;
++			for_each_node_mask(j, nodes_parsed)
++				if (start < nodes[j].end
++				    && end > nodes[j].start) {
++					if (start >= nodes[j].start) {
++						start = nodes[j].end;
++						found = 1;
++					}
++					if (end <= nodes[j].end) {
++						end = nodes[j].start;
++						found = 1;
++					}
++				}
++		} while (found && start < end);
++
++		if (start < end) {
++			printk(KERN_ERR "SRAT: No PXM for e820 range: "
++				"%016Lx - %016Lx\n", start, end);
++			return 0;
++		}
+ 	}
+ 	return 1;
+ }

@@ -1,0 +1,79 @@
+From: Dave Airlie <airlied@redhat.com>
+Date: Thu, 24 Jan 2008 10:48:52 +1000
+Subject: [misc] agp: add E7221 pci ids
+Message-id: 1201135733.3331.7.camel@clockmaker.usersys.redhat.com
+O-Subject: [RHEL5.2 PATCH] BZ#216722 Add E7221 pci ids to kernel
+Bugzilla: 216722
+
+BZ#
+
+Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+Acked-by: Alan Cox <alan@redhat.com>
+
+diff --git a/drivers/char/agp/intel-agp.c b/drivers/char/agp/intel-agp.c
+index 23e21ae..707279e 100644
+--- a/drivers/char/agp/intel-agp.c
++++ b/drivers/char/agp/intel-agp.c
+@@ -9,6 +9,8 @@
+ #include <linux/agp_backend.h>
+ #include "agp.h"
+ 
++#define PCI_DEVICE_ID_INTEL_E7221_HB        0x2588
++#define PCI_DEVICE_ID_INTEL_E7221_IG        0x258a
+ #define PCI_DEVICE_ID_INTEL_82946GZ_HB      0x2970
+ #define PCI_DEVICE_ID_INTEL_82946GZ_IG      0x2972
+ #define PCI_DEVICE_ID_INTEL_82965G_1_HB     0x2980
+@@ -499,7 +501,8 @@ static void intel_i830_init_gtt_entries(void)
+ 			break;
+ 		case I915_GMCH_GMS_STOLEN_48M:
+ 			/* Check it's really I915G */
+-			if (agp_bridge->dev->device == PCI_DEVICE_ID_INTEL_82915G_HB ||
++			if (agp_bridge->dev->device == PCI_DEVICE_ID_INTEL_E7221_HB ||
++			    agp_bridge->dev->device == PCI_DEVICE_ID_INTEL_82915G_HB ||
+ 			    agp_bridge->dev->device == PCI_DEVICE_ID_INTEL_82915GM_HB ||
+ 			    agp_bridge->dev->device == PCI_DEVICE_ID_INTEL_82945G_HB ||
+ 			    agp_bridge->dev->device == PCI_DEVICE_ID_INTEL_82945GM_HB ||
+@@ -511,7 +514,8 @@ static void intel_i830_init_gtt_entries(void)
+ 			break;
+ 		case I915_GMCH_GMS_STOLEN_64M:
+ 			/* Check it's really I915G */
+-			if (agp_bridge->dev->device == PCI_DEVICE_ID_INTEL_82915G_HB ||
++			if (agp_bridge->dev->device == PCI_DEVICE_ID_INTEL_E7221_HB ||
++			    agp_bridge->dev->device == PCI_DEVICE_ID_INTEL_82915G_HB ||
+ 			    agp_bridge->dev->device == PCI_DEVICE_ID_INTEL_82915GM_HB ||
+ 			    agp_bridge->dev->device == PCI_DEVICE_ID_INTEL_82945G_HB ||
+ 			    agp_bridge->dev->device == PCI_DEVICE_ID_INTEL_82945GM_HB ||
+@@ -1865,6 +1869,13 @@ static int __devinit agp_intel_probe(struct pci_dev *pdev,
+ 		bridge->driver = &intel_845_driver;
+ 		name = "i875";
+ 		break;
++	case PCI_DEVICE_ID_INTEL_E7221_HB:
++		if (find_i830(PCI_DEVICE_ID_INTEL_E7221_IG)) {
++			bridge->driver = &intel_915_driver;
++			name = "E7221 (i915)";
++		} else
++			bridge->driver = NULL;
++		break;
+ 	case PCI_DEVICE_ID_INTEL_82915G_HB:
+ 		if (find_i830(PCI_DEVICE_ID_INTEL_82915G_IG)) {
+ 			bridge->driver = &intel_915_driver;
+@@ -2122,6 +2133,7 @@ static struct pci_device_id agp_intel_pci_table[] = {
+ 	ID(PCI_DEVICE_ID_INTEL_82875_HB),
+ 	ID(PCI_DEVICE_ID_INTEL_7505_0),
+ 	ID(PCI_DEVICE_ID_INTEL_7205_0),
++	ID(PCI_DEVICE_ID_INTEL_E7221_HB),
+ 	ID(PCI_DEVICE_ID_INTEL_82915G_HB),
+ 	ID(PCI_DEVICE_ID_INTEL_82915GM_HB),
+ 	ID(PCI_DEVICE_ID_INTEL_82945G_HB),
+diff --git a/drivers/char/drm/drm_pciids.h b/drivers/char/drm/drm_pciids.h
+index 52b3fb8..76660f8 100644
+--- a/drivers/char/drm/drm_pciids.h
++++ b/drivers/char/drm/drm_pciids.h
+@@ -377,6 +377,7 @@
+ 	{0x8086, 0x3582, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_I8XX}, \
+ 	{0x8086, 0x2572, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_I8XX}, \
+ 	{0x8086, 0x2582, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_I9XX|CHIP_I915}, \
++	{0x8086, 0x258a, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_I9XX|CHIP_I915}, \
+ 	{0x8086, 0x2592, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_I9XX|CHIP_I915}, \
+ 	{0x8086, 0x2772, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_I9XX|CHIP_I915}, \
+ 	{0x8086, 0x27A2, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_I9XX|CHIP_I915}, \

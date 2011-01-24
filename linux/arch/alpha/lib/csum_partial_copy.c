@@ -2,7 +2,7 @@
  * csum_partial_copy - do IP checksumming and copy
  *
  * (C) Copyright 1996 Linus Torvalds
- * accelerated versions (and 21264 assembly versions ) contributed by
+ * accellerated versions (and 21264 assembly versions ) contributed by
  *	Rick Gorton	<rick.gorton@alpha-processor.com>
  *
  * Don't look at this too closely - you'll go mad. The things
@@ -329,11 +329,11 @@ csum_partial_cfu_unaligned(const unsigned long __user * src,
 	return checksum;
 }
 
-__wsum
-csum_partial_copy_from_user(const void __user *src, void *dst, int len,
-			       __wsum sum, int *errp)
+static unsigned int
+do_csum_partial_copy_from_user(const char __user *src, char *dst, int len,
+			       unsigned int sum, int *errp)
 {
-	unsigned long checksum = (__force u32) sum;
+	unsigned long checksum = (unsigned) sum;
 	unsigned long soff = 7 & (unsigned long) src;
 	unsigned long doff = 7 & (unsigned long) dst;
 
@@ -367,12 +367,25 @@ csum_partial_copy_from_user(const void __user *src, void *dst, int len,
 		}
 		checksum = from64to16 (checksum);
 	}
-	return (__force __wsum)checksum;
+	return checksum;
 }
 
-__wsum
-csum_partial_copy_nocheck(const void *src, void *dst, int len, __wsum sum)
+unsigned int
+csum_partial_copy_from_user(const char __user *src, char *dst, int len,
+			    unsigned int sum, int *errp)
 {
-	return csum_partial_copy_from_user((__force const void __user *)src,
-			dst, len, sum, NULL);
+	if (!access_ok(VERIFY_READ, src, len)) {
+		*errp = -EFAULT;
+		memset(dst, 0, len);
+		return sum;
+	}
+
+	return do_csum_partial_copy_from_user(src, dst, len, sum, errp);
+}
+
+unsigned int
+csum_partial_copy_nocheck(const char __user *src, char *dst, int len,
+			  unsigned int sum)
+{
+	return do_csum_partial_copy_from_user(src, dst, len, sum, NULL);
 }

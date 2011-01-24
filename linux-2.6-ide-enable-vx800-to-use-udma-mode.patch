@@ -1,0 +1,75 @@
+From: John Feeney <jfeeney@redhat.com>
+Date: Fri, 26 Jun 2009 13:20:09 -0400
+Subject: [ide] enable VX800 to use UDMA mode
+Message-id: 4A450349.4040702@redhat.com
+O-Subject: [RHEL5.4 PATCH] enable VX800 to use UDMA mode
+Bugzilla: 504121
+RH-Acked-by: Chuck Ebbert <cebbert@redhat.com>
+RH-Acked-by: David Milburn <dmilburn@redhat.com>
+
+bz504121
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=504121
+RHEL5.3 long installation time and low hard disk performance
+in VX800 platform
+
+Description of problem:
+Slow performance due to not using device capable of using UDMA.
+
+Solution:
+The pci ids for the VX800 bridge and the 5324 device need to be
+added to via82cxxx.c.
+
+Upstream status:
+vx800 add new VIA bridge to VIA PATA drivers - Josepch Chan
+  - adds vx800
+  commit b311ec4ae82b1dc337689e966dcf9c5f6a53877e
+
+vt8237s  correct PCI_DEVICE_ID_VIA_SATA_EIDE ID
+  - Josepch Chan - adds EIDE to pci-ids.h and via82cxxxx.c
+  commit e0b874df14052489e6408125903dba96b4dd7baa
+
+NOTE: Given this is an exception to RHEL-5.4, only the specific
+lines of code that fixed the problem for the VX800 were included so
+as to minimize destabilization.
+
+Brew:
+Successfully built in Brew (task_1862333)
+
+Testing:
+VIA provided the patch and successfully did the testing with the
+Brew built rpm.
+
+Acks would be appreciated. Thanks.
+
+diff --git a/drivers/ide/pci/via82cxxx.c b/drivers/ide/pci/via82cxxx.c
+index 9b7589e..3cf5857 100644
+--- a/drivers/ide/pci/via82cxxx.c
++++ b/drivers/ide/pci/via82cxxx.c
+@@ -78,6 +78,7 @@ static struct via_isa_bridge {
+ 	u8 rev_max;
+ 	u16 flags;
+ } via_isa_bridges[] = {
++	{ "vx800",	PCI_DEVICE_ID_VIA_VX800,    0x00, 0x2f, VIA_UDMA_133 | VIA_BAD_AST },
+ 	{ "vt6410",	PCI_DEVICE_ID_VIA_6410,     0x00, 0x2f, VIA_UDMA_133 | VIA_BAD_AST },
+ 	{ "vt8251",	PCI_DEVICE_ID_VIA_8251,     0x00, 0x2f, VIA_UDMA_133 | VIA_BAD_AST },
+ 	{ "vt8237",	PCI_DEVICE_ID_VIA_8237,     0x00, 0x2f, VIA_UDMA_133 | VIA_BAD_AST },
+@@ -498,6 +499,7 @@ static struct pci_device_id via_pci_tbl[] = {
+ 	{ PCI_VENDOR_ID_VIA, PCI_DEVICE_ID_VIA_82C576_1, PCI_ANY_ID, PCI_ANY_ID, 0, 0, 0},
+ 	{ PCI_VENDOR_ID_VIA, PCI_DEVICE_ID_VIA_82C586_1, PCI_ANY_ID, PCI_ANY_ID, 0, 0, 0},
+ 	{ PCI_VENDOR_ID_VIA, PCI_DEVICE_ID_VIA_6410,     PCI_ANY_ID, PCI_ANY_ID, 0, 0, 1},
++	{ PCI_VENDOR_ID_VIA, PCI_DEVICE_ID_VIA_5324,     PCI_ANY_ID, PCI_ANY_ID, 0, 0, 1},
+ 	{ 0, },
+ };
+ MODULE_DEVICE_TABLE(pci, via_pci_tbl);
+diff --git a/include/linux/pci_ids.h b/include/linux/pci_ids.h
+index 98cf867..ca982e1 100644
+--- a/include/linux/pci_ids.h
++++ b/include/linux/pci_ids.h
+@@ -1351,6 +1351,7 @@
+ #define PCI_DEVICE_ID_VIA_8231		0x8231
+ #define PCI_DEVICE_ID_VIA_8231_4	0x8235
+ #define PCI_DEVICE_ID_VIA_8365_1	0x8305
++#define PCI_DEVICE_ID_VIA_5324		0x5324
+ #define PCI_DEVICE_ID_VIA_CX700		0x8324
+ #define PCI_DEVICE_ID_VIA_VX800		0x8353
+ #define PCI_DEVICE_ID_VIA_8371_1	0x8391

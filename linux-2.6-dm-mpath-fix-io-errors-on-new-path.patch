@@ -1,0 +1,544 @@
+Date: Mon, 2 Oct 2006 22:17:32 +0100
+From: Alasdair G Kergon <agk@redhat.com>
+Subject: [RHEL5 PATCH] dm mpath: fix adding new path while I/O is pending
+
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=169302                                                                          
+
+If you lose all the paths to a dm multipath device you can set
+queue_if_no_path so that I/O will get queued.  If one of your paths comes
+back, userspace will re-enabled it and the queued I/O will be released.
+
+In the current implementation if paths need to be reconfigured while I/O
+is queued like this any pending I/O must be cleared (with EIO) first:
+the application receives I/O errors.
+
+This patch from NEC allows the multipath tools to set DM_NOFLUSH_FLAG during a
+suspend operation to request that I/O be queued during such a path
+reconfiguration.  Targets such as multipath then transfer ('push back') their
+queue of waiting I/O onto the existing queue held in the device-mapper core
+during a 'suspend' operation.
+
+I shall be submitting this upstream via -mm shortly.
+
+Index: linux-2.6.18.noarch/drivers/md/dm.c
+===================================================================
+--- linux-2.6.18.noarch.orig/drivers/md/dm.c	2006-10-02 21:18:07.000000000 +0100
++++ linux-2.6.18.noarch/drivers/md/dm.c	2006-10-02 21:23:51.000000000 +0100
+@@ -68,10 +68,12 @@ union map_info *dm_get_mapinfo(struct bi
+ #define DMF_FROZEN 2
+ #define DMF_FREEING 3
+ #define DMF_DELETING 4
++#define DMF_NOFLUSH_SUSPENDING 5
+ 
+ struct mapped_device {
+ 	struct rw_semaphore io_lock;
+ 	struct semaphore suspend_lock;
++	spinlock_t pushback_lock;
+ 	rwlock_t map_lock;
+ 	atomic_t holders;
+ 	atomic_t open_count;
+@@ -90,6 +92,7 @@ struct mapped_device {
+ 	atomic_t pending;
+ 	wait_queue_head_t wait;
+  	struct bio_list deferred;
++	struct bio_list pushback;
+ 
+ 	/*
+ 	 * The current mapping.
+@@ -444,23 +447,50 @@ int dm_set_geometry(struct mapped_device
+  *   you this clearly demarcated crap.
+  *---------------------------------------------------------------*/
+ 
++static int __noflush_suspending(struct mapped_device *md)
++{
++	return test_bit(DMF_NOFLUSH_SUSPENDING, &md->flags);
++}
++
+ /*
+  * Decrements the number of outstanding ios that a bio has been
+  * cloned into, completing the original io if necc.
+  */
+ static void dec_pending(struct dm_io *io, int error)
+ {
+-	if (error)
++	unsigned long flags;
++
++	/* Push-back supersedes any I/O errors */
++	if (error && !(io->error > 0 && __noflush_suspending(io->md)))
+ 		io->error = error;
+ 
+ 	if (atomic_dec_and_test(&io->io_count)) {
++		if (io->error == DM_ENDIO_REQUEUE) {
++			/*
++			 * Target requested pushing back the I/O.
++			 * This must be handled before the sleeper on
++			 * suspend queue merges the pushback list.
++			 */
++			spin_lock_irqsave(&io->md->pushback_lock, flags);
++			if (__noflush_suspending(io->md))
++				bio_list_add(&io->md->pushback, io->bio);
++			else
++				/* noflush suspend was interrupted. */
++				io->error = -EIO;
++			spin_unlock_irqrestore(&io->md->pushback_lock, flags);
++		}
++
+ 		if (end_io_acct(io))
+ 			/* nudge anyone waiting on suspend queue */
+ 			wake_up(&io->md->wait);
+ 
+-		blk_add_trace_bio(io->md->queue, io->bio, BLK_TA_COMPLETE);
++		if (io->error != DM_ENDIO_REQUEUE) {
++			blk_add_trace_bio(io->md->queue, io->bio,
++					  BLK_TA_COMPLETE);
++
++			bio_endio(io->bio, io->bio->bi_size, io->error);
++		}
+ 
+-		bio_endio(io->bio, io->bio->bi_size, io->error);
+ 		free_io(io->md, io);
+ 	}
+ }
+@@ -480,12 +510,19 @@ static int clone_endio(struct bio *bio, 
+ 
+ 	if (endio) {
+ 		r = endio(tio->ti, bio, error, &tio->info);
+-		if (r < 0)
++		if (r < 0 || r == DM_ENDIO_REQUEUE)
++			/*
++			 * error and requeue request are handled
++			 * in dec_pending().
++			 */
+ 			error = r;
+-
+-		else if (r > 0)
+-			/* the target wants another shot at the io */
++		else if (r == DM_ENDIO_INCOMPLETE)
++			/* The target will handle the io */
+ 			return 1;
++		else if (r) {
++			DMWARN("unimplemented target endio return value: %d", r);
++			BUG();
++		}
+ 	}
+ 
+ 	dec_pending(tio->io, error);
+@@ -543,7 +580,7 @@ static void __map_bio(struct dm_target *
+ 	atomic_inc(&tio->io->io_count);
+ 	sector = clone->bi_sector;
+ 	r = ti->type->map(ti, clone, &tio->info);
+-	if (r > 0) {
++	if (r == DM_MAPIO_REMAPPED) {
+ 		/* the bio has been remapped so dispatch it */
+ 
+ 		blk_add_trace_remap(bdev_get_queue(clone->bi_bdev), clone,
+@@ -551,10 +588,8 @@ static void __map_bio(struct dm_target *
+ 				    clone->bi_sector);
+ 
+ 		generic_make_request(clone);
+-	}
+-
+-	else if (r < 0) {
+-		/* error the io and bail out */
++	} else if (r < 0 || r == DM_MAPIO_REQUEUE) {
++		/* error the io and bail out, or requeue it if needed */
+ 		md = tio->io->md;
+ 		dec_pending(tio->io, r);
+ 		/*
+@@ -563,6 +598,9 @@ static void __map_bio(struct dm_target *
+ 		clone->bi_private = md->bs;
+ 		bio_put(clone);
+ 		free_tio(md, tio);
++	} else if (r) {
++		DMWARN("unimplemented target map return value: %d", r);
++		BUG();
+ 	}
+ }
+ 
+@@ -948,6 +986,7 @@ static struct mapped_device *alloc_dev(i
+ 	memset(md, 0, sizeof(*md));
+ 	init_rwsem(&md->io_lock);
+ 	init_MUTEX(&md->suspend_lock);
++	spin_lock_init(&md->pushback_lock);
+ 	rwlock_init(&md->map_lock);
+ 	atomic_set(&md->holders, 1);
+ 	atomic_set(&md->open_count, 0);
+@@ -1275,12 +1314,15 @@ static void unlock_fs(struct mapped_devi
+  * dm_bind_table, dm_suspend must be called to flush any in
+  * flight bios and ensure that any further io gets deferred.
+  */
+-int dm_suspend(struct mapped_device *md, int do_lockfs)
++int dm_suspend(struct mapped_device *md, unsigned suspend_flags)
+ {
+ 	struct dm_table *map = NULL;
++	unsigned long flags;
+ 	DECLARE_WAITQUEUE(wait, current);
+ 	struct bio *def;
+ 	int r = -EINVAL;
++	int do_lockfs = suspend_flags & DM_SUSPEND_LOCKFS_FLAG ? 1 : 0;
++	int noflush = suspend_flags & DM_SUSPEND_NOFLUSH_FLAG ? 1 : 0;
+ 
+ 	down(&md->suspend_lock);
+ 
+@@ -1289,6 +1331,13 @@ int dm_suspend(struct mapped_device *md,
+ 
+ 	map = dm_get_table(md);
+ 
++	/*
++	 * DMF_NOFLUSH_SUSPENDING must be set before presuspend.
++	 * This flag is cleared before dm_suspend returns.
++	 */
++	if (noflush)
++		set_bit(DMF_NOFLUSH_SUSPENDING, &md->flags);
++
+ 	/* This does not get reverted if there's an error later. */
+ 	dm_table_presuspend_targets(map);
+ 
+@@ -1296,11 +1345,14 @@ int dm_suspend(struct mapped_device *md,
+ 	if (!md->suspended_bdev) {
+ 		DMWARN("bdget failed in dm_suspend");
+ 		r = -ENOMEM;
+-		goto out;
++		goto flush_and_out;
+ 	}
+ 
+-	/* Flush I/O to the device. */
+-	if (do_lockfs) {
++	/*
++	 * Flush I/O to the device.
++	 * noflush supersedes do_lockfs, because lock_fs() needs to flush I/Os.
++	 */
++	if (do_lockfs && !noflush) {
+ 		r = lock_fs(md);
+ 		if (r)
+ 			goto out;
+@@ -1336,6 +1388,14 @@ int dm_suspend(struct mapped_device *md,
+ 	down_write(&md->io_lock);
+ 	remove_wait_queue(&md->wait, &wait);
+ 
++	if (noflush) {
++		spin_lock_irqsave(&md->pushback_lock, flags);
++		clear_bit(DMF_NOFLUSH_SUSPENDING, &md->flags);
++		bio_list_merge_head(&md->deferred, &md->pushback);
++		bio_list_init(&md->pushback);
++		spin_unlock_irqrestore(&md->pushback_lock, flags);
++	}
++
+ 	/* were we interrupted ? */
+ 	r = -EINTR;
+ 	if (atomic_read(&md->pending)) {
+@@ -1344,7 +1404,7 @@ int dm_suspend(struct mapped_device *md,
+ 		__flush_deferred_io(md, def);
+ 		up_write(&md->io_lock);
+ 		unlock_fs(md);
+-		goto out;
++		goto out; /* pushback list is already flushed, so skip flush */
+ 	}
+ 	up_write(&md->io_lock);
+ 
+@@ -1354,6 +1414,25 @@ int dm_suspend(struct mapped_device *md,
+ 
+ 	r = 0;
+ 
++flush_and_out:
++	if (r && noflush) {
++		/*
++		 * Because there may be already I/Os in the pushback list,
++		 * flush them before return.
++		 */
++		down_write(&md->io_lock);
++
++		spin_lock_irqsave(&md->pushback_lock, flags);
++		clear_bit(DMF_NOFLUSH_SUSPENDING, &md->flags);
++		bio_list_merge_head(&md->deferred, &md->pushback);
++		bio_list_init(&md->pushback);
++		spin_unlock_irqrestore(&md->pushback_lock, flags);
++
++		def = bio_list_get(&md->deferred);
++		__flush_deferred_io(md, def);
++		up_write(&md->io_lock);
++	}
++
+ out:
+ 	if (r && md->suspended_bdev) {
+ 		bdput(md->suspended_bdev);
+@@ -1438,6 +1517,17 @@ int dm_suspended(struct mapped_device *m
+ 	return test_bit(DMF_SUSPENDED, &md->flags);
+ }
+ 
++int dm_noflush_suspending(struct dm_target *ti)
++{
++	struct mapped_device *md = dm_table_get_md(ti->table);
++	int r = __noflush_suspending(md);
++
++	dm_put(md);
++
++	return r;
++}
++EXPORT_SYMBOL_GPL(dm_noflush_suspending);
++
+ static struct block_device_operations dm_blk_dops = {
+ 	.open = dm_blk_open,
+ 	.release = dm_blk_close,
+Index: linux-2.6.18.noarch/drivers/md/dm-ioctl.c
+===================================================================
+--- linux-2.6.18.noarch.orig/drivers/md/dm-ioctl.c	2006-10-02 21:18:07.000000000 +0100
++++ linux-2.6.18.noarch/drivers/md/dm-ioctl.c	2006-10-02 21:20:03.000000000 +0100
+@@ -760,7 +760,7 @@ out:
+ static int do_suspend(struct dm_ioctl *param)
+ {
+ 	int r = 0;
+-	int do_lockfs = 1;
++	unsigned suspend_flags = DM_SUSPEND_LOCKFS_FLAG;
+ 	struct mapped_device *md;
+ 
+ 	md = find_device(param);
+@@ -768,10 +768,12 @@ static int do_suspend(struct dm_ioctl *p
+ 		return -ENXIO;
+ 
+ 	if (param->flags & DM_SKIP_LOCKFS_FLAG)
+-		do_lockfs = 0;
++		suspend_flags &= ~DM_SUSPEND_LOCKFS_FLAG;
++	if (param->flags & DM_NOFLUSH_FLAG)
++		suspend_flags |= DM_SUSPEND_NOFLUSH_FLAG;
+ 
+ 	if (!dm_suspended(md))
+-		r = dm_suspend(md, do_lockfs);
++		r = dm_suspend(md, suspend_flags);
+ 
+ 	if (!r)
+ 		r = __dev_status(md, param);
+@@ -783,7 +785,7 @@ static int do_suspend(struct dm_ioctl *p
+ static int do_resume(struct dm_ioctl *param)
+ {
+ 	int r = 0;
+-	int do_lockfs = 1;
++	unsigned suspend_flags = DM_SUSPEND_LOCKFS_FLAG;
+ 	struct hash_cell *hc;
+ 	struct mapped_device *md;
+ 	struct dm_table *new_map;
+@@ -809,9 +811,11 @@ static int do_resume(struct dm_ioctl *pa
+ 	if (new_map) {
+ 		/* Suspend if it isn't already suspended */
+ 		if (param->flags & DM_SKIP_LOCKFS_FLAG)
+-			do_lockfs = 0;
++			suspend_flags &= ~DM_SUSPEND_LOCKFS_FLAG;
++		if (param->flags & DM_NOFLUSH_FLAG)
++			suspend_flags |= DM_SUSPEND_NOFLUSH_FLAG;
+ 		if (!dm_suspended(md))
+-			dm_suspend(md, do_lockfs);
++			dm_suspend(md, suspend_flags);
+ 
+ 		r = dm_swap_table(md, new_map);
+ 		if (r) {
+Index: linux-2.6.18.noarch/include/linux/device-mapper.h
+===================================================================
+--- linux-2.6.18.noarch.orig/include/linux/device-mapper.h	2006-10-02 21:20:01.000000000 +0100
++++ linux-2.6.18.noarch/include/linux/device-mapper.h	2006-10-02 21:20:03.000000000 +0100
+@@ -39,7 +39,8 @@ typedef void (*dm_dtr_fn) (struct dm_tar
+  * The map function must return:
+  * < 0: error
+  * = 0: The target will handle the io by resubmitting it later
+- * > 0: simple remap complete
++ * = 1: simple remap complete
++ * = 2: The target wants to push back the io
+  */
+ typedef int (*dm_map_fn) (struct dm_target *ti, struct bio *bio,
+ 			  union map_info *map_context);
+@@ -50,6 +51,7 @@ typedef int (*dm_map_fn) (struct dm_targ
+  * 0   : ended successfully
+  * 1   : for some reason the io has still not completed (eg,
+  *       multipath target might want to requeue a failed io).
++ * 2   : The target wants to push back the io
+  */
+ typedef int (*dm_endio_fn) (struct dm_target *ti,
+ 			    struct bio *bio, int error,
+@@ -174,7 +176,7 @@ void *dm_get_mdptr(struct mapped_device 
+ /*
+  * A device can still be used while suspended, but I/O is deferred.
+  */
+-int dm_suspend(struct mapped_device *md, int with_lockfs);
++int dm_suspend(struct mapped_device *md, unsigned suspend_flags);
+ int dm_resume(struct mapped_device *md);
+ 
+ /*
+@@ -189,6 +191,7 @@ int dm_wait_event(struct mapped_device *
+ const char *dm_device_name(struct mapped_device *md);
+ struct gendisk *dm_disk(struct mapped_device *md);
+ int dm_suspended(struct mapped_device *md);
++int dm_noflush_suspending(struct dm_target *ti);
+ 
+ /*
+  * Geometry functions.
+Index: linux-2.6.18.noarch/drivers/md/dm.h
+===================================================================
+--- linux-2.6.18.noarch.orig/drivers/md/dm.h	2006-10-02 21:18:07.000000000 +0100
++++ linux-2.6.18.noarch/drivers/md/dm.h	2006-10-02 21:20:03.000000000 +0100
+@@ -33,6 +33,25 @@
+ #define SECTOR_SHIFT 9
+ 
+ /*
++ * Definitions of return values from target end_io function.
++ */
++#define DM_ENDIO_INCOMPLETE	1
++#define DM_ENDIO_REQUEUE	2
++
++/*
++ * Definitions of return values from target map function.
++ */
++#define DM_MAPIO_SUBMITTED		0
++#define DM_MAPIO_REMAPPED		1
++#define DM_MAPIO_REQUEUE		DM_ENDIO_REQUEUE
++
++/*
++ * Suspend feature flags
++ */
++#define DM_SUSPEND_LOCKFS_FLAG		(1 << 0)
++#define DM_SUSPEND_NOFLUSH_FLAG		(1 << 1)
++
++/*
+  * List of devices that a metadevice uses and should open/close.
+  */
+ struct dm_dev {
+Index: linux-2.6.18.noarch/drivers/md/dm-bio-list.h
+===================================================================
+--- linux-2.6.18.noarch.orig/drivers/md/dm-bio-list.h	2006-10-02 21:18:07.000000000 +0100
++++ linux-2.6.18.noarch/drivers/md/dm-bio-list.h	2006-10-02 21:20:03.000000000 +0100
+@@ -44,6 +44,20 @@ static inline void bio_list_merge(struct
+ 	bl->tail = bl2->tail;
+ }
+ 
++static inline void bio_list_merge_head(struct bio_list *bl,
++				       struct bio_list *bl2)
++{
++	if (!bl2->head)
++		return;
++
++	if (bl->head)
++		bl2->tail->bi_next = bl->head;
++	else
++		bl->tail = bl2->tail;
++
++	bl->head = bl2->head;
++}
++
+ static inline struct bio *bio_list_pop(struct bio_list *bl)
+ {
+ 	struct bio *bio = bl->head;
+Index: linux-2.6.18.noarch/include/linux/dm-ioctl.h
+===================================================================
+--- linux-2.6.18.noarch.orig/include/linux/dm-ioctl.h	2006-10-02 21:18:07.000000000 +0100
++++ linux-2.6.18.noarch/include/linux/dm-ioctl.h	2006-10-02 21:20:03.000000000 +0100
+@@ -285,7 +285,7 @@ typedef char ioctl_struct[308];
+ #define DM_DEV_SET_GEOMETRY	_IOWR(DM_IOCTL, DM_DEV_SET_GEOMETRY_CMD, struct dm_ioctl)
+ 
+ #define DM_VERSION_MAJOR	4
+-#define DM_VERSION_MINOR	9
++#define DM_VERSION_MINOR	11
+ #define DM_VERSION_PATCHLEVEL	0
+ #define DM_VERSION_EXTRA	"-ioctl (2006-09-14)"
+ 
+@@ -323,4 +323,9 @@ typedef char ioctl_struct[308];
+  */
+ #define DM_SKIP_LOCKFS_FLAG	(1 << 10) /* In */
+ 
++/*
++ * Set this to suspend without flushing queued ios.
++ */
++#define DM_NOFLUSH_FLAG                (1 << 11) /* In */
++
+ #endif				/* _LINUX_DM_IOCTL_H */
+Index: linux-2.6.18.noarch/drivers/md/dm-mpath.c
+===================================================================
+--- linux-2.6.18.noarch.orig/drivers/md/dm-mpath.c	2006-10-02 21:18:07.000000000 +0100
++++ linux-2.6.18.noarch/drivers/md/dm-mpath.c	2006-10-02 21:27:55.000000000 +0100
+@@ -282,10 +282,13 @@ failed:
+ 	m->current_pg = NULL;
+ }
+ 
++#define __PUSHBACK(m) (!(m)->queue_if_no_path && (m)->saved_queue_if_no_path && \
++		       dm_noflush_suspending((m)->ti))
++
+ static int map_io(struct multipath *m, struct bio *bio, struct mpath_io *mpio,
+ 		  unsigned was_queued)
+ {
+-	int r = 1;
++	int r = DM_MAPIO_REMAPPED;
+ 	unsigned long flags;
+ 	struct pgpath *pgpath;
+ 
+@@ -310,10 +313,13 @@ static int map_io(struct multipath *m, s
+ 		    !m->queue_io)
+ 			queue_work(kmultipathd, &m->process_queued_ios);
+ 		pgpath = NULL;
+-		r = 0;
+-	} else if (!pgpath)
++		r = DM_MAPIO_SUBMITTED;
++	} else if (!pgpath) {
+ 		r = -EIO;		/* Failed */
+-	else
++
++		if (__PUSHBACK(m))
++			r = DM_MAPIO_REQUEUE;
++	} else
+ 		bio->bi_bdev = pgpath->path.dev->bdev;
+ 
+ 	mpio->pgpath = pgpath;
+@@ -372,8 +378,16 @@ static void dispatch_queued_ios(struct m
+ 		r = map_io(m, bio, mpio, 1);
+ 		if (r < 0)
+ 			bio_endio(bio, bio->bi_size, r);
+-		else if (r == 1)
++		else if (r == DM_MAPIO_REMAPPED)
+ 			generic_make_request(bio);
++		else if (r == DM_MAPIO_REQUEUE)
++			/*
++			 * end_io handles the requeue request by
++			 * returning the bio with error status.
++			 * We don't return the r value to end_io,
++			 * since it is probably not needed.
++			 */
++			bio_endio(bio, bio->bi_size, -EIO);
+ 
+ 		bio = next;
+ 	}
+@@ -781,7 +795,7 @@ static int multipath_map(struct dm_targe
+ 	map_context->ptr = mpio;
+ 	bio->bi_rw |= (1 << BIO_RW_FAILFAST);
+ 	r = map_io(m, bio, mpio, 0);
+-	if (r < 0)
++	if (r < 0 || r == DM_MAPIO_REQUEUE)
+ 		mempool_free(mpio, m->mpio_pool);
+ 
+ 	return r;
+@@ -1005,7 +1019,10 @@ static int do_end_io(struct multipath *m
+ 
+ 	spin_lock_irqsave(&m->lock, flags);
+ 	if (!m->nr_valid_paths) {
+-		if (!m->queue_if_no_path) {
++		if (__PUSHBACK(m)) {
++			spin_unlock_irqrestore(&m->lock, flags);
++			return DM_ENDIO_REQUEUE;
++		} else if (!m->queue_if_no_path) {
+ 			spin_unlock_irqrestore(&m->lock, flags);
+ 			return -EIO;
+ 		} else {
+@@ -1040,7 +1057,7 @@ static int do_end_io(struct multipath *m
+ 		queue_work(kmultipathd, &m->process_queued_ios);
+ 	spin_unlock_irqrestore(&m->lock, flags);
+ 
+-	return 1;	/* io not complete */
++	return DM_ENDIO_INCOMPLETE;	/* io not complete */
+ }
+ 
+ static int multipath_end_io(struct dm_target *ti, struct bio *bio,
+@@ -1058,7 +1075,7 @@ static int multipath_end_io(struct dm_ta
+ 		if (ps->type->end_io)
+ 			ps->type->end_io(ps, &pgpath->path);
+ 	}
+-	if (r <= 0)
++	if (r != DM_ENDIO_INCOMPLETE)
+ 		mempool_free(mpio, m->mpio_pool);
+ 
+ 	return r;
+

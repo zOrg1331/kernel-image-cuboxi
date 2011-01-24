@@ -1,0 +1,38 @@
+From: Eugene Teo <eugene@redhat.com>
+Date: Mon, 23 Feb 2009 15:39:56 +0800
+Subject: [net] skfp_ioctl inverted logic flaw
+Message-id: 49A252CC.3090803@redhat.com
+O-Subject: [RHEL5.4 patch] CVE-2009-0675 BZ#486540 kernel: skfp_ioctl inverted logic flaw
+Bugzilla: 486540
+RH-Acked-by: Mikulas Patocka <mpatocka@redhat.com>
+RH-Acked-by: Jiri Pirko <jpirko@redhat.com>
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+RH-Acked-by: Alexander Viro <aviro@redhat.com>
+CVE: CVE-2009-0675
+
+This is for bz#486540 (CVE-2009-0675).
+
+Fix inverted logic in skfp_ioctl(). Non-privileged users should not be
+able to clear the driver statistics.
+
+Backport of upstream commit: c25b9abbc2c2c0da88e180c3933d6e773245815a
+
+--
+Eugene Teo / Red Hat Security Response Team
+
+diff --git a/drivers/net/skfp/skfddi.c b/drivers/net/skfp/skfddi.c
+index b5714a6..0567dd2 100644
+--- a/drivers/net/skfp/skfddi.c
++++ b/drivers/net/skfp/skfddi.c
+@@ -1006,9 +1006,9 @@ static int skfp_ioctl(struct net_device *dev, struct ifreq *rq, int cmd)
+ 		break;
+ 	case SKFP_CLR_STATS:	/* Zero out the driver statistics */
+ 		if (!capable(CAP_NET_ADMIN)) {
+-			memset(&lp->MacStat, 0, sizeof(lp->MacStat));
+-		} else {
+ 			status = -EPERM;
++		} else {
++			memset(&lp->MacStat, 0, sizeof(lp->MacStat));
+ 		}
+ 		break;
+ 	default:

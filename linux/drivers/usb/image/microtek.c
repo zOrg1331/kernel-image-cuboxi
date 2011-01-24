@@ -121,6 +121,7 @@
 
 #include <linux/module.h>
 #include <linux/kernel.h>
+#include <linux/sched.h>
 #include <linux/signal.h>
 #include <linux/errno.h>
 #include <linux/random.h>
@@ -128,6 +129,7 @@
 #include <linux/init.h>
 #include <linux/slab.h>
 #include <linux/spinlock.h>
+#include <linux/smp_lock.h>
 #include <linux/usb.h>
 #include <linux/proc_fs.h>
 
@@ -185,11 +187,11 @@ static struct usb_driver mts_usb_driver = {
 	printk( KERN_DEBUG MTS_NAME x )
 
 #define MTS_DEBUG_GOT_HERE() \
-	MTS_DEBUG("got to %s:%d (%s)\n", __FILE__, (int)__LINE__, __func__ )
+	MTS_DEBUG("got to %s:%d (%s)\n", __FILE__, (int)__LINE__, __PRETTY_FUNCTION__ )
 #define MTS_DEBUG_INT() \
 	do { MTS_DEBUG_GOT_HERE(); \
 	     MTS_DEBUG("transfer = 0x%x context = 0x%x\n",(int)transfer,(int)context ); \
-	     MTS_DEBUG("status = 0x%x data-length = 0x%x sent = 0x%x\n",transfer->status,(int)context->data_length, (int)transfer->actual_length ); \
+	     MTS_DEBUG("status = 0x%x data-length = 0x%x sent = 0x%x\n",(int)transfer->status,(int)context->data_length, (int)transfer->actual_length ); \
              mts_debug_dump(context->instance);\
 	   } while(0)
 #else
@@ -223,7 +225,7 @@ static inline void mts_debug_dump(struct mts_desc* desc) {
 }
 
 
-static inline void mts_show_command(struct scsi_cmnd *srb)
+static inline void mts_show_command(Scsi_Cmnd *srb)
 {
 	char *what = NULL;
 
@@ -307,7 +309,7 @@ static inline void mts_show_command(struct scsi_cmnd *srb)
 
 #else
 
-static inline void mts_show_command(struct scsi_cmnd * dummy)
+static inline void mts_show_command(Scsi_Cmnd * dummy)
 {
 }
 
@@ -336,7 +338,7 @@ static int mts_slave_configure (struct scsi_device *s)
 	return 0;
 }
 
-static int mts_scsi_abort(struct scsi_cmnd *srb)
+static int mts_scsi_abort (Scsi_Cmnd *srb)
 {
 	struct mts_desc* desc = (struct mts_desc*)(srb->device->host->hostdata[0]);
 
@@ -347,27 +349,28 @@ static int mts_scsi_abort(struct scsi_cmnd *srb)
 	return FAILED;
 }
 
-static int mts_scsi_host_reset(struct scsi_cmnd *srb)
+static int mts_scsi_host_reset (Scsi_Cmnd *srb)
 {
 	struct mts_desc* desc = (struct mts_desc*)(srb->device->host->hostdata[0]);
-	int result;
+	int result, rc;
 
 	MTS_DEBUG_GOT_HERE();
 	mts_debug_dump(desc);
 
-	result = usb_lock_device_for_reset(desc->usb_dev, desc->usb_intf);
-	if (result == 0) {
-		result = usb_reset_device(desc->usb_dev);
+	rc = usb_lock_device_for_reset(desc->usb_dev, desc->usb_intf);
+	if (rc < 0)
+		return FAILED;
+	result = usb_reset_device(desc->usb_dev);
+	if (rc)
 		usb_unlock_device(desc->usb_dev);
-	}
 	return result ? FAILED : SUCCESS;
 }
 
-static int
-mts_scsi_queuecommand(struct scsi_cmnd *srb, mts_scsi_cmnd_callback callback);
+static
+int mts_scsi_queuecommand (Scsi_Cmnd *srb, mts_scsi_cmnd_callback callback );
 
 static void mts_transfer_cleanup( struct urb *transfer );
-static void mts_do_sg(struct urb * transfer);
+static void mts_do_sg(struct urb * transfer, struct pt_regs *regs);
 
 static inline
 void mts_int_submit_urb (struct urb* transfer,
@@ -392,6 +395,8 @@ void mts_int_submit_urb (struct urb* transfer,
 		      context
 		);
 
+	transfer->status = 0;
+
 	res = usb_submit_urb( transfer, GFP_ATOMIC );
 	if ( unlikely(res) ) {
 		MTS_INT_ERROR( "could not submit URB! Error was %d\n",(int)res );
@@ -412,7 +417,7 @@ static void mts_transfer_cleanup( struct urb *transfer )
 
 }
 
-static void mts_transfer_done( struct urb *transfer )
+static void mts_transfer_done( struct urb *transfer, struct pt_regs *regs )
 {
 	MTS_INT_INIT();
 
@@ -438,17 +443,15 @@ static void mts_get_status( struct urb *transfer )
 			   mts_transfer_done );
 }
 
-static void mts_data_done( struct urb* transfer )
+static void mts_data_done( struct urb* transfer, struct pt_regs *regs )
 /* Interrupt context! */
 {
-	int status = transfer->status;
 	MTS_INT_INIT();
 
 	if ( context->data_length != transfer->actual_length ) {
-		scsi_set_resid(context->srb, context->data_length -
-			       transfer->actual_length);
-	} else if ( unlikely(status) ) {
-		context->srb->result = (status == -ENOENT ? DID_ABORT : DID_ERROR)<<16;
+		context->srb->resid = context->data_length - transfer->actual_length;
+	} else if ( unlikely(transfer->status) ) {
+		context->srb->result = (transfer->status == -ENOENT ? DID_ABORT : DID_ERROR)<<16;
 	}
 
 	mts_get_status(transfer);
@@ -457,14 +460,13 @@ static void mts_data_done( struct urb* transfer )
 }
 
 
-static void mts_command_done( struct urb *transfer )
+static void mts_command_done( struct urb *transfer, struct pt_regs *regs )
 /* Interrupt context! */
 {
-	int status = transfer->status;
 	MTS_INT_INIT();
 
-	if ( unlikely(status) ) {
-	        if (status == -ENOENT) {
+	if ( unlikely(transfer->status) ) {
+	        if (transfer->status == -ENOENT) {
 		        /* We are being killed */
 			MTS_DEBUG_GOT_HERE();
 			context->srb->result = DID_ABORT<<16;
@@ -490,8 +492,7 @@ static void mts_command_done( struct urb *transfer )
 					   context->data_pipe,
 					   context->data,
 					   context->data_length,
-					   scsi_sg_count(context->srb) > 1 ?
-					           mts_do_sg : mts_data_done);
+					   context->srb->use_sg > 1 ? mts_do_sg : mts_data_done);
 		} else {
 			mts_get_status(transfer);
 		}
@@ -500,28 +501,26 @@ static void mts_command_done( struct urb *transfer )
 	return;
 }
 
-static void mts_do_sg (struct urb* transfer)
+static void mts_do_sg (struct urb* transfer, struct pt_regs *regs)
 {
 	struct scatterlist * sg;
-	int status = transfer->status;
 	MTS_INT_INIT();
 
-	MTS_DEBUG("Processing fragment %d of %d\n", context->fragment,
-	                                          scsi_sg_count(context->srb));
+	MTS_DEBUG("Processing fragment %d of %d\n", context->fragment,context->srb->use_sg);
 
-	if (unlikely(status)) {
-                context->srb->result = (status == -ENOENT ? DID_ABORT : DID_ERROR)<<16;
+	if (unlikely(transfer->status)) {
+                context->srb->result = (transfer->status == -ENOENT ? DID_ABORT : DID_ERROR)<<16;
 		mts_transfer_cleanup(transfer);
         }
 
-	sg = scsi_sglist(context->srb);
+	sg = context->srb->request_buffer;
 	context->fragment++;
 	mts_int_submit_urb(transfer,
 			   context->data_pipe,
-			   sg_virt(&sg[context->fragment]),
+			   page_address(sg[context->fragment].page) +
+			   sg[context->fragment].offset,
 			   sg[context->fragment].length,
-			   context->fragment + 1 == scsi_sg_count(context->srb) ?
-			   mts_data_done : mts_do_sg);
+			   context->fragment + 1 == context->srb->use_sg ? mts_data_done : mts_do_sg);
 	return;
 }
 
@@ -538,7 +537,7 @@ static const unsigned char mts_direction[256/8] = {
 #define MTS_DIRECTION_IS_IN(x) ((mts_direction[x>>3] >> (x & 7)) & 1)
 
 static void
-mts_build_transfer_context(struct scsi_cmnd *srb, struct mts_desc* desc)
+mts_build_transfer_context( Scsi_Cmnd *srb, struct mts_desc* desc )
 {
 	int pipe;
 	struct scatterlist * sg;
@@ -549,13 +548,21 @@ mts_build_transfer_context(struct scsi_cmnd *srb, struct mts_desc* desc)
 	desc->context.srb = srb;
 	desc->context.fragment = 0;
 
-	if (!scsi_bufflen(srb)) {
-		desc->context.data = NULL;
-		desc->context.data_length = 0;
-		return;
+	if (!srb->use_sg) {
+		if ( !srb->request_bufflen ){
+			desc->context.data = NULL;
+			desc->context.data_length = 0;
+			return;
+		} else {
+			desc->context.data = srb->request_buffer;
+			desc->context.data_length = srb->request_bufflen;
+			MTS_DEBUG("length = %d or %d\n",
+				  srb->request_bufflen, srb->bufflen);
+		}
 	} else {
-		sg = scsi_sglist(srb);
-		desc->context.data = sg_virt(&sg[0]);
+		MTS_DEBUG("Using scatter/gather\n");
+		sg = srb->request_buffer;
+		desc->context.data = page_address(sg[0].page) + sg[0].offset;
 		desc->context.data_length = sg[0].length;
 	}
 
@@ -581,8 +588,8 @@ mts_build_transfer_context(struct scsi_cmnd *srb, struct mts_desc* desc)
 }
 
 
-static int
-mts_scsi_queuecommand(struct scsi_cmnd *srb, mts_scsi_cmnd_callback callback)
+static
+int mts_scsi_queuecommand( Scsi_Cmnd *srb, mts_scsi_cmnd_callback callback )
 {
 	struct mts_desc* desc = (struct mts_desc*)(srb->device->host->hostdata[0]);
 	int err = 0;
@@ -653,6 +660,33 @@ static struct scsi_host_template mts_scsi_host_template = {
 	.max_sectors=		256, /* 128 K */
 };
 
+struct vendor_product
+{
+	char* name;
+	enum
+	{
+		mts_sup_unknown=0,
+		mts_sup_alpha,
+		mts_sup_full
+	}
+	support_status;
+} ;
+
+
+/* These are taken from the msmUSB.inf file on the Windows driver CD */
+static const struct vendor_product mts_supported_products[] =
+{
+	{ "Phantom 336CX",	mts_sup_unknown},
+	{ "Phantom 336CX",	mts_sup_unknown},
+	{ "Scanmaker X6",	mts_sup_alpha},
+	{ "Phantom C6",		mts_sup_unknown},
+	{ "Phantom 336CX",	mts_sup_unknown},
+	{ "ScanMaker V6USL",	mts_sup_unknown},
+	{ "ScanMaker V6USL",	mts_sup_unknown},
+	{ "Scanmaker V6UL",	mts_sup_unknown},
+	{ "Scanmaker V6UPL",	mts_sup_alpha},
+};
+
 /* The entries of microtek_table must correspond, line-by-line to
    the entries of mts_supported_products[]. */
 
@@ -684,6 +718,7 @@ static int mts_usb_probe(struct usb_interface *intf,
 	int err_retval = -ENOMEM;
 
 	struct mts_desc * new_desc;
+	struct vendor_product const* p;
 	struct usb_device *dev = interface_to_usbdev (intf);
 
 	/* the current altsetting on the interface we're probing */
@@ -697,6 +732,15 @@ static int mts_usb_probe(struct usb_interface *intf,
 		   le16_to_cpu(dev->descriptor.idVendor) );
 
 	MTS_DEBUG_GOT_HERE();
+
+	p = &mts_supported_products[id - mts_usb_ids];
+
+	MTS_DEBUG_GOT_HERE();
+
+	MTS_DEBUG( "found model %s\n", p->name );
+	if ( p->support_status != mts_sup_full )
+		MTS_MESSAGE( "model %s is not known to be fully supported, reports welcome!\n",
+			     p->name );
 
 	/* the current altsetting on the interface we're probing */
 	altsetting = intf->cur_altsetting;
@@ -752,10 +796,11 @@ static int mts_usb_probe(struct usb_interface *intf,
 
 	new_desc->context.scsi_status = kmalloc(1, GFP_KERNEL);
 	if (!new_desc->context.scsi_status)
-		goto out_free_urb;
+		goto out_kfree2;
 
 	new_desc->usb_dev = dev;
 	new_desc->usb_intf = intf;
+	init_MUTEX(&new_desc->lock);
 
 	/* endpoints */
 	new_desc->ep_out = ep_out;
@@ -777,20 +822,18 @@ static int mts_usb_probe(struct usb_interface *intf,
 	new_desc->host = scsi_host_alloc(&mts_scsi_host_template,
 			sizeof(new_desc));
 	if (!new_desc->host)
-		goto out_kfree2;
+		goto out_free_urb;
 
 	new_desc->host->hostdata[0] = (unsigned long)new_desc;
-	if (scsi_add_host(new_desc->host, &dev->dev)) {
+	if (scsi_add_host(new_desc->host, NULL)) {
 		err_retval = -EIO;
-		goto out_host_put;
+		goto out_free_urb;
 	}
 	scsi_scan_host(new_desc->host);
 
 	usb_set_intfdata(intf, new_desc);
 	return 0;
 
- out_host_put:
-	scsi_host_put(new_desc->host);
  out_kfree2:
 	kfree(new_desc->context.scsi_status);
  out_free_urb:

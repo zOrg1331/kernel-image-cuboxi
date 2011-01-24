@@ -52,9 +52,6 @@ rawhide_update_irq_hw(int hose, int mask)
 	*(vuip)MCPCIA_INT_MASK0(MCPCIA_HOSE2MID(hose));
 }
 
-#define hose_exists(h) \
-  (((h) < MCPCIA_MAX_HOSES) && (cached_irq_masks[(h)] != 0))
-
 static inline void 
 rawhide_enable_irq(unsigned int irq)
 {
@@ -62,9 +59,6 @@ rawhide_enable_irq(unsigned int irq)
 
 	irq -= 16;
 	hose = irq / 24;
-	if (!hose_exists(hose)) /* if hose non-existent, exit */
-		return;
-
 	irq -= hose * 24;
 	mask = 1 << irq;
 
@@ -82,9 +76,6 @@ rawhide_disable_irq(unsigned int irq)
 
 	irq -= 16;
 	hose = irq / 24;
-	if (!hose_exists(hose)) /* if hose non-existent, exit */
-		return;
-
 	irq -= hose * 24;
 	mask = ~(1 << irq) | hose_irq_masks[hose];
 
@@ -102,9 +93,6 @@ rawhide_mask_and_ack_irq(unsigned int irq)
 
 	irq -= 16;
 	hose = irq / 24;
-	if (!hose_exists(hose)) /* if hose non-existent, exit */
-		return;
-
 	irq -= hose * 24;
 	mask1 = 1 << irq;
 	mask = ~mask1 | hose_irq_masks[hose];
@@ -135,8 +123,8 @@ rawhide_end_irq(unsigned int irq)
 		rawhide_enable_irq(irq);
 }
 
-static struct irq_chip rawhide_irq_type = {
-	.name		= "RAWHIDE",
+static struct hw_interrupt_type rawhide_irq_type = {
+	.typename	= "RAWHIDE",
 	.startup	= rawhide_startup_irq,
 	.shutdown	= rawhide_disable_irq,
 	.enable		= rawhide_enable_irq,
@@ -146,7 +134,7 @@ static struct irq_chip rawhide_irq_type = {
 };
 
 static void 
-rawhide_srm_device_interrupt(unsigned long vector)
+rawhide_srm_device_interrupt(unsigned long vector, struct pt_regs * regs)
 {
 	int irq;
 
@@ -170,7 +158,7 @@ rawhide_srm_device_interrupt(unsigned long vector)
 	/* Adjust by which hose it is from.  */
 	irq -= ((irq + 16) >> 2) & 0x38;
 
-	handle_irq(irq);
+	handle_irq(irq, regs);
 }
 
 static void __init
@@ -180,9 +168,6 @@ rawhide_init_irq(void)
 	long i;
 
 	mcpcia_init_hoses();
-
-	/* Clear them all; only hoses that exist will be non-zero. */
-	for (i = 0; i < MCPCIA_MAX_HOSES; i++) cached_irq_masks[i] = 0;
 
 	for (hose = hose_head; hose; hose = hose->next) {
 		unsigned int h = hose->index;

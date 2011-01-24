@@ -1,0 +1,655 @@
+From: Scott Moser <smoser@redhat.com>
+Date: Tue, 20 Nov 2007 17:29:37 -0500
+Subject: [ppc64] cbe_cpufreq: fixes from 2.6.23-rc7
+Message-id: 11955977803420-do-send-email-smoser@redhat.com
+O-Subject: [PATCH RHEL5u2] bz279171 Cell/B.E. Power and Thermal Management [2/4]
+Bugzilla: 279171
+
+Backport from 74889e41d9a1f80928130a02af9b010673bc5ba7,
+5050063c0464663a0b0c3dc9fc5bc822aa74a1dd,
+36ca4ba4b9728f3c420a589a3322c2fbd7ec88b7 and fixes to those.
+
+Subject: cbe_cpufreq: backport cbe_cpufreq driver to rhel-5-2
+
+From: krafft@linux.vnet.ibm.com
+This patch ports the cbe_cpufreq driver to the rhel-5-2 kernel.
+It includes all fixes that made it into 2.6.23-rc7.
+
+Signed-off-by: Christian Krafft <krafft@de.ibm.com>
+--
+ arch/powerpc/configs/cell_defconfig                 |   16 +
+ arch/powerpc/kernel/prom.c                          |    1
+ arch/powerpc/kernel/smp.c                           |    1
+ arch/powerpc/platforms/cell/Kconfig                 |   19 +
+ arch/powerpc/platforms/cell/Makefile                |    4
+ arch/powerpc/platforms/cell/cbe_cpufreq.c           |  209 ++++++++++++++
+ arch/powerpc/platforms/cell/cbe_cpufreq.h           |   23 +
+ arch/powerpc/platforms/cell/cbe_cpufreq_pervasive.c |  118 +++++++
+ arch/powerpc/platforms/cell/cbe_cpufreq_pmi.c       |  146 +++++++++
+ 9 files changed, 536 insertions(+), 1 deletion(-)
+
+Acked-by: David Howells <dhowells@redhat.com>
+
+diff --git a/arch/powerpc/configs/cell_defconfig b/arch/powerpc/configs/cell_defconfig
+index 6fd9e7a..327c2d2 100644
+--- a/arch/powerpc/configs/cell_defconfig
++++ b/arch/powerpc/configs/cell_defconfig
+@@ -133,7 +133,19 @@ CONFIG_RTAS_FLASH=y
+ CONFIG_MMIO_NVRAM=y
+ # CONFIG_PPC_MPC106 is not set
+ # CONFIG_PPC_970_NAP is not set
+-# CONFIG_CPU_FREQ is not set
++CONFIG_CPU_FREQ=y
++CONFIG_CPU_FREQ_TABLE=y
++# CONFIG_CPU_FREQ_DEBUG is not set
++CONFIG_CPU_FREQ_STAT=y
++# CONFIG_CPU_FREQ_STAT_DETAILS is not set
++CONFIG_CPU_FREQ_DEFAULT_GOV_PERFORMANCE=y
++# CONFIG_CPU_FREQ_DEFAULT_GOV_USERSPACE is not set
++CONFIG_CPU_FREQ_GOV_PERFORMANCE=y
++CONFIG_CPU_FREQ_GOV_POWERSAVE=m
++CONFIG_CPU_FREQ_GOV_USERSPACE=m
++CONFIG_CPU_FREQ_GOV_ONDEMAND=m
++# CONFIG_CPU_FREQ_GOV_CONSERVATIVE is not set
++
+ # CONFIG_WANT_EARLY_SERIAL is not set
+ # CONFIG_MPIC is not set
+ 
+@@ -144,6 +156,8 @@ CONFIG_SPU_FS=m
+ CONFIG_SPU_BASE=y
+ CONFIG_SPUFS_MMAP=y
+ CONFIG_CBE_RAS=y
++CONFIG_CBE_CPUFREQ=m
++CONFIG_CBE_CPUFREQ_PMI=m
+ 
+ #
+ # Kernel options
+diff --git a/arch/powerpc/kernel/prom.c b/arch/powerpc/kernel/prom.c
+index 5d1d1dd..4bb5798 100644
+--- a/arch/powerpc/kernel/prom.c
++++ b/arch/powerpc/kernel/prom.c
+@@ -1729,6 +1729,7 @@ struct device_node *of_get_cpu_node(int cpu, unsigned int *thread)
+ 	}
+ 	return NULL;
+ }
++EXPORT_SYMBOL_GPL(of_get_cpu_node);
+ 
+ #ifdef DEBUG
+ static struct debugfs_blob_wrapper flat_dt_blob;
+diff --git a/arch/powerpc/kernel/smp.c b/arch/powerpc/kernel/smp.c
+index 6a9bc9c..464f9b1 100644
+--- a/arch/powerpc/kernel/smp.c
++++ b/arch/powerpc/kernel/smp.c
+@@ -65,6 +65,7 @@ cpumask_t cpu_sibling_map[NR_CPUS] = { [0 ... NR_CPUS-1] = CPU_MASK_NONE };
+ 
+ EXPORT_SYMBOL(cpu_online_map);
+ EXPORT_SYMBOL(cpu_possible_map);
++EXPORT_SYMBOL(cpu_sibling_map);
+ 
+ /* SMP operations for this machine */
+ struct smp_ops_t *smp_ops;
+diff --git a/arch/powerpc/platforms/cell/Kconfig b/arch/powerpc/platforms/cell/Kconfig
+index ec27d03..e5d2e8c 100644
+--- a/arch/powerpc/platforms/cell/Kconfig
++++ b/arch/powerpc/platforms/cell/Kconfig
+@@ -25,6 +25,25 @@ config CBE_RAS
+ 	bool "RAS features for bare metal Cell BE"
+ 	default y
+ 
++config CBE_CPUFREQ
++        tristate "CBE frequency scaling"
++        depends on CBE_RAS && CPU_FREQ
++        default m
++        help
++          This adds the cpufreq driver for Cell BE processors.
++          For details, take a look at <file:Documentation/cpu-freq/>.
++          If you don't have such processor, say N
++
++config CBE_CPUFREQ_PMI
++        tristate "CBE frequency scaling using PMI interface"
++        depends on CBE_CPUFREQ && PPC_PMI && EXPERIMENTAL
++        default n
++        help
++          Select this, if you want to use the PMI interface
++          to switch frequencies. Using PMI, the
++          processor will not only be able to run at lower speed,
++          but also at lower core voltage.
++
+ config CBE_AXON_UTL
+ 	bool "CBE/Axon PCIe Upper Transaction layer error handling"
+ 	default n
+diff --git a/arch/powerpc/platforms/cell/Makefile b/arch/powerpc/platforms/cell/Makefile
+index b5a968c..9f671e4 100644
+--- a/arch/powerpc/platforms/cell/Makefile
++++ b/arch/powerpc/platforms/cell/Makefile
+@@ -3,6 +3,10 @@ obj-$(CONFIG_PPC_CELL_NATIVE)		+= interrupt.o iommu.o setup.o \
+ 					   io-workarounds.o
+ obj-$(CONFIG_CBE_RAS)			+= ras.o
+ 
++obj-$(CONFIG_CBE_CPUFREQ_PMI)           += cbe_cpufreq_pmi.o
++obj-$(CONFIG_CBE_CPUFREQ)               += cbe-cpufreq.o
++cbe-cpufreq-y                           += cbe_cpufreq_pervasive.o cbe_cpufreq.o
++
+ obj-$(CONFIG_CBE_AXON_UTL)		+= axon_utl.o
+ obj-$(CONFIG_CBE_AXON_PCI)		+= axon_pci-error.o
+ 
+diff --git a/arch/powerpc/platforms/cell/cbe_cpufreq.c b/arch/powerpc/platforms/cell/cbe_cpufreq.c
+new file mode 100644
+index 0000000..4673ff6
+--- /dev/null
++++ b/arch/powerpc/platforms/cell/cbe_cpufreq.c
+@@ -0,0 +1,209 @@
++/*
++ * cpufreq driver for the cell processor
++ *
++ * (C) Copyright IBM Deutschland Entwicklung GmbH 2005-2007
++ *
++ * Author: Christian Krafft <krafft@de.ibm.com>
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 2, or (at your option)
++ * any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program; if not, write to the Free Software
++ * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
++ */
++
++#include <linux/cpufreq.h>
++#include <asm/machdep.h>
++#include <asm/prom.h>
++#include <asm/smp.h>
++#include "cbe_regs.h"
++#include "cbe_cpufreq.h"
++
++static DEFINE_MUTEX(cbe_switch_mutex);
++
++
++/* the CBE supports an 8 step frequency scaling */
++static struct cpufreq_frequency_table cbe_freqs[] = {
++	{1,	0},
++	{2,	0},
++	{3,	0},
++	{4,	0},
++	{5,	0},
++	{6,	0},
++	{8,	0},
++	{10,	0},
++	{0,	CPUFREQ_TABLE_END},
++};
++
++/*
++ * hardware specific functions
++ */
++
++static int set_pmode(unsigned int cpu, unsigned int slow_mode)
++{
++	int rc;
++
++	if (cbe_cpufreq_has_pmi)
++		rc = cbe_cpufreq_set_pmode_pmi(cpu, slow_mode);
++	else
++		rc = cbe_cpufreq_set_pmode(cpu, slow_mode);
++
++	pr_debug("register contains slow mode %d\n", cbe_cpufreq_get_pmode(cpu));
++
++	return rc;
++}
++
++/*
++ * cpufreq functions
++ */
++
++static int cbe_cpufreq_cpu_init(struct cpufreq_policy *policy)
++{
++	const u32 *max_freqp;
++	u32 max_freq;
++	int i, cur_pmode;
++	struct device_node *cpu;
++
++	cpu = of_get_cpu_node(policy->cpu, NULL);
++
++	if (!cpu)
++		return -ENODEV;
++
++	pr_debug("init cpufreq on CPU %d\n", policy->cpu);
++
++	/*
++	 * Let's check we can actually get to the CELL regs
++	 */
++	if (!cbe_get_cpu_pmd_regs(policy->cpu) ||
++	    !cbe_get_cpu_mic_tm_regs(policy->cpu)) {
++		pr_info("invalid CBE regs pointers for cpufreq\n");
++		return -EINVAL;
++	}
++
++	max_freqp = get_property(cpu, "clock-frequency", NULL);
++
++	of_node_put(cpu);
++
++	if (!max_freqp)
++		return -EINVAL;
++
++	/* we need the freq in kHz */
++	max_freq = *max_freqp / 1000;
++
++	pr_debug("max clock-frequency is at %u kHz\n", max_freq);
++	pr_debug("initializing frequency table\n");
++
++	/* initialize frequency table */
++	for (i=0; cbe_freqs[i].frequency!=CPUFREQ_TABLE_END; i++) {
++		cbe_freqs[i].frequency = max_freq / cbe_freqs[i].index;
++		pr_debug("%d: %d\n", i, cbe_freqs[i].frequency);
++	}
++
++	policy->governor = CPUFREQ_DEFAULT_GOVERNOR;
++
++	/* if DEBUG is enabled set_pmode() measures the latency
++	 * of a transition */
++	policy->cpuinfo.transition_latency = 25000;
++
++	cur_pmode = cbe_cpufreq_get_pmode(policy->cpu);
++	pr_debug("current pmode is at %d\n",cur_pmode);
++
++	policy->cur = cbe_freqs[cur_pmode].frequency;
++
++#ifdef CONFIG_SMP
++	policy->cpus = cpu_sibling_map[policy->cpu];
++#endif
++
++	cpufreq_frequency_table_get_attr(cbe_freqs, policy->cpu);
++
++	/* this ensures that policy->cpuinfo_min
++	 * and policy->cpuinfo_max are set correctly */
++	return cpufreq_frequency_table_cpuinfo(policy, cbe_freqs);
++}
++
++static int cbe_cpufreq_cpu_exit(struct cpufreq_policy *policy)
++{
++	cpufreq_frequency_table_put_attr(policy->cpu);
++	return 0;
++}
++
++static int cbe_cpufreq_verify(struct cpufreq_policy *policy)
++{
++	return cpufreq_frequency_table_verify(policy, cbe_freqs);
++}
++
++static int cbe_cpufreq_target(struct cpufreq_policy *policy,
++			      unsigned int target_freq,
++			      unsigned int relation)
++{
++	int rc;
++	struct cpufreq_freqs freqs;
++	unsigned int cbe_pmode_new;
++
++	cpufreq_frequency_table_target(policy,
++				       cbe_freqs,
++				       target_freq,
++				       relation,
++				       &cbe_pmode_new);
++
++	freqs.old = policy->cur;
++	freqs.new = cbe_freqs[cbe_pmode_new].frequency;
++	freqs.cpu = policy->cpu;
++
++	mutex_lock(&cbe_switch_mutex);
++	cpufreq_notify_transition(&freqs, CPUFREQ_PRECHANGE);
++
++	pr_debug("setting frequency for cpu %d to %d kHz, " \
++		 "1/%d of max frequency\n",
++		 policy->cpu,
++		 cbe_freqs[cbe_pmode_new].frequency,
++		 cbe_freqs[cbe_pmode_new].index);
++
++	rc = set_pmode(policy->cpu, cbe_pmode_new);
++
++	cpufreq_notify_transition(&freqs, CPUFREQ_POSTCHANGE);
++	mutex_unlock(&cbe_switch_mutex);
++
++	return rc;
++}
++
++static struct cpufreq_driver cbe_cpufreq_driver = {
++	.verify		= cbe_cpufreq_verify,
++	.target		= cbe_cpufreq_target,
++	.init		= cbe_cpufreq_cpu_init,
++	.exit		= cbe_cpufreq_cpu_exit,
++	.name		= "cbe-cpufreq",
++	.owner		= THIS_MODULE,
++	.flags		= CPUFREQ_CONST_LOOPS,
++};
++
++/*
++ * module init and destoy
++ */
++
++static int __init cbe_cpufreq_init(void)
++{
++	if (!machine_is(cell))
++		return -ENODEV;
++
++	return cpufreq_register_driver(&cbe_cpufreq_driver);
++}
++
++static void __exit cbe_cpufreq_exit(void)
++{
++	cpufreq_unregister_driver(&cbe_cpufreq_driver);
++}
++
++module_init(cbe_cpufreq_init);
++module_exit(cbe_cpufreq_exit);
++
++MODULE_LICENSE("GPL");
++MODULE_AUTHOR("Christian Krafft <krafft@de.ibm.com>");
+diff --git a/arch/powerpc/platforms/cell/cbe_cpufreq.h b/arch/powerpc/platforms/cell/cbe_cpufreq.h
+new file mode 100644
+index 0000000..4166558
+--- /dev/null
++++ b/arch/powerpc/platforms/cell/cbe_cpufreq.h
+@@ -0,0 +1,23 @@
++/*
++ * cbe_cpufreq.h
++ *
++ * This file contains the definitions used by the cbe_cpufreq driver.
++ *
++ * (C) Copyright IBM Deutschland Entwicklung GmbH 2005-2007
++ *
++ * Author: Christian Krafft <krafft@de.ibm.com>
++ *
++ */
++
++#include <linux/cpufreq.h>
++
++int cbe_cpufreq_set_pmode(int cpu, unsigned int pmode);
++int cbe_cpufreq_get_pmode(int cpu);
++
++int cbe_cpufreq_set_pmode_pmi(int cpu, unsigned int pmode);
++
++#if defined(CONFIG_CBE_CPUFREQ_PMI) || defined(CONFIG_CBE_CPUFREQ_PMI_MODULE)
++extern int cbe_cpufreq_has_pmi;
++#else
++#define cbe_cpufreq_has_pmi (0)
++#endif
+diff --git a/arch/powerpc/platforms/cell/cbe_cpufreq_pervasive.c b/arch/powerpc/platforms/cell/cbe_cpufreq_pervasive.c
+new file mode 100644
+index 0000000..e9d87b4
+--- /dev/null
++++ b/arch/powerpc/platforms/cell/cbe_cpufreq_pervasive.c
+@@ -0,0 +1,118 @@
++/*
++ * pervasive backend for the cbe_cpufreq driver
++ *
++ * This driver makes use of the pervasive unit to
++ * engage the desired frequency.
++ *
++ * (C) Copyright IBM Deutschland Entwicklung GmbH 2005-2007
++ *
++ * Author: Christian Krafft <krafft@de.ibm.com>
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 2, or (at your option)
++ * any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program; if not, write to the Free Software
++ * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
++ */
++
++#include <linux/kernel.h>
++#include <asm/machdep.h>
++#include <asm/hw_irq.h>
++#include <asm/io.h>
++
++#ifdef DEBUG
++#include <asm/time.h>
++#endif
++
++#include "cbe_regs.h"
++#include "cbe_cpufreq.h"
++
++/* to write to MIC register */
++static u64 MIC_Slow_Fast_Timer_table[] = {
++	[0 ... 7] = 0x007fc00000000000ull,
++};
++
++/* more values for the MIC */
++static u64 MIC_Slow_Next_Timer_table[] = {
++	0x0000240000000000ull,
++	0x0000268000000000ull,
++	0x000029C000000000ull,
++	0x00002D0000000000ull,
++	0x0000300000000000ull,
++	0x0000334000000000ull,
++	0x000039C000000000ull,
++	0x00003FC000000000ull,
++};
++
++
++int cbe_cpufreq_set_pmode(int cpu, unsigned int pmode)
++{
++	struct cbe_pmd_regs __iomem *pmd_regs;
++	struct cbe_mic_tm_regs __iomem *mic_tm_regs;
++	u64 flags;
++	u64 value;
++#ifdef DEBUG
++	long time;
++#endif
++
++	local_irq_save(flags);
++
++	mic_tm_regs = cbe_get_cpu_mic_tm_regs(cpu);
++	pmd_regs = cbe_get_cpu_pmd_regs(cpu);
++
++#ifdef DEBUG
++	time = jiffies;
++#endif
++
++	out_be64(&mic_tm_regs->slow_fast_timer_0, MIC_Slow_Fast_Timer_table[pmode]);
++	out_be64(&mic_tm_regs->slow_fast_timer_1, MIC_Slow_Fast_Timer_table[pmode]);
++
++	out_be64(&mic_tm_regs->slow_next_timer_0, MIC_Slow_Next_Timer_table[pmode]);
++	out_be64(&mic_tm_regs->slow_next_timer_1, MIC_Slow_Next_Timer_table[pmode]);
++
++	value = in_be64(&pmd_regs->pmcr);
++	/* set bits to zero */
++	value &= 0xFFFFFFFFFFFFFFF8ull;
++	/* set bits to next pmode */
++	value |= pmode;
++
++	out_be64(&pmd_regs->pmcr, value);
++
++#ifdef DEBUG
++	/* wait until new pmode appears in status register */
++	value = in_be64(&pmd_regs->pmsr) & 0x07;
++	while(value != pmode) {
++		cpu_relax();
++		value = in_be64(&pmd_regs->pmsr) & 0x07;
++	}
++
++	time = jiffies  - time;
++	time = jiffies_to_msecs(time);
++	pr_debug("had to wait %lu ms for a transition using " \
++		 "pervasive unit\n", time);
++#endif
++	local_irq_restore(flags);
++
++	return 0;
++}
++
++
++int cbe_cpufreq_get_pmode(int cpu)
++{
++	int ret;
++	struct cbe_pmd_regs __iomem *pmd_regs;
++
++	pmd_regs = cbe_get_cpu_pmd_regs(cpu);
++	ret = in_be64(&pmd_regs->pmsr) & 0x07;
++
++	return ret;
++}
++
+diff --git a/arch/powerpc/platforms/cell/cbe_cpufreq_pmi.c b/arch/powerpc/platforms/cell/cbe_cpufreq_pmi.c
+new file mode 100644
+index 0000000..0f3cdd2
+--- /dev/null
++++ b/arch/powerpc/platforms/cell/cbe_cpufreq_pmi.c
+@@ -0,0 +1,146 @@
++/*
++ * pmi backend for the cbe_cpufreq driver
++ *
++ * (C) Copyright IBM Deutschland Entwicklung GmbH 2005-2007
++ *
++ * Author: Christian Krafft <krafft@de.ibm.com>
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 2, or (at your option)
++ * any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program; if not, write to the Free Software
++ * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
++ */
++
++#include <linux/kernel.h>
++#include <linux/timer.h>
++#include <asm/processor.h>
++#include <asm/prom.h>
++#include <asm/pmi.h>
++
++#ifdef DEBUG
++#include <asm/time.h>
++#endif
++
++#include "cbe_regs.h"
++#include "cbe_cpufreq.h"
++
++static u8 pmi_slow_mode_limit[MAX_CBE];
++
++int cbe_cpufreq_has_pmi = 0;
++EXPORT_SYMBOL_GPL(cbe_cpufreq_has_pmi);
++
++/*
++ * hardware specific functions
++ */
++
++int cbe_cpufreq_set_pmode_pmi(int cpu, unsigned int pmode)
++{
++	int ret;
++	pmi_message_t pmi_msg;
++#ifdef DEBUG
++	long time;
++#endif
++	pmi_msg.type = PMI_TYPE_FREQ_CHANGE;
++	pmi_msg.data1 =	cbe_cpu_to_node(cpu);
++	pmi_msg.data2 = pmode;
++
++#ifdef DEBUG
++	time = jiffies;
++#endif
++	pmi_send_message(pmi_msg);
++
++#ifdef DEBUG
++	time = jiffies  - time;
++	time = jiffies_to_msecs(time);
++	pr_debug("had to wait %lu ms for a transition using " \
++		 "PMI\n", time);
++#endif
++	ret = pmi_msg.data2;
++	pr_debug("PMI returned slow mode %d\n", ret);
++
++	return ret;
++}
++EXPORT_SYMBOL_GPL(cbe_cpufreq_set_pmode_pmi);
++
++
++static void cbe_cpufreq_handle_pmi(pmi_message_t pmi_msg)
++{
++	u8 node, slow_mode;
++
++	BUG_ON(pmi_msg.type != PMI_TYPE_FREQ_CHANGE);
++
++	node = pmi_msg.data1;
++	slow_mode = pmi_msg.data2;
++
++	pmi_slow_mode_limit[node] = slow_mode;
++
++	pr_debug("cbe_handle_pmi: node: %d max_freq: %d\n", node, slow_mode);
++}
++
++static int pmi_notifier(struct notifier_block *nb,
++				       unsigned long event, void *data)
++{
++	struct cpufreq_policy *policy = data;
++	struct cpufreq_frequency_table *cbe_freqs;
++	u8 node;
++
++	cbe_freqs = cpufreq_frequency_get_table(policy->cpu);
++	node = cbe_cpu_to_node(policy->cpu);
++
++	pr_debug("got notified, event=%lu, node=%u\n", event, node);
++
++	if (pmi_slow_mode_limit[node] != 0) {
++		pr_debug("limiting node %d to slow mode %d\n",
++			 node, pmi_slow_mode_limit[node]);
++
++		cpufreq_verify_within_limits(policy, 0,
++
++			cbe_freqs[pmi_slow_mode_limit[node]].frequency);
++	}
++
++	return 0;
++}
++
++static struct notifier_block pmi_notifier_block = {
++	.notifier_call = pmi_notifier,
++};
++
++static struct pmi_handler cbe_pmi_handler = {
++	.type			= PMI_TYPE_FREQ_CHANGE,
++	.handle_pmi_message	= cbe_cpufreq_handle_pmi,
++};
++
++
++
++static int __init cbe_cpufreq_pmi_init(void)
++{
++	cbe_cpufreq_has_pmi = pmi_register_handler(&cbe_pmi_handler) == 0;
++
++	if (!cbe_cpufreq_has_pmi)
++		return -ENODEV;
++
++	cpufreq_register_notifier(&pmi_notifier_block, CPUFREQ_POLICY_NOTIFIER);
++
++	return 0;
++}
++
++static void __exit cbe_cpufreq_pmi_exit(void)
++{
++	cpufreq_unregister_notifier(&pmi_notifier_block, CPUFREQ_POLICY_NOTIFIER);
++	pmi_unregister_handler(&cbe_pmi_handler);
++}
++
++module_init(cbe_cpufreq_pmi_init);
++module_exit(cbe_cpufreq_pmi_exit);
++
++MODULE_LICENSE("GPL");
++MODULE_AUTHOR("Christian Krafft <krafft@de.ibm.com>");

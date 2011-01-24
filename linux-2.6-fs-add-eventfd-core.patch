@@ -1,0 +1,400 @@
+From: Jeff Moyer <jmoyer@redhat.com>
+Date: Tue, 1 Dec 2009 21:06:29 -0500
+Subject: [fs] add eventfd core
+Message-id: <1259701600-23508-2-git-send-email-jmoyer@redhat.com>
+Patchwork-id: 21610
+O-Subject: [RHEL5 PATCH 01/12 v2] signal/timer/event: eventfd core
+Bugzilla: 493101
+RH-Acked-by: Josef Bacik <josef@redhat.com>
+
+Resolves: bug 493101.
+
+commit e1ad7468c77ddb94b0615d5f50fa255525fde0f0
+Author: Davide Libenzi <davidel@xmailserver.org>
+Date:   Thu May 10 22:23:19 2007 -0700
+
+    signal/timer/event: eventfd core
+
+    This is a very simple and light file descriptor, that can be used as event
+    wait/dispatch by userspace (both wait and dispatch) and by the kernel
+    (dispatch only).  It can be used instead of pipe(2) in all cases where those
+    would simply be used to signal events.  Their kernel overhead is much lower
+    than pipes, and they do not consume two fds.  When used in the kernel, it can
+    offer an fd-bridge to enable, for example, functionalities like KAIO or
+    syslets/threadlets to signal to an fd the completion of certain operations.
+    But more in general, an eventfd can be used by the kernel to signal readiness,
+    in a POSIX poll/select way, of interfaces that would otherwise be incompatible
+    with it.  The API is:
+
+    int eventfd(unsigned int count);
+
+    The eventfd API accepts an initial "count" parameter, and returns an eventfd
+    fd.  It supports poll(2) (POLLIN, POLLOUT, POLLERR), read(2) and write(2).
+
+    The POLLIN flag is raised when the internal counter is greater than zero.
+
+    The POLLOUT flag is raised when at least a value of "1" can be written to the
+    internal counter.
+
+    The POLLERR flag is raised when an overflow in the counter value is detected.
+
+    The write(2) operation can never overflow the counter, since it blocks (unless
+    O_NONBLOCK is set, in which case -EAGAIN is returned).
+
+    But the eventfd_signal() function can do it, since it's supposed to not sleep
+    during its operation.
+
+    The read(2) function reads the __u64 counter value, and reset the internal
+    value to zero.  If the value read is equal to (__u64) -1, an overflow happened
+    on the internal counter (due to 2^64 eventfd_signal() posts that has never
+    been retired - unlickely, but possible).
+
+    The write(2) call writes an __u64 count value, and adds it to the current
+    counter.  The eventfd fd supports O_NONBLOCK also.
+
+    On the kernel side, we have:
+
+    struct file *eventfd_fget(int fd);
+    int eventfd_signal(struct file *file, unsigned int n);
+
+    The eventfd_fget() should be called to get a struct file* from an eventfd fd
+    (this is an fget() + check of f_op being an eventfd fops pointer).
+
+    The kernel can then call eventfd_signal() every time it wants to post an event
+    to userspace.  The eventfd_signal() function can be called from any context.
+    An eventfd() simple test and bench is available here:
+
+    http://www.xmailserver.org/eventfd-bench.c
+
+    This is the eventfd-based version of pipetest-4 (pipe(2) based):
+
+    http://www.xmailserver.org/pipetest-4.c
+
+    Not that performance matters much in the eventfd case, but eventfd-bench
+    shows almost as double as performance than pipetest-4.
+
+Signed-off-by: Jeff Moyer <jmoyer@redhat.com>
+
+diff --git a/fs/Makefile b/fs/Makefile
+index 80f0076..e93f24f 100644
+--- a/fs/Makefile
++++ b/fs/Makefile
+@@ -17,6 +17,7 @@ obj-$(CONFIG_INOTIFY)		+= inotify.o
+ obj-$(CONFIG_INOTIFY_USER)	+= inotify_user.o
+ obj-$(CONFIG_EPOLL)		+= eventpoll.o
+ obj-$(CONFIG_ANON_INODES)	+= anon_inodes.o
++obj-$(CONFIG_EVENTFD)		+= eventfd.o
+ obj-$(CONFIG_COMPAT)		+= compat.o compat_ioctl.o
+ 
+ nfsd-$(CONFIG_NFSD)		:= nfsctl.o
+diff --git a/fs/eventfd.c b/fs/eventfd.c
+new file mode 100644
+index 0000000..480e2b3
+--- /dev/null
++++ b/fs/eventfd.c
+@@ -0,0 +1,228 @@
++/*
++ *  fs/eventfd.c
++ *
++ *  Copyright (C) 2007  Davide Libenzi <davidel@xmailserver.org>
++ *
++ */
++
++#include <linux/file.h>
++#include <linux/poll.h>
++#include <linux/init.h>
++#include <linux/fs.h>
++#include <linux/sched.h>
++#include <linux/kernel.h>
++#include <linux/list.h>
++#include <linux/spinlock.h>
++#include <linux/anon_inodes.h>
++#include <linux/eventfd.h>
++
++struct eventfd_ctx {
++	spinlock_t lock;
++	wait_queue_head_t wqh;
++	/*
++	 * Every time that a write(2) is performed on an eventfd, the
++	 * value of the __u64 being written is added to "count" and a
++	 * wakeup is performed on "wqh". A read(2) will return the "count"
++	 * value to userspace, and will reset "count" to zero. The kernel
++	 * size eventfd_signal() also, adds to the "count" counter and
++	 * issue a wakeup.
++	 */
++	__u64 count;
++};
++
++/*
++ * Adds "n" to the eventfd counter "count". Returns "n" in case of
++ * success, or a value lower then "n" in case of coutner overflow.
++ * This function is supposed to be called by the kernel in paths
++ * that do not allow sleeping. In this function we allow the counter
++ * to reach the ULLONG_MAX value, and we signal this as overflow
++ * condition by returining a POLLERR to poll(2).
++ */
++int eventfd_signal(struct file *file, int n)
++{
++	struct eventfd_ctx *ctx = file->private_data;
++	unsigned long flags;
++
++	if (n < 0)
++		return -EINVAL;
++	spin_lock_irqsave(&ctx->lock, flags);
++	if (ULLONG_MAX - ctx->count < n)
++		n = (int) (ULLONG_MAX - ctx->count);
++	ctx->count += n;
++	if (waitqueue_active(&ctx->wqh))
++		wake_up_locked(&ctx->wqh);
++	spin_unlock_irqrestore(&ctx->lock, flags);
++
++	return n;
++}
++
++static int eventfd_release(struct inode *inode, struct file *file)
++{
++	kfree(file->private_data);
++	return 0;
++}
++
++static unsigned int eventfd_poll(struct file *file, poll_table *wait)
++{
++	struct eventfd_ctx *ctx = file->private_data;
++	unsigned int events = 0;
++	unsigned long flags;
++
++	poll_wait(file, &ctx->wqh, wait);
++
++	spin_lock_irqsave(&ctx->lock, flags);
++	if (ctx->count > 0)
++		events |= POLLIN;
++	if (ctx->count == ULLONG_MAX)
++		events |= POLLERR;
++	if (ULLONG_MAX - 1 > ctx->count)
++		events |= POLLOUT;
++	spin_unlock_irqrestore(&ctx->lock, flags);
++
++	return events;
++}
++
++static ssize_t eventfd_read(struct file *file, char __user *buf, size_t count,
++			    loff_t *ppos)
++{
++	struct eventfd_ctx *ctx = file->private_data;
++	ssize_t res;
++	__u64 ucnt;
++	DECLARE_WAITQUEUE(wait, current);
++
++	if (count < sizeof(ucnt))
++		return -EINVAL;
++	spin_lock_irq(&ctx->lock);
++	res = -EAGAIN;
++	ucnt = ctx->count;
++	if (ucnt > 0)
++		res = sizeof(ucnt);
++	else if (!(file->f_flags & O_NONBLOCK)) {
++		__add_wait_queue(&ctx->wqh, &wait);
++		for (res = 0;;) {
++			set_current_state(TASK_INTERRUPTIBLE);
++			if (ctx->count > 0) {
++				ucnt = ctx->count;
++				res = sizeof(ucnt);
++				break;
++			}
++			if (signal_pending(current)) {
++				res = -ERESTARTSYS;
++				break;
++			}
++			spin_unlock_irq(&ctx->lock);
++			schedule();
++			spin_lock_irq(&ctx->lock);
++		}
++		__remove_wait_queue(&ctx->wqh, &wait);
++		__set_current_state(TASK_RUNNING);
++	}
++	if (res > 0) {
++		ctx->count = 0;
++		if (waitqueue_active(&ctx->wqh))
++			wake_up_locked(&ctx->wqh);
++	}
++	spin_unlock_irq(&ctx->lock);
++	if (res > 0 && put_user(ucnt, (__u64 __user *) buf))
++		return -EFAULT;
++
++	return res;
++}
++
++static ssize_t eventfd_write(struct file *file, const char __user *buf, size_t count,
++			     loff_t *ppos)
++{
++	struct eventfd_ctx *ctx = file->private_data;
++	ssize_t res;
++	__u64 ucnt;
++	DECLARE_WAITQUEUE(wait, current);
++
++	if (count < sizeof(ucnt))
++		return -EINVAL;
++	if (copy_from_user(&ucnt, buf, sizeof(ucnt)))
++		return -EFAULT;
++	if (ucnt == ULLONG_MAX)
++		return -EINVAL;
++	spin_lock_irq(&ctx->lock);
++	res = -EAGAIN;
++	if (ULLONG_MAX - ctx->count > ucnt)
++		res = sizeof(ucnt);
++	else if (!(file->f_flags & O_NONBLOCK)) {
++		__add_wait_queue(&ctx->wqh, &wait);
++		for (res = 0;;) {
++			set_current_state(TASK_INTERRUPTIBLE);
++			if (ULLONG_MAX - ctx->count > ucnt) {
++				res = sizeof(ucnt);
++				break;
++			}
++			if (signal_pending(current)) {
++				res = -ERESTARTSYS;
++				break;
++			}
++			spin_unlock_irq(&ctx->lock);
++			schedule();
++			spin_lock_irq(&ctx->lock);
++		}
++		__remove_wait_queue(&ctx->wqh, &wait);
++		__set_current_state(TASK_RUNNING);
++	}
++	if (res > 0) {
++		ctx->count += ucnt;
++		if (waitqueue_active(&ctx->wqh))
++			wake_up_locked(&ctx->wqh);
++	}
++	spin_unlock_irq(&ctx->lock);
++
++	return res;
++}
++
++static const struct file_operations eventfd_fops = {
++	.release	= eventfd_release,
++	.poll		= eventfd_poll,
++	.read		= eventfd_read,
++	.write		= eventfd_write,
++};
++
++struct file *eventfd_fget(int fd)
++{
++	struct file *file;
++
++	file = fget(fd);
++	if (!file)
++		return ERR_PTR(-EBADF);
++	if (file->f_op != &eventfd_fops) {
++		fput(file);
++		return ERR_PTR(-EINVAL);
++	}
++
++	return file;
++}
++
++asmlinkage long sys_eventfd(unsigned int count)
++{
++	int error, fd;
++	struct eventfd_ctx *ctx;
++	struct file *file;
++	struct inode *inode;
++
++	ctx = kmalloc(sizeof(*ctx), GFP_KERNEL);
++	if (!ctx)
++		return -ENOMEM;
++
++	init_waitqueue_head(&ctx->wqh);
++	spin_lock_init(&ctx->lock);
++	ctx->count = count;
++
++	/*
++	 * When we call this, the initialization must be complete, since
++	 * anon_inode_getfd() will install the fd.
++	 */
++	error = anon_inode_getfd(&fd, &inode, &file, "[eventfd]",
++				 &eventfd_fops, ctx);
++	if (!error)
++		return fd;
++
++	kfree(ctx);
++	return error;
++}
++
+diff --git a/include/linux/eventfd.h b/include/linux/eventfd.h
+new file mode 100644
+index 0000000..0d6ecc6
+--- /dev/null
++++ b/include/linux/eventfd.h
+@@ -0,0 +1,29 @@
++/*
++ *  include/linux/eventfd.h
++ *
++ *  Copyright (C) 2007  Davide Libenzi <davidel@xmailserver.org>
++ *
++ */
++
++#ifndef _LINUX_EVENTFD_H
++#define _LINUX_EVENTFD_H
++
++
++#ifdef __KERNEL__
++
++#ifdef CONFIG_EVENTFD
++
++struct file *eventfd_fget(int fd);
++int eventfd_signal(struct file *file, int n);
++
++#else /* CONFIG_EVENTFD */
++
++#define eventfd_fget(fd) ERR_PTR(-ENOSYS)
++#define eventfd_signal(f, n) 0
++
++#endif /* CONFIG_EVENTFD */
++
++#endif /* __KERNEL__ */
++
++#endif /* _LINUX_EVENTFD_H */
++
+diff --git a/include/linux/syscalls.h b/include/linux/syscalls.h
+index 5a10f9c..0db3ebd 100644
+--- a/include/linux/syscalls.h
++++ b/include/linux/syscalls.h
+@@ -601,4 +601,5 @@ asmlinkage long sys_set_robust_list(struct robust_list_head __user *head,
+ 				    size_t len);
+ asmlinkage long sys_getcpu(unsigned *cpu, unsigned *node, struct getcpu_cache *cache);
+ asmlinkage long sys_fallocate(int fd, int mode, loff_t offset, loff_t len);
++asmlinkage long sys_eventfd(unsigned int count);
+ #endif
+diff --git a/init/Kconfig b/init/Kconfig
+index 9f130cc..fbab124 100644
+--- a/init/Kconfig
++++ b/init/Kconfig
+@@ -392,6 +392,16 @@ config EPOLL
+ 	  Disabling this option will cause the kernel to be built without
+ 	  support for epoll family of system calls.
+ 
++config EVENTFD
++	bool "Enable eventfd() system call" if EMBEDDED
++	depends on ANON_INODES
++	default y
++	help
++	  Enable the eventfd() system call that allows to receive both
++	  kernel notification (ie. KAIO) or userspace notifications.
++
++	  If unsure, say Y.
++
+ config SHMEM
+ 	bool "Use full shmem filesystem" if EMBEDDED
+ 	default y
+diff --git a/kernel/sys_ni.c b/kernel/sys_ni.c
+index 5c23f69..abfe96b 100644
+--- a/kernel/sys_ni.c
++++ b/kernel/sys_ni.c
+@@ -139,3 +139,6 @@ cond_syscall(sys_madvise);
+ cond_syscall(sys_mremap);
+ cond_syscall(sys_remap_file_pages);
+ cond_syscall(compat_sys_move_pages);
++
++/* New file descriptors */
++cond_syscall(sys_eventfd);

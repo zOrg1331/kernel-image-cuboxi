@@ -5,9 +5,7 @@
 #include <linux/mm.h>
 #include <linux/mman.h>
 #include <linux/shm.h>
-#include <linux/sched.h>
-#include <linux/io.h>
-#include <asm/cputype.h>
+
 #include <asm/system.h>
 
 #define COLOUR_ALIGN(addr,pgoff)		\
@@ -39,8 +37,8 @@ arch_get_unmapped_area(struct file *filp, unsigned long addr,
 	 * caches alias.  This is indicated by bits 9 and 21 of the
 	 * cache type register.
 	 */
-	cache_type = read_cpuid_cachetype();
-	if (cache_type != read_cpuid_id()) {
+	cache_type = read_cpuid(CPUID_CACHETYPE);
+	if (cache_type != read_cpuid(CPUID_ID)) {
 		aliasing = (cache_type | cache_type >> 12) & (1 << 11);
 		if (aliasing)
 			do_align = filp || flags & MAP_SHARED;
@@ -51,11 +49,11 @@ arch_get_unmapped_area(struct file *filp, unsigned long addr,
 #endif
 
 	/*
-	 * We enforce the MAP_FIXED case.
+	 * We should enforce the MAP_FIXED case.  However, currently
+	 * the generic kernel code doesn't allow us to handle this.
 	 */
 	if (flags & MAP_FIXED) {
-		if (aliasing && flags & MAP_SHARED &&
-		    (addr - (pgoff << PAGE_SHIFT)) & (SHMLBA - 1))
+		if (aliasing && flags & MAP_SHARED && addr & (SHMLBA - 1))
 			return -EINVAL;
 		return addr;
 	}
@@ -116,27 +114,3 @@ full_search:
 	}
 }
 
-
-/*
- * You really shouldn't be using read() or write() on /dev/mem.  This
- * might go away in the future.
- */
-int valid_phys_addr_range(unsigned long addr, size_t size)
-{
-	if (addr < PHYS_OFFSET)
-		return 0;
-	if (addr + size > __pa(high_memory - 1) + 1)
-		return 0;
-
-	return 1;
-}
-
-/*
- * We don't use supersection mappings for mmap() on /dev/mem, which
- * means that we can't map the memory area above the 4G barrier into
- * userspace.
- */
-int valid_mmap_phys_addr_range(unsigned long pfn, size_t size)
-{
-	return !(pfn + (size >> PAGE_SHIFT) > 0x00100000);
-}

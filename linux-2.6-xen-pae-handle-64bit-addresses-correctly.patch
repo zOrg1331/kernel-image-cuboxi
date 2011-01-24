@@ -1,0 +1,39 @@
+Index: linux-2.6.18.hack-i386/include/xen/gnttab.h
+===================================================================
+--- linux-2.6.18.hack-i386.orig/include/xen/gnttab.h
++++ linux-2.6.18.hack-i386/include/xen/gnttab.h
+@@ -117,7 +117,7 @@ int gnttab_suspend(void);
+ int gnttab_resume(void);
+ 
+ static inline void
+-gnttab_set_map_op(struct gnttab_map_grant_ref *map, unsigned long addr,
++gnttab_set_map_op(struct gnttab_map_grant_ref *map, uint64_t addr,
+ 		  uint32_t flags, grant_ref_t ref, domid_t domid)
+ {
+ 	if (flags & GNTMAP_contains_pte)
+@@ -133,7 +133,7 @@ gnttab_set_map_op(struct gnttab_map_gran
+ }
+ 
+ static inline void
+-gnttab_set_unmap_op(struct gnttab_unmap_grant_ref *unmap, unsigned long addr,
++gnttab_set_unmap_op(struct gnttab_unmap_grant_ref *unmap, uint64_t addr,
+ 		    uint32_t flags, grant_handle_t handle)
+ {
+ 	if (flags & GNTMAP_contains_pte)
+Index: linux-2.6.18.hack-i386/drivers/xen/blktap/blktapmain.c
+===================================================================
+--- linux-2.6.18.hack-i386.orig/drivers/xen/blktap/blktapmain.c
++++ linux-2.6.18.hack-i386/drivers/xen/blktap/blktapmain.c
+@@ -861,8 +861,10 @@ static void fast_flush_area(pending_req_
+ 			return;
+ 		}
+ 
+-		gnttab_set_unmap_op(&unmap[invcount], 
+-			ptep, GNTMAP_host_map,
++		gnttab_set_unmap_op(&unmap[invcount], ptep,
++			GNTMAP_host_map |
++			GNTMAP_application_map |
++			GNTMAP_contains_pte,
+ 			khandle->user);
+ 		invcount++;
+             

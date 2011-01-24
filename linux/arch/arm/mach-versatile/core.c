@@ -26,16 +26,10 @@
 #include <linux/interrupt.h>
 #include <linux/amba/bus.h>
 #include <linux/amba/clcd.h>
-#include <linux/amba/pl061.h>
-#include <linux/amba/mmci.h>
-#include <linux/clocksource.h>
-#include <linux/clockchips.h>
-#include <linux/cnt32_to_63.h>
-#include <linux/io.h>
 
-#include <asm/clkdev.h>
 #include <asm/system.h>
-#include <mach/hardware.h>
+#include <asm/hardware.h>
+#include <asm/io.h>
 #include <asm/irq.h>
 #include <asm/leds.h>
 #include <asm/hardware/arm_timer.h>
@@ -48,6 +42,7 @@
 #include <asm/mach/irq.h>
 #include <asm/mach/time.h>
 #include <asm/mach/map.h>
+#include <asm/mach/mmc.h>
 
 #include "core.h"
 #include "clock.h"
@@ -82,12 +77,12 @@ static struct irq_chip sic_chip = {
 };
 
 static void
-sic_handle_irq(unsigned int irq, struct irq_desc *desc)
+sic_handle_irq(unsigned int irq, struct irqdesc *desc, struct pt_regs *regs)
 {
 	unsigned long status = readl(VA_SIC_BASE + SIC_IRQ_STATUS);
 
 	if (status == 0) {
-		do_bad_IRQ(irq, desc);
+		do_bad_IRQ(irq, desc, regs);
 		return;
 	}
 
@@ -97,7 +92,8 @@ sic_handle_irq(unsigned int irq, struct irq_desc *desc)
 
 		irq += IRQ_SIC_START;
 
-		generic_handle_irq(irq);
+		desc = irq_desc + irq;
+		desc_handle_irq(irq, desc, regs);
 	} while (status);
 }
 
@@ -117,7 +113,7 @@ void __init versatile_init_irq(void)
 {
 	unsigned int i;
 
-	vic_init(VA_VIC_BASE, IRQ_VIC_START, ~0, 0);
+	vic_init(VA_VIC_BASE, IRQ_VIC_START, ~0);
 
 	set_irq_chained_handler(IRQ_VICSOURCE31, sic_handle_irq);
 
@@ -127,7 +123,7 @@ void __init versatile_init_irq(void)
 	for (i = IRQ_SIC_START; i <= IRQ_SIC_END; i++) {
 		if ((PIC_MASK & (1 << (i - IRQ_SIC_START))) == 0) {
 			set_irq_chip(i, &sic_chip);
-			set_irq_handler(i, handle_level_irq);
+			set_irq_handler(i, do_level_IRQ);
 			set_irq_flags(i, IRQF_VALID | IRQF_PROBE);
 		}
 	}
@@ -192,12 +188,12 @@ static struct map_desc versatile_io_desc[] __initdata = {
 		.length		= SZ_4K,
 		.type		= MT_DEVICE
 	}, {
-		.virtual	=  (unsigned long)VERSATILE_PCI_VIRT_BASE,
+		.virtual	=  VERSATILE_PCI_VIRT_BASE,
 		.pfn		= __phys_to_pfn(VERSATILE_PCI_BASE),
 		.length		= VERSATILE_PCI_BASE_SIZE,
 		.type		= MT_DEVICE
 	}, {
-		.virtual	=  (unsigned long)VERSATILE_PCI_CFG_VIRT_BASE,
+		.virtual	=  VERSATILE_PCI_CFG_VIRT_BASE,
 		.pfn		= __phys_to_pfn(VERSATILE_PCI_CFG_BASE),
 		.length		= VERSATILE_PCI_CFG_BASE_SIZE,
 		.type		= MT_DEVICE
@@ -232,19 +228,14 @@ void __init versatile_map_io(void)
 
 /*
  * This is the Versatile sched_clock implementation.  This has
- * a resolution of 41.7ns, and a maximum value of about 35583 days.
- *
- * The return value is guaranteed to be monotonic in that range as
- * long as there is always less than 89 seconds between successive
- * calls to this function.
+ * a resolution of 41.7ns, and a maximum value of about 179s.
  */
 unsigned long long sched_clock(void)
 {
-	unsigned long long v = cnt32_to_63(readl(VERSATILE_REFCOUNTER));
+	unsigned long long v;
 
-	/* the <<1 gets rid of the cnt_32_to_63 top bit saving on a bic insn */
-	v *= 125<<1;
-	do_div(v, 3<<1);
+	v = (unsigned long long)readl(VERSATILE_REFCOUNTER) * 125;
+	do_div(v, 3);
 
 	return v;
 }
@@ -328,32 +319,6 @@ static struct platform_device smc91x_device = {
 	.resource	= smc91x_resources,
 };
 
-static struct resource versatile_i2c_resource = {
-	.start			= VERSATILE_I2C_BASE,
-	.end			= VERSATILE_I2C_BASE + SZ_4K - 1,
-	.flags			= IORESOURCE_MEM,
-};
-
-static struct platform_device versatile_i2c_device = {
-	.name			= "versatile-i2c",
-	.id			= 0,
-	.num_resources		= 1,
-	.resource		= &versatile_i2c_resource,
-};
-
-static struct i2c_board_info versatile_i2c_board_info[] = {
-	{
-		I2C_BOARD_INFO("ds1338", 0xd0 >> 1),
-	},
-};
-
-static int __init versatile_i2c_init(void)
-{
-	return i2c_register_board_info(0, versatile_i2c_board_info,
-				       ARRAY_SIZE(versatile_i2c_board_info));
-}
-arch_initcall(versatile_i2c_init);
-
 #define VERSATILE_SYSMCI	(__io_address(VERSATILE_SYS_BASE) + VERSATILE_SYS_MCI_OFFSET)
 
 unsigned int mmc_status(struct device *dev)
@@ -369,11 +334,9 @@ unsigned int mmc_status(struct device *dev)
 	return readl(VERSATILE_SYSMCI) & mask;
 }
 
-static struct mmci_platform_data mmc0_plat_data = {
+static struct mmc_platform_data mmc0_plat_data = {
 	.ocr_mask	= MMC_VDD_32_33|MMC_VDD_33_34,
 	.status		= mmc_status,
-	.gpio_wp	= -1,
-	.gpio_cd	= -1,
 };
 
 /*
@@ -390,60 +353,22 @@ static const struct icst307_params versatile_oscvco_params = {
 
 static void versatile_oscvco_set(struct clk *clk, struct icst307_vco vco)
 {
-	void __iomem *sys = __io_address(VERSATILE_SYS_BASE);
-	void __iomem *sys_lock = sys + VERSATILE_SYS_LOCK_OFFSET;
+	void __iomem *sys_lock = __io_address(VERSATILE_SYS_BASE) + VERSATILE_SYS_LOCK_OFFSET;
+	void __iomem *sys_osc = __io_address(VERSATILE_SYS_BASE) + VERSATILE_SYS_OSCCLCD_OFFSET;
 	u32 val;
 
-	val = readl(sys + clk->oscoff) & ~0x7ffff;
+	val = readl(sys_osc) & ~0x7ffff;
 	val |= vco.v | (vco.r << 9) | (vco.s << 16);
 
 	writel(0xa05f, sys_lock);
-	writel(val, sys + clk->oscoff);
+	writel(val, sys_osc);
 	writel(0, sys_lock);
 }
 
-static struct clk osc4_clk = {
+static struct clk versatile_clcd_clk = {
+	.name	= "CLCDCLK",
 	.params	= &versatile_oscvco_params,
-	.oscoff	= VERSATILE_SYS_OSCCLCD_OFFSET,
-	.setvco	= versatile_oscvco_set,
-};
-
-/*
- * These are fixed clocks.
- */
-static struct clk ref24_clk = {
-	.rate	= 24000000,
-};
-
-static struct clk_lookup lookups[] = {
-	{	/* UART0 */
-		.dev_id		= "dev:f1",
-		.clk		= &ref24_clk,
-	}, {	/* UART1 */
-		.dev_id		= "dev:f2",
-		.clk		= &ref24_clk,
-	}, {	/* UART2 */
-		.dev_id		= "dev:f3",
-		.clk		= &ref24_clk,
-	}, {	/* UART3 */
-		.dev_id		= "fpga:09",
-		.clk		= &ref24_clk,
-	}, {	/* KMI0 */
-		.dev_id		= "fpga:06",
-		.clk		= &ref24_clk,
-	}, {	/* KMI1 */
-		.dev_id		= "fpga:07",
-		.clk		= &ref24_clk,
-	}, {	/* MMC0 */
-		.dev_id		= "fpga:05",
-		.clk		= &ref24_clk,
-	}, {	/* MMC1 */
-		.dev_id		= "fpga:0b",
-		.clk		= &ref24_clk,
-	}, {	/* CLCD */
-		.dev_id		= "dev:20",
-		.clk		= &osc4_clk,
-	}
+	.setvco = versatile_oscvco_set,
 };
 
 /*
@@ -708,16 +633,6 @@ static struct clcd_board clcd_plat_data = {
 	.remove		= versatile_clcd_remove,
 };
 
-static struct pl061_platform_data gpio0_plat_data = {
-	.gpio_base	= 0,
-	.irq_base	= IRQ_GPIO0_START,
-};
-
-static struct pl061_platform_data gpio1_plat_data = {
-	.gpio_base	= 8,
-	.irq_base	= IRQ_GPIO1_START,
-};
-
 #define AACI_IRQ	{ IRQ_AACI, NO_IRQ }
 #define AACI_DMA	{ 0x80, 0x81 }
 #define MMCI0_IRQ	{ IRQ_MMCI0A,IRQ_SIC_MMCI0B }
@@ -780,8 +695,8 @@ AMBA_DEVICE(clcd,  "dev:20",  CLCD,     &clcd_plat_data);
 AMBA_DEVICE(dmac,  "dev:30",  DMAC,     NULL);
 AMBA_DEVICE(sctl,  "dev:e0",  SCTL,     NULL);
 AMBA_DEVICE(wdog,  "dev:e1",  WATCHDOG, NULL);
-AMBA_DEVICE(gpio0, "dev:e4",  GPIO0,    &gpio0_plat_data);
-AMBA_DEVICE(gpio1, "dev:e5",  GPIO1,    &gpio1_plat_data);
+AMBA_DEVICE(gpio0, "dev:e4",  GPIO0,    NULL);
+AMBA_DEVICE(gpio1, "dev:e5",  GPIO1,    NULL);
 AMBA_DEVICE(rtc,   "dev:e8",  RTC,      NULL);
 AMBA_DEVICE(sci0,  "dev:f0",  SCI,      NULL);
 AMBA_DEVICE(uart0, "dev:f1",  UART0,    NULL);
@@ -851,11 +766,9 @@ void __init versatile_init(void)
 {
 	int i;
 
-	for (i = 0; i < ARRAY_SIZE(lookups); i++)
-		clkdev_add(&lookups[i]);
+	clk_register(&versatile_clcd_clk);
 
 	platform_device_register(&versatile_flash_device);
-	platform_device_register(&versatile_i2c_device);
 	platform_device_register(&smc91x_device);
 
 	for (i = 0; i < ARRAY_SIZE(amba_devs); i++) {
@@ -895,100 +808,68 @@ void __init versatile_init(void)
 #define TICKS2USECS(x)	((x) / TICKS_PER_uSEC)
 #endif
 
-static void timer_set_mode(enum clock_event_mode mode,
-			   struct clock_event_device *clk)
+/*
+ * Returns number of ms since last clock interrupt.  Note that interrupts
+ * will have been disabled by do_gettimeoffset()
+ */
+static unsigned long versatile_gettimeoffset(void)
 {
-	unsigned long ctrl;
+	unsigned long ticks1, ticks2, status;
 
-	switch(mode) {
-	case CLOCK_EVT_MODE_PERIODIC:
-		writel(TIMER_RELOAD, TIMER0_VA_BASE + TIMER_LOAD);
+	/*
+	 * Get the current number of ticks.  Note that there is a race
+	 * condition between us reading the timer and checking for
+	 * an interrupt.  We get around this by ensuring that the
+	 * counter has not reloaded between our two reads.
+	 */
+	ticks2 = readl(TIMER0_VA_BASE + TIMER_VALUE) & 0xffff;
+	do {
+		ticks1 = ticks2;
+		status = __raw_readl(VA_IC_BASE + VIC_RAW_STATUS);
+		ticks2 = readl(TIMER0_VA_BASE + TIMER_VALUE) & 0xffff;
+	} while (ticks2 > ticks1);
 
-		ctrl = TIMER_CTRL_PERIODIC;
-		ctrl |= TIMER_CTRL_32BIT | TIMER_CTRL_IE | TIMER_CTRL_ENABLE;
-		break;
-	case CLOCK_EVT_MODE_ONESHOT:
-		/* period set, and timer enabled in 'next_event' hook */
-		ctrl = TIMER_CTRL_ONESHOT;
-		ctrl |= TIMER_CTRL_32BIT | TIMER_CTRL_IE;
-		break;
-	case CLOCK_EVT_MODE_UNUSED:
-	case CLOCK_EVT_MODE_SHUTDOWN:
-	default:
-		ctrl = 0;
-	}
+	/*
+	 * Number of ticks since last interrupt.
+	 */
+	ticks1 = TIMER_RELOAD - ticks2;
 
-	writel(ctrl, TIMER0_VA_BASE + TIMER_CTRL);
+	/*
+	 * Interrupt pending?  If so, we've reloaded once already.
+	 *
+	 * FIXME: Need to check this is effectively timer 0 that expires
+	 */
+	if (status & IRQMASK_TIMERINT0_1)
+		ticks1 += TIMER_RELOAD;
+
+	/*
+	 * Convert the ticks to usecs
+	 */
+	return TICKS2USECS(ticks1);
 }
-
-static int timer_set_next_event(unsigned long evt,
-				struct clock_event_device *unused)
-{
-	unsigned long ctrl = readl(TIMER0_VA_BASE + TIMER_CTRL);
-
-	writel(evt, TIMER0_VA_BASE + TIMER_LOAD);
-	writel(ctrl | TIMER_CTRL_ENABLE, TIMER0_VA_BASE + TIMER_CTRL);
-
-	return 0;
-}
-
-static struct clock_event_device timer0_clockevent =	 {
-	.name		= "timer0",
-	.shift		= 32,
-	.features       = CLOCK_EVT_FEAT_PERIODIC | CLOCK_EVT_FEAT_ONESHOT,
-	.set_mode	= timer_set_mode,
-	.set_next_event	= timer_set_next_event,
-};
 
 /*
  * IRQ handler for the timer
  */
-static irqreturn_t versatile_timer_interrupt(int irq, void *dev_id)
+static irqreturn_t versatile_timer_interrupt(int irq, void *dev_id, struct pt_regs *regs)
 {
-	struct clock_event_device *evt = &timer0_clockevent;
+	write_seqlock(&xtime_lock);
 
+	// ...clear the interrupt
 	writel(1, TIMER0_VA_BASE + TIMER_INTCLR);
 
-	evt->event_handler(evt);
+	timer_tick(regs);
+
+	write_sequnlock(&xtime_lock);
 
 	return IRQ_HANDLED;
 }
 
 static struct irqaction versatile_timer_irq = {
 	.name		= "Versatile Timer Tick",
-	.flags		= IRQF_DISABLED | IRQF_TIMER | IRQF_IRQPOLL,
+	.flags		= IRQF_DISABLED | IRQF_TIMER,
 	.handler	= versatile_timer_interrupt,
 };
-
-static cycle_t versatile_get_cycles(struct clocksource *cs)
-{
-	return ~readl(TIMER3_VA_BASE + TIMER_VALUE);
-}
-
-static struct clocksource clocksource_versatile = {
-	.name 		= "timer3",
- 	.rating		= 200,
- 	.read		= versatile_get_cycles,
-	.mask		= CLOCKSOURCE_MASK(32),
- 	.shift 		= 20,
-	.flags		= CLOCK_SOURCE_IS_CONTINUOUS,
-};
-
-static int __init versatile_clocksource_init(void)
-{
-	/* setup timer3 as free-running clocksource */
-	writel(0, TIMER3_VA_BASE + TIMER_CTRL);
-	writel(0xffffffff, TIMER3_VA_BASE + TIMER_LOAD);
-	writel(0xffffffff, TIMER3_VA_BASE + TIMER_VALUE);
-	writel(TIMER_CTRL_32BIT | TIMER_CTRL_ENABLE | TIMER_CTRL_PERIODIC,
-	       TIMER3_VA_BASE + TIMER_CTRL);
-
- 	clocksource_versatile.mult =
- 		clocksource_khz2mult(1000, clocksource_versatile.shift);
- 	clocksource_register(&clocksource_versatile);
-
- 	return 0;
-}
 
 /*
  * Set up timer interrupt, and return the current time in seconds.
@@ -1017,25 +898,18 @@ static void __init versatile_timer_init(void)
 	writel(0, TIMER2_VA_BASE + TIMER_CTRL);
 	writel(0, TIMER3_VA_BASE + TIMER_CTRL);
 
+	writel(TIMER_RELOAD, TIMER0_VA_BASE + TIMER_LOAD);
+	writel(TIMER_RELOAD, TIMER0_VA_BASE + TIMER_VALUE);
+	writel(TIMER_DIVISOR | TIMER_CTRL_ENABLE | TIMER_CTRL_PERIODIC |
+	       TIMER_CTRL_IE, TIMER0_VA_BASE + TIMER_CTRL);
+
 	/* 
 	 * Make irqs happen for the system timer
 	 */
 	setup_irq(IRQ_TIMERINT0_1, &versatile_timer_irq);
-
-	versatile_clocksource_init();
-
-	timer0_clockevent.mult =
-		div_sc(1000000, NSEC_PER_SEC, timer0_clockevent.shift);
-	timer0_clockevent.max_delta_ns =
-		clockevent_delta2ns(0xffffffff, &timer0_clockevent);
-	timer0_clockevent.min_delta_ns =
-		clockevent_delta2ns(0xf, &timer0_clockevent);
-
-	timer0_clockevent.cpumask = cpumask_of(0);
-	clockevents_register_device(&timer0_clockevent);
 }
 
 struct sys_timer versatile_timer = {
 	.init		= versatile_timer_init,
+	.offset		= versatile_gettimeoffset,
 };
-

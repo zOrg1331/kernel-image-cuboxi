@@ -21,12 +21,16 @@
  * 2 of the License, or (at your option) any later version.
  */
 
+#undef DEBUG
 
 #include <asm/firmware.h>
 #include <asm/prom.h>
-#include <asm/udbg.h>
 
-#include "pseries.h"
+#ifdef DEBUG
+#define DBG(fmt...) udbg_printf(fmt)
+#else
+#define DBG(fmt...)
+#endif
 
 typedef struct {
     unsigned long val;
@@ -51,7 +55,7 @@ firmware_features_table[FIRMWARE_MAX_FEATURES] = {
 	{FW_FEATURE_VIO,		"hcall-vio"},
 	{FW_FEATURE_RDMA,		"hcall-rdma"},
 	{FW_FEATURE_LLAN,		"hcall-lLAN"},
-	{FW_FEATURE_BULK_REMOVE,	"hcall-bulk"},
+	{FW_FEATURE_BULK,		"hcall-bulk"},
 	{FW_FEATURE_XDABR,		"hcall-xdabr"},
 	{FW_FEATURE_MULTITCE,		"hcall-multi-tce"},
 	{FW_FEATURE_SPLPAR,		"hcall-splpar"},
@@ -61,12 +65,23 @@ firmware_features_table[FIRMWARE_MAX_FEATURES] = {
  * device-tree/ibm,hypertas-functions.  Ultimately this functionality may
  * be moved into prom.c prom_init().
  */
-void __init fw_feature_init(const char *hypertas, unsigned long len)
+void __init fw_feature_init(void)
 {
-	const char *s;
-	int i;
+	struct device_node *dn;
+	char *hypertas, *s;
+	int len, i;
 
-	pr_debug(" -> fw_feature_init()\n");
+	DBG(" -> fw_feature_init()\n");
+
+	dn = of_find_node_by_path("/rtas");
+	if (dn == NULL) {
+		printk(KERN_ERR "WARNING! Cannot find RTAS in device-tree!\n");
+		goto out;
+	}
+
+	hypertas = get_property(dn, "ibm,hypertas-functions", &len);
+	if (hypertas == NULL)
+		goto out;
 
 	for (s = hypertas; s < hypertas + len; s += strlen(s) + 1) {
 		for (i = 0; i < FIRMWARE_MAX_FEATURES; i++) {
@@ -82,5 +97,7 @@ void __init fw_feature_init(const char *hypertas, unsigned long len)
 		}
 	}
 
-	pr_debug(" <- fw_feature_init()\n");
+out:
+	of_node_put(dn);
+	DBG(" <- fw_feature_init()\n");
 }

@@ -14,6 +14,7 @@
 #include <linux/rio.h>
 #include <linux/rio_drv.h>
 #include <linux/stat.h>
+#include <linux/sched.h>	/* for capable() */
 
 #include "rio.h"
 
@@ -43,8 +44,7 @@ static ssize_t routes_show(struct device *dev, struct device_attribute *attr, ch
 	if (!rdev->rswitch)
 		goto out;
 
-	for (i = 0; i < RIO_MAX_ROUTE_ENTRIES(rdev->net->hport->sys_size);
-			i++) {
+	for (i = 0; i < RIO_MAX_ROUTE_ENTRIES; i++) {
 		if (rdev->rswitch->route_table[i] == RIO_INVALID_ROUTE)
 			continue;
 		str +=
@@ -68,9 +68,7 @@ struct device_attribute rio_dev_attrs[] = {
 };
 
 static ssize_t
-rio_read_config(struct file *filp, struct kobject *kobj,
-		struct bin_attribute *bin_attr,
-		char *buf, loff_t off, size_t count)
+rio_read_config(struct kobject *kobj, char *buf, loff_t off, size_t count)
 {
 	struct rio_dev *dev =
 	    to_rio_dev(container_of(kobj, struct device, kobj));
@@ -140,9 +138,7 @@ rio_read_config(struct file *filp, struct kobject *kobj,
 }
 
 static ssize_t
-rio_write_config(struct file *filp, struct kobject *kobj,
-		 struct bin_attribute *bin_attr,
-		 char *buf, loff_t off, size_t count)
+rio_write_config(struct kobject *kobj, char *buf, loff_t off, size_t count)
 {
 	struct rio_dev *dev =
 	    to_rio_dev(container_of(kobj, struct device, kobj));
@@ -202,6 +198,7 @@ static struct bin_attribute rio_config_attr = {
 	.attr = {
 		 .name = "config",
 		 .mode = S_IRUGO | S_IWUSR,
+		 .owner = THIS_MODULE,
 		 },
 	.size = 0x200000,
 	.read = rio_read_config,
@@ -216,11 +213,9 @@ static struct bin_attribute rio_config_attr = {
  */
 int rio_create_sysfs_dev_files(struct rio_dev *rdev)
 {
-	int err = 0;
+	sysfs_create_bin_file(&rdev->dev.kobj, &rio_config_attr);
 
-	err = sysfs_create_bin_file(&rdev->dev.kobj, &rio_config_attr);
-
-	return err;
+	return 0;
 }
 
 /**

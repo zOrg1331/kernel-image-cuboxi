@@ -1,0 +1,119 @@
+From: Mauro Carvalho Chehab <mchehab@redhat.com>
+Date: Tue, 23 Nov 2010 17:33:54 -0500
+Subject: [edac] i7core_edac: always do get/put for all devices
+Message-id: <20101123153354.07bda4b1@pedra>
+Patchwork-id: 29570
+O-Subject: [PATCH RHEL5 15/29] BZ#:651869 i7core_edac: Always do get/put for
+	all devices
+Bugzilla: 651869
+RH-Acked-by: Aristeu Rozanski <aris@redhat.com>
+
+Changeset: 64c10f6e0e6b4473b97c29c574e9517f93bedaec
+
+We already do 'get' for all sockets at once. So do 'put' in the
+same way.
+
+And let args of the 'get' function to void since it handles
+only the single, static and known size table pci_dev_table[].
+
+Signed-off-by: Hidetoshi Seto <seto.hidetoshi@jp.fujitsu.com>
+Signed-off-by: Mauro Carvalho Chehab <mchehab@redhat.com>
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/edac/i7core_edac.c b/drivers/edac/i7core_edac.c
+index f4a8b1b..23a3880 100644
+--- a/drivers/edac/i7core_edac.c
++++ b/drivers/edac/i7core_edac.c
+@@ -1256,7 +1256,7 @@ static const struct mcidev_sysfs_attribute i7core_sysfs_udimm_attrs[] = {
+  ****************************************************************************/
+ 
+ /*
+- *	i7core_put_devices	'put' all the devices that we have
++ *	i7core_put_all_devices	'put' all the devices that we have
+  *				reserved via 'get'
+  */
+ static void i7core_put_devices(struct i7core_dev *i7core_dev)
+@@ -1324,7 +1324,7 @@ static unsigned i7core_pci_lastbus(void)
+ }
+ 
+ /*
+- *	i7core_get_devices	Find and perform 'get' operation on the MCH's
++ *	i7core_get_all_devices	Find and perform 'get' operation on the MCH's
+  *			device/functions we want to reference for this driver
+  *
+  *			Need to 'get' device 16 func 1 and func 2
+@@ -1433,14 +1433,16 @@ static int i7core_get_onedevice(struct pci_dev **prev,
+ 	return 0;
+ }
+ 
+-static int i7core_get_devices(const struct pci_id_table *table)
++static int i7core_get_all_devices(void)
+ {
+-	int i, rc, last_bus;
++	int i, j, rc, last_bus;
+ 	struct pci_dev *pdev = NULL;
++	const struct pci_id_table *table;
+ 
+ 	last_bus = i7core_pci_lastbus();
+ 
+-	while (table && table->descr) {
++	for (j = 0; j < ARRAY_SIZE(pci_dev_table); j++) {
++		table = &pci_dev_table[j];
+ 		for (i = 0; i < table->n_devs; i++) {
+ 			pdev = NULL;
+ 			do {
+@@ -1456,7 +1458,6 @@ static int i7core_get_devices(const struct pci_id_table *table)
+ 				}
+ 			} while (pdev);
+ 		}
+-		table++;
+ 	}
+ 
+ 	return 0;
+@@ -2021,7 +2022,7 @@ static int __devinit i7core_probe(struct pci_dev *pdev,
+ 	}
+ 	probed++;
+ 
+-	rc = i7core_get_devices(pci_dev_table);
++	rc = i7core_get_all_devices();
+ 	if (unlikely(rc < 0))
+ 		goto fail0;
+ 
+@@ -2059,7 +2060,8 @@ fail0:
+ static void __devexit i7core_remove(struct pci_dev *pdev)
+ {
+ 	struct mem_ctl_info *mci;
+-	struct i7core_dev *i7core_dev, *tmp;
++	struct i7core_dev *i7core_dev;
++	struct i7core_pvt *pvt;
+ 
+ 	debugf0(__FILE__ ": %s()\n", __func__);
+ 
+@@ -2072,8 +2074,8 @@ static void __devexit i7core_remove(struct pci_dev *pdev)
+ 	 */
+ 
+ 	mutex_lock(&i7core_edac_lock);
+-	list_for_each_entry_safe(i7core_dev, tmp, &i7core_edac_list, list) {
+-		mci = edac_mc_del_mc(&i7core_dev->pdev[0]->dev);
++	list_for_each_entry(i7core_dev, &i7core_edac_list, list) {
++		mci = find_mci_by_dev(&i7core_dev->pdev[0]->dev);
+ 		if (unlikely(!mci || !mci->pvt_info)) {
+ 			debugf0("MC: " __FILE__ ": %s(): dev = %p\n",
+ 				__func__, &i7core_dev->pdev[0]->dev);
+@@ -2095,12 +2097,12 @@ static void __devexit i7core_remove(struct pci_dev *pdev)
+ 			debugf1("%s: free mci struct\n", mci->ctl_name);
+ 			kfree(mci->ctl_name);
+ 			edac_mc_free(mci);
+-
+-			/* Release PCI resources */
+-			i7core_put_devices(i7core_dev);
+-			free_i7core_dev(i7core_dev);
+ 		}
+ 	}
++
++	/* Release PCI resources */
++	i7core_put_all_devices();
++
+ 	probed--;
+ 
+ 	mutex_unlock(&i7core_edac_lock);

@@ -33,19 +33,13 @@
 #include <linux/init.h>
 #include <linux/slab.h>
 #include <linux/module.h>
+#include <linux/usb_ch9.h>
 #include <linux/usb/input.h>
 #include "usb.h"
+#include "onetouch.h"
 #include "debug.h"
 
-MODULE_DESCRIPTION("Maxtor USB OneTouch hard drive button driver");
-MODULE_AUTHOR("Nick Sillik <n.sillik@temple.edu>");
-MODULE_LICENSE("GPL");
-
-#define ONETOUCH_PKT_LEN        0x02
-#define ONETOUCH_BUTTON         KEY_PROG1
-
-static int onetouch_connect_input(struct us_data *ss);
-static void onetouch_release_input(void *onetouch_);
+void onetouch_release_input(void *onetouch_);
 
 struct usb_onetouch {
 	char name[128];
@@ -59,55 +53,14 @@ struct usb_onetouch {
 	unsigned int is_open:1;
 };
 
-
-/*
- * The table of devices
- */
-#define UNUSUAL_DEV(id_vendor, id_product, bcdDeviceMin, bcdDeviceMax, \
-		    vendorName, productName, useProtocol, useTransport, \
-		    initFunction, flags) \
-{ USB_DEVICE_VER(id_vendor, id_product, bcdDeviceMin, bcdDeviceMax), \
-  .driver_info = (flags)|(USB_US_TYPE_STOR<<24) }
-
-struct usb_device_id onetouch_usb_ids[] = {
-#	include "unusual_onetouch.h"
-	{ }		/* Terminating entry */
-};
-MODULE_DEVICE_TABLE(usb, onetouch_usb_ids);
-
-#undef UNUSUAL_DEV
-
-/*
- * The flags table
- */
-#define UNUSUAL_DEV(idVendor, idProduct, bcdDeviceMin, bcdDeviceMax, \
-		    vendor_name, product_name, use_protocol, use_transport, \
-		    init_function, Flags) \
-{ \
-	.vendorName = vendor_name,	\
-	.productName = product_name,	\
-	.useProtocol = use_protocol,	\
-	.useTransport = use_transport,	\
-	.initFunction = init_function,	\
-}
-
-static struct us_unusual_dev onetouch_unusual_dev_list[] = {
-#	include "unusual_onetouch.h"
-	{ }		/* Terminating entry */
-};
-
-#undef UNUSUAL_DEV
-
-
-static void usb_onetouch_irq(struct urb *urb)
+static void usb_onetouch_irq(struct urb *urb, struct pt_regs *regs)
 {
 	struct usb_onetouch *onetouch = urb->context;
 	signed char *data = onetouch->data;
 	struct input_dev *dev = onetouch->dev;
-	int status = urb->status;
-	int retval;
+	int status;
 
-	switch (status) {
+	switch (urb->status) {
 	case 0:			/* success */
 		break;
 	case -ECONNRESET:	/* unlink */
@@ -119,25 +72,26 @@ static void usb_onetouch_irq(struct urb *urb)
 		goto resubmit;
 	}
 
+	input_regs(dev, regs);
 	input_report_key(dev, ONETOUCH_BUTTON, data[0] & 0x02);
 	input_sync(dev);
 
 resubmit:
-	retval = usb_submit_urb (urb, GFP_ATOMIC);
-	if (retval)
-		dev_err(&dev->dev, "can't resubmit intr, %s-%s/input0, "
-			"retval %d\n", onetouch->udev->bus->bus_name,
-			onetouch->udev->devpath, retval);
+	status = usb_submit_urb (urb, SLAB_ATOMIC);
+	if (status)
+		err ("can't resubmit intr, %s-%s/input0, status %d",
+			onetouch->udev->bus->bus_name,
+			onetouch->udev->devpath, status);
 }
 
 static int usb_onetouch_open(struct input_dev *dev)
 {
-	struct usb_onetouch *onetouch = input_get_drvdata(dev);
+	struct usb_onetouch *onetouch = dev->private;
 
 	onetouch->is_open = 1;
 	onetouch->irq->dev = onetouch->udev;
 	if (usb_submit_urb(onetouch->irq, GFP_KERNEL)) {
-		dev_err(&dev->dev, "usb_submit_urb failed\n");
+		err("usb_submit_urb failed");
 		return -EIO;
 	}
 
@@ -146,7 +100,7 @@ static int usb_onetouch_open(struct input_dev *dev)
 
 static void usb_onetouch_close(struct input_dev *dev)
 {
-	struct usb_onetouch *onetouch = input_get_drvdata(dev);
+	struct usb_onetouch *onetouch = dev->private;
 
 	usb_kill_urb(onetouch->irq);
 	onetouch->is_open = 0;
@@ -163,9 +117,8 @@ static void usb_onetouch_pm_hook(struct us_data *us, int action)
 			usb_kill_urb(onetouch->irq);
 			break;
 		case US_RESUME:
-			if (usb_submit_urb(onetouch->irq, GFP_NOIO) != 0)
-				dev_err(&onetouch->irq->dev->dev,
-					"usb_submit_urb failed\n");
+			if (usb_submit_urb(onetouch->irq, GFP_KERNEL) != 0)
+				err("usb_submit_urb failed");
 			break;
 		default:
 			break;
@@ -174,7 +127,7 @@ static void usb_onetouch_pm_hook(struct us_data *us, int action)
 }
 #endif /* CONFIG_PM */
 
-static int onetouch_connect_input(struct us_data *ss)
+int onetouch_connect_input(struct us_data *ss)
 {
 	struct usb_device *udev = ss->pusb_dev;
 	struct usb_host_interface *interface;
@@ -182,7 +135,6 @@ static int onetouch_connect_input(struct us_data *ss)
 	struct usb_onetouch *onetouch;
 	struct input_dev *input_dev;
 	int pipe, maxp;
-	int error = -ENOMEM;
 
 	interface = ss->pusb_intf->cur_altsetting;
 
@@ -190,7 +142,10 @@ static int onetouch_connect_input(struct us_data *ss)
 		return -ENODEV;
 
 	endpoint = &interface->endpoint[2].desc;
-	if (!usb_endpoint_is_int_in(endpoint))
+	if (!(endpoint->bEndpointAddress & USB_DIR_IN))
+		return -ENODEV;
+	if ((endpoint->bmAttributes & USB_ENDPOINT_XFERTYPE_MASK)
+			!= USB_ENDPOINT_XFER_INT)
 		return -ENODEV;
 
 	pipe = usb_rcvintpipe(udev, endpoint->bEndpointAddress);
@@ -202,7 +157,7 @@ static int onetouch_connect_input(struct us_data *ss)
 		goto fail1;
 
 	onetouch->data = usb_buffer_alloc(udev, ONETOUCH_PKT_LEN,
-					  GFP_ATOMIC, &onetouch->data_dma);
+					  SLAB_ATOMIC, &onetouch->data_dma);
 	if (!onetouch->data)
 		goto fail1;
 
@@ -234,14 +189,13 @@ static int onetouch_connect_input(struct us_data *ss)
 	input_dev->name = onetouch->name;
 	input_dev->phys = onetouch->phys;
 	usb_to_input_id(udev, &input_dev->id);
-	input_dev->dev.parent = &udev->dev;
+	input_dev->cdev.dev = &udev->dev;
 
 	set_bit(EV_KEY, input_dev->evbit);
 	set_bit(ONETOUCH_BUTTON, input_dev->keybit);
 	clear_bit(0, input_dev->keybit);
 
-	input_set_drvdata(input_dev, onetouch);
-
+	input_dev->private = onetouch;
 	input_dev->open = usb_onetouch_open;
 	input_dev->close = usb_onetouch_close;
 
@@ -257,21 +211,18 @@ static int onetouch_connect_input(struct us_data *ss)
 	ss->suspend_resume_hook = usb_onetouch_pm_hook;
 #endif
 
-	error = input_register_device(onetouch->dev);
-	if (error)
-		goto fail3;
+	input_register_device(onetouch->dev);
 
 	return 0;
 
- fail3:	usb_free_urb(onetouch->irq);
  fail2:	usb_buffer_free(udev, ONETOUCH_PKT_LEN,
 			onetouch->data, onetouch->data_dma);
  fail1:	kfree(onetouch);
 	input_free_device(input_dev);
-	return error;
+	return -ENOMEM;
 }
 
-static void onetouch_release_input(void *onetouch_)
+void onetouch_release_input(void *onetouch_)
 {
 	struct usb_onetouch *onetouch = (struct usb_onetouch *) onetouch_;
 
@@ -283,46 +234,3 @@ static void onetouch_release_input(void *onetouch_)
 				onetouch->data, onetouch->data_dma);
 	}
 }
-
-static int onetouch_probe(struct usb_interface *intf,
-			 const struct usb_device_id *id)
-{
-	struct us_data *us;
-	int result;
-
-	result = usb_stor_probe1(&us, intf, id,
-			(id - onetouch_usb_ids) + onetouch_unusual_dev_list);
-	if (result)
-		return result;
-
-	/* Use default transport and protocol */
-
-	result = usb_stor_probe2(us);
-	return result;
-}
-
-static struct usb_driver onetouch_driver = {
-	.name =		"ums-onetouch",
-	.probe =	onetouch_probe,
-	.disconnect =	usb_stor_disconnect,
-	.suspend =	usb_stor_suspend,
-	.resume =	usb_stor_resume,
-	.reset_resume =	usb_stor_reset_resume,
-	.pre_reset =	usb_stor_pre_reset,
-	.post_reset =	usb_stor_post_reset,
-	.id_table =	onetouch_usb_ids,
-	.soft_unbind =	1,
-};
-
-static int __init onetouch_init(void)
-{
-	return usb_register(&onetouch_driver);
-}
-
-static void __exit onetouch_exit(void)
-{
-	usb_deregister(&onetouch_driver);
-}
-
-module_init(onetouch_init);
-module_exit(onetouch_exit);

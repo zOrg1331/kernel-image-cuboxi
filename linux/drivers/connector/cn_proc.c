@@ -28,7 +28,6 @@
 #include <linux/init.h>
 #include <linux/connector.h>
 #include <asm/atomic.h>
-#include <asm/unaligned.h>
 
 #include <linux/cn_proc.h>
 
@@ -61,7 +60,7 @@ void proc_fork_connector(struct task_struct *task)
 	ev = (struct proc_event*)msg->data;
 	get_seq(&msg->seq, &ev->cpu);
 	ktime_get_ts(&ts); /* get high res monotonic timestamp */
-	put_unaligned(timespec_to_ns(&ts), (__u64 *)&ev->timestamp_ns);
+	ev->timestamp_ns = timespec_to_ns(&ts);
 	ev->what = PROC_EVENT_FORK;
 	ev->event_data.fork.parent_pid = task->real_parent->pid;
 	ev->event_data.fork.parent_tgid = task->real_parent->tgid;
@@ -89,7 +88,7 @@ void proc_exec_connector(struct task_struct *task)
 	ev = (struct proc_event*)msg->data;
 	get_seq(&msg->seq, &ev->cpu);
 	ktime_get_ts(&ts); /* get high res monotonic timestamp */
-	put_unaligned(timespec_to_ns(&ts), (__u64 *)&ev->timestamp_ns);
+	ev->timestamp_ns = timespec_to_ns(&ts);
 	ev->what = PROC_EVENT_EXEC;
 	ev->event_data.exec.process_pid = task->pid;
 	ev->event_data.exec.process_tgid = task->tgid;
@@ -106,7 +105,6 @@ void proc_id_connector(struct task_struct *task, int which_id)
 	struct proc_event *ev;
 	__u8 buffer[CN_PROC_MSG_SIZE];
 	struct timespec ts;
-	const struct cred *cred;
 
 	if (atomic_read(&proc_event_num_listeners) < 1)
 		return;
@@ -116,47 +114,17 @@ void proc_id_connector(struct task_struct *task, int which_id)
 	ev->what = which_id;
 	ev->event_data.id.process_pid = task->pid;
 	ev->event_data.id.process_tgid = task->tgid;
-	rcu_read_lock();
-	cred = __task_cred(task);
 	if (which_id == PROC_EVENT_UID) {
-		ev->event_data.id.r.ruid = cred->uid;
-		ev->event_data.id.e.euid = cred->euid;
+	 	ev->event_data.id.r.ruid = task->uid;
+	 	ev->event_data.id.e.euid = task->euid;
 	} else if (which_id == PROC_EVENT_GID) {
-		ev->event_data.id.r.rgid = cred->gid;
-		ev->event_data.id.e.egid = cred->egid;
-	} else {
-		rcu_read_unlock();
+	   	ev->event_data.id.r.rgid = task->gid;
+	   	ev->event_data.id.e.egid = task->egid;
+	} else
 	     	return;
-	}
-	rcu_read_unlock();
 	get_seq(&msg->seq, &ev->cpu);
 	ktime_get_ts(&ts); /* get high res monotonic timestamp */
-	put_unaligned(timespec_to_ns(&ts), (__u64 *)&ev->timestamp_ns);
-
-	memcpy(&msg->id, &cn_proc_event_id, sizeof(msg->id));
-	msg->ack = 0; /* not used */
-	msg->len = sizeof(*ev);
-	cn_netlink_send(msg, CN_IDX_PROC, GFP_KERNEL);
-}
-
-void proc_sid_connector(struct task_struct *task)
-{
-	struct cn_msg *msg;
-	struct proc_event *ev;
-	struct timespec ts;
-	__u8 buffer[CN_PROC_MSG_SIZE];
-
-	if (atomic_read(&proc_event_num_listeners) < 1)
-		return;
-
-	msg = (struct cn_msg *)buffer;
-	ev = (struct proc_event *)msg->data;
-	get_seq(&msg->seq, &ev->cpu);
-	ktime_get_ts(&ts); /* get high res monotonic timestamp */
-	put_unaligned(timespec_to_ns(&ts), (__u64 *)&ev->timestamp_ns);
-	ev->what = PROC_EVENT_SID;
-	ev->event_data.sid.process_pid = task->pid;
-	ev->event_data.sid.process_tgid = task->tgid;
+	ev->timestamp_ns = timespec_to_ns(&ts);
 
 	memcpy(&msg->id, &cn_proc_event_id, sizeof(msg->id));
 	msg->ack = 0; /* not used */
@@ -178,7 +146,7 @@ void proc_exit_connector(struct task_struct *task)
 	ev = (struct proc_event*)msg->data;
 	get_seq(&msg->seq, &ev->cpu);
 	ktime_get_ts(&ts); /* get high res monotonic timestamp */
-	put_unaligned(timespec_to_ns(&ts), (__u64 *)&ev->timestamp_ns);
+	ev->timestamp_ns = timespec_to_ns(&ts);
 	ev->what = PROC_EVENT_EXIT;
 	ev->event_data.exit.process_pid = task->pid;
 	ev->event_data.exit.process_tgid = task->tgid;
@@ -213,7 +181,7 @@ static void cn_proc_ack(int err, int rcvd_seq, int rcvd_ack)
 	ev = (struct proc_event*)msg->data;
 	msg->seq = rcvd_seq;
 	ktime_get_ts(&ts); /* get high res monotonic timestamp */
-	put_unaligned(timespec_to_ns(&ts), (__u64 *)&ev->timestamp_ns);
+	ev->timestamp_ns = timespec_to_ns(&ts);
 	ev->cpu = -1;
 	ev->what = PROC_EVENT_NONE;
 	ev->event_data.ack.err = err;
@@ -227,9 +195,9 @@ static void cn_proc_ack(int err, int rcvd_seq, int rcvd_ack)
  * cn_proc_mcast_ctl
  * @data: message sent from userspace via the connector
  */
-static void cn_proc_mcast_ctl(struct cn_msg *msg,
-			      struct netlink_skb_parms *nsp)
+static void cn_proc_mcast_ctl(void *data)
 {
+	struct cn_msg *msg = data;
 	enum proc_cn_mcast_op *mc_op = NULL;
 	int err = 0;
 

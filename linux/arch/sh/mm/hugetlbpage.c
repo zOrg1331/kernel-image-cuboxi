@@ -13,6 +13,7 @@
 #include <linux/mm.h>
 #include <linux/hugetlb.h>
 #include <linux/pagemap.h>
+#include <linux/smp_lock.h>
 #include <linux/slab.h>
 #include <linux/sysctl.h>
 
@@ -22,50 +23,64 @@
 #include <asm/tlbflush.h>
 #include <asm/cacheflush.h>
 
-pte_t *huge_pte_alloc(struct mm_struct *mm,
-			unsigned long addr, unsigned long sz)
+pte_t *huge_pte_alloc(struct mm_struct *mm, unsigned long addr)
 {
 	pgd_t *pgd;
-	pud_t *pud;
 	pmd_t *pmd;
 	pte_t *pte = NULL;
 
 	pgd = pgd_offset(mm, addr);
 	if (pgd) {
-		pud = pud_alloc(mm, pgd, addr);
-		if (pud) {
-			pmd = pmd_alloc(mm, pud, addr);
-			if (pmd)
-				pte = pte_alloc_map(mm, pmd, addr);
-		}
+		pmd = pmd_alloc(mm, pgd, addr);
+		if (pmd)
+			pte = pte_alloc_map(mm, pmd, addr);
 	}
-
 	return pte;
 }
 
 pte_t *huge_pte_offset(struct mm_struct *mm, unsigned long addr)
 {
 	pgd_t *pgd;
-	pud_t *pud;
 	pmd_t *pmd;
 	pte_t *pte = NULL;
 
 	pgd = pgd_offset(mm, addr);
 	if (pgd) {
-		pud = pud_offset(pgd, addr);
-		if (pud) {
-			pmd = pmd_offset(pud, addr);
-			if (pmd)
-				pte = pte_offset_map(pmd, addr);
-		}
+		pmd = pmd_offset(pgd, addr);
+		if (pmd)
+			pte = pte_offset_map(pmd, addr);
 	}
-
 	return pte;
 }
 
-int huge_pmd_unshare(struct mm_struct *mm, unsigned long *addr, pte_t *ptep)
+void set_huge_pte_at(struct mm_struct *mm, unsigned long addr,
+		     pte_t *ptep, pte_t entry)
 {
-	return 0;
+	int i;
+
+	for (i = 0; i < (1 << HUGETLB_PAGE_ORDER); i++) {
+		set_pte_at(mm, addr, ptep, entry);
+		ptep++;
+		addr += PAGE_SIZE;
+		pte_val(entry) += PAGE_SIZE;
+	}
+}
+
+pte_t huge_ptep_get_and_clear(struct mm_struct *mm, unsigned long addr,
+			      pte_t *ptep)
+{
+	pte_t entry;
+	int i;
+
+	entry = *ptep;
+
+	for (i = 0; i < (1 << HUGETLB_PAGE_ORDER); i++) {
+		pte_clear(mm, addr, ptep);
+		addr += PAGE_SIZE;
+		ptep++;
+	}
+
+	return entry;
 }
 
 struct page *follow_huge_addr(struct mm_struct *mm,
@@ -75,11 +90,6 @@ struct page *follow_huge_addr(struct mm_struct *mm,
 }
 
 int pmd_huge(pmd_t pmd)
-{
-	return 0;
-}
-
-int pud_huge(pud_t pud)
 {
 	return 0;
 }

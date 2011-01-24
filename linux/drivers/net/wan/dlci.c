@@ -28,6 +28,7 @@
  *		2 of the License, or (at your option) any later version.
  */
 
+#include <linux/config.h> /* for CONFIG_DLCI_COUNT */
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/types.h>
@@ -66,15 +67,15 @@ static void dlci_setup(struct net_device *);
  */
 
 static int dlci_header(struct sk_buff *skb, struct net_device *dev, 
-		       unsigned short type, const void *daddr,
-		       const void *saddr, unsigned len)
+                           unsigned short type, void *daddr, void *saddr, 
+                           unsigned len)
 {
 	struct frhdr		hdr;
 	struct dlci_local	*dlp;
 	unsigned int		hlen;
 	char			*dest;
 
-	dlp = netdev_priv(dev);
+	dlp = dev->priv;
 
 	hdr.control = FRAD_I_UI;
 	switch(type)
@@ -110,11 +111,11 @@ static void dlci_receive(struct sk_buff *skb, struct net_device *dev)
 	struct frhdr		*hdr;
 	int					process, header;
 
-	dlp = netdev_priv(dev);
+	dlp = dev->priv;
 	if (!pskb_may_pull(skb, sizeof(*hdr))) {
 		printk(KERN_NOTICE "%s: invalid data no header\n",
 		       dev->name);
-		dev->stats.rx_errors++;
+		dlp->stats.rx_errors++;
 		kfree_skb(skb);
 		return;
 	}
@@ -127,7 +128,7 @@ static void dlci_receive(struct sk_buff *skb, struct net_device *dev)
 	if (hdr->control != FRAD_I_UI)
 	{
 		printk(KERN_NOTICE "%s: Invalid header flag 0x%02X.\n", dev->name, hdr->control);
-		dev->stats.rx_errors++;
+		dlp->stats.rx_errors++;
 	}
 	else
 		switch(hdr->IP_NLPID)
@@ -136,14 +137,14 @@ static void dlci_receive(struct sk_buff *skb, struct net_device *dev)
 				if (hdr->NLPID != FRAD_P_SNAP)
 				{
 					printk(KERN_NOTICE "%s: Unsupported NLPID 0x%02X.\n", dev->name, hdr->NLPID);
-					dev->stats.rx_errors++;
+					dlp->stats.rx_errors++;
 					break;
 				}
 	 
 				if (hdr->OUI[0] + hdr->OUI[1] + hdr->OUI[2] != 0)
 				{
 					printk(KERN_NOTICE "%s: Unsupported organizationally unique identifier 0x%02X-%02X-%02X.\n", dev->name, hdr->OUI[0], hdr->OUI[1], hdr->OUI[2]);
-					dev->stats.rx_errors++;
+					dlp->stats.rx_errors++;
 					break;
 				}
 
@@ -164,35 +165,68 @@ static void dlci_receive(struct sk_buff *skb, struct net_device *dev)
 			case FRAD_P_Q933:
 			case FRAD_P_CLNP:
 				printk(KERN_NOTICE "%s: Unsupported NLPID 0x%02X.\n", dev->name, hdr->pad);
-				dev->stats.rx_errors++;
+				dlp->stats.rx_errors++;
 				break;
 
 			default:
 				printk(KERN_NOTICE "%s: Invalid pad byte 0x%02X.\n", dev->name, hdr->pad);
-				dev->stats.rx_errors++;
+				dlp->stats.rx_errors++;
 				break;				
 		}
 
 	if (process)
 	{
 		/* we've set up the protocol, so discard the header */
-		skb_reset_mac_header(skb);
+		skb->mac.raw = skb->data; 
 		skb_pull(skb, header);
-		dev->stats.rx_bytes += skb->len;
+		dlp->stats.rx_bytes += skb->len;
 		netif_rx(skb);
-		dev->stats.rx_packets++;
+		dlp->stats.rx_packets++;
+		dev->last_rx = jiffies;
 	}
 	else
 		dev_kfree_skb(skb);
 }
 
-static netdev_tx_t dlci_transmit(struct sk_buff *skb, struct net_device *dev)
+static int dlci_transmit(struct sk_buff *skb, struct net_device *dev)
 {
-	struct dlci_local *dlp = netdev_priv(dev);
+	struct dlci_local *dlp;
+	int					ret;
 
-	if (skb)
-		dlp->slave->netdev_ops->ndo_start_xmit(skb, dlp->slave);
-	return NETDEV_TX_OK;
+	ret = 0;
+
+	if (!skb || !dev)
+		return(0);
+
+	dlp = dev->priv;
+
+	netif_stop_queue(dev);
+	
+	ret = dlp->slave->hard_start_xmit(skb, dlp->slave);
+	switch (ret)
+	{
+		case DLCI_RET_OK:
+			dlp->stats.tx_packets++;
+			ret = 0;
+			break;
+			case DLCI_RET_ERR:
+			dlp->stats.tx_errors++;
+			ret = 0;
+			break;
+			case DLCI_RET_DROP:
+			dlp->stats.tx_dropped++;
+			ret = 1;
+			break;
+	}
+	/* Alan Cox recommends always returning 0, and always freeing the packet */
+	/* experience suggest a slightly more conservative approach */
+
+	if (!ret)
+	{
+		dev_kfree_skb(skb);
+		netif_wake_queue(dev);
+	}
+	return(ret);
 }
 
 static int dlci_config(struct net_device *dev, struct dlci_conf __user *conf, int get)
@@ -202,9 +236,9 @@ static int dlci_config(struct net_device *dev, struct dlci_conf __user *conf, in
 	struct frad_local	*flp;
 	int			err;
 
-	dlp = netdev_priv(dev);
+	dlp = dev->priv;
 
-	flp = netdev_priv(dlp->slave);
+	flp = dlp->slave->priv;
 
 	if (!get)
 	{
@@ -236,7 +270,7 @@ static int dlci_dev_ioctl(struct net_device *dev, struct ifreq *ifr, int cmd)
 	if (!capable(CAP_NET_ADMIN))
 		return(-EPERM);
 
-	dlp = netdev_priv(dev);
+	dlp = dev->priv;
 
 	switch(cmd)
 	{
@@ -263,9 +297,11 @@ static int dlci_dev_ioctl(struct net_device *dev, struct ifreq *ifr, int cmd)
 
 static int dlci_change_mtu(struct net_device *dev, int new_mtu)
 {
-	struct dlci_local *dlp = netdev_priv(dev);
+	struct dlci_local *dlp;
 
-	return dev_set_mtu(dlp->slave, new_mtu);
+	dlp = dev->priv;
+
+	return((*dlp->slave->change_mtu)(dlp->slave, new_mtu));
 }
 
 static int dlci_open(struct net_device *dev)
@@ -274,7 +310,7 @@ static int dlci_open(struct net_device *dev)
 	struct frad_local	*flp;
 	int			err;
 
-	dlp = netdev_priv(dev);
+	dlp = dev->priv;
 
 	if (!*(short *)(dev->dev_addr))
 		return(-EINVAL);
@@ -282,7 +318,7 @@ static int dlci_open(struct net_device *dev)
 	if (!netif_running(dlp->slave))
 		return(-ENOTCONN);
 
-	flp = netdev_priv(dlp->slave);
+	flp = dlp->slave->priv;
 	err = (*flp->activate)(dlp->slave, dev);
 	if (err)
 		return(err);
@@ -300,12 +336,21 @@ static int dlci_close(struct net_device *dev)
 
 	netif_stop_queue(dev);
 
-	dlp = netdev_priv(dev);
+	dlp = dev->priv;
 
-	flp = netdev_priv(dlp->slave);
+	flp = dlp->slave->priv;
 	err = (*flp->deactivate)(dlp->slave, dev);
 
 	return 0;
+}
+
+static struct net_device_stats *dlci_get_stats(struct net_device *dev)
+{
+	struct dlci_local *dlp;
+
+	dlp = dev->priv;
+
+	return(&dlp->stats);
 }
 
 static int dlci_add(struct dlci_add *dlci)
@@ -317,11 +362,11 @@ static int dlci_add(struct dlci_add *dlci)
 
 
 	/* validate slave device */
-	slave = dev_get_by_name(&init_net, dlci->devname);
+	slave = dev_get_by_name(dlci->devname);
 	if (!slave)
 		return -ENODEV;
 
-	if (slave->type != ARPHRD_FRAD || netdev_priv(slave) == NULL)
+	if (slave->type != ARPHRD_FRAD || slave->priv == NULL)
 		goto err1;
 
 	/* create device name */
@@ -347,11 +392,11 @@ static int dlci_add(struct dlci_add *dlci)
 
 	*(short *)(master->dev_addr) = dlci->dlci;
 
-	dlp = netdev_priv(master);
+	dlp = (struct dlci_local *) master->priv;
 	dlp->slave = slave;
 	dlp->master = master;
 
-	flp = netdev_priv(slave);
+	flp = slave->priv;
 	err = (*flp->assoc)(slave, master);
 	if (err < 0)
 		goto err2;
@@ -383,7 +428,7 @@ static int dlci_del(struct dlci_add *dlci)
 	int			err;
 
 	/* validate slave device */
-	master = __dev_get_by_name(&init_net, dlci->devname);
+	master = __dev_get_by_name(dlci->devname);
 	if (!master)
 		return(-ENODEV);
 
@@ -391,9 +436,9 @@ static int dlci_del(struct dlci_add *dlci)
 		return(-EBUSY);
 	}
 
-	dlp = netdev_priv(master);
+	dlp = master->priv;
 	slave = dlp->slave;
-	flp = netdev_priv(slave);
+	flp = slave->priv;
 
 	rtnl_lock();
 	err = (*flp->deassoc)(slave, master);
@@ -441,25 +486,18 @@ static int dlci_ioctl(unsigned int cmd, void __user *arg)
 	return(err);
 }
 
-static const struct header_ops dlci_header_ops = {
-	.create	= dlci_header,
-};
-
-static const struct net_device_ops dlci_netdev_ops = {
-	.ndo_open	= dlci_open,
-	.ndo_stop	= dlci_close,
-	.ndo_do_ioctl	= dlci_dev_ioctl,
-	.ndo_start_xmit	= dlci_transmit,
-	.ndo_change_mtu	= dlci_change_mtu,
-};
-
 static void dlci_setup(struct net_device *dev)
 {
-	struct dlci_local *dlp = netdev_priv(dev);
+	struct dlci_local *dlp = dev->priv;
 
 	dev->flags		= 0;
-	dev->header_ops		= &dlci_header_ops;
-	dev->netdev_ops		= &dlci_netdev_ops;
+	dev->open		= dlci_open;
+	dev->stop		= dlci_close;
+	dev->do_ioctl		= dlci_dev_ioctl;
+	dev->hard_start_xmit	= dlci_transmit;
+	dev->hard_header	= dlci_header;
+	dev->get_stats		= dlci_get_stats;
+	dev->change_mtu		= dlci_change_mtu;
 	dev->destructor		= free_netdev;
 
 	dlp->receive		= dlci_receive;
@@ -475,9 +513,6 @@ static int dlci_dev_event(struct notifier_block *unused,
 			  unsigned long event, void *ptr)
 {
 	struct net_device *dev = (struct net_device *) ptr;
-
-	if (dev_net(dev) != &init_net)
-		return NOTIFY_DONE;
 
 	if (event == NETDEV_UNREGISTER) {
 		struct dlci_local *dlp;

@@ -5,6 +5,8 @@
  *
  *      (C) Copyright 2000-2001, Greg Ungerer (gerg@snapgear.com)
  *      (C) Copyright 2001-2002, SnapGear (www.snapgear.com)
+ *
+ *	$Id: nettel.c,v 1.12 2005/11/29 14:30:00 gleixner Exp $
  */
 
 /****************************************************************************/
@@ -18,7 +20,6 @@
 #include <linux/mtd/partitions.h>
 #include <linux/mtd/cfi.h>
 #include <linux/reboot.h>
-#include <linux/err.h>
 #include <linux/kdev_t.h>
 #include <linux/root_dev.h>
 #include <asm/io.h>
@@ -156,11 +157,68 @@ static struct notifier_block nettel_notifier_block = {
 	nettel_reboot_notifier, NULL, 0
 };
 
+/*
+ *	Erase the configuration file system.
+ *	Used to support the software reset button.
+ */
+static void nettel_erasecallback(struct erase_info *done)
+{
+	wait_queue_head_t *wait_q = (wait_queue_head_t *)done->priv;
+	wake_up(wait_q);
+}
+
+static struct erase_info nettel_erase;
+
+int nettel_eraseconfig(void)
+{
+	struct mtd_info *mtd;
+	DECLARE_WAITQUEUE(wait, current);
+	wait_queue_head_t wait_q;
+	int ret;
+
+	init_waitqueue_head(&wait_q);
+	mtd = get_mtd_device(NULL, 2);
+	if (mtd) {
+		nettel_erase.mtd = mtd;
+		nettel_erase.callback = nettel_erasecallback;
+		nettel_erase.callback = NULL;
+		nettel_erase.addr = 0;
+		nettel_erase.len = mtd->size;
+		nettel_erase.priv = (u_long) &wait_q;
+		nettel_erase.priv = 0;
+
+		set_current_state(TASK_INTERRUPTIBLE);
+		add_wait_queue(&wait_q, &wait);
+
+		ret = mtd->erase(mtd, &nettel_erase);
+		if (ret) {
+			set_current_state(TASK_RUNNING);
+			remove_wait_queue(&wait_q, &wait);
+			put_mtd_device(mtd);
+			return(ret);
+		}
+
+		schedule();  /* Wait for erase to finish. */
+		remove_wait_queue(&wait_q, &wait);
+
+		put_mtd_device(mtd);
+	}
+
+	return(0);
+}
+
+#else
+
+int nettel_eraseconfig(void)
+{
+	return(0);
+}
+
 #endif
 
 /****************************************************************************/
 
-static int __init nettel_init(void)
+int __init nettel_init(void)
 {
 	volatile unsigned long *amdpar;
 	unsigned long amdaddr, maxsize;
@@ -219,14 +277,13 @@ static int __init nettel_init(void)
 	nettel_amd_map.virt = ioremap_nocache(amdaddr, maxsize);
 	if (!nettel_amd_map.virt) {
 		printk("SNAPGEAR: failed to ioremap() BOOTCS\n");
-		iounmap(nettel_mmcrp);
 		return(-EIO);
 	}
 	simple_map_init(&nettel_amd_map);
 
 	if ((amd_mtd = do_map_probe("jedec_probe", &nettel_amd_map))) {
 		printk(KERN_NOTICE "SNAPGEAR: AMD flash device size = %dK\n",
-			(int)(amd_mtd->size>>10));
+			amd_mtd->size>>10);
 
 		amd_mtd->owner = THIS_MODULE;
 
@@ -280,8 +337,7 @@ static int __init nettel_init(void)
 		nettel_amd_map.virt = NULL;
 #else
 		/* Only AMD flash supported */
-		rc = -ENXIO;
-		goto out_unmap2;
+		return(-ENXIO);
 #endif
 	}
 
@@ -299,21 +355,20 @@ static int __init nettel_init(void)
 	/* Turn other PAR off so the first probe doesn't find it */
 	*intel1par = 0;
 
-	/* Probe for the size of the first Intel flash */
+	/* Probe for the the size of the first Intel flash */
 	nettel_intel_map.size = maxsize;
 	nettel_intel_map.phys = intel0addr;
 	nettel_intel_map.virt = ioremap_nocache(intel0addr, maxsize);
 	if (!nettel_intel_map.virt) {
 		printk("SNAPGEAR: failed to ioremap() ROMCS1\n");
-		rc = -EIO;
-		goto out_unmap2;
+		return(-EIO);
 	}
 	simple_map_init(&nettel_intel_map);
 
 	intel_mtd = do_map_probe("cfi_probe", &nettel_intel_map);
 	if (!intel_mtd) {
-		rc = -ENXIO;
-		goto out_unmap1;
+		iounmap(nettel_intel_map.virt);
+		return(-ENXIO);
 	}
 
 	/* Set PAR to the detected size */
@@ -339,14 +394,13 @@ static int __init nettel_init(void)
 	nettel_intel_map.virt = ioremap_nocache(intel0addr, maxsize);
 	if (!nettel_intel_map.virt) {
 		printk("SNAPGEAR: failed to ioremap() ROMCS1/2\n");
-		rc = -EIO;
-		goto out_unmap2;
+		return(-EIO);
 	}
 
 	intel_mtd = do_map_probe("cfi_probe", &nettel_intel_map);
 	if (! intel_mtd) {
-		rc = -ENXIO;
-		goto out_unmap1;
+		iounmap((void *) nettel_intel_map.virt);
+		return(-ENXIO);
 	}
 
 	intel1size = intel_mtd->size - intel0size;
@@ -357,12 +411,17 @@ static int __init nettel_init(void)
 		*intel1par = 0;
 	}
 
-	printk(KERN_NOTICE "SNAPGEAR: Intel flash device size = %lldKiB\n",
-	       (unsigned long long)(intel_mtd->size >> 10));
+	printk(KERN_NOTICE "SNAPGEAR: Intel flash device size = %dK\n",
+		(intel_mtd->size >> 10));
 
 	intel_mtd->owner = THIS_MODULE;
 
-	num_intel_partitions = ARRAY_SIZE(nettel_intel_partitions);
+#ifndef CONFIG_BLK_DEV_INITRD
+	ROOT_DEV = MKDEV(MTD_BLOCK_MAJOR, 1);
+#endif
+
+	num_intel_partitions = sizeof(nettel_intel_partitions) /
+		sizeof(nettel_intel_partitions[0]);
 
 	if (intelboot) {
 		/*
@@ -397,23 +456,11 @@ static int __init nettel_init(void)
 #endif
 
 	return(rc);
-
-#ifdef CONFIG_MTD_CFI_INTELEXT
-out_unmap1:
-	iounmap(nettel_intel_map.virt);
-#endif
-
-out_unmap2:
-	iounmap(nettel_mmcrp);
-	iounmap(nettel_amd_map.virt);
-
-	return(rc);
-
 }
 
 /****************************************************************************/
 
-static void __exit nettel_cleanup(void)
+void __exit nettel_cleanup(void)
 {
 #ifdef CONFIG_MTD_CFI_INTELEXT
 	unregister_reboot_notifier(&nettel_notifier_block);
@@ -421,10 +468,6 @@ static void __exit nettel_cleanup(void)
 	if (amd_mtd) {
 		del_mtd_partitions(amd_mtd);
 		map_destroy(amd_mtd);
-	}
-	if (nettel_mmcrp) {
-		iounmap(nettel_mmcrp);
-		nettel_mmcrp = NULL;
 	}
 	if (nettel_amd_map.virt) {
 		iounmap(nettel_amd_map.virt);

@@ -43,6 +43,8 @@ static void iiEnableMailIrqIIEX(i2eBordStrPtr);
 static void iiWriteMaskII(i2eBordStrPtr, unsigned char);
 static void iiWriteMaskIIEX(i2eBordStrPtr, unsigned char);
 
+static void ii2DelayTimer(unsigned int);
+static void ii2DelayWakeup(unsigned long id);
 static void ii2Nop(void);
 
 //***************
@@ -53,7 +55,9 @@ static int ii2Safe;         // Safe I/O address for delay routine
 
 static int iiDelayed;	// Set when the iiResetDelay function is
 							// called. Cleared when ANY board is reset.
-static DEFINE_RWLOCK(Dl_spinlock);
+static struct timer_list * pDelayTimer;   // Used by iiDelayTimer
+static wait_queue_head_t pDelayWait;    // Used by iiDelayTimer
+static rwlock_t Dl_spinlock;
 
 //********
 //* Code *
@@ -67,6 +71,43 @@ static DEFINE_RWLOCK(Dl_spinlock);
 // iiResetDelay
 // iiInitialize
 //=======================================================
+
+//******************************************************************************
+// Function:   iiEllisInit()
+// Parameters: None
+//
+// Returns:    Nothing
+//
+// Description:
+//
+// This routine performs any required initialization of the iiEllis subsystem.
+//
+//******************************************************************************
+static void
+iiEllisInit(void)
+{
+	pDelayTimer = kmalloc ( sizeof (struct timer_list), GFP_KERNEL );
+	init_timer(pDelayTimer);
+	init_waitqueue_head(&pDelayWait);
+	LOCK_INIT(&Dl_spinlock);
+}
+
+//******************************************************************************
+// Function:   iiEllisCleanup()
+// Parameters: None
+//
+// Returns:    Nothing
+//
+// Description:
+//
+// This routine performs any required cleanup of the iiEllis subsystem.
+//
+//******************************************************************************
+static void
+iiEllisCleanup(void)
+{
+	kfree(pDelayTimer);
+}
 
 //******************************************************************************
 // Function:   iiSetAddress(pB, address, delay)
@@ -99,7 +140,7 @@ iiSetAddress( i2eBordStrPtr pB, int address, delayFunc_t delay )
 		|| (address & 0x7)
 		)
 	{
-		I2_COMPLETE(pB, I2EE_BADADDR);
+		COMPLETE(pB,I2EE_BADADDR);
 	}
 
 	// Initialize accelerators
@@ -119,7 +160,7 @@ iiSetAddress( i2eBordStrPtr pB, int address, delayFunc_t delay )
 	pB->i2eValid = I2E_MAGIC;
 	pB->i2eState = II_STATE_COLD;
 
-	I2_COMPLETE(pB, I2EE_GOOD);
+	COMPLETE(pB, I2EE_GOOD);
 }
 
 //******************************************************************************
@@ -144,12 +185,12 @@ iiReset(i2eBordStrPtr pB)
 	// Magic number should be set, else even the address is suspect
 	if (pB->i2eValid != I2E_MAGIC)
 	{
-		I2_COMPLETE(pB, I2EE_BADMAGIC);
+		COMPLETE(pB, I2EE_BADMAGIC);
 	}
 
-	outb(0, pB->i2eBase + FIFO_RESET);  /* Any data will do */
+	OUTB(pB->i2eBase + FIFO_RESET, 0);  // Any data will do
 	iiDelay(pB, 50);                    // Pause between resets
-	outb(0, pB->i2eBase + FIFO_RESET);  /* Second reset */
+	OUTB(pB->i2eBase + FIFO_RESET, 0);  // Second reset
 
 	// We must wait before even attempting to read anything from the FIFO: the
 	// board's P.O.S.T may actually attempt to read and write its end of the
@@ -170,7 +211,7 @@ iiReset(i2eBordStrPtr pB)
 	// Ensure anything which would have been of use to standard loadware is
 	// blanked out, since board has now forgotten everything!.
 
-	pB->i2eUsingIrq = I2_IRQ_UNDEFINED; /* to not use an interrupt so far */
+	pB->i2eUsingIrq = IRQ_UNDEFINED; // Not set up to use an interrupt yet
 	pB->i2eWaitingForEmptyFifo = 0;
 	pB->i2eOutMailWaiting = 0;
 	pB->i2eChannelPtr = NULL;
@@ -182,7 +223,7 @@ iiReset(i2eBordStrPtr pB)
 	pB->i2eFatalTrap = NULL;
 	pB->i2eFatal = 0;
 
-	I2_COMPLETE(pB, I2EE_GOOD);
+	COMPLETE(pB, I2EE_GOOD);
 }
 
 //******************************************************************************
@@ -202,14 +243,14 @@ static int
 iiResetDelay(i2eBordStrPtr pB)
 {
 	if (pB->i2eValid != I2E_MAGIC) {
-		I2_COMPLETE(pB, I2EE_BADMAGIC);
+		COMPLETE(pB, I2EE_BADMAGIC);
 	}
 	if (pB->i2eState != II_STATE_RESET) {
-		I2_COMPLETE(pB, I2EE_BADSTATE);
+		COMPLETE(pB, I2EE_BADSTATE);
 	}
 	iiDelay(pB,2000);       /* Now we wait for two seconds. */
 	iiDelayed = 1;          /* Delay has been called: ok to initialize */
-	I2_COMPLETE(pB, I2EE_GOOD);
+	COMPLETE(pB, I2EE_GOOD);
 }
 
 //******************************************************************************
@@ -240,12 +281,12 @@ iiInitialize(i2eBordStrPtr pB)
 
 	if (pB->i2eValid != I2E_MAGIC)
 	{
-		I2_COMPLETE(pB, I2EE_BADMAGIC);
+		COMPLETE(pB, I2EE_BADMAGIC);
 	}
 
 	if (pB->i2eState != II_STATE_RESET || !iiDelayed)
 	{
-		I2_COMPLETE(pB, I2EE_BADSTATE);
+		COMPLETE(pB, I2EE_BADSTATE);
 	}
 
 	// In case there is a failure short of our completely reading the power-up
@@ -258,12 +299,13 @@ iiInitialize(i2eBordStrPtr pB)
 	for (itemp = 0; itemp < sizeof(porStr); itemp++)
 	{
 		// We expect the entire message is ready.
-		if (!I2_HAS_INPUT(pB)) {
+		if (HAS_NO_INPUT(pB))
+		{
 			pB->i2ePomSize = itemp;
-			I2_COMPLETE(pB, I2EE_PORM_SHORT);
+			COMPLETE(pB, I2EE_PORM_SHORT);
 		}
 
-		pB->i2ePom.c[itemp] = c = inb(pB->i2eData);
+		pB->i2ePom.c[itemp] = c = BYTE_FROM(pB);
 
 		// We check the magic numbers as soon as they are supposed to be read
 		// (rather than after) to minimize effect of reading something we
@@ -272,22 +314,22 @@ iiInitialize(i2eBordStrPtr pB)
 				(itemp == POR_2_INDEX && c != POR_MAGIC_2))
 		{
 			pB->i2ePomSize = itemp+1;
-			I2_COMPLETE(pB, I2EE_BADMAGIC);
+			COMPLETE(pB, I2EE_BADMAGIC);
 		}
 	}
 
 	pB->i2ePomSize = itemp;
 
 	// Ensure that this was all the data...
-	if (I2_HAS_INPUT(pB))
-		I2_COMPLETE(pB, I2EE_PORM_LONG);
+	if (HAS_INPUT(pB))
+		COMPLETE(pB, I2EE_PORM_LONG);
 
 	// For now, we'll fail to initialize if P.O.S.T reports bad chip mapper:
 	// Implying we will not be able to download any code either:  That's ok: the
 	// condition is pretty explicit.
 	if (pB->i2ePom.e.porDiag1 & POR_BAD_MAPPER)
 	{
-		I2_COMPLETE(pB, I2EE_POSTERR);
+		COMPLETE(pB, I2EE_POSTERR);
 	}
 
 	// Determine anything which must be done differently depending on the family
@@ -298,7 +340,7 @@ iiInitialize(i2eBordStrPtr pB)
 
 		pB->i2eFifoStyle   = FIFO_II;
 		pB->i2eFifoSize    = 512;     // 512 bytes, always
-		pB->i2eDataWidth16 = false;
+		pB->i2eDataWidth16 = NO;
 
 		pB->i2eMaxIrq = 15;	// Because board cannot tell us it is in an 8-bit
 							// slot, we do allow it to be done (documentation!)
@@ -320,7 +362,7 @@ iiInitialize(i2eBordStrPtr pB)
 			// should always be consistent for IntelliPort-II.  Ditto below...
 			if (pB->i2ePom.e.porPorts1 != 4)
 			{
-				I2_COMPLETE(pB, I2EE_INCONSIST);
+				COMPLETE(pB, I2EE_INCONSIST);
 			}
 			break;
 
@@ -330,7 +372,7 @@ iiInitialize(i2eBordStrPtr pB)
 			pB->i2eChannelMap[0] = 0xff;  // Eight port
 			if (pB->i2ePom.e.porPorts1 != 8)
 			{
-				I2_COMPLETE(pB, I2EE_INCONSIST);
+				COMPLETE(pB, I2EE_INCONSIST);
 			}
 			break;
 
@@ -339,7 +381,7 @@ iiInitialize(i2eBordStrPtr pB)
 			pB->i2eChannelMap[0] = 0x3f;  // Six Port
 			if (pB->i2ePom.e.porPorts1 != 6)
 			{
-				I2_COMPLETE(pB, I2EE_INCONSIST);
+				COMPLETE(pB, I2EE_INCONSIST);
 			}
 			break;
 		}
@@ -368,7 +410,7 @@ iiInitialize(i2eBordStrPtr pB)
 
 		if (itemp < 8 || itemp > 15)
 		{
-			I2_COMPLETE(pB, I2EE_INCONSIST);
+			COMPLETE(pB, I2EE_INCONSIST);
 		}
 		pB->i2eFifoSize = (1 << itemp);
 
@@ -416,26 +458,26 @@ iiInitialize(i2eBordStrPtr pB)
 		switch (pB->i2ePom.e.porBus & (POR_BUS_SLOT16 | POR_BUS_DIP16) )
 		{
 		case POR_BUS_SLOT16 | POR_BUS_DIP16:
-			pB->i2eDataWidth16 = true;
+			pB->i2eDataWidth16 = YES;
 			pB->i2eMaxIrq = 15;
 			break;
 
 		case POR_BUS_SLOT16:
-			pB->i2eDataWidth16 = false;
+			pB->i2eDataWidth16 = NO;
 			pB->i2eMaxIrq = 15;
 			break;
 
 		case 0:
 		case POR_BUS_DIP16:     // In an 8-bit slot, DIP switch don't care.
 		default:
-			pB->i2eDataWidth16 = false;
+			pB->i2eDataWidth16 = NO;
 			pB->i2eMaxIrq = 7;
 			break;
 		}
 		break;   // POR_ID_FIIEX case
 
 	default:    // Unknown type of board
-		I2_COMPLETE(pB, I2EE_BAD_FAMILY);
+		COMPLETE(pB, I2EE_BAD_FAMILY);
 		break;
 	}  // End the switch based on family
 
@@ -449,14 +491,17 @@ iiInitialize(i2eBordStrPtr pB)
 	{
 	case POR_BUS_T_ISA:
 	case POR_BUS_T_UNK:  // If the type of bus is undeclared, assume ok.
+		pB->i2eChangeIrq = YES;
+		break;
 	case POR_BUS_T_MCA:
 	case POR_BUS_T_EISA:
+		pB->i2eChangeIrq = NO;
 		break;
 	default:
-		I2_COMPLETE(pB, I2EE_BADBUS);
+		COMPLETE(pB, I2EE_BADBUS);
 	}
 
-	if (pB->i2eDataWidth16)
+	if (pB->i2eDataWidth16 == YES)
 	{
 		pB->i2eWriteBuf  = iiWriteBuf16;
 		pB->i2eReadBuf   = iiReadBuf16;
@@ -492,7 +537,7 @@ iiInitialize(i2eBordStrPtr pB)
 		break;
 
 	default:
-		I2_COMPLETE(pB, I2EE_INCONSIST);
+		COMPLETE(pB, I2EE_INCONSIST);
 	}
 
 	// Initialize state information.
@@ -512,7 +557,20 @@ iiInitialize(i2eBordStrPtr pB)
 	// Everything is ok now, return with good status/
 
 	pB->i2eValid = I2E_MAGIC;
-	I2_COMPLETE(pB, I2EE_GOOD);
+	COMPLETE(pB, I2EE_GOOD);
+}
+
+//=======================================================
+// Delay Routines
+//
+// iiDelayIO
+// iiNop
+//=======================================================
+
+static void
+ii2DelayWakeup(unsigned long id)
+{
+	wake_up_interruptible ( &pDelayWait );
 }
 
 //******************************************************************************
@@ -536,7 +594,28 @@ iiInitialize(i2eBordStrPtr pB)
 static void
 ii2DelayTimer(unsigned int mseconds)
 {
-	msleep_interruptible(mseconds);
+	wait_queue_t wait;
+
+	init_waitqueue_entry(&wait, current);
+
+	init_timer ( pDelayTimer );
+
+	add_wait_queue(&pDelayWait, &wait);
+
+	set_current_state( TASK_INTERRUPTIBLE );
+
+	pDelayTimer->expires  = jiffies + ( mseconds + 9 ) / 10;
+	pDelayTimer->function = ii2DelayWakeup;
+	pDelayTimer->data     = 0;
+
+	add_timer ( pDelayTimer );
+
+	schedule();
+
+	set_current_state( TASK_RUNNING );
+	remove_wait_queue(&pDelayWait, &wait);
+
+	del_timer ( pDelayTimer );
 }
 
 #if 0
@@ -621,7 +700,7 @@ ii2DelayIO(unsigned int mseconds)
 	while(mseconds--) {
 		int i = ii2DelValue;
 		while ( i-- ) {
-			inb(ii2Safe);
+			INB ( ii2Safe );
 		}
 	}
 }
@@ -672,11 +751,11 @@ iiWriteBuf16(i2eBordStrPtr pB, unsigned char *address, int count)
 {
 	// Rudimentary sanity checking here.
 	if (pB->i2eValid != I2E_MAGIC)
-		I2_COMPLETE(pB, I2EE_INVALID);
+		COMPLETE(pB, I2EE_INVALID);
 
-	I2_OUTSW(pB->i2eData, address, count);
+	OUTSW ( pB->i2eData, address, count);
 
-	I2_COMPLETE(pB, I2EE_GOOD);
+	COMPLETE(pB, I2EE_GOOD);
 }
 
 //******************************************************************************
@@ -701,11 +780,11 @@ iiWriteBuf8(i2eBordStrPtr pB, unsigned char *address, int count)
 {
 	/* Rudimentary sanity checking here */
 	if (pB->i2eValid != I2E_MAGIC)
-		I2_COMPLETE(pB, I2EE_INVALID);
+		COMPLETE(pB, I2EE_INVALID);
 
-	I2_OUTSB(pB->i2eData, address, count);
+	OUTSB ( pB->i2eData, address, count );
 
-	I2_COMPLETE(pB, I2EE_GOOD);
+	COMPLETE(pB, I2EE_GOOD);
 }
 
 //******************************************************************************
@@ -730,11 +809,11 @@ iiReadBuf16(i2eBordStrPtr pB, unsigned char *address, int count)
 {
 	// Rudimentary sanity checking here.
 	if (pB->i2eValid != I2E_MAGIC)
-		I2_COMPLETE(pB, I2EE_INVALID);
+		COMPLETE(pB, I2EE_INVALID);
 
-	I2_INSW(pB->i2eData, address, count);
+	INSW ( pB->i2eData, address, count);
 
-	I2_COMPLETE(pB, I2EE_GOOD);
+	COMPLETE(pB, I2EE_GOOD);
 }
 
 //******************************************************************************
@@ -759,11 +838,11 @@ iiReadBuf8(i2eBordStrPtr pB, unsigned char *address, int count)
 {
 	// Rudimentary sanity checking here.
 	if (pB->i2eValid != I2E_MAGIC)
-		I2_COMPLETE(pB, I2EE_INVALID);
+		COMPLETE(pB, I2EE_INVALID);
 
-	I2_INSB(pB->i2eData, address, count);
+	INSB ( pB->i2eData, address, count);
 
-	I2_COMPLETE(pB, I2EE_GOOD);
+	COMPLETE(pB, I2EE_GOOD);
 }
 
 //******************************************************************************
@@ -783,7 +862,7 @@ iiReadBuf8(i2eBordStrPtr pB, unsigned char *address, int count)
 static unsigned short
 iiReadWord16(i2eBordStrPtr pB)
 {
-	return inw(pB->i2eData);
+	return (unsigned short)( INW(pB->i2eData) );
 }
 
 //******************************************************************************
@@ -805,9 +884,9 @@ iiReadWord8(i2eBordStrPtr pB)
 {
 	unsigned short urs;
 
-	urs = inb(pB->i2eData);
+	urs = INB ( pB->i2eData );
 
-	return (inb(pB->i2eData) << 8) | urs;
+	return ( ( INB ( pB->i2eData ) << 8 ) | urs );
 }
 
 //******************************************************************************
@@ -828,7 +907,7 @@ iiReadWord8(i2eBordStrPtr pB)
 static void
 iiWriteWord16(i2eBordStrPtr pB, unsigned short value)
 {
-	outw((int)value, pB->i2eData);
+	WORD_TO(pB, (int)value);
 }
 
 //******************************************************************************
@@ -849,8 +928,8 @@ iiWriteWord16(i2eBordStrPtr pB, unsigned short value)
 static void
 iiWriteWord8(i2eBordStrPtr pB, unsigned short value)
 {
-	outb((char)value, pB->i2eData);
-	outb((char)(value >> 8), pB->i2eData);
+	BYTE_TO(pB, (char)value);
+	BYTE_TO(pB, (char)(value >> 8) );
 }
 
 //******************************************************************************
@@ -902,30 +981,30 @@ iiWaitForTxEmptyII(i2eBordStrPtr pB, int mSdelay)
 		// interrupts of any kind.
 
 
-		write_lock_irqsave(&Dl_spinlock, flags);
-		outb(SEL_COMMAND, pB->i2ePointer);
-		outb(SEL_CMD_SH, pB->i2ePointer);
+		WRITE_LOCK_IRQSAVE(&Dl_spinlock,flags)
+		OUTB(pB->i2ePointer, SEL_COMMAND);
+		OUTB(pB->i2ePointer, SEL_CMD_SH);
 
-		itemp = inb(pB->i2eStatus);
+		itemp = INB(pB->i2eStatus);
 
-		outb(SEL_COMMAND, pB->i2ePointer);
-		outb(SEL_CMD_UNSH, pB->i2ePointer);
+		OUTB(pB->i2ePointer, SEL_COMMAND);
+		OUTB(pB->i2ePointer, SEL_CMD_UNSH);
 
 		if (itemp & ST_IN_EMPTY)
 		{
-			I2_UPDATE_FIFO_ROOM(pB);
-			write_unlock_irqrestore(&Dl_spinlock, flags);
-			I2_COMPLETE(pB, I2EE_GOOD);
+			UPDATE_FIFO_ROOM(pB);
+			WRITE_UNLOCK_IRQRESTORE(&Dl_spinlock,flags)
+			COMPLETE(pB, I2EE_GOOD);
 		}
 
-		write_unlock_irqrestore(&Dl_spinlock, flags);
+		WRITE_UNLOCK_IRQRESTORE(&Dl_spinlock,flags)
 
 		if (mSdelay-- == 0)
 			break;
 
 		iiDelay(pB, 1);      /* 1 mS granularity on checking condition */
 	}
-	I2_COMPLETE(pB, I2EE_TXE_TIME);
+	COMPLETE(pB, I2EE_TXE_TIME);
 }
 
 //******************************************************************************
@@ -965,21 +1044,21 @@ iiWaitForTxEmptyIIEX(i2eBordStrPtr pB, int mSdelay)
 		// you will generally not want to service interrupts or in any way
 		// disrupt the assumptions implicit in the larger context.
 
-		write_lock_irqsave(&Dl_spinlock, flags);
+		WRITE_LOCK_IRQSAVE(&Dl_spinlock,flags)
 
-		if (inb(pB->i2eStatus) & STE_OUT_MT) {
-			I2_UPDATE_FIFO_ROOM(pB);
-			write_unlock_irqrestore(&Dl_spinlock, flags);
-			I2_COMPLETE(pB, I2EE_GOOD);
+		if (INB(pB->i2eStatus) & STE_OUT_MT) {
+			UPDATE_FIFO_ROOM(pB);
+			WRITE_UNLOCK_IRQRESTORE(&Dl_spinlock,flags)
+			COMPLETE(pB, I2EE_GOOD);
 		}
-		write_unlock_irqrestore(&Dl_spinlock, flags);
+		WRITE_UNLOCK_IRQRESTORE(&Dl_spinlock,flags)
 
 		if (mSdelay-- == 0)
 			break;
 
 		iiDelay(pB, 1);      // 1 mS granularity on checking condition
 	}
-	I2_COMPLETE(pB, I2EE_TXE_TIME);
+	COMPLETE(pB, I2EE_TXE_TIME);
 }
 
 //******************************************************************************
@@ -1001,8 +1080,8 @@ static int
 iiTxMailEmptyII(i2eBordStrPtr pB)
 {
 	int port = pB->i2ePointer;
-	outb(SEL_OUTMAIL, port);
-	return inb(port) == 0;
+	OUTB ( port, SEL_OUTMAIL );
+	return ( INB(port) == 0 );
 }
 
 //******************************************************************************
@@ -1023,7 +1102,7 @@ iiTxMailEmptyII(i2eBordStrPtr pB)
 static int
 iiTxMailEmptyIIEX(i2eBordStrPtr pB)
 {
-	return !(inb(pB->i2eStatus) & STE_OUT_MAIL);
+	return !(INB(pB->i2eStatus) & STE_OUT_MAIL);
 }
 
 //******************************************************************************
@@ -1047,10 +1126,10 @@ iiTrySendMailII(i2eBordStrPtr pB, unsigned char mail)
 {
 	int port = pB->i2ePointer;
 
-	outb(SEL_OUTMAIL, port);
-	if (inb(port) == 0) {
-		outb(SEL_OUTMAIL, port);
-		outb(mail, port);
+	OUTB(port, SEL_OUTMAIL);
+	if (INB(port) == 0) {
+		OUTB(port, SEL_OUTMAIL);
+		OUTB(port, mail);
 		return 1;
 	}
 	return 0;
@@ -1075,9 +1154,10 @@ iiTrySendMailII(i2eBordStrPtr pB, unsigned char mail)
 static int
 iiTrySendMailIIEX(i2eBordStrPtr pB, unsigned char mail)
 {
-	if (inb(pB->i2eStatus) & STE_OUT_MAIL)
+	if(INB(pB->i2eStatus) & STE_OUT_MAIL) {
 		return 0;
-	outb(mail, pB->i2eXMail);
+	}
+	OUTB(pB->i2eXMail, mail);
 	return 1;
 }
 
@@ -1098,9 +1178,9 @@ iiTrySendMailIIEX(i2eBordStrPtr pB, unsigned char mail)
 static unsigned short
 iiGetMailII(i2eBordStrPtr pB)
 {
-	if (I2_HAS_MAIL(pB)) {
-		outb(SEL_INMAIL, pB->i2ePointer);
-		return inb(pB->i2ePointer);
+	if (HAS_MAIL(pB)) {
+		OUTB(pB->i2ePointer, SEL_INMAIL);
+		return INB(pB->i2ePointer);
 	} else {
 		return NO_MAIL_HERE;
 	}
@@ -1123,10 +1203,11 @@ iiGetMailII(i2eBordStrPtr pB)
 static unsigned short
 iiGetMailIIEX(i2eBordStrPtr pB)
 {
-	if (I2_HAS_MAIL(pB))
-		return inb(pB->i2eXMail);
-	else
+	if (HAS_MAIL(pB)) {
+		return INB(pB->i2eXMail);
+	} else {
 		return NO_MAIL_HERE;
+	}
 }
 
 //******************************************************************************
@@ -1145,8 +1226,8 @@ iiGetMailIIEX(i2eBordStrPtr pB)
 static void
 iiEnableMailIrqII(i2eBordStrPtr pB)
 {
-	outb(SEL_MASK, pB->i2ePointer);
-	outb(ST_IN_MAIL, pB->i2ePointer);
+	OUTB(pB->i2ePointer, SEL_MASK);
+	OUTB(pB->i2ePointer, ST_IN_MAIL);
 }
 
 //******************************************************************************
@@ -1165,7 +1246,7 @@ iiEnableMailIrqII(i2eBordStrPtr pB)
 static void
 iiEnableMailIrqIIEX(i2eBordStrPtr pB)
 {
-	outb(MX_IN_MAIL, pB->i2eXMask);
+	OUTB(pB->i2eXMask, MX_IN_MAIL);
 }
 
 //******************************************************************************
@@ -1184,8 +1265,8 @@ iiEnableMailIrqIIEX(i2eBordStrPtr pB)
 static void
 iiWriteMaskII(i2eBordStrPtr pB, unsigned char value)
 {
-	outb(SEL_MASK, pB->i2ePointer);
-	outb(value, pB->i2ePointer);
+	OUTB(pB->i2ePointer, SEL_MASK);
+	OUTB(pB->i2ePointer, value);
 }
 
 //******************************************************************************
@@ -1204,7 +1285,7 @@ iiWriteMaskII(i2eBordStrPtr pB, unsigned char value)
 static void
 iiWriteMaskIIEX(i2eBordStrPtr pB, unsigned char value)
 {
-	outb(value, pB->i2eXMask);
+	OUTB(pB->i2eXMask, value);
 }
 
 //******************************************************************************
@@ -1315,8 +1396,9 @@ iiDownloadBlock ( i2eBordStrPtr pB, loadHdrStrPtr pSource, int isStandard)
 	// immediately and be harmless, though not strictly necessary.
 	itemp = MAX_DLOAD_ACK_TIME/10;
 	while (--itemp) {
-		if (I2_HAS_INPUT(pB)) {
-			switch (inb(pB->i2eData)) {
+		if (HAS_INPUT(pB)) {
+			switch(BYTE_FROM(pB))
+			{
 			case LOADWARE_OK:
 				pB->i2eState =
 					isStandard ? II_STATE_STDLOADED :II_STATE_LOADED;

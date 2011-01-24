@@ -18,7 +18,6 @@
 #include <linux/slab.h>
 #include <linux/spinlock.h>
 #include <linux/types.h>
-#include <linux/bug.h>
 
 #include <net/sock.h>
 
@@ -29,15 +28,14 @@ struct proto;
 
 struct request_sock_ops {
 	int		family;
+	kmem_cache_t	*slab;
 	int		obj_size;
-	struct kmem_cache	*slab;
-	char		*slab_name;
 	int		(*rtx_syn_ack)(struct sock *sk,
-				       struct request_sock *req);
-	void		(*send_ack)(struct sock *sk, struct sk_buff *skb,
+				       struct request_sock *req,
+				       struct dst_entry *dst);
+	void		(*send_ack)(struct sk_buff *skb,
 				    struct request_sock *req);
-	void		(*send_reset)(struct sock *sk,
-				      struct sk_buff *skb);
+	void		(*send_reset)(struct sk_buff *skb);
 	void		(*destructor)(struct request_sock *req);
 };
 
@@ -47,21 +45,19 @@ struct request_sock {
 	struct request_sock		*dl_next; /* Must be first member! */
 	u16				mss;
 	u8				retrans;
-	u8				cookie_ts; /* syncookie: encode tcpopts in timestamp */
+	u8				__pad;
 	/* The following two fields can be easily recomputed I think -AK */
 	u32				window_clamp; /* window clamp at creation time */
 	u32				rcv_wnd;	  /* rcv_wnd offered first time */
 	u32				ts_recent;
 	unsigned long			expires;
-	const struct request_sock_ops	*rsk_ops;
+	struct request_sock_ops		*rsk_ops;
 	struct sock			*sk;
-	u32				secid;
-	u32				peer_secid;
 };
 
-static inline struct request_sock *reqsk_alloc(const struct request_sock_ops *ops)
+static inline struct request_sock *reqsk_alloc(struct request_sock_ops *ops)
 {
-	struct request_sock *req = kmem_cache_alloc(ops->slab, GFP_ATOMIC);
+	struct request_sock *req = kmem_cache_alloc(ops->slab, SLAB_ATOMIC);
 
 	if (req != NULL)
 		req->rsk_ops = ops;
@@ -123,9 +119,25 @@ struct request_sock_queue {
 };
 
 extern int reqsk_queue_alloc(struct request_sock_queue *queue,
-			     unsigned int nr_table_entries);
+			     const int nr_table_entries);
 
-extern void __reqsk_queue_destroy(struct request_sock_queue *queue);
+static inline struct listen_sock *reqsk_queue_yank_listen_sk(struct request_sock_queue *queue)
+{
+	struct listen_sock *lopt;
+
+	write_lock_bh(&queue->syn_wait_lock);
+	lopt = queue->listen_opt;
+	queue->listen_opt = NULL;
+	write_unlock_bh(&queue->syn_wait_lock);
+
+	return lopt;
+}
+
+static inline void __reqsk_queue_destroy(struct request_sock_queue *queue)
+{
+	kfree(reqsk_queue_yank_listen_sk(queue));
+}
+
 extern void reqsk_queue_destroy(struct request_sock_queue *queue);
 
 static inline struct request_sock *
@@ -172,7 +184,7 @@ static inline struct request_sock *reqsk_queue_remove(struct request_sock_queue 
 {
 	struct request_sock *req = queue->rskq_accept_head;
 
-	WARN_ON(req == NULL);
+	BUG_TRAP(req != NULL);
 
 	queue->rskq_accept_head = req->dl_next;
 	if (queue->rskq_accept_head == NULL)
@@ -187,7 +199,7 @@ static inline struct sock *reqsk_queue_get_child(struct request_sock_queue *queu
 	struct request_sock *req = reqsk_queue_remove(queue);
 	struct sock *child = req->sk;
 
-	WARN_ON(child == NULL);
+	BUG_TRAP(child != NULL);
 
 	sk_acceptq_removed(parent);
 	__reqsk_free(req);

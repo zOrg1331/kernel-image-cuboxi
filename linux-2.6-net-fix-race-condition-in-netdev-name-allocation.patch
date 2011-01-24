@@ -1,0 +1,84 @@
+From: Neil Horman <nhorman@redhat.com>
+Date: Thu, 23 Aug 2007 08:10:27 -0400
+Subject: [net] fix race condition in netdev name allocation
+Message-id: 20070823121027.GA13069@hmsendeavour.rdu.redhat.com
+O-Subject: [RHEL5.2 PATCH] fix race condition in netdev name allocation
+Bugzilla: 247128
+
+Hey all-
+	This is an upstream backport of commit:
+9093bbb2d96d0184f037cea9b4e952a44ebe7c32
+It fixes a race condition that results in the inadvertent registration of an
+existing net device name.  Fixes bz 247128
+
+Regards
+Neil
+
+Acked-by: Thomas Graf <tgraf@redhat.com>
+Acked-by: Herbert Xu <herbert.xu@redhat.com>
+Acked-by: "David S. Miller" <davem@redhat.com>
+---
+ net/core/dev.c       |   10 ++++++----
+ net/core/net-sysfs.c |    7 +++++++
+ 2 files changed, 13 insertions(+), 4 deletions(-)
+
+diff --git a/net/core/dev.c b/net/core/dev.c
+index d7890e8..e700dde 100644
+--- a/net/core/dev.c
++++ b/net/core/dev.c
+@@ -3217,7 +3217,6 @@ void netdev_run_todo(void)
+ 			continue;
+ 		}
+ 
+-		netdev_unregister_sysfs(dev);
+ 		dev->reg_state = NETREG_UNREGISTERED;
+ 
+ 		netdev_wait_allrefs(dev);
+@@ -3228,11 +3227,11 @@ void netdev_run_todo(void)
+ 		BUG_TRAP(!dev->ip6_ptr);
+ 		BUG_TRAP(!dev->dn_ptr);
+ 
+-		/* It must be the very last action,
+-		 * after this 'dev' may point to freed up memory.
+-		 */
+ 		if (dev->destructor)
+ 			dev->destructor(dev);
++
++		/* Free network device */
++		class_device_put(&dev->class_dev);
+ 	}
+ 
+ out:
+@@ -3389,6 +3388,9 @@ int unregister_netdevice(struct net_device *dev)
+ 
+ 	free_divert_blk(dev);
+ 
++	/* Remove entries from sysfs */
++	netdev_unregister_sysfs(dev);
++
+ 	/* Finish processing unregister after unlock */
+ 	net_set_todo(dev);
+ 
+diff --git a/net/core/net-sysfs.c b/net/core/net-sysfs.c
+index 1347276..3ab3057 100644
+--- a/net/core/net-sysfs.c
++++ b/net/core/net-sysfs.c
+@@ -442,8 +442,15 @@ static struct class net_class = {
+ #endif
+ };
+ 
++/* 
++ *	Delete sysfs entries but hold kobject reference until after all
++ *	netdev references are gone.
++ */
+ void netdev_unregister_sysfs(struct net_device * net)
+ {
++	struct class_device *dev = &(net->class_dev);
++
++	kobject_get(&dev->kobj);
+ 	class_device_del(&(net->class_dev));
+ }
+ 
+-- 
+1.5.3.5.645.gbb47
+

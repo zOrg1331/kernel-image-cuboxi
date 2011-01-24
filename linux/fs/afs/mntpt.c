@@ -1,4 +1,4 @@
-/* mountpoint management
+/* mntpt.c: mountpoint management
  *
  * Copyright (C) 2002 Red Hat, Inc. All Rights Reserved.
  * Written by David Howells (dhowells@redhat.com)
@@ -12,11 +12,17 @@
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/init.h>
+#include <linux/sched.h>
 #include <linux/slab.h>
 #include <linux/fs.h>
 #include <linux/pagemap.h>
 #include <linux/mount.h>
 #include <linux/namei.h>
+#include <linux/namespace.h>
+#include "super.h"
+#include "cell.h"
+#include "volume.h"
+#include "vnode.h"
 #include "internal.h"
 
 
@@ -25,57 +31,62 @@ static struct dentry *afs_mntpt_lookup(struct inode *dir,
 				       struct nameidata *nd);
 static int afs_mntpt_open(struct inode *inode, struct file *file);
 static void *afs_mntpt_follow_link(struct dentry *dentry, struct nameidata *nd);
-static void afs_mntpt_expiry_timed_out(struct work_struct *work);
 
 const struct file_operations afs_mntpt_file_operations = {
 	.open		= afs_mntpt_open,
 };
 
-const struct inode_operations afs_mntpt_inode_operations = {
+struct inode_operations afs_mntpt_inode_operations = {
 	.lookup		= afs_mntpt_lookup,
 	.follow_link	= afs_mntpt_follow_link,
 	.readlink	= page_readlink,
-	.getattr	= afs_getattr,
+	.getattr	= afs_inode_getattr,
 };
 
 static LIST_HEAD(afs_vfsmounts);
-static DECLARE_DELAYED_WORK(afs_mntpt_expiry_timer, afs_mntpt_expiry_timed_out);
 
-static unsigned long afs_mntpt_expiry_timeout = 10 * 60;
+static void afs_mntpt_expiry_timed_out(struct afs_timer *timer);
 
+struct afs_timer_ops afs_mntpt_expiry_timer_ops = {
+	.timed_out	= afs_mntpt_expiry_timed_out,
+};
+
+struct afs_timer afs_mntpt_expiry_timer;
+
+unsigned long afs_mntpt_expiry_timeout = 20;
+
+/*****************************************************************************/
 /*
  * check a symbolic link to see whether it actually encodes a mountpoint
  * - sets the AFS_VNODE_MOUNTPOINT flag on the vnode appropriately
  */
-int afs_mntpt_check_symlink(struct afs_vnode *vnode, struct key *key)
+int afs_mntpt_check_symlink(struct afs_vnode *vnode)
 {
-	struct file file = {
-		.private_data = key,
-	};
 	struct page *page;
 	size_t size;
 	char *buf;
 	int ret;
 
-	_enter("{%x:%u,%u}",
-	       vnode->fid.vid, vnode->fid.vnode, vnode->fid.unique);
+	_enter("{%u,%u}", vnode->fid.vnode, vnode->fid.unique);
 
 	/* read the contents of the symlink into the pagecache */
-	page = read_mapping_page(AFS_VNODE_TO_I(vnode)->i_mapping, 0, &file);
+	page = read_mapping_page(AFS_VNODE_TO_I(vnode)->i_mapping, 0, NULL);
 	if (IS_ERR(page)) {
 		ret = PTR_ERR(page);
 		goto out;
 	}
 
 	ret = -EIO;
+	wait_on_page_locked(page);
+	buf = kmap(page);
+	if (!PageUptodate(page))
+		goto out_free;
 	if (PageError(page))
 		goto out_free;
 
-	buf = kmap(page);
-
 	/* examine the symlink's contents */
 	size = vnode->status.size;
-	_debug("symlink to %*.*s", (int) size, (int) size, buf);
+	_debug("symlink to %*.*s", size, (int) size, buf);
 
 	if (size > 2 &&
 	    (buf[0] == '%' || buf[0] == '#') &&
@@ -83,20 +94,22 @@ int afs_mntpt_check_symlink(struct afs_vnode *vnode, struct key *key)
 	    ) {
 		_debug("symlink is a mountpoint");
 		spin_lock(&vnode->lock);
-		set_bit(AFS_VNODE_MOUNTPOINT, &vnode->flags);
+		vnode->flags |= AFS_VNODE_MOUNTPOINT;
 		spin_unlock(&vnode->lock);
 	}
 
 	ret = 0;
 
+ out_free:
 	kunmap(page);
-out_free:
 	page_cache_release(page);
-out:
+ out:
 	_leave(" = %d", ret);
 	return ret;
-}
 
+} /* end afs_mntpt_check_symlink() */
+
+/*****************************************************************************/
 /*
  * no valid lookup procedure on this sort of dir
  */
@@ -104,7 +117,7 @@ static struct dentry *afs_mntpt_lookup(struct inode *dir,
 				       struct dentry *dentry,
 				       struct nameidata *nd)
 {
-	_enter("%p,%p{%p{%s},%s}",
+	kenter("%p,%p{%p{%s},%s}",
 	       dir,
 	       dentry,
 	       dentry->d_parent,
@@ -113,24 +126,26 @@ static struct dentry *afs_mntpt_lookup(struct inode *dir,
 	       dentry->d_name.name);
 
 	return ERR_PTR(-EREMOTE);
-}
+} /* end afs_mntpt_lookup() */
 
+/*****************************************************************************/
 /*
  * no valid open procedure on this sort of dir
  */
 static int afs_mntpt_open(struct inode *inode, struct file *file)
 {
-	_enter("%p,%p{%p{%s},%s}",
+	kenter("%p,%p{%p{%s},%s}",
 	       inode, file,
-	       file->f_path.dentry->d_parent,
-	       file->f_path.dentry->d_parent ?
-	       file->f_path.dentry->d_parent->d_name.name :
+	       file->f_dentry->d_parent,
+	       file->f_dentry->d_parent ?
+	       file->f_dentry->d_parent->d_name.name :
 	       (const unsigned char *) "",
-	       file->f_path.dentry->d_name.name);
+	       file->f_dentry->d_name.name);
 
 	return -EREMOTE;
-}
+} /* end afs_mntpt_open() */
 
+/*****************************************************************************/
 /*
  * create a vfsmount to be automounted
  */
@@ -143,7 +158,7 @@ static struct vfsmount *afs_mntpt_do_automount(struct dentry *mntpt)
 	char *buf, *devname = NULL, *options = NULL;
 	int ret;
 
-	_enter("{%s}", mntpt->d_name.name);
+	kenter("{%s}", mntpt->d_name.name);
 
 	BUG_ON(!mntpt->d_inode);
 
@@ -169,12 +184,13 @@ static struct vfsmount *afs_mntpt_do_automount(struct dentry *mntpt)
 	}
 
 	ret = -EIO;
-	if (PageError(page))
+	wait_on_page_locked(page);
+	if (!PageUptodate(page) || PageError(page))
 		goto error;
 
-	buf = kmap_atomic(page, KM_USER0);
+	buf = kmap(page);
 	memcpy(devname, buf, size);
-	kunmap_atomic(buf, KM_USER0);
+	kunmap(page);
 	page_cache_release(page);
 	page = NULL;
 
@@ -186,99 +202,79 @@ static struct vfsmount *afs_mntpt_do_automount(struct dentry *mntpt)
 		strcat(options, ",rwpath");
 
 	/* try and do the mount */
-	_debug("--- attempting mount %s -o %s ---", devname, options);
+	kdebug("--- attempting mount %s -o %s ---", devname, options);
 	mnt = vfs_kern_mount(&afs_fs_type, 0, devname, options);
-	_debug("--- mount result %p ---", mnt);
+	kdebug("--- mount result %p ---", mnt);
 
 	free_page((unsigned long) devname);
 	free_page((unsigned long) options);
-	_leave(" = %p", mnt);
+	kleave(" = %p", mnt);
 	return mnt;
 
-error:
+ error:
 	if (page)
 		page_cache_release(page);
 	if (devname)
 		free_page((unsigned long) devname);
 	if (options)
 		free_page((unsigned long) options);
-	_leave(" = %d", ret);
+	kleave(" = %d", ret);
 	return ERR_PTR(ret);
-}
+} /* end afs_mntpt_do_automount() */
 
+/*****************************************************************************/
 /*
  * follow a link from a mountpoint directory, thus causing it to be mounted
  */
 static void *afs_mntpt_follow_link(struct dentry *dentry, struct nameidata *nd)
 {
 	struct vfsmount *newmnt;
+	struct dentry *old_dentry;
 	int err;
 
-	_enter("%p{%s},{%s:%p{%s},}",
+	kenter("%p{%s},{%s:%p{%s}}",
 	       dentry,
 	       dentry->d_name.name,
-	       nd->path.mnt->mnt_devname,
+	       nd->mnt->mnt_devname,
 	       dentry,
-	       nd->path.dentry->d_name.name);
+	       nd->dentry->d_name.name);
 
-	dput(nd->path.dentry);
-	nd->path.dentry = dget(dentry);
-
-	newmnt = afs_mntpt_do_automount(nd->path.dentry);
+	newmnt = afs_mntpt_do_automount(dentry);
 	if (IS_ERR(newmnt)) {
-		path_put(&nd->path);
+		path_release(nd);
 		return (void *)newmnt;
 	}
 
-	mntget(newmnt);
-	err = do_add_mount(newmnt, &nd->path, MNT_SHRINKABLE, &afs_vfsmounts);
-	switch (err) {
-	case 0:
-		path_put(&nd->path);
-		nd->path.mnt = newmnt;
-		nd->path.dentry = dget(newmnt->mnt_root);
-		schedule_delayed_work(&afs_mntpt_expiry_timer,
-				      afs_mntpt_expiry_timeout * HZ);
-		break;
-	case -EBUSY:
-		/* someone else made a mount here whilst we were busy */
-		while (d_mountpoint(nd->path.dentry) &&
-		       follow_down(&nd->path))
-			;
-		err = 0;
-	default:
-		mntput(newmnt);
-		break;
+	old_dentry = nd->dentry;
+	nd->dentry = dentry;
+	err = do_add_mount(newmnt, nd, 0, &afs_vfsmounts);
+	nd->dentry = old_dentry;
+
+	path_release(nd);
+
+	if (!err) {
+		mntget(newmnt);
+		nd->mnt = newmnt;
+		dget(newmnt->mnt_root);
+		nd->dentry = newmnt->mnt_root;
 	}
 
-	_leave(" = %d", err);
+	kleave(" = %d", err);
 	return ERR_PTR(err);
-}
+} /* end afs_mntpt_follow_link() */
 
+/*****************************************************************************/
 /*
  * handle mountpoint expiry timer going off
  */
-static void afs_mntpt_expiry_timed_out(struct work_struct *work)
+static void afs_mntpt_expiry_timed_out(struct afs_timer *timer)
 {
-	_enter("");
+	kenter("");
 
-	if (!list_empty(&afs_vfsmounts)) {
-		mark_mounts_for_expiry(&afs_vfsmounts);
-		schedule_delayed_work(&afs_mntpt_expiry_timer,
-				      afs_mntpt_expiry_timeout * HZ);
-	}
+	mark_mounts_for_expiry(&afs_vfsmounts);
 
-	_leave("");
-}
+	afs_kafstimod_add_timer(&afs_mntpt_expiry_timer,
+				afs_mntpt_expiry_timeout * HZ);
 
-/*
- * kill the AFS mountpoint timer if it's still running
- */
-void afs_mntpt_kill_timer(void)
-{
-	_enter("");
-
-	ASSERT(list_empty(&afs_vfsmounts));
-	cancel_delayed_work(&afs_mntpt_expiry_timer);
-	flush_scheduled_work();
-}
+	kleave("");
+} /* end afs_mntpt_expiry_timed_out() */

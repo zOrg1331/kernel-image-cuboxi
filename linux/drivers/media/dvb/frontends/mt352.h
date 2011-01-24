@@ -51,23 +51,9 @@ struct mt352_config
 	int (*demod_init)(struct dvb_frontend* fe);
 };
 
-#if defined(CONFIG_DVB_MT352) || (defined(CONFIG_DVB_MT352_MODULE) && defined(MODULE))
 extern struct dvb_frontend* mt352_attach(const struct mt352_config* config,
 					 struct i2c_adapter* i2c);
-#else
-static inline struct dvb_frontend* mt352_attach(const struct mt352_config* config,
-					 struct i2c_adapter* i2c)
-{
-	printk(KERN_WARNING "%s: driver disabled by Kconfig\n", __func__);
-	return NULL;
-}
-#endif // CONFIG_DVB_MT352
 
-static inline int mt352_write(struct dvb_frontend *fe, u8 *buf, int len) {
-	int r = 0;
-	if (fe->ops.write)
-		r = fe->ops.write(fe, buf, len);
-	return r;
-}
+extern int mt352_write(struct dvb_frontend* fe, u8* ibuf, int ilen);
 
 #endif // MT352_H

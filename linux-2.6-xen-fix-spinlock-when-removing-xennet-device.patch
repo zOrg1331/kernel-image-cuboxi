@@ -1,0 +1,27 @@
+From: Chris Lalancette <clalance@redhat.com>
+Subject: [RHEL5 Patch] Fix spinlock bad magic when removing xennet device
+Date: Fri, 20 Oct 2006 17:25:34 -0400
+Bugzilla: 211684
+Message-Id: <45393ECE.7060304@redhat.com>
+Changelog: Fix spinlock bad magic when removing xennet device
+
+
+All,
+     Attached is a simple patch to fix BZ 211684/IT 104759, originally reported by IBM.  It basically fixes an OOPs while unloading the xennet module; this can be seen in the current RHEL5 kernel by doing "modprobe xennet; rmmod xennet".  Without this patch, the kernel goes into an endless loop printing "spinlock lockup".  With this patch applied, xennet properly unloads.  This patch was committed in upstream Xen changeset 11822.  Please ACK.
+
+Chris Lalancette
+
+diff -r 05bf8693c735 linux-2.6-xen-sparse/drivers/xen/netfront/netfront.c
+--- linux-2.6-xen-sparse/drivers/xen/netfront/netfront.c	Wed Oct 18 16:08:58 2006 +0100
++++ linux-2.6-xen-sparse/drivers/xen/netfront/netfront.c	Wed Oct 18 13:21:33 2006 -0400
+@@ -2129,6 +2129,9 @@ module_init(netif_init);
+ 
+ static void __exit netif_exit(void)
+ {
++	if (is_initial_xendomain())
++		return;
++
+ 	unregister_inetaddr_notifier(&notifier_inetdev);
+ 
+ 	return xenbus_unregister_driver(&netfront);
+

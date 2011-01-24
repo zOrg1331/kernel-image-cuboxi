@@ -1,0 +1,43 @@
+From: Rob Evers <revers@redhat.com>
+Date: Mon, 4 Jan 2010 22:52:53 -0500
+Subject: [scsi] lpfc: Fix Dead FCF not triggering discovery others
+Message-id: <20100104225300.24386.43759.sendpatchset@localhost.localdomain>
+Patchwork-id: 22308
+O-Subject: [RHEL5.5 PATCH 16/18] Fix Dead FCF not triggering discovery of other
+	FCF.
+Bugzilla: 549763
+RH-Acked-by: Tomas Henzl <thenzl@redhat.com>
+RH-Acked-by: Mike Christie <mchristi@redhat.com>
+
+https://bugzilla.redhat.com/show_bug.cgi?id=549763
+
+Fix Dead FCF not triggering discovery of other FCF.
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/scsi/lpfc/lpfc_init.c b/drivers/scsi/lpfc/lpfc_init.c
+index 92f6aa8..9793f71 100644
+--- a/drivers/scsi/lpfc/lpfc_init.c
++++ b/drivers/scsi/lpfc/lpfc_init.c
+@@ -3103,6 +3103,7 @@ lpfc_sli4_async_fcoe_evt(struct lpfc_hba *phba,
+ 	struct lpfc_vport *vport;
+ 	struct lpfc_nodelist *ndlp;
+ 	struct Scsi_Host  *shost;
++	uint32_t link_state;
+ 
+ 	phba->fc_eventTag = acqe_fcoe->event_tag;
+ 	phba->fcoe_eventtag = acqe_fcoe->event_tag;
+@@ -3149,9 +3150,12 @@ lpfc_sli4_async_fcoe_evt(struct lpfc_hba *phba,
+ 			break;
+ 		/*
+ 		 * Currently, driver support only one FCF - so treat this as
+-		 * a link down.
++		 * a link down, but save the link state because we don't want
++		 * it to be changed to Link Down unless it is already down.
+ 		 */
++		link_state = phba->link_state;
+ 		lpfc_linkdown(phba);
++		phba->link_state = link_state;
+ 		/* Unregister FCF if no devices connected to it */
+ 		lpfc_unregister_unused_fcf(phba);
+ 		break;

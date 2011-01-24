@@ -1,0 +1,103 @@
+From: Eric Paris <eparis@redhat.com>
+Subject: [PATCH RHEL5] version-2 217958 Audit: Add type for 3rd party, emit key for audit events
+Date: Fri, 22 Dec 2006 14:42:47 -0500
+Bugzilla: 217958
+Message-Id: <1166816567.23016.71.camel@localhost.localdomain>
+Changelog: Audit: Add type for 3rd party, emit key for audit events
+
+
+BZ 217958
+
+This is a new/repost as we had to revert the last attempt.  Turns out
+for the change messages we couldn't be sure of the key associated with
+the rule since the change was a summary message.  Upstream has decided
+to drop the problematic part of the patch entirely.  A kernel with this
+change has been tested against the rhts audit test which caused the
+previous panic.  The rest of this message is an updated copy of my
+original posting.
+
+
+The following patch is a merger of 2 audit patches.  This first part is
+upstream in 2.6.19 and adds a type for 3rd party modules to use.  It
+also cleans up a deprecated type.
+
+http://www.kernel.org/git/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=c8e649ba908954447e9a095677f6a6c8e50a37b2
+
+The second part is still working it's way upstream and isn't in a git
+tree yet.  It is from steve grubb and he says about it:
+
+I was looking at parsing some of these messages and found that I wanted
+what it was doing next to an op= for the parser to key on. Also missing
+in a couple places is the list number and results.
+
+Upstream link for that part of the patch is:
+
+http://article.gmane.org/gmane.linux.redhat.security.audit/828
+
+I have to poke and prod again to see what the right way as it get this
+into linus's tree.  We used to have a clear process but with the lack of
+audit changes noone seems to know what the right thing to do is.
+
+-Eric
+
+diff -urp linux-2.6.18.x86_64.orig/kernel/auditfilter.c linux-2.6.18.x86_64/kernel/auditfilter.c
+--- linux-2.6.18.x86_64.orig/kernel/auditfilter.c	2006-12-14 09:59:04.000000000 -0500
++++ linux-2.6.18.x86_64/kernel/auditfilter.c	2006-12-14 10:02:39.000000000 -0500
+@@ -938,9 +938,10 @@ static void audit_update_watch(struct au
+ 		}
+ 
+ 		ab = audit_log_start(NULL, GFP_KERNEL, AUDIT_CONFIG_CHANGE);
+-		audit_log_format(ab, "audit updated rules specifying path=");
++		audit_log_format(ab, "op=updated rules specifying path=");
+ 		audit_log_untrustedstring(ab, owatch->path);
+ 		audit_log_format(ab, " with dev=%u ino=%lu\n", dev, ino);
++		audit_log_format(ab, " list=%d res=1", r->listnr);
+ 		audit_log_end(ab);
+ 
+ 		audit_remove_watch(owatch);
+@@ -970,14 +971,14 @@ static void audit_remove_parent_watches(
+ 			e = container_of(r, struct audit_entry, rule);
+ 
+ 			ab = audit_log_start(NULL, GFP_KERNEL, AUDIT_CONFIG_CHANGE);
+-			audit_log_format(ab, "audit implicitly removed rule path=");
++			audit_log_format(ab, "op=remove rule path=");
+ 			audit_log_untrustedstring(ab, w->path);
+ 			if (r->filterkey) {
+ 				audit_log_format(ab, " key=");
+ 				audit_log_untrustedstring(ab, r->filterkey);
+ 			} else
+ 				audit_log_format(ab, " key=(null)");
+-			audit_log_format(ab, " list=%d", r->listnr);
++			audit_log_format(ab, " list=%d res=1", r->listnr);
+ 			audit_log_end(ab);
+ 
+ 			list_del(&r->rlist);
+@@ -1411,7 +1412,7 @@ static void audit_log_rule_change(uid_t 
+ 			audit_log_format(ab, " subj=%s", ctx);
+ 		kfree(ctx);
+ 	}
+-	audit_log_format(ab, " %s rule key=", action);
++	audit_log_format(ab, " op=%s rule key=", action);
+ 	if (rule->filterkey)
+ 		audit_log_untrustedstring(ab, rule->filterkey);
+ 	else
+--- linux-2.6.18.i686/include/linux/audit.h.audit.fixes	2006-12-01 19:25:24.000000000 -0500
++++ linux-2.6.18.i686/include/linux/audit.h	2006-12-01 19:25:36.000000000 -0500
+@@ -75,7 +75,7 @@
+ #define AUDIT_DAEMON_CONFIG     1203    /* Daemon config change */
+ 
+ #define AUDIT_SYSCALL		1300	/* Syscall event */
+-#define AUDIT_FS_WATCH		1301	/* Filesystem watch event */
++/* #define AUDIT_FS_WATCH	1301	 * Deprecated */
+ #define AUDIT_PATH		1302	/* Filename path information */
+ #define AUDIT_IPC		1303	/* IPC record */
+ #define AUDIT_SOCKETCALL	1304	/* sys_socketcall arguments */
+@@ -88,6 +88,7 @@
+ #define AUDIT_MQ_SENDRECV	1313	/* POSIX MQ send/receive record type */
+ #define AUDIT_MQ_NOTIFY		1314	/* POSIX MQ notify record type */
+ #define AUDIT_MQ_GETSETATTR	1315	/* POSIX MQ get/set attribute record type */
++#define AUDIT_KERNEL_OTHER	1316	/* For use by 3rd party modules */
+ 
+ #define AUDIT_AVC		1400	/* SE Linux avc denial or grant */
+ #define AUDIT_SELINUX_ERR	1401	/* Internal SE Linux Errors */
+

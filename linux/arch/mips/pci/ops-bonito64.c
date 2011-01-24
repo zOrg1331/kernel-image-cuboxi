@@ -29,60 +29,83 @@
 #define PCI_ACCESS_READ  0
 #define PCI_ACCESS_WRITE 1
 
-#ifdef CONFIG_LEMOTE_FULOONG2E
-#define CFG_SPACE_REG(offset) (void *)CKSEG1ADDR(BONITO_PCICFG_BASE | (offset))
-#define ID_SEL_BEGIN 11
-#else
-#define CFG_SPACE_REG(offset) (void *)CKSEG1ADDR(_pcictrl_bonito_pcicfg + (offset))
-#define ID_SEL_BEGIN 10
-#endif
-#define MAX_DEV_NUM (31 - ID_SEL_BEGIN)
+/*
+ *  PCI configuration cycle AD bus definition
+ */
+/* Type 0 */
+#define PCI_CFG_TYPE0_REG_SHF           0
+#define PCI_CFG_TYPE0_FUNC_SHF          8
 
+/* Type 1 */
+#define PCI_CFG_TYPE1_REG_SHF           0
+#define PCI_CFG_TYPE1_FUNC_SHF          8
+#define PCI_CFG_TYPE1_DEV_SHF           11
+#define PCI_CFG_TYPE1_BUS_SHF           16
 
 static int bonito64_pcibios_config_access(unsigned char access_type,
 				      struct pci_bus *bus,
 				      unsigned int devfn, int where,
 				      u32 * data)
 {
-	u32 busnum = bus->number;
-	u32 addr, type;
+	unsigned char busnum = bus->number;
 	u32 dummy;
-	void *addrp;
-	int device = PCI_SLOT(devfn);
-	int function = PCI_FUNC(devfn);
-	int reg = where & ~3;
+	u64 pci_addr;
 
-	if (busnum == 0) {
-		/* Type 0 configuration for onboard PCI bus */
-		if (device > MAX_DEV_NUM)
-			return -1;
+	/* Algorithmics Bonito64 system controller. */
 
-		addr = (1 << (device + ID_SEL_BEGIN)) | (function << 8) | reg;
-		type = 0;
-	} else {
-		/* Type 1 configuration for offboard PCI bus */
-		addr = (busnum << 16) | (device << 11) | (function << 8) | reg;
-		type = 0x10000;
+	if ((busnum == 0) && (PCI_SLOT(devfn) > 21)) {
+		/* We number bus 0 devices from 0..21 */
+		return -1;
 	}
 
-	/* Clear aborts */
-	BONITO_PCICMD |= BONITO_PCICMD_MABORT_CLR | BONITO_PCICMD_MTABORT_CLR;
+	/* Clear cause register bits */
+	BONITO_PCICMD |= (BONITO_PCICMD_MABORT_CLR |
+			  BONITO_PCICMD_MTABORT_CLR);
 
-	BONITO_PCIMAP_CFG = (addr >> 16) | type;
+	/*
+	 * Setup pattern to be used as PCI "address" for
+	 * Type 0 cycle
+	 */
+	if (busnum == 0) {
+		/* IDSEL */
+		pci_addr = (u64) 1 << (PCI_SLOT(devfn) + 10);
+	} else {
+		/* Bus number */
+		pci_addr = busnum << PCI_CFG_TYPE1_BUS_SHF;
+
+		/* Device number */
+		pci_addr |=
+		    PCI_SLOT(devfn) << PCI_CFG_TYPE1_DEV_SHF;
+	}
+
+	/* Function (same for Type 0/1) */
+	pci_addr |= PCI_FUNC(devfn) << PCI_CFG_TYPE0_FUNC_SHF;
+
+	/* Register number (same for Type 0/1) */
+	pci_addr |= (where & ~0x3) << PCI_CFG_TYPE0_REG_SHF;
+
+	if (busnum == 0) {
+		/* Type 0 */
+		BONITO_PCIMAP_CFG = pci_addr >> 16;
+	} else {
+		/* Type 1 */
+		BONITO_PCIMAP_CFG = (pci_addr >> 16) | 0x10000;
+	}
+
+	pci_addr &= 0xffff;
 
 	/* Flush Bonito register block */
 	dummy = BONITO_PCIMAP_CFG;
-	mmiowb();
+	iob();		/* sync */
 
-	addrp = CFG_SPACE_REG(addr & 0xffff);
+	/* Perform access */
 	if (access_type == PCI_ACCESS_WRITE) {
-		writel(cpu_to_le32(*data), addrp);
-#ifndef CONFIG_LEMOTE_FULOONG2E
+		*(volatile u32 *) (_pcictrl_bonito_pcicfg + (u32)pci_addr) = *(u32 *) data;
+
 		/* Wait till done */
 		while (BONITO_PCIMSTAT & 0xF);
-#endif
 	} else {
-		*data = le32_to_cpu(readl(addrp));
+		*(u32 *) data = *(volatile u32 *) (_pcictrl_bonito_pcicfg + (u32)pci_addr);
 	}
 
 	/* Detect Master/Target abort */
@@ -98,7 +121,6 @@ static int bonito64_pcibios_config_access(unsigned char access_type,
 	}
 
 	return 0;
-
 }
 
 

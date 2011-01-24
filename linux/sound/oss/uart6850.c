@@ -1,5 +1,5 @@
 /*
- * sound/oss/uart6850.c
+ * sound/uart6850.c
  *
  *
  * Copyright (C) by Hannu Savolainen 1993-1997
@@ -104,7 +104,7 @@ static void uart6850_input_loop(void)
 	}
 }
 
-static irqreturn_t m6850intr(int irq, void *dev_id)
+static irqreturn_t m6850intr(int irq, void *dev_id, struct pt_regs *dummy)
 {
 	if (input_avail())
 		uart6850_input_loop();

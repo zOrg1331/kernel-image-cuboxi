@@ -1,0 +1,134 @@
+From: AMEET M. PARANJAPE <aparanja@redhat.com>
+Date: Wed, 7 Jan 2009 10:50:57 -0500
+Subject: [ppc] MSI interrupts are unreliable on IBM QS21 and QS22
+Message-id: 20090107155000.15465.79353.sendpatchset@squad5-lp1.lab.bos.redhat.com
+O-Subject: [PATCH RHEL5.4 BZ472405 1/2] MSI interrupts are unreliable on IBM QS21 and QS22
+Bugzilla: 472405
+RH-Acked-by: David Howells <dhowells@redhat.com>
+
+RHBZ#:
+======
+https://bugzilla.redhat.com/show_bug.cgi?id=472405
+
+Description:
+===========
+The MSI capture logic on the axon bridge can sometimes
+lose interrupts in case of high DMA and interrupt load,
+when it signals an MSI interrupt to the MPIC interrupt
+controller while we are already handling another MSI.
+
+Each MSI vector gets written into a FIFO buffer in main
+memory using DMA, and that DMA access is normally flushed
+by the actual interrupt packet on the IOIF. An MMIO
+register in the MSIC holds the position of the last
+entry in the FIFO buffer that was written. However,
+reading that position does not flush the DMA, so that
+we can observe stale data in the buffer.
+
+RHEL Version Found:
+================
+RHEL 5.3
+
+kABI Status:
+============
+No symbols were harmed.
+
+Brew:
+=====
+Built on all platforms.
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1639654
+
+Upstream Status:
+================
+http://git.kernel.org/gitweb.cgi?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=d015fe9951641b2d869a7ae4a690be2a05a9dc7f
+
+Test Status:
+============
+In a stress test, we have observed the DMA to arrive
+up to 14 microseconds after reading the register.
+We can reliably detect this conditioning by writing
+an invalid MSI vector into the FIFO buffer after
+reading from it, assuming that all MSIs we get
+are valid. After detecting an invalid MSI vector,
+we udelay(1) in the interrupt cascade for up to
+100 times before giving up.
+
+With this patch applied this behavior is not seen.
+===============================================================
+Ameet Paranjape 978-392-3903 ext 23903
+IBM on-site partner
+
+Proposed Patch:
+===============
+
+diff --git a/arch/powerpc/platforms/cell/axon_msi.c b/arch/powerpc/platforms/cell/axon_msi.c
+index 0fd3e53..9bbb406 100644
+--- a/arch/powerpc/platforms/cell/axon_msi.c
++++ b/arch/powerpc/platforms/cell/axon_msi.c
+@@ -91,6 +91,7 @@ static void axon_msi_cascade(unsigned int irq, struct irq_desc *desc,
+ 	struct axon_msic *msic = get_irq_data(irq);
+ 	u32 write_offset, msi;
+ 	int idx;
++	int retry = 0;
+ 
+ 	write_offset = msic_dcr_read(msic, MSIC_WRITE_OFFSET_REG);
+ 	pr_debug("axon_msi: original write_offset 0x%x\n", write_offset);
+@@ -98,7 +99,7 @@ static void axon_msi_cascade(unsigned int irq, struct irq_desc *desc,
+ 	/* write_offset doesn't wrap properly, so we have to mask it */
+ 	write_offset &= MSIC_FIFO_SIZE_MASK;
+ 
+-	while (msic->read_offset != write_offset) {
++	while (msic->read_offset != write_offset && retry < 100) {
+ 		idx  = msic->read_offset / sizeof(__le32);
+ 		msi  = le32_to_cpu(msic->fifo_virt[idx]);
+ 		msi &= 0xFFFF;
+@@ -106,13 +107,37 @@ static void axon_msi_cascade(unsigned int irq, struct irq_desc *desc,
+ 		pr_debug("axon_msi: woff %x roff %x msi %x\n",
+ 			  write_offset, msic->read_offset, msi);
+ 
++		if (msi < NR_IRQS && irq_map[msi].host == msic->irq_host) {
++			generic_handle_irq(msi, regs);
++			msic->fifo_virt[idx] = cpu_to_le32(0xffffffff);
++		} else {
++			/*
++			 * Reading the MSIC_WRITE_OFFSET_REG does not
++			 * reliably flush the outstanding DMA to the
++			 * FIFO buffer. Here we were reading stale
++			 * data, so we need to retry.
++			 */
++			udelay(1);
++			retry++;
++			pr_debug("axon_msi: invalid irq 0x%x!\n", msi);
++			continue;
++		}
++
++		if (retry) {
++			pr_debug("axon_msi: late irq 0x%x, retry %d\n",
++				 msi, retry);
++			retry = 0;
++		}
++
+ 		msic->read_offset += MSIC_FIFO_ENTRY_SIZE;
+ 		msic->read_offset &= MSIC_FIFO_SIZE_MASK;
++	}
+ 
+-		if (msi < NR_IRQS && irq_map[msi].host == msic->irq_host)
+-			generic_handle_irq(msi, regs);
+-		else
+-			pr_debug("axon_msi: invalid irq 0x%x!\n", msi);
++	if (retry) {
++		printk(KERN_WARNING "axon_msi: irq timed out\n");
++
++		msic->read_offset += MSIC_FIFO_ENTRY_SIZE;
++		msic->read_offset &= MSIC_FIFO_SIZE_MASK;
+ 	}
+ 
+ 	desc->chip->eoi(irq);
+@@ -362,6 +387,7 @@ static int axon_msi_probe(struct of_device *device,
+ 		       dn->full_name);
+ 		goto out_free_msic;
+ 	}
++	memset(msic->fifo_virt, 0xff, MSIC_FIFO_SIZE_BYTES);
+ 
+ 	msic->irq_host = irq_alloc_host(IRQ_HOST_MAP_NOMAP, NR_IRQS,
+ 					&msic_host_ops, 0);

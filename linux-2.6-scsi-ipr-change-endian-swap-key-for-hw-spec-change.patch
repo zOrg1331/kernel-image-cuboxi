@@ -1,0 +1,56 @@
+From: Steve Best <sbest@redhat.com>
+Date: Mon, 30 Aug 2010 15:18:02 -0400
+Subject: [scsi] ipr: change endian swap key for hw spec change
+Message-id: <20100830150616.5212.24441.sendpatchset@squad5-lp1.lab.bos.redhat.com>
+Patchwork-id: 27925
+O-Subject: [PATCH RHEL5.6 BZ626566 13/16] ipr: change endian swap key to match
+	hardware spec change
+Bugzilla: 626566
+
+RHBZ#:
+------
+https://bugzilla.redhat.com/show_bug.cgi?id=626566
+
+Description:
+------------
+The value used to change the endian representation on the new adapters has
+changed.  This patch updates that value.
+
+Signed-off-by: Wayne Boyer <wayneb@linux.vnet.ibm.com>
+Signed-off-by: James Bottomley <James.Bottomley@suse.de>
+
+RHEL Version Found:
+-------------------
+5.6
+
+Brew:
+-----
+Built on all platforms. All patches brewed together.
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=2713332
+
+Upstream Status:
+----------------
+http://git.kernel.org/?p=linux/kernel/git/jejb/scsi-misc-2.6.git;
+a=commit;h=4289a08680d646dcc18e291cb437a292738e504f
+
+Steve Best
+IBM on-site partner
+
+Proposed Patch:
+---------------
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/scsi/ipr.h b/drivers/scsi/ipr.h
+index e4924aa..67e7522 100644
+--- a/drivers/scsi/ipr.h
++++ b/drivers/scsi/ipr.h
+@@ -1257,7 +1257,7 @@ struct ipr_interrupt_offsets {
+ 	unsigned long dump_addr_reg;
+ 	unsigned long dump_data_reg;
+ 
+-#define IPR_ENDIAN_SWAP_KEY		0x000C0C00
++#define IPR_ENDIAN_SWAP_KEY		0x00080800
+ 	unsigned long endian_swap_reg;
+ };
+ 

@@ -1,4 +1,6 @@
 /*
+ * $Id: guillemot.c,v 1.10 2002/01/22 20:28:12 vojtech Exp $
+ *
  *  Copyright (c) 2001 Vojtech Pavlik
  */
 
@@ -154,7 +156,7 @@ static void guillemot_poll(struct gameport *gameport)
 
 static int guillemot_open(struct input_dev *dev)
 {
-	struct guillemot *guillemot = input_get_drvdata(dev);
+	struct guillemot *guillemot = dev->private;
 
 	gameport_start_polling(guillemot->gameport);
 	return 0;
@@ -166,7 +168,7 @@ static int guillemot_open(struct input_dev *dev)
 
 static void guillemot_close(struct input_dev *dev)
 {
-	struct guillemot *guillemot = input_get_drvdata(dev);
+	struct guillemot *guillemot = dev->private;
 
 	gameport_stop_polling(guillemot->gameport);
 }
@@ -229,14 +231,13 @@ static int guillemot_connect(struct gameport *gameport, struct gameport_driver *
 	input_dev->id.vendor = GAMEPORT_ID_VENDOR_GUILLEMOT;
 	input_dev->id.product = guillemot_type[i].id;
 	input_dev->id.version = (int)data[14] << 8 | data[15];
-	input_dev->dev.parent = &gameport->dev;
-
-	input_set_drvdata(input_dev, guillemot);
+	input_dev->cdev.dev = &gameport->dev;
+	input_dev->private = guillemot;
 
 	input_dev->open = guillemot_open;
 	input_dev->close = guillemot_close;
 
-	input_dev->evbit[0] = BIT_MASK(EV_KEY) | BIT_MASK(EV_ABS);
+	input_dev->evbit[0] = BIT(EV_KEY) | BIT(EV_ABS);
 
 	for (i = 0; (t = guillemot->type->abs[i]) >= 0; i++)
 		input_set_abs_params(input_dev, t, 0, 255, 0, 0);
@@ -249,9 +250,7 @@ static int guillemot_connect(struct gameport *gameport, struct gameport_driver *
 	for (i = 0; (t = guillemot->type->btn[i]) >= 0; i++)
 		set_bit(t, input_dev->keybit);
 
-	err = input_register_device(guillemot->dev);
-	if (err)
-		goto fail2;
+	input_register_device(guillemot->dev);
 
 	return 0;
 
@@ -283,7 +282,8 @@ static struct gameport_driver guillemot_drv = {
 
 static int __init guillemot_init(void)
 {
-	return gameport_register_driver(&guillemot_drv);
+	gameport_register_driver(&guillemot_drv);
+	return 0;
 }
 
 static void __exit guillemot_exit(void)

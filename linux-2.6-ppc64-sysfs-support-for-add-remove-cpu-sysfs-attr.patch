@@ -1,0 +1,94 @@
+From: Scott Moser <smoser@redhat.com>
+Date: Tue, 20 Nov 2007 17:29:38 -0500
+Subject: [ppc64] sysfs: support for add/remove cpu sysfs attr
+Message-id: 11955977801330-do-send-email-smoser@redhat.com
+O-Subject: [PATCH RHEL5u2] bz279171 Cell/B.E. Power and Thermal Management [3/4]
+Bugzilla: 279171
+
+commit 0344c6c5387ba335bba5a66fd44714b94c98573f
+
+Subject: sysfs: add support for adding/removing cpu sysfs attribute groups
+
+From: Christian Krafft <krafft@linux.ibm.com>
+This patch adds two functions to create and remove sysfs attribute groups to
+all cpus.  That allows to register sysfs attributes in a subdirectory like:
+/sys/devices/system/cpu/cpuX/group_name/what_ever
+
+This will be used by cbe_thermal to group all attributes dealing with
+thermal support in one directory.
+
+Signed-of-by: Christian Krafft <krafft@de.ibm.com>
+
+--
+ arch/powerpc/kernel/sysfs.c |   40 ++++++++++++++++++++++++++++++++++++++
+ include/linux/cpu.h         |    4 +++
+ 2 files changed, 44 insertions(+)
+
+Acked-by: David Howells <dhowells@redhat.com>
+
+diff --git a/arch/powerpc/kernel/sysfs.c b/arch/powerpc/kernel/sysfs.c
+index c615575..b1ca7e2 100644
+--- a/arch/powerpc/kernel/sysfs.c
++++ b/arch/powerpc/kernel/sysfs.c
+@@ -299,6 +299,46 @@ static struct notifier_block __cpuinitdata sysfs_cpu_nb = {
+ 	.notifier_call	= sysfs_cpu_notify,
+ };
+ 
++static DEFINE_MUTEX(cpu_mutex);
++
++int cpu_add_sysdev_attr_group(struct attribute_group *attrs)
++{
++        int cpu;
++        struct sys_device *sysdev;
++        int error = 0, rc = 0;
++
++        mutex_lock(&cpu_mutex);
++
++        for_each_possible_cpu(cpu) {
++                sysdev = get_cpu_sysdev(cpu);
++                error = sysfs_create_group(&sysdev->kobj, attrs);
++
++		if(error)
++			rc = error;
++        }
++
++        mutex_unlock(&cpu_mutex);
++        return rc;
++}
++EXPORT_SYMBOL_GPL(cpu_add_sysdev_attr_group);
++
++void cpu_remove_sysdev_attr_group(struct attribute_group *attrs)
++{
++        int cpu;
++        struct sys_device *sysdev;
++
++        mutex_lock(&cpu_mutex);
++
++        for_each_possible_cpu(cpu) {
++                sysdev = get_cpu_sysdev(cpu);
++                sysfs_remove_group(&sysdev->kobj, attrs);
++        }
++
++        mutex_unlock(&cpu_mutex);
++}
++EXPORT_SYMBOL_GPL(cpu_remove_sysdev_attr_group);
++
++
+ /* NUMA stuff */
+ 
+ #ifdef CONFIG_NUMA
+diff --git a/include/linux/cpu.h b/include/linux/cpu.h
+index 3fef7d6..c0e1682 100644
+--- a/include/linux/cpu.h
++++ b/include/linux/cpu.h
+@@ -33,6 +33,10 @@ struct cpu {
+ 
+ extern int register_cpu(struct cpu *cpu, int num);
+ extern struct sys_device *get_cpu_sysdev(unsigned cpu);
++
++extern int cpu_add_sysdev_attr_group(struct attribute_group *attrs);
++extern void cpu_remove_sysdev_attr_group(struct attribute_group *attrs);
++
+ #ifdef CONFIG_HOTPLUG_CPU
+ extern void unregister_cpu(struct cpu *cpu);
+ #endif

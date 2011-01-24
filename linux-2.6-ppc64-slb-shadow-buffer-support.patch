@@ -1,0 +1,400 @@
+From: Scott Moser <smoser@redhat.com>
+Date: Tue, 27 Nov 2007 10:15:32 -0500
+Subject: [ppc64] SLB shadow buffer support
+Message-id: Pine.LNX.4.64.0711271015010.31535@squad5-lp1.lab.boston.redhat.com
+O-Subject: [PATCH RHEL5u2] bz253112 SLB shadow buffer support
+Bugzilla: 253112
+
+Bug 253112 [1]
+---------------
+
+Description:
+-----------
+On POWER6, the hypervisor can recover the machine after
+certain kinds of CPU hardware failure and migrate affected partitions to
+another CPU, but to do that seamlessly, it needs the operating system to
+maintain a record in memory of the SLB entries that it needs.
+
+This adds code to the kernel to maintain this record.
+
+Kernel Version:
+--------------
+Patch built against 2.6.18-57
+
+Upstream Status:
+---------------
+This patch is a backport of relevant pieces of the following upstream
+commits:
+ 67439b76f29cb278bb3412fc873b980fc65110c9
+ 2f6093c84730b4bad65bcd0f2f904a5769b1dfc5
+ 11a27ad782fc7ae4b7d6ac8fefad4ceb415300d6
+
+Test Status:
+----
+To ensure cross platform build, a brew scratch build has been done against
+2.6.18-57 at [2].
+
+Test is done by IBM on this feature.  Actual testing is difficult due to
+it occuring on hardware failure.  In absense of that, kernel memory can
+be sanity checked with xmon.
+
+Please review patch below for RHEL5u2
+--
+[1]:https://bugzilla.redhat.com/show_bug.cgi?id=253112
+[2]:http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1057564
+--
+ arch/powerpc/kernel/asm-offsets.c               |    5 +
+ arch/powerpc/kernel/entry_64.S                  |   17 +++++
+ arch/powerpc/kernel/paca.c                      |   12 ++++
+ arch/powerpc/mm/hash_utils_64.c                 |    2
+ arch/powerpc/mm/slb.c                           |   52 ++++++++++++++++--
+ arch/powerpc/platforms/pseries/lpar.c           |   24 ++++++--
+ arch/powerpc/platforms/pseries/plpar_wrappers.h |   10 +++
+ arch/powerpc/platforms/pseries/setup.c          |   12 +++-
+ include/asm-powerpc/lppaca.h                    |   21 +++++++
+ include/asm-powerpc/mmu.h                       |    1
+ 10 files changed, 144 insertions(+), 12 deletions(-)
+
+Acked-by: David Howells <dhowells@redhat.com>
+
+diff --git a/arch/powerpc/kernel/asm-offsets.c b/arch/powerpc/kernel/asm-offsets.c
+index ba2394f..e85b792 100644
+--- a/arch/powerpc/kernel/asm-offsets.c
++++ b/arch/powerpc/kernel/asm-offsets.c
+@@ -43,6 +43,7 @@
+ #include <asm/iseries/hv_lp_event.h>
+ #include <asm/cache.h>
+ #include <asm/compat.h>
++#include <asm/mmu.h>
+ #endif
+ 
+ #define DEFINE(sym, val) \
+@@ -135,6 +136,10 @@ int main(void)
+ 	DEFINE(PACA_USER_TIME, offsetof(struct paca_struct, user_time));
+ 	DEFINE(PACA_SYSTEM_TIME, offsetof(struct paca_struct, system_time));
+ 
++	DEFINE(SLBSHADOW_STACKVSID,
++	       offsetof(struct slb_shadow, save_area[SLB_NUM_BOLTED - 1].vsid));
++	DEFINE(SLBSHADOW_STACKESID,
++	       offsetof(struct slb_shadow, save_area[SLB_NUM_BOLTED - 1].esid));
+ 	DEFINE(LPPACASRR0, offsetof(struct lppaca, saved_srr0));
+ 	DEFINE(LPPACASRR1, offsetof(struct lppaca, saved_srr1));
+ 	DEFINE(LPPACAANYINT, offsetof(struct lppaca, int_dword.any_int));
+diff --git a/arch/powerpc/kernel/entry_64.S b/arch/powerpc/kernel/entry_64.S
+index 54d9f5c..635ce3c 100644
+--- a/arch/powerpc/kernel/entry_64.S
++++ b/arch/powerpc/kernel/entry_64.S
+@@ -27,6 +27,7 @@
+ #include <asm/ppc_asm.h>
+ #include <asm/asm-offsets.h>
+ #include <asm/cputable.h>
++#include <asm/cache.h>
+ 
+ #ifdef CONFIG_PPC_ISERIES
+ #define DO_SOFT_DISABLE
+@@ -38,6 +39,8 @@
+ 	.section	".toc","aw"
+ .SYS_CALL_TABLE:
+ 	.tc .sys_call_table[TC],.sys_call_table
++.slb_shadow:
++	.tc	slb_shadow[TC],slb_shadow
+ 
+ /* This value is used to mark exception frames on the stack. */
+ exception_marker:
+@@ -375,6 +378,20 @@ BEGIN_FTR_SECTION
+ 	ld	r7,KSP_VSID(r4)	/* Get new stack's VSID */
+ 	oris	r0,r6,(SLB_ESID_V)@h
+ 	ori	r0,r0,(SLB_NUM_BOLTED-1)@l
++
++	/* Update the last bolted SLB.  No write barriers are needed
++	 * here, provided we only update the current CPU's SLB shadow
++	 * buffer.
++	 */
++	ld	r9,.slb_shadow@toc(r2)
++	lhz	r12,PACAPACAINDEX(r13)
++	sldi	r12,r12,L1_CACHE_SHIFT
++	add	r9,r9,r12
++	li	r12,0
++	std	r12,SLBSHADOW_STACKESID(r9) /* Clear ESID */
++	std	r7,SLBSHADOW_STACKVSID(r9)  /* Save VSID */
++	std	r0,SLBSHADOW_STACKESID(r9)  /* Save ESID */
++
+ 	slbie	r6
+ 	slbie	r6		/* Workaround POWER5 < DD2.1 issue */
+ 	slbmte	r7,r0
+diff --git a/arch/powerpc/kernel/paca.c b/arch/powerpc/kernel/paca.c
+index c68741f..c422ff2 100644
+--- a/arch/powerpc/kernel/paca.c
++++ b/arch/powerpc/kernel/paca.c
+@@ -17,6 +17,7 @@
+ #include <asm/lppaca.h>
+ #include <asm/iseries/it_lp_reg_save.h>
+ #include <asm/paca.h>
++#include <asm/mmu.h>
+ 
+ 
+ /* This symbol is provided by the linker - let it fill in the paca
+@@ -45,6 +46,17 @@ struct lppaca lppaca[] = {
+ 	},
+ };
+ 
++/*
++ * 3 persistent SLBs are registered here.  The buffer will be zero
++ * initially, hence will all be invaild until we actually write them.
++ */
++struct slb_shadow slb_shadow[] __cacheline_aligned = {
++	[0 ... (NR_CPUS-1)] = {
++		.persistent = SLB_NUM_BOLTED,
++		.buffer_length = sizeof(struct slb_shadow),
++	},
++};
++
+ /* The Paca is an array with one entry per processor.  Each contains an
+  * lppaca, which contains the information shared between the
+  * hypervisor and Linux.
+diff --git a/arch/powerpc/mm/hash_utils_64.c b/arch/powerpc/mm/hash_utils_64.c
+index 09b2c2f..c439de7 100644
+--- a/arch/powerpc/mm/hash_utils_64.c
++++ b/arch/powerpc/mm/hash_utils_64.c
+@@ -727,7 +727,7 @@ int hash_page(unsigned long ea, unsigned long access, unsigned long trap)
+ 			   mmu_psize_defs[mmu_vmalloc_psize].sllp) {
+ 			get_paca()->vmalloc_sllp =
+ 				mmu_psize_defs[mmu_vmalloc_psize].sllp;
+-			slb_flush_and_rebolt();
++			slb_vmalloc_update();
+ #ifdef CONFIG_SPU_BASE
+ 			spu_flush_all_slbs(mm);
+ #endif
+diff --git a/arch/powerpc/mm/slb.c b/arch/powerpc/mm/slb.c
+index de0c884..c1469d6 100644
+--- a/arch/powerpc/mm/slb.c
++++ b/arch/powerpc/mm/slb.c
+@@ -22,6 +22,8 @@
+ #include <asm/paca.h>
+ #include <asm/cputable.h>
+ #include <asm/cacheflush.h>
++#include <asm/smp.h>
++#include <linux/compiler.h>
+ 
+ #ifdef DEBUG
+ #define DBG(fmt...) udbg_printf(fmt)
+@@ -50,9 +52,35 @@ static inline unsigned long mk_vsid_data(unsigned long ea, unsigned long flags)
+ 	return (get_kernel_vsid(ea) << SLB_VSID_SHIFT) | flags;
+ }
+ 
+-static inline void create_slbe(unsigned long ea, unsigned long flags,
+-			       unsigned long entry)
++static inline void slb_shadow_update(unsigned long ea,
++				     unsigned long flags,
++				     unsigned long entry)
+ {
++	/*
++	 * Clear the ESID first so the entry is not valid while we are
++	 * updating it.  No write barriers are needed here, provided
++	 * we only update the current CPU's SLB shadow buffer.
++	 */
++	get_slb_shadow()->save_area[entry].esid = 0;
++	get_slb_shadow()->save_area[entry].vsid = mk_vsid_data(ea, flags);
++	get_slb_shadow()->save_area[entry].esid = mk_esid_data(ea, entry);
++}
++
++static inline void slb_shadow_clear(unsigned long entry)
++{
++	get_slb_shadow()->save_area[entry].esid = 0;
++}
++
++static inline void create_shadowed_slbe(unsigned long ea, unsigned long flags,
++					unsigned long entry)
++{
++	/*
++	 * Updating the shadow buffer before writing the SLB ensures
++	 * we don't get a stale entry here if we get preempted by PHYP
++	 * between these two statements.
++	 */
++	slb_shadow_update(ea, flags, entry);
++
+ 	asm volatile("slbmte  %0,%1" :
+ 		     : "r" (mk_vsid_data(ea, flags)),
+ 		       "r" (mk_esid_data(ea, entry))
+@@ -74,8 +102,13 @@ void slb_flush_and_rebolt(void)
+ 	vflags = SLB_VSID_KERNEL | vmalloc_llp;
+ 
+ 	ksp_esid_data = mk_esid_data(get_paca()->kstack, 2);
+-	if ((ksp_esid_data & ESID_MASK) == PAGE_OFFSET)
++	if ((ksp_esid_data & ESID_MASK) == PAGE_OFFSET) {
+ 		ksp_esid_data &= ~SLB_ESID_V;
++		slb_shadow_clear(2);
++	} else {
++		/* Update stack entry; others don't change */
++		slb_shadow_update(get_paca()->kstack, lflags, 2);
++	}
+ 
+ 	/* We need to do this all in asm, so we're sure we don't touch
+ 	 * the stack between the slbia and rebolting it. */
+@@ -93,6 +126,15 @@ void slb_flush_and_rebolt(void)
+ 		     : "memory");
+ }
+ 
++void slb_vmalloc_update(void)
++{
++	unsigned long vflags;
++
++	vflags = SLB_VSID_KERNEL | mmu_psize_defs[mmu_vmalloc_psize].sllp;
++	slb_shadow_update(VMALLOC_START, vflags, 1);
++	slb_flush_and_rebolt();
++}
++
+ /* Flush all user entries from the segment table of the current processor. */
+ void switch_slb(struct task_struct *tsk, struct mm_struct *mm)
+ {
+@@ -209,9 +251,9 @@ void slb_initialize(void)
+ 	asm volatile("isync":::"memory");
+ 	asm volatile("slbmte  %0,%0"::"r" (0) : "memory");
+ 	asm volatile("isync; slbia; isync":::"memory");
+-	create_slbe(PAGE_OFFSET, lflags, 0);
++	create_shadowed_slbe(PAGE_OFFSET, lflags, 0);
+ 
+-	create_slbe(VMALLOC_START, vflags, 1);
++	create_shadowed_slbe(VMALLOC_START, vflags, 1);
+ 
+ 	/* We don't bolt the stack for the time being - we're in boot,
+ 	 * so the stack is in the bolted segment.  By the time it goes
+diff --git a/arch/powerpc/platforms/pseries/lpar.c b/arch/powerpc/platforms/pseries/lpar.c
+index 3c62552..550f4f9 100644
+--- a/arch/powerpc/platforms/pseries/lpar.c
++++ b/arch/powerpc/platforms/pseries/lpar.c
+@@ -254,18 +254,34 @@ out:
+ void vpa_init(int cpu)
+ {
+ 	int hwcpu = get_hard_smp_processor_id(cpu);
+-	unsigned long vpa = __pa(&lppaca[cpu]);
++	unsigned long addr;
+ 	long ret;
+ 
+ 	if (cpu_has_feature(CPU_FTR_ALTIVEC))
+ 		lppaca[cpu].vmxregs_in_use = 1;
+ 
+-	ret = register_vpa(hwcpu, vpa);
++	addr = __pa(&lppaca[cpu]);
++	ret = register_vpa(hwcpu, addr);
+ 
+-	if (ret)
++	if (ret) {
+ 		printk(KERN_ERR "WARNING: vpa_init: VPA registration for "
+ 				"cpu %d (hw %d) of area %lx returns %ld\n",
+-				cpu, hwcpu, vpa, ret);
++				cpu, hwcpu, addr, ret);
++		return;
++	}
++	/*
++	 * PAPR says this feature is SLB-Buffer but firmware never
++	 * reports that.  All SPLPAR support SLB shadow buffer.
++	 */
++	addr = __pa(&slb_shadow[cpu]);
++	if (firmware_has_feature(FW_FEATURE_SPLPAR)) {
++		ret = register_slb_shadow(hwcpu, addr);
++		if (ret)
++			printk(KERN_ERR
++			       "WARNING: vpa_init: SLB shadow buffer "
++			       "registration for cpu %d (hw %d) of area %lx "
++			       "returns %ld\n", cpu, hwcpu, addr, ret);
++	}
+ }
+ 
+ long pSeries_lpar_hpte_insert(unsigned long hpte_group,
+diff --git a/arch/powerpc/platforms/pseries/plpar_wrappers.h b/arch/powerpc/platforms/pseries/plpar_wrappers.h
+index 3bd1b3e..f12effc 100644
+--- a/arch/powerpc/platforms/pseries/plpar_wrappers.h
++++ b/arch/powerpc/platforms/pseries/plpar_wrappers.h
+@@ -40,6 +40,16 @@ static inline long register_vpa(unsigned long cpu, unsigned long vpa)
+ 	return vpa_call(0x1, cpu, vpa);
+ }
+ 
++static inline long unregister_slb_shadow(unsigned long cpu, unsigned long vpa)
++{
++	return vpa_call(0x7, cpu, vpa);
++}
++
++static inline long register_slb_shadow(unsigned long cpu, unsigned long vpa)
++{
++	return vpa_call(0x3, cpu, vpa);
++}
++
+ extern void vpa_init(int cpu);
+ 
+ static inline long plpar_pte_remove(unsigned long flags, unsigned long ptex,
+diff --git a/arch/powerpc/platforms/pseries/setup.c b/arch/powerpc/platforms/pseries/setup.c
+index ab290de..9e3f580 100644
+--- a/arch/powerpc/platforms/pseries/setup.c
++++ b/arch/powerpc/platforms/pseries/setup.c
+@@ -232,9 +232,17 @@ static void pseries_kexec_cpu_down_xics(int crash_shutdown, int secondary)
+ {
+ 	/* Don't risk a hypervisor call if we're crashing */
+ 	if (firmware_has_feature(FW_FEATURE_SPLPAR) && !crash_shutdown) {
+-		unsigned long vpa = __pa(get_lppaca());
++		unsigned long addr;
+ 
+-		if (unregister_vpa(hard_smp_processor_id(), vpa)) {
++		addr = __pa(get_slb_shadow());
++		if (unregister_slb_shadow(hard_smp_processor_id(), addr))
++			printk("SLB shadow buffer deregistration of "
++			       "cpu %u (hw_cpu_id %d) failed\n",
++			       smp_processor_id(),
++			       hard_smp_processor_id());
++
++		addr = __pa(get_lppaca());
++		if (unregister_vpa(hard_smp_processor_id(), addr)) {
+ 			printk("VPA deregistration of cpu %u (hw_cpu_id %d) "
+ 					"failed\n", smp_processor_id(),
+ 					hard_smp_processor_id());
+diff --git a/include/asm-powerpc/lppaca.h b/include/asm-powerpc/lppaca.h
+index 4dc514a..2e89c98 100644
+--- a/include/asm-powerpc/lppaca.h
++++ b/include/asm-powerpc/lppaca.h
+@@ -27,7 +27,9 @@
+ //
+ //
+ //----------------------------------------------------------------------------
++#include <linux/cache.h>
+ #include <asm/types.h>
++#include <asm/mmu.h>
+ 
+ /* The Hypervisor barfs if the lppaca crosses a page boundary.  A 1k
+  * alignment is sufficient to prevent this */
+@@ -133,5 +135,24 @@ struct lppaca {
+ 
+ extern struct lppaca lppaca[];
+ 
++/*
++ * SLB shadow buffer structure as defined in the PAPR.  The save_area
++ * contains adjacent ESID and VSID pairs for each shadowed SLB.  The
++ * ESID is stored in the lower 64bits, then the VSID.
++ * N.B. Code in entry_64.S assumes this array has a stride of L1_CACHE_BYTES.
++ */
++struct slb_shadow {
++	u32	persistent;		// Number of persistent SLBs	x00-x03
++	u32	buffer_length;		// Total shadow buffer length	x04-x07
++	u64	reserved;		// Alignment			x08-x0f
++	struct	{
++		u64     esid;
++		u64	vsid;
++	} save_area[SLB_NUM_BOLTED];	//				x10-x40
++} ____cacheline_aligned;
++
++extern struct slb_shadow slb_shadow[];
++
++#define get_slb_shadow()	(&slb_shadow[smp_processor_id()])
+ #endif /* __KERNEL__ */
+ #endif /* _ASM_POWERPC_LPPACA_H */
+diff --git a/include/asm-powerpc/mmu.h b/include/asm-powerpc/mmu.h
+index 4c05ddf..2b19f8c 100644
+--- a/include/asm-powerpc/mmu.h
++++ b/include/asm-powerpc/mmu.h
+@@ -283,6 +283,7 @@ extern void slb_initialize(void);
+ extern void slb_flush_and_rebolt(void);
+ extern void stab_initialize(unsigned long stab);
+ 
++extern void slb_vmalloc_update(void);
+ #endif /* __ASSEMBLY__ */
+ 
+ /*

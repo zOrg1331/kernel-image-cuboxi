@@ -1,0 +1,67 @@
+From: Jeff Layton <jlayton@redhat.com>
+Date: Wed, 3 Sep 2008 13:32:58 -0400
+Subject: [fs] cifs: fix O_APPEND on directio mounts
+Message-id: 1220463178-6396-1-git-send-email-jlayton@redhat.com
+O-Subject: [RHEL5.3 PATCH] BZ#460063: cifs: fix O_APPEND on directio mounts
+Bugzilla: 460063
+RH-Acked-by: Peter Staubach <staubach@redhat.com>
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+
+Rather late breaking patch to fix O_APPEND in CIFS when a share is
+mounted with the "directio" mount option. This just recently went
+upstream and to the stable kernel series and an exception was just filed
+for it since it's a potential data corruption issue.
+
+Applies cleanly on top of the cifs update patchset that I recently
+posted, and to 5.2 kernels with a little bit of offset. Tested by myself
+using a simple test that appends data to a file, and by the customer who
+originally reported the problem.
+
+Original patch description follows.
+
+-------------[snip]-------------
+
+Upstream commit 838726c4756813576078203eb7e1e219db0da870
+
+The direct I/O write codepath for CIFS is done through
+cifs_user_write(). That function does not currently call
+generic_write_checks() so the file position isn't being properly set
+when the file is opened with O_APPEND.  It's also not doing the other
+"normal" checks that should be done for a write call.
+
+The problem is currently that when you open a file with O_APPEND on a
+mount with the directio mount option, the file position is set to the
+beginning of the file. This makes any subsequent writes clobber the data
+in the file starting at the beginning.
+
+This seems to fix the problem in cursory testing. It is, however
+important to note that NFS disallows the combination of
+(O_DIRECT|O_APPEND). If my understanding is correct, the concern is
+races with multiple clients appending to a file clobbering each others'
+data. Since the write model for CIFS and NFS is pretty similar in this
+regard, CIFS is probably subject to the same sort of races. What's
+unclear to me is why this is a particular problem with O_DIRECT and not
+with buffered writes...
+
+Regardless, disallowing O_APPEND on an entire mount is probably not
+reasonable, so we'll probably just have to deal with it and reevaluate
+this flag combination when we get proper support for O_DIRECT. In the
+meantime this patch at least fixes the existing problem.
+
+Signed-off-by: Jeff Layton <jlayton@redhat.com>
+
+diff --git a/fs/cifs/file.c b/fs/cifs/file.c
+index 50a19b2..086dbdc 100644
+--- a/fs/cifs/file.c
++++ b/fs/cifs/file.c
+@@ -940,6 +940,10 @@ ssize_t cifs_user_write(struct file *file, const char __user *write_data,
+ 		return -EBADF;
+ 	open_file = (struct cifsFileInfo *) file->private_data;
+ 
++	rc = generic_write_checks(file, poffset, &write_size, 0);
++	if (rc)
++		return rc;
++
+ 	xid = GetXid();
+ 
+ #if LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 20)

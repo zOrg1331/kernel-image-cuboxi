@@ -14,6 +14,7 @@
 #include <linux/sched.h>
 #include <linux/mm.h>
 #include <linux/smp.h>
+#include <linux/smp_lock.h>
 #include <linux/errno.h>
 #include <linux/ptrace.h>
 #include <linux/user.h>
@@ -61,7 +62,7 @@ static inline long get_reg(struct task_struct *task, int regno)
 
 	if (regno == PT_USP)
 		addr = &task->thread.usp;
-	else if (regno < ARRAY_SIZE(regoff))
+	else if (regno < sizeof(regoff)/sizeof(regoff[0]))
 		addr = (unsigned long *)(task->thread.esp0 + regoff[regno]);
 	else
 		return 0;
@@ -78,7 +79,7 @@ static inline int put_reg(struct task_struct *task, int regno,
 
 	if (regno == PT_USP)
 		addr = &task->thread.usp;
-	else if (regno < ARRAY_SIZE(regoff))
+	else if (regno < sizeof(regoff)/sizeof(regoff[0]))
 		addr = (unsigned long *) (task->thread.esp0 + regoff[regno]);
 	else
 		return -1;
@@ -106,9 +107,17 @@ long arch_ptrace(struct task_struct *child, long request, long addr, long data)
 	switch (request) {
 		/* when I and D space are separate, these will need to be fixed. */
 		case PTRACE_PEEKTEXT: /* read word at location addr. */ 
-		case PTRACE_PEEKDATA:
-			ret = generic_ptrace_peekdata(child, addr, data);
+		case PTRACE_PEEKDATA: {
+			unsigned long tmp;
+			int copied;
+
+			copied = access_process_vm(child, addr, &tmp, sizeof(tmp), 0);
+			ret = -EIO;
+			if (copied != sizeof(tmp))
+				break;
+			ret = put_user(tmp,(unsigned long *) data);
 			break;
+		}
 
 		/* read the word at location addr in the USER area. */
 		case PTRACE_PEEKUSR: {
@@ -151,7 +160,10 @@ long arch_ptrace(struct task_struct *child, long request, long addr, long data)
 		/* when I and D space are separate, this will have to be fixed. */
 		case PTRACE_POKETEXT: /* write the word at location addr. */
 		case PTRACE_POKEDATA:
-			ret = generic_ptrace_pokedata(child, addr, data);
+			ret = 0;
+			if (access_process_vm(child, addr, &data, sizeof(data), 1) == sizeof(data))
+				break;
+			ret = -EIO;
 			break;
 
 		case PTRACE_POKEUSR: /* write the word at location addr in the USER area */

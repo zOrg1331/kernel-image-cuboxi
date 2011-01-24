@@ -11,7 +11,6 @@
 #include <linux/errno.h>
 #include <linux/module.h>
 #include <linux/sched.h>
-#include <linux/tick.h>
 #include <linux/kernel.h>
 #include <linux/mm.h>
 #include <linux/stddef.h>
@@ -22,12 +21,12 @@
 #include <linux/personality.h>
 #include <linux/sys.h>
 #include <linux/user.h>
+#include <linux/a.out.h>
 #include <linux/init.h>
 #include <linux/completion.h>
 #include <linux/kallsyms.h>
-#include <linux/random.h>
 
-#include <asm/asm.h>
+#include <asm/abi.h>
 #include <asm/bootinfo.h>
 #include <asm/cpu.h>
 #include <asm/dsp.h>
@@ -41,44 +40,64 @@
 #include <asm/elf.h>
 #include <asm/isadep.h>
 #include <asm/inst.h>
-#include <asm/stacktrace.h>
+#ifdef CONFIG_MIPS_MT_SMTC
+#include <asm/mipsmtregs.h>
+extern void smtc_idle_loop_hook(void);
+#endif /* CONFIG_MIPS_MT_SMTC */
 
 /*
  * The idle thread. There's no useful work to be done, so just try to conserve
  * power and have a low exit latency (ie sit in a loop waiting for somebody to
  * say that they'd like to reschedule)
  */
-void __noreturn cpu_idle(void)
+ATTRIB_NORET void cpu_idle(void)
 {
-	int cpu;
-
-	/* CPU is going idle. */
-	cpu = smp_processor_id();
-
 	/* endless idle loop with no priority at all */
 	while (1) {
-		tick_nohz_stop_sched_tick(1);
-		while (!need_resched() && cpu_online(cpu)) {
+		while (!need_resched()) {
 #ifdef CONFIG_MIPS_MT_SMTC
-			extern void smtc_idle_loop_hook(void);
-
 			smtc_idle_loop_hook();
-#endif
+#endif /* CONFIG_MIPS_MT_SMTC */
 			if (cpu_wait)
 				(*cpu_wait)();
 		}
-#ifdef CONFIG_HOTPLUG_CPU
-		if (!cpu_online(cpu) && !cpu_isset(cpu, cpu_callin_map) &&
-		    (system_state == SYSTEM_RUNNING ||
-		     system_state == SYSTEM_BOOTING))
-			play_dead();
-#endif
-		tick_nohz_restart_sched_tick();
 		preempt_enable_no_resched();
 		schedule();
 		preempt_disable();
 	}
 }
+
+/*
+ * Native o32 and N64 ABI without DSP ASE
+ */
+struct mips_abi mips_abi = {
+	.do_signal	= do_signal,
+#ifdef CONFIG_TRAD_SIGNALS
+	.setup_frame	= setup_frame,
+#endif
+	.setup_rt_frame	= setup_rt_frame
+};
+
+#ifdef CONFIG_MIPS32_O32
+/*
+ * o32 compatibility on 64-bit kernels, without DSP ASE
+ */
+struct mips_abi mips_abi_32 = {
+	.do_signal	= do_signal32,
+	.setup_frame	= setup_frame_32,
+	.setup_rt_frame	= setup_rt_frame_32
+};
+#endif /* CONFIG_MIPS32_O32 */
+
+#ifdef CONFIG_MIPS32_N32
+/*
+ * N32 on 64-bit kernels, without DSP ASE
+ */
+struct mips_abi mips_abi_n32 = {
+	.do_signal	= do_signal,
+	.setup_rt_frame	= setup_rt_frame_n32
+};
+#endif /* CONFIG_MIPS32_N32 */
 
 asmlinkage void ret_from_fork(void);
 
@@ -87,14 +106,15 @@ void start_thread(struct pt_regs * regs, unsigned long pc, unsigned long sp)
 	unsigned long status;
 
 	/* New thread loses kernel privileges. */
-	status = regs->cp0_status & ~(ST0_CU0|ST0_CU1|ST0_FR|KU_MASK);
+	status = regs->cp0_status & ~(ST0_CU0|ST0_CU1|KU_MASK);
 #ifdef CONFIG_64BIT
-	status |= test_thread_flag(TIF_32BIT_REGS) ? 0 : ST0_FR;
+	status &= ~ST0_FR;
+	status |= (current->thread.mflags & MF_32BIT_REGS) ? 0 : ST0_FR;
 #endif
 	status |= KU_USER;
 	regs->cp0_status = status;
 	clear_used_math();
-	clear_fpu_owner();
+	lose_fpu();
 	if (cpu_has_dsp)
 		__init_dsp();
 	regs->cp0_epc = pc;
@@ -110,12 +130,12 @@ void flush_thread(void)
 {
 }
 
-int copy_thread(unsigned long clone_flags, unsigned long usp,
+int copy_thread(int nr, unsigned long clone_flags, unsigned long usp,
 	unsigned long unused, struct task_struct *p, struct pt_regs *regs)
 {
 	struct thread_info *ti = task_thread_info(p);
 	struct pt_regs *childregs;
-	unsigned long childksp;
+	long childksp;
 	p->set_child_tid = p->clear_child_tid = NULL;
 
 	childksp = (unsigned long)task_stack_page(p) + THREAD_SIZE - 32;
@@ -132,11 +152,16 @@ int copy_thread(unsigned long clone_flags, unsigned long usp,
 
 	/* set up new TSS. */
 	childregs = (struct pt_regs *) childksp - 1;
-	/*  Put the stack after the struct pt_regs.  */
-	childksp = (unsigned long) childregs;
 	*childregs = *regs;
 	childregs->regs[7] = 0;	/* Clear error flag */
 
+#if defined(CONFIG_BINFMT_IRIX)
+	if (current->personality != PER_LINUX) {
+		/* Under IRIX things are a little different. */
+		childregs->regs[3] = 1;
+		regs->regs[3] = 0;
+	}
+#endif
 	childregs->regs[2] = 0;	/* Child gets zero as return value */
 	regs->regs[2] = p->pid;
 
@@ -157,18 +182,17 @@ int copy_thread(unsigned long clone_flags, unsigned long usp,
 	 */
 	p->thread.cp0_status = read_c0_status() & ~(ST0_CU2|ST0_CU1);
 	childregs->cp0_status &= ~(ST0_CU2|ST0_CU1);
-
-#ifdef CONFIG_MIPS_MT_SMTC
-	/*
-	 * SMTC restores TCStatus after Status, and the CU bits
-	 * are aliased there.
-	 */
-	childregs->cp0_tcstatus &= ~(ST0_CU2|ST0_CU1);
-#endif
 	clear_tsk_thread_flag(p, TIF_USEDFPU);
 
 #ifdef CONFIG_MIPS_MT_FPAFF
-	clear_tsk_thread_flag(p, TIF_FPUBOUND);
+	/*
+	 * FPU affinity support is cleaner if we track the
+	 * user-visible CPU affinity from the very beginning.
+	 * The generic cpus_allowed mask will already have
+	 * been copied from the parent before copy_thread
+	 * is invoked.
+	 */
+	p->thread.user_cpus_allowed = p->cpus_allowed;
 #endif /* CONFIG_MIPS_MT_FPAFF */
 
 	if (clone_flags & CLONE_SETTLS)
@@ -207,13 +231,13 @@ void elf_dump_regs(elf_greg_t *gp, struct pt_regs *regs)
 #endif
 }
 
-int dump_task_regs(struct task_struct *tsk, elf_gregset_t *regs)
+int dump_task_regs (struct task_struct *tsk, elf_gregset_t *regs)
 {
 	elf_dump_regs(*regs, task_pt_regs(tsk));
 	return 1;
 }
 
-int dump_task_fpu(struct task_struct *t, elf_fpregset_t *fpr)
+int dump_task_fpu (struct task_struct *t, elf_fpregset_t *fpr)
 {
 	memcpy(fpr, &t->thread.fpu, sizeof(current->thread.fpu));
 
@@ -223,7 +247,7 @@ int dump_task_fpu(struct task_struct *t, elf_fpregset_t *fpr)
 /*
  * Create a kernel thread
  */
-static void __noreturn kernel_thread_helper(void *arg, int (*fn)(void *))
+ATTRIB_NORET void kernel_thread_helper(void *arg, int (*fn)(void *))
 {
 	do_exit(fn(arg));
 }
@@ -239,8 +263,8 @@ long kernel_thread(int (*fn)(void *), void *arg, unsigned long flags)
 	regs.cp0_epc = (unsigned long) kernel_thread_helper;
 	regs.cp0_status = read_c0_status();
 #if defined(CONFIG_CPU_R3000) || defined(CONFIG_CPU_TX39XX)
-	regs.cp0_status = (regs.cp0_status & ~(ST0_KUP | ST0_IEP | ST0_IEC)) |
-			  ((regs.cp0_status & (ST0_KUC | ST0_IEC)) << 2);
+	regs.cp0_status &= ~(ST0_KUP | ST0_IEC);
+	regs.cp0_status |= ST0_IEP;
 #else
 	regs.cp0_status |= ST0_EXL;
 #endif
@@ -249,105 +273,104 @@ long kernel_thread(int (*fn)(void *), void *arg, unsigned long flags)
 	return do_fork(flags | CLONE_VM | CLONE_UNTRACED, 0, &regs, 0, NULL, NULL);
 }
 
-/*
- *
- */
-struct mips_frame_info {
-	void		*func;
-	unsigned long	func_size;
-	int		frame_size;
-	int		pc_offset;
-};
+static struct mips_frame_info {
+	void *func;
+	unsigned long func_size;
+	int frame_size;
+	int pc_offset;
+} *schedule_frame, mfinfo[64];
+static int mfinfo_num;
 
-static inline int is_ra_save_ins(union mips_instruction *ip)
+static int __init get_frame_info(struct mips_frame_info *info)
 {
-	/* sw / sd $ra, offset($sp) */
-	return (ip->i_format.opcode == sw_op || ip->i_format.opcode == sd_op) &&
-		ip->i_format.rs == 29 &&
-		ip->i_format.rt == 31;
-}
+	int i;
+	void *func = info->func;
+	union mips_instruction *ip = (union mips_instruction *)func;
+	info->pc_offset = -1;
+	info->frame_size = 0;
+	for (i = 0; i < 128; i++, ip++) {
+		/* if jal, jalr, jr, stop. */
+		if (ip->j_format.opcode == jal_op ||
+		    (ip->r_format.opcode == spec_op &&
+		     (ip->r_format.func == jalr_op ||
+		      ip->r_format.func == jr_op)))
+			break;
 
-static inline int is_jal_jalr_jr_ins(union mips_instruction *ip)
-{
-	if (ip->j_format.opcode == jal_op)
-		return 1;
-	if (ip->r_format.opcode != spec_op)
-		return 0;
-	return ip->r_format.func == jalr_op || ip->r_format.func == jr_op;
-}
+		if (info->func_size && i >= info->func_size / 4)
+			break;
+		if (
+#ifdef CONFIG_32BIT
+		    ip->i_format.opcode == addiu_op &&
+#endif
+#ifdef CONFIG_64BIT
+		    ip->i_format.opcode == daddiu_op &&
+#endif
+		    ip->i_format.rs == 29 &&
+		    ip->i_format.rt == 29) {
+			/* addiu/daddiu sp,sp,-imm */
+			if (info->frame_size)
+				continue;
+			info->frame_size = - ip->i_format.simmediate;
+		}
 
-static inline int is_sp_move_ins(union mips_instruction *ip)
-{
-	/* addiu/daddiu sp,sp,-imm */
-	if (ip->i_format.rs != 29 || ip->i_format.rt != 29)
-		return 0;
-	if (ip->i_format.opcode == addiu_op || ip->i_format.opcode == daddiu_op)
-		return 1;
+		if (
+#ifdef CONFIG_32BIT
+		    ip->i_format.opcode == sw_op &&
+#endif
+#ifdef CONFIG_64BIT
+		    ip->i_format.opcode == sd_op &&
+#endif
+		    ip->i_format.rs == 29 &&
+		    ip->i_format.rt == 31) {
+			/* sw / sd $ra, offset($sp) */
+			if (info->pc_offset != -1)
+				continue;
+			info->pc_offset =
+				ip->i_format.simmediate / sizeof(long);
+		}
+	}
+	if (info->pc_offset == -1 || info->frame_size == 0) {
+		if (func == schedule)
+			printk("Can't analyze prologue code at %p\n", func);
+		info->pc_offset = -1;
+		info->frame_size = 0;
+	}
+
 	return 0;
 }
 
-static int get_frame_info(struct mips_frame_info *info)
-{
-	union mips_instruction *ip = info->func;
-	unsigned max_insns = info->func_size / sizeof(union mips_instruction);
-	unsigned i;
-
-	info->pc_offset = -1;
-	info->frame_size = 0;
-
-	if (!ip)
-		goto err;
-
-	if (max_insns == 0)
-		max_insns = 128U;	/* unknown function size */
-	max_insns = min(128U, max_insns);
-
-	for (i = 0; i < max_insns; i++, ip++) {
-
-		if (is_jal_jalr_jr_ins(ip))
-			break;
-		if (!info->frame_size) {
-			if (is_sp_move_ins(ip))
-				info->frame_size = - ip->i_format.simmediate;
-			continue;
-		}
-		if (info->pc_offset == -1 && is_ra_save_ins(ip)) {
-			info->pc_offset =
-				ip->i_format.simmediate / sizeof(long);
-			break;
-		}
-	}
-	if (info->frame_size && info->pc_offset >= 0) /* nested */
-		return 0;
-	if (info->pc_offset < 0) /* leaf */
-		return 1;
-	/* prologue seems boggus... */
-err:
-	return -1;
-}
-
-static struct mips_frame_info schedule_mfi __read_mostly;
-
 static int __init frame_info_init(void)
 {
-	unsigned long size = 0;
+	int i;
 #ifdef CONFIG_KALLSYMS
-	unsigned long ofs;
+	char *modname;
+	char namebuf[KSYM_NAME_LEN + 1];
+	unsigned long start, size, ofs;
+	extern char __sched_text_start[], __sched_text_end[];
+	extern char __lock_text_start[], __lock_text_end[];
 
-	kallsyms_lookup_size_offset((unsigned long)schedule, &size, &ofs);
+	start = (unsigned long)__sched_text_start;
+	for (i = 0; i < ARRAY_SIZE(mfinfo); i++) {
+		if (start == (unsigned long)schedule)
+			schedule_frame = &mfinfo[i];
+		if (!kallsyms_lookup(start, &size, &ofs, &modname, namebuf))
+			break;
+		mfinfo[i].func = (void *)(start + ofs);
+		mfinfo[i].func_size = size;
+		start += size - ofs;
+		if (start >= (unsigned long)__lock_text_end)
+			break;
+		if (start == (unsigned long)__sched_text_end)
+			start = (unsigned long)__lock_text_start;
+	}
+#else
+	mfinfo[0].func = schedule;
+	schedule_frame = &mfinfo[0];
 #endif
-	schedule_mfi.func = schedule;
-	schedule_mfi.func_size = size;
+	for (i = 0; i < ARRAY_SIZE(mfinfo) && mfinfo[i].func; i++)
+		get_frame_info(&mfinfo[i]);
 
-	get_frame_info(&schedule_mfi);
-
-	/*
-	 * Without schedule() frame info, result given by
-	 * thread_saved_pc() and get_wchan() are not reliable.
-	 */
-	if (schedule_mfi.pc_offset < 0)
-		printk("Can't analyze schedule() prologue at %p\n", schedule);
-
+	mfinfo_num = i;
 	return 0;
 }
 
@@ -363,122 +386,54 @@ unsigned long thread_saved_pc(struct task_struct *tsk)
 	/* New born processes are a special case */
 	if (t->reg31 == (unsigned long) ret_from_fork)
 		return t->reg31;
-	if (schedule_mfi.pc_offset < 0)
+
+	if (!schedule_frame || schedule_frame->pc_offset < 0)
 		return 0;
-	return ((unsigned long *)t->reg29)[schedule_mfi.pc_offset];
+	return ((unsigned long *)t->reg29)[schedule_frame->pc_offset];
 }
 
-
-#ifdef CONFIG_KALLSYMS
-/* used by show_backtrace() */
-unsigned long unwind_stack(struct task_struct *task, unsigned long *sp,
-			   unsigned long pc, unsigned long *ra)
+/* get_wchan - a maintenance nightmare^W^Wpain in the ass ...  */
+unsigned long get_wchan(struct task_struct *p)
 {
 	unsigned long stack_page;
-	struct mips_frame_info info;
-	unsigned long size, ofs;
-	int leaf;
-	extern void ret_from_irq(void);
-	extern void ret_from_exception(void);
+	unsigned long pc;
+#ifdef CONFIG_KALLSYMS
+	unsigned long frame;
+#endif
 
-	stack_page = (unsigned long)task_stack_page(task);
-	if (!stack_page)
+	if (!p || p == current || p->state == TASK_RUNNING)
 		return 0;
 
-	/*
-	 * If we reached the bottom of interrupt context,
-	 * return saved pc in pt_regs.
-	 */
-	if (pc == (unsigned long)ret_from_irq ||
-	    pc == (unsigned long)ret_from_exception) {
-		struct pt_regs *regs;
-		if (*sp >= stack_page &&
-		    *sp + sizeof(*regs) <= stack_page + THREAD_SIZE - 32) {
-			regs = (struct pt_regs *)*sp;
-			pc = regs->cp0_epc;
-			if (__kernel_text_address(pc)) {
-				*sp = regs->regs[29];
-				*ra = regs->regs[31];
-				return pc;
-			}
-		}
+	stack_page = (unsigned long)task_stack_page(p);
+	if (!stack_page || !mfinfo_num)
 		return 0;
-	}
-	if (!kallsyms_lookup_size_offset(pc, &size, &ofs))
-		return 0;
-	/*
-	 * Return ra if an exception occured at the first instruction
-	 */
-	if (unlikely(ofs == 0)) {
-		pc = *ra;
-		*ra = 0;
+
+	pc = thread_saved_pc(p);
+#ifdef CONFIG_KALLSYMS
+	if (!in_sched_functions(pc))
 		return pc;
-	}
 
-	info.func = (void *)(pc - ofs);
-	info.func_size = ofs;	/* analyze from start to ofs */
-	leaf = get_frame_info(&info);
-	if (leaf < 0)
-		return 0;
+	frame = p->thread.reg29 + schedule_frame->frame_size;
+	do {
+		int i;
 
-	if (*sp < stack_page ||
-	    *sp + info.frame_size > stack_page + THREAD_SIZE - 32)
-		return 0;
+		if (frame < stack_page || frame > stack_page + THREAD_SIZE - 32)
+			return 0;
 
-	if (leaf)
-		/*
-		 * For some extreme cases, get_frame_info() can
-		 * consider wrongly a nested function as a leaf
-		 * one. In that cases avoid to return always the
-		 * same value.
-		 */
-		pc = pc != *ra ? *ra : 0;
-	else
-		pc = ((unsigned long *)(*sp))[info.pc_offset];
+		for (i = mfinfo_num - 1; i >= 0; i--) {
+			if (pc >= (unsigned long) mfinfo[i].func)
+				break;
+		}
+		if (i < 0)
+			break;
 
-	*sp += info.frame_size;
-	*ra = 0;
-	return __kernel_text_address(pc) ? pc : 0;
-}
+		pc = ((unsigned long *)frame)[mfinfo[i].pc_offset];
+		if (!mfinfo[i].frame_size)
+			break;
+		frame += mfinfo[i].frame_size;
+	} while (in_sched_functions(pc));
 #endif
 
-/*
- * get_wchan - a maintenance nightmare^W^Wpain in the ass ...
- */
-unsigned long get_wchan(struct task_struct *task)
-{
-	unsigned long pc = 0;
-#ifdef CONFIG_KALLSYMS
-	unsigned long sp;
-	unsigned long ra = 0;
-#endif
-
-	if (!task || task == current || task->state == TASK_RUNNING)
-		goto out;
-	if (!task_stack_page(task))
-		goto out;
-
-	pc = thread_saved_pc(task);
-
-#ifdef CONFIG_KALLSYMS
-	sp = task->thread.reg29 + schedule_mfi.frame_size;
-
-	while (in_sched_functions(pc))
-		pc = unwind_stack(task, &sp, pc, &ra);
-#endif
-
-out:
 	return pc;
 }
 
-/*
- * Don't forget that the stack pointer must be aligned on a 8 bytes
- * boundary for 32-bits ABI and 16 bytes for 64-bits ABI.
- */
-unsigned long arch_align_stack(unsigned long sp)
-{
-	if (!(current->personality & ADDR_NO_RANDOMIZE) && randomize_va_space)
-		sp -= get_random_int() & ~PAGE_MASK;
-
-	return sp & ALMASK;
-}

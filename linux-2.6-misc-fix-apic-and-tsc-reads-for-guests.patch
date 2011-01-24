@@ -1,0 +1,126 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Date: Mon, 8 Feb 2010 16:17:45 -0500
+Subject: [misc] fix APIC and TSC reads for guests
+Message-id: <20100208161745.6197.5679.sendpatchset@prarit.bos.redhat.com>
+Patchwork-id: 23190
+O-Subject: [RHEL5]: Fix APIC & TSC reads for guests
+Bugzilla: 562006
+RH-Acked-by: Zachary Amsden <zamsden@redhat.com>
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+
+APIC and TSC reads do take longer than 1000 cycles when done from inside the
+VM, due to the hypervisor exits that need to be taken.
+
+Bump the calibration length to 5000 cycles, and add a kernel parameter to
+allow a user to modify the length.
+
+Successfully tested by me on a guest and baremetal.
+
+Resolves BZ 562006.
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/Documentation/kernel-parameters.txt b/Documentation/kernel-parameters.txt
+index f9e5c88..5887dd0 100644
+--- a/Documentation/kernel-parameters.txt
++++ b/Documentation/kernel-parameters.txt
+@@ -271,6 +271,10 @@ running once the system is up.
+ 			[APIC,i386, x86_64] Number of iterations during APIC
+ 			calibration.  Default is 10.
+ 
++	apiccalibrationdiff=
++			[APIC,i386, x86_64] Length of APIC calibration window.
++			Default is 5000.
++
+ 	apm=		[APM] Advanced Power Management
+ 			See header of arch/i386/kernel/apm.c.
+ 
+diff --git a/arch/i386/kernel/apic.c b/arch/i386/kernel/apic.c
+index 6e05f68..ed139fc 100644
+--- a/arch/i386/kernel/apic.c
++++ b/arch/i386/kernel/apic.c
+@@ -1008,7 +1008,7 @@ static void __devinit setup_APIC_timer(unsigned int clocks)
+ }
+ 
+ int apic_calibration_iters __initdata = 10;
+-#define MAX_DIFFERENCE 1000ULL
++int apic_calibration_diff __initdata = 5000;
+ 
+ static inline int __init
+ __read_tsc_and_apic(unsigned long long *tsc, long *apic)
+@@ -1023,10 +1023,10 @@ __read_tsc_and_apic(unsigned long long *tsc, long *apic)
+ 		rdtsc_barrier();
+ 		rdtscll(tsc1);
+ 		diff = tsc1 - tsc0;
+-	} while (diff > MAX_DIFFERENCE && ++i < apic_calibration_iters);
++	} while (diff > apic_calibration_diff && ++i < apic_calibration_iters);
+ 
+ 	*tsc = tsc0 + (diff >> 1);
+-	return diff > MAX_DIFFERENCE ? -EIO : 0;
++	return diff > apic_calibration_diff ? -EIO : 0;
+ }
+ 
+ /*
+@@ -1139,6 +1139,14 @@ static __init int setup_apiccalibrationiters(char *str)
+ }
+ __setup("apiccalibrationiters=", setup_apiccalibrationiters);
+ 
++static __init int setup_apiccalibrationdiff(char *str)
++{
++	get_option(&str, &apic_calibration_diff);
++	return 1;
++}
++__setup("apiccalibrationdiff=", setup_apiccalibrationdiff);
++
++
+ static unsigned int calibration_result;
+ 
+ void __init setup_boot_APIC_clock(void)
+diff --git a/arch/x86_64/kernel/apic.c b/arch/x86_64/kernel/apic.c
+index c518f62..3a22107 100644
+--- a/arch/x86_64/kernel/apic.c
++++ b/arch/x86_64/kernel/apic.c
+@@ -43,6 +43,7 @@ int apic_verbosity;
+ int apic_runs_main_timer;
+ int apic_calibrate_pmtmr __initdata;
+ int apic_calibration_iters __initdata = 10;
++int apic_calibration_diff __initdata = 5000;
+ 
+ int disable_apic_timer __initdata;
+ 
+@@ -770,7 +771,6 @@ static void setup_APIC_timer(unsigned int clocks)
+  * than a single retry, given that the rdtsc/apic_read/rdtsc
+  * sequence won't take more than a few cycles.
+  */
+-#define MAX_DIFFERENCE 1000UL
+ static inline int __init
+ __read_tsc_and_apic(unsigned long *tsc, unsigned int *apic)
+ {
+@@ -784,10 +784,10 @@ __read_tsc_and_apic(unsigned long *tsc, unsigned int *apic)
+ 		rdtsc_barrier();
+ 		rdtscll(tsc1);
+ 		diff = tsc1 - tsc0;
+-	} while (diff > MAX_DIFFERENCE && ++i < apic_calibration_iters);
++	} while (diff > apic_calibration_diff && ++i < apic_calibration_iters);
+ 
+ 	*tsc = tsc0 + (diff >> 1);
+-	return diff > MAX_DIFFERENCE ? -EIO : 0;
++	return diff > apic_calibration_diff ? -EIO : 0;
+ }
+ 
+ /*
+@@ -1285,6 +1285,14 @@ static __init int setup_apiccalibrationiters(char *str)
+ }
+ __setup("apiccalibrationiters=", setup_apiccalibrationiters);
+ 
++static __init int setup_apiccalibrationdiff(char *str)
++{
++	get_option(&str, &apic_calibration_diff);
++	return 1;
++}
++__setup("apiccalibrationdiff=", setup_apiccalibrationdiff);
++
++
+ /* dummy parsing: see setup.c */
+ 
+ __setup("disableapic", setup_disableapic); 

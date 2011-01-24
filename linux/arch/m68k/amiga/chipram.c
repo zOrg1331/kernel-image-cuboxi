@@ -9,18 +9,14 @@
 
 #include <linux/types.h>
 #include <linux/kernel.h>
-#include <linux/mm.h>
 #include <linux/init.h>
 #include <linux/ioport.h>
 #include <linux/slab.h>
 #include <linux/string.h>
-#include <linux/module.h>
-
 #include <asm/page.h>
 #include <asm/amigahw.h>
 
 unsigned long amiga_chip_size;
-EXPORT_SYMBOL(amiga_chip_size);
 
 static struct resource chipram_res = {
     .name = "Chip RAM", .start = CHIP_PHYSADDR
@@ -33,10 +29,12 @@ void __init amiga_chip_init(void)
     if (!AMIGAHW_PRESENT(CHIP_RAM))
 	return;
 
+#ifndef CONFIG_APUS_FAST_EXCEPT
     /*
      *  Remove the first 4 pages where PPC exception handlers will be located
      */
     amiga_chip_size -= 0x4000;
+#endif
     chipram_res.end = amiga_chip_size-1;
     request_resource(&iomem_resource, &chipram_res);
 
@@ -54,9 +52,10 @@ void *amiga_chip_alloc(unsigned long size, const char *name)
 #ifdef DEBUG
     printk("amiga_chip_alloc: allocate %ld bytes\n", size);
 #endif
-    res = kzalloc(sizeof(struct resource), GFP_KERNEL);
+    res = kmalloc(sizeof(struct resource), GFP_KERNEL);
     if (!res)
 	return NULL;
+    memset(res, 0, sizeof(struct resource));
     res->name = name;
 
     if (allocate_resource(&chipram_res, res, size, 0, UINT_MAX, PAGE_SIZE, NULL, NULL) < 0) {
@@ -69,7 +68,6 @@ void *amiga_chip_alloc(unsigned long size, const char *name)
 #endif
     return (void *)ZTWO_VADDR(res->start);
 }
-EXPORT_SYMBOL(amiga_chip_alloc);
 
 
     /*
@@ -123,7 +121,6 @@ void amiga_chip_free(void *ptr)
     }
     printk("amiga_chip_free: trying to free nonexistent region at %p\n", ptr);
 }
-EXPORT_SYMBOL(amiga_chip_free);
 
 
 unsigned long amiga_chip_avail(void)
@@ -133,5 +130,3 @@ unsigned long amiga_chip_avail(void)
 #endif
 	return chipavail;
 }
-EXPORT_SYMBOL(amiga_chip_avail);
-

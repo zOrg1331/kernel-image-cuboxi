@@ -1,0 +1,154 @@
+From: John Linville <linville@redhat.com>
+Date: Mon, 1 Feb 2010 18:45:19 -0500
+Subject: [net] wireless fixes from 2.6.32.7
+Message-id: <20100201184519.GG28565@redhat.com>
+Patchwork-id: 23059
+O-Subject: [RHEL5 Patch 4/4] wireless fixes from 2.6.32.7
+Bugzilla: 559711
+RH-Acked-by: David S. Miller <davem@redhat.com>
+RH-Acked-by: Stanislaw Gruszka <sgruszka@redhat.com>
+
+On Mon, Feb 01, 2010 at 01:36:11PM -0500, John W. Linville wrote:
+> As you may know, the mac80211-based wireless bits in RHEL 5.5 are
+> basically identical to the equivalent components in 2.6.32.  Since it's
+> release, there have been a number of fixes propogated to the 2.6.32
+> -stable tree.  This series brings those fixes to the RHEL 5.5 kernel.
+>
+> BZ559711
+
+These are the bits included in 2.6.32.7.  FWIW, 2.6.32.5 and 2.6.32.6
+didn't have any wireless fixes applied.
+
+Reasonably extensive "real world" testing by me, with positive
+results...
+
+commit 01e991b8eb2cc28f41ed3f96ec33ae3dd6b860a3
+Author: Wey-Yi Guy <wey-yi.w.guy@intel.com>
+Date:   Tue Jan 26 12:00:43 2010 -0800
+
+    iwlwifi: Fix throughput stall issue in HT mode for 5000
+
+    commit 1152dcc28c66a74b5b3f1a3ede0aa6729bfd48e4 upstream
+
+    Similar to 6000 and 1000 series, RTS/CTS is the recommended protection
+    mechanism for 5000 series in HT mode based on the HW design.
+
+    Using RTS/CTS will better protect the inner exchange from interference,
+    especially in highly-congested environment, it also prevent uCode encounter
+    TX FIFO underrun and other HT mode related performance issues.
+
+    Signed-off-by: Wey-Yi Guy <wey-yi.w.guy@intel.com>
+    Signed-off-by: Reinette Chatre <reinette.chatre@intel.com>
+    Signed-off-by: John W. Linville <linville@tuxdriver.com>
+    Signed-off-by: Greg Kroah-Hartman <gregkh@suse.de>
+
+commit eb6002526b1c5cb3e7f9e42004ba395f5d57beaf
+Author: Abhijeet Kolekar <abhijeet.kolekar@intel.com>
+Date:   Wed Jan 13 13:23:14 2010 -0800
+
+    cfg80211: fix channel setting for wext
+
+    commit 5f6120335c701ba07d5151206071f4d6ccaa684f upstream.
+
+    Patch fixes the bug at
+    http://bugzilla.intellinuxwireless.org/show_bug.cgi?id=2139
+
+    Currently we cannot set the channel using wext extension
+    if we have already associated and disconnected. As
+    cfg80211_mgd_wext_siwfreq will not switch the channel if ssid is set.
+    This fixes it by clearing the ssid.
+    Following is the sequence which it tries to fix.
+    modprobe iwlagn
+    iwconfig wlan0 essid ""
+    ifconfig wlan0 down
+    iwconfig wlan0 chan X
+
+    wext is marked as deprecate.If we use nl80211 we can easily play with
+    setting the channel.
+
+    Signed-off-by: Abhijeet Kolekar <abhijeet.kolekar@intel.com>
+    Acked-by: Samuel Ortiz <sameo@linux.intel.com>
+    Signed-off-by: John W. Linville <linville@tuxdriver.com>
+    Signed-off-by: Greg Kroah-Hartman <gregkh@suse.de>
+
+commit 304cd19e41f6c77c3d307869f15a8bfe2a7408cd
+Author: Benoit Papillault <benoit.papillault@free.fr>
+Date:   Fri Jan 15 12:21:37 2010 +0100
+
+    mac80211: check that ieee80211_set_power_mgmt only handles STA interfaces.
+
+    commit e5de30c9bf4a39db9f54c4a373470ce65881ade0 upstream.
+
+    ieee80211_set_power_mgmt is meant for STA interfaces only. Moreover,
+    since sdata->u.mgd.mtx is only initialized for STA interfaces, using
+    this code for any other type of interface (like creating a monitor
+    interface) will result in a oops.
+
+    Signed-off-by: Benoit Papillault <benoit.papillault@free.fr>
+    Signed-off-by: John W. Linville <linville@tuxdriver.com>
+    Signed-off-by: Greg Kroah-Hartman <gregkh@suse.de>
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/net/wireless/iwlwifi/iwl-5000.c b/drivers/net/wireless/iwlwifi/iwl-5000.c
+index 944b510..d4c248d 100644
+--- a/drivers/net/wireless/iwlwifi/iwl-5000.c
++++ b/drivers/net/wireless/iwlwifi/iwl-5000.c
+@@ -1672,6 +1672,7 @@ struct iwl_cfg iwl5300_agn_cfg = {
+ 	.valid_rx_ant = ANT_ABC,
+ 	.need_pll_cfg = true,
+ 	.ht_greenfield_support = true,
++	.use_rts_for_ht = true, /* use rts/cts protection */
+ };
+ 
+ struct iwl_cfg iwl5100_bg_cfg = {
+@@ -1723,6 +1724,7 @@ struct iwl_cfg iwl5100_agn_cfg = {
+ 	.valid_rx_ant = ANT_AB,
+ 	.need_pll_cfg = true,
+ 	.ht_greenfield_support = true,
++	.use_rts_for_ht = true, /* use rts/cts protection */
+ };
+ 
+ struct iwl_cfg iwl5350_agn_cfg = {
+@@ -1740,6 +1742,7 @@ struct iwl_cfg iwl5350_agn_cfg = {
+ 	.valid_rx_ant = ANT_ABC,
+ 	.need_pll_cfg = true,
+ 	.ht_greenfield_support = true,
++	.use_rts_for_ht = true, /* use rts/cts protection */
+ };
+ 
+ struct iwl_cfg iwl5150_agn_cfg = {
+@@ -1757,6 +1760,7 @@ struct iwl_cfg iwl5150_agn_cfg = {
+ 	.valid_rx_ant = ANT_AB,
+ 	.need_pll_cfg = true,
+ 	.ht_greenfield_support = true,
++	.use_rts_for_ht = true, /* use rts/cts protection */
+ };
+ 
+ MODULE_FIRMWARE(IWL5000_MODULE_FIRMWARE(IWL5000_UCODE_API_MAX));
+diff --git a/net/mac80211/cfg.c b/net/mac80211/cfg.c
+index dbee85a..3be7c70 100644
+--- a/net/mac80211/cfg.c
++++ b/net/mac80211/cfg.c
+@@ -1312,6 +1312,9 @@ static int ieee80211_set_power_mgmt(struct wiphy *wiphy, struct net_device *dev,
+ 	struct ieee80211_local *local = wdev_priv(dev->ieee80211_ptr);
+ 	struct ieee80211_conf *conf = &local->hw.conf;
+ 
++	if (sdata->vif.type != NL80211_IFTYPE_STATION)
++		return -EOPNOTSUPP;
++
+ 	if (!(local->hw.flags & IEEE80211_HW_SUPPORTS_PS))
+ 		return -EOPNOTSUPP;
+ 
+diff --git a/net/wireless/sme.c b/net/wireless/sme.c
+index 50ce44c..0609461 100644
+--- a/net/wireless/sme.c
++++ b/net/wireless/sme.c
+@@ -680,6 +680,7 @@ void __cfg80211_disconnected(struct net_device *dev, const u8 *ie,
+ 	memset(&wrqu, 0, sizeof(wrqu));
+ 	wrqu.ap_addr.sa_family = ARPHRD_ETHER;
+ 	wireless_send_event(dev, SIOCGIWAP, &wrqu, NULL);
++	wdev->wext.connect.ssid_len = 0;
+ #endif
+ }
+ 

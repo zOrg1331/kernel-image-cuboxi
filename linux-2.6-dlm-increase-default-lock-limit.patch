@@ -1,0 +1,36 @@
+From: David Teigland <teigland@redhat.com>
+Subject: [RHEL5.1 PATCH] gfs2 (dlm): increase default lock limit
+Date: Fri, 26 Jan 2007 11:54:24 -0600
+Bugzilla: 224460
+Message-Id: <20070126175424.GC18186@redhat.com>
+Changelog: [dlm] increase default lock limit
+
+
+bz 224460
+(patch 1 of 2)
+
+Increase the number of locks at which point the dlm begins asking gfs to
+reduce its lock usage.  The default value is largely arbitrary, but the
+current value of 50,000 ends up limiting performance unnecessarily for too
+many users.
+
+Because this is in lock_dlm, it also affects gfs1 since gfs1 uses gfs2's
+lock modules in the upstream kernel.
+
+patch in upstream gfs2 git tree
+
+
+Index: linux-rhel5-quilt/fs/gfs2/locking/dlm/lock_dlm.h
+===================================================================
+--- linux-rhel5-quilt.orig/fs/gfs2/locking/dlm/lock_dlm.h	2007-01-24 14:42:04.000000000 -0600
++++ linux-rhel5-quilt/fs/gfs2/locking/dlm/lock_dlm.h	2007-01-25 14:27:25.000000000 -0600
+@@ -36,7 +36,7 @@
+ 
+ #define GDLM_STRNAME_BYTES	24
+ #define GDLM_LVB_SIZE		32
+-#define GDLM_DROP_COUNT		50000
++#define GDLM_DROP_COUNT		200000
+ #define GDLM_DROP_PERIOD	60
+ #define GDLM_NAME_LEN		128
+ 
+

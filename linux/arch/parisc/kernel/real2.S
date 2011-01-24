@@ -8,24 +8,10 @@
  *
  */
 
-#include <asm/pdc.h>
 #include <asm/psw.h>
 #include <asm/assembly.h>
-#include <asm/asm-offsets.h>
-
-#include <linux/linkage.h>
-
 
 	.section	.bss
-
-	.export pdc_result
-	.export pdc_result2
-	.align 8
-pdc_result:
-	.block	ASM_PDC_RESULT_SIZE
-pdc_result2:
-	.block	ASM_PDC_RESULT_SIZE
-
 	.export real_stack
 	.export real32_stack
 	.export real64_stack
@@ -53,6 +39,8 @@ save_cr_end:
 
 	.text
 
+	.export real32_call_asm
+
 	/* unsigned long real32_call_asm(unsigned int *sp,
 	 *		unsigned int *arg0p,
 	 *		unsigned int iodc_fn)
@@ -61,7 +49,7 @@ save_cr_end:
 	 *	iodc_fn is the IODC function to call
 	 */
 
-ENTRY(real32_call_asm)
+real32_call_asm:
 	STREG	%rp, -RP_OFFSET(%sp)	/* save RP */
 #ifdef CONFIG_64BIT
 	callee_save
@@ -119,7 +107,6 @@ ric_ret:
 	LDREG	-RP_OFFSET(%sp), %rp	/* restore RP */
 	bv	0(%rp)
 	nop
-ENDPROC(real32_call_asm)
 
 
 #  define PUSH_CR(r, where) mfctl r, %r1 ! STREG,ma %r1, REG_SZ(where)
@@ -231,6 +218,7 @@ rfi_r2v_1:
 /************************ 64-bit real-mode calls ***********************/
 /* This is only usable in wide kernels right now and will probably stay so */
 	.text
+	.export real64_call_asm
 	/* unsigned long real64_call_asm(unsigned long *sp,
 	 *		unsigned long *arg0p,
 	 *		unsigned long fn)
@@ -238,7 +226,7 @@ rfi_r2v_1:
 	 *	arg0p points to where saved arg values may be found
 	 *	iodc_fn is the IODC function to call
 	 */
-ENTRY(real64_call_asm)
+real64_call_asm:
 	std	%rp, -0x10(%sp)		/* save RP */
 	std	%sp, -8(%arg0)		/* save SP on real-mode stack */
 	copy	%arg0, %sp		/* adopt the real-mode SP */
@@ -284,21 +272,19 @@ r64_ret:
 	ldd	-0x10(%sp), %rp		/* restore RP */
 	bv	0(%rp)
 	nop
-ENDPROC(real64_call_asm)
 
 #endif
 
+	.export __canonicalize_funcptr_for_compare
 	.text
 	/* http://lists.parisc-linux.org/hypermail/parisc-linux/10916.html
 	**	GCC 3.3 and later has a new function in libgcc.a for
 	**	comparing function pointers.
 	*/
-ENTRY(__canonicalize_funcptr_for_compare)
+__canonicalize_funcptr_for_compare:
 #ifdef CONFIG_64BIT
 	bve (%r2)
 #else
 	bv %r0(%r2)
 #endif
 	copy %r26,%r28
-ENDPROC(__canonicalize_funcptr_for_compare)
-

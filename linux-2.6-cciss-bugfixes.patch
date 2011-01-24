@@ -1,0 +1,423 @@
+From: Tom Coughlan <coughlan@redhat.com>
+Subject: [RHEL 5.0 PATCH] cciss bugfixes
+Date: Thu, 14 Dec 2006 18:34:20 -0500
+Bugzilla: 185021
+Message-Id: <1166139261.6591.37.camel@bianchi.boston.redhat.com>
+Changelog: cciss bugfixes
+
+
+This is a set of patches that HP considers critical for cciss. This
+represents some cherry picking from their latest upstream submissions.
+All are bug fixes.  All are in Linus' tree. 
+
+- Remove the NR_CMDS define and replace it with a per controller value.
+Most Smart Array controllers can support up to 1024 commands but the
+E200 family can only support 128. To prevent annoying "fifo full"
+messages we define nr_cmds on a per controller basis by adding it the
+product table.
+
+- Change the SSID on the E500, as a workaround for a firmware bug.
+
+- Disable DMA prefetch on the P600, another bug workaround.
+
+- Add a check to make sure we don't try to start a queue on a disk which
+is configuring. Otherwise, there was a small window when the interrupt
+handler could fire and we would try to process the command, causing a
+panic.
+
+- Cleanup for cciss_interrupt_mode.
+
+- Remove certain calls to pci_disable_device. These were causing insmod
+after rmmod to fail. Important for ease of debugging.  
+
+- Version number change.
+
+HP has tested this on RHEL 5. I did some regression testing here with
+some of the older CCISS hardware. 
+
+Bug 185021.
+
+Tom
+
+Common subdirectories: linux-2.6.18.noarch/drivers/block-stock/aoe and linux-2.6.18.noarch/drivers/block/aoe
+diff -up linux-2.6.18.noarch/drivers/block-stock/cciss.c linux-2.6.18.noarch/drivers/block/cciss.c
+--- linux-2.6.18.noarch/drivers/block-stock/cciss.c
++++ linux-2.6.18.noarch/drivers/block/cciss.c
+@@ -47,16 +47,16 @@
+ #include <linux/completion.h>
+ 
+ #define CCISS_DRIVER_VERSION(maj,min,submin) ((maj<<16)|(min<<8)|(submin))
+-#define DRIVER_NAME "HP CISS Driver (v 3.6.10)"
+-#define DRIVER_VERSION CCISS_DRIVER_VERSION(3,6,10)
++#define DRIVER_NAME "HP CISS Driver (v 3.6.14-RH1)"
++#define DRIVER_VERSION CCISS_DRIVER_VERSION(3,6,14)
+ 
+ /* Embedded module documentation macros - see modules.h */
+ MODULE_AUTHOR("Hewlett-Packard Company");
+-MODULE_DESCRIPTION("Driver for HP Controller SA5xxx SA6xxx version 3.6.10");
++MODULE_DESCRIPTION("Driver for HP Controller SA5xxx SA6xxx version 3.6.14-RH1");
+ MODULE_SUPPORTED_DEVICE("HP SA5i SA5i+ SA532 SA5300 SA5312 SA641 SA642 SA6400"
+ 			" SA6i P600 P800 P400 P400i E200 E200i E500");
++MODULE_VERSION("3.6.14-RH1");
+ MODULE_LICENSE("GPL");
+-MODULE_VERSION("2.6.8");
+ 
+ #include "cciss_cmd.h"
+ #include "cciss.h"
+@@ -82,7 +82,7 @@ static const struct pci_device_id cciss_
+ 	{PCI_VENDOR_ID_HP,     PCI_DEVICE_ID_HP_CISSD,     0x103C, 0x3213},
+ 	{PCI_VENDOR_ID_HP,     PCI_DEVICE_ID_HP_CISSD,     0x103C, 0x3214},
+ 	{PCI_VENDOR_ID_HP,     PCI_DEVICE_ID_HP_CISSD,     0x103C, 0x3215},
+-	{PCI_VENDOR_ID_HP,     PCI_DEVICE_ID_HP_CISSC,     0x103C, 0x3233},
++	{PCI_VENDOR_ID_HP,     PCI_DEVICE_ID_HP_CISSC,     0x103C, 0x3237},
+ 	{0,}
+ };
+ 
+@@ -91,27 +91,28 @@ MODULE_DEVICE_TABLE(pci, cciss_pci_devic
+ /*  board_id = Subsystem Device ID & Vendor ID
+  *  product = Marketing Name for the board
+  *  access = Address of the struct of function pointers
++ *  nr_cmds = Number of commands supported by controller
+  */
+ static struct board_type products[] = {
+-	{0x40700E11, "Smart Array 5300", &SA5_access},
+-	{0x40800E11, "Smart Array 5i", &SA5B_access},
+-	{0x40820E11, "Smart Array 532", &SA5B_access},
+-	{0x40830E11, "Smart Array 5312", &SA5B_access},
+-	{0x409A0E11, "Smart Array 641", &SA5_access},
+-	{0x409B0E11, "Smart Array 642", &SA5_access},
+-	{0x409C0E11, "Smart Array 6400", &SA5_access},
+-	{0x409D0E11, "Smart Array 6400 EM", &SA5_access},
+-	{0x40910E11, "Smart Array 6i", &SA5_access},
+-	{0x3225103C, "Smart Array P600", &SA5_access},
+-	{0x3223103C, "Smart Array P800", &SA5_access},
+-	{0x3234103C, "Smart Array P400", &SA5_access},
+-	{0x3235103C, "Smart Array P400i", &SA5_access},
+-	{0x3211103C, "Smart Array E200i", &SA5_access},
+-	{0x3212103C, "Smart Array E200", &SA5_access},
+-	{0x3213103C, "Smart Array E200i", &SA5_access},
+-	{0x3214103C, "Smart Array E200i", &SA5_access},
+-	{0x3215103C, "Smart Array E200i", &SA5_access},
+-	{0x3233103C, "Smart Array E500", &SA5_access},
++	{0x40700E11, "Smart Array 5300", &SA5_access, 512},
++	{0x40800E11, "Smart Array 5i", &SA5B_access, 512},
++	{0x40820E11, "Smart Array 532", &SA5B_access, 512},
++	{0x40830E11, "Smart Array 5312", &SA5B_access, 512},
++	{0x409A0E11, "Smart Array 641", &SA5_access, 512},
++	{0x409B0E11, "Smart Array 642", &SA5_access, 512},
++	{0x409C0E11, "Smart Array 6400", &SA5_access, 512},
++	{0x409D0E11, "Smart Array 6400 EM", &SA5_access, 512},
++	{0x40910E11, "Smart Array 6i", &SA5_access, 512},
++	{0x3225103C, "Smart Array P600", &SA5_access, 512},
++	{0x3223103C, "Smart Array P800", &SA5_access, 512},
++	{0x3234103C, "Smart Array P400", &SA5_access, 512},
++	{0x3235103C, "Smart Array P400i", &SA5_access, 512},
++	{0x3211103C, "Smart Array E200i", &SA5_access, 120},
++	{0x3212103C, "Smart Array E200", &SA5_access, 120},
++	{0x3213103C, "Smart Array E200i", &SA5_access, 120},
++	{0x3214103C, "Smart Array E200i", &SA5_access, 120},
++	{0x3215103C, "Smart Array E200i", &SA5_access, 120},
++	{0x3237103C, "Smart Array E500", &SA5_access, 512},
+ };
+ 
+ /* How long to wait (in milliseconds) for board to go into simple mode */
+@@ -122,7 +123,6 @@ static struct board_type products[] = {
+ #define MAX_CMD_RETRIES 3
+ 
+ #define READ_AHEAD 	 1024
+-#define NR_CMDS		 384	/* #commands that can be outstanding */
+ #define MAX_CTLR	32
+ 
+ /* Originally cciss driver only supports 8 major numbers */
+@@ -401,8 +401,8 @@ static CommandList_struct *cmd_alloc(ctl
+ 	} else {		/* get it out of the controllers pool */
+ 
+ 		do {
+-			i = find_first_zero_bit(h->cmd_pool_bits, NR_CMDS);
+-			if (i == NR_CMDS)
++			i = find_first_zero_bit(h->cmd_pool_bits, h->nr_cmds);
++			if (i == h->nr_cmds)
+ 				return NULL;
+ 		} while (test_and_set_bit
+ 			 (i & (BITS_PER_LONG - 1),
+@@ -1245,7 +1245,7 @@ static void cciss_check_queues(ctlr_info
+ 	 * in case the interrupt we serviced was from an ioctl and did not
+ 	 * free any new commands.
+ 	 */
+-	if ((find_first_zero_bit(h->cmd_pool_bits, NR_CMDS)) == NR_CMDS)
++	if ((find_first_zero_bit(h->cmd_pool_bits, h->nr_cmds)) == h->nr_cmds)
+ 		return;
+ 
+ 	/* We have room on the queue for more commands.  Now we need to queue
+@@ -1257,14 +1257,17 @@ static void cciss_check_queues(ctlr_info
+ 		/* make sure the disk has been added and the drive is real
+ 		 * because this can be called from the middle of init_one.
+ 		 */
+-		if (!(h->drv[curr_queue].queue) || !(h->drv[curr_queue].heads))
++		if (!(h->drv[curr_queue].queue) ||
++		    !(h->drv[curr_queue].heads) ||
++		    h->drv[curr_queue].busy_configuring)
+ 			continue;
++
+ 		blk_start_queue(h->gendisk[curr_queue]->queue);
+ 
+ 		/* check to see if we have maxed out the number of commands
+ 		 * that can be placed on the queue.
+ 		 */
+-		if ((find_first_zero_bit(h->cmd_pool_bits, NR_CMDS)) == NR_CMDS) {
++		if ((find_first_zero_bit(h->cmd_pool_bits, h->nr_cmds)) == h->nr_cmds) {
+ 			if (curr_queue == start_queue) {
+ 				h->next_to_run =
+ 				    (start_queue + 1) % (h->highest_lun + 1);
+@@ -2076,7 +2079,7 @@ static int add_sendcmd_reject(__u8 cmd, 
+ 
+ 	/* We've sent down an abort or reset, but something else
+ 	   has completed */
+-	if (srl->ncompletions >= (NR_CMDS + 2)) {
++	if (srl->ncompletions >= (hba[ctlr]->nr_cmds + 2)) {
+ 		/* Uh oh.  No room to save it for later... */
+ 		printk(KERN_WARNING "cciss%d: Sendcmd: Invalid command addr, "
+ 		       "reject list overflow, command lost!\n", ctlr);
+@@ -2594,7 +2597,7 @@ static irqreturn_t do_cciss_intr(int irq
+ 			a1 = a;
+ 			if ((a & 0x04)) {
+ 				a2 = (a >> 3);
+-				if (a2 >= NR_CMDS) {
++				if (a2 >= h->nr_cmds) {
+ 					printk(KERN_WARNING
+ 					       "cciss: controller cciss%d failed, stopping.\n",
+ 					       h->ctlr);
+@@ -2748,23 +2751,21 @@ static void __devinit cciss_interrupt_mo
+ 		if (err > 0) {
+ 			printk(KERN_WARNING "cciss: only %d MSI-X vectors "
+ 			       "available\n", err);
++			goto default_int_mode;
+ 		} else {
+ 			printk(KERN_WARNING "cciss: MSI-X init failed %d\n",
+ 			       err);
++			goto default_int_mode;
+ 		}
+ 	}
+ 	if (pci_find_capability(pdev, PCI_CAP_ID_MSI)) {
+ 		if (!pci_enable_msi(pdev)) {
+-			c->intr[SIMPLE_MODE_INT] = pdev->irq;
+ 			c->msi_vector = 1;
+-			return;
+ 		} else {
+ 			printk(KERN_WARNING "cciss: MSI init failed\n");
+-			c->intr[SIMPLE_MODE_INT] = pdev->irq;
+-			return;
+ 		}
+ 	}
+-      default_int_mode:
++default_int_mode:
+ #endif				/* CONFIG_PCI_MSI */
+ 	/* if we get here we're going to use the default interrupt mode */
+ 	c->intr[SIMPLE_MODE_INT] = pdev->irq;
+@@ -2799,7 +2800,7 @@ static int cciss_pci_init(ctlr_info_t *c
+ 	if (err) {
+ 		printk(KERN_ERR "cciss: Cannot obtain PCI resources, "
+ 		       "aborting\n");
+-		goto err_out_disable_pdev;
++		return err;
+ 	}
+ 
+ 	subsystem_vendor_id = pdev->subsystem_vendor;
+@@ -2877,6 +2878,7 @@ static int cciss_pci_init(ctlr_info_t *c
+ 		if (board_id == products[i].board_id) {
+ 			c->product_name = products[i].product_name;
+ 			c->access = *(products[i].access);
++			c->nr_cmds = products[i].nr_cmds;
+ 			break;
+ 		}
+ 	}
+@@ -2905,6 +2907,17 @@ static int cciss_pci_init(ctlr_info_t *c
+ 	}
+ #endif
+ 
++	/* Disabling DMA prefetch for the P600
++	 * An ASIC bug may result in a prefetch beyond
++	 * physical memory.
++	 */
++	if(board_id == 0x3225103C) {
++		__u32 dma_prefetch;
++		dma_prefetch = readl(c->vaddr + I2O_DMA1_CFG);
++		dma_prefetch |= 0x8000;
++		writel(dma_prefetch, c->vaddr + I2O_DMA1_CFG);
++	}
++
+ #ifdef CCISS_DEBUG
+ 	printk("Trying to put board into Simple mode\n");
+ #endif				/* CCISS_DEBUG */
+@@ -2941,10 +2954,11 @@ static int cciss_pci_init(ctlr_info_t *c
+ 	return 0;
+ 
+       err_out_free_res:
++	/*
++	 * Deliberately omit pci_disable_device(): it does something nasty to
++	 * Smart Array controllers that pci_enable_device does not undo
++	 */
+ 	pci_release_regions(pdev);
+-
+-      err_out_disable_pdev:
+-	pci_disable_device(pdev);
+ 	return err;
+ }
+ 
+@@ -3182,15 +3196,15 @@ static int __devinit cciss_init_one(stru
+ 	       hba[i]->intr[SIMPLE_MODE_INT], dac ? "" : " not");
+ 
+ 	hba[i]->cmd_pool_bits =
+-	    kmalloc(((NR_CMDS + BITS_PER_LONG -
++	    kmalloc(((hba[i]->nr_cmds + BITS_PER_LONG -
+ 		      1) / BITS_PER_LONG) * sizeof(unsigned long), GFP_KERNEL);
+ 	hba[i]->cmd_pool = (CommandList_struct *)
+ 	    pci_alloc_consistent(hba[i]->pdev,
+-		    NR_CMDS * sizeof(CommandList_struct),
++		    hba[i]->nr_cmds * sizeof(CommandList_struct),
+ 		    &(hba[i]->cmd_pool_dhandle));
+ 	hba[i]->errinfo_pool = (ErrorInfo_struct *)
+ 	    pci_alloc_consistent(hba[i]->pdev,
+-		    NR_CMDS * sizeof(ErrorInfo_struct),
++		    hba[i]->nr_cmds * sizeof(ErrorInfo_struct),
+ 		    &(hba[i]->errinfo_pool_dhandle));
+ 	if ((hba[i]->cmd_pool_bits == NULL)
+ 	    || (hba[i]->cmd_pool == NULL)
+@@ -3201,7 +3215,7 @@ static int __devinit cciss_init_one(stru
+ #ifdef CONFIG_CISS_SCSI_TAPE
+ 	hba[i]->scsi_rejects.complete =
+ 	    kmalloc(sizeof(hba[i]->scsi_rejects.complete[0]) *
+-		    (NR_CMDS + 5), GFP_KERNEL);
++		    (hba[i]->nr_cmds + 5), GFP_KERNEL);
+ 	if (hba[i]->scsi_rejects.complete == NULL) {
+ 		printk(KERN_ERR "cciss: out of memory");
+ 		goto clean4;
+@@ -3215,7 +3229,7 @@ static int __devinit cciss_init_one(stru
+ 	/* command and error info recs zeroed out before
+ 	   they are used */
+ 	memset(hba[i]->cmd_pool_bits, 0,
+-	       ((NR_CMDS + BITS_PER_LONG -
++	       ((hba[i]->nr_cmds + BITS_PER_LONG -
+ 		 1) / BITS_PER_LONG) * sizeof(unsigned long));
+ 
+ #ifdef CCISS_DEBUG
+@@ -3284,11 +3298,11 @@ static int __devinit cciss_init_one(stru
+ 	kfree(hba[i]->cmd_pool_bits);
+ 	if (hba[i]->cmd_pool)
+ 		pci_free_consistent(hba[i]->pdev,
+-				    NR_CMDS * sizeof(CommandList_struct),
++				    hba[i]->nr_cmds * sizeof(CommandList_struct),
+ 				    hba[i]->cmd_pool, hba[i]->cmd_pool_dhandle);
+ 	if (hba[i]->errinfo_pool)
+ 		pci_free_consistent(hba[i]->pdev,
+-				    NR_CMDS * sizeof(ErrorInfo_struct),
++				    hba[i]->nr_cmds * sizeof(ErrorInfo_struct),
+ 				    hba[i]->errinfo_pool,
+ 				    hba[i]->errinfo_pool_dhandle);
+ 	free_irq(hba[i]->intr[SIMPLE_MODE_INT], hba[i]);
+@@ -3355,16 +3369,19 @@ static void __devexit cciss_remove_one(s
+ 		}
+ 	}
+ 
+-	pci_free_consistent(hba[i]->pdev, NR_CMDS * sizeof(CommandList_struct),
++	pci_free_consistent(hba[i]->pdev, hba[i]->nr_cmds * sizeof(CommandList_struct),
+ 			    hba[i]->cmd_pool, hba[i]->cmd_pool_dhandle);
+-	pci_free_consistent(hba[i]->pdev, NR_CMDS * sizeof(ErrorInfo_struct),
++	pci_free_consistent(hba[i]->pdev, hba[i]->nr_cmds * sizeof(ErrorInfo_struct),
+ 			    hba[i]->errinfo_pool, hba[i]->errinfo_pool_dhandle);
+ 	kfree(hba[i]->cmd_pool_bits);
+ #ifdef CONFIG_CISS_SCSI_TAPE
+ 	kfree(hba[i]->scsi_rejects.complete);
+ #endif
++	/*
++	 * Deliberately omit pci_disable_device(): it does something nasty to
++	 * Smart Array controllers that pci_enable_device does not undo
++	 */
+ 	pci_release_regions(pdev);
+-	pci_disable_device(pdev);
+ 	pci_set_drvdata(pdev, NULL);
+ 	free_hba(i);
+ }
+diff -up linux-2.6.18.noarch/drivers/block-stock/cciss_cmd.h linux-2.6.18.noarch/drivers/block/cciss_cmd.h
+--- linux-2.6.18.noarch/drivers/block-stock/cciss_cmd.h
++++ linux-2.6.18.noarch/drivers/block/cciss_cmd.h
+@@ -55,6 +55,7 @@
+ #define I2O_INT_MASK            0x34
+ #define I2O_IBPOST_Q            0x40
+ #define I2O_OBPOST_Q            0x44
++#define I2O_DMA1_CFG		0x214
+ 
+ //Configuration Table
+ #define CFGTBL_ChangeReq        0x00000001l
+diff -up linux-2.6.18.noarch/drivers/block-stock/cciss.h linux-2.6.18.noarch/drivers/block/cciss.h
+--- linux-2.6.18.noarch/drivers/block-stock/cciss.h
++++ linux-2.6.18.noarch/drivers/block/cciss.h
+@@ -60,6 +60,7 @@ struct ctlr_info 
+ 	__u32	board_id;
+ 	void __iomem *vaddr;
+ 	unsigned long paddr;
++	int 	nr_cmds; /* Number of commands allowed on this controller */
+ 	CfgTable_struct __iomem *cfgtable;
+ 	int	interrupts_enabled;
+ 	int	major;
+@@ -279,6 +280,7 @@ struct board_type {
+ 	__u32	board_id;
+ 	char	*product_name;
+ 	struct access_method *access;
++	int nr_cmds; /* Max cmds this kind of ctlr can handle. */
+ };
+ 
+ #define CCISS_LOCK(i)	(&hba[i]->lock)
+Common subdirectories: linux-2.6.18.noarch/drivers/block-stock/paride and linux-2.6.18.noarch/drivers/block/paride
+
+Date: Mon, 18 Dec 2006 19:14:35 -0500
+From: Tom Coughlan <coughlan@redhat.com>
+X-Mailer: Evolution 2.8.0 (2.8.0-28.el5) 
+To: rhkernel-list@redhat.com
+Reply-To: rhkernel-list@redhat.com
+Subject: Re: [RHEL 5.0 PATCH] cciss bugfixes
+Message-Id: <1166487275.1111.11.camel@bianchi.boston.redhat.com>
+
+On Thu, 2006-12-14 at 18:34 -0500, Tom Coughlan wrote:
+
+One of the changes in this patch:
+
+> - Disable DMA prefetch on the P600, another bug workaround.
+
+was incomplete. That fix has:
+
++       if(board_id == 0x3225103C) {
++               __u32 dma_prefetch;
++               dma_prefetch = readl(c->vaddr + I2O_DMA1_CFG);
++               dma_prefetch |= 0x8000;
++               writel(dma_prefetch, c->vaddr + I2O_DMA1_CFG);
+
+and:
+
++#define I2O_DMA1_CFG           0x214
+
+In order to do this, it is necessary to map out more of the config
+table, to get to this bit. The attached patch fixes it (incremental to
+the original patch).
+
+This patch is posted upstream:
+
+http://marc.theaimsgroup.com/?l=linux-scsi&m=116595333400191&w=2
+
+I built and ran with it. I do not know if we have one of these boards. 
+
+Tom
+
+
+--- linux-2.6.18.noarch/drivers/block/cciss.c.old
++++ linux-2.6.18.noarch/drivers/block/cciss.c
+@@ -2828,7 +2828,7 @@ static int cciss_pci_init(ctlr_info_t *c
+ #ifdef CCISS_DEBUG
+ 	printk("address 0 = %x\n", c->paddr);
+ #endif				/* CCISS_DEBUG */
+-	c->vaddr = remap_pci_mem(c->paddr, 200);
++	c->vaddr = remap_pci_mem(c->paddr, 0x250);
+ 
+ 	/* Wait for the board to become ready.  (PCI hotplug needs this.)
+ 	 * We poll for up to 120 secs, once per 100ms. */
+

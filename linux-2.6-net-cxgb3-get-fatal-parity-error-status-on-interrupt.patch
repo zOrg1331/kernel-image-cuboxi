@@ -1,0 +1,40 @@
+From: Doug Ledford <dledford@redhat.com>
+Date: Fri, 3 Sep 2010 21:20:19 -0400
+Subject: [net] cxgb3: get fatal parity error status on interrupt
+Message-id: <de58b25937879f9ca678eae785f8f92428d24060.1283548506.git.dledford@redhat.com>
+Patchwork-id: 28140
+O-Subject: [Patch RHEL5.6 3/4] cxgb3: deal with fatal parity error status in
+	interrupt handler
+Bugzilla: 630124
+RH-Acked-by: David S. Miller <davem@redhat.com>
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+
+Related: bz630124
+
+Signed-off-by: Doug Ledford <dledford@redhat.com>
+
+diff --git a/drivers/net/cxgb3/t3_hw.c b/drivers/net/cxgb3/t3_hw.c
+index b2147a6..3e0a4eb 100644
+--- a/drivers/net/cxgb3/t3_hw.c
++++ b/drivers/net/cxgb3/t3_hw.c
+@@ -1403,6 +1403,7 @@ static int t3_handle_intr_status(struct adapter *adapter, unsigned int reg,
+ 			fatal++;
+ 			CH_ALERT(adapter, "%s (0x%x)\n",
+ 				 acts->msg, status & acts->mask);
++			status &= ~acts->mask;
+ 		} else if (acts->msg)
+ 			CH_WARN(adapter, "%s (0x%x)\n",
+ 				acts->msg, status & acts->mask);
+@@ -1835,11 +1836,10 @@ static int mac_intr_handler(struct adapter *adap, unsigned int idx)
+ 		t3_os_link_fault_handler(adap, idx);
+ 	}
+ 
+-	t3_write_reg(adap, A_XGM_INT_CAUSE + mac->offset, cause);
+-
+ 	if (cause & XGM_INTR_FATAL)
+ 		t3_fatal_err(adap);
+ 
++	t3_write_reg(adap, A_XGM_INT_CAUSE + mac->offset, cause);
+ 	return cause != 0;
+ }
+ 

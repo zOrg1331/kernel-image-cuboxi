@@ -1,4 +1,6 @@
 /*
+ * $Id: grip.c,v 1.21 2002/01/22 20:27:57 vojtech Exp $
+ *
  *  Copyright (c) 1998-2001 Vojtech Pavlik
  */
 
@@ -283,7 +285,7 @@ static void grip_poll(struct gameport *gameport)
 
 static int grip_open(struct input_dev *dev)
 {
-	struct grip *grip = input_get_drvdata(dev);
+	struct grip *grip = dev->private;
 
 	gameport_start_polling(grip->gameport);
 	return 0;
@@ -291,7 +293,7 @@ static int grip_open(struct input_dev *dev)
 
 static void grip_close(struct input_dev *dev)
 {
-	struct grip *grip = input_get_drvdata(dev);
+	struct grip *grip = dev->private;
 
 	gameport_stop_polling(grip->gameport);
 }
@@ -361,14 +363,13 @@ static int grip_connect(struct gameport *gameport, struct gameport_driver *drv)
 		input_dev->id.vendor = GAMEPORT_ID_VENDOR_GRAVIS;
 		input_dev->id.product = grip->mode[i];
 		input_dev->id.version = 0x0100;
-		input_dev->dev.parent = &gameport->dev;
-
-		input_set_drvdata(input_dev, grip);
+		input_dev->cdev.dev = &gameport->dev;
+		input_dev->private = grip;
 
 		input_dev->open = grip_open;
 		input_dev->close = grip_close;
 
-		input_dev->evbit[0] = BIT_MASK(EV_KEY) | BIT_MASK(EV_ABS);
+		input_dev->evbit[0] = BIT(EV_KEY) | BIT(EV_ABS);
 
 		for (j = 0; (t = grip_abs[grip->mode[i]][j]) >= 0; j++) {
 
@@ -426,7 +427,8 @@ static struct gameport_driver grip_drv = {
 
 static int __init grip_init(void)
 {
-	return gameport_register_driver(&grip_drv);
+	gameport_register_driver(&grip_drv);
+	return 0;
 }
 
 static void __exit grip_exit(void)

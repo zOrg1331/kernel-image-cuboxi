@@ -1,0 +1,66 @@
+From: Thomas Graf <tgraf@redhat.com>
+Date: Fri, 23 Jul 2010 15:34:51 -0400
+Subject: [net] tcp: htcp last_cong bug fix
+Message-id: <20100723153451.GJ14925@lsx.localdomain>
+Patchwork-id: 27068
+O-Subject: [RHEL5.6 PATCH 8/14] tcp: htcp last_cong bug fix
+Bugzilla: 612709
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+RH-Acked-by: David S. Miller <davem@redhat.com>
+
+commit 8f65b5354b1a34a536641bd915958662e8af5320
+Author: Doug Leith <doug.leith@nuim.ie>
+Date:   Wed Nov 12 01:41:09 2008 -0800
+
+    tcp_htcp: last_cong bug fix
+
+    This patch fixes a minor bug in tcp_htcp.c which has been
+    highlighted by Lachlan Andrew and Lawrence Stewart.  Currently, the
+    time since the last congestion event, which is stored in variable
+    last_cong, is reset whenever there is a state change into
+    TCP_CA_Open.  This includes transitions of the type
+    TCP_CA_Open->TCP_CA_Disorder->TCP_CA_Open which are not associated
+    with backoff of cwnd.  The patch changes last_cong to be updated
+    only on transitions into TCP_CA_Open that occur after experiencing
+    the congestion-related states TCP_CA_Loss, TCP_CA_Recovery,
+    TCP_CA_CWR.
+
+    Signed-off-by: Doug Leith <doug.leith@nuim.ie>
+    Signed-off-by: David S. Miller <davem@davemloft.net>
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/net/ipv4/tcp_htcp.c b/net/ipv4/tcp_htcp.c
+index 6edfe5e..01b8dbc 100644
+--- a/net/ipv4/tcp_htcp.c
++++ b/net/ipv4/tcp_htcp.c
+@@ -67,9 +67,14 @@ static u32 htcp_cwnd_undo(struct sock *sk)
+ {
+ 	const struct tcp_sock *tp = tcp_sk(sk);
+ 	struct htcp *ca = inet_csk_ca(sk);
+-	ca->last_cong = ca->undo_last_cong;
+-	ca->maxRTT = ca->undo_maxRTT;
+-	ca->old_maxB = ca->undo_old_maxB;
++
++	if (ca->undo_last_cong) {
++		ca->last_cong = ca->undo_last_cong;
++		ca->maxRTT = ca->undo_maxRTT;
++		ca->old_maxB = ca->undo_old_maxB;
++		ca->undo_last_cong = 0;
++	}
++
+ 	return max(tp->snd_cwnd, (tp->snd_ssthresh<<7)/ca->beta);
+ }
+ 
+@@ -262,7 +267,10 @@ static void htcp_state(struct sock *sk, u8 new_state)
+ 	case TCP_CA_Open:
+ 		{
+ 			struct htcp *ca = inet_csk_ca(sk);
+-			ca->last_cong = jiffies;
++			if (ca->undo_last_cong) {
++				ca->last_cong = jiffies;
++				ca->undo_last_cong = 0;
++			}
+ 		}
+ 		break;
+ 	case TCP_CA_CWR:

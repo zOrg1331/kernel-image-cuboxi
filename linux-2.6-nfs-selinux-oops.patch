@@ -1,0 +1,11 @@
+--- linux-2.6.17.i686/net/sunrpc/rpc_pipe.c.orig	2006-08-31 13:33:13.082136000 -0400
++++ linux-2.6.17.i686/net/sunrpc/rpc_pipe.c	2006-09-05 12:52:21.517500000 -0400
+@@ -713,7 +713,7 @@ rpc_mkpipe(char *path, void *private, st
+ 	if (IS_ERR(dentry))
+ 		return dentry;
+ 	dir = nd.dentry->d_inode;
+-	inode = rpc_get_inode(dir->i_sb, S_IFSOCK | S_IRUSR | S_IWUSR);
++	inode = rpc_get_inode(dir->i_sb, S_IFIFO | S_IRUSR | S_IWUSR);
+ 	if (!inode)
+ 		goto err_dput;
+ 	inode->i_ino = iunique(dir->i_sb, 100);

@@ -1,0 +1,89 @@
+From: John Feeney <jfeeney@redhat.com>
+Date: Fri, 30 Apr 2010 17:32:58 -0400
+Subject: [net] bnx2: fix lost MSI-X problem on 5709 NICs
+Message-id: <4BDB144A.2070000@redhat.com>
+Patchwork-id: 24735
+O-Subject: [RHEL5.6 PATCH] bnx2: Fix lost MSI-X problem on 5709 NICs
+Bugzilla: 511368
+RH-Acked-by: Andy Gospodarek <gospo@redhat.com>
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+bz511368
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=511368
+NIC doesn't register packets
+
+Description of problem:
+When under heavy load in certain circumstances, the bnx2 NIC
+configured to run with MSI-X will stop processing interrupts
+and connectivity will cease. Even though the problem was
+reported by a number of customers, only Dell was able to create
+a test environment that reproduced the issue with consistency.
+
+According to Broadcom, the "problem is triggered when there is
+a combination of events happening on PCIE. First of all the host
+has to stop issuing PCIE TLP credit for a while (>32 usec).
+Second, there needs to be an MSI-X interrupt pending to be sent
+to the host, but blocked because of the lack of TLP credit.
+Third, the kernel needs to read or write the MSI-X table at
+this time."
+
+Solution:
+Again, according to Broadcom, in "the CATC trace, the host
+stopped issuing credits for about 60usec. There was status
+block DMA right before this so there was likely a pending MSI-X.
+
+The kernel was writing to the MSI-X mask at this time.  Because
+the GRC timeout was set to 32usec by default, and the MSI-X
+interrupt was held for about 60usec, the MSI-X table write could
+not be completed and it was silently dropped.  A read can also
+be dropped in this scenario and the chip would return 0xdeadbeef
+which was also reported."
+
+This fix increases the GRC timeout for read and write operations.
+
+Upstream status:
+
+commit: c441b8d2cb2194b05550a558d6d95d8944e56a84
+Fix lost MSI-X problem on 5709 NICs
+ <http://git.kernel.org/?p=linux/kernel/git/davem/net-2.6.git;a=commit;h=c441b8d2cb2194b05550a558d6d95d8944e56a84>
+
+Brew:
+Successfully Built in Brew for all architectures (task_2411586).
+as well as specific brew build for x86_64(task_2411596).
+
+Testing:
+Dell has successfully tested this patch with the only reliable
+failure reproducer available. With at least three bnx2 systems
+running the test load constantly over the course of 3 days in
+an HPC environment, no failure was detected.
+
+Locally, I am in the process of running Connectathon to make
+sure systems with NICs other than 5709 don't have issues, which
+I don't anticipate.
+
+Note: Due to build deadline time constraints, I am posting this
+before the Connectathon tests run to completion. I will update
+this post with the final results when available.
+
+Acks would be appreciated. Thanks.
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/net/bnx2.c b/drivers/net/bnx2.c
+index 7dbb425..16f1893 100644
+--- a/drivers/net/bnx2.c
++++ b/drivers/net/bnx2.c
+@@ -4795,8 +4795,12 @@ bnx2_reset_chip(struct bnx2 *bp, u32 reset_code)
+ 		rc = bnx2_alloc_bad_rbuf(bp);
+ 	}
+ 
+-	if (bp->flags & BNX2_FLAG_USING_MSIX)
++	if (bp->flags & BNX2_FLAG_USING_MSIX) {
+ 		bnx2_setup_msix_tbl(bp);
++		/* Prevent MSIX table reads and write from timing out */
++		REG_WR(bp, BNX2_MISC_ECO_HW_CTL,
++			BNX2_MISC_ECO_HW_CTL_LARGE_GRC_TMOUT_EN);
++	}
+ 
+ 	return rc;
+ }

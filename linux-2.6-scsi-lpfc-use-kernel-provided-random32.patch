@@ -1,0 +1,239 @@
+From: Jarod Wilson <jarod@redhat.com>
+Date: Tue, 22 Jun 2010 20:12:03 -0400
+Subject: [scsi] lpfc: use kernel-provided random32
+Message-id: <20100622201203.GA28893@redhat.com>
+Patchwork-id: 26448
+O-Subject: Re: [RHEL5 PATCH 2/2] scsi: lpfc: use kernel-provided random32
+Bugzilla: 605816
+RH-Acked-by: Tomas Henzl <thenzl@redhat.com>
+
+Bugzilla #605816
+
+A recent lpfc driver patch introduced a private copy of the random32 functions
+available upstream in lib/random32.c. Just a bit ago, I posted a patch to
+backport proper random32 support to rhel5. This patch drops the private copy
+of it from the lpfc driver and wires it up to use the new generally available
+one. Build-tested locally on x86_64 and i686.
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/scsi/lpfc/lpfc_crtn.h b/drivers/scsi/lpfc/lpfc_crtn.h
+index e8dfb60..8d2ad90 100644
+--- a/drivers/scsi/lpfc/lpfc_crtn.h
++++ b/drivers/scsi/lpfc/lpfc_crtn.h
+@@ -447,16 +447,6 @@ static inline int pci_cleanup_aer_uncorrect_error_status(struct pci_dev *dev)
+ }
+ #endif
+ 
+-/*
+- * The random32 apis are back ported from upstream 2.6.33rc7 kernel.
+- * The apis are available to SLES11 or later, and RHEL6 or later
+- * distributions.
+- */
+-u32 random32(void);
+-void srandom32(u32);
+-int random32_init(void);
+-int random32_reseed(void);
+-
+ void __lpfc_sli_ringtx_put(struct lpfc_hba *, struct lpfc_sli_ring *,
+ 	struct lpfc_iocbq *);
+ struct lpfc_iocbq *lpfc_sli_ringtx_get(struct lpfc_hba *,
+diff --git a/drivers/scsi/lpfc/lpfc_hbadisc.c b/drivers/scsi/lpfc/lpfc_hbadisc.c
+index 5764e0f..ebf44c6 100644
+--- a/drivers/scsi/lpfc/lpfc_hbadisc.c
++++ b/drivers/scsi/lpfc/lpfc_hbadisc.c
+@@ -24,6 +24,7 @@
+ #include <linux/pci.h>
+ #include <linux/kthread.h>
+ #include <linux/interrupt.h>
++#include <linux/random.h>
+ 
+ #include <scsi/scsi.h>
+ #include <scsi/scsi_device.h>
+diff --git a/drivers/scsi/lpfc/lpfc_init.c b/drivers/scsi/lpfc/lpfc_init.c
+index a36c589..a8ee391 100644
+--- a/drivers/scsi/lpfc/lpfc_init.c
++++ b/drivers/scsi/lpfc/lpfc_init.c
+@@ -4059,14 +4059,6 @@ lpfc_sli4_driver_resource_setup(struct lpfc_hba *phba)
+ 		return -ENODEV;
+ 
+ 	/*
+-	 * The random32 apis are back ported from upstream 2.6.33rc7.
+-	 * kernel. The apis are available to SLES11 or later, and
+-	 * RHEL6 or later distributions.
+-	 */
+-	random32_init();
+-	random32_reseed();
+-
+-	/*
+ 	 * Initialize timers used by driver
+ 	 */
+ 
+diff --git a/drivers/scsi/lpfc/lpfc_sli.c b/drivers/scsi/lpfc/lpfc_sli.c
+index d66cc6c..cd1802a 100644
+--- a/drivers/scsi/lpfc/lpfc_sli.c
++++ b/drivers/scsi/lpfc/lpfc_sli.c
+@@ -12814,163 +12814,6 @@ lpfc_cleanup_pending_mbox(struct lpfc_vport *vport)
+ 	spin_unlock_irq(&phba->hbalock);
+ }
+ 
+-/*
+- * The random32 apis are back ported from upstream 2.6.33rc7 kernel.
+- * The apis are available to SLES11 or later, and RHEL6 or later
+- * distributions.
+- */
+-
+-/*
+-  This is a maximally equidistributed combined Tausworthe generator
+-  based on code from GNU Scientific Library 1.5 (30 Jun 2004)
+-
+-   x_n = (s1_n ^ s2_n ^ s3_n)
+-
+-   s1_{n+1} = (((s1_n & 4294967294) <<12) ^ (((s1_n <<13) ^ s1_n) >>19))
+-   s2_{n+1} = (((s2_n & 4294967288) << 4) ^ (((s2_n << 2) ^ s2_n) >>25))
+-   s3_{n+1} = (((s3_n & 4294967280) <<17) ^ (((s3_n << 3) ^ s3_n) >>11))
+-
+-   The period of this generator is about 2^88.
+-
+-   From: P. L'Ecuyer, "Maximally Equidistributed Combined Tausworthe
+-   Generators", Mathematics of Computation, 65, 213 (1996), 203--213.
+-
+-   This is available on the net from L'Ecuyer's home page,
+-
+-   http://www.iro.umontreal.ca/~lecuyer/myftp/papers/tausme.ps
+-   ftp://ftp.iro.umontreal.ca/pub/simulation/lecuyer/papers/tausme.ps
+-
+-   There is an erratum in the paper "Tables of Maximally
+-   Equidistributed Combined LFSR Generators", Mathematics of
+-   Computation, 68, 225 (1999), 261--269:
+-   http://www.iro.umontreal.ca/~lecuyer/myftp/papers/tausme2.ps
+-
+-        ... the k_j most significant bits of z_j must be non-
+-        zero, for each j. (Note: this restriction also applies to the
+-        computer code given in [4], but was mistakenly not mentioned in
+-        that paper.)
+-
+-   This affects the seeding procedure by imposing the requirement
+-   s1 > 1, s2 > 7, s3 > 15.
+-
+-*/
+-
+-#include <linux/types.h>
+-#include <linux/percpu.h>
+-#include <linux/module.h>
+-#include <linux/jiffies.h>
+-#include <linux/random.h>
+-
+-struct rnd_state {
+-	u32 s1, s2, s3;
+-};
+-
+-static DEFINE_PER_CPU(struct rnd_state, net_rand_state);
+-
+-static u32 __random32(struct rnd_state *state)
+-{
+-#define TAUSWORTHE(s,a,b,c,d) ((s&c)<<d) ^ (((s <<a) ^ s)>>b)
+-
+-	state->s1 = TAUSWORTHE(state->s1, 13, 19, 4294967294UL, 12);
+-	state->s2 = TAUSWORTHE(state->s2, 2, 25, 4294967288UL, 4);
+-	state->s3 = TAUSWORTHE(state->s3, 3, 11, 4294967280UL, 17);
+-
+-	return (state->s1 ^ state->s2 ^ state->s3);
+-}
+-
+-/*
+- * Handle minimum values for seeds
+- */
+-static inline u32 __seed(u32 x, u32 m)
+-{
+-	return (x < m) ? x + m : x;
+-}
+-
+-/**
+- *	random32 - pseudo random number generator
+- *
+- *	A 32 bit pseudo-random number is generated using a fast
+- *	algorithm suitable for simulation. This algorithm is NOT
+- *	considered safe for cryptographic use.
+- */
+-u32 random32(void)
+-{
+-	unsigned long r;
+-	struct rnd_state *state = &get_cpu_var(net_rand_state);
+-	r = __random32(state);
+-	put_cpu_var(state);
+-	return r;
+-}
+-
+-/**
+- *	srandom32 - add entropy to pseudo random number generator
+- *	@seed: seed value
+- *
+- *	Add some additional seeding to the random32() pool.
+- */
+-void srandom32(u32 entropy)
+-{
+-	int i;
+-	/*
+-	 * No locking on the CPUs, but then somewhat random results are, well,
+-	 * expected.
+-	 */
+-	for_each_possible_cpu (i) {
+-		struct rnd_state *state = &per_cpu(net_rand_state, i);
+-		state->s1 = __seed(state->s1 ^ entropy, 1);
+-	}
+-}
+-
+-/*
+- *	Generate some initially weak seeding values to allow
+- *	to start the random32() engine.
+- */
+-int random32_init(void)
+-{
+-	int i;
+-
+-	for_each_possible_cpu(i) {
+-		struct rnd_state *state = &per_cpu(net_rand_state,i);
+-
+-#define LCG(x)	((x) * 69069)	/* super-duper LCG */
+-		state->s1 = __seed(LCG(i + jiffies), 1);
+-		state->s2 = __seed(LCG(state->s1), 7);
+-		state->s3 = __seed(LCG(state->s2), 15);
+-
+-		/* "warm it up" */
+-		__random32(state);
+-		__random32(state);
+-		__random32(state);
+-		__random32(state);
+-		__random32(state);
+-		__random32(state);
+-	}
+-	return 0;
+-}
+-
+-/*
+- *	Generate better values after random number generator
+- *	is fully initalized.
+- */
+-int random32_reseed(void)
+-{
+-	int i;
+-
+-	for_each_possible_cpu(i) {
+-		struct rnd_state *state = &per_cpu(net_rand_state,i);
+-		u32 seeds[3];
+-
+-		get_random_bytes(&seeds, sizeof(seeds));
+-		state->s1 = __seed(seeds[0], 1);
+-		state->s2 = __seed(seeds[1], 7);
+-		state->s3 = __seed(seeds[2], 15);
+-
+-		/* mix it in */
+-		__random32(state);
+-	}
+-	return 0;
+-}
+-
+ /**
+  * lpfc_drain_txq - Drain the txq
+  * @phba: Pointer to HBA context object.

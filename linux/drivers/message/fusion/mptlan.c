@@ -1,11 +1,10 @@
 /*
  *  linux/drivers/message/fusion/mptlan.c
  *      IP Over Fibre Channel device driver.
- *      For use with LSI Fibre Channel PCI chip/adapters
- *      running LSI Fusion MPT (Message Passing Technology) firmware.
+ *      For use with LSI Logic Fibre Channel PCI chip/adapters
+ *      running LSI Logic Fusion MPT (Message Passing Technology) firmware.
  *
- *  Copyright (c) 2000-2008 LSI Corporation
- *  (mailto:DL-MPTFusionLinux@lsi.com)
+ *  Copyright (c) 2000-2005 LSI Logic Corporation
  *
  */
 /*=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=*/
@@ -56,13 +55,10 @@
 #include <linux/init.h>
 #include <linux/module.h>
 #include <linux/fs.h>
-#include <linux/sched.h>
 
-#define my_VERSION	MPT_LINUX_VERSION_COMMON
 #define MYNAM		"mptlan"
 
 MODULE_LICENSE("GPL");
-MODULE_VERSION(my_VERSION);
 
 /*=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=*/
 /*
@@ -77,6 +73,12 @@ MODULE_VERSION(my_VERSION);
 /*
  *  Fusion MPT LAN private structures
  */
+
+struct NAA_Hosed {
+	u16 NAA;
+	u8 ieee[FC_ALEN];
+	struct NAA_Hosed *next;
+};
 
 struct BufferControl {
 	struct sk_buff	*skb;
@@ -107,9 +109,9 @@ struct mpt_lan_priv {
 
 	u32 total_posted;
 	u32 total_received;
+	struct net_device_stats stats;	/* Per device statistics */
 
-	struct delayed_work post_buckets_task;
-	struct net_device *dev;
+	struct work_struct post_buckets_task;
 	unsigned long post_buckets_active;
 };
 
@@ -130,7 +132,7 @@ static int  lan_reply (MPT_ADAPTER *ioc, MPT_FRAME_HDR *mf,
 static int  mpt_lan_open(struct net_device *dev);
 static int  mpt_lan_reset(struct net_device *dev);
 static int  mpt_lan_close(struct net_device *dev);
-static void mpt_lan_post_receive_buckets(struct mpt_lan_priv *priv);
+static void mpt_lan_post_receive_buckets(void *dev_id);
 static void mpt_lan_wake_post_buckets_task(struct net_device *dev,
 					   int priority);
 static int  mpt_lan_receive_post_turbo(struct net_device *dev, u32 tmsg);
@@ -148,10 +150,21 @@ static unsigned short mpt_lan_type_trans(struct sk_buff *skb,
 /*
  *  Fusion MPT LAN private data
  */
-static u8 LanCtx = MPT_MAX_PROTOCOL_DRIVERS;
+static int LanCtx = -1;
 
 static u32 max_buckets_out = 127;
 static u32 tx_max_out_p = 127 - 16;
+
+#ifdef QLOGIC_NAA_WORKAROUND
+static struct NAA_Hosed *mpt_bad_naa = NULL;
+DEFINE_RWLOCK(bad_naa_lock);
+#endif
+
+/*=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=*/
+/*
+ * Fusion MPT LAN external data
+ */
+extern int mpt_lan_index;
 
 /*=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=*/
 /**
@@ -332,7 +345,7 @@ mpt_lan_ioc_reset(MPT_ADAPTER *ioc, int reset_phase)
 			priv->mpt_rxfidx[++priv->mpt_rxfidx_tail] = i;
 		spin_unlock_irqrestore(&priv->rxfidx_lock, flags);
 	} else {
-		mpt_lan_post_receive_buckets(priv);
+		mpt_lan_post_receive_buckets(dev);
 		netif_wake_queue(dev);
 	}
 
@@ -428,7 +441,7 @@ mpt_lan_open(struct net_device *dev)
 
 	dlprintk((KERN_INFO MYNAM "/lo: Finished initializing RcvCtl\n"));
 
-	mpt_lan_post_receive_buckets(priv);
+	mpt_lan_post_receive_buckets(dev);
 	printk(KERN_INFO MYNAM ": %s/%s: interface up & active\n",
 			IOC_AND_NETDEV_NAMES_s_s(dev));
 
@@ -548,6 +561,15 @@ mpt_lan_close(struct net_device *dev)
 }
 
 /*=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=*/
+static struct net_device_stats *
+mpt_lan_get_stats(struct net_device *dev)
+{
+	struct mpt_lan_priv *priv = netdev_priv(dev);
+
+	return (struct net_device_stats *) &priv->stats;
+}
+
+/*=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=*/
 static int
 mpt_lan_change_mtu(struct net_device *dev, int new_mtu)
 {
@@ -585,12 +607,12 @@ mpt_lan_send_turbo(struct net_device *dev, u32 tmsg)
 	ctx = GET_LAN_BUFFER_CONTEXT(tmsg);
 	sent = priv->SendCtl[ctx].skb;
 
-	dev->stats.tx_packets++;
-	dev->stats.tx_bytes += sent->len;
+	priv->stats.tx_packets++;
+	priv->stats.tx_bytes += sent->len;
 
 	dioprintk((KERN_INFO MYNAM ": %s/%s: @%s, skb %p sent.\n",
 			IOC_AND_NETDEV_NAMES_s_s(dev),
-			__func__, sent));
+			__FUNCTION__, sent));
 
 	priv->SendCtl[ctx].skb = NULL;
 	pci_unmap_single(mpt_dev->pcidev, priv->SendCtl[ctx].dma,
@@ -627,7 +649,7 @@ mpt_lan_send_reply(struct net_device *dev, LANSendReply_t *pSendRep)
 
 	switch (le16_to_cpu(pSendRep->IOCStatus) & MPI_IOCSTATUS_MASK) {
 	case MPI_IOCSTATUS_SUCCESS:
-		dev->stats.tx_packets += count;
+		priv->stats.tx_packets += count;
 		break;
 
 	case MPI_IOCSTATUS_LAN_CANCELED:
@@ -635,13 +657,13 @@ mpt_lan_send_reply(struct net_device *dev, LANSendReply_t *pSendRep)
 		break;
 
 	case MPI_IOCSTATUS_INVALID_SGL:
-		dev->stats.tx_errors += count;
+		priv->stats.tx_errors += count;
 		printk (KERN_ERR MYNAM ": %s/%s: ERROR - Invalid SGL sent to IOC!\n",
 				IOC_AND_NETDEV_NAMES_s_s(dev));
 		goto out;
 
 	default:
-		dev->stats.tx_errors += count;
+		priv->stats.tx_errors += count;
 		break;
 	}
 
@@ -652,11 +674,11 @@ mpt_lan_send_reply(struct net_device *dev, LANSendReply_t *pSendRep)
 		ctx = GET_LAN_BUFFER_CONTEXT(le32_to_cpu(*pContext));
 
 		sent = priv->SendCtl[ctx].skb;
-		dev->stats.tx_bytes += sent->len;
+		priv->stats.tx_bytes += sent->len;
 
 		dioprintk((KERN_INFO MYNAM ": %s/%s: @%s, skb %p sent.\n",
 				IOC_AND_NETDEV_NAMES_s_s(dev),
-				__func__, sent));
+				__FUNCTION__, sent));
 
 		priv->SendCtl[ctx].skb = NULL;
 		pci_unmap_single(mpt_dev->pcidev, priv->SendCtl[ctx].dma,
@@ -688,14 +710,13 @@ mpt_lan_sdu_send (struct sk_buff *skb, struct net_device *dev)
 	LANSendRequest_t *pSendReq;
 	SGETransaction32_t *pTrans;
 	SGESimple64_t *pSimple;
-	const unsigned char *mac;
 	dma_addr_t dma;
 	unsigned long flags;
 	int ctx;
 	u16 cur_naa = 0x1000;
 
 	dioprintk((KERN_INFO MYNAM ": %s called, skb_addr = %p\n",
-			__func__, skb));
+			__FUNCTION__, skb));
 
 	spin_lock_irqsave(&priv->txfidx_lock, flags);
 	if (priv->mpt_txfidx_tail < 0) {
@@ -703,8 +724,8 @@ mpt_lan_sdu_send (struct sk_buff *skb, struct net_device *dev)
 		spin_unlock_irqrestore(&priv->txfidx_lock, flags);
 
 		printk (KERN_ERR "%s: no tx context available: %u\n",
-			__func__, priv->mpt_txfidx_tail);
-		return NETDEV_TX_BUSY;
+			__FUNCTION__, priv->mpt_txfidx_tail);
+		return 1;
 	}
 
 	mf = mpt_get_msg_frame(LanCtx, mpt_dev);
@@ -713,8 +734,8 @@ mpt_lan_sdu_send (struct sk_buff *skb, struct net_device *dev)
 		spin_unlock_irqrestore(&priv->txfidx_lock, flags);
 
 		printk (KERN_ERR "%s: Unable to alloc request frame\n",
-			__func__);
-		return NETDEV_TX_BUSY;
+			__FUNCTION__);
+		return 1;
 	}
 
 	ctx = priv->mpt_txfidx[priv->mpt_txfidx_tail--];
@@ -728,7 +749,7 @@ mpt_lan_sdu_send (struct sk_buff *skb, struct net_device *dev)
 	/* Set the mac.raw pointer, since this apparently isn't getting
 	 * done before we get the skb. Pull the data pointer past the mac data.
 	 */
-	skb_reset_mac_header(skb);
+	skb->mac.raw = skb->data;
 	skb_pull(skb, 12);
 
         dma = pci_map_single(mpt_dev->pcidev, skb->data, skb->len,
@@ -759,15 +780,38 @@ mpt_lan_sdu_send (struct sk_buff *skb, struct net_device *dev)
 //			IOC_AND_NETDEV_NAMES_s_s(dev),
 //			ctx, skb, skb->data));
 
-	mac = skb_mac_header(skb);
+#ifdef QLOGIC_NAA_WORKAROUND
+{
+	struct NAA_Hosed *nh;
+
+	/* Munge the NAA for Tx packets to QLogic boards, which don't follow
+	   RFC 2625. The longer I look at this, the more my opinion of Qlogic
+	   drops. */
+	read_lock_irq(&bad_naa_lock);
+	for (nh = mpt_bad_naa; nh != NULL; nh=nh->next) {
+		if ((nh->ieee[0] == skb->mac.raw[0]) &&
+		    (nh->ieee[1] == skb->mac.raw[1]) &&
+		    (nh->ieee[2] == skb->mac.raw[2]) &&
+		    (nh->ieee[3] == skb->mac.raw[3]) &&
+		    (nh->ieee[4] == skb->mac.raw[4]) &&
+		    (nh->ieee[5] == skb->mac.raw[5])) {
+			cur_naa = nh->NAA;
+			dlprintk ((KERN_INFO "mptlan/sdu_send: using NAA value "
+				  "= %04x.\n", cur_naa));
+			break;
+		}
+	}
+	read_unlock_irq(&bad_naa_lock);
+}
+#endif
 
 	pTrans->TransactionDetails[0] = cpu_to_le32((cur_naa         << 16) |
-						    (mac[0] <<  8) |
-						    (mac[1] <<  0));
-	pTrans->TransactionDetails[1] = cpu_to_le32((mac[2] << 24) |
-						    (mac[3] << 16) |
-						    (mac[4] <<  8) |
-						    (mac[5] <<  0));
+						    (skb->mac.raw[0] <<  8) |
+						    (skb->mac.raw[1] <<  0));
+	pTrans->TransactionDetails[1] = cpu_to_le32((skb->mac.raw[2] << 24) |
+						    (skb->mac.raw[3] << 16) |
+						    (skb->mac.raw[4] <<  8) |
+						    (skb->mac.raw[5] <<  0));
 
 	pSimple = (SGESimple64_t *) &pTrans->TransactionDetails[2];
 
@@ -796,7 +840,7 @@ mpt_lan_sdu_send (struct sk_buff *skb, struct net_device *dev)
 			IOC_AND_NETDEV_NAMES_s_s(dev),
 			le32_to_cpu(pSimple->FlagsLength)));
 
-	return NETDEV_TX_OK;
+	return 0;
 }
 
 /*=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=*/
@@ -806,11 +850,11 @@ mpt_lan_wake_post_buckets_task(struct net_device *dev, int priority)
  * @priority: 0 = put it on the timer queue, 1 = put it on the immediate queue
  */
 {
-	struct mpt_lan_priv *priv = netdev_priv(dev);
+	struct mpt_lan_priv *priv = dev->priv;
 	
 	if (test_and_set_bit(0, &priv->post_buckets_active) == 0) {
 		if (priority) {
-			schedule_delayed_work(&priv->post_buckets_task, 0);
+			schedule_work(&priv->post_buckets_task);
 		} else {
 			schedule_delayed_work(&priv->post_buckets_task, 1);
 			dioprintk((KERN_INFO MYNAM ": post_buckets queued on "
@@ -825,7 +869,7 @@ mpt_lan_wake_post_buckets_task(struct net_device *dev, int priority)
 static int
 mpt_lan_receive_skb(struct net_device *dev, struct sk_buff *skb)
 {
-	struct mpt_lan_priv *priv = netdev_priv(dev);
+	struct mpt_lan_priv *priv = dev->priv;
 
 	skb->protocol = mpt_lan_type_trans(skb, dev);
 
@@ -833,8 +877,8 @@ mpt_lan_receive_skb(struct net_device *dev, struct sk_buff *skb)
 		 "delivered to upper level.\n",
 			IOC_AND_NETDEV_NAMES_s_s(dev), skb->len));
 
-	dev->stats.rx_bytes += skb->len;
-	dev->stats.rx_packets++;
+	priv->stats.rx_bytes += skb->len;
+	priv->stats.rx_packets++;
 
 	skb->dev = dev;
 	netif_rx(skb);
@@ -857,7 +901,7 @@ mpt_lan_receive_skb(struct net_device *dev, struct sk_buff *skb)
 static int
 mpt_lan_receive_post_turbo(struct net_device *dev, u32 tmsg)
 {
-	struct mpt_lan_priv *priv = netdev_priv(dev);
+	struct mpt_lan_priv *priv = dev->priv;
 	MPT_ADAPTER *mpt_dev = priv->mpt_dev;
 	struct sk_buff *skb, *old_skb;
 	unsigned long flags;
@@ -882,7 +926,7 @@ mpt_lan_receive_post_turbo(struct net_device *dev, u32 tmsg)
 		pci_dma_sync_single_for_cpu(mpt_dev->pcidev, priv->RcvCtl[ctx].dma,
 					    priv->RcvCtl[ctx].len, PCI_DMA_FROMDEVICE);
 
-		skb_copy_from_linear_data(old_skb, skb_put(skb, len), len);
+		memcpy(skb_put(skb, len), old_skb->data, len);
 
 		pci_dma_sync_single_for_device(mpt_dev->pcidev, priv->RcvCtl[ctx].dma,
 					       priv->RcvCtl[ctx].len, PCI_DMA_FROMDEVICE);
@@ -912,7 +956,7 @@ static int
 mpt_lan_receive_post_free(struct net_device *dev,
 			  LANReceivePostReply_t *pRecvRep)
 {
-	struct mpt_lan_priv *priv = netdev_priv(dev);
+	struct mpt_lan_priv *priv = dev->priv;
 	MPT_ADAPTER *mpt_dev = priv->mpt_dev;
 	unsigned long flags;
 	struct sk_buff *skb;
@@ -967,7 +1011,7 @@ static int
 mpt_lan_receive_post_reply(struct net_device *dev,
 			   LANReceivePostReply_t *pRecvRep)
 {
-	struct mpt_lan_priv *priv = netdev_priv(dev);
+	struct mpt_lan_priv *priv = dev->priv;
 	MPT_ADAPTER *mpt_dev = priv->mpt_dev;
 	struct sk_buff *skb, *old_skb;
 	unsigned long flags;
@@ -1043,7 +1087,7 @@ mpt_lan_receive_post_reply(struct net_device *dev,
 						    priv->RcvCtl[ctx].dma,
 						    priv->RcvCtl[ctx].len,
 						    PCI_DMA_FROMDEVICE);
-			skb_copy_from_linear_data(old_skb, skb_put(skb, l), l);
+			memcpy(skb_put(skb, l), old_skb->data, l);
 
 			pci_dma_sync_single_for_device(mpt_dev->pcidev,
 						       priv->RcvCtl[ctx].dma,
@@ -1072,7 +1116,7 @@ mpt_lan_receive_post_reply(struct net_device *dev,
 					    priv->RcvCtl[ctx].len,
 					    PCI_DMA_FROMDEVICE);
 
-		skb_copy_from_linear_data(old_skb, skb_put(skb, len), len);
+		memcpy(skb_put(skb, len), old_skb->data, len);
 
 		pci_dma_sync_single_for_device(mpt_dev->pcidev,
 					       priv->RcvCtl[ctx].dma,
@@ -1144,9 +1188,10 @@ mpt_lan_receive_post_reply(struct net_device *dev,
 /* Simple SGE's only at the moment */
 
 static void
-mpt_lan_post_receive_buckets(struct mpt_lan_priv *priv)
+mpt_lan_post_receive_buckets(void *dev_id)
 {
-	struct net_device *dev = priv->dev;
+	struct net_device *dev = dev_id;
+	struct mpt_lan_priv *priv = dev->priv;
 	MPT_ADAPTER *mpt_dev = priv->mpt_dev;
 	MPT_FRAME_HDR *mf;
 	LANReceivePostRequest_t *pRecvReq;
@@ -1164,7 +1209,7 @@ mpt_lan_post_receive_buckets(struct mpt_lan_priv *priv)
 
 	dioprintk((KERN_INFO MYNAM ": %s/%s: @%s, Start_buckets = %u, buckets_out = %u\n",
 			IOC_AND_NETDEV_NAMES_s_s(dev),
-			__func__, buckets, curr));
+			__FUNCTION__, buckets, curr));
 
 	max = (mpt_dev->req_sz - MPT_LAN_RECEIVE_POST_REQUEST_SIZE) /
 			(MPT_LAN_TRANSACTION32_SIZE + sizeof(SGESimple64_t));
@@ -1173,15 +1218,13 @@ mpt_lan_post_receive_buckets(struct mpt_lan_priv *priv)
 		mf = mpt_get_msg_frame(LanCtx, mpt_dev);
 		if (mf == NULL) {
 			printk (KERN_ERR "%s: Unable to alloc request frame\n",
-				__func__);
+				__FUNCTION__);
 			dioprintk((KERN_ERR "%s: %u buckets remaining\n",
-				 __func__, buckets));
+				 __FUNCTION__, buckets));
 			goto out;
 		}
 		pRecvReq = (LANReceivePostRequest_t *) mf;
 
-		i = le16_to_cpu(mf->u.frame.hwhdr.msgctxu.fld.req_idx);
-		mpt_dev->RequestNB[i] = 0;
 		count = buckets;
 		if (count > max)
 			count = max;
@@ -1200,7 +1243,7 @@ mpt_lan_post_receive_buckets(struct mpt_lan_priv *priv)
 			spin_lock_irqsave(&priv->rxfidx_lock, flags);
 			if (priv->mpt_rxfidx_tail < 0) {
 				printk (KERN_ERR "%s: Can't alloc context\n",
-					__func__);
+					__FUNCTION__);
 				spin_unlock_irqrestore(&priv->rxfidx_lock,
 						       flags);
 				break;
@@ -1223,7 +1266,7 @@ mpt_lan_post_receive_buckets(struct mpt_lan_priv *priv)
 				if (skb == NULL) {
 					printk (KERN_WARNING
 						MYNAM "/%s: Can't alloc skb\n",
-						__func__);
+						__FUNCTION__);
 					priv->mpt_rxfidx[++priv->mpt_rxfidx_tail] = ctx;
 					spin_unlock_irqrestore(&priv->rxfidx_lock, flags);
 					break;
@@ -1261,7 +1304,7 @@ mpt_lan_post_receive_buckets(struct mpt_lan_priv *priv)
 
 		if (pSimple == NULL) {
 /**/			printk (KERN_WARNING MYNAM "/%s: No buckets posted\n",
-/**/				__func__);
+/**/				__FUNCTION__);
 			mpt_free_msg_frame(mpt_dev, mf);
 			goto out;
 		}
@@ -1285,37 +1328,21 @@ mpt_lan_post_receive_buckets(struct mpt_lan_priv *priv)
 
 out:
 	dioprintk((KERN_INFO MYNAM "/%s: End_buckets = %u, priv->buckets_out = %u\n",
-		  __func__, buckets, atomic_read(&priv->buckets_out)));
+		  __FUNCTION__, buckets, atomic_read(&priv->buckets_out)));
 	dioprintk((KERN_INFO MYNAM "/%s: Posted %u buckets and received %u back\n",
-	__func__, priv->total_posted, priv->total_received));
+	__FUNCTION__, priv->total_posted, priv->total_received));
 
 	clear_bit(0, &priv->post_buckets_active);
 }
-
-static void
-mpt_lan_post_receive_buckets_work(struct work_struct *work)
-{
-	mpt_lan_post_receive_buckets(container_of(work, struct mpt_lan_priv,
-						  post_buckets_task.work));
-}
-
-static const struct net_device_ops mpt_netdev_ops = {
-	.ndo_open       = mpt_lan_open,
-	.ndo_stop       = mpt_lan_close,
-	.ndo_start_xmit = mpt_lan_sdu_send,
-	.ndo_change_mtu = mpt_lan_change_mtu,
-	.ndo_tx_timeout = mpt_lan_tx_timeout,
-};
 
 /*=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=*/
 static struct net_device *
 mpt_register_lan_device (MPT_ADAPTER *mpt_dev, int pnum)
 {
-	struct net_device *dev;
-	struct mpt_lan_priv *priv;
+	struct net_device *dev = alloc_fcdev(sizeof(struct mpt_lan_priv));
+	struct mpt_lan_priv *priv = NULL;
 	u8 HWaddr[FC_ALEN], *a;
 
-	dev = alloc_fcdev(sizeof(struct mpt_lan_priv));
 	if (!dev)
 		return NULL;
 
@@ -1323,12 +1350,11 @@ mpt_register_lan_device (MPT_ADAPTER *mpt_dev, int pnum)
 
 	priv = netdev_priv(dev);
 
-	priv->dev = dev;
 	priv->mpt_dev = mpt_dev;
 	priv->pnum = pnum;
 
-	INIT_DELAYED_WORK(&priv->post_buckets_task,
-			  mpt_lan_post_receive_buckets_work);
+	memset(&priv->post_buckets_task, 0, sizeof(struct work_struct));
+	INIT_WORK(&priv->post_buckets_task, mpt_lan_post_receive_buckets, dev);
 	priv->post_buckets_active = 0;
 
 	dlprintk((KERN_INFO MYNAM "@%d: bucketlen = %d\n",
@@ -1351,6 +1377,8 @@ mpt_register_lan_device (MPT_ADAPTER *mpt_dev, int pnum)
 	spin_lock_init(&priv->txfidx_lock);
 	spin_lock_init(&priv->rxfidx_lock);
 
+	memset(&priv->stats, 0, sizeof(priv->stats));
+
 	/*  Grab pre-fetched LANPage1 stuff. :-) */
 	a = (u8 *) &mpt_dev->lan_cnfg_page1.HardwareAddressLow;
 
@@ -1371,11 +1399,21 @@ mpt_register_lan_device (MPT_ADAPTER *mpt_dev, int pnum)
 	priv->tx_max_out = (tx_max_out_p <= MPT_TX_MAX_OUT_LIM) ?
 			    tx_max_out_p : MPT_TX_MAX_OUT_LIM;
 
-	dev->netdev_ops = &mpt_netdev_ops;
+	dev->open = mpt_lan_open;
+	dev->stop = mpt_lan_close;
+	dev->get_stats = mpt_lan_get_stats;
+	dev->set_multicast_list = NULL;
+	dev->change_mtu = mpt_lan_change_mtu;
+	dev->hard_start_xmit = mpt_lan_sdu_send;
+
+/* Not in 2.3.42. Need 2.3.45+ */
+	dev->tx_timeout = mpt_lan_tx_timeout;
 	dev->watchdog_timeo = MPT_LAN_TX_TIMEOUT;
 
 	dlprintk((KERN_INFO MYNAM ": Finished registering dev "
 		"and setting initial values\n"));
+
+	SET_MODULE_OWNER(dev);
 
 	if (register_netdev(dev) != 0) {
 		free_netdev(dev);
@@ -1418,9 +1456,11 @@ mptlan_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 		printk(KERN_INFO MYNAM ": %s: Fusion MPT LAN device "
 		       "registered as '%s'\n", ioc->name, dev->name);
 		printk(KERN_INFO MYNAM ": %s/%s: "
-		       "LanAddr = %pM\n",
+		       "LanAddr = %02X:%02X:%02X:%02X:%02X:%02X\n",
 		       IOC_AND_NETDEV_NAMES_s_s(dev),
-		       dev->dev_addr);
+		       dev->dev_addr[0], dev->dev_addr[1],
+		       dev->dev_addr[2], dev->dev_addr[3],
+		       dev->dev_addr[4], dev->dev_addr[5]);
 	
 		ioc->netdev = dev;
 
@@ -1451,11 +1491,13 @@ static int __init mpt_lan_init (void)
 {
 	show_mptmod_ver(LANAME, LANVER);
 
-	if ((LanCtx = mpt_register(lan_reply, MPTLAN_DRIVER,
-		    "lan_reply")) <= 0) {
+	if ((LanCtx = mpt_register(lan_reply, MPTLAN_DRIVER)) <= 0) {
 		printk (KERN_ERR MYNAM ": Failed to register with MPT base driver\n");
 		return -EBUSY;
 	}
+
+	/* Set the callback index to be used by driver core for turbo replies */
+	mpt_lan_index = LanCtx;
 
 	dlprintk((KERN_INFO MYNAM ": assigned context of %d\n", LanCtx));
 
@@ -1468,7 +1510,8 @@ static int __init mpt_lan_init (void)
 
 	dlprintk((KERN_INFO MYNAM ": Registered for IOC reset notifications\n"));
 	
-	mpt_device_driver_register(&mptlan_driver, MPTLAN_DRIVER);
+	if (mpt_device_driver_register(&mptlan_driver, MPTLAN_DRIVER))
+		dprintk((KERN_INFO MYNAM ": failed to register dd callbacks\n"));
 	return 0;
 }
 
@@ -1477,9 +1520,10 @@ static void __exit mpt_lan_exit(void)
 	mpt_device_driver_deregister(MPTLAN_DRIVER);
 	mpt_reset_deregister(LanCtx);
 
-	if (LanCtx) {
+	if (LanCtx >= 0) {
 		mpt_deregister(LanCtx);
-		LanCtx = MPT_MAX_PROTOCOL_DRIVERS;
+		LanCtx = -1;
+		mpt_lan_index = 0;
 	}
 }
 
@@ -1493,7 +1537,7 @@ mpt_lan_type_trans(struct sk_buff *skb, struct net_device *dev)
 	struct mpt_lan_ohdr *fch = (struct mpt_lan_ohdr *)skb->data;
 	struct fcllc *fcllc;
 
-	skb_reset_mac_header(skb);
+	skb->mac.raw = skb->data;
 	skb_pull(skb, sizeof(struct mpt_lan_ohdr));
 
 	if (fch->dtype == htons(0xffff)) {
@@ -1506,8 +1550,9 @@ mpt_lan_type_trans(struct sk_buff *skb, struct net_device *dev)
 
 		printk (KERN_WARNING MYNAM ": %s: WARNING - Broadcast swap F/W bug detected!\n",
 				NETDEV_PTR_TO_IOC_NAME_s(dev));
-		printk (KERN_WARNING MYNAM ": Please update sender @ MAC_addr = %pM\n",
-				fch->saddr);
+		printk (KERN_WARNING MYNAM ": Please update sender @ MAC_addr = %02x:%02x:%02x:%02x:%02x:%02x\n",
+				fch->saddr[0], fch->saddr[1], fch->saddr[2],
+				fch->saddr[3], fch->saddr[4], fch->saddr[5]);
 	}
 
 	if (*fch->daddr & 1) {
@@ -1525,6 +1570,80 @@ mpt_lan_type_trans(struct sk_buff *skb, struct net_device *dev)
 	}
 
 	fcllc = (struct fcllc *)skb->data;
+
+#ifdef QLOGIC_NAA_WORKAROUND
+{
+	u16 source_naa = fch->stype, found = 0;
+
+	/* Workaround for QLogic not following RFC 2625 in regards to the NAA
+	   value. */
+
+	if ((source_naa & 0xF000) == 0)
+		source_naa = swab16(source_naa);
+
+	if (fcllc->ethertype == htons(ETH_P_ARP))
+	    dlprintk ((KERN_INFO "mptlan/type_trans: got arp req/rep w/ naa of "
+		      "%04x.\n", source_naa));
+
+	if ((fcllc->ethertype == htons(ETH_P_ARP)) &&
+	   ((source_naa >> 12) !=  MPT_LAN_NAA_RFC2625)){
+		struct NAA_Hosed *nh, *prevnh;
+		int i;
+
+		dlprintk ((KERN_INFO "mptlan/type_trans: ARP Req/Rep from "
+			  "system with non-RFC 2625 NAA value (%04x).\n",
+			  source_naa));
+
+		write_lock_irq(&bad_naa_lock);
+		for (prevnh = nh = mpt_bad_naa; nh != NULL;
+		     prevnh=nh, nh=nh->next) {
+			if ((nh->ieee[0] == fch->saddr[0]) &&
+			    (nh->ieee[1] == fch->saddr[1]) &&
+			    (nh->ieee[2] == fch->saddr[2]) &&
+			    (nh->ieee[3] == fch->saddr[3]) &&
+			    (nh->ieee[4] == fch->saddr[4]) &&
+			    (nh->ieee[5] == fch->saddr[5])) {
+				found = 1;
+				dlprintk ((KERN_INFO "mptlan/type_trans: ARP Re"
+					 "q/Rep w/ bad NAA from system already"
+					 " in DB.\n"));
+				break;
+			}
+		}
+
+		if ((!found) && (nh == NULL)) {
+
+			nh = kmalloc(sizeof(struct NAA_Hosed), GFP_KERNEL);
+			dlprintk ((KERN_INFO "mptlan/type_trans: ARP Req/Rep w/"
+				 " bad NAA from system not yet in DB.\n"));
+
+			if (nh != NULL) {
+				nh->next = NULL;
+				if (!mpt_bad_naa)
+					mpt_bad_naa = nh;
+				if (prevnh)
+					prevnh->next = nh;
+
+				nh->NAA = source_naa; /* Set the S_NAA value. */
+				for (i = 0; i < FC_ALEN; i++)
+					nh->ieee[i] = fch->saddr[i];
+				dlprintk ((KERN_INFO "Got ARP from %02x:%02x:%02x:%02x:"
+					  "%02x:%02x with non-compliant S_NAA value.\n",
+					  fch->saddr[0], fch->saddr[1], fch->saddr[2],
+					  fch->saddr[3], fch->saddr[4],fch->saddr[5]));
+			} else {
+				printk (KERN_ERR "mptlan/type_trans: Unable to"
+					" kmalloc a NAA_Hosed struct.\n");
+			}
+		} else if (!found) {
+			printk (KERN_ERR "mptlan/type_trans: found not"
+				" set, but nh isn't null. Evil "
+				"funkiness abounds.\n");
+		}
+		write_unlock_irq(&bad_naa_lock);
+	}
+}
+#endif
 
 	/* Strip the SNAP header from ARP packets since we don't
 	 * pass them through to the 802.2/SNAP layers.

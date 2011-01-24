@@ -1,20 +1,47 @@
 /*
  * (C) P. Horton 2006
  */
-#include <linux/io.h>
+
+#include <linux/init.h>
+#include <linux/kernel.h>
+#include <linux/console.h>
 #include <linux/serial_reg.h>
+#include <asm/addrspace.h>
+#include <asm/mach-cobalt/cobalt.h>
 
-#include <cobalt.h>
-
-#define UART_BASE	((void __iomem *)CKSEG1ADDR(0x1c800000))
-
-void prom_putchar(char c)
+static void putchar(int c)
 {
-	if (cobalt_board_id <= COBALT_BRD_ID_QUBE1)
-		return;
+	if(c == '\n')
+		putchar('\r');
 
-	while (!(readb(UART_BASE + UART_LSR) & UART_LSR_THRE))
+	while(!(COBALT_UART[UART_LSR] & UART_LSR_THRE))
 		;
 
-	writeb(c, UART_BASE + UART_TX);
+	COBALT_UART[UART_TX] = c;
+}
+
+static void cons_write(struct console *c, const char *s, unsigned n)
+{
+	while(n-- && *s)
+		putchar(*s++);
+}
+
+static struct console cons_info =
+{
+	.name	= "uart",
+	.write	= cons_write,
+	.flags	= CON_PRINTBUFFER | CON_BOOT,
+	.index	= -1,
+};
+
+void __init cobalt_early_console(void)
+{
+	register_console(&cons_info);
+
+	printk("Cobalt: early console registered\n");
+}
+
+void __init disable_early_printk(void)
+{
+	unregister_console(&cons_info);
 }

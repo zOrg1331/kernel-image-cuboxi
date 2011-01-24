@@ -27,6 +27,7 @@
 
 #include <linux/kernel.h>
 #include <linux/init.h>
+#include <linux/sched.h>
 #include <linux/types.h>
 #include <linux/fcntl.h>
 #include <linux/interrupt.h>
@@ -45,6 +46,11 @@
 #include <net/bluetooth/hci_core.h>
 
 #include "hci_uart.h"
+
+#ifndef CONFIG_BT_HCIUART_DEBUG
+#undef  BT_DBG
+#define BT_DBG( A... )
+#endif
 
 #define VERSION "1.2"
 
@@ -102,7 +108,8 @@ static int h4_close(struct hci_uart *hu)
 
 	skb_queue_purge(&h4->txq);
 
-	kfree_skb(h4->rx_skb);
+	if (h4->rx_skb)
+		kfree_skb(h4->rx_skb);
 
 	hu->priv = NULL;
 	kfree(h4);
@@ -182,7 +189,7 @@ static int h4_recv(struct hci_uart *hu, void *data, int count)
 				continue;
 
 			case H4_W4_EVENT_HDR:
-				eh = hci_event_hdr(h4->rx_skb);
+				eh = (struct hci_event_hdr *) h4->rx_skb->data;
 
 				BT_DBG("Event header: evt 0x%2.2x plen %d", eh->evt, eh->plen);
 
@@ -190,7 +197,7 @@ static int h4_recv(struct hci_uart *hu, void *data, int count)
 				continue;
 
 			case H4_W4_ACL_HDR:
-				ah = hci_acl_hdr(h4->rx_skb);
+				ah = (struct hci_acl_hdr *) h4->rx_skb->data;
 				dlen = __le16_to_cpu(ah->dlen);
 
 				BT_DBG("ACL header: dlen %d", dlen);
@@ -199,7 +206,7 @@ static int h4_recv(struct hci_uart *hu, void *data, int count)
 				continue;
 
 			case H4_W4_SCO_HDR:
-				sh = hci_sco_hdr(h4->rx_skb);
+				sh = (struct hci_sco_hdr *) h4->rx_skb->data;
 
 				BT_DBG("SCO header: dlen %d", sh->dlen);
 

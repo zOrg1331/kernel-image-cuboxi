@@ -5,7 +5,7 @@
  *   This program is free software; you can redistribute it and/or modify
  *   it under the terms of the GNU General Public License as published by
  *   the Free Software Foundation, Inc., 53 Temple Place Ste 330,
- *   Boston MA 02111-1307, USA; either version 2 of the License, or
+ *   Bostom MA 02111-1307, USA; either version 2 of the License, or
  *   (at your option) any later version; incorporated herein by reference.
  *
  * ----------------------------------------------------------------------- */
@@ -16,9 +16,9 @@
  * MMX implementation of RAID-6 syndrome functions
  */
 
-#if defined(__i386__) && !defined(__arch_um__)
+#if defined(__i386__)
 
-#include <linux/raid/pq.h>
+#include "raid6.h"
 #include "raid6x86.h"
 
 /* Shared with raid6sse1.c */
@@ -30,8 +30,14 @@ const struct raid6_mmx_constants {
 
 static int raid6_have_mmx(void)
 {
+#ifdef __KERNEL__
 	/* Not really "boot_cpu" but "all_cpus" */
 	return boot_cpu_has(X86_FEATURE_MMX);
+#else
+	/* User space test code */
+	u32 features = cpuid_features();
+	return ( (features & (1<<23)) == (1<<23) );
+#endif
 }
 
 /*
@@ -42,12 +48,13 @@ static void raid6_mmx1_gen_syndrome(int disks, size_t bytes, void **ptrs)
 	u8 **dptr = (u8 **)ptrs;
 	u8 *p, *q;
 	int d, z, z0;
+	raid6_mmx_save_t sa;
 
 	z0 = disks - 3;		/* Highest data disk */
 	p = dptr[z0+1];		/* XOR parity */
 	q = dptr[z0+2];		/* RS syndrome */
 
-	kernel_fpu_begin();
+	raid6_before_mmx(&sa);
 
 	asm volatile("movq %0,%%mm0" : : "m" (raid6_mmx_constants.x1d));
 	asm volatile("pxor %mm5,%mm5");	/* Zero temp */
@@ -71,7 +78,7 @@ static void raid6_mmx1_gen_syndrome(int disks, size_t bytes, void **ptrs)
 		asm volatile("pxor %mm4,%mm4");
 	}
 
-	kernel_fpu_end();
+	raid6_after_mmx(&sa);
 }
 
 const struct raid6_calls raid6_mmxx1 = {
@@ -89,12 +96,13 @@ static void raid6_mmx2_gen_syndrome(int disks, size_t bytes, void **ptrs)
 	u8 **dptr = (u8 **)ptrs;
 	u8 *p, *q;
 	int d, z, z0;
+	raid6_mmx_save_t sa;
 
 	z0 = disks - 3;		/* Highest data disk */
 	p = dptr[z0+1];		/* XOR parity */
 	q = dptr[z0+2];		/* RS syndrome */
 
-	kernel_fpu_begin();
+	raid6_before_mmx(&sa);
 
 	asm volatile("movq %0,%%mm0" : : "m" (raid6_mmx_constants.x1d));
 	asm volatile("pxor %mm5,%mm5");	/* Zero temp */
@@ -129,7 +137,7 @@ static void raid6_mmx2_gen_syndrome(int disks, size_t bytes, void **ptrs)
 		asm volatile("movq %%mm6,%0" : "=m" (q[d+8]));
 	}
 
-	kernel_fpu_end();
+	raid6_after_mmx(&sa);
 }
 
 const struct raid6_calls raid6_mmxx2 = {

@@ -1,0 +1,63 @@
+From: Chris Lalancette <clalance@redhat.com>
+Date: Wed, 20 May 2009 09:16:05 +0200
+Subject: [x86] xen: fix local denial of service
+Message-id: 4A13AE35.4070804@redhat.com
+O-Subject: [RHEL5 PATCH]: Fix Xen local denial of service
+Bugzilla: 500951
+RH-Acked-by: Markus Armbruster <armbru@redhat.com>
+RH-Acked-by: Don Dutile <ddutile@redhat.com>
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+
+All,
+     With the current RHEL-5 kernel, it's possible for a rogue user application
+to cause a kernel crash.  If a 32-bit application tried to access a memory
+location between the scrit and ecrit symbols in the kernel, instead of a
+receiving SEGV it could instead crash the kernel.
+
+This happens because of insufficient checking in the hypervisor_callback path,
+where it was forgetting to check the CS during entry.  In order to fix this,
+I've backported linux-2.6.18-xen.hg c/s 870.  Note that the upstream changeset
+does much more than just this bugfix; it also renames some jump points and
+optimizes some of the code in critical_region_fixup.  Because we have quite
+different code in the critical_region_fixup path, and because I don't think we
+should necessarily optimize this at the same time, I elected to go with the
+minimal fix, which is attached.
+
+Tested by me on an i386 Xen guest.  Before the patch, running the reproducer in
+the BZ would crash the guest 50% of the time.  After the patch, running the
+reproducer in the BZ would always SEGV the application.
+
+This should solve BZ 500949.  Please review and ACK.
+
+--
+Chris Lalancette
+
+diff --git a/arch/i386/kernel/entry-xen.S b/arch/i386/kernel/entry-xen.S
+index 3e7ebd7..ea89966 100644
+--- a/arch/i386/kernel/entry-xen.S
++++ b/arch/i386/kernel/entry-xen.S
+@@ -735,11 +735,15 @@ ENTRY(hypervisor_callback)
+ 	pushl %eax
+ 	CFI_ADJUST_CFA_OFFSET 4
+ 	SAVE_ALL
++	testb $2,CS(%esp)
+ 	movl EIP(%esp),%eax
++	jnz  11f
+ 	cmpl $scrit,%eax
+-	jb   11f
++	jb   0f
+ 	cmpl $ecrit,%eax
+ 	jb   critical_region_fixup
++0:
++#ifdef CONFIG_XEN_SUPERVISOR_MODE_KERNEL
+ 	cmpl $sysexit_scrit,%eax
+ 	jb   11f
+ 	cmpl $sysexit_ecrit,%eax
+@@ -748,6 +752,7 @@ ENTRY(hypervisor_callback)
+ 	addl $0x34,%esp			# Remove cs...ebx from stack frame.
+ 	# this popped off new frame to reuse the old one, therefore no 
+ 	# CFI_ADJUST_CFA_OFFSET here
++#endif
+ 11:	push %esp
+ 	CFI_ADJUST_CFA_OFFSET 4
+ 	call evtchn_do_upcall

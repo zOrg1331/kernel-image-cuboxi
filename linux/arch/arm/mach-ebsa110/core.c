@@ -14,10 +14,10 @@
 #include <linux/interrupt.h>
 #include <linux/serial_8250.h>
 #include <linux/init.h>
-#include <linux/io.h>
 
-#include <mach/hardware.h>
+#include <asm/hardware.h>
 #include <asm/irq.h>
+#include <asm/io.h>
 #include <asm/setup.h>
 #include <asm/mach-types.h>
 #include <asm/pgtable.h>
@@ -45,7 +45,7 @@ static void ebsa110_unmask_irq(unsigned int irq)
 	__raw_writeb(1 << irq, IRQ_MSET);
 }
 
-static struct irq_chip ebsa110_irq_chip = {
+static struct irqchip ebsa110_irq_chip = {
 	.ack	= ebsa110_mask_irq,
 	.mask	= ebsa110_mask_irq,
 	.unmask = ebsa110_unmask_irq,
@@ -67,7 +67,7 @@ static void __init ebsa110_init_irq(void)
 
 	for (irq = 0; irq < NR_IRQS; irq++) {
 		set_irq_chip(irq, &ebsa110_irq_chip);
-		set_irq_handler(irq, handle_level_irq);
+		set_irq_handler(irq, do_level_IRQ);
 		set_irq_flags(irq, IRQF_VALID | IRQF_PROBE);
 	}
 }
@@ -174,9 +174,11 @@ static unsigned long ebsa110_gettimeoffset(void)
 }
 
 static irqreturn_t
-ebsa110_timer_interrupt(int irq, void *dev_id)
+ebsa110_timer_interrupt(int irq, void *dev_id, struct pt_regs *regs)
 {
 	u32 count;
+
+	write_seqlock(&xtime_lock);
 
 	/* latch and read timer 1 */
 	__raw_writeb(0x40, PIT_CTRL);
@@ -188,14 +190,16 @@ ebsa110_timer_interrupt(int irq, void *dev_id)
 	__raw_writeb(count & 0xff, PIT_T1);
 	__raw_writeb(count >> 8, PIT_T1);
 
-	timer_tick();
+	timer_tick(regs);
+
+	write_sequnlock(&xtime_lock);
 
 	return IRQ_HANDLED;
 }
 
 static struct irqaction ebsa110_timer_irq = {
 	.name		= "EBSA110 Timer Tick",
-	.flags		= IRQF_DISABLED | IRQF_TIMER | IRQF_IRQPOLL,
+	.flags		= IRQF_DISABLED | IRQF_TIMER,
 	.handler	= ebsa110_timer_interrupt,
 };
 

@@ -1,0 +1,127 @@
+From: Robert S Peterson <rpeterso@redhat.com>
+Date: Wed, 3 Nov 2010 22:10:47 -0400
+Subject: [fs] gfs2: flock (LOCK_EX|LOCK_NB) blocks
+Message-id: <1419418983.1367961288822247795.JavaMail.root@zmail06.collab.prod.int.phx2.redhat.com>
+Patchwork-id: 29022
+O-Subject: [PATCH GFS2 RHEL5.6 or 5.7] bz 648602 - GFS2:
+	flock(LOCK_EX|LOCK_NB) blocks
+Bugzilla: 648602
+RH-Acked-by: Abhijith Das <adas@redhat.com>
+RH-Acked-by: Steven Whitehouse <swhiteho@redhat.com>
+
+Hi,
+
+This patch fixes a GFS2 file system bug whereby flocks specified
+as non-blocking (LOCK_NB) were blocking anyway.  This is a RHEL5
+crosswrite from this upstream patch:
+
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=d5341a92416706808dc5cd847826f28c08063c8c
+
+The patch is already in RHEL6 and the RHEL6 patch can be found here:
+http://git.engineering.redhat.com/?p=users/arozansk/rhel6.git;a=commitdiff;h=01c531290d117ccb1b92c543aaf4e2dc829800e0
+
+This looks like a big change, but in reality its only a single line of actual
+code change, the rest is just moving a function to before its new caller.
+The "try" flag for glocks is a rather subtle and delicate setting since it
+requires that the state machine tries just hard enough to ensure that it has
+a good chance of getting the requested lock, but not so hard that the
+request can land up blocked behind another.
+
+The patch adds in an additional check which will fail any queued try
+locks if there is another request blocking the try lock request which
+is not granted and compatible, nor in progress already. The check is made
+only after all pending locks which may be granted have been granted.
+
+It has been tested by the customer in a test patch and found
+to fix the problem.
+
+I'm sure the customer would like this to go into 5.6 but I'm not sure if
+we're too late in the process.  I don't want to make QE restart their
+5.6 testing from the beginning.  If it doesn't make 5.6 we should probably
+z-stream it to 5.6.z.  The bugzilla has the 5.6 and 5.7 flags set, but
+not blocker yet.
+
+This is for bug #648602.
+
+Regards,
+
+Bob Peterson
+
+Signed-off-by: Bob Peterson <rpeterso@redhat.com>
+--
+ fs/gfs2/glock.c |   47 ++++++++++++++++++++++++-----------------------
+ 1 files changed, 24 insertions(+), 23 deletions(-)
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/fs/gfs2/glock.c b/fs/gfs2/glock.c
+index 444fb3d..b55d3c1 100644
+--- a/fs/gfs2/glock.c
++++ b/fs/gfs2/glock.c
+@@ -389,6 +389,29 @@ static void gfs2_holder_wake(struct gfs2_holder *gh)
+ }
+ 
+ /**
++ * do_error - Something unexpected has happened during a lock request
++ *
++ */
++
++static inline void do_error(struct gfs2_glock *gl, const int ret)
++{
++	struct gfs2_holder *gh, *tmp;
++
++	list_for_each_entry_safe(gh, tmp, &gl->gl_holders, gh_list) {
++		if (test_bit(HIF_HOLDER, &gh->gh_iflags))
++			continue;
++		if (ret & LM_OUT_ERROR)
++			gh->gh_error = -EIO;
++		else if (gh->gh_flags & (LM_FLAG_TRY | LM_FLAG_TRY_1CB))
++			gh->gh_error = GLR_TRYFAILED;
++		else
++			continue;
++		list_del_init(&gh->gh_list);
++		gfs2_holder_wake(gh);
++	}
++}
++
++/**
+  * do_promote - promote as many requests as possible on the current queue
+  * @gl: The glock
+  * 
+@@ -433,35 +456,13 @@ restart:
+ 		}
+ 		if (gh->gh_list.prev == &gl->gl_holders)
+ 			return 1;
++		do_error(gl, 0);
+ 		break;
+ 	}
+ 	return 0;
+ }
+ 
+ /**
+- * do_error - Something unexpected has happened during a lock request
+- *
+- */
+-
+-static inline void do_error(struct gfs2_glock *gl, const int ret)
+-{
+-	struct gfs2_holder *gh, *tmp;
+-
+-	list_for_each_entry_safe(gh, tmp, &gl->gl_holders, gh_list) {
+-		if (test_bit(HIF_HOLDER, &gh->gh_iflags))
+-			continue;
+-		if (ret & LM_OUT_ERROR)
+-			gh->gh_error = -EIO;
+-		else if (gh->gh_flags & (LM_FLAG_TRY | LM_FLAG_TRY_1CB))
+-			gh->gh_error = GLR_TRYFAILED;
+-		else
+-			continue;
+-		list_del_init(&gh->gh_list);
+-		gfs2_holder_wake(gh);
+-	}
+-}
+-
+-/**
+  * find_first_waiter - find the first gh that's waiting for the glock
+  * @gl: the glock
+  */

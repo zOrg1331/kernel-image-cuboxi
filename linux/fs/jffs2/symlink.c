@@ -1,13 +1,16 @@
 /*
  * JFFS2 -- Journalling Flash File System, Version 2.
  *
- * Copyright © 2001-2007 Red Hat, Inc.
+ * Copyright (C) 2001, 2002 Red Hat, Inc.
  *
  * Created by David Woodhouse <dwmw2@infradead.org>
  *
  * For licensing information, see the file 'LICENCE' in this directory.
  *
+ * $Id: symlink.c,v 1.19 2005/11/07 11:14:42 gleixner Exp $
+ *
  */
+
 
 #include <linux/kernel.h>
 #include <linux/slab.h>
@@ -17,11 +20,11 @@
 
 static void *jffs2_follow_link(struct dentry *dentry, struct nameidata *nd);
 
-const struct inode_operations jffs2_symlink_inode_operations =
+struct inode_operations jffs2_symlink_inode_operations =
 {
 	.readlink =	generic_readlink,
 	.follow_link =	jffs2_follow_link,
-	.check_acl =	jffs2_check_acl,
+	.permission =	jffs2_permission,
 	.setattr =	jffs2_setattr,
 	.setxattr =	jffs2_setxattr,
 	.getxattr =	jffs2_getxattr,
@@ -48,7 +51,7 @@ static void *jffs2_follow_link(struct dentry *dentry, struct nameidata *nd)
 	 */
 
 	if (!p) {
-		printk(KERN_ERR "jffs2_follow_link(): can't find symlink target\n");
+		printk(KERN_ERR "jffs2_follow_link(): can't find symlink taerget\n");
 		p = ERR_PTR(-EIO);
 	}
 	D1(printk(KERN_DEBUG "jffs2_follow_link(): target path is '%s'\n", (char *) f->target));

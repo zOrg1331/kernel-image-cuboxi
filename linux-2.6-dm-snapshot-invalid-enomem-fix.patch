@@ -1,0 +1,20 @@
+Date: Thu, 21 Sep 2006 16:45:29 +0100
+From: Alasdair G Kergon <agk@redhat.com>
+Subject: [RHEL5 PATCH 07/30] dm snapshot: fix invalidation ENOMEM
+
+Fix ENOMEM error sign.
+
+Index: linux-2.6.18.noarch/drivers/md/dm-snap.c
+===================================================================
+--- linux-2.6.18.noarch.orig/drivers/md/dm-snap.c
++++ linux-2.6.18.noarch/drivers/md/dm-snap.c
+@@ -1034,7 +1034,7 @@ static int __origin_write(struct list_he
+ 
+ 		pe = __find_pending_exception(snap, bio);
+ 		if (!pe) {
+-			__invalidate_snapshot(snap, pe, ENOMEM);
++			__invalidate_snapshot(snap, pe, -ENOMEM);
+ 			goto next_snapshot;
+ 		}
+ 
+

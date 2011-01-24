@@ -1,0 +1,54 @@
+From: Jeff Layton <jlayton@redhat.com>
+Date: Tue, 11 Dec 2007 10:05:48 -0500
+Subject: [fs] cifs: bad handling of EAGAIN on kernel_recvmsg
+Message-id: 1197385560-21991-4-git-send-email-jlayton@redhat.com
+O-Subject: [RHEL5.2 PATCH 03/15] BZ#336501: [CIFS] fix bad handling of EAGAIN error on kernel_recvmsg in cifs_demultiplex_thread
+Bugzilla: 336501
+
+When kernel_recvmsg returns -EAGAIN or -ERESTARTSYS, then
+cifs_demultiplex_thread sleeps for a bit and then tries the read again.
+When it does this, it's not zeroing out the length and that throws off
+the value of total_read. Fix it to zero out the length.
+
+Can cause memory corruption:
+If kernel_recvmsg returns an error and total_read is a large enough
+value, then we'll end up going through the loop again. total_read will
+be a bogus value, as will (pdu_length-total_read). When this happens we
+end up calling kernel_recvmsg with a bogus value (possibly larger than
+the current iov_len).
+
+At that point, memcpy_toiovec can overrun iov. It will start walking
+up the stack, casting other things that are there to struct iovecs
+(since it assumes that it's been passed an array of them). Any pointer
+on the stack at an address above the kvec is a candidate for corruption
+here.
+
+Many thanks to Ulrich Obergfell for pointing this out.
+
+Signed-off-by: Jeff Layton <jlayton@redhat.com>
+Signed-off-by: Steve French <sfrench@us.ibm.com>
+
+diff --git a/fs/cifs/connect.c b/fs/cifs/connect.c
+index 3a05c19..5f588a8 100644
+--- a/fs/cifs/connect.c
++++ b/fs/cifs/connect.c
+@@ -457,7 +457,10 @@ incomplete_rcv:
+ 			msleep(1); /* minimum sleep to prevent looping
+ 				allowing socket to clear and app threads to set
+ 				tcpStatus CifsNeedReconnect if server hung */
+-			continue;
++			if (pdu_length < 4)
++				goto incomplete_rcv;
++			else
++				continue;
+ 		} else if (length <= 0) {
+ 			if (server->tcpStatus == CifsNew) {
+ 				cFYI(1, ("tcp session abend after SMBnegprot"));
+@@ -594,6 +597,7 @@ incomplete_rcv:
+ 					      allowing socket to clear and app
+ 					      threads to set tcpStatus
+ 					      CifsNeedReconnect if server hung*/
++				length = 0;
+ 				continue;
+ 			} else if (length <= 0) {
+ 				cERROR(1, ("Received no data, expecting %d",

@@ -21,38 +21,33 @@ int dvb_usb_vp702x_debug;
 module_param_named(debug,dvb_usb_vp702x_debug, int, 0644);
 MODULE_PARM_DESC(debug, "set debugging level (1=info,xfer=2,rc=4 (or-able))." DVB_USB_DEBUG_STATUS);
 
-DVB_DEFINE_MOD_OPT_ADAPTER_NR(adapter_nr);
-
 struct vp702x_state {
-	int pid_filter_count;
-	int pid_filter_can_bypass;
-	u8  pid_filter_state;
-};
-
-struct vp702x_device_state {
-	u8 power_state;
+	u8 pid_table[17]; /* [16] controls the pid_table state */
 };
 
 /* check for mutex FIXME */
 int vp702x_usb_in_op(struct dvb_usb_device *d, u8 req, u16 value, u16 index, u8 *b, int blen)
 {
-	int ret = -1;
+	int ret = 0,try = 0;
 
+	while (ret >= 0 && ret != blen && try < 3) {
 		ret = usb_control_msg(d->udev,
 			usb_rcvctrlpipe(d->udev,0),
 			req,
 			USB_TYPE_VENDOR | USB_DIR_IN,
 			value,index,b,blen,
 			2000);
+		deb_info("reading number %d (ret: %d)\n",try,ret);
+		try++;
+	}
 
-	if (ret < 0) {
-		warn("usb in operation failed. (%d)", ret);
+	if (ret < 0 || ret != blen) {
+		warn("usb in operation failed.");
 		ret = -EIO;
 	} else
 		ret = 0;
 
-
-	deb_xfer("in: req. %02x, val: %04x, ind: %04x, buffer: ",req,value,index);
+	deb_xfer("in: req. %x, val: %x, ind: %x, buffer: ",req,value,index);
 	debug_dump(b,blen,deb_xfer);
 
 	return ret;
@@ -61,17 +56,16 @@ int vp702x_usb_in_op(struct dvb_usb_device *d, u8 req, u16 value, u16 index, u8 
 static int vp702x_usb_out_op(struct dvb_usb_device *d, u8 req, u16 value,
 			     u16 index, u8 *b, int blen)
 {
-	int ret;
-	deb_xfer("out: req. %02x, val: %04x, ind: %04x, buffer: ",req,value,index);
+	deb_xfer("out: req. %x, val: %x, ind: %x, buffer: ",req,value,index);
 	debug_dump(b,blen,deb_xfer);
 
-	if ((ret = usb_control_msg(d->udev,
+	if (usb_control_msg(d->udev,
 			usb_sndctrlpipe(d->udev,0),
 			req,
 			USB_TYPE_VENDOR | USB_DIR_OUT,
 			value,index,b,blen,
-			2000)) != blen) {
-		warn("usb out operation failed. (%d)",ret);
+			2000) != blen) {
+		warn("usb out operation failed.");
 		return -EIO;
 	} else
 		return 0;
@@ -84,10 +78,12 @@ int vp702x_usb_inout_op(struct dvb_usb_device *d, u8 *o, int olen, u8 *i, int il
 	if ((ret = mutex_lock_interruptible(&d->usb_mutex)))
 		return ret;
 
-	ret = vp702x_usb_out_op(d,REQUEST_OUT,0,0,o,olen);
+	if ((ret = vp702x_usb_out_op(d,REQUEST_OUT,0,0,o,olen)) < 0)
+		goto unlock;
 	msleep(msec);
 	ret = vp702x_usb_in_op(d,REQUEST_IN,0,0,i,ilen);
 
+unlock:
 	mutex_unlock(&d->usb_mutex);
 
 	return ret;
@@ -112,71 +108,35 @@ static int vp702x_usb_inout_cmd(struct dvb_usb_device *d, u8 cmd, u8 *o,
 	return ret;
 }
 
-static int vp702x_set_pld_mode(struct dvb_usb_adapter *adap, u8 bypass)
+static int vp702x_pid_filter(struct dvb_usb_device *d, int index, u16 pid, int onoff)
 {
-	u8 buf[16] = { 0 };
-	return vp702x_usb_in_op(adap->dev, 0xe0, (bypass << 8) | 0x0e, 0, buf, 16);
-}
+	struct vp702x_state *st = d->priv;
+	u8 buf[9];
 
-static int vp702x_set_pld_state(struct dvb_usb_adapter *adap, u8 state)
-{
-	u8 buf[16] = { 0 };
-	return vp702x_usb_in_op(adap->dev, 0xe0, (state << 8) | 0x0f, 0, buf, 16);
-}
-
-static int vp702x_set_pid(struct dvb_usb_adapter *adap, u16 pid, u8 id, int onoff)
-{
-	struct vp702x_state *st = adap->priv;
-	u8 buf[16] = { 0 };
-
-	if (onoff)
-		st->pid_filter_state |=  (1 << id);
-	else {
-		st->pid_filter_state &= ~(1 << id);
-		pid = 0xffff;
+	if (onoff) {
+		st->pid_table[16]   |=   1 << index;
+		st->pid_table[index*2]   = (pid >> 8) & 0xff;
+		st->pid_table[index*2+1] =  pid       & 0xff;
+	} else {
+		st->pid_table[16]   &= ~(1 << index);
+		st->pid_table[index*2] = st->pid_table[index*2+1] = 0;
 	}
 
-	id = 0x10 + id*2;
-
-	vp702x_set_pld_state(adap, st->pid_filter_state);
-	vp702x_usb_in_op(adap->dev, 0xe0, (((pid >> 8) & 0xff) << 8) | (id), 0, buf, 16);
-	vp702x_usb_in_op(adap->dev, 0xe0, (((pid     ) & 0xff) << 8) | (id+1), 0, buf, 16);
-	return 0;
+	return vp702x_usb_inout_cmd(d,SET_PID_FILTER,st->pid_table,17,buf,9,10);
 }
 
-
-static int vp702x_init_pid_filter(struct dvb_usb_adapter *adap)
+static int vp702x_power_ctrl(struct dvb_usb_device *d, int onoff)
 {
-	struct vp702x_state *st = adap->priv;
-	int i;
-	u8 b[10] = { 0 };
+	vp702x_usb_in_op(d,RESET_TUNER,0,0,NULL,0);
 
-	st->pid_filter_count = 8;
-	st->pid_filter_can_bypass = 1;
-	st->pid_filter_state = 0x00;
-
-	vp702x_set_pld_mode(adap, 1); // bypass
-
-	for (i = 0; i < st->pid_filter_count; i++)
-		vp702x_set_pid(adap, 0xffff, i, 1);
-
-	vp702x_usb_in_op(adap->dev, 0xb5, 3, 0, b, 10);
-	vp702x_usb_in_op(adap->dev, 0xb5, 0, 0, b, 10);
-	vp702x_usb_in_op(adap->dev, 0xb5, 1, 0, b, 10);
-
-	//vp702x_set_pld_mode(d, 0); // filter
-	return 0;
-}
-
-static int vp702x_streaming_ctrl(struct dvb_usb_adapter *adap, int onoff)
-{
-	return 0;
+	vp702x_usb_in_op(d,SET_TUNER_POWER_REQ,0,onoff,NULL,0);
+	return vp702x_usb_in_op(d,SET_TUNER_POWER_REQ,0,onoff,NULL,0);
 }
 
 /* keys for the enclosed remote control */
 static struct dvb_usb_rc_key vp702x_rc_keys[] = {
-	{ 0x0001, KEY_1 },
-	{ 0x0002, KEY_2 },
+	{ 0x00, 0x01, KEY_1 },
+	{ 0x00, 0x02, KEY_2 },
 };
 
 /* remote control stuff (does not work with my box) */
@@ -198,7 +158,7 @@ static int vp702x_rc_query(struct dvb_usb_device *d, u32 *event, int *state)
 	}
 
 	for (i = 0; i < ARRAY_SIZE(vp702x_rc_keys); i++)
-		if (rc5_custom(&vp702x_rc_keys[i]) == key[1]) {
+		if (vp702x_rc_keys[i].custom == key[1]) {
 			*state = REMOTE_KEY_PRESSED;
 			*event = vp702x_rc_keys[i].event;
 			break;
@@ -206,81 +166,61 @@ static int vp702x_rc_query(struct dvb_usb_device *d, u32 *event, int *state)
 	return 0;
 }
 
-
 static int vp702x_read_mac_addr(struct dvb_usb_device *d,u8 mac[6])
 {
-	u8 i;
-	for (i = 6; i < 12; i++)
-		vp702x_usb_in_op(d, READ_EEPROM_REQ, i, 1, &mac[i - 6], 1);
+	u8 macb[9];
+	if (vp702x_usb_inout_cmd(d, GET_MAC_ADDRESS, NULL, 0, macb, 9, 10))
+		return -EIO;
+	memcpy(mac,&macb[3],6);
 	return 0;
 }
 
-static int vp702x_frontend_attach(struct dvb_usb_adapter *adap)
+static int vp702x_frontend_attach(struct dvb_usb_device *d)
 {
-	u8 buf[10] = { 0 };
+	u8 buf[9] = { 0 };
 
-	vp702x_usb_out_op(adap->dev, SET_TUNER_POWER_REQ, 0, 7, NULL, 0);
-
-	if (vp702x_usb_inout_cmd(adap->dev, GET_SYSTEM_STRING, NULL, 0, buf, 10, 10))
+	if (vp702x_usb_inout_cmd(d, GET_SYSTEM_STRING, NULL, 0, buf, 9, 10))
 		return -EIO;
 
-	buf[9] = '\0';
+	buf[8] = '\0';
 	info("system string: %s",&buf[1]);
 
-	vp702x_init_pid_filter(adap);
-
-	adap->fe = vp702x_fe_attach(adap->dev);
-	vp702x_usb_out_op(adap->dev, SET_TUNER_POWER_REQ, 1, 7, NULL, 0);
-
+	d->fe = vp702x_fe_attach(d);
 	return 0;
 }
 
-static struct dvb_usb_device_properties vp702x_properties;
+static struct dvb_usb_properties vp702x_properties;
 
 static int vp702x_usb_probe(struct usb_interface *intf,
 		const struct usb_device_id *id)
 {
-	return dvb_usb_device_init(intf, &vp702x_properties,
-				   THIS_MODULE, NULL, adapter_nr);
+	struct usb_device *udev = interface_to_usbdev(intf);
+
+	usb_clear_halt(udev,usb_sndctrlpipe(udev,0));
+	usb_clear_halt(udev,usb_rcvctrlpipe(udev,0));
+
+	return dvb_usb_device_init(intf,&vp702x_properties,THIS_MODULE,NULL);
 }
 
 static struct usb_device_id vp702x_usb_table [] = {
 	    { USB_DEVICE(USB_VID_VISIONPLUS, USB_PID_TWINHAN_VP7021_COLD) },
-//	    { USB_DEVICE(USB_VID_VISIONPLUS, USB_PID_TWINHAN_VP7020_COLD) },
-//	    { USB_DEVICE(USB_VID_VISIONPLUS, USB_PID_TWINHAN_VP7020_WARM) },
+	    { USB_DEVICE(USB_VID_VISIONPLUS, USB_PID_TWINHAN_VP7021_WARM) },
+	    { USB_DEVICE(USB_VID_VISIONPLUS, USB_PID_TWINHAN_VP7020_COLD) },
+	    { USB_DEVICE(USB_VID_VISIONPLUS, USB_PID_TWINHAN_VP7020_WARM) },
 	    { 0 },
 };
 MODULE_DEVICE_TABLE(usb, vp702x_usb_table);
 
-static struct dvb_usb_device_properties vp702x_properties = {
+static struct dvb_usb_properties vp702x_properties = {
+	.caps = DVB_USB_HAS_PID_FILTER | DVB_USB_NEED_PID_FILTERING,
+	.pid_filter_count = 8, /* !!! */
+
 	.usb_ctrl = CYPRESS_FX2,
-	.firmware            = "dvb-usb-vp702x-02.fw",
-	.no_reconnect        = 1,
+	.firmware = "dvb-usb-vp702x-01.fw",
 
-	.size_of_priv     = sizeof(struct vp702x_device_state),
-
-	.num_adapters = 1,
-	.adapter = {
-		{
-			.caps             = DVB_USB_ADAP_RECEIVES_204_BYTE_TS,
-
-			.streaming_ctrl   = vp702x_streaming_ctrl,
-			.frontend_attach  = vp702x_frontend_attach,
-
-			/* parameter for the MPEG2-data transfer */
-			.stream = {
-				.type = USB_BULK,
-				.count = 10,
-				.endpoint = 0x02,
-				.u = {
-					.bulk = {
-						.buffersize = 4096,
-					}
-				}
-			},
-			.size_of_priv     = sizeof(struct vp702x_state),
-		}
-	},
+	.pid_filter       = vp702x_pid_filter,
+	.power_ctrl       = vp702x_power_ctrl,
+	.frontend_attach  = vp702x_frontend_attach,
 	.read_mac_address = vp702x_read_mac_addr,
 
 	.rc_key_map       = vp702x_rc_keys,
@@ -288,23 +228,37 @@ static struct dvb_usb_device_properties vp702x_properties = {
 	.rc_interval      = 400,
 	.rc_query         = vp702x_rc_query,
 
-	.num_device_descs = 1,
+	.size_of_priv     = sizeof(struct vp702x_state),
+
+	/* parameter for the MPEG2-data transfer */
+	.urb = {
+		.type = DVB_USB_BULK,
+		.count = 7,
+		.endpoint = 0x02,
+		.u = {
+			.bulk = {
+				.buffersize = 4096,
+			}
+		}
+	},
+
+	.num_device_descs = 2,
 	.devices = {
 		{ .name = "TwinhanDTV StarBox DVB-S USB2.0 (VP7021)",
 		  .cold_ids = { &vp702x_usb_table[0], NULL },
-		  .warm_ids = { NULL },
+		  .warm_ids = { &vp702x_usb_table[1], NULL },
 		},
-/*		{ .name = "TwinhanDTV StarBox DVB-S USB2.0 (VP7020)",
+		{ .name = "TwinhanDTV StarBox DVB-S USB2.0 (VP7020)",
 		  .cold_ids = { &vp702x_usb_table[2], NULL },
 		  .warm_ids = { &vp702x_usb_table[3], NULL },
 		},
-*/		{ NULL },
+		{ 0 },
 	}
 };
 
 /* usb specific object needed to register this driver with the usb subsystem */
 static struct usb_driver vp702x_usb_driver = {
-	.name		= "dvb_usb_vp702x",
+	.name		= "dvb-usb-vp702x",
 	.probe 		= vp702x_usb_probe,
 	.disconnect = dvb_usb_device_exit,
 	.id_table 	= vp702x_usb_table,
@@ -333,5 +287,5 @@ module_exit(vp702x_usb_module_exit);
 
 MODULE_AUTHOR("Patrick Boettcher <patrick.boettcher@desy.de>");
 MODULE_DESCRIPTION("Driver for Twinhan StarBox DVB-S USB2.0 and clones");
-MODULE_VERSION("1.0");
+MODULE_VERSION("1.0-alpha");
 MODULE_LICENSE("GPL");

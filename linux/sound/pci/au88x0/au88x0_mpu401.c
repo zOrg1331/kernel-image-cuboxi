@@ -1,5 +1,5 @@
 /*
- *  Copyright (c) by Jaroslav Kysela <perex@perex.cz>
+ *  Copyright (c) by Jaroslav Kysela <perex@suse.cz>
  *  Routines for control of MPU-401 in UART mode
  *
  *   Modified for the Aureal Vortex based Soundcards
@@ -21,6 +21,7 @@
  *
  */
 
+#include <sound/driver.h>
 #include <linux/time.h>
 #include <linux/init.h>
 #include <sound/core.h>

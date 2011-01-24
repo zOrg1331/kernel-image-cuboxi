@@ -1,4 +1,6 @@
 /*
+ * $Id: spaceball.c,v 1.17 2002/01/22 20:29:03 vojtech Exp $
+ *
  *  Copyright (c) 1999-2001 Vojtech Pavlik
  *
  *  Based on the work of:
@@ -80,13 +82,15 @@ struct spaceball {
  * SpaceBall.
  */
 
-static void spaceball_process_packet(struct spaceball* spaceball)
+static void spaceball_process_packet(struct spaceball* spaceball, struct pt_regs *regs)
 {
 	struct input_dev *dev = spaceball->dev;
 	unsigned char *data = spaceball->data;
 	int i;
 
 	if (spaceball->idx < 2) return;
+
+	input_regs(dev, regs);
 
 	switch (spaceball->data[0]) {
 
@@ -147,13 +151,13 @@ static void spaceball_process_packet(struct spaceball* spaceball)
  */
 
 static irqreturn_t spaceball_interrupt(struct serio *serio,
-		unsigned char data, unsigned int flags)
+		unsigned char data, unsigned int flags, struct pt_regs *regs)
 {
 	struct spaceball *spaceball = serio_get_drvdata(serio);
 
 	switch (data) {
 		case 0xd:
-			spaceball_process_packet(spaceball);
+			spaceball_process_packet(spaceball, regs);
 			spaceball->idx = 0;
 			spaceball->escape = 0;
 			break;
@@ -213,7 +217,7 @@ static int spaceball_connect(struct serio *serio, struct serio_driver *drv)
 	spaceball = kmalloc(sizeof(struct spaceball), GFP_KERNEL);
 	input_dev = input_allocate_device();
 	if (!spaceball || !input_dev)
-		goto fail1;
+		goto fail;
 
 	spaceball->dev = input_dev;
 	snprintf(spaceball->phys, sizeof(spaceball->phys), "%s/input0", serio->phys);
@@ -224,25 +228,21 @@ static int spaceball_connect(struct serio *serio, struct serio_driver *drv)
 	input_dev->id.vendor = SERIO_SPACEBALL;
 	input_dev->id.product = id;
 	input_dev->id.version = 0x0100;
-	input_dev->dev.parent = &serio->dev;
+	input_dev->cdev.dev = &serio->dev;
+	input_dev->private = spaceball;
 
-	input_dev->evbit[0] = BIT_MASK(EV_KEY) | BIT_MASK(EV_ABS);
+	input_dev->evbit[0] = BIT(EV_KEY) | BIT(EV_ABS);
 
 	switch (id) {
 		case SPACEBALL_4000FLX:
 		case SPACEBALL_4000FLX_L:
-			input_dev->keybit[BIT_WORD(BTN_0)] |= BIT_MASK(BTN_9);
-			input_dev->keybit[BIT_WORD(BTN_A)] |= BIT_MASK(BTN_A) |
-				BIT_MASK(BTN_B) | BIT_MASK(BTN_C) |
-				BIT_MASK(BTN_MODE);
+			input_dev->keybit[LONG(BTN_0)] |= BIT(BTN_9);
+			input_dev->keybit[LONG(BTN_A)] |= BIT(BTN_A) | BIT(BTN_B) | BIT(BTN_C) | BIT(BTN_MODE);
 		default:
-			input_dev->keybit[BIT_WORD(BTN_0)] |= BIT_MASK(BTN_2) |
-				BIT_MASK(BTN_3) | BIT_MASK(BTN_4) |
-				BIT_MASK(BTN_5) | BIT_MASK(BTN_6) |
-				BIT_MASK(BTN_7) | BIT_MASK(BTN_8);
+			input_dev->keybit[LONG(BTN_0)] |= BIT(BTN_2) | BIT(BTN_3) | BIT(BTN_4)
+				| BIT(BTN_5) | BIT(BTN_6) | BIT(BTN_7) | BIT(BTN_8);
 		case SPACEBALL_3003C:
-			input_dev->keybit[BIT_WORD(BTN_0)] |= BIT_MASK(BTN_1) |
-				BIT_MASK(BTN_8);
+			input_dev->keybit[LONG(BTN_0)] |= BIT(BTN_1) | BIT(BTN_8);
 	}
 
 	for (i = 0; i < 3; i++) {
@@ -254,17 +254,13 @@ static int spaceball_connect(struct serio *serio, struct serio_driver *drv)
 
 	err = serio_open(serio, drv);
 	if (err)
-		goto fail2;
+		goto fail;
 
-	err = input_register_device(spaceball->dev);
-	if (err)
-		goto fail3;
-
+	input_register_device(spaceball->dev);
 	return 0;
 
- fail3:	serio_close(serio);
- fail2:	serio_set_drvdata(serio, NULL);
- fail1:	input_free_device(input_dev);
+ fail:	serio_set_drvdata(serio, NULL);
+	input_free_device(input_dev);
 	kfree(spaceball);
 	return err;
 }
@@ -302,7 +298,8 @@ static struct serio_driver spaceball_drv = {
 
 static int __init spaceball_init(void)
 {
-	return serio_register_driver(&spaceball_drv);
+	serio_register_driver(&spaceball_drv);
+	return 0;
 }
 
 static void __exit spaceball_exit(void)

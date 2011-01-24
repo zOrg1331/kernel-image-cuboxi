@@ -1,0 +1,37 @@
+From: Jeff Layton <jlayton@redhat.com>
+Date: Thu, 19 Nov 2009 14:38:30 -0500
+Subject: [cifs] add addr= mount option alias for ip=
+Message-id: <1258641517-20756-4-git-send-email-jlayton@redhat.com>
+Patchwork-id: 21430
+O-Subject: [RHEL5.5 PATCH 03/10] BZ#500838: cifs: add addr= mount option alias
+	for ip=
+Bugzilla: 500838
+RH-Acked-by: Peter Staubach <staubach@redhat.com>
+
+(Upstream commit 58f7f68f228c3aba2ba4468d92e2cec35724ba2e)
+
+When you look in /proc/mounts, the address of the server gets displayed
+as "addr=". That's really a better option to use anyway since it's more
+generic. What if we eventually want to support non-IP transports? It
+also makes CIFS option consistent with the NFS option of the same name.
+
+Begin the migration to that option name by adding an alias for ip=
+called addr=.
+
+Signed-off-by: Jeff Layton <jlayton@redhat.com>
+Signed-off-by: Steve French <sfrench@us.ibm.com>
+
+diff --git a/fs/cifs/connect.c b/fs/cifs/connect.c
+index d4eb872..f2dc067 100644
+--- a/fs/cifs/connect.c
++++ b/fs/cifs/connect.c
+@@ -1012,7 +1012,8 @@ cifs_parse_mount_options(char *options, const char *devname,
+ 				}
+ 				strcpy(vol->password, value);
+ 			}
+-		} else if (strnicmp(data, "ip", 2) == 0) {
++		} else if (!strnicmp(data, "ip", 2) ||
++			   !strnicmp(data, "addr", 4)) {
+ 			if (!value || !*value) {
+ 				vol->UNCip = NULL;
+ 			} else if (strnlen(value, 35) < 35) {

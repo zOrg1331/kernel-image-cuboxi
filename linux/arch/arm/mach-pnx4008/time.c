@@ -11,6 +11,7 @@
  * or implied.
  */
 
+#include <linux/config.h>
 #include <linux/kernel.h>
 #include <linux/init.h>
 #include <linux/delay.h>
@@ -22,10 +23,10 @@
 #include <linux/time.h>
 #include <linux/timex.h>
 #include <linux/irq.h>
-#include <linux/io.h>
 
 #include <asm/system.h>
-#include <mach/hardware.h>
+#include <asm/hardware.h>
+#include <asm/io.h>
 #include <asm/leds.h>
 #include <asm/mach/time.h>
 #include <asm/errno.h>
@@ -47,12 +48,15 @@ static unsigned long pnx4008_gettimeoffset(void)
 /*!
  * IRQ handler for the timer
  */
-static irqreturn_t pnx4008_timer_interrupt(int irq, void *dev_id)
+static irqreturn_t pnx4008_timer_interrupt(int irq, void *dev_id,
+					   struct pt_regs *regs)
 {
 	if (__raw_readl(HSTIM_INT) & MATCH0_INT) {
 
+		write_seqlock(&xtime_lock);
+
 		do {
-			timer_tick();
+			timer_tick(regs);
 
 			/*
 			 * this algorithm takes care of possible delay
@@ -71,6 +75,8 @@ static irqreturn_t pnx4008_timer_interrupt(int irq, void *dev_id)
 		} while ((signed)
 			 (__raw_readl(HSTIM_MATCH0) -
 			  __raw_readl(HSTIM_COUNTER)) < 0);
+
+		write_sequnlock(&xtime_lock);
 	}
 
 	return IRQ_HANDLED;
@@ -78,7 +84,7 @@ static irqreturn_t pnx4008_timer_interrupt(int irq, void *dev_id)
 
 static struct irqaction pnx4008_timer_irq = {
 	.name = "PNX4008 Tick Timer",
-	.flags = IRQF_DISABLED | IRQF_TIMER | IRQF_IRQPOLL,
+	.flags = IRQF_DISABLED | IRQF_TIMER,
 	.handler = pnx4008_timer_interrupt
 };
 

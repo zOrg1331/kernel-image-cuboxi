@@ -1,0 +1,82 @@
+From: Jeff Layton <jlayton@redhat.com>
+Date: Thu, 24 Jul 2008 15:47:29 -0400
+Subject: [fs] vfs: wrong error code on interrupted close syscalls
+Message-id: 1216928849-14413-1-git-send-email-jlayton@redhat.com
+O-Subject: [RHEL5.3 PATCH] BZ#455729: VFS: fix wrong error code on interrupted close syscalls
+Bugzilla: 455729
+RH-Acked-by: Josef Bacik <jbacik@redhat.com>
+RH-Acked-by: Peter Staubach <staubach@redhat.com>
+
+While working on a NFS performance problem for a large customer, we
+noticed that signaling a process that's hung in a close() call on
+file on an NFS mount mounted with -o intr can cause the close to
+return -EBADF.
+
+The patch below is already in RHEL4, but never made it into RHEL5
+for some reason. Ernie's description of the problem is as good as
+any that I could make. I've tested this patch with the reproducer
+I have for this issue and it fixes the problem.
+
+------------[snip]-------------
+
+>From upstream commit ee731f4f7880b09ca147008ab46ad4e5f72cb8bf
+
+The problem is that close() syscalls can call a file system's flush
+handler, which in turn might sleep interruptibly and ultimately pass back
+an -ERESTARTSYS return value.  This happens for files backed by an
+interruptible NFS mount under nfs_file_flush() when a large file has just
+been written and nfs_wait_bit_interruptible() detects that there is a
+signal pending.
+
+I have a test case where the "strace" command is used to attach to a
+process sleeping in such a close().  Since the SIGSTOP is forced onto the
+victim process (removing it from the thread's "blocked" mask in
+force_sig_info()), the RPC wait is interrupted and the close() is
+terminated early.
+
+But the file table entry has already been cleared before the flush handler
+was called.  Thus, when the syscall is restarted, the file descriptor
+appears closed and an EBADF error is returned (which is wrong).  What's
+worse, there is the hypothetical case where another thread of a
+multi-threaded application might have reused the file descriptor, in which
+case that file would be mistakenly closed.
+
+The bottom line is that close() syscalls are not restartable, and thus
+-ERESTARTSYS return values should be mapped to -EINTR.  This is consistent
+with the close(2) manual page.  The fix is below.
+
+Signed-off-by: Ernie Petrides <petrides@redhat.com>
+Cc: Roland McGrath <roland@redhat.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+Signed-off-by: Linus Torvalds <torvalds@osdl.org>
+
+diff --git a/fs/open.c b/fs/open.c
+index 39ee034..793eb22 100644
+--- a/fs/open.c
++++ b/fs/open.c
+@@ -1176,6 +1176,7 @@ asmlinkage long sys_close(unsigned int fd)
+ 	struct file * filp;
+ 	struct files_struct *files = current->files;
+ 	struct fdtable *fdt;
++	int retval;
+ 
+ 	spin_lock(&files->file_lock);
+ 	fdt = files_fdtable(files);
+@@ -1188,7 +1189,16 @@ asmlinkage long sys_close(unsigned int fd)
+ 	FD_CLR(fd, fdt->close_on_exec);
+ 	__put_unused_fd(files, fd);
+ 	spin_unlock(&files->file_lock);
+-	return filp_close(filp, files);
++	retval = filp_close(filp, files);
++
++	/* can't restart close syscall because file table entry was cleared */
++	if (unlikely(retval == -ERESTARTSYS ||
++		     retval == -ERESTARTNOINTR ||
++		     retval == -ERESTARTNOHAND ||
++		     retval == -ERESTART_RESTARTBLOCK))
++		retval = -EINTR;
++
++	return retval;
+ 
+ out_unlock:
+ 	spin_unlock(&files->file_lock);

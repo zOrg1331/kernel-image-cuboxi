@@ -1,0 +1,88 @@
+From: Aristeu Rozanski <arozansk@redhat.com>
+Date: Fri, 14 Sep 2007 09:05:49 -0400
+Subject: [input] psmouse: add support to 'cortps' protocol
+Message-id: 20070914130549.GB23728@redhat.com
+O-Subject: [RHEL5.2 PATCH] psmouse: add support to 'cortps' protocol
+Bugzilla: 248759
+
+https://bugzilla.redhat.com/show_bug.cgi?id=248759
+
+This patch adds support to 'cortps' protocol which supports Cortron PS/2
+Trackballs. These trackballs have 4 buttons and the fourth button is
+reported in a non standard way. They also don't have any detection
+protocol, so you have to manually set the protocol writting the
+'protocol' sysfs file:
+	echo -n "cortps" > /sys/devices/platform/i8042/serio$NUM/protocol
+
+Upstream: aea6a46122a0ce65a831fd93cac6d2084ac666f9
+
+Tested by Chris Williams
+
+Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+
+diff --git a/drivers/input/mouse/psmouse-base.c b/drivers/input/mouse/psmouse-base.c
+index 07b0604..4300ac6 100644
+--- a/drivers/input/mouse/psmouse-base.c
++++ b/drivers/input/mouse/psmouse-base.c
+@@ -185,6 +185,15 @@ static psmouse_ret_t psmouse_process_byte(struct psmouse *psmouse, struct pt_reg
+ 	}
+ 
+ /*
++ * Cortron PS2 Trackball reports SIDE button on the 4th bit of the first
++ * byte.
++ */
++	if (psmouse->type == PSMOUSE_CORTRON) {
++		input_report_key(dev, BTN_SIDE, (packet[0] >> 3) & 1);
++		packet[0] |= 0x08;
++	}
++
++/*
+  * Generic PS/2 Mouse
+  */
+ 
+@@ -544,6 +553,20 @@ static int ps2bare_detect(struct psmouse *psmouse, int set_properties)
+ 	return 0;
+ }
+ 
++/*
++ * Cortron PS/2 protocol detection. There's no special way to detect it, so it
++ * must be forced by sysfs protocol writing.
++ */
++static int cortron_detect(struct psmouse *psmouse, int set_properties)
++{
++	if (set_properties) {
++		psmouse->vendor = "Cortron";
++		psmouse->name = "PS/2 Trackball";
++		set_bit(BTN_SIDE, psmouse->dev->keybit);
++	}
++
++	return 0;
++}
+ 
+ /*
+  * psmouse_extensions() probes for any extensions to the basic PS/2 protocol
+@@ -718,6 +741,12 @@ static struct psmouse_protocol psmouse_protocols[] = {
+ 		.alias		= "trackpoint",
+ 		.detect		= trackpoint_detect,
+ 	},
++ 	{
++		.type		= PSMOUSE_CORTRON,
++		.name		= "CortronPS/2",
++		.alias		= "cortps",
++		.detect		= cortron_detect,
++	},
+ 	{
+ 		.type		= PSMOUSE_AUTO,
+ 		.name		= "auto",
+diff --git a/drivers/input/mouse/psmouse.h b/drivers/input/mouse/psmouse.h
+index 4d9107f..2e191dd 100644
+--- a/drivers/input/mouse/psmouse.h
++++ b/drivers/input/mouse/psmouse.h
+@@ -86,6 +86,7 @@ enum psmouse_type {
+ 	PSMOUSE_ALPS,
+ 	PSMOUSE_LIFEBOOK,
+ 	PSMOUSE_TRACKPOINT,
++	PSMOUSE_CORTRON,
+ 	PSMOUSE_AUTO		/* This one should always be last */
+ };
+ 

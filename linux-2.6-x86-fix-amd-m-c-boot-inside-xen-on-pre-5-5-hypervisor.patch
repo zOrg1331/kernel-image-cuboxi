@@ -1,0 +1,95 @@
+From: Paolo Bonzini <pbonzini@redhat.com>
+Date: Mon, 1 Feb 2010 12:03:05 -0500
+Subject: [x86] fix AMD M-C boot inside xen on pre-5.5 hypervisor
+Message-id: <1265025785-32255-1-git-send-email-pbonzini@redhat.com>
+Patchwork-id: 23011
+O-Subject: [RHEL5.5 PATCH v2] x86: Fix AMD Magny-Cours boot inside xen on
+	pre-5.5 hypervisor
+Bugzilla: 560013
+RH-Acked-by: Andrew Jones <drjones@redhat.com>
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+RH-Acked-by: Don Dutile <ddutile@redhat.com>
+
+Bugzilla: https://bugzilla.redhat.com/show_bug.cgi?id=560013
+
+Upstream: not present (see below)
+
+Brew build: https://brewweb.devel.redhat.com/taskinfo?taskID=2235184
+
+This patch checks for the presence of an AMD NorthBridge before accessing
+the NodeID MSR.
+
+Checking for the NorthBridge this way was considered hackish and so it
+was applied only to 5.4.z.  For 5.5 a hypervisor fix was used instead,
+which masked to guests the presence of the MSR.  Unfortunately, the two
+patches fix two different scenarios.  Patching the hypervisor fixes
+non-Magny-Cours-aware guests; instead, patching the kernel lets the
+system boot even on non-Magny-Cours-aware hypervisors.
+
+This is because while the code already looks for the presence of the
+MSR in CPUID, when the hypervisor is not from RHEL 5.5 as well Xen
+will set the NodeIDMSR bit and still inject a #GP on the corresponding
+rdmsr.  So now there is a regression in that if the hypervisor is kept
+to 5.4, 5.4.z will boot but 5.5 won't.
+
+This patch fixes the bug by adding the kernel workaround to 5.5 as well.
+It is the same as 5.4.z except for context.  Tested by me on amd-dinar-03.
+
+Upstream doesn't care so much about upgrade scenarios, and Magny-Cours
+systems are very very new, so I didn't post the patch there.
+
+v1->v2: fix typo
+
+Signed-off-by: Paolo Bonzini <pbonzini@redhat.com>
+Cc: Andrew Jones <drjones@redhat.com>
+
+diff --git a/arch/i386/kernel/cpu/amd.c b/arch/i386/kernel/cpu/amd.c
+index b4c1d47..c201a15 100644
+--- a/arch/i386/kernel/cpu/amd.c
++++ b/arch/i386/kernel/cpu/amd.c
+@@ -4,6 +4,7 @@
+ #include <asm/io.h>
+ #include <asm/processor.h>
+ #include <asm/pci-direct.h>
++#include <asm/k8.h>
+ 
+ #include "cpu.h"
+ 
+@@ -43,6 +44,12 @@ static void __cpuinit amd_fixup_dcm(struct cpuinfo_x86 *c)
+ 	if (cpu_has(c, X86_FEATURE_AMD_DCM))
+ 		return;
+ 
++	/* proceed only if there is a valid AMD northbridge
++	 * (not in virtualized environments!)
++	 */
++	if (!early_is_k8_nb(read_pci_config(0, 24, 3, 0x00)))
++		return;
++
+ 	rdmsrl(0xc001100c, value);
+ 
+ 	nodes = ((value >> 3) & 7) + 1;
+diff --git a/arch/x86_64/kernel/setup.c b/arch/x86_64/kernel/setup.c
+index dacb23a..ad74550 100644
+--- a/arch/x86_64/kernel/setup.c
++++ b/arch/x86_64/kernel/setup.c
+@@ -69,6 +69,7 @@
+ #include <asm/generic-hypervisor.h>
+ #include <asm/pci-direct.h>
+ #include <asm/kvm_para.h>
++#include <asm/k8.h>
+ 
+ /*
+  * Machine setup..
+@@ -823,6 +824,12 @@ static void __cpuinit amd_fixup_dcm(struct cpuinfo_x86 *c)
+ 	if (cpu_has(c, X86_FEATURE_AMD_DCM))
+ 		return;
+ 
++	/* proceed only if there is a valid AMD northbridge
++	 * (not in virtualized environments!)
++	 */
++	if (!early_is_k8_nb(read_pci_config(0, 24, 3, 0x00)))
++		return;
++
+ 	rdmsrl(0xc001100c, value);
+ 
+ 	nodes = ((value >> 3) & 7) + 1;

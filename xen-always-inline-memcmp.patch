@@ -1,0 +1,58 @@
+From: Paolo Bonzini <pbonzini@redhat.com>
+Date: Fri, 14 Aug 2009 21:08:36 +0200
+Subject: [xen] always inline memcmp
+Message-id: 1250276916-30916-3-git-send-email-pbonzini@redhat.com
+O-Subject: [RHEL5.5 PATCH 2/2] Always inline memcmp
+Bugzilla: 510686
+RH-Acked-by: Juan Quintela <quintela@redhat.com>
+RH-Acked-by: Gerd Hoffmann <kraxel@redhat.com>
+
+Bugzilla: http://bugzilla.redhat.com/show_bug.cgi?id=510686
+
+Brew build: http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1929311
+
+Upstream status: see below
+
+GCC assumes the presence of a few string.h functions (memcpy, memset,
+memcmp, memmove).  Xen tries to work around this, and force generation
+of inline sequences, using this trick:
+
+    #define memcmp __builtin_memcmp
+
+However, this is not the purpose of __builtin_memcmp and there's no
+guarantee that it actually expands to string operations unless
+the -minline-all-stringops command-line option is given too.  The
+attached patch future-proofs the code by passing the flag to GCC.
+
+Upstream instead removed all arch-specific handling of memcmp (revs
+16450 and 16454).  The attached patch is preferrable for RHEL since it
+won't change at all the generated code.
+
+Test status: used daily for a month.
+
+diff --git a/x86_32.mk b/x86_32.mk
+index ce0bb67..dc18d89 100644
+--- a/x86_32.mk
++++ b/x86_32.mk
+@@ -7,7 +7,7 @@ CONFIG_MIGRATE := y
+ CONFIG_XCUTILS := y
+ CONFIG_IOEMU := y
+ 
+-CFLAGS += -m32 -march=i686
++CFLAGS += -m32 -march=i686 -minline-all-stringops
+ LIBDIR := lib
+ 
+ # Use only if calling $(LD) directly.
+diff --git a/x86_64.mk b/x86_64.mk
+index 2888786..e43f79f 100644
+--- a/x86_64.mk
++++ b/x86_64.mk
+@@ -8,7 +8,7 @@ CONFIG_MIGRATE := y
+ CONFIG_XCUTILS := y
+ CONFIG_IOEMU := y
+ 
+-CFLAGS += -m64
++CFLAGS += -m64 -minline-all-stringops
+ LIBDIR = $(LIB64DIR)
+ 
+ # Use only if calling $(LD) directly.

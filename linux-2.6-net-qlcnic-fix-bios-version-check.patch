@@ -1,0 +1,46 @@
+From: Chad Dupuis <cdupuis@redhat.com>
+Date: Tue, 20 Jul 2010 15:32:36 -0400
+Subject: [net] qlcnic: fix bios version check
+Message-id: <20100720153143.2978.43334.sendpatchset@localhost.localdomain>
+Patchwork-id: 26972
+O-Subject: [RHEL 5.6 PATCH 13/16] qlcnic: fix bios version check
+Bugzilla: 562723
+RH-Acked-by: David S. Miller <davem@redhat.com>
+
+Bugzilla
+========
+
+562723
+
+Upstream Status
+===============
+
+net-2.6 commit id addd5abf49be31787aeb6203d266e0bd31a3fadd
+
+Description
+===========
+
+>From efc05993a5ad2e9ce7b7539ed2a64cbecdeb702a Mon Sep 17 00:00:00 2001
+From: Amit Kumar Salecha <amit.salecha@qlogic.com>
+Date: Mon, 8 Mar 2010 00:14:49 +0000
+Subject: [PATCH] qlcnic: fix bios version check
+
+Bios sub version from unified fw image is calculated incorrect.
+
+Signed-off-by: Amit Kumar Salecha <amit.salecha@qlogic.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/net/qlcnic/qlcnic_init.c b/drivers/net/qlcnic/qlcnic_init.c
+index 7b85a77..9b18e80 100644
+--- a/drivers/net/qlcnic/qlcnic_init.c
++++ b/drivers/net/qlcnic/qlcnic_init.c
+@@ -849,7 +849,7 @@ qlcnic_get_bios_version(struct qlcnic_adapter *adapter)
+ 	bios_ver = cpu_to_le32(*((u32 *) (&fw->data[prd_off])
+ 				+ QLCNIC_UNI_BIOS_VERSION_OFF));
+ 
+-	return (bios_ver << 24) + ((bios_ver >> 8) & 0xff00) + (bios_ver >> 24);
++	return (bios_ver << 16) + ((bios_ver >> 8) & 0xff00) + (bios_ver >> 24);
+ }
+ 
+ int

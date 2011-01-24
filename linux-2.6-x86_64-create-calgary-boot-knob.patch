@@ -1,0 +1,149 @@
+From: Konrad Rzeszutek <konradr@redhat.com>
+Subject: [RHEL5 PATCH] #220078 -allow compiling Calgary in but not using it by default
+Date: Mon, 18 Dec 2006 15:57:18 -0500
+Bugzilla: 220078
+Message-Id: <20061218205718.GA27037@dhcp83-154.boston.redhat.com>
+Changelog: x86_64: create Calgary boot knob
+
+
+RHBZ#:
+------
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=220078
+
+Description:
+------------
+The Calgary IOMMU and the newer version of Calgary2 chipsets 
+are not working with RHEL5. RHEL5 panics at bootup.
+
+Main-line is working on resolving this issue (adding new code
+for the chipset) but in the meantime, we do have a patch from 
+main-line (2.6.20-rc1) which provides a bootup knob to turn 
+Calgary on if the customer wants it (and a compile flag).
+
+
+RHEL Version Found:
+------------------
+RHEL5 RC1 snaphost 1
+
+Upstream Status:
+----------------
+In 2.6.20-rc1
+
+Test Status:
+------------
+Tested on x460 in Westford for regression - no trouble. It was
+tested on the x460 in Beaverton with the Tulsa procs (and the newer Calgary).
+
+Proposed Patch:
+---------------
+This patch is based on 2.6.18-1.2901 kernel.
+
+Also a compile flag needs to be added:
+
+# CALGARY_IOMMU_ENABLED_BY_DEFAULT is not set
+
+to the config files.
+
+diff -uNr linux-2.6.18.i386.orig/arch/x86_64/Kconfig linux-2.6.18.i386/arch/x86_64/Kconfig
+--- linux-2.6.18.i386.orig/arch/x86_64/Kconfig	2006-12-18 11:21:25.000000000 -0500
++++ linux-2.6.18.i386/arch/x86_64/Kconfig	2006-12-18 11:23:22.000000000 -0500
+@@ -481,6 +481,17 @@
+ 	  Normally the kernel will make the right choice by itself.
+ 	  If unsure, say Y.
+ 
++config CALGARY_IOMMU_ENABLED_BY_DEFAULT
++	bool "Should Calgary be enabled by default?"
++	default n
++	depends on CALGARY_IOMMU
++	help
++	  Should Calgary be enabled by default? if you choose 'y', Calgary
++	  will be used (if it exists). If you choose 'n', Calgary will not be
++	  used even if it exists. If you choose 'n' and would like to use
++	  Calgary anyway, pass 'iommu=calgary' on the kernel command line.
++	  If unsure, say Y.
++
+ # need this always selected by IOMMU for the VIA workaround
+ config SWIOTLB
+ 	bool
+diff -uNr linux-2.6.18.i386.orig/arch/x86_64/kernel/pci-calgary.c linux-2.6.18.i386/arch/x86_64/kernel/pci-calgary.c
+--- linux-2.6.18.i386.orig/arch/x86_64/kernel/pci-calgary.c	2006-12-18 11:21:25.000000000 -0500
++++ linux-2.6.18.i386/arch/x86_64/kernel/pci-calgary.c	2006-12-18 12:57:54.000000000 -0500
+@@ -41,6 +41,12 @@
+ #include <asm/system.h>
+ #include <asm/dma.h>
+ 
++#ifdef CONFIG_CALGARY_IOMMU_ENABLED_BY_DEFAULT
++int use_calgary __read_mostly = 1;
++#else
++int use_calgary __read_mostly = 0;
++#endif /* CONFIG_CALGARY_DEFAULT_ENABLED */
++
+ #define PCI_DEVICE_ID_IBM_CALGARY 0x02a1
+ #define PCI_VENDOR_DEVICE_ID_CALGARY \
+ 	(PCI_VENDOR_ID_IBM | PCI_DEVICE_ID_IBM_CALGARY << 16)
+@@ -898,6 +904,13 @@
+ 	if (swiotlb || no_iommu || iommu_detected)
+ 		return;
+ 
++	/*
++	 * If the user did not specify iommu=calgary 
++	 * (and CALGARY_IOMMU_ENABLED_BY_DEFAULT=n), bail out.
++	 */
++	if (!use_calgary)
++		return;
++
+ 	specified_table_size = determine_tce_table_size(end_pfn * PAGE_SIZE);
+ 
+ 	for (bus = 0; bus < MAX_PHB_BUS_NUM; bus++) {
+diff -uNr linux-2.6.18.i386.orig/arch/x86_64/kernel/pci-dma.c linux-2.6.18.i386/arch/x86_64/kernel/pci-dma.c
+--- linux-2.6.18.i386.orig/arch/x86_64/kernel/pci-dma.c	2006-12-18 11:21:25.000000000 -0500
++++ linux-2.6.18.i386/arch/x86_64/kernel/pci-dma.c	2006-12-18 11:48:00.000000000 -0500
+@@ -274,6 +274,11 @@
+ 	    gart_parse_options(p);
+ #endif
+ 
++#ifdef CONFIG_CALGARY_IOMMU
++	    if (!strncmp(p, "calgary", 7))
++		    use_calgary = 1;
++#endif /* CONFIG_CALGARY_IOMMU */
++
+ 	    p += strcspn(p, ",");
+ 	    if (*p == ',')
+ 		    ++p;
+diff -uNr linux-2.6.18.i386.orig/Documentation/x86_64/boot-options.txt linux-2.6.18.i386/Documentation/x86_64/boot-options.txt
+--- linux-2.6.18.i386.orig/Documentation/x86_64/boot-options.txt	2006-12-18 11:21:28.000000000 -0500
++++ linux-2.6.18.i386/Documentation/x86_64/boot-options.txt	2006-12-18 11:43:22.000000000 -0500
+@@ -183,7 +183,7 @@
+ IOMMU
+ 
+  iommu=[size][,noagp][,off][,force][,noforce][,leak][,memaper[=order]][,merge]
+-         [,forcesac][,fullflush][,nomerge][,noaperture]
++         [,forcesac][,fullflush][,nomerge][,noaperture][,calgary]
+    size  set size of iommu (in bytes)
+    noagp don't initialize the AGP driver and use full aperture.
+    off   don't use the IOMMU
+@@ -199,6 +199,7 @@
+    allowed  overwrite iommu off workarounds for specific chipsets.
+    soft	 Use software bounce buffering (default for Intel machines)
+    noaperture Don't touch the aperture for AGP.
++   calgary Use the Calgary IOMMU if it is available
+ 
+   swiotlb=pages[,force]
+ 
+diff -uNr linux-2.6.18.i386.orig/include/asm-x86_64/calgary.h linux-2.6.18.i386/include/asm-x86_64/calgary.h
+--- linux-2.6.18.i386.orig/include/asm-x86_64/calgary.h	2006-12-18 11:21:23.000000000 -0500
++++ linux-2.6.18.i386/include/asm-x86_64/calgary.h	2006-12-18 11:23:22.000000000 -0500
+@@ -51,6 +51,8 @@
+ #define TCE_TABLE_SIZE_4M		6
+ #define TCE_TABLE_SIZE_8M		7
+ 
++extern int use_calgary;
++
+ #ifdef CONFIG_CALGARY_IOMMU
+ extern int calgary_iommu_init(void);
+ extern void detect_calgary(void);
+
+-- 
+Konrad Rzeszutek 1-(978)-392-3903 or 1-(617)-693-1718
+IBM on-site partner.
+

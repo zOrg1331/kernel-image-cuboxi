@@ -1,0 +1,287 @@
+From: Don Dutile <ddutile@redhat.com>
+Date: Mon, 23 Feb 2009 18:49:50 -0500
+Subject: [xen] pv-block: remove anaconda workaround
+Message-id: 49A3361E.3070204@redhat.com
+O-Subject: [RHEL5.4 PATCH] Remove xen pv-block workaround for anaconda in bare-metal / FV kernel
+Bugzilla: 477005
+RH-Acked-by: Chris Lalancette <clalance@redhat.com>
+
+BZ 477005
+ -- this bz complains about a possible cyclic lock dependency.
+    -- this code is the culprit & removes these warnings.
+
+The following patches are a backport of the ones done to rhel4.8,
+for bz 474667.
+It removes the hack put into the xen pv block code to workaround
+an anaconda installation failure when the xen-platform-pci.ko support
+was built into the kernel.
+Now that xen-platform-pci.ko is not built-in (loadable), and it is
+not in anaconda's rhel5 initrd, the installation failure is not possible.
+So, removing the code make the modules much closer to upstream,
+common to rhel4.8, and gets rid of the kernel-debug warnings
+in the aformentioned bz.
+
+While I was cleaing up the xen pv block code, I also
+fixed two build warnings introduced in the original
+make xen-platform-pci.ko a loadable module in netfront.c
+(looking to correct the errors of my ways, and improve status w/dzickus! ;-) ).
+
+Also passed the patch along to Chris Lalancette so he can include it in
+his virttest rpm's.  This patch is needed *before* the extend xen device
+connect timeout to 5mins is done, because when it is, a FV kernel waits that
+long for the non-spec, CD drive to timeout.... (ugh!).
+
+Brew build:
+https://brewweb.devel.redhat.com/taskinfo?taskID=1701561
+
+Testing:
+(1) x86_64, FV; did several block-attach, mount xvdb1, ls, umount xvdb1, block-detach
+(2) x86_64, PV;  ditto
+(3) i386 FV; ditto
+(4) x86_64 FV -debug kernel -- ensure warnings listed in bz477005 no longer appeared
+    on boot up by inspecting log files.
+
+Please review & ACK.
+
+- Don
+
+diff --git a/drivers/xen/blkfront/blkfront.c b/drivers/xen/blkfront/blkfront.c
+index febf734..6b4b0c2 100644
+--- a/drivers/xen/blkfront/blkfront.c
++++ b/drivers/xen/blkfront/blkfront.c
+@@ -860,21 +860,10 @@ static struct xenbus_driver blkfront = {
+ 
+ static int __init xlblk_init(void)
+ {
+-	int rtn_val;
+-#ifdef CONFIG_XEN_PV_ON_HVM
+-	extern void xvd_dev_shutdown(void);
+-#endif
+-
+ 	if (!is_running_on_xen())
+ 		return -ENODEV;
+ 
+-	rtn_val = xenbus_register_frontend(&blkfront);
+-
+-#ifdef CONFIG_XEN_PV_ON_HVM
+-	/* remove any xvd's in xvd_rem_list after all dev's configured */
+-	xvd_dev_shutdown();
+-#endif
+-	return rtn_val;
++	return xenbus_register_frontend(&blkfront);
+ }
+ module_init(xlblk_init);
+ 
+diff --git a/drivers/xen/blkfront/vbd.c b/drivers/xen/blkfront/vbd.c
+index ba9fa45..36d8d0f 100644
+--- a/drivers/xen/blkfront/vbd.c
++++ b/drivers/xen/blkfront/vbd.c
+@@ -334,7 +334,6 @@ xlvbd_add(blkif_sector_t capacity, int vdevice, u16 vdisk_info,
+ 	struct block_device *bd;
+ 	int err = 0;
+ 	int major, minor;
+-	extern void xendev_rem_add(struct xenbus_device *dev);
+ 
+ 	if ((vdevice>>EXT_SHIFT) > 1) {
+ 		/* this is above the extended range; something is wrong */
+@@ -359,12 +358,6 @@ xlvbd_add(blkif_sector_t capacity, int vdevice, u16 vdisk_info,
+ 	err = xlvbd_alloc_gendisk(major, minor, capacity, vdevice, vdisk_info,
+ 				  sector_size, info);
+ 
+-#ifdef CONFIG_XEN_PV_ON_HVM
+-	/* tag these devices for removal; unconnected hd's */
+-	if (err) {
+-		xendev_rem_add(info->xbdev);
+-	}
+-#endif
+ 	bdput(bd);
+ 	return err;
+ }
+diff --git a/drivers/xen/netfront/netfront.c b/drivers/xen/netfront/netfront.c
+index d4aa1b9..4df5cca 100644
+--- a/drivers/xen/netfront/netfront.c
++++ b/drivers/xen/netfront/netfront.c
+@@ -1163,13 +1163,12 @@ static int xennet_get_responses(struct netfront_info *np,
+ 				struct page *page =
+ 					skb_shinfo(skb)->frags[0].page;
+ 				unsigned long pfn = page_to_pfn(page);
+-				void *vaddr = page_address(page);
+ 
+ 				mcl = np->rx_mcl + pages_flipped;
+ 				mmu = np->rx_mmu + pages_flipped;
+ 
+ 				MULTI_update_va_mapping(mcl,
+-							(unsigned long)vaddr,
++							(unsigned long)page_address(page),
+ 							pfn_pte_ma(mfn,
+ 								   PAGE_KERNEL),
+ 							0);
+@@ -1539,9 +1538,9 @@ static void netif_release_rx_bufs_flip(struct netfront_info *np)
+ 			/* Remap the page. */
+ 			struct page *page = skb_shinfo(skb)->frags[0].page;
+ 			unsigned long pfn = page_to_pfn(page);
+-			void *vaddr = page_address(page);
+ 
+-			MULTI_update_va_mapping(mcl, (unsigned long)vaddr,
++			MULTI_update_va_mapping(mcl, 
++						(unsigned long)page_address(page),
+ 						pfn_pte_ma(mfn, PAGE_KERNEL),
+ 						0);
+ 
+diff --git a/drivers/xen/xenbus/xenbus_probe.c b/drivers/xen/xenbus/xenbus_probe.c
+index 04f1fd3..4648e88 100644
+--- a/drivers/xen/xenbus/xenbus_probe.c
++++ b/drivers/xen/xenbus/xenbus_probe.c
+@@ -67,24 +67,9 @@ static unsigned long xen_store_mfn;
+ 
+ extern struct mutex xenwatch_mutex;
+ 
+-#ifdef CONFIG_XEN_PV_ON_HVM
+-extern int xenpv_notify_ide_disable;
+-#else
+-static int xenpv_notify_ide_disable = 0;
+-#endif
+-
+-/* struct & lock to remove unconnected vbd's at boostrap */
+-struct xendev_rem {
+-	struct list_head list;
+-	struct xenbus_device* xendev;
+-};
+-struct xendev_rem xendev_rem_hd;
+-static spinlock_t xendev_rem_lock = SPIN_LOCK_UNLOCKED;
+-
+ static BLOCKING_NOTIFIER_HEAD(xenstore_notifier_list);
+ 
+ static void wait_for_devices(struct xenbus_driver *xendrv);
+-int boot_wait_for_devices(void);
+ 
+ static int xenbus_probe_frontend(const char *type, const char *name);
+ #ifdef CONFIG_XEN
+@@ -95,7 +80,6 @@ static int xenbus_probe_backend(const char *type, const char *domid);
+ static int xenbus_dev_probe(struct device *_dev);
+ static int xenbus_dev_remove(struct device *_dev);
+ static void xenbus_dev_shutdown(struct device *_dev);
+-static int print_device_status(struct device *dev, void *data);
+ 
+ /* If something in array of ids matches this device, return it. */
+ static const struct xenbus_device_id *
+@@ -1253,56 +1237,6 @@ static int exists_disconnected_device(struct device_driver *drv)
+ 				is_disconnected_device);
+ }
+ 
+-void xendev_rem_add(struct xenbus_device *dev)
+-{
+-	struct xendev_rem *new;
+-	struct xendev_rem *ptr;
+-
+-	/*
+-	 * do nothing if ide is disabled, since
+-	 * may need vbd in this case;
+-	 */
+-	if (xenpv_notify_ide_disable == 1) {
+-		printk("xenpv_notify_ide_disable set \n");
+-		return;
+-	}
+-
+-	/* only add vbd devices */
+-	if (strncmp(dev->dev.bus_id, "vbd", 3)) 
+-		return;
+-
+-	new = kmalloc(sizeof(*new), GFP_KERNEL);
+-	if (new == 0L) {
+-		printk(KERN_INFO "XENBUS: failed xendev_rem struct alloc\n");
+-		printk(KERN_INFO "- couldn't removed %s from avail dev list\n",
+-			dev->nodename);
+-		return;
+-	}
+-	new->xendev = dev;
+-
+-	/* need to init if not done so already; for xen-platform-pci build */
+-	if (xendev_rem_hd.list.next == NULL) {
+-		INIT_LIST_HEAD(&xendev_rem_hd.list);
+-	}
+-
+-	spin_lock(&xendev_rem_lock);
+-	/* make sure xendev not already on the list */
+-	list_for_each_entry(ptr, &xendev_rem_hd.list, list) {
+-		struct xenbus_device *xendev = ptr->xendev;
+-		if (xendev == dev) {
+-			/* ok to have dev added via multiple code paths */
+-			spin_unlock(&xendev_rem_lock);
+-			kfree(new);
+-			return;
+-		}
+-	}
+-	list_add_tail(&new->list, &xendev_rem_hd.list);
+-	spin_unlock(&xendev_rem_lock);
+-
+-	return;
+-}
+-EXPORT_SYMBOL_GPL(xendev_rem_add);
+-
+ static int print_device_status(struct device *dev, void *data)
+ {
+ 	struct xenbus_device *xendev = to_xenbus_device(dev);
+@@ -1320,42 +1254,11 @@ static int print_device_status(struct device *dev, void *data)
+ 		printk(KERN_WARNING "XENBUS: Timeout connecting "
+ 		       "to device: %s (state %d)\n",
+ 		       xendev->nodename, xendev->state);
+-		xendev_rem_add(xendev);
+ 	}
+ 
+ 	return 0;
+ }
+ 
+-#ifdef CONFIG_XEN_PV_ON_HVM
+-/*
+- * Remove unused xvd's (vbd devices) at bootstrap so anaconda
+- * doesn't have a nutty seeing xvd's that are not connected
+- */
+-void xvd_dev_shutdown(void)
+-{
+-	struct xendev_rem *ptr;
+-	struct xendev_rem *tmp;
+-	
+-	if (xendev_rem_hd.list.next == NULL)
+-		return;
+-
+-	spin_lock(&xendev_rem_lock);
+-	list_for_each_entry_safe(ptr, tmp, &xendev_rem_hd.list, list) {
+-		struct device *dev = &ptr->xendev->dev;
+-		device_remove_file(dev, &dev_attr_devtype);
+-		device_remove_file(dev, &dev_attr_nodename);
+-		device_unregister(dev);
+-/*		put_device(dev); */
+-		/* remove list entry once processed */
+-		list_del(&ptr->list);
+-		/* free memory of this list entry */
+-		kfree(ptr);
+-	}
+-	spin_unlock(&xendev_rem_lock);
+-}
+-EXPORT_SYMBOL_GPL(xvd_dev_shutdown);
+-#endif
+-
+ /* We only wait for device setup after most initcalls have run. */
+ static int ready_to_wait_for_devices;
+ 
+@@ -1378,11 +1281,6 @@ static void wait_for_devices(struct xenbus_driver *xendrv)
+ 	unsigned long timeout = jiffies + 10*HZ;
+ 	struct device_driver *drv = xendrv ? &xendrv->driver : NULL;
+ 
+-#ifdef CONFIG_XEN_PV_ON_HVM
+-	/* force wait_for_devices check */
+-	ready_to_wait_for_devices = 1;
+-#endif
+-
+ 	if (!ready_to_wait_for_devices || !is_running_on_xen())
+ 		return;
+ 
+@@ -1398,7 +1296,6 @@ static void wait_for_devices(struct xenbus_driver *xendrv)
+ #ifndef MODULE
+ int boot_wait_for_devices(void)
+ {
+-	INIT_LIST_HEAD(&xendev_rem_hd.list);
+ 	if (!xenbus_frontend.error) {
+ 		ready_to_wait_for_devices = 1;
+ 		wait_for_devices(NULL);

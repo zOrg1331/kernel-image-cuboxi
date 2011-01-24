@@ -5,6 +5,8 @@
  *	Authors:
  *	Lennert Buytenhek		<buytenh@gnu.org>
  *
+ *	$Id: br_stp_if.c,v 1.4 2001/04/14 21:14:39 davem Exp $
+ *
  *	This program is free software; you can redistribute it and/or
  *	modify it under the terms of the GNU General Public License
  *	as published by the Free Software Foundation; either version
@@ -12,6 +14,7 @@
  */
 
 #include <linux/kernel.h>
+#include <linux/smp_lock.h>
 #include <linux/etherdevice.h>
 #include <linux/rtnetlink.h>
 
@@ -25,7 +28,7 @@
  */
 static inline port_id br_make_port_id(__u8 priority, __u16 port_no)
 {
-	return ((u16)priority << BR_PORT_BITS)
+	return ((u16)priority << BR_PORT_BITS) 
 		| (port_no & ((1<<BR_PORT_BITS)-1));
 }
 
@@ -47,7 +50,7 @@ void br_stp_enable_bridge(struct net_bridge *br)
 	spin_lock_bh(&br->lock);
 	mod_timer(&br->hello_timer, jiffies + br->hello_time);
 	mod_timer(&br->gc_timer, jiffies + HZ/10);
-
+	
 	br_config_bpdu_generation(br);
 
 	list_for_each_entry(p, &br->port_list, list) {
@@ -84,6 +87,7 @@ void br_stp_disable_bridge(struct net_bridge *br)
 void br_stp_enable_port(struct net_bridge_port *p)
 {
 	br_init_port(p);
+	br_ifinfo_notify(RTM_NEWLINK, p);
 	br_port_state_selection(p->br);
 }
 
@@ -97,6 +101,8 @@ void br_stp_disable_port(struct net_bridge_port *p)
 	printk(KERN_INFO "%s: port %i(%s) entering %s state\n",
 	       br->dev->name, p->port_no, p->dev->name, "disabled");
 
+	br_ifinfo_notify(RTM_DELLINK, p);
+
 	wasroot = br_is_root_bridge(br);
 	br_become_designated_port(p);
 	p->state = BR_STATE_DISABLED;
@@ -107,9 +113,6 @@ void br_stp_disable_port(struct net_bridge_port *p)
 	del_timer(&p->forward_delay_timer);
 	del_timer(&p->hold_timer);
 
-	br_fdb_delete_by_port(br, p, 0);
-	br_multicast_disable_port(p);
-
 	br_configuration_update(br);
 
 	br_port_state_selection(br);
@@ -118,68 +121,10 @@ void br_stp_disable_port(struct net_bridge_port *p)
 		br_become_root_bridge(br);
 }
 
-static void br_stp_start(struct net_bridge *br)
-{
-	int r;
-	char *argv[] = { BR_STP_PROG, br->dev->name, "start", NULL };
-	char *envp[] = { NULL };
-
-	r = call_usermodehelper(BR_STP_PROG, argv, envp, UMH_WAIT_PROC);
-	if (r == 0) {
-		br->stp_enabled = BR_USER_STP;
-		printk(KERN_INFO "%s: userspace STP started\n", br->dev->name);
-	} else {
-		br->stp_enabled = BR_KERNEL_STP;
-		printk(KERN_INFO "%s: starting userspace STP failed, "
-				"starting kernel STP\n", br->dev->name);
-
-		/* To start timers on any ports left in blocking */
-		spin_lock_bh(&br->lock);
-		br_port_state_selection(br);
-		spin_unlock_bh(&br->lock);
-	}
-}
-
-static void br_stp_stop(struct net_bridge *br)
-{
-	int r;
-	char *argv[] = { BR_STP_PROG, br->dev->name, "stop", NULL };
-	char *envp[] = { NULL };
-
-	if (br->stp_enabled == BR_USER_STP) {
-		r = call_usermodehelper(BR_STP_PROG, argv, envp, 1);
-		printk(KERN_INFO "%s: userspace STP stopped, return code %d\n",
-			br->dev->name, r);
-
-
-		/* To start timers on any ports left in blocking */
-		spin_lock_bh(&br->lock);
-		br_port_state_selection(br);
-		spin_unlock_bh(&br->lock);
-	}
-
-	br->stp_enabled = BR_NO_STP;
-}
-
-void br_stp_set_enabled(struct net_bridge *br, unsigned long val)
-{
-	ASSERT_RTNL();
-
-	if (val) {
-		if (br->stp_enabled == BR_NO_STP)
-			br_stp_start(br);
-	} else {
-		if (br->stp_enabled != BR_NO_STP)
-			br_stp_stop(br);
-	}
-}
-
 /* called under bridge lock */
 void br_stp_change_bridge_id(struct net_bridge *br, const unsigned char *addr)
 {
-	/* should be aligned on 2 bytes for compare_ether_addr() */
-	unsigned short oldaddr_aligned[ETH_ALEN >> 1];
-	unsigned char *oldaddr = (unsigned char *)oldaddr_aligned;
+	unsigned char oldaddr[6];
 	struct net_bridge_port *p;
 	int wasroot;
 
@@ -204,20 +149,13 @@ void br_stp_change_bridge_id(struct net_bridge *br, const unsigned char *addr)
 		br_become_root_bridge(br);
 }
 
-/* should be aligned on 2 bytes for compare_ether_addr() */
-static const unsigned short br_mac_zero_aligned[ETH_ALEN >> 1];
+static const unsigned char br_mac_zero[6];
 
 /* called under bridge lock */
 void br_stp_recalculate_bridge_id(struct net_bridge *br)
 {
-	const unsigned char *br_mac_zero =
-			(const unsigned char *)br_mac_zero_aligned;
 	const unsigned char *addr = br_mac_zero;
 	struct net_bridge_port *p;
-
-	/* user has chosen a value so keep it */
-	if (br->flags & BR_SET_MAC_ADDR)
-		return;
 
 	list_for_each_entry(p, &br->port_list, list) {
 		if (addr == br_mac_zero ||

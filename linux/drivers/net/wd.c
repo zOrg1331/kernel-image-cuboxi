@@ -61,7 +61,7 @@ static void wd_block_output(struct net_device *dev, int count,
 							const unsigned char *buf, int start_page);
 static int wd_close(struct net_device *dev);
 
-
+
 #define WD_START_PG		0x00	/* First page of TX buffer */
 #define WD03_STOP_PG	0x20	/* Last page +1 of RX ring */
 #define WD13_STOP_PG	0x40	/* Last page +1 of RX ring */
@@ -75,7 +75,7 @@ static int wd_close(struct net_device *dev);
 #define WD_NIC_OFFSET	16		/* Offset to the 8390 from the base_addr. */
 #define WD_IO_EXTENT	32
 
-
+
 /*	Probe for the WD8003 and WD8013.  These cards have the station
 	address PROM at I/O ports <base>+8 to <base>+13, with a checksum
 	following. A Soundblaster can have the same checksum as an WDethercard,
@@ -93,12 +93,14 @@ static int __init do_wd_probe(struct net_device *dev)
 	int mem_start = dev->mem_start;
 	int mem_end = dev->mem_end;
 
+	SET_MODULE_OWNER(dev);
+
 	if (base_addr > 0x1ff) {	/* Check a user specified location. */
 		r = request_region(base_addr, WD_IO_EXTENT, "wd-probe");
 		if ( r == NULL)
 			return -EBUSY;
 		i = wd_probe1(dev, base_addr);
-		if (i != 0)
+		if (i != 0)  
 			release_region(base_addr, WD_IO_EXTENT);
 		else
 			r->name = dev->name;
@@ -147,21 +149,6 @@ out:
 }
 #endif
 
-static const struct net_device_ops wd_netdev_ops = {
-	.ndo_open		= wd_open,
-	.ndo_stop		= wd_close,
-	.ndo_start_xmit		= ei_start_xmit,
-	.ndo_tx_timeout		= ei_tx_timeout,
-	.ndo_get_stats		= ei_get_stats,
-	.ndo_set_multicast_list = ei_set_multicast_list,
-	.ndo_validate_addr	= eth_validate_addr,
-	.ndo_set_mac_address 	= eth_mac_addr,
-	.ndo_change_mtu		= eth_change_mtu,
-#ifdef CONFIG_NET_POLL_CONTROLLER
-	.ndo_poll_controller 	= ei_poll,
-#endif
-};
-
 static int __init wd_probe1(struct net_device *dev, int ioaddr)
 {
 	int i;
@@ -189,11 +176,9 @@ static int __init wd_probe1(struct net_device *dev, int ioaddr)
 	if (ei_debug  &&  version_printed++ == 0)
 		printk(version);
 
+	printk("%s: WD80x3 at %#3x,", dev->name, ioaddr);
 	for (i = 0; i < 6; i++)
-		dev->dev_addr[i] = inb(ioaddr + 8 + i);
-
-	printk("%s: WD80x3 at %#3x, %pM",
-	       dev->name, ioaddr, dev->dev_addr);
+		printk(" %2.2X", dev->dev_addr[i] = inb(ioaddr + 8 + i));
 
 	/* The following PureData probe code was contributed by
 	   Mike Jagdis <jaggy@purplet.demon.co.uk>. Puredata does software
@@ -287,7 +272,7 @@ static int __init wd_probe1(struct net_device *dev, int ioaddr)
 			   a reliable way to trigger an interrupt. */
 			outb_p(E8390_NODMA + E8390_STOP, nic_addr);
 			outb(0x00, nic_addr+EN0_IMR);	/* Disable all intrs. */
-
+			
 			irq_mask = probe_irq_on();
 			outb_p(0xff, nic_addr + EN0_IMR);	/* Enable all interrupts. */
 			outb_p(0x00, nic_addr + EN0_RCNTLO);
@@ -295,7 +280,7 @@ static int __init wd_probe1(struct net_device *dev, int ioaddr)
 			outb(E8390_RREAD+E8390_START, nic_addr); /* Trigger it... */
 			mdelay(20);
 			dev->irq = probe_irq_off(irq_mask);
-
+			
 			outb_p(0x00, nic_addr+EN0_IMR);	/* Mask all intrs. again. */
 
 			if (ei_debug > 2)
@@ -346,8 +331,11 @@ static int __init wd_probe1(struct net_device *dev, int ioaddr)
 	ei_status.block_input = &wd_block_input;
 	ei_status.block_output = &wd_block_output;
 	ei_status.get_8390_hdr = &wd_get_8390_hdr;
-
-	dev->netdev_ops = &wd_netdev_ops;
+	dev->open = &wd_open;
+	dev->stop = &wd_close;
+#ifdef CONFIG_NET_POLL_CONTROLLER
+	dev->poll_controller = ei_poll;
+#endif
 	NS8390_init(dev, 0);
 
 #if 1
@@ -377,7 +365,8 @@ wd_open(struct net_device *dev)
 	  outb(ei_status.reg5, ioaddr+WD_CMDREG5);
   outb(ei_status.reg0, ioaddr); /* WD_CMDREG */
 
-  return ei_open(dev);
+  ei_open(dev);
+  return 0;
 }
 
 static void
@@ -444,7 +433,7 @@ wd_block_input(struct net_device *dev, int count, struct sk_buff *skb, int ring_
 		memcpy_fromio(skb->data + semi_count, ei_status.mem + TX_PAGES * 256, count);
 	} else {
 		/* Packet is in one chunk -- we can copy + cksum. */
-		memcpy_fromio(skb->data, xfer_start, count);
+		eth_io_copy_and_sum(skb, xfer_start, count, 0);
 	}
 
 	/* Turn off 16 bit access so that reboot works.	 ISA brain-damage */
@@ -489,7 +478,7 @@ wd_close(struct net_device *dev)
 	return 0;
 }
 
-
+
 #ifdef MODULE
 #define MAX_WD_CARDS	4	/* Max number of wd cards per module */
 static struct net_device *dev_wd[MAX_WD_CARDS];
@@ -549,7 +538,7 @@ static void cleanup_card(struct net_device *dev)
 	iounmap(ei_status.mem);
 }
 
-void __exit
+void
 cleanup_module(void)
 {
 	int this_dev;

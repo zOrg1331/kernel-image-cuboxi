@@ -14,6 +14,7 @@
 #include <linux/types.h>
 #include <linux/crypto.h>
 #include <linux/errno.h>
+#include <asm/scatterlist.h>
 #include <linux/string.h>
 #include "internal.h"
 
@@ -31,6 +32,11 @@ static int crypto_decompress(struct crypto_tfm *tfm,
 {
 	return tfm->__crt_alg->cra_compress.coa_decompress(tfm, src, slen, dst,
 	                                                   dlen);
+}
+
+int crypto_init_compress_flags(struct crypto_tfm *tfm, u32 flags)
+{
+	return flags ? -EINVAL : 0;
 }
 
 int crypto_init_compress_ops(struct crypto_tfm *tfm)

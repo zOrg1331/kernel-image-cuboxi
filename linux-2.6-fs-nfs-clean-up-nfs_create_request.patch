@@ -1,0 +1,48 @@
+From: Jeff Layton <jlayton@redhat.com>
+Date: Fri, 10 Dec 2010 18:07:00 -0500
+Subject: [fs] nfs: clean up nfs_create_request
+Message-id: <1292004422-17475-2-git-send-email-jlayton@redhat.com>
+Patchwork-id: 30075
+O-Subject: [RHEL5.6 PATCH 1/3] BZ#656492: NFS: Clean up nfs_create_request()
+Bugzilla: 656492
+RH-Acked-by: J. Bruce Fields <bfields@redhat.com>
+
+From: Trond Myklebust <Trond.Myklebust@netapp.com>
+
+There is no point in looping if we're out of memory.
+
+Upstream commit: 18eb884282bbaf99700ba5b60ded782807d52408
+Signed-off-by: Trond Myklebust <Trond.Myklebust@netapp.com>
+
+diff --git a/fs/nfs/pagelist.c b/fs/nfs/pagelist.c
+index 801347d..e4b560b 100644
+--- a/fs/nfs/pagelist.c
++++ b/fs/nfs/pagelist.c
+@@ -60,23 +60,12 @@ nfs_create_request(struct nfs_open_context *ctx, struct inode *inode,
+ 		   struct page *page,
+ 		   unsigned int offset, unsigned int count)
+ {
+-	struct nfs_server *server = NFS_SERVER(inode);
+ 	struct nfs_page		*req;
+ 
+-	/* Deal with hard limits.  */
+-	for (;;) {
+-		/* try to allocate the request struct */
+-		req = nfs_page_alloc();
+-		if (req != NULL)
+-			break;
+-
+-		/* Try to free up at least one request in order to stay
+-		 * below the hard limit
+-		 */
+-		if (signalled() && (server->flags & NFS_MOUNT_INTR))
+-			return ERR_PTR(-ERESTARTSYS);
+-		yield();
+-	}
++	/* try to allocate the request struct */
++	req = nfs_page_alloc();
++	if (req == NULL)
++		return ERR_PTR(-ENOMEM);
+ 
+ 	/* Initialize the request struct. Initially, we assume a
+ 	 * long write-back delay. This will be adjusted in

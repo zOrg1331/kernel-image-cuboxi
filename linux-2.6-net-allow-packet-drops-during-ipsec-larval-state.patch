@@ -1,0 +1,401 @@
+From: Vince Worthington <vincew@redhat.com>
+Subject: Re: repost - [RHEL5 U1 PATCH] BZ 240902 - Allow packet drops 	during IPSec larval state resolution
+Date: Fri, 15 Jun 2007 17:48:09 -0400
+Bugzilla: 240902
+Message-Id: <20070615214809.GD4261@cobrajet.rdu.redhat.com>
+Changelog: [net] Allow packet drops during IPSec larval state resolution
+
+
+--- linux-2.6.18.x86_64/net/core/sysctl_net_core.c.larval	2007-06-15 17:11:02.000000000 -0400
++++ linux-2.6.18.x86_64/net/core/sysctl_net_core.c	2007-06-15 17:29:01.000000000 -0400
+@@ -28,6 +28,7 @@ extern char sysctl_divert_version[];
+ #ifdef CONFIG_XFRM
+ extern u32 sysctl_xfrm_aevent_etime;
+ extern u32 sysctl_xfrm_aevent_rseqth;
++extern int sysctl_xfrm_larval_drop;
+ extern u32 sysctl_xfrm_acq_expires;
+ #endif
+ 
+@@ -141,6 +142,14 @@ ctl_table core_table[] = {
+ 		.mode		= 0644,
+ 		.proc_handler	= &proc_dointvec
+ 	},
++	{
++		.ctl_name	= NET_CORE_XFRM_LARVAL_DROP,
++		.procname	= "xfrm_larval_drop",
++		.data		= &sysctl_xfrm_larval_drop,
++		.maxlen		= sizeof(int),
++		.mode		= 0644,
++		.proc_handler	= &proc_dointvec
++	},
+ #endif /* CONFIG_XFRM */
+ #endif /* CONFIG_NET */
+ 	{
+--- linux-2.6.18.x86_64/net/ipv4/route.c.larval	2007-06-15 17:10:36.000000000 -0400
++++ linux-2.6.18.x86_64/net/ipv4/route.c	2007-06-15 17:23:11.000000000 -0400
+@@ -2609,6 +2609,69 @@ int __ip_route_output_key(struct rtable 
+ 
+ EXPORT_SYMBOL_GPL(__ip_route_output_key);
+ 
++static void ipv4_rt_blackhole_update_pmtu(struct dst_entry *dst, u32 mtu)
++{
++}
++
++static struct dst_ops ipv4_dst_blackhole_ops = {
++	.family			=	AF_INET,
++	.protocol		=	__constant_htons(ETH_P_IP),
++	.destroy		=	ipv4_dst_destroy,
++	.check			=	ipv4_dst_check,
++	.update_pmtu		=	ipv4_rt_blackhole_update_pmtu,
++	.entry_size		=	sizeof(struct rtable),
++};
++
++
++static int ipv4_blackhole_output(struct sk_buff *skb)
++{
++	kfree_skb(skb);
++	return 0;
++}
++
++static int ipv4_dst_blackhole(struct rtable **rp, struct flowi *flp, struct sock *sk)
++{
++	struct rtable *ort = *rp;
++	struct rtable *rt = (struct rtable *)
++		dst_alloc(&ipv4_dst_blackhole_ops);
++
++	if (rt) {
++		struct dst_entry *new = &rt->u.dst;
++
++		atomic_set(&new->__refcnt, 1);
++		new->__use = 1;
++		new->input = ipv4_blackhole_output;
++		new->output = ipv4_blackhole_output;
++		memcpy(new->metrics, ort->u.dst.metrics, RTAX_MAX*sizeof(u32));
++
++		new->dev = ort->u.dst.dev;
++		if (new->dev)
++			dev_hold(new->dev);
++
++		rt->fl = ort->fl;
++
++		rt->idev = ort->idev;
++		if (rt->idev)
++			in_dev_hold(rt->idev);
++		rt->rt_flags = ort->rt_flags;
++		rt->rt_type = ort->rt_type;
++		rt->rt_dst = ort->rt_dst;
++		rt->rt_src = ort->rt_src;
++		rt->rt_iif = ort->rt_iif;
++		rt->rt_gateway = ort->rt_gateway;
++		rt->rt_spec_dst = ort->rt_spec_dst;
++		rt->peer = ort->peer;
++		if (rt->peer)
++			atomic_inc(&rt->peer->refcnt);
++
++		dst_free(new);
++	}
++
++	dst_release(&(*rp)->u.dst);
++	*rp = rt;
++	return (rt ? 0 : -ENOMEM);
++}
++
+ int ip_route_output_flow(struct rtable **rp, struct flowi *flp, struct sock *sk, int flags)
+ {
+ 	int err;
+@@ -2621,7 +2684,11 @@ int ip_route_output_flow(struct rtable *
+ 			flp->fl4_src = (*rp)->rt_src;
+ 		if (!flp->fl4_dst)
+ 			flp->fl4_dst = (*rp)->rt_dst;
+-		return xfrm_lookup((struct dst_entry **)rp, flp, sk, flags);
++		err = __xfrm_lookup((struct dst_entry **)rp, flp, sk, flags);
++		if (err == -EREMOTE)
++			err = ipv4_dst_blackhole(rp, flp, sk);
++
++		return err;
+ 	}
+ 
+ 	return 0;
+@@ -3152,6 +3219,8 @@ int __init ip_rt_init(void)
+ 	if (!ipv4_dst_ops.kmem_cachep)
+ 		panic("IP: failed to allocate ip_dst_cache\n");
+ 
++	ipv4_dst_blackhole_ops.kmem_cachep = ipv4_dst_ops.kmem_cachep;
++
+ 	rt_hash_table = (struct rt_hash_bucket *)
+ 		alloc_large_system_hash("IP route cache",
+ 					sizeof(struct rt_hash_bucket),
+--- linux-2.6.18.x86_64/net/ipv6/tcp_ipv6.c.larval	2007-06-15 17:10:51.000000000 -0400
++++ linux-2.6.18.x86_64/net/ipv6/tcp_ipv6.c	2007-06-15 17:23:11.000000000 -0400
+@@ -259,8 +259,12 @@ static int tcp_v6_connect(struct sock *s
+ 	if (final_p)
+ 		ipv6_addr_copy(&fl.fl6_dst, final_p);
+ 
+-	if ((err = xfrm_lookup(&dst, &fl, sk, 1)) < 0)
+-		goto failure;
++	if ((err = __xfrm_lookup(&dst, &fl, sk, 1)) < 0) {
++		if (err == -EREMOTE)
++			err = ip6_dst_blackhole(sk, &dst, &fl);
++		if (err < 0)
++			goto failure;
++	}
+ 
+ 	if (saddr == NULL) {
+ 		saddr = &fl.fl6_src;
+--- linux-2.6.18.x86_64/net/ipv6/route.c.larval	2007-06-15 17:10:50.000000000 -0400
++++ linux-2.6.18.x86_64/net/ipv6/route.c	2007-06-15 17:23:11.000000000 -0400
+@@ -117,6 +117,19 @@ static struct dst_ops ip6_dst_ops = {
+ 	.entry_size		=	sizeof(struct rt6_info),
+ };
+ 
++static void ip6_rt_blackhole_update_pmtu(struct dst_entry *dst, u32 mtu)
++{
++}
++
++static struct dst_ops ip6_dst_blackhole_ops = {
++	.family			=	AF_INET6,
++	.protocol		=	__constant_htons(ETH_P_IPV6),
++	.destroy		=	ip6_dst_destroy,
++	.check			=	ip6_dst_check,
++	.update_pmtu		=	ip6_rt_blackhole_update_pmtu,
++	.entry_size		=	sizeof(struct rt6_info),
++};
++
+ struct rt6_info ip6_null_entry = {
+ 	.u = {
+ 		.dst = {
+@@ -827,6 +840,54 @@ struct dst_entry * ip6_route_output(stru
+ }
+ 
+ 
++static int ip6_blackhole_output(struct sk_buff *skb)
++{
++	kfree_skb(skb);
++	return 0;
++}
++
++int ip6_dst_blackhole(struct sock *sk, struct dst_entry **dstp, struct flowi *fl)
++{
++	struct rt6_info *ort = (struct rt6_info *) *dstp;
++	struct rt6_info *rt = (struct rt6_info *)
++		dst_alloc(&ip6_dst_blackhole_ops);
++	struct dst_entry *new = NULL;
++
++	if (rt) {
++		new = &rt->u.dst;
++
++		atomic_set(&new->__refcnt, 1);
++		new->__use = 1;
++		new->input = ip6_blackhole_output;
++		new->output = ip6_blackhole_output;
++
++		memcpy(new->metrics, ort->u.dst.metrics, RTAX_MAX*sizeof(u32));
++		new->dev = ort->u.dst.dev;
++		if (new->dev)
++			dev_hold(new->dev);
++		rt->rt6i_idev = ort->rt6i_idev;
++		if (rt->rt6i_idev)
++			in6_dev_hold(rt->rt6i_idev);
++		rt->rt6i_expires = 0;
++
++		ipv6_addr_copy(&rt->rt6i_gateway, &ort->rt6i_gateway);
++		rt->rt6i_flags = ort->rt6i_flags & ~RTF_EXPIRES;
++		rt->rt6i_metric = 0;
++
++		memcpy(&rt->rt6i_dst, &ort->rt6i_dst, sizeof(struct rt6key));
++#ifdef CONFIG_IPV6_SUBTREES
++		memcpy(&rt->rt6i_src, &ort->rt6i_src, sizeof(struct rt6key));
++#endif
++
++		dst_free(new);
++	}
++
++	dst_release(*dstp);
++	*dstp = new;
++	return (new ? 0 : -ENOMEM);
++}
++EXPORT_SYMBOL_GPL(ip6_dst_blackhole);
++
+ /*
+  *	Destination cache support functions
+  */
+@@ -2418,6 +2479,8 @@ void __init ip6_route_init(void)
+ 	if (!ip6_dst_ops.kmem_cachep)
+ 		panic("cannot create ip6_dst_cache");
+ 
++	ip6_dst_blackhole_ops.kmem_cachep = ip6_dst_ops.kmem_cachep;
++
+ 	fib6_init();
+ #ifdef 	CONFIG_PROC_FS
+ 	p = proc_net_create("ipv6_route", 0, rt6_proc_info);
+--- linux-2.6.18.x86_64/net/ipv6/datagram.c.larval	2007-06-15 17:10:50.000000000 -0400
++++ linux-2.6.18.x86_64/net/ipv6/datagram.c	2007-06-15 17:23:11.000000000 -0400
+@@ -178,8 +178,12 @@ ipv4_connected:
+ 	if (final_p)
+ 		ipv6_addr_copy(&fl.fl6_dst, final_p);
+ 
+-	if ((err = xfrm_lookup(&dst, &fl, sk, 1)) < 0)
+-		goto out;
++	if ((err = __xfrm_lookup(&dst, &fl, sk, 1)) < 0) {
++		if (err == -EREMOTE)
++			err = ip6_dst_blackhole(sk, &dst, &fl);
++		if (err < 0)
++			goto out;
++	}
+ 
+ 	/* source address lookup done in ip6_dst_lookup */
+ 
+--- linux-2.6.18.x86_64/net/ipv6/udp.c.larval	2007-06-15 17:10:50.000000000 -0400
++++ linux-2.6.18.x86_64/net/ipv6/udp.c	2007-06-15 17:23:11.000000000 -0400
+@@ -790,8 +790,12 @@ do_udp_sendmsg:
+ 	if (final_p)
+ 		ipv6_addr_copy(&fl.fl6_dst, final_p);
+ 
+-	if ((err = xfrm_lookup(&dst, &fl, sk, 1)) < 0)
+-		goto out;
++	if ((err = __xfrm_lookup(&dst, &fl, sk, 1)) < 0) {
++		if (err == -EREMOTE)
++			err = ip6_dst_blackhole(sk, &dst, &fl);
++		if (err < 0)
++			goto out;
++	}
+ 
+ 	if (hlimit < 0) {
+ 		if (ipv6_addr_is_multicast(&fl.fl6_dst))
+--- linux-2.6.18.x86_64/net/ipv6/raw.c.larval	2007-06-15 17:10:50.000000000 -0400
++++ linux-2.6.18.x86_64/net/ipv6/raw.c	2007-06-15 17:23:11.000000000 -0400
+@@ -767,9 +767,12 @@ static int rawv6_sendmsg(struct kiocb *i
+ 	if (final_p)
+ 		ipv6_addr_copy(&fl.fl6_dst, final_p);
+ 
+-	if ((err = xfrm_lookup(&dst, &fl, sk, 1)) < 0)
+-		goto out;
+-
++	if ((err = __xfrm_lookup(&dst, &fl, sk, 1)) < 0) {
++		if (err == -EREMOTE)
++			err = ip6_dst_blackhole(sk, &dst, &fl);
++		if (err < 0)
++			goto out;
++	}
+ 	if (hlimit < 0) {
+ 		if (ipv6_addr_is_multicast(&fl.fl6_dst))
+ 			hlimit = np->mcast_hops;
+--- linux-2.6.18.x86_64/net/xfrm/xfrm_policy.c.larval	2007-06-15 17:11:00.000000000 -0400
++++ linux-2.6.18.x86_64/net/xfrm/xfrm_policy.c	2007-06-15 17:23:11.000000000 -0400
+@@ -26,6 +26,8 @@
+ #include <net/ip.h>
+ #include <linux/audit.h>
+ 
++int sysctl_xfrm_larval_drop;
++
+ DEFINE_MUTEX(xfrm_cfg_mutex);
+ EXPORT_SYMBOL(xfrm_cfg_mutex);
+ 
+@@ -920,8 +922,8 @@ static int stale_bundle(struct dst_entry
+  * At the moment we eat a raw IP route. Mostly to speed up lookups
+  * on interfaces with disabled IPsec.
+  */
+-int xfrm_lookup(struct dst_entry **dst_p, struct flowi *fl,
+-		struct sock *sk, int flags)
++int __xfrm_lookup(struct dst_entry **dst_p, struct flowi *fl,
++		  struct sock *sk, int flags)
+ {
+ 	struct xfrm_policy *policy;
+ 	struct xfrm_state *xfrm[XFRM_MAX_DEPTH];
+@@ -989,6 +991,13 @@ restart:
+ 
+ 		if (unlikely(nx<0)) {
+ 			err = nx;
++			if (err == -EAGAIN && sysctl_xfrm_larval_drop) {
++				/* EREMOTE tells the caller to generate
++				 * a one-shot blackhole route.
++				 */
++				xfrm_pol_put(policy);
++				return -EREMOTE;
++			}
+ 			if (err == -EAGAIN && flags) {
+ 				DECLARE_WAITQUEUE(wait, current);
+ 
+@@ -1060,6 +1069,21 @@ error:
+ 	*dst_p = NULL;
+ 	return err;
+ }
++EXPORT_SYMBOL(__xfrm_lookup);
++
++int xfrm_lookup(struct dst_entry **dst_p, struct flowi *fl,
++		struct sock *sk, int flags)
++{
++	int err = __xfrm_lookup(dst_p, fl, sk, flags);
++
++	if (err == -EREMOTE) {
++		dst_release(*dst_p);
++		*dst_p = NULL;
++		err = -EAGAIN;
++	}
++
++	return err;
++}
+ EXPORT_SYMBOL(xfrm_lookup);
+ 
+ /* When skb is transformed back to its "native" form, we have to
+--- linux-2.6.18.x86_64/net/dccp/ipv6.c.larval	2007-06-15 17:10:50.000000000 -0400
++++ linux-2.6.18.x86_64/net/dccp/ipv6.c	2007-06-15 17:23:11.000000000 -0400
+@@ -218,9 +218,13 @@ static int dccp_v6_connect(struct sock *
+ 	if (final_p)
+ 		ipv6_addr_copy(&fl.fl6_dst, final_p);
+ 
+-	err = xfrm_lookup(&dst, &fl, sk, 1);
+-	if (err < 0)
+-		goto failure;
++	err = __xfrm_lookup(&dst, &fl, sk, 1);
++	if (err < 0) {
++		if (err == -EREMOTE)
++			err = ip6_dst_blackhole(sk, &dst, &fl);
++		if (err < 0)
++			goto failure;
++	}
+ 
+ 	if (saddr == NULL) {
+ 		saddr = &fl.fl6_src;
+--- linux-2.6.18.x86_64/include/net/ipv6.h.larval	2006-09-19 23:42:06.000000000 -0400
++++ linux-2.6.18.x86_64/include/net/ipv6.h	2007-06-15 17:23:11.000000000 -0400
+@@ -468,6 +468,9 @@ extern void			ip6_flush_pending_frames(s
+ extern int			ip6_dst_lookup(struct sock *sk,
+ 					       struct dst_entry **dst,
+ 					       struct flowi *fl);
++extern int			ip6_dst_blackhole(struct sock *sk,
++						  struct dst_entry **dst,
++						  struct flowi *fl);
+ extern int			ip6_sk_dst_lookup(struct sock *sk,
+ 						  struct dst_entry **dst,
+ 						  struct flowi *fl);
+--- linux-2.6.18.x86_64/include/net/dst.h.larval	2006-09-19 23:42:06.000000000 -0400
++++ linux-2.6.18.x86_64/include/net/dst.h	2007-06-15 17:23:11.000000000 -0400
+@@ -259,9 +259,16 @@ static inline int xfrm_lookup(struct dst
+ {
+ 	return 0;
+ } 
++static inline int __xfrm_lookup(struct dst_entry **dst_p, struct flowi *fl,
++				struct sock *sk, int flags)
++{
++	return 0;
++} 
+ #else
+ extern int xfrm_lookup(struct dst_entry **dst_p, struct flowi *fl,
+ 		       struct sock *sk, int flags);
++extern int __xfrm_lookup(struct dst_entry **dst_p, struct flowi *fl,
++			 struct sock *sk, int flags);
+ #endif
+ #endif
+ 
+--- linux-2.6.18.x86_64/include/linux/sysctl.h.larval	2007-06-15 17:25:33.000000000 -0400
++++ linux-2.6.18.x86_64/include/linux/sysctl.h	2007-06-15 17:27:12.000000000 -0400
+@@ -278,6 +278,7 @@ enum
+ 	NET_CORE_BUDGET=19,
+ 	NET_CORE_AEVENT_ETIME=20,
+ 	NET_CORE_AEVENT_RSEQTH=21,
++	NET_CORE_XFRM_LARVAL_DROP=22,
+ 	NET_CORE_XFRM_ACQ_EXPIRES=23,
+ };
+ 
+

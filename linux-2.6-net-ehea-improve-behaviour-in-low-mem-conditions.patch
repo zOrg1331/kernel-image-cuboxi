@@ -1,0 +1,152 @@
+From: AMEET M. PARANJAPE <aparanja@redhat.com>
+Date: Mon, 2 Feb 2009 11:05:51 -0500
+Subject: [net] ehea: improve behaviour in low mem conditions
+Message-id: 20090202160430.31058.11540.sendpatchset@squad5-lp1.lab.bos.redhat.com
+O-Subject: [PATCH RHEL5.4 BZ483148] ehea: Improve driver behaviour in low mem conditions
+Bugzilla: 483148
+RH-Acked-by: David Miller <davem@redhat.com>
+RH-Acked-by: Anton Arapov <aarapov@redhat.com>
+
+RHBZ#:
+======
+https://bugzilla.redhat.com/show_bug.cgi?id=483148
+
+Description:
+===========
+Re-worked EHEA driver receive queue fill policies to make the driver more
+tolerant in low memory conditions.
+
+RHEL Version Found:
+================
+RHEL 5.3
+
+kABI Status:
+============
+No symbols were harmed.
+
+Brew:
+=====
+Built on all platforms.
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1667788
+
+Upstream Status:
+================
+http://git.kernel.org/?p=linux/kernel/git/davem/net-next-2.6.git;a=commit;h=e2878806227d223467f84f900ef4c6733ee166df
+
+Test Status:
+============
+Without this patch a POWER machine will not successfully configure the EHEA
+network interface if the amount of memory available is <12MB for each
+receive queue.  With this patch the system is able to successfully configure
+the network device even in low memory conditions.
+
+This driver has executed the following tests succesfully with the patch:
+- ipv4: ping, flood ping, broadcast ping
+- ipv6: ping, flood ping, TCP traffic
+- flood ping with big pakets
+- ftp tests with large files using 4 connections with TSO on/off
+- ftp long run using 4 connections with TSO on/off
+- netpipe
+- netperf
+- netperf via IPv6
+- netperf using LRO
+- netperf/udp
+- vlan ping
+- multicast basic
+- dlpar memory add
+- dlpar port add / remove
+===============================================================
+Ameet Paranjape 978-392-3903 ext 23903
+IBM on-site partner
+
+Proposed Patch:
+===============
+
+diff --git a/drivers/net/ehea/ehea.h b/drivers/net/ehea/ehea.h
+index eda20da..feab775 100644
+--- a/drivers/net/ehea/ehea.h
++++ b/drivers/net/ehea/ehea.h
+@@ -40,7 +40,7 @@
+ #include <asm/io.h>
+ 
+ #define DRV_NAME	"ehea"
+-#define DRV_VERSION	"EHEA_0092-00"
++#define DRV_VERSION	"EHEA_0092-01"
+ 
+ /* eHEA capability flags */
+ #define DLPAR_PORT_ADD_REM 1
+diff --git a/drivers/net/ehea/ehea_main.c b/drivers/net/ehea/ehea_main.c
+index cb99ef2..a009c7f 100644
+--- a/drivers/net/ehea/ehea_main.c
++++ b/drivers/net/ehea/ehea_main.c
+@@ -373,8 +373,6 @@ static void ehea_refill_rq1(struct ehea_port_res *pr, int index, int nr_of_wqes)
+ 							      EHEA_L_PKT_SIZE);
+ 			if (!skb_arr_rq1[index]) {
+ 				pr->rq1_skba.os_skbs = fill_wqes - i;
+-				ehea_error("%s: no mem for skb/%d wqes filled",
+-					   dev->name, i);
+ 				break;
+ 			}
+ 		}
+@@ -390,26 +388,19 @@ static void ehea_refill_rq1(struct ehea_port_res *pr, int index, int nr_of_wqes)
+ 	ehea_update_rq1a(pr->qp, adder);
+ }
+ 
+-static int ehea_init_fill_rq1(struct ehea_port_res *pr, int nr_rq1a)
++static void ehea_init_fill_rq1(struct ehea_port_res *pr, int nr_rq1a)
+ {
+-	int ret = 0;
+ 	struct sk_buff **skb_arr_rq1 = pr->rq1_skba.arr;
+ 	struct net_device *dev = pr->port->netdev;
+ 	int i;
+ 
+ 	for (i = 0; i < pr->rq1_skba.len; i++) {
+ 		skb_arr_rq1[i] = netdev_alloc_skb(dev, EHEA_L_PKT_SIZE);
+-		if (!skb_arr_rq1[i]) {
+-			ehea_error("%s: no mem for skb/%d wqes filled",
+-				   dev->name, i);
+-			ret = -ENOMEM;
+-			goto out;
+-		}
++		if (!skb_arr_rq1[i])
++			break;
+ 	}
+ 	/* Ring doorbell */
+ 	ehea_update_rq1a(pr->qp, nr_rq1a);
+-out:
+-	return ret;
+ }
+ 
+ static int ehea_refill_rq_def(struct ehea_port_res *pr,
+@@ -438,10 +429,12 @@ static int ehea_refill_rq_def(struct ehea_port_res *pr,
+ 		u64 tmp_addr;
+ 		struct sk_buff *skb = netdev_alloc_skb(dev, packet_size);
+ 		if (!skb) {
+-			ehea_error("%s: no mem for skb/%d wqes filled",
+-				   pr->port->netdev->name, i);
+ 			q_skba->os_skbs = fill_wqes - i;
+-			ret = -ENOMEM;
++			if (q_skba->os_skbs == q_skba->len - 2) {
++				ehea_info("%s: rq%i ran dry - no mem for skb",
++					  pr->port->netdev->name, rq_nr);
++				ret = -ENOMEM;
++			}
+ 			break;
+ 		}
+ 		skb_reserve(skb, NET_IP_ALIGN);
+@@ -1212,11 +1205,11 @@ static int ehea_fill_port_res(struct ehea_port_res *pr)
+ 	int ret;
+ 	struct ehea_qp_init_attr *init_attr = &pr->qp->init_attr;
+ 
+-	ret = ehea_init_fill_rq1(pr, init_attr->act_nr_rwqes_rq1
+-				     - init_attr->act_nr_rwqes_rq2
+-				     - init_attr->act_nr_rwqes_rq3 - 1);
++	ehea_init_fill_rq1(pr, init_attr->act_nr_rwqes_rq1
++			       - init_attr->act_nr_rwqes_rq2
++			       - init_attr->act_nr_rwqes_rq3 - 1);
+ 
+-	ret |= ehea_refill_rq2(pr, init_attr->act_nr_rwqes_rq2 - 1);
++	ret = ehea_refill_rq2(pr, init_attr->act_nr_rwqes_rq2 - 1);
+ 
+ 	ret |= ehea_refill_rq3(pr, init_attr->act_nr_rwqes_rq3 - 1);
+ 

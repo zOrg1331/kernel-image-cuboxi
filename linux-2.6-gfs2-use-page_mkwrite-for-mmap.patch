@@ -1,0 +1,553 @@
+From: Benjamin Marzinski <bmarzins@redhat.com>
+Date: Mon, 23 Mar 2009 14:03:03 -0500
+Subject: [gfs2] use ->page_mkwrite for mmap()
+Message-id: 20090323190303.GB23645@ether.msp.redhat.com
+O-Subject: [RHEL-5.4 PATCH] bz315191 GFS2: Use ->page_mkwrite() for mmap()
+Bugzilla: 315191
+RH-Acked-by: Steven Whitehouse <swhiteho@redhat.com>
+RH-Acked-by: Bob Peterson <rpeterso@redhat.com>
+
+This is a backport of upstream code that cleans up the mmap() code path for
+GFS2 by implementing the page_mkwrite function in GFS2. The upstream
+commit for this patch is.
+
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=3cc3f710ce0effe397b830826a1a081fa81f11c7
+
+There are only minor differences between this version and the upstream
+code, which are due to the differences in the kernel code that calls
+page_mkwrite.  This patch was tested with QAs cluster coherency test and
+the by running a full regression load with QAs distributed IO test.
+
+-Ben
+
+Signed-off-by: Benjamin Marzinski <bmarzins@redhat.com>
+
+diff --git a/fs/gfs2/Makefile b/fs/gfs2/Makefile
+index 04ad0ca..8fff110 100644
+--- a/fs/gfs2/Makefile
++++ b/fs/gfs2/Makefile
+@@ -2,7 +2,7 @@ obj-$(CONFIG_GFS2_FS) += gfs2.o
+ gfs2-y := acl.o bmap.o daemon.o dir.o eaops.o eattr.o glock.o \
+ 	glops.o inode.o lm.o log.o lops.o locking.o main.o meta_io.o \
+ 	mount.o ops_address.o ops_dentry.o ops_export.o ops_file.o \
+-	ops_fstype.o ops_inode.o ops_super.o ops_vm.o quota.o \
++	ops_fstype.o ops_inode.o ops_super.o quota.o \
+ 	recovery.o rgrp.o super.o sys.o trans.o util.o
+ 
+ obj-$(CONFIG_GFS2_FS_LOCKING_NOLOCK) += locking/nolock/
+diff --git a/fs/gfs2/glock.c b/fs/gfs2/glock.c
+index 9dc9d7e..c2aa549 100644
+--- a/fs/gfs2/glock.c
++++ b/fs/gfs2/glock.c
+@@ -567,6 +567,8 @@ static void do_xmote(struct gfs2_glock *gl, struct gfs2_holder *gh, unsigned int
+ 	if (test_bit(GLF_INVALIDATE_IN_PROGRESS, &gl->gl_flags))
+ 		glops->go_inval(gl, target == LM_ST_DEFERRED ? 0 : DIO_METADATA);
+ 	clear_bit(GLF_INVALIDATE_IN_PROGRESS, &gl->gl_flags);
++	smp_mb__after_clear_bit();
++	wake_up_bit(&gl->gl_flags, GLF_INVALIDATE_IN_PROGRESS);
+ 
+ 	gfs2_glock_hold(gl);
+ 	if (target != LM_ST_UNLOCKED && (gl->gl_state == LM_ST_SHARED ||
+diff --git a/fs/gfs2/glops.c b/fs/gfs2/glops.c
+index 40096f8..7ce0016 100644
+--- a/fs/gfs2/glops.c
++++ b/fs/gfs2/glops.c
+@@ -87,14 +87,9 @@ static void gfs2_pte_inval(struct gfs2_glock *gl)
+ 	if (!ip || !S_ISREG(inode->i_mode))
+ 		return;
+ 
+-	if (!test_bit(GIF_PAGED, &ip->i_flags))
+-		return;
+-
+ 	unmap_shared_mapping_range(inode->i_mapping, 0, 0);
+ 	if (test_bit(GIF_SW_PAGED, &ip->i_flags))
+ 		set_bit(GLF_DIRTY, &gl->gl_flags);
+-
+-	clear_bit(GIF_SW_PAGED, &ip->i_flags);
+ }
+ 
+ /**
+@@ -217,10 +212,8 @@ static void inode_go_inval(struct gfs2_glock *gl, int flags)
+ 			set_bit(GIF_INVALID, &ip->i_flags);
+ 	}
+ 
+-	if (ip && S_ISREG(ip->i_inode.i_mode)) {
++	if (ip && S_ISREG(ip->i_inode.i_mode))
+ 		truncate_inode_pages(ip->i_inode.i_mapping, 0);
+-		clear_bit(GIF_PAGED, &ip->i_flags);
+-	}
+ }
+ 
+ /**
+diff --git a/fs/gfs2/incore.h b/fs/gfs2/incore.h
+index 99ac86c..dcd481b 100644
+--- a/fs/gfs2/incore.h
++++ b/fs/gfs2/incore.h
+@@ -229,7 +229,6 @@ struct gfs2_alloc {
+ enum {
+ 	GIF_INVALID		= 0,
+ 	GIF_QD_LOCKED		= 1,
+-	GIF_PAGED		= 2,
+ 	GIF_SW_PAGED		= 3,
+ 	GIF_USER                = 4, /* user inode, not metadata addr space */
+ };
+@@ -277,13 +276,7 @@ static inline struct gfs2_sbd *GFS2_SB(const struct inode *inode)
+ 	return inode->i_sb->s_fs_info;
+ }
+ 
+-enum {
+-	GFF_DID_DIRECT_ALLOC	= 0,
+-	GFF_EXLOCK = 1,
+-};
+-
+ struct gfs2_file {
+-	unsigned long f_flags;		/* GFF_... */
+ 	struct mutex f_fl_mutex;
+ 	struct gfs2_holder f_fl_gh;
+ };
+diff --git a/fs/gfs2/ops_address.c b/fs/gfs2/ops_address.c
+index cb9156b..dc13990 100644
+--- a/fs/gfs2/ops_address.c
++++ b/fs/gfs2/ops_address.c
+@@ -477,19 +477,12 @@ static int gfs2_readpage(struct file *file, struct page *page)
+ 	struct address_space *mapping = page->mapping;
+ 	struct gfs2_inode *ip = GFS2_I(mapping->host);
+ 	struct gfs2_sbd *sdp = GFS2_SB(mapping->host);
+-	struct gfs2_file *gf = NULL;
+ 	struct gfs2_holder gh;
+ 	int do_unlock = 0;
+ 	pgoff_t index = page->index;
+ 	int error = 0;
+ 
+ 	if (likely(file != &gfs2_internal_file_sentinel)) {
+-		if (file) {
+-			gf = file->private_data;
+-			if (test_bit(GFF_EXLOCK, &gf->f_flags))
+-				/* gfs2_sharewrite_nopage has grabbed the ip->i_gl already */
+-				goto skip_lock;
+-		}
+ 		unlock_page(page);
+ 		gfs2_holder_init(ip->i_gl, LM_ST_SHARED, 0, &gh);
+ 		error = gfs2_glock_nq(&gh);
+@@ -503,7 +496,6 @@ static int gfs2_readpage(struct file *file, struct page *page)
+ 			error = AOP_TRUNCATED_PAGE;
+ 	}
+ 
+-skip_lock:
+ 	if (!error && !PageUptodate(page)) {
+ 		if (gfs2_is_stuffed(ip)) {
+ 			error = stuffed_readpage(ip, page);
+@@ -554,11 +546,6 @@ static int gfs2_readpages(struct file *file, struct address_space *mapping,
+ 	int do_unlock = 0;
+ 
+ 	if (likely(file != &gfs2_internal_file_sentinel)) {
+-		if (file) {
+-			struct gfs2_file *gf = file->private_data;
+-			if (test_bit(GFF_EXLOCK, &gf->f_flags))
+-				goto skip_lock;
+-		}
+ 		gfs2_holder_init(ip->i_gl, LM_ST_SHARED,
+ 				 LM_FLAG_TRY_1CB, &gh);
+ 		do_unlock = 1;
+@@ -568,12 +555,12 @@ static int gfs2_readpages(struct file *file, struct address_space *mapping,
+ 		if (unlikely(ret))
+ 			goto out_unlock;
+ 	}
+-skip_lock:
++
+ 	if (!gfs2_is_stuffed(ip))
+ 		ret = mpage_readpages(mapping, pages, nr_pages, gfs2_block_map);
+ 
+ 	if (do_unlock) {
+-		gfs2_glock_dq_m(1, &gh);
++		gfs2_glock_dq(&gh);
+ 		gfs2_holder_uninit(&gh);
+ 	}
+ out:
+@@ -1052,9 +1039,7 @@ static int gfs2_commit_write(struct file *file, struct page *page,
+ 		gfs2_quota_unlock(ip);
+ 		gfs2_alloc_put(ip);
+ 	}
+-	unlock_page(page);
+-	gfs2_glock_dq_m(1, &ip->i_gh);
+-	lock_page(page);
++	gfs2_glock_dq(&ip->i_gh);
+ 	gfs2_holder_uninit(&ip->i_gh);
+ 	return 0;
+ 
+@@ -1067,9 +1052,7 @@ fail_endtrans:
+ 		gfs2_quota_unlock(ip);
+ 		gfs2_alloc_put(ip);
+ 	}
+-	unlock_page(page);
+-	gfs2_glock_dq_m(1, &ip->i_gh);
+-	lock_page(page);
++	gfs2_glock_dq(&ip->i_gh);
+ 	gfs2_holder_uninit(&ip->i_gh);
+ fail_nounlock:
+ 	ClearPageUptodate(page);
+@@ -1218,7 +1201,7 @@ static ssize_t gfs2_direct_IO(int rw, struct kiocb *iocb,
+ 					   iov, offset, nr_segs,
+ 					   gfs2_get_block_direct, NULL);
+ out:
+-	gfs2_glock_dq_m(1, &gh);
++	gfs2_glock_dq(&gh);
+ 	gfs2_holder_uninit(&gh);
+ 	return rv;
+ }
+diff --git a/fs/gfs2/ops_file.c b/fs/gfs2/ops_file.c
+index 5dcde81..965aa19 100644
+--- a/fs/gfs2/ops_file.c
++++ b/fs/gfs2/ops_file.c
+@@ -219,7 +219,7 @@ static int gfs2_get_flags(struct file *filp, u32 __user *ptr)
+ 	if (put_user(fsflags, ptr))
+ 		error = -EFAULT;
+ 
+-	gfs2_glock_dq_m(1, &gh);
++	gfs2_glock_dq(&gh);
+ 	gfs2_holder_uninit(&gh);
+ 	return error;
+ }
+@@ -353,6 +353,161 @@ static long gfs2_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
+ 	return -ENOTTY;
+ }
+ 
++/**
++ * gfs2_allocate_page_backing - Use bmap to allocate blocks
++ * @page: The (locked) page to allocate backing for
++ *
++ * We try to allocate all the blocks required for the page in
++ * one go. This might fail for various reasons, so we keep
++ * trying until all the blocks to back this page are allocated.
++ * If some of the blocks are already allocated, thats ok too.
++ */
++
++static int gfs2_allocate_page_backing(struct page *page)
++{
++	struct inode *inode = page->mapping->host;
++	struct buffer_head bh;
++	unsigned long size = PAGE_CACHE_SIZE;
++	u64 lblock = page->index << (PAGE_CACHE_SHIFT - inode->i_blkbits);
++
++	do {
++		bh.b_state = 0;
++		bh.b_size = size;
++		gfs2_block_map(inode, lblock, &bh, 1);
++		if (!buffer_mapped(&bh))
++			return -EIO;
++		size -= bh.b_size;
++		lblock += (bh.b_size >> inode->i_blkbits);
++	} while(size > 0);
++	return 0;
++}
++
++/**
++ * gfs2_page_mkwrite - Make a shared, mmap()ed, page writable
++ * @vma: The virtual memory area
++ * @page: The page which is about to become writable
++ *
++ * When the page becomes writable, we need to ensure that we have
++ * blocks allocated on disk to back that page.
++ */
++
++static int gfs2_page_mkwrite(struct vm_area_struct *vma, struct page *page)
++{
++	struct inode *inode = vma->vm_file->f_dentry->d_inode;
++	struct gfs2_inode *ip = GFS2_I(inode);
++	struct gfs2_sbd *sdp = GFS2_SB(inode);
++	unsigned long last_index;
++	u64 pos = page->index << PAGE_CACHE_SHIFT;
++	unsigned int data_blocks, ind_blocks, rblocks;
++	int alloc_required = 0;
++	struct gfs2_holder gh;
++	struct gfs2_alloc *al;
++	int ret;
++
++	gfs2_holder_init(ip->i_gl, LM_ST_EXCLUSIVE, 0, &gh);
++	ret = gfs2_glock_nq(&gh);
++	if (ret)
++		goto out;
++
++	set_bit(GIF_SW_PAGED, &ip->i_flags);
++	ret = gfs2_write_alloc_required(ip, pos, PAGE_CACHE_SIZE, &alloc_required);
++	if (ret || !alloc_required)
++		goto out_unlock;
++
++	al = gfs2_alloc_get(ip);
++	if (al == NULL) {
++		ret = -ENOMEM;
++		goto out_unlock;
++	}
++	ret = gfs2_quota_lock(ip, NO_QUOTA_CHANGE, NO_QUOTA_CHANGE);
++	if (ret)
++		goto out_alloc_put;
++	ret = gfs2_quota_check(ip, ip->i_inode.i_uid, ip->i_inode.i_gid);
++	if (ret)
++		goto out_quota_unlock;
++	gfs2_write_calc_reserv(ip, PAGE_CACHE_SIZE, &data_blocks, &ind_blocks);
++	al->al_requested = data_blocks + ind_blocks;
++	ret = gfs2_inplace_reserve(ip);
++	if (ret)
++		goto out_quota_unlock;
++
++	rblocks = RES_DINODE + ind_blocks;
++	if (gfs2_is_jdata(ip))
++		rblocks += data_blocks ? data_blocks : 1;
++	if (ind_blocks || data_blocks)
++		rblocks += RES_STATFS + RES_QUOTA;
++	ret = gfs2_trans_begin(sdp, rblocks, 0);
++	if (ret)
++		goto out_trans_fail;
++
++	lock_page(page);
++	ret = -EINVAL;
++	last_index = ip->i_inode.i_size >> PAGE_CACHE_SHIFT;
++	if (page->index > last_index)
++		goto out_unlock_page;
++	ret = 0;
++	if (!PageUptodate(page) || page->mapping != ip->i_inode.i_mapping)
++		goto out_unlock_page;
++	if (gfs2_is_stuffed(ip)) {
++		ret = gfs2_unstuff_dinode(ip, page);
++		if (ret)
++			goto out_unlock_page;
++	}
++	ret = gfs2_allocate_page_backing(page);
++
++out_unlock_page:
++	unlock_page(page);
++	gfs2_trans_end(sdp);
++out_trans_fail:
++	gfs2_inplace_release(ip);
++out_quota_unlock:
++	gfs2_quota_unlock(ip);
++out_alloc_put:
++	gfs2_alloc_put(ip);
++out_unlock:
++	gfs2_glock_dq(&gh);
++out:
++	gfs2_holder_uninit(&gh);
++	return ret;
++}
++
++static int just_schedule(void *word)
++{
++	schedule();
++	return 0;
++}
++
++static void wait_on_invalidate(struct gfs2_glock *gl)
++{
++	might_sleep();
++	wait_on_bit(&gl->gl_flags, GLF_INVALIDATE_IN_PROGRESS, just_schedule,
++		    TASK_UNINTERRUPTIBLE);
++}
++
++static struct page *gfs2_nopage(struct vm_area_struct *area,
++				unsigned long address, int *type)
++{
++	struct file *file = area->vm_file;
++	struct inode *inode = file->f_mapping->host;
++	struct gfs2_inode *ip = GFS2_I(inode);
++	struct gfs2_glock *gl = ip->i_gl;
++	struct gfs2_sbd *sdp = gl->gl_sbd;
++
++	if (likely(file != &gfs2_internal_file_sentinel)) {
++		gfs2_glock_hold(gl);
++		if (likely(!test_bit(SDF_SHUTDOWN, &sdp->sd_flags)))
++			wait_on_invalidate(gl);
++		gfs2_glock_put(gl);
++	}
++
++	return filemap_nopage(area, address, type);
++}
++
++static struct vm_operations_struct gfs2_vm_ops = {
++	.nopage = gfs2_nopage,
++	.page_mkwrite = gfs2_page_mkwrite,
++};
++
+ 
+ /**
+  * gfs2_mmap -
+@@ -375,14 +530,7 @@ static int gfs2_mmap(struct file *file, struct vm_area_struct *vma)
+ 		return error;
+ 	}
+ 
+-	/* This is VM_MAYWRITE instead of VM_WRITE because a call
+-	   to mprotect() can turn on VM_WRITE later. */
+-
+-	if ((vma->vm_flags & (VM_MAYSHARE | VM_MAYWRITE)) ==
+-	    (VM_MAYSHARE | VM_MAYWRITE))
+-		vma->vm_ops = &gfs2_vm_ops_sharewrite;
+-	else
+-		vma->vm_ops = &gfs2_vm_ops_private;
++	vma->vm_ops = &gfs2_vm_ops;
+ 
+ 	gfs2_glock_dq_uninit(&i_gh);
+ 
+diff --git a/fs/gfs2/ops_vm.c b/fs/gfs2/ops_vm.c
+deleted file mode 100644
+index ed158fe..0000000
+--- a/fs/gfs2/ops_vm.c
++++ /dev/null
+@@ -1,159 +0,0 @@
+-/*
+- * Copyright (C) Sistina Software, Inc.  1997-2003 All rights reserved.
+- * Copyright (C) 2004-2006 Red Hat, Inc.  All rights reserved.
+- *
+- * This copyrighted material is made available to anyone wishing to use,
+- * modify, copy, or redistribute it subject to the terms and conditions
+- * of the GNU General Public License version 2.
+- */
+-
+-#include <linux/slab.h>
+-#include <linux/spinlock.h>
+-#include <linux/completion.h>
+-#include <linux/buffer_head.h>
+-#include <linux/mm.h>
+-#include <linux/pagemap.h>
+-#include <linux/gfs2_ondisk.h>
+-#include <linux/lm_interface.h>
+-
+-#include "gfs2.h"
+-#include "incore.h"
+-#include "bmap.h"
+-#include "glock.h"
+-#include "inode.h"
+-#include "ops_vm.h"
+-#include "quota.h"
+-#include "rgrp.h"
+-#include "trans.h"
+-#include "util.h"
+-
+-static struct page *gfs2_private_nopage(struct vm_area_struct *area,
+-					unsigned long address, int *type)
+-{
+-	struct gfs2_inode *ip = GFS2_I(area->vm_file->f_mapping->host);
+-
+-	set_bit(GIF_PAGED, &ip->i_flags);
+-	return filemap_nopage(area, address, type);
+-}
+-
+-static int alloc_page_backing(struct gfs2_inode *ip, struct page *page)
+-{
+-	struct gfs2_sbd *sdp = GFS2_SB(&ip->i_inode);
+-	unsigned long index = page->index;
+-	u64 lblock = index << (PAGE_CACHE_SHIFT -
+-				    sdp->sd_sb.sb_bsize_shift);
+-	unsigned int blocks = PAGE_CACHE_SIZE >> sdp->sd_sb.sb_bsize_shift;
+-	struct gfs2_alloc *al;
+-	unsigned int data_blocks, ind_blocks;
+-	unsigned int x;
+-	int error;
+-
+-	al = gfs2_alloc_get(ip);
+-
+-	error = gfs2_quota_lock(ip, NO_QUOTA_CHANGE, NO_QUOTA_CHANGE);
+-	if (error)
+-		goto out;
+-
+-	error = gfs2_quota_check(ip, ip->i_inode.i_uid, ip->i_inode.i_gid);
+-	if (error)
+-		goto out_gunlock_q;
+-
+-	gfs2_write_calc_reserv(ip, PAGE_CACHE_SIZE, &data_blocks, &ind_blocks);
+-
+-	al->al_requested = data_blocks + ind_blocks;
+-
+-	error = gfs2_inplace_reserve(ip);
+-	if (error)
+-		goto out_gunlock_q;
+-
+-	error = gfs2_trans_begin(sdp, al->al_rgd->rd_length +
+-				 ind_blocks + RES_DINODE +
+-				 RES_STATFS + RES_QUOTA, 0);
+-	if (error)
+-		goto out_ipres;
+-
+-	if (gfs2_is_stuffed(ip)) {
+-		error = gfs2_unstuff_dinode(ip, NULL);
+-		if (error)
+-			goto out_trans;
+-	}
+-
+-	for (x = 0; x < blocks; ) {
+-		u64 dblock;
+-		unsigned int extlen;
+-		int new = 1;
+-
+-		error = gfs2_extent_map(&ip->i_inode, lblock, &new, &dblock, &extlen);
+-		if (error)
+-			goto out_trans;
+-
+-		lblock += extlen;
+-		x += extlen;
+-	}
+-
+-out_trans:
+-	gfs2_trans_end(sdp);
+-out_ipres:
+-	gfs2_inplace_release(ip);
+-out_gunlock_q:
+-	gfs2_quota_unlock(ip);
+-out:
+-	gfs2_alloc_put(ip);
+-	return error;
+-}
+-
+-static struct page *gfs2_sharewrite_nopage(struct vm_area_struct *area,
+-					   unsigned long address, int *type)
+-{
+-	struct file *file = area->vm_file;
+-	struct gfs2_file *gf = file->private_data;
+-	struct gfs2_inode *ip = GFS2_I(file->f_mapping->host);
+-	struct gfs2_holder i_gh;
+-	struct page *result = NULL;
+-	unsigned long index = ((address - area->vm_start) >> PAGE_CACHE_SHIFT) +
+-			      area->vm_pgoff;
+-	int alloc_required;
+-	int error;
+-
+-	error = gfs2_glock_nq_init(ip->i_gl, LM_ST_EXCLUSIVE, 0, &i_gh);
+-	if (error)
+-		return NULL;
+-
+-	set_bit(GIF_PAGED, &ip->i_flags);
+-	set_bit(GIF_SW_PAGED, &ip->i_flags);
+-
+-	error = gfs2_write_alloc_required(ip, (u64)index << PAGE_CACHE_SHIFT,
+-					  PAGE_CACHE_SIZE, &alloc_required);
+-	if (error)
+-		goto out;
+-
+-	set_bit(GFF_EXLOCK, &gf->f_flags);
+-	result = filemap_nopage(area, address, type);
+-	clear_bit(GFF_EXLOCK, &gf->f_flags);
+-	if (!result || result == NOPAGE_OOM)
+-		goto out;
+-
+-	if (alloc_required) {
+-		error = alloc_page_backing(ip, result);
+-		if (error) {
+-			page_cache_release(result);
+-			result = NULL;
+-			goto out;
+-		}
+-		set_page_dirty(result);
+-	}
+-
+-out:
+-	gfs2_glock_dq_uninit(&i_gh);
+-
+-	return result;
+-}
+-
+-struct vm_operations_struct gfs2_vm_ops_private = {
+-	.nopage = gfs2_private_nopage,
+-};
+-
+-struct vm_operations_struct gfs2_vm_ops_sharewrite = {
+-	.nopage = gfs2_sharewrite_nopage,
+-};
+-

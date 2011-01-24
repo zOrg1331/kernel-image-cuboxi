@@ -1,0 +1,83 @@
+From: Neil Horman <nhorman@redhat.com>
+Date: Thu, 24 Jul 2008 15:17:48 -0400
+Subject: [net] proc: add unresolved discards stat to ndisc_cache
+Message-id: 20080724191748.GC17344@hmsendeavour.rdu.redhat.com
+O-Subject: [RHEL 5.3 PATCH] net: add unresolved discards stat to /proc/net/stat/ndisc_cache (bz 453173)
+Bugzilla: 456732
+RH-Acked-by: David S. Miller <davem@redhat.com>
+
+Hey-
+	We recently had a problem at NYSE in which frames were periodically
+getting retransmitted on a tcp stream.  In attempting to track down where the
+frame was getting dropped, we discovered that the frame was lost internally to
+the network stack, but no drop counter was getting incremented in response to
+it.  Careful auditing by several people eventually revealed that we could drop
+in the neighbor cache if frames were being sent to a neighbor with an incomplete
+entry (the arp_queue list that skb are enqueued to during resolution is limited
+to 3 skbs by default).  This patch is a backport of commit
+9a6d276e85aa3d8f308fc5e8de6892daeb60ae5f in DaveM's net-next tree to add an
+unresolved discards counter to the ndisc_cache proc file, so that frames lost
+here in the future will be visible.  Satisfies bz 453173
+
+Neil
+
+diff --git a/include/net/neighbour.h b/include/net/neighbour.h
+index 4901ee4..62f832b 100644
+--- a/include/net/neighbour.h
++++ b/include/net/neighbour.h
+@@ -99,7 +99,7 @@ struct neigh_statistics
+ 	unsigned long destroys;		/* number of destroyed neighs */
+ 	unsigned long hash_grows;	/* number of hash resizes */
+ 
+-	unsigned long res_failed;	/* nomber of failed resolutions */
++	unsigned long res_failed;	/* number of failed resolutions */
+ 
+ 	unsigned long lookups;		/* number of lookups */
+ 	unsigned long hits;		/* number of hits (among lookups) */
+@@ -109,6 +109,9 @@ struct neigh_statistics
+ 
+ 	unsigned long periodic_gc_runs;	/* number of periodic GC runs */
+ 	unsigned long forced_gc_runs;	/* number of forced GC runs */
++#ifndef __GENKSYMS__
++	unsigned long unres_discards;	/* number of unresolved drops */
++#endif
+ };
+ 
+ #define NEIGH_CACHE_STAT_INC(tbl, field)				\
+diff --git a/net/core/neighbour.c b/net/core/neighbour.c
+index fe2113f..f76696e 100644
+--- a/net/core/neighbour.c
++++ b/net/core/neighbour.c
+@@ -878,6 +878,7 @@ int __neigh_event_send(struct neighbour *neigh, struct sk_buff *skb)
+ 				buff = neigh->arp_queue.next;
+ 				__skb_unlink(buff, &neigh->arp_queue);
+ 				kfree_skb(buff);
++				NEIGH_CACHE_STAT_INC(neigh->tbl, unres_discards);
+ 			}
+ 			__skb_queue_tail(&neigh->arp_queue, skb);
+ 		}
+@@ -2282,12 +2283,12 @@ static int neigh_stat_seq_show(struct seq_file *seq, void *v)
+ 	struct neigh_statistics *st = v;
+ 
+ 	if (v == SEQ_START_TOKEN) {
+-		seq_printf(seq, "entries  allocs destroys hash_grows  lookups hits  res_failed  rcv_probes_mcast rcv_probes_ucast  periodic_gc_runs forced_gc_runs\n");
++		seq_printf(seq, "entries  allocs destroys hash_grows  lookups hits  res_failed  rcv_probes_mcast rcv_probes_ucast  periodic_gc_runs forced_gc_runs unresolved_discards\n");
+ 		return 0;
+ 	}
+ 
+ 	seq_printf(seq, "%08x  %08lx %08lx %08lx  %08lx %08lx  %08lx  "
+-			"%08lx %08lx  %08lx %08lx\n",
++			"%08lx %08lx  %08lx %08lx %08lx\n",
+ 		   atomic_read(&tbl->entries),
+ 
+ 		   st->allocs,
+@@ -2303,7 +2304,8 @@ static int neigh_stat_seq_show(struct seq_file *seq, void *v)
+ 		   st->rcv_probes_ucast,
+ 
+ 		   st->periodic_gc_runs,
+-		   st->forced_gc_runs
++		   st->forced_gc_runs,
++		   st->unres_discards
+ 		   );
+ 
+ 	return 0;

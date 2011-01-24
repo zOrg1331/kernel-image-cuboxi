@@ -1,0 +1,53 @@
+From: Jeff Moyer <jmoyer@redhat.com>
+Date: Tue, 3 Nov 2009 11:36:38 -0500
+Subject: [block] cfq-iosched: default seek when not enough samples
+Message-id: 1257266206-24003-5-git-send-email-jmoyer@redhat.com
+O-Subject: [PATCH 04/12] cfq-iosched: use the default seek distance when there aren't enough seek samples
+Bugzilla: 456181 448130 427709
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+RH-Acked-by: Josef Bacik <josef@redhat.com>
+RH-Acked-by: Vivek Goyal <vgoyal@redhat.com>
+RH-Acked-by: Jeff Layton <jlayton@redhat.com>
+
+commit 04dc6e71a28d4815bf9431efcafc107bb0ad2792
+Author: Jeff Moyer <jmoyer@redhat.com>
+Date:   Tue Apr 21 07:31:56 2009 +0200
+
+    cfq-iosched: use the default seek distance when there aren't enough seek sam
+
+    If the cfq io context doesn't have enough samples yet to provide a mean
+    seek distance, then use the default threshold we have for seeky IO instead
+    of defaulting to 0.
+
+    Signed-off-by: Jeff Moyer <jmoyer@redhat.com>
+    Signed-off-by: Jens Axboe <jens.axboe@oracle.com>
+
+diff --git a/block/cfq-iosched.c b/block/cfq-iosched.c
+index 78f4853..b20eba7 100644
+--- a/block/cfq-iosched.c
++++ b/block/cfq-iosched.c
+@@ -962,18 +962,20 @@ static inline sector_t cfq_dist_from_last(struct cfq_data *cfqd,
+ 		return cfqd->last_position - rq->sector;
+ }
+ 
++#define CIC_SEEK_THR   8 * 1024
++#define CIC_SEEKY(cic) ((cic)->seek_mean > CIC_SEEK_THR)
++
+ static inline int cfq_rq_close(struct cfq_data *cfqd, struct request *rq)
+ {
+ 	struct cfq_io_context *cic = cfqd->active_cic;
++	sector_t sdist = cic->seek_mean;
+ 
+ 	if (!sample_valid(cic->seek_samples))
+-		return 0;
++		sdist = CIC_SEEK_THR;
+ 
+-	return cfq_dist_from_last(cfqd, rq) <= cic->seek_mean;
++	return cfq_dist_from_last(cfqd, rq) <= sdist;
+ }
+ 
+-#define CIC_SEEKY(cic) ((cic)->seek_mean > (8 * 1024))
+-
+ static struct cfq_queue *cfq_set_active_queue(struct cfq_data *cfqd,
+ 					      struct cfq_queue *cfqq)
+ {

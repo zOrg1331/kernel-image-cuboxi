@@ -1,0 +1,389 @@
+From: Tom Coughlan <coughlan@redhat.com>
+Subject: [RHEL 5.0 PATCH] mpt fusion bugfix and maintainability improvements
+Date: Tue, 12 Dec 2006 12:37:39 -0500
+Bugzilla: 213736
+Message-Id: <1165945061.10150.2.camel@bianchi.boston.redhat.com>
+Changelog: mpt fusion bugfix and maintainability improvements
+
+
+This patch fixes a bug in mptfc, causing it to properly wait for
+firmware target discovery to complete. It also includes some
+enhancements that will improve the maintainability of RHEL 5.0:
+
+(1) When a port on an expander is used specifically to link to the
+parent device, make mptsas call sas_port_mark_backlink. This will cause
+the topology to be represented properly in sysfs.
+
+(2) Improve error handling (abort, dev_reset, bus_reset, host_reset),
+and add some fc transport attributes (supported_speeds, maxframe_size,
+fabric_name, port_state, etc.)
+
+(3) Remove some old code in fusion/linux_compat.h.
+
+(4) Add MODULE_VERSION to each mpt driver so the version is present in
+modinfo.
+
+The patch is requested by LSI Logic, IBM, and SGI. BZ 213736.
+All except the last change were submitted upstream and accepted several
+months ago. The maintainer intends to post the MODULE_VERSION patch
+soon. This is very low risk.  
+
+I built it and tested mptfc. Confirmed the new fc attributes. 
+
+Tom
+
+diff -up linux-2.6.18.noarch/drivers/message/fusion.stock/mptbase.h linux-2.6.18.noarch/drivers/message/fusion/mptbase.h
+--- linux-2.6.18.noarch/drivers/message/fusion.stock/mptbase.h
++++ linux-2.6.18.noarch/drivers/message/fusion/mptbase.h
+@@ -75,8 +75,8 @@
+ #define COPYRIGHT	"Copyright (c) 1999-2005 " MODULEAUTHOR
+ #endif
+ 
+-#define MPT_LINUX_VERSION_COMMON	"3.04.01"
+-#define MPT_LINUX_PACKAGE_NAME		"@(#)mptlinux-3.04.01"
++#define MPT_LINUX_VERSION_COMMON	"3.04.02"
++#define MPT_LINUX_PACKAGE_NAME		"@(#)mptlinux-3.04.02"
+ #define WHAT_MAGIC_STRING		"@" "(" "#" ")"
+ 
+ #define show_mptmod_ver(s,ver)  \
+diff -up linux-2.6.18.noarch/drivers/message/fusion.stock/mptctl.c linux-2.6.18.noarch/drivers/message/fusion/mptctl.c
+--- linux-2.6.18.noarch/drivers/message/fusion.stock/mptctl.c
++++ linux-2.6.18.noarch/drivers/message/fusion/mptctl.c
+@@ -79,6 +79,7 @@
+ MODULE_AUTHOR(MODULEAUTHOR);
+ MODULE_DESCRIPTION(my_NAME);
+ MODULE_LICENSE("GPL");
++MODULE_VERSION(MPT_LINUX_VERSION_COMMON);
+ 
+ /*=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=*/
+ 
+diff -up linux-2.6.18.noarch/drivers/message/fusion.stock/mptfc.c linux-2.6.18.noarch/drivers/message/fusion/mptfc.c
+--- linux-2.6.18.noarch/drivers/message/fusion.stock/mptfc.c
++++ linux-2.6.18.noarch/drivers/message/fusion/mptfc.c
+@@ -75,6 +75,7 @@
+ MODULE_AUTHOR(MODULEAUTHOR);
+ MODULE_DESCRIPTION(my_NAME);
+ MODULE_LICENSE("GPL");
++MODULE_VERSION(MPT_LINUX_VERSION_COMMON);
+ 
+ /* Command line args */
+ #define MPTFC_DEV_LOSS_TMO (60)
+@@ -96,6 +97,10 @@ static int mptfc_qcmd(struct scsi_cmnd *
+ static void mptfc_target_destroy(struct scsi_target *starget);
+ static void mptfc_set_rport_loss_tmo(struct fc_rport *rport, uint32_t timeout);
+ static void __devexit mptfc_remove(struct pci_dev *pdev);
++static int mptfc_abort(struct scsi_cmnd *SCpnt);
++static int mptfc_dev_reset(struct scsi_cmnd *SCpnt);
++static int mptfc_bus_reset(struct scsi_cmnd *SCpnt);
++static int mptfc_host_reset(struct scsi_cmnd *SCpnt);
+ 
+ static struct scsi_host_template mptfc_driver_template = {
+ 	.module				= THIS_MODULE,
+@@ -110,10 +115,10 @@ static struct scsi_host_template mptfc_d
+ 	.target_destroy			= mptfc_target_destroy,
+ 	.slave_destroy			= mptscsih_slave_destroy,
+ 	.change_queue_depth 		= mptscsih_change_queue_depth,
+-	.eh_abort_handler		= mptscsih_abort,
+-	.eh_device_reset_handler	= mptscsih_dev_reset,
+-	.eh_bus_reset_handler		= mptscsih_bus_reset,
+-	.eh_host_reset_handler		= mptscsih_host_reset,
++	.eh_abort_handler		= mptfc_abort,
++	.eh_device_reset_handler	= mptfc_dev_reset,
++	.eh_bus_reset_handler		= mptfc_bus_reset,
++	.eh_host_reset_handler		= mptfc_host_reset,
+ 	.bios_param			= mptscsih_bios_param,
+ 	.can_queue			= MPT_FC_CAN_QUEUE,
+ 	.this_id			= -1,
+@@ -162,9 +167,86 @@ static struct fc_function_template mptfc
+ 	.show_starget_port_id = 1,
+ 	.set_rport_dev_loss_tmo = mptfc_set_rport_loss_tmo,
+ 	.show_rport_dev_loss_tmo = 1,
+-
++	.show_host_supported_speeds = 1,
++	.show_host_maxframe_size = 1,
++	.show_host_speed = 1,
++	.show_host_fabric_name = 1,
++	.show_host_port_type = 1,
++	.show_host_port_state = 1,
++	.show_host_symbolic_name = 1,
+ };
+ 
++static int
++mptfc_block_error_handler(struct scsi_cmnd *SCpnt,
++			  int (*func)(struct scsi_cmnd *SCpnt),
++			  const char *caller)
++{
++	struct scsi_device	*sdev = SCpnt->device;
++	struct Scsi_Host	*shost = sdev->host;
++	struct fc_rport		*rport = starget_to_rport(scsi_target(sdev));
++	unsigned long		flags;
++	int			ready;
++
++	spin_lock_irqsave(shost->host_lock, flags);
++	while ((ready = fc_remote_port_chkready(rport) >> 16) == DID_IMM_RETRY) {
++		spin_unlock_irqrestore(shost->host_lock, flags);
++		dfcprintk ((MYIOC_s_INFO_FMT
++			"mptfc_block_error_handler.%d: %d:%d, port status is "
++			"DID_IMM_RETRY, deferring %s recovery.\n",
++			((MPT_SCSI_HOST *) shost->hostdata)->ioc->name,
++			((MPT_SCSI_HOST *) shost->hostdata)->ioc->sh->host_no,
++			SCpnt->device->id,SCpnt->device->lun,caller));
++		msleep(1000);
++		spin_lock_irqsave(shost->host_lock, flags);
++	}
++	spin_unlock_irqrestore(shost->host_lock, flags);
++
++	if (ready == DID_NO_CONNECT || !SCpnt->device->hostdata) {
++		dfcprintk ((MYIOC_s_INFO_FMT
++			"%s.%d: %d:%d, failing recovery, "
++			"port state %d, vdev %p.\n", caller,
++			((MPT_SCSI_HOST *) shost->hostdata)->ioc->name,
++			((MPT_SCSI_HOST *) shost->hostdata)->ioc->sh->host_no,
++			SCpnt->device->id,SCpnt->device->lun,ready,
++			SCpnt->device->hostdata));
++		return FAILED;
++	}
++	dfcprintk ((MYIOC_s_INFO_FMT
++		"%s.%d: %d:%d, executing recovery.\n", caller,
++		((MPT_SCSI_HOST *) shost->hostdata)->ioc->name,
++		((MPT_SCSI_HOST *) shost->hostdata)->ioc->sh->host_no,
++		SCpnt->device->id,SCpnt->device->lun));
++	return (*func)(SCpnt);
++}
++
++static int
++mptfc_abort(struct scsi_cmnd *SCpnt)
++{
++	return
++	    mptfc_block_error_handler(SCpnt, mptscsih_abort, __FUNCTION__);
++}
++
++static int
++mptfc_dev_reset(struct scsi_cmnd *SCpnt)
++{
++	return
++	    mptfc_block_error_handler(SCpnt, mptscsih_dev_reset, __FUNCTION__);
++}
++
++static int
++mptfc_bus_reset(struct scsi_cmnd *SCpnt)
++{
++	return
++	    mptfc_block_error_handler(SCpnt, mptscsih_bus_reset, __FUNCTION__);
++}
++
++static int
++mptfc_host_reset(struct scsi_cmnd *SCpnt)
++{
++	return
++	    mptfc_block_error_handler(SCpnt, mptscsih_host_reset, __FUNCTION__);
++}
++
+ static void
+ mptfc_set_rport_loss_tmo(struct fc_rport *rport, uint32_t timeout)
+ {
+@@ -556,6 +638,12 @@ mptfc_qcmd(struct scsi_cmnd *SCpnt, void
+ 		return 0;
+ 	}
+ 
++	if (!SCpnt->device->hostdata) {	/* vdev */
++		SCpnt->result = DID_NO_CONNECT << 16;
++		done(SCpnt);
++		return 0;
++	}
++
+ 	/* dd_data is null until finished adding target */
+ 	ri = *((struct mptfc_rport_info **)rport->dd_data);
+ 	if (unlikely(!ri)) {
+@@ -839,33 +927,95 @@ mptfc_SetFcPortPage1_defaults(MPT_ADAPTE
+ static void
+ mptfc_init_host_attr(MPT_ADAPTER *ioc,int portnum)
+ {
+-	unsigned class = 0, cos = 0;
++	unsigned	class = 0;
++	unsigned	cos = 0;
++	unsigned	speed;
++	unsigned	port_type;
++	unsigned	port_state;
++	FCPortPage0_t	*pp0;
++	struct Scsi_Host *sh;
++	char		*sn;
+ 
+ 	/* don't know what to do as only one scsi (fc) host was allocated */
+ 	if (portnum != 0)
+ 		return;
+ 
+-	class = ioc->fc_port_page0[portnum].SupportedServiceClass;
++	pp0 = &ioc->fc_port_page0[portnum];
++	sh = ioc->sh;
++
++	sn = fc_host_symbolic_name(sh);
++	snprintf(sn, FC_SYMBOLIC_NAME_SIZE, "%s %s%08xh",
++	    ioc->prod_name,
++	    MPT_FW_REV_MAGIC_ID_STRING,
++	    ioc->facts.FWVersion.Word);
++
++	fc_host_tgtid_bind_type(sh) = FC_TGTID_BIND_BY_WWPN;
++
++	fc_host_maxframe_size(sh) = pp0->MaxFrameSize;
++
++	fc_host_node_name(sh) =
++	    	(u64)pp0->WWNN.High << 32 | (u64)pp0->WWNN.Low;
++
++	fc_host_port_name(sh) =
++	    	(u64)pp0->WWPN.High << 32 | (u64)pp0->WWPN.Low;
++
++	fc_host_port_id(sh) = pp0->PortIdentifier;
++
++	class = pp0->SupportedServiceClass;
+ 	if (class & MPI_FCPORTPAGE0_SUPPORT_CLASS_1)
+ 		cos |= FC_COS_CLASS1;
+ 	if (class & MPI_FCPORTPAGE0_SUPPORT_CLASS_2)
+ 		cos |= FC_COS_CLASS2;
+ 	if (class & MPI_FCPORTPAGE0_SUPPORT_CLASS_3)
+ 		cos |= FC_COS_CLASS3;
++	fc_host_supported_classes(sh) = cos;
+ 
+-	fc_host_node_name(ioc->sh) =
+-	    	(u64)ioc->fc_port_page0[portnum].WWNN.High << 32
+-		    | (u64)ioc->fc_port_page0[portnum].WWNN.Low;
+-
+-	fc_host_port_name(ioc->sh) =
+-	    	(u64)ioc->fc_port_page0[portnum].WWPN.High << 32
+-		    | (u64)ioc->fc_port_page0[portnum].WWPN.Low;
+-
+-	fc_host_port_id(ioc->sh) = ioc->fc_port_page0[portnum].PortIdentifier;
++	if (pp0->CurrentSpeed == MPI_FCPORTPAGE0_CURRENT_SPEED_1GBIT)
++		speed = FC_PORTSPEED_1GBIT;
++	else if (pp0->CurrentSpeed == MPI_FCPORTPAGE0_CURRENT_SPEED_2GBIT)
++		speed = FC_PORTSPEED_2GBIT;
++	else if (pp0->CurrentSpeed == MPI_FCPORTPAGE0_CURRENT_SPEED_4GBIT)
++		speed = FC_PORTSPEED_4GBIT;
++	else if (pp0->CurrentSpeed == MPI_FCPORTPAGE0_CURRENT_SPEED_10GBIT)
++		speed = FC_PORTSPEED_10GBIT;
++	else
++		speed = FC_PORTSPEED_UNKNOWN;
++	fc_host_speed(sh) = speed;
+ 
+-	fc_host_supported_classes(ioc->sh) = cos;
++	speed = 0;
++	if (pp0->SupportedSpeeds & MPI_FCPORTPAGE0_SUPPORT_1GBIT_SPEED)
++		speed |= FC_PORTSPEED_1GBIT;
++	if (pp0->SupportedSpeeds & MPI_FCPORTPAGE0_SUPPORT_2GBIT_SPEED)
++		speed |= FC_PORTSPEED_2GBIT;
++	if (pp0->SupportedSpeeds & MPI_FCPORTPAGE0_SUPPORT_4GBIT_SPEED)
++		speed |= FC_PORTSPEED_4GBIT;
++	if (pp0->SupportedSpeeds & MPI_FCPORTPAGE0_SUPPORT_10GBIT_SPEED)
++		speed |= FC_PORTSPEED_10GBIT;
++	fc_host_supported_speeds(sh) = speed;
++
++	port_state = FC_PORTSTATE_UNKNOWN;
++	if (pp0->PortState == MPI_FCPORTPAGE0_PORTSTATE_ONLINE)
++		port_state = FC_PORTSTATE_ONLINE;
++	else if (pp0->PortState == MPI_FCPORTPAGE0_PORTSTATE_OFFLINE)
++		port_state = FC_PORTSTATE_LINKDOWN;
++	fc_host_port_state(sh) = port_state;
++
++	port_type = FC_PORTTYPE_UNKNOWN;
++	if (pp0->Flags & MPI_FCPORTPAGE0_FLAGS_ATTACH_POINT_TO_POINT)
++		port_type = FC_PORTTYPE_PTP;
++	else if (pp0->Flags & MPI_FCPORTPAGE0_FLAGS_ATTACH_PRIVATE_LOOP)
++		port_type = FC_PORTTYPE_LPORT;
++	else if (pp0->Flags & MPI_FCPORTPAGE0_FLAGS_ATTACH_PUBLIC_LOOP)
++		port_type = FC_PORTTYPE_NLPORT;
++	else if (pp0->Flags & MPI_FCPORTPAGE0_FLAGS_ATTACH_FABRIC_DIRECT)
++		port_type = FC_PORTTYPE_NPORT;
++	fc_host_port_type(sh) = port_type;
++
++	fc_host_fabric_name(sh) =
++	    (pp0->Flags & MPI_FCPORTPAGE0_FLAGS_FABRIC_WWN_VALID) ?
++		(u64) pp0->FabricWWNN.High << 32 | (u64) pp0->FabricWWPN.Low :
++		(u64)pp0->WWNN.High << 32 | (u64)pp0->WWNN.Low;
+ 
+-	fc_host_tgtid_bind_type(ioc->sh) = FC_TGTID_BIND_BY_WWPN;
+ }
+ 
+ static void
+diff -up linux-2.6.18.noarch/drivers/message/fusion.stock/mptlan.c linux-2.6.18.noarch/drivers/message/fusion/mptlan.c
+--- linux-2.6.18.noarch/drivers/message/fusion.stock/mptlan.c
++++ linux-2.6.18.noarch/drivers/message/fusion/mptlan.c
+@@ -59,6 +59,7 @@
+ #define MYNAM		"mptlan"
+ 
+ MODULE_LICENSE("GPL");
++MODULE_VERSION(MPT_LINUX_VERSION_COMMON);
+ 
+ /*=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=*/
+ /*
+diff -up linux-2.6.18.noarch/drivers/message/fusion.stock/mptsas.c linux-2.6.18.noarch/drivers/message/fusion/mptsas.c
+--- linux-2.6.18.noarch/drivers/message/fusion.stock/mptsas.c
++++ linux-2.6.18.noarch/drivers/message/fusion/mptsas.c
+@@ -75,6 +75,7 @@
+ MODULE_AUTHOR(MODULEAUTHOR);
+ MODULE_DESCRIPTION(my_NAME);
+ MODULE_LICENSE("GPL");
++MODULE_VERSION(MPT_LINUX_VERSION_COMMON);
+ 
+ static int mpt_pt_clear;
+ module_param(mpt_pt_clear, int, 0);
+@@ -1647,14 +1648,18 @@ static int mptsas_probe_one_phy(struct d
+ 
+ 			for (i = 0; i < port_info->num_phys; i++)
+ 				if (port_info->phy_info[i].identify.sas_address ==
+-				    identify.sas_address)
++				    identify.sas_address) {
++					sas_port_mark_backlink(port);
+ 					goto out;
++				}
+ 
+ 		} else if (scsi_is_sas_rphy(parent)) {
+ 			struct sas_rphy *parent_rphy = dev_to_rphy(parent);
+ 			if (identify.sas_address ==
+-			    parent_rphy->identify.sas_address)
++			    parent_rphy->identify.sas_address) {
++				sas_port_mark_backlink(port);
+ 				goto out;
++			}
+ 		}
+ 
+ 		switch (identify.device_type) {
+diff -up linux-2.6.18.noarch/drivers/message/fusion.stock/mptscsih.c linux-2.6.18.noarch/drivers/message/fusion/mptscsih.c
+--- linux-2.6.18.noarch/drivers/message/fusion.stock/mptscsih.c
++++ linux-2.6.18.noarch/drivers/message/fusion/mptscsih.c
+@@ -76,6 +76,7 @@
+ MODULE_AUTHOR(MODULEAUTHOR);
+ MODULE_DESCRIPTION(my_NAME);
+ MODULE_LICENSE("GPL");
++MODULE_VERSION(MPT_LINUX_VERSION_COMMON);
+ 
+ /*=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=*/
+ 
+diff -up linux-2.6.18.noarch/drivers/message/fusion.stock/mptspi.c linux-2.6.18.noarch/drivers/message/fusion/mptspi.c
+--- linux-2.6.18.noarch/drivers/message/fusion.stock/mptspi.c
++++ linux-2.6.18.noarch/drivers/message/fusion/mptspi.c
+@@ -77,6 +77,7 @@
+ MODULE_AUTHOR(MODULEAUTHOR);
+ MODULE_DESCRIPTION(my_NAME);
+ MODULE_LICENSE("GPL");
++MODULE_VERSION(MPT_LINUX_VERSION_COMMON);
+ 
+ /* Command line args */
+ static int mpt_saf_te = MPTSCSIH_SAF_TE;
+diff -up linux-2.6.18.noarch/drivers/message/fusion.stock/linux_compat.h linux-2.6.18.noarch/drivers/message/fusion/linux_compat.h
+--- linux-2.6.18.noarch/drivers/message/fusion.stock/linux_compat.h
++++ linux-2.6.18.noarch/drivers/message/fusion/linux_compat.h
+@@ -6,13 +6,4 @@
+ #include <linux/version.h>
+ #include <scsi/scsi_device.h>
+ 
+-#if (LINUX_VERSION_CODE < KERNEL_VERSION(2,6,6))
+-static int inline scsi_device_online(struct scsi_device *sdev)
+-{
+-	return sdev->online;
+-}
+-#endif
+-
+-
+-/*}-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=*/
+ #endif /* _LINUX_COMPAT_H */
+

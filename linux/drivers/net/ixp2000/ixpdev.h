@@ -14,8 +14,6 @@
 
 struct ixpdev_priv
 {
-	struct net_device *dev;
-	struct napi_struct napi;
 	int	channel;
 	int	tx_queue_entries;
 };

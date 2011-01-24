@@ -6,6 +6,8 @@
  *  Derived from drivers/mtd/nand/autcpu12.c
  *       Copyright (c) 2001 Thomas Gleixner (gleixner@autronix.de)
  *
+ * $Id: edb7312.c,v 1.12 2005/11/07 11:14:30 gleixner Exp $
+ *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
  * published by the Free Software Foundation.
@@ -23,7 +25,7 @@
 #include <linux/mtd/nand.h>
 #include <linux/mtd/partitions.h>
 #include <asm/io.h>
-#include <mach/hardware.h>	/* for CLPS7111_VIRT_BASE */
+#include <asm/arch/hardware.h>	/* for CLPS7111_VIRT_BASE */
 #include <asm/sizes.h>
 #include <asm/hardware/clps7111.h>
 
@@ -72,7 +74,7 @@ static struct mtd_partition partition_info[] = {
 /*
  *	hardware specific access to control-lines
  *
- *	NAND_NCE: bit 0 -> bit 6 (bit 7 = 1)
+ *	NAND_NCE: bit 0 -> bit 7
  *	NAND_CLE: bit 1 -> bit 4
  *	NAND_ALE: bit 2 -> bit 5
  */
@@ -81,12 +83,12 @@ static void ep7312_hwcontrol(struct mtd_info *mtd, int cmd, unsigned int ctrl)
 	struct nand_chip *chip = mtd->priv;
 
 	if (ctrl & NAND_CTRL_CHANGE) {
-		unsigned char bits = 0x80;
+		unsigned char bits;
 
-		bits |= (ctrl & (NAND_CLE | NAND_ALE)) << 3;
-		bits |= (ctrl & NAND_NCE) ? 0x00 : 0x40;
+		bits = (ctrl & (NAND_CLE | NAND_ALE)) << 3;
+		bits = (ctrl & NAND_NCE) << 7;
 
-		clps_writeb((clps_readb(ep7312_pxdr)  & 0xF0) | bits,
+		clps_writeb((clps_readb(ep7312_pxdr)  & 0xB0) | 0x10,
 			    ep7312_pxdr);
 	}
 	if (cmd != NAND_CMD_NONE)
@@ -123,7 +125,7 @@ static int __init ep7312_init(void)
 		return -ENOMEM;
 	}
 
-	/* map physical address */
+	/* map physical adress */
 	ep7312_fio_base = ioremap(ep7312_fio_pbase, SZ_1K);
 	if (!ep7312_fio_base) {
 		printk("ioremap EDB7312 NAND flash failed\n");
@@ -195,9 +197,6 @@ static void __exit ep7312_cleanup(void)
 
 	/* Release resources, unregister device */
 	nand_release(ap7312_mtd);
-
-	/* Release io resource */
-	iounmap(this->IO_ADDR_R);
 
 	/* Free the MTD device structure */
 	kfree(ep7312_mtd);

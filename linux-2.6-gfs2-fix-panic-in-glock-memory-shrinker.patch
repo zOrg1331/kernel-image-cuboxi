@@ -1,0 +1,37 @@
+From: Benjamin Marzinski <bmarzins@redhat.com>
+Date: Tue, 30 Jun 2009 14:29:58 -0500
+Subject: [gfs2] fix panic in glock memory shrinker
+Message-id: 20090630192958.GQ3172@ether.msp.redhat.com
+O-Subject: [RHEL-5.4 PATCH] BZ#508806 gfs2: Fix panic in glock memory shrinker
+Bugzilla: 508806
+RH-Acked-by: Steven Whitehouse <swhiteho@redhat.com>
+
+It is possible for gfs2_shrink_glock_memory() to check a glock for
+demotion that's in the process of being freed by gfs2_glock_put().  As
+long as gfs2_shrink_glock_memory() holds the lru_lock, the glock won't
+be freed out from under it, however gfs2_shrink_glock_memory() grabs a
+refrence to the glock when it checks to see if it's demoteable. Then
+tries to free the glock itself when it drops the refernce.  To solve
+this, gfs2_shrink_glock_memory() just needs to check if the glock is in
+the process of being freed, and if so, skip it without ever unlocking
+the lru_lock or grabbing a reference.
+
+This patch has been submitted upstream as well.
+
+Signed-off-by: Benjamin Marzinski <bmarzins@redhat.com>
+
+diff --git a/fs/gfs2/glock.c b/fs/gfs2/glock.c
+index cbeb0c1..03409a2 100644
+--- a/fs/gfs2/glock.c
++++ b/fs/gfs2/glock.c
+@@ -1434,6 +1434,10 @@ static int gfs2_shrink_glock_memory(int nr, gfp_t gfp_mask)
+ 		list_del_init(&gl->gl_lru);
+ 		atomic_dec(&lru_count);
+ 
++		/* Check if glock is about to be freed */
++		if (atomic_read(&gl->gl_ref) == 0)
++			continue;
++
+ 		/* Test for being demotable */
+ 		if (!test_and_set_bit(GLF_LOCK, &gl->gl_flags)) {
+ 			gfs2_glock_hold(gl);

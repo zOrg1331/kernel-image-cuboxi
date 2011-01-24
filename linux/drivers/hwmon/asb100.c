@@ -40,7 +40,6 @@
 #include <linux/slab.h>
 #include <linux/i2c.h>
 #include <linux/hwmon.h>
-#include <linux/hwmon-sysfs.h>
 #include <linux/hwmon-vid.h>
 #include <linux/err.h>
 #include <linux/init.h>
@@ -48,15 +47,18 @@
 #include <linux/mutex.h>
 #include "lm75.h"
 
+/*
+	HISTORY:
+	2003-12-29	1.0.0	Ported from lm_sensors project for kernel 2.6
+*/
+#define ASB100_VERSION "1.0.0"
+
 /* I2C addresses to scan */
-static const unsigned short normal_i2c[] = { 0x2d, I2C_CLIENT_END };
+static unsigned short normal_i2c[] = { 0x2d, I2C_CLIENT_END };
 
 /* Insmod parameters */
 I2C_CLIENT_INSMOD_1(asb100);
-
-static unsigned short force_subclients[4];
-module_param_array(force_subclients, short, NULL, 0);
-MODULE_PARM_DESC(force_subclients, "List of subclient addresses: "
+I2C_CLIENT_MODULE_PARM(force_subclients, "List of subclient addresses: "
 	"{bus, clientaddr, subclientaddr1, subclientaddr2}");
 
 /* Voltage IN registers 0-6 */
@@ -141,7 +143,7 @@ static int FAN_FROM_REG(u8 val, int div)
 
 /* TEMP: 0.001C/bit (-128C to +127C)
    REG: 1C/bit, two's complement */
-static u8 TEMP_TO_REG(long temp)
+static u8 TEMP_TO_REG(int temp)
 {
 	int ntemp = SENSORS_LIMIT(temp, ASB100_TEMP_MIN, ASB100_TEMP_MAX);
 	ntemp += (ntemp<0 ? -500 : 500);
@@ -179,8 +181,10 @@ static u8 DIV_TO_REG(long val)
    data is pointed to by client->data. The structure itself is
    dynamically allocated, at the same time the client itself is allocated. */
 struct asb100_data {
-	struct device *hwmon_dev;
+	struct i2c_client client;
+	struct class_device *class_dev;
 	struct mutex lock;
+	enum chips type;
 
 	struct mutex update_lock;
 	unsigned long last_updated;	/* In jiffies */
@@ -207,38 +211,25 @@ struct asb100_data {
 static int asb100_read_value(struct i2c_client *client, u16 reg);
 static void asb100_write_value(struct i2c_client *client, u16 reg, u16 val);
 
-static int asb100_probe(struct i2c_client *client,
-			const struct i2c_device_id *id);
-static int asb100_detect(struct i2c_client *client, int kind,
-			 struct i2c_board_info *info);
-static int asb100_remove(struct i2c_client *client);
+static int asb100_attach_adapter(struct i2c_adapter *adapter);
+static int asb100_detect(struct i2c_adapter *adapter, int address, int kind);
+static int asb100_detach_client(struct i2c_client *client);
 static struct asb100_data *asb100_update_device(struct device *dev);
 static void asb100_init_client(struct i2c_client *client);
 
-static const struct i2c_device_id asb100_id[] = {
-	{ "asb100", asb100 },
-	{ }
-};
-MODULE_DEVICE_TABLE(i2c, asb100_id);
-
 static struct i2c_driver asb100_driver = {
-	.class		= I2C_CLASS_HWMON,
 	.driver = {
 		.name	= "asb100",
 	},
-	.probe		= asb100_probe,
-	.remove		= asb100_remove,
-	.id_table	= asb100_id,
-	.detect		= asb100_detect,
-	.address_data	= &addr_data,
+	.id		= I2C_DRIVERID_ASB100,
+	.attach_adapter	= asb100_attach_adapter,
+	.detach_client	= asb100_detach_client,
 };
 
 /* 7 Voltages */
 #define show_in_reg(reg) \
-static ssize_t show_##reg(struct device *dev, struct device_attribute *attr, \
-		char *buf) \
+static ssize_t show_##reg (struct device *dev, char *buf, int nr) \
 { \
-	int nr = to_sensor_dev_attr(attr)->index; \
 	struct asb100_data *data = asb100_update_device(dev); \
 	return sprintf(buf, "%d\n", IN_FROM_REG(data->reg[nr])); \
 }
@@ -248,10 +239,9 @@ show_in_reg(in_min)
 show_in_reg(in_max)
 
 #define set_in_reg(REG, reg) \
-static ssize_t set_in_##reg(struct device *dev, struct device_attribute *attr, \
-		const char *buf, size_t count) \
+static ssize_t set_in_##reg(struct device *dev, const char *buf, \
+		size_t count, int nr) \
 { \
-	int nr = to_sensor_dev_attr(attr)->index; \
 	struct i2c_client *client = to_i2c_client(dev); \
 	struct asb100_data *data = i2c_get_clientdata(client); \
 	unsigned long val = simple_strtoul(buf, NULL, 10); \
@@ -268,12 +258,37 @@ set_in_reg(MIN, min)
 set_in_reg(MAX, max)
 
 #define sysfs_in(offset) \
-static SENSOR_DEVICE_ATTR(in##offset##_input, S_IRUGO, \
-		show_in, NULL, offset); \
-static SENSOR_DEVICE_ATTR(in##offset##_min, S_IRUGO | S_IWUSR, \
-		show_in_min, set_in_min, offset); \
-static SENSOR_DEVICE_ATTR(in##offset##_max, S_IRUGO | S_IWUSR, \
-		show_in_max, set_in_max, offset)
+static ssize_t \
+	show_in##offset (struct device *dev, struct device_attribute *attr, char *buf) \
+{ \
+	return show_in(dev, buf, offset); \
+} \
+static DEVICE_ATTR(in##offset##_input, S_IRUGO, \
+		show_in##offset, NULL); \
+static ssize_t \
+	show_in##offset##_min (struct device *dev, struct device_attribute *attr, char *buf) \
+{ \
+	return show_in_min(dev, buf, offset); \
+} \
+static ssize_t \
+	show_in##offset##_max (struct device *dev, struct device_attribute *attr, char *buf) \
+{ \
+	return show_in_max(dev, buf, offset); \
+} \
+static ssize_t set_in##offset##_min (struct device *dev, struct device_attribute *attr, \
+		const char *buf, size_t count) \
+{ \
+	return set_in_min(dev, buf, count, offset); \
+} \
+static ssize_t set_in##offset##_max (struct device *dev, struct device_attribute *attr, \
+		const char *buf, size_t count) \
+{ \
+	return set_in_max(dev, buf, count, offset); \
+} \
+static DEVICE_ATTR(in##offset##_min, S_IRUGO | S_IWUSR, \
+		show_in##offset##_min, set_in##offset##_min); \
+static DEVICE_ATTR(in##offset##_max, S_IRUGO | S_IWUSR, \
+		show_in##offset##_max, set_in##offset##_max);
 
 sysfs_in(0);
 sysfs_in(1);
@@ -283,37 +298,36 @@ sysfs_in(4);
 sysfs_in(5);
 sysfs_in(6);
 
+#define device_create_file_in(client, offset) do { \
+	device_create_file(&client->dev, &dev_attr_in##offset##_input); \
+	device_create_file(&client->dev, &dev_attr_in##offset##_min); \
+	device_create_file(&client->dev, &dev_attr_in##offset##_max); \
+} while (0)
+
 /* 3 Fans */
-static ssize_t show_fan(struct device *dev, struct device_attribute *attr,
-		char *buf)
+static ssize_t show_fan(struct device *dev, char *buf, int nr)
 {
-	int nr = to_sensor_dev_attr(attr)->index;
 	struct asb100_data *data = asb100_update_device(dev);
 	return sprintf(buf, "%d\n", FAN_FROM_REG(data->fan[nr],
 		DIV_FROM_REG(data->fan_div[nr])));
 }
 
-static ssize_t show_fan_min(struct device *dev, struct device_attribute *attr,
-		char *buf)
+static ssize_t show_fan_min(struct device *dev, char *buf, int nr)
 {
-	int nr = to_sensor_dev_attr(attr)->index;
 	struct asb100_data *data = asb100_update_device(dev);
 	return sprintf(buf, "%d\n", FAN_FROM_REG(data->fan_min[nr],
 		DIV_FROM_REG(data->fan_div[nr])));
 }
 
-static ssize_t show_fan_div(struct device *dev, struct device_attribute *attr,
-		char *buf)
+static ssize_t show_fan_div(struct device *dev, char *buf, int nr)
 {
-	int nr = to_sensor_dev_attr(attr)->index;
 	struct asb100_data *data = asb100_update_device(dev);
 	return sprintf(buf, "%d\n", DIV_FROM_REG(data->fan_div[nr]));
 }
 
-static ssize_t set_fan_min(struct device *dev, struct device_attribute *attr,
-		const char *buf, size_t count)
+static ssize_t set_fan_min(struct device *dev, const char *buf,
+				size_t count, int nr)
 {
-	int nr = to_sensor_dev_attr(attr)->index;
 	struct i2c_client *client = to_i2c_client(dev);
 	struct asb100_data *data = i2c_get_clientdata(client);
 	u32 val = simple_strtoul(buf, NULL, 10);
@@ -329,23 +343,22 @@ static ssize_t set_fan_min(struct device *dev, struct device_attribute *attr,
    determined in part by the fan divisor.  This follows the principle of
    least surprise; the user doesn't expect the fan minimum to change just
    because the divisor changed. */
-static ssize_t set_fan_div(struct device *dev, struct device_attribute *attr,
-		const char *buf, size_t count)
+static ssize_t set_fan_div(struct device *dev, const char *buf,
+				size_t count, int nr)
 {
-	int nr = to_sensor_dev_attr(attr)->index;
 	struct i2c_client *client = to_i2c_client(dev);
 	struct asb100_data *data = i2c_get_clientdata(client);
 	unsigned long min;
 	unsigned long val = simple_strtoul(buf, NULL, 10);
 	int reg;
-
+	
 	mutex_lock(&data->update_lock);
 
 	min = FAN_FROM_REG(data->fan_min[nr],
 			DIV_FROM_REG(data->fan_div[nr]));
 	data->fan_div[nr] = DIV_TO_REG(val);
 
-	switch (nr) {
+	switch(nr) {
 	case 0:	/* fan 1 */
 		reg = asb100_read_value(client, ASB100_REG_VID_FANDIV);
 		reg = (reg & 0xcf) | (data->fan_div[0] << 4);
@@ -375,16 +388,44 @@ static ssize_t set_fan_div(struct device *dev, struct device_attribute *attr,
 }
 
 #define sysfs_fan(offset) \
-static SENSOR_DEVICE_ATTR(fan##offset##_input, S_IRUGO, \
-		show_fan, NULL, offset - 1); \
-static SENSOR_DEVICE_ATTR(fan##offset##_min, S_IRUGO | S_IWUSR, \
-		show_fan_min, set_fan_min, offset - 1); \
-static SENSOR_DEVICE_ATTR(fan##offset##_div, S_IRUGO | S_IWUSR, \
-		show_fan_div, set_fan_div, offset - 1)
+static ssize_t show_fan##offset(struct device *dev, struct device_attribute *attr, char *buf) \
+{ \
+	return show_fan(dev, buf, offset - 1); \
+} \
+static ssize_t show_fan##offset##_min(struct device *dev, struct device_attribute *attr, char *buf) \
+{ \
+	return show_fan_min(dev, buf, offset - 1); \
+} \
+static ssize_t show_fan##offset##_div(struct device *dev, struct device_attribute *attr, char *buf) \
+{ \
+	return show_fan_div(dev, buf, offset - 1); \
+} \
+static ssize_t set_fan##offset##_min(struct device *dev, struct device_attribute *attr, const char *buf, \
+					size_t count) \
+{ \
+	return set_fan_min(dev, buf, count, offset - 1); \
+} \
+static ssize_t set_fan##offset##_div(struct device *dev, struct device_attribute *attr, const char *buf, \
+					size_t count) \
+{ \
+	return set_fan_div(dev, buf, count, offset - 1); \
+} \
+static DEVICE_ATTR(fan##offset##_input, S_IRUGO, \
+		show_fan##offset, NULL); \
+static DEVICE_ATTR(fan##offset##_min, S_IRUGO | S_IWUSR, \
+		show_fan##offset##_min, set_fan##offset##_min); \
+static DEVICE_ATTR(fan##offset##_div, S_IRUGO | S_IWUSR, \
+		show_fan##offset##_div, set_fan##offset##_div);
 
 sysfs_fan(1);
 sysfs_fan(2);
 sysfs_fan(3);
+
+#define device_create_file_fan(client, offset) do { \
+	device_create_file(&client->dev, &dev_attr_fan##offset##_input); \
+	device_create_file(&client->dev, &dev_attr_fan##offset##_min); \
+	device_create_file(&client->dev, &dev_attr_fan##offset##_div); \
+} while (0)
 
 /* 4 Temp. Sensors */
 static int sprintf_temp_from_reg(u16 reg, char *buf, int nr)
@@ -401,12 +442,10 @@ static int sprintf_temp_from_reg(u16 reg, char *buf, int nr)
 	}
 	return ret;
 }
-
+		 	
 #define show_temp_reg(reg) \
-static ssize_t show_##reg(struct device *dev, struct device_attribute *attr, \
-		char *buf) \
+static ssize_t show_##reg(struct device *dev, char *buf, int nr) \
 { \
-	int nr = to_sensor_dev_attr(attr)->index; \
 	struct asb100_data *data = asb100_update_device(dev); \
 	return sprintf_temp_from_reg(data->reg[nr], buf, nr); \
 }
@@ -416,13 +455,12 @@ show_temp_reg(temp_max);
 show_temp_reg(temp_hyst);
 
 #define set_temp_reg(REG, reg) \
-static ssize_t set_##reg(struct device *dev, struct device_attribute *attr, \
-		const char *buf, size_t count) \
+static ssize_t set_##reg(struct device *dev, const char *buf, \
+			size_t count, int nr) \
 { \
-	int nr = to_sensor_dev_attr(attr)->index; \
 	struct i2c_client *client = to_i2c_client(dev); \
 	struct asb100_data *data = i2c_get_clientdata(client); \
-	long val = simple_strtol(buf, NULL, 10); \
+	unsigned long val = simple_strtoul(buf, NULL, 10); \
  \
 	mutex_lock(&data->update_lock); \
 	switch (nr) { \
@@ -443,12 +481,33 @@ set_temp_reg(MAX, temp_max);
 set_temp_reg(HYST, temp_hyst);
 
 #define sysfs_temp(num) \
-static SENSOR_DEVICE_ATTR(temp##num##_input, S_IRUGO, \
-		show_temp, NULL, num - 1); \
-static SENSOR_DEVICE_ATTR(temp##num##_max, S_IRUGO | S_IWUSR, \
-		show_temp_max, set_temp_max, num - 1); \
-static SENSOR_DEVICE_ATTR(temp##num##_max_hyst, S_IRUGO | S_IWUSR, \
-		show_temp_hyst, set_temp_hyst, num - 1)
+static ssize_t show_temp##num(struct device *dev, struct device_attribute *attr, char *buf) \
+{ \
+	return show_temp(dev, buf, num-1); \
+} \
+static DEVICE_ATTR(temp##num##_input, S_IRUGO, show_temp##num, NULL); \
+static ssize_t show_temp_max##num(struct device *dev, struct device_attribute *attr, char *buf) \
+{ \
+	return show_temp_max(dev, buf, num-1); \
+} \
+static ssize_t set_temp_max##num(struct device *dev, struct device_attribute *attr, const char *buf, \
+					size_t count) \
+{ \
+	return set_temp_max(dev, buf, count, num-1); \
+} \
+static DEVICE_ATTR(temp##num##_max, S_IRUGO | S_IWUSR, \
+		show_temp_max##num, set_temp_max##num); \
+static ssize_t show_temp_hyst##num(struct device *dev, struct device_attribute *attr, char *buf) \
+{ \
+	return show_temp_hyst(dev, buf, num-1); \
+} \
+static ssize_t set_temp_hyst##num(struct device *dev, struct device_attribute *attr, const char *buf, \
+					size_t count) \
+{ \
+	return set_temp_hyst(dev, buf, count, num-1); \
+} \
+static DEVICE_ATTR(temp##num##_max_hyst, S_IRUGO | S_IWUSR, \
+		show_temp_hyst##num, set_temp_hyst##num);
 
 sysfs_temp(1);
 sysfs_temp(2);
@@ -456,72 +515,61 @@ sysfs_temp(3);
 sysfs_temp(4);
 
 /* VID */
-static ssize_t show_vid(struct device *dev, struct device_attribute *attr,
-		char *buf)
+#define device_create_file_temp(client, num) do { \
+	device_create_file(&client->dev, &dev_attr_temp##num##_input); \
+	device_create_file(&client->dev, &dev_attr_temp##num##_max); \
+	device_create_file(&client->dev, &dev_attr_temp##num##_max_hyst); \
+} while (0)
+
+static ssize_t show_vid(struct device *dev, struct device_attribute *attr, char *buf)
 {
 	struct asb100_data *data = asb100_update_device(dev);
 	return sprintf(buf, "%d\n", vid_from_reg(data->vid, data->vrm));
 }
 
 static DEVICE_ATTR(cpu0_vid, S_IRUGO, show_vid, NULL);
+#define device_create_file_vid(client) \
+device_create_file(&client->dev, &dev_attr_cpu0_vid)
 
 /* VRM */
-static ssize_t show_vrm(struct device *dev, struct device_attribute *attr,
-		char *buf)
+static ssize_t show_vrm(struct device *dev, struct device_attribute *attr, char *buf)
 {
-	struct asb100_data *data = dev_get_drvdata(dev);
+	struct asb100_data *data = asb100_update_device(dev);
 	return sprintf(buf, "%d\n", data->vrm);
 }
 
-static ssize_t set_vrm(struct device *dev, struct device_attribute *attr,
-		const char *buf, size_t count)
+static ssize_t set_vrm(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
 {
-	struct asb100_data *data = dev_get_drvdata(dev);
-	data->vrm = simple_strtoul(buf, NULL, 10);
+	struct i2c_client *client = to_i2c_client(dev);
+	struct asb100_data *data = i2c_get_clientdata(client);
+	unsigned long val = simple_strtoul(buf, NULL, 10);
+	data->vrm = val;
 	return count;
 }
 
 /* Alarms */
 static DEVICE_ATTR(vrm, S_IRUGO | S_IWUSR, show_vrm, set_vrm);
+#define device_create_file_vrm(client) \
+device_create_file(&client->dev, &dev_attr_vrm);
 
-static ssize_t show_alarms(struct device *dev, struct device_attribute *attr,
-		char *buf)
+static ssize_t show_alarms(struct device *dev, struct device_attribute *attr, char *buf)
 {
 	struct asb100_data *data = asb100_update_device(dev);
 	return sprintf(buf, "%u\n", data->alarms);
 }
 
 static DEVICE_ATTR(alarms, S_IRUGO, show_alarms, NULL);
-
-static ssize_t show_alarm(struct device *dev, struct device_attribute *attr,
-		char *buf)
-{
-	int bitnr = to_sensor_dev_attr(attr)->index;
-	struct asb100_data *data = asb100_update_device(dev);
-	return sprintf(buf, "%u\n", (data->alarms >> bitnr) & 1);
-}
-static SENSOR_DEVICE_ATTR(in0_alarm, S_IRUGO, show_alarm, NULL, 0);
-static SENSOR_DEVICE_ATTR(in1_alarm, S_IRUGO, show_alarm, NULL, 1);
-static SENSOR_DEVICE_ATTR(in2_alarm, S_IRUGO, show_alarm, NULL, 2);
-static SENSOR_DEVICE_ATTR(in3_alarm, S_IRUGO, show_alarm, NULL, 3);
-static SENSOR_DEVICE_ATTR(in4_alarm, S_IRUGO, show_alarm, NULL, 8);
-static SENSOR_DEVICE_ATTR(fan1_alarm, S_IRUGO, show_alarm, NULL, 6);
-static SENSOR_DEVICE_ATTR(fan2_alarm, S_IRUGO, show_alarm, NULL, 7);
-static SENSOR_DEVICE_ATTR(fan3_alarm, S_IRUGO, show_alarm, NULL, 11);
-static SENSOR_DEVICE_ATTR(temp1_alarm, S_IRUGO, show_alarm, NULL, 4);
-static SENSOR_DEVICE_ATTR(temp2_alarm, S_IRUGO, show_alarm, NULL, 5);
-static SENSOR_DEVICE_ATTR(temp3_alarm, S_IRUGO, show_alarm, NULL, 13);
+#define device_create_file_alarms(client) \
+device_create_file(&client->dev, &dev_attr_alarms)
 
 /* 1 PWM */
-static ssize_t show_pwm1(struct device *dev, struct device_attribute *attr,
-		char *buf)
+static ssize_t show_pwm1(struct device *dev, struct device_attribute *attr, char *buf)
 {
 	struct asb100_data *data = asb100_update_device(dev);
 	return sprintf(buf, "%d\n", ASB100_PWM_FROM_REG(data->pwm & 0x0f));
 }
 
-static ssize_t set_pwm1(struct device *dev, struct device_attribute *attr,
-		const char *buf, size_t count)
+static ssize_t set_pwm1(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
 {
 	struct i2c_client *client = to_i2c_client(dev);
 	struct asb100_data *data = i2c_get_clientdata(client);
@@ -535,15 +583,14 @@ static ssize_t set_pwm1(struct device *dev, struct device_attribute *attr,
 	return count;
 }
 
-static ssize_t show_pwm_enable1(struct device *dev,
-		struct device_attribute *attr, char *buf)
+static ssize_t show_pwm_enable1(struct device *dev, struct device_attribute *attr, char *buf)
 {
 	struct asb100_data *data = asb100_update_device(dev);
 	return sprintf(buf, "%d\n", (data->pwm & 0x80) ? 1 : 0);
 }
 
-static ssize_t set_pwm_enable1(struct device *dev,
-		struct device_attribute *attr, const char *buf, size_t count)
+static ssize_t set_pwm_enable1(struct device *dev, struct device_attribute *attr, const char *buf,
+				size_t count)
 {
 	struct i2c_client *client = to_i2c_client(dev);
 	struct asb100_data *data = i2c_get_clientdata(client);
@@ -560,85 +607,40 @@ static ssize_t set_pwm_enable1(struct device *dev,
 static DEVICE_ATTR(pwm1, S_IRUGO | S_IWUSR, show_pwm1, set_pwm1);
 static DEVICE_ATTR(pwm1_enable, S_IRUGO | S_IWUSR,
 		show_pwm_enable1, set_pwm_enable1);
+#define device_create_file_pwm1(client) do { \
+	device_create_file(&new_client->dev, &dev_attr_pwm1); \
+	device_create_file(&new_client->dev, &dev_attr_pwm1_enable); \
+} while (0)
 
-static struct attribute *asb100_attributes[] = {
-	&sensor_dev_attr_in0_input.dev_attr.attr,
-	&sensor_dev_attr_in0_min.dev_attr.attr,
-	&sensor_dev_attr_in0_max.dev_attr.attr,
-	&sensor_dev_attr_in1_input.dev_attr.attr,
-	&sensor_dev_attr_in1_min.dev_attr.attr,
-	&sensor_dev_attr_in1_max.dev_attr.attr,
-	&sensor_dev_attr_in2_input.dev_attr.attr,
-	&sensor_dev_attr_in2_min.dev_attr.attr,
-	&sensor_dev_attr_in2_max.dev_attr.attr,
-	&sensor_dev_attr_in3_input.dev_attr.attr,
-	&sensor_dev_attr_in3_min.dev_attr.attr,
-	&sensor_dev_attr_in3_max.dev_attr.attr,
-	&sensor_dev_attr_in4_input.dev_attr.attr,
-	&sensor_dev_attr_in4_min.dev_attr.attr,
-	&sensor_dev_attr_in4_max.dev_attr.attr,
-	&sensor_dev_attr_in5_input.dev_attr.attr,
-	&sensor_dev_attr_in5_min.dev_attr.attr,
-	&sensor_dev_attr_in5_max.dev_attr.attr,
-	&sensor_dev_attr_in6_input.dev_attr.attr,
-	&sensor_dev_attr_in6_min.dev_attr.attr,
-	&sensor_dev_attr_in6_max.dev_attr.attr,
+/* This function is called when:
+	asb100_driver is inserted (when this module is loaded), for each
+		available adapter
+	when a new adapter is inserted (and asb100_driver is still present)
+ */
+static int asb100_attach_adapter(struct i2c_adapter *adapter)
+{
+	if (!(adapter->class & I2C_CLASS_HWMON))
+		return 0;
+	return i2c_probe(adapter, &addr_data, asb100_detect);
+}
 
-	&sensor_dev_attr_fan1_input.dev_attr.attr,
-	&sensor_dev_attr_fan1_min.dev_attr.attr,
-	&sensor_dev_attr_fan1_div.dev_attr.attr,
-	&sensor_dev_attr_fan2_input.dev_attr.attr,
-	&sensor_dev_attr_fan2_min.dev_attr.attr,
-	&sensor_dev_attr_fan2_div.dev_attr.attr,
-	&sensor_dev_attr_fan3_input.dev_attr.attr,
-	&sensor_dev_attr_fan3_min.dev_attr.attr,
-	&sensor_dev_attr_fan3_div.dev_attr.attr,
-
-	&sensor_dev_attr_temp1_input.dev_attr.attr,
-	&sensor_dev_attr_temp1_max.dev_attr.attr,
-	&sensor_dev_attr_temp1_max_hyst.dev_attr.attr,
-	&sensor_dev_attr_temp2_input.dev_attr.attr,
-	&sensor_dev_attr_temp2_max.dev_attr.attr,
-	&sensor_dev_attr_temp2_max_hyst.dev_attr.attr,
-	&sensor_dev_attr_temp3_input.dev_attr.attr,
-	&sensor_dev_attr_temp3_max.dev_attr.attr,
-	&sensor_dev_attr_temp3_max_hyst.dev_attr.attr,
-	&sensor_dev_attr_temp4_input.dev_attr.attr,
-	&sensor_dev_attr_temp4_max.dev_attr.attr,
-	&sensor_dev_attr_temp4_max_hyst.dev_attr.attr,
-
-	&sensor_dev_attr_in0_alarm.dev_attr.attr,
-	&sensor_dev_attr_in1_alarm.dev_attr.attr,
-	&sensor_dev_attr_in2_alarm.dev_attr.attr,
-	&sensor_dev_attr_in3_alarm.dev_attr.attr,
-	&sensor_dev_attr_in4_alarm.dev_attr.attr,
-	&sensor_dev_attr_fan1_alarm.dev_attr.attr,
-	&sensor_dev_attr_fan2_alarm.dev_attr.attr,
-	&sensor_dev_attr_fan3_alarm.dev_attr.attr,
-	&sensor_dev_attr_temp1_alarm.dev_attr.attr,
-	&sensor_dev_attr_temp2_alarm.dev_attr.attr,
-	&sensor_dev_attr_temp3_alarm.dev_attr.attr,
-
-	&dev_attr_cpu0_vid.attr,
-	&dev_attr_vrm.attr,
-	&dev_attr_alarms.attr,
-	&dev_attr_pwm1.attr,
-	&dev_attr_pwm1_enable.attr,
-
-	NULL
-};
-
-static const struct attribute_group asb100_group = {
-	.attrs = asb100_attributes,
-};
-
-static int asb100_detect_subclients(struct i2c_client *client)
+static int asb100_detect_subclients(struct i2c_adapter *adapter, int address,
+		int kind, struct i2c_client *new_client)
 {
 	int i, id, err;
-	int address = client->addr;
-	unsigned short sc_addr[2];
-	struct asb100_data *data = i2c_get_clientdata(client);
-	struct i2c_adapter *adapter = client->adapter;
+	struct asb100_data *data = i2c_get_clientdata(new_client);
+
+	data->lm75[0] = kzalloc(sizeof(struct i2c_client), GFP_KERNEL);
+	if (!(data->lm75[0])) {
+		err = -ENOMEM;
+		goto ERROR_SC_0;
+	}
+
+	data->lm75[1] = kzalloc(sizeof(struct i2c_client), GFP_KERNEL);
+	if (!(data->lm75[1])) {
+		err = -ENOMEM;
+		goto ERROR_SC_1;
+	}
 
 	id = i2c_adapter_id(adapter);
 
@@ -646,44 +648,48 @@ static int asb100_detect_subclients(struct i2c_client *client)
 		for (i = 2; i <= 3; i++) {
 			if (force_subclients[i] < 0x48 ||
 			    force_subclients[i] > 0x4f) {
-				dev_err(&client->dev, "invalid subclient "
+				dev_err(&new_client->dev, "invalid subclient "
 					"address %d; must be 0x48-0x4f\n",
 					force_subclients[i]);
 				err = -ENODEV;
 				goto ERROR_SC_2;
 			}
 		}
-		asb100_write_value(client, ASB100_REG_I2C_SUBADDR,
+		asb100_write_value(new_client, ASB100_REG_I2C_SUBADDR,
 					(force_subclients[2] & 0x07) |
-					((force_subclients[3] & 0x07) << 4));
-		sc_addr[0] = force_subclients[2];
-		sc_addr[1] = force_subclients[3];
+					((force_subclients[3] & 0x07) <<4));
+		data->lm75[0]->addr = force_subclients[2];
+		data->lm75[1]->addr = force_subclients[3];
 	} else {
-		int val = asb100_read_value(client, ASB100_REG_I2C_SUBADDR);
-		sc_addr[0] = 0x48 + (val & 0x07);
-		sc_addr[1] = 0x48 + ((val >> 4) & 0x07);
+		int val = asb100_read_value(new_client, ASB100_REG_I2C_SUBADDR);
+		data->lm75[0]->addr = 0x48 + (val & 0x07);
+		data->lm75[1]->addr = 0x48 + ((val >> 4) & 0x07);
 	}
 
-	if (sc_addr[0] == sc_addr[1]) {
-		dev_err(&client->dev, "duplicate addresses 0x%x "
-				"for subclients\n", sc_addr[0]);
+	if(data->lm75[0]->addr == data->lm75[1]->addr) {
+		dev_err(&new_client->dev, "duplicate addresses 0x%x "
+				"for subclients\n", data->lm75[0]->addr);
 		err = -ENODEV;
 		goto ERROR_SC_2;
 	}
 
-	data->lm75[0] = i2c_new_dummy(adapter, sc_addr[0]);
-	if (!data->lm75[0]) {
-		dev_err(&client->dev, "subclient %d registration "
-			"at address 0x%x failed.\n", 1, sc_addr[0]);
-		err = -ENOMEM;
+	for (i = 0; i <= 1; i++) {
+		i2c_set_clientdata(data->lm75[i], NULL);
+		data->lm75[i]->adapter = adapter;
+		data->lm75[i]->driver = &asb100_driver;
+		data->lm75[i]->flags = 0;
+		strlcpy(data->lm75[i]->name, "asb100 subclient", I2C_NAME_SIZE);
+	}
+
+	if ((err = i2c_attach_client(data->lm75[0]))) {
+		dev_err(&new_client->dev, "subclient %d registration "
+			"at address 0x%x failed.\n", i, data->lm75[0]->addr);
 		goto ERROR_SC_2;
 	}
 
-	data->lm75[1] = i2c_new_dummy(adapter, sc_addr[1]);
-	if (!data->lm75[1]) {
-		dev_err(&client->dev, "subclient %d registration "
-			"at address 0x%x failed.\n", 2, sc_addr[1]);
-		err = -ENOMEM;
+	if ((err = i2c_attach_client(data->lm75[1]))) {
+		dev_err(&new_client->dev, "subclient %d registration "
+			"at address 0x%x failed.\n", i, data->lm75[1]->addr);
 		goto ERROR_SC_3;
 	}
 
@@ -691,22 +697,47 @@ static int asb100_detect_subclients(struct i2c_client *client)
 
 /* Undo inits in case of errors */
 ERROR_SC_3:
-	i2c_unregister_device(data->lm75[0]);
+	i2c_detach_client(data->lm75[0]);
 ERROR_SC_2:
+	kfree(data->lm75[1]);
+ERROR_SC_1:
+	kfree(data->lm75[0]);
+ERROR_SC_0:
 	return err;
 }
 
-/* Return 0 if detection is successful, -ENODEV otherwise */
-static int asb100_detect(struct i2c_client *client, int kind,
-			 struct i2c_board_info *info)
+static int asb100_detect(struct i2c_adapter *adapter, int address, int kind)
 {
-	struct i2c_adapter *adapter = client->adapter;
+	int err;
+	struct i2c_client *new_client;
+	struct asb100_data *data;
 
 	if (!i2c_check_functionality(adapter, I2C_FUNC_SMBUS_BYTE_DATA)) {
 		pr_debug("asb100.o: detect failed, "
 				"smbus byte data not supported!\n");
-		return -ENODEV;
+		err = -ENODEV;
+		goto ERROR0;
 	}
+
+	/* OK. For now, we presume we have a valid client. We now create the
+	   client structure, even though we cannot fill it completely yet.
+	   But it allows us to access asb100_{read,write}_value. */
+
+	if (!(data = kzalloc(sizeof(struct asb100_data), GFP_KERNEL))) {
+		pr_debug("asb100.o: detect failed, kzalloc failed!\n");
+		err = -ENOMEM;
+		goto ERROR0;
+	}
+
+	new_client = &data->client;
+	mutex_init(&data->lock);
+	i2c_set_clientdata(new_client, data);
+	new_client->addr = address;
+	new_client->adapter = adapter;
+	new_client->driver = &asb100_driver;
+	new_client->flags = 0;
+
+	/* Now, we do the remaining detection. */
 
 	/* The chip may be stuck in some other bank than bank 0. This may
 	   make reading other information impossible. Specify a force=... or
@@ -714,114 +745,135 @@ static int asb100_detect(struct i2c_client *client, int kind,
 	   bank. */
 	if (kind < 0) {
 
-		int val1 = i2c_smbus_read_byte_data(client, ASB100_REG_BANK);
-		int val2 = i2c_smbus_read_byte_data(client, ASB100_REG_CHIPMAN);
+		int val1 = asb100_read_value(new_client, ASB100_REG_BANK);
+		int val2 = asb100_read_value(new_client, ASB100_REG_CHIPMAN);
 
 		/* If we're in bank 0 */
-		if ((!(val1 & 0x07)) &&
+		if ( (!(val1 & 0x07)) &&
 				/* Check for ASB100 ID (low byte) */
-				(((!(val1 & 0x80)) && (val2 != 0x94)) ||
+				( ((!(val1 & 0x80)) && (val2 != 0x94)) ||
 				/* Check for ASB100 ID (high byte ) */
-				((val1 & 0x80) && (val2 != 0x06)))) {
+				((val1 & 0x80) && (val2 != 0x06)) ) ) {
 			pr_debug("asb100.o: detect failed, "
 					"bad chip id 0x%02x!\n", val2);
-			return -ENODEV;
+			err = -ENODEV;
+			goto ERROR1;
 		}
 
 	} /* kind < 0 */
 
 	/* We have either had a force parameter, or we have already detected
 	   Winbond. Put it now into bank 0 and Vendor ID High Byte */
-	i2c_smbus_write_byte_data(client, ASB100_REG_BANK,
-		(i2c_smbus_read_byte_data(client, ASB100_REG_BANK) & 0x78)
-		| 0x80);
+	asb100_write_value(new_client, ASB100_REG_BANK,
+		(asb100_read_value(new_client, ASB100_REG_BANK) & 0x78) | 0x80);
 
 	/* Determine the chip type. */
 	if (kind <= 0) {
-		int val1 = i2c_smbus_read_byte_data(client, ASB100_REG_WCHIPID);
-		int val2 = i2c_smbus_read_byte_data(client, ASB100_REG_CHIPMAN);
+		int val1 = asb100_read_value(new_client, ASB100_REG_WCHIPID);
+		int val2 = asb100_read_value(new_client, ASB100_REG_CHIPMAN);
 
 		if ((val1 == 0x31) && (val2 == 0x06))
 			kind = asb100;
 		else {
 			if (kind == 0)
-				dev_warn(&adapter->dev, "ignoring "
+				dev_warn(&new_client->dev, "ignoring "
 					"'force' parameter for unknown chip "
 					"at adapter %d, address 0x%02x.\n",
-					i2c_adapter_id(adapter), client->addr);
-			return -ENODEV;
+					i2c_adapter_id(adapter), address);
+			err = -ENODEV;
+			goto ERROR1;
 		}
 	}
 
-	strlcpy(info->type, "asb100", I2C_NAME_SIZE);
+	/* Fill in remaining client fields and put it into the global list */
+	strlcpy(new_client->name, "asb100", I2C_NAME_SIZE);
+	data->type = kind;
 
-	return 0;
-}
-
-static int asb100_probe(struct i2c_client *client,
-			const struct i2c_device_id *id)
-{
-	int err;
-	struct asb100_data *data;
-
-	data = kzalloc(sizeof(struct asb100_data), GFP_KERNEL);
-	if (!data) {
-		pr_debug("asb100.o: probe failed, kzalloc failed!\n");
-		err = -ENOMEM;
-		goto ERROR0;
-	}
-
-	i2c_set_clientdata(client, data);
-	mutex_init(&data->lock);
+	data->valid = 0;
 	mutex_init(&data->update_lock);
 
-	/* Attach secondary lm75 clients */
-	err = asb100_detect_subclients(client);
-	if (err)
+	/* Tell the I2C layer a new client has arrived */
+	if ((err = i2c_attach_client(new_client)))
 		goto ERROR1;
 
+	/* Attach secondary lm75 clients */
+	if ((err = asb100_detect_subclients(adapter, address, kind,
+			new_client)))
+		goto ERROR2;
+
 	/* Initialize the chip */
-	asb100_init_client(client);
+	asb100_init_client(new_client);
 
 	/* A few vars need to be filled upon startup */
-	data->fan_min[0] = asb100_read_value(client, ASB100_REG_FAN_MIN(0));
-	data->fan_min[1] = asb100_read_value(client, ASB100_REG_FAN_MIN(1));
-	data->fan_min[2] = asb100_read_value(client, ASB100_REG_FAN_MIN(2));
+	data->fan_min[0] = asb100_read_value(new_client, ASB100_REG_FAN_MIN(0));
+	data->fan_min[1] = asb100_read_value(new_client, ASB100_REG_FAN_MIN(1));
+	data->fan_min[2] = asb100_read_value(new_client, ASB100_REG_FAN_MIN(2));
 
 	/* Register sysfs hooks */
-	if ((err = sysfs_create_group(&client->dev.kobj, &asb100_group)))
+	data->class_dev = hwmon_device_register(&new_client->dev);
+	if (IS_ERR(data->class_dev)) {
+		err = PTR_ERR(data->class_dev);
 		goto ERROR3;
-
-	data->hwmon_dev = hwmon_device_register(&client->dev);
-	if (IS_ERR(data->hwmon_dev)) {
-		err = PTR_ERR(data->hwmon_dev);
-		goto ERROR4;
 	}
+
+	device_create_file_in(new_client, 0);
+	device_create_file_in(new_client, 1);
+	device_create_file_in(new_client, 2);
+	device_create_file_in(new_client, 3);
+	device_create_file_in(new_client, 4);
+	device_create_file_in(new_client, 5);
+	device_create_file_in(new_client, 6);
+
+	device_create_file_fan(new_client, 1);
+	device_create_file_fan(new_client, 2);
+	device_create_file_fan(new_client, 3);
+
+	device_create_file_temp(new_client, 1);
+	device_create_file_temp(new_client, 2);
+	device_create_file_temp(new_client, 3);
+	device_create_file_temp(new_client, 4);
+
+	device_create_file_vid(new_client);
+	device_create_file_vrm(new_client);
+
+	device_create_file_alarms(new_client);
+
+	device_create_file_pwm1(new_client);
 
 	return 0;
 
-ERROR4:
-	sysfs_remove_group(&client->dev.kobj, &asb100_group);
 ERROR3:
-	i2c_unregister_device(data->lm75[1]);
-	i2c_unregister_device(data->lm75[0]);
+	i2c_detach_client(data->lm75[1]);
+	i2c_detach_client(data->lm75[0]);
+	kfree(data->lm75[1]);
+	kfree(data->lm75[0]);
+ERROR2:
+	i2c_detach_client(new_client);
 ERROR1:
 	kfree(data);
 ERROR0:
 	return err;
 }
 
-static int asb100_remove(struct i2c_client *client)
+static int asb100_detach_client(struct i2c_client *client)
 {
 	struct asb100_data *data = i2c_get_clientdata(client);
+	int err;
 
-	hwmon_device_unregister(data->hwmon_dev);
-	sysfs_remove_group(&client->dev.kobj, &asb100_group);
+	/* main client */
+	if (data)
+		hwmon_device_unregister(data->class_dev);
 
-	i2c_unregister_device(data->lm75[1]);
-	i2c_unregister_device(data->lm75[0]);
+	if ((err = i2c_detach_client(client)))
+		return err;
 
-	kfree(data);
+	/* main client */
+	if (data)
+		kfree(data);
+
+	/* subclient */
+	else
+		kfree(client);
 
 	return 0;
 }
@@ -850,17 +902,17 @@ static int asb100_read_value(struct i2c_client *client, u16 reg)
 		/* convert from ISA to LM75 I2C addresses */
 		switch (reg & 0xff) {
 		case 0x50: /* TEMP */
-			res = swab16(i2c_smbus_read_word_data(cl, 0));
+			res = swab16(i2c_smbus_read_word_data (cl, 0));
 			break;
 		case 0x52: /* CONFIG */
 			res = i2c_smbus_read_byte_data(cl, 1);
 			break;
 		case 0x53: /* HYST */
-			res = swab16(i2c_smbus_read_word_data(cl, 2));
+			res = swab16(i2c_smbus_read_word_data (cl, 2));
 			break;
 		case 0x55: /* MAX */
 		default:
-			res = swab16(i2c_smbus_read_word_data(cl, 3));
+			res = swab16(i2c_smbus_read_word_data (cl, 3));
 			break;
 		}
 	}
@@ -915,11 +967,15 @@ static void asb100_write_value(struct i2c_client *client, u16 reg, u16 value)
 static void asb100_init_client(struct i2c_client *client)
 {
 	struct asb100_data *data = i2c_get_clientdata(client);
+	int vid = 0;
 
+	vid = asb100_read_value(client, ASB100_REG_VID_FANDIV) & 0x0f;
+	vid |= (asb100_read_value(client, ASB100_REG_CHIPID) & 0x01) << 4;
 	data->vrm = vid_which_vrm();
+	vid = vid_from_reg(vid, data->vrm);
 
 	/* Start monitoring */
-	asb100_write_value(client, ASB100_REG_CONFIG,
+	asb100_write_value(client, ASB100_REG_CONFIG, 
 		(asb100_read_value(client, ASB100_REG_CONFIG) & 0xf7) | 0x01);
 }
 
@@ -1008,3 +1064,4 @@ MODULE_LICENSE("GPL");
 
 module_init(asb100_init);
 module_exit(asb100_exit);
+

@@ -1,0 +1,47 @@
+From: John Feeney <jfeeney@redhat.com>
+Subject: [PATCH RHEL-5] BZ211446 Raritan KVM USB dongle needs to be added  to the USB HID blacklist
+Date: Thu, 09 Nov 2006 11:54:11 -0500
+Bugzilla: 211446
+Message-Id: <45535D33.2040601@redhat.com>
+Changelog: Add Raritan KVM USB dongle to the USB HID blacklist
+
+
+bz211446
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=211446
+Raritan KVM USB dongle needs to be added to the USB HID blacklist
+
+Description of problem:
+During Installation the host tries to enumerate the keyboard/mouse dongle
+for the Raritan KVM. At this time timeouts have been observed. So if the
+system has USB Floppy/CDROM and if the Raritan USB KVM Dongle is
+being enumerated first then due to these timeouts the usb-storage driver 
+will not be loaded. So the USB storage devices will be inaccessible.
+
+Solution:
+Adding the Raritan KVM USB dongle to the blacklist fixes this issue.
+According to Dell, the patch has been accepted upstream. This
+RHEL-5 generated patch was successfully tested by Dell. This is hot
+item for Dell to get fixed.
+
+--- linux-2.6.18.noarch/drivers/usb/input/hid-core.c.orig
++++ linux-2.6.18.noarch/drivers/usb/input/hid-core.c
+@@ -1591,6 +1591,9 @@ void hid_init_reports(struct hid_device 
+ 
+ #define USB_VENDOR_ID_YEALINK		0x6993
+ #define USB_DEVICE_ID_YEALINK_P1K_P4K_B2K	0xb001
++#define USB_VENDOR_ID_SUN		0x0430
++#define USB_DEVICE_ID_RARITAN_KVM_DONGLE	0xcdab
++
+ /*
+  * Alphabetically sorted blacklist by quirk type.
+  */
+@@ -1711,6 +1714,8 @@ static const struct hid_blacklist {
+ 	{ USB_VENDOR_ID_ATEN, USB_DEVICE_ID_ATEN_2PORTKVM, HID_QUIRK_NOGET },
+ 	{ USB_VENDOR_ID_ATEN, USB_DEVICE_ID_ATEN_4PORTKVM, HID_QUIRK_NOGET },
+ 	{ USB_VENDOR_ID_ATEN, USB_DEVICE_ID_ATEN_4PORTKVMC, HID_QUIRK_NOGET },
++        /* Raritan KVM USB Dongle shows up with Sun Vendor ID*/
++        { USB_VENDOR_ID_SUN, USB_DEVICE_ID_RARITAN_KVM_DONGLE, HID_QUIRK_NOGET },
+ 	{ USB_VENDOR_ID_WISEGROUP, USB_DEVICE_ID_DUAL_USB_JOYPAD, HID_QUIRK_NOGET | HID_QUIRK_MULTI_INPUT },
+ 	{ USB_VENDOR_ID_WISEGROUP_LTD, USB_DEVICE_ID_SMARTJOY_DUAL_PLUS, HID_QUIRK_NOGET | HID_QUIRK_MULTI_INPUT },
+ 
+

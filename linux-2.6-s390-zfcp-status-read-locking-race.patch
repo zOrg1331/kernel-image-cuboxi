@@ -1,0 +1,202 @@
+From: Hans-Joachim Picht <hpicht@redhat.com>
+Date: Tue, 1 Jul 2008 15:12:28 +0200
+Subject: [s390] zfcp: status read locking race
+Message-id: 20080701131228.GB20922@redhat.com
+O-Subject: [RHEL5 U3 PATCH 2/6] s390 - zfcp: status read locking race
+Bugzilla: 451278
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+
+Description
+============
+
+Processing of an unsolicited status request can lead to a locking race of the
+request_queue's queue_lock during the recreation of the used up status read
+request while still in interrupt context of the response handler.
+
+Bugzilla
+=========
+
+BZ 451278
+https://bugzilla.redhat.com/show_bug.cgi?id=451278
+
+Upstream status of the patch:
+=============================
+
+Patch is contained in linux-scsi
+d26ab06ede83287f99067fee3034c5455a75faf9
+
+Test status:
+============
+
+The patch has been tested and fixes the problem.
+The fix has been verified by the IBM test department.
+
+Please ACK.
+
+With best regards,
+
+	-Hans
+
+diff --git a/drivers/s390/scsi/zfcp_aux.c b/drivers/s390/scsi/zfcp_aux.c
+index cd9deb1..9117b3f 100644
+--- a/drivers/s390/scsi/zfcp_aux.c
++++ b/drivers/s390/scsi/zfcp_aux.c
+@@ -1006,6 +1006,26 @@ zfcp_dummy_release(struct device *dev)
+ 	return;
+ }
+ 
++int zfcp_status_read_refill(struct zfcp_adapter *adapter)
++{
++	while (atomic_read(&adapter->stat_miss) > 0)
++		if (zfcp_fsf_status_read(adapter, ZFCP_WAIT_FOR_SBAL)) {
++			if (atomic_read(&adapter->stat_miss) >= 16) {
++				zfcp_erp_adapter_reopen(adapter, 0, 103, NULL);
++				return 1;
++			}
++			break;
++		}
++		else
++			atomic_dec(&adapter->stat_miss);
++	return 0;
++}
++
++static void _zfcp_status_read_scheduler(void *ptr)
++{
++	zfcp_status_read_refill((struct zfcp_adapter *)ptr);
++}
++
+ /*
+  * Enqueues an adapter at the end of the adapter list in the driver data.
+  * All adapter internal structures are set up.
+@@ -1095,6 +1115,8 @@ zfcp_adapter_enqueue(struct ccw_device *ccw_device)
+ 
+ 	/* initialize lock of associated request queue */
+ 	rwlock_init(&adapter->request_queue.queue_lock);
++	INIT_WORK(&adapter->stat_work, _zfcp_status_read_scheduler,
++		  adapter);
+ 
+ 	/* mark adapter unusable as long as sysfs registration is not complete */
+ 	atomic_set_mask(ZFCP_STATUS_COMMON_REMOVE, &adapter->status);
+diff --git a/drivers/s390/scsi/zfcp_dbf.c b/drivers/s390/scsi/zfcp_dbf.c
+index 5778bfd..5406a16 100644
+--- a/drivers/s390/scsi/zfcp_dbf.c
++++ b/drivers/s390/scsi/zfcp_dbf.c
+@@ -295,7 +295,7 @@ zfcp_hba_dbf_event_fsf_unsol(const char *tag, struct zfcp_adapter *adapter,
+ 	strncpy(rec->tag, "stat", ZFCP_DBF_TAG_SIZE);
+ 	strncpy(rec->tag2, tag, ZFCP_DBF_TAG_SIZE);
+ 
+-	rec->type.status.failed = adapter->status_read_failed;
++	rec->type.status.failed = atomic_read(&adapter->stat_miss);
+ 	if (status_buffer != NULL) {
+ 		rec->type.status.status_type = status_buffer->status_type;
+ 		rec->type.status.status_subtype = status_buffer->status_subtype;
+diff --git a/drivers/s390/scsi/zfcp_def.h b/drivers/s390/scsi/zfcp_def.h
+index 33ed851..b78f815 100644
+--- a/drivers/s390/scsi/zfcp_def.h
++++ b/drivers/s390/scsi/zfcp_def.h
+@@ -133,8 +133,6 @@ zfcp_address_to_sg(void *address, struct scatterlist *list)
+ #define ZFCP_QTCB_VERSION	FSF_QTCB_CURRENT_VERSION
+ /* ATTENTION: value must not be used by hardware */
+ #define FSF_QTCB_UNSOLICITED_STATUS		0x6305
+-#define ZFCP_STATUS_READ_FAILED_THRESHOLD	3
+-#define ZFCP_STATUS_READS_RECOM		        FSF_STATUS_READS_RECOM
+ 
+ /* Do 1st retry in 1 second, then double the timeout for each following retry */
+ #define ZFCP_EXCHANGE_CONFIG_DATA_FIRST_SLEEP	100
+@@ -947,7 +945,8 @@ struct zfcp_adapter {
+ 	rwlock_t		abort_lock;        /* Protects against SCSI
+ 						      stack abort/command
+ 						      completion races */
+-	u16			status_read_failed; /* # failed status reads */
++	atomic_t		stat_miss;	   /* # missing status reads*/
++	struct work_struct	stat_work;
+ 	atomic_t		status;	           /* status of this adapter */
+ 	struct list_head	erp_ready_head;	   /* error recovery for this
+ 						      adapter/devices */
+@@ -1100,7 +1099,7 @@ struct zfcp_sg_list {
+ #define ZFCP_POOL_FSF_REQ_ERP_NR	1
+ #define ZFCP_POOL_FSF_REQ_SCSI_NR	1
+ #define ZFCP_POOL_FSF_REQ_ABORT_NR	1
+-#define ZFCP_POOL_STATUS_READ_NR	ZFCP_STATUS_READS_RECOM
++#define ZFCP_POOL_STATUS_READ_NR	FSF_STATUS_READS_RECOM
+ #define ZFCP_POOL_DATA_GID_PN_NR	1
+ 
+ /* struct used by memory pools for fsf_requests */
+diff --git a/drivers/s390/scsi/zfcp_erp.c b/drivers/s390/scsi/zfcp_erp.c
+index 24b800b..3ea78a6 100644
+--- a/drivers/s390/scsi/zfcp_erp.c
++++ b/drivers/s390/scsi/zfcp_erp.c
+@@ -2138,25 +2138,10 @@ static int
+ zfcp_erp_adapter_strategy_open_fsf_statusread(struct zfcp_erp_action
+ 					      *erp_action)
+ {
+-	int retval = ZFCP_ERP_SUCCEEDED;
+-	int temp_ret;
+ 	struct zfcp_adapter *adapter = erp_action->adapter;
+-	int i;
+ 
+-	adapter->status_read_failed = 0;
+-	for (i = 0; i < ZFCP_STATUS_READS_RECOM; i++) {
+-		temp_ret = zfcp_fsf_status_read(adapter, ZFCP_WAIT_FOR_SBAL);
+-		if (temp_ret < 0) {
+-			ZFCP_LOG_INFO("error: set-up of unsolicited status "
+-				      "notification failed on adapter %s\n",
+-				      zfcp_get_busid_by_adapter(adapter));
+-			retval = ZFCP_ERP_FAILED;
+-			i--;
+-			break;
+-		}
+-	}
+-
+-	return retval;
++	atomic_set(&adapter->stat_miss, 16);
++	return zfcp_status_read_refill(adapter);
+ }
+ 
+ /*
+diff --git a/drivers/s390/scsi/zfcp_ext.h b/drivers/s390/scsi/zfcp_ext.h
+index 4d83a82..1556ff1 100644
+--- a/drivers/s390/scsi/zfcp_ext.h
++++ b/drivers/s390/scsi/zfcp_ext.h
+@@ -92,6 +92,7 @@ extern void zfcp_fsf_start_timer(struct zfcp_fsf_req *, unsigned long);
+ extern void zfcp_erp_start_timer(struct zfcp_fsf_req *);
+ extern void zfcp_fsf_req_dismiss_all(struct zfcp_adapter *);
+ extern int  zfcp_fsf_status_read(struct zfcp_adapter *, int);
++extern int zfcp_status_read_refill(struct zfcp_adapter *adapter);
+ extern int zfcp_fsf_req_create(struct zfcp_adapter *, u32, int, mempool_t *,
+ 			       unsigned long *, struct zfcp_fsf_req **);
+ extern int zfcp_fsf_send_ct(struct zfcp_send_ct *, mempool_t *,
+diff --git a/drivers/s390/scsi/zfcp_fsf.c b/drivers/s390/scsi/zfcp_fsf.c
+index fa7398f..7d9477a 100644
+--- a/drivers/s390/scsi/zfcp_fsf.c
++++ b/drivers/s390/scsi/zfcp_fsf.c
+@@ -1026,26 +1026,9 @@ zfcp_fsf_status_read_handler(struct zfcp_fsf_req *fsf_req)
+ 	 * qdio_cleanup will have to wait at least that long before returning
+ 	 * with failure to allow us a proper cleanup under all circumstances
+ 	 */
+-	/*
+-	 * FIXME:
+-	 * allocation failure possible? (Is this code needed?)
+-	 */
+-	retval = zfcp_fsf_status_read(adapter, 0);
+-	if (retval < 0) {
+-		ZFCP_LOG_INFO("Failed to create unsolicited status read "
+-			      "request for the adapter %s.\n",
+-			      zfcp_get_busid_by_adapter(adapter));
+-		/* temporary fix to avoid status read buffer shortage */
+-		adapter->status_read_failed++;
+-		if ((ZFCP_STATUS_READS_RECOM - adapter->status_read_failed)
+-		    < ZFCP_STATUS_READ_FAILED_THRESHOLD) {
+-			ZFCP_LOG_INFO("restart adapter %s due to status read "
+-				      "buffer shortage\n",
+-				      zfcp_get_busid_by_adapter(adapter));
+-			zfcp_erp_adapter_reopen(adapter, 0, 103, fsf_req);
+-		}
+-	}
+- out:
++	atomic_inc(&adapter->stat_miss);
++	schedule_work(&adapter->stat_work);
++out:
+ 	return retval;
+ }
+ 

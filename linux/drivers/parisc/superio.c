@@ -73,7 +73,6 @@
 #include <linux/termios.h>
 #include <linux/tty.h>
 #include <linux/serial_core.h>
-#include <linux/serial_8250.h>
 #include <linux/delay.h>
 
 #include <asm/io.h>
@@ -95,7 +94,7 @@ static struct superio_device sio_dev;
 #define PFX	SUPERIO ": "
 
 static irqreturn_t
-superio_interrupt(int parent_irq, void *devp)
+superio_interrupt(int parent_irq, void *devp, struct pt_regs *regs)
 {
 	u8 results;
 	u8 local_irq;
@@ -139,7 +138,7 @@ superio_interrupt(int parent_irq, void *devp)
 	}
 
 	/* Call the appropriate device's interrupt */
-	__do_IRQ(local_irq);
+	__do_IRQ(local_irq, regs);
 
 	/* set EOI - forces a new interrupt if a lower priority device
 	 * still needs service.
@@ -155,7 +154,6 @@ superio_init(struct pci_dev *pcidev)
 	struct superio_device *sio = &sio_dev;
 	struct pci_dev *pdev = sio->lio_pdev;
 	u16 word;
-	int ret;
 
 	if (sio->suckyio_irq_enabled)
 		return;
@@ -201,8 +199,7 @@ superio_init(struct pci_dev *pcidev)
 	pci_write_config_word (pdev, PCI_COMMAND, word);
 
 	pci_set_master (pdev);
-	ret = pci_enable_device(pdev);
-	BUG_ON(ret < 0);	/* not too much we can do about this... */
+	pci_enable_device(pdev);
 
 	/*
 	 * Next project is programming the onboard interrupt controllers.
@@ -325,7 +322,7 @@ static unsigned int superio_startup_irq(unsigned int irq)
 	return 0;
 }
 
-static struct irq_chip superio_interrupt_type = {
+static struct hw_interrupt_type superio_interrupt_type = {
 	.typename =	SUPERIO,
 	.startup =	superio_startup_irq,
 	.shutdown =	superio_disable_irq,
@@ -363,9 +360,7 @@ int superio_fixup_irq(struct pci_dev *pcidev)
 #endif
 
 	for (i = 0; i < 16; i++) {
-		struct irq_desc *desc = irq_to_desc(i);
-
-		desc->chip = &superio_interrupt_type;
+		irq_desc[i].chip = &superio_interrupt_type;
 	}
 
 	/*
@@ -394,7 +389,7 @@ int superio_fixup_irq(struct pci_dev *pcidev)
 	return local_irq;
 }
 
-static void __init superio_serial_init(void)
+static void __devinit superio_serial_init(void)
 {
 #ifdef CONFIG_SERIAL_8250
 	int retval;
@@ -405,6 +400,7 @@ static void __init superio_serial_init(void)
 	serial_port.type	= PORT_16550A;
 	serial_port.uartclk	= 115200*16;
 	serial_port.fifosize	= 16;
+	spin_lock_init(&serial_port.lock);
 
 	/* serial port #1 */
 	serial_port.iobase	= sio_dev.sp1_base;
@@ -427,15 +423,14 @@ static void __init superio_serial_init(void)
 }
 
 
-static void __init superio_parport_init(void)
+static void __devinit superio_parport_init(void)
 {
 #ifdef CONFIG_PARPORT_PC
 	if (!parport_pc_probe_port(sio_dev.pp_base,
 			0 /*base_hi*/,
 			PAR_IRQ, 
 			PARPORT_DMA_NONE /* dma */,
-			NULL /*struct pci_dev* */,
-			0 /* shared irq flags */))
+			NULL /*struct pci_dev* */) )
 
 		printk(KERN_WARNING PFX "Probing parallel port failed.\n");
 #endif	/* CONFIG_PARPORT_PC */
@@ -455,7 +450,7 @@ static void superio_fixup_pci(struct pci_dev *pdev)
 DECLARE_PCI_FIXUP_EARLY(PCI_VENDOR_ID_NS, PCI_DEVICE_ID_NS_87415, superio_fixup_pci);
 
 
-static int __init
+static int __devinit
 superio_probe(struct pci_dev *dev, const struct pci_device_id *id)
 {
 	struct superio_device *sio = &sio_dev;
@@ -490,7 +485,7 @@ superio_probe(struct pci_dev *dev, const struct pci_device_id *id)
 	return -ENODEV;
 }
 
-static const struct pci_device_id superio_tbl[] = {
+static struct pci_device_id superio_tbl[] = {
 	{ PCI_DEVICE(PCI_VENDOR_ID_NS, PCI_DEVICE_ID_NS_87560_LIO) },
 	{ PCI_DEVICE(PCI_VENDOR_ID_NS, PCI_DEVICE_ID_NS_87560_USB) },
 	{ PCI_DEVICE(PCI_VENDOR_ID_NS, PCI_DEVICE_ID_NS_87415) },

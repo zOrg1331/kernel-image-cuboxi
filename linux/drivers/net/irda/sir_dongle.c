@@ -14,6 +14,7 @@
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/init.h>
+#include <linux/smp_lock.h>
 #include <linux/kmod.h>
 #include <linux/mutex.h>
 
@@ -36,7 +37,7 @@ int irda_register_dongle(struct dongle_driver *new)
 	struct dongle_driver *drv;
 
 	IRDA_DEBUG(0, "%s : registering dongle \"%s\" (%d).\n",
-		   __func__, new->driver_name, new->type);
+		   __FUNCTION__, new->driver_name, new->type);
 
 	mutex_lock(&dongle_list_lock);
 	list_for_each(entry, &dongle_list) {
@@ -67,7 +68,9 @@ int sirdev_get_dongle(struct sir_dev *dev, IRDA_DONGLE type)
 	const struct dongle_driver *drv = NULL;
 	int err = -EINVAL;
 
+#ifdef CONFIG_KMOD
 	request_module("irda-dongle-%d", type);
+#endif
 
 	if (dev->dongle_drv != NULL)
 		return -EBUSY;

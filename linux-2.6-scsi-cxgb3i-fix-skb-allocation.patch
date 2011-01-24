@@ -1,0 +1,51 @@
+From: mchristi@redhat.com <mchristi@redhat.com>
+Date: Mon, 27 Jul 2009 22:54:23 -0500
+Subject: [scsi] cxgb3i: fix skb allocation
+Message-id: 1248753263-2809-1-git-send-email-mchristi@redhat.com
+O-Subject: [PATCH] RHEL 5.4: cxgb3i: fix skb allocation
+Bugzilla: 514073
+RH-Acked-by: David Miller <davem@redhat.com>
+RH-Acked-by: Stefan Assmann <sassmann@redhat.com>
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+
+From: Mike Christie <mchristi@redhat.com>
+
+This is for BZ 514073.
+
+>From the BZ:
+
+	On systems where the page size is large (64K) and skb's MAX_SKB_FRAGS is
+	relatively small (say PPC64), for write command the cxgb3i could wrongly
+	allocate a much smaller skb than what is needed, thus trigger the
+	skb_over_panic() when trying to write data to the skb's head.
+
+This is not needed upstream. It was a bug introduced when porting the
+driver. In the code path that is getting fixed below, we want to
+check if the cmd/pdu is a write and if it is allocate a skb that is big
+enough to hold the data to be sent. When porting the code, we dropped
+part of the upstream test because RHEL does not have bidi and then
+for some reason made the rest of line check for reads instead of writes.
+
+I could not replicate the problem. I ran the patch against disktest
+and bonnie++ and did not hit any problems. Chelsio is doing the primiary
+QE. They found the bug and sent the patch and did their own regression
+tests.
+
+cxgb3i is a new driver for 5.4, Chelsio is doing the QE for us on
+this, the code has been upstream for at least a kernel release and thi
+ patch only affects the cxgb3i driver, so I think it should be safe.
+
+diff --git a/drivers/scsi/cxgb3i/cxgb3i_pdu.c b/drivers/scsi/cxgb3i/cxgb3i_pdu.c
+index a2d2773..fe964e2 100644
+--- a/drivers/scsi/cxgb3i/cxgb3i_pdu.c
++++ b/drivers/scsi/cxgb3i/cxgb3i_pdu.c
+@@ -246,7 +246,8 @@ int cxgb3i_conn_alloc_pdu(struct iscsi_task *task, u8 opcode)
+ 
+ 	/* write command, need to send data pdus */
+ 	if (skb_extra_headroom && (opcode == ISCSI_OP_SCSI_DATA_OUT ||
+-	    (opcode == ISCSI_OP_SCSI_CMD && is_read_command(sc))))
++	    (opcode == ISCSI_OP_SCSI_CMD &&
++	     sc->sc_data_direction == DMA_TO_DEVICE)))
+ 		headroom += min(skb_extra_headroom, conn->max_xmit_dlength);
+ 
+ 	tdata->skb = alloc_skb(TX_HEADER_LEN + headroom, GFP_ATOMIC);

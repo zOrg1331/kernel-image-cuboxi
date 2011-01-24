@@ -42,8 +42,7 @@
 #include <asm/page.h>
 #include <asm/uaccess.h>
 #include <linux/page-flags.h>
-#include <linux/videodev.h>
-#include <media/v4l2-ioctl.h>
+#include <linux/moduleparam.h>
 
 #include "w9968cf.h"
 #include "w9968cf_decoder.h"
@@ -69,6 +68,7 @@ MODULE_VERSION(W9968CF_MODULE_VERSION);
 MODULE_LICENSE(W9968CF_MODULE_LICENSE);
 MODULE_SUPPORTED_DEVICE("Video");
 
+static int ovmod_load = W9968CF_OVMOD_LOAD;
 static unsigned short simcams = W9968CF_SIMCAMS;
 static short video_nr[]={[0 ... W9968CF_MAX_DEVICES-1] = -1}; /*-1=first free*/
 static unsigned int packet_size[] = {[0 ... W9968CF_MAX_DEVICES-1] =
@@ -111,6 +111,9 @@ static int specific_debug = W9968CF_SPECIFIC_DEBUG;
 
 static unsigned int param_nv[24]; /* number of values per parameter */
 
+#ifdef CONFIG_KMOD
+module_param(ovmod_load, bool, 0644);
+#endif
 module_param(simcams, ushort, 0644);
 module_param_array(video_nr, short, &param_nv[0], 0444);
 module_param_array(packet_size, uint, &param_nv[1], 0444);
@@ -141,6 +144,18 @@ module_param(debug, ushort, 0644);
 module_param(specific_debug, bool, 0644);
 #endif
 
+#ifdef CONFIG_KMOD
+MODULE_PARM_DESC(ovmod_load,
+		 "\n<0|1> Automatic 'ovcamchip' module loading."
+		 "\n0 disabled, 1 enabled."
+		 "\nIf enabled,'insmod' searches for the required 'ovcamchip'"
+		 "\nmodule in the system, according to its configuration, and"
+		 "\nattempts to load that module automatically. This action is"
+		 "\nperformed once as soon as the 'w9968cf' module is loaded"
+		 "\ninto memory."
+		 "\nDefault value is "__MODULE_STRING(W9968CF_OVMOD_LOAD)"."
+		 "\n");
+#endif
 MODULE_PARM_DESC(simcams,
 		 "\n<n> Number of cameras allowed to stream simultaneously."
 		 "\nn may vary from 0 to "
@@ -384,13 +399,13 @@ MODULE_PARM_DESC(specific_debug,
  ****************************************************************************/
 
 /* Video4linux interface */
-static const struct v4l2_file_operations w9968cf_fops;
-static int w9968cf_open(struct file *);
-static int w9968cf_release(struct file *);
-static int w9968cf_mmap(struct file *, struct vm_area_struct *);
-static long w9968cf_ioctl(struct file *, unsigned, unsigned long);
-static ssize_t w9968cf_read(struct file *, char __user *, size_t, loff_t *);
-static long w9968cf_v4l_ioctl(struct file *, unsigned int,
+static struct file_operations w9968cf_fops;
+static int w9968cf_open(struct inode*, struct file*);
+static int w9968cf_release(struct inode*, struct file*);
+static int w9968cf_mmap(struct file*, struct vm_area_struct*);
+static int w9968cf_ioctl(struct inode*, struct file*, unsigned, unsigned long);
+static ssize_t w9968cf_read(struct file*, char __user *, size_t, loff_t*);
+static int w9968cf_v4l_ioctl(struct inode*, struct file*, unsigned int,
 			     void __user *);
 
 /* USB-specific */
@@ -402,7 +417,7 @@ static int w9968cf_write_fsb(struct w9968cf_device*, u16* data);
 static int w9968cf_write_sb(struct w9968cf_device*, u16 value);
 static int w9968cf_read_sb(struct w9968cf_device*);
 static int w9968cf_upload_quantizationtables(struct w9968cf_device*);
-static void w9968cf_urb_complete(struct urb *urb);
+static void w9968cf_urb_complete(struct urb *urb, struct pt_regs *regs);
 
 /* Low-level I2C (SMBus) I/O */
 static int w9968cf_smbus_start(struct w9968cf_device*);
@@ -428,6 +443,10 @@ static int w9968cf_i2c_smbus_xfer(struct i2c_adapter*, u16 addr,
 				  unsigned short flags, char read_write,
 				  u8 command, int size, union i2c_smbus_data*);
 static u32 w9968cf_i2c_func(struct i2c_adapter*);
+static int w9968cf_i2c_attach_inform(struct i2c_client*);
+static int w9968cf_i2c_detach_inform(struct i2c_client*);
+static int w9968cf_i2c_control(struct i2c_adapter*, unsigned int cmd,
+			       unsigned long arg);
 
 /* Memory management */
 static void* rvmalloc(unsigned long size);
@@ -460,7 +479,7 @@ static int w9968cf_set_picture(struct w9968cf_device*, struct video_picture);
 static int w9968cf_set_window(struct w9968cf_device*, struct video_window);
 static int w9968cf_postprocess_frame(struct w9968cf_device*,
 				     struct w9968cf_frame_t*);
-static int w9968cf_adjust_window_size(struct w9968cf_device*, u32 *w, u32 *h);
+static int w9968cf_adjust_window_size(struct w9968cf_device*, u16* w, u16* h);
 static void w9968cf_init_framelist(struct w9968cf_device*);
 static void w9968cf_push_frame(struct w9968cf_device*, u8 f_num);
 static void w9968cf_pop_frame(struct w9968cf_device*,struct w9968cf_frame_t**);
@@ -567,13 +586,14 @@ static struct w9968cf_symbolic_list urb_errlist[] = {
 	{ -EFBIG,     "Too much ISO frames requested" },
 	{ -ENOSR,     "Buffer error (overrun)" },
 	{ -EPIPE,     "Specified endpoint is stalled (device not responding)"},
-	{ -EOVERFLOW, "Babble (too much data)" },
+	{ -EOVERFLOW, "Babble (bad cable?)" },
 	{ -EPROTO,    "Bit-stuff error (bad cable?)" },
 	{ -EILSEQ,    "CRC/Timeout" },
-	{ -ETIME,     "Device does not respond to token" },
-	{ -ETIMEDOUT, "Device does not respond to command" },
+	{ -ETIMEDOUT, "NAK (device does not respond)" },
 	{ -1, NULL }
 };
+
+
 
 /****************************************************************************
  * Memory management functions                                              *
@@ -762,7 +782,7 @@ static int w9968cf_allocate_memory(struct w9968cf_device* cam)
   If there are no requested frames in the FIFO list, packets are collected into
   a temporary buffer.
   --------------------------------------------------------------------------*/
-static void w9968cf_urb_complete(struct urb *urb)
+static void w9968cf_urb_complete(struct urb *urb, struct pt_regs *regs)
 {
 	struct w9968cf_device* cam = (struct w9968cf_device*)urb->context;
 	struct w9968cf_frame_t** f;
@@ -894,6 +914,7 @@ static int w9968cf_start_transfer(struct w9968cf_device* cam)
 
 	for (i = 0; i < W9968CF_URBS; i++) {
 		urb = usb_alloc_urb(W9968CF_ISO_PACKETS, GFP_KERNEL);
+		cam->urb[i] = urb;
 		if (!urb) {
 			for (j = 0; j < i; j++)
 				usb_free_urb(cam->urb[j]);
@@ -901,7 +922,6 @@ static int w9968cf_start_transfer(struct w9968cf_device* cam)
 			return -ENOMEM;
 		}
 
-		cam->urb[i] = urb;
 		urb->dev = udev;
 		urb->context = (void*)cam;
 		urb->pipe = usb_rcvisocpipe(udev, 1);
@@ -1426,10 +1446,18 @@ w9968cf_i2c_smbus_xfer(struct i2c_adapter *adapter, u16 addr,
 		       unsigned short flags, char read_write, u8 command,
 		       int size, union i2c_smbus_data *data)
 {
-	struct v4l2_device *v4l2_dev = i2c_get_adapdata(adapter);
-	struct w9968cf_device *cam = to_cam(v4l2_dev);
+	struct w9968cf_device* cam = i2c_get_adapdata(adapter);
 	u8 i;
 	int err = 0;
+
+	switch (addr) {
+		case OV6xx0_SID:
+		case OV7xx0_SID:
+			break;
+		default:
+			DBG(4, "Rejected slave ID 0x%04X", addr)
+			return -EINVAL;
+	}
 
 	if (size == I2C_SMBUS_BYTE) {
 		/* Why addr <<= 1? See OVXXX0_SID defines in ovcamchip.h */
@@ -1438,17 +1466,8 @@ w9968cf_i2c_smbus_xfer(struct i2c_adapter *adapter, u16 addr,
 		if (read_write == I2C_SMBUS_WRITE)
 			err = w9968cf_i2c_adap_write_byte(cam, addr, command);
 		else if (read_write == I2C_SMBUS_READ)
-			for (i = 1; i <= W9968CF_I2C_RW_RETRIES; i++) {
-				err = w9968cf_i2c_adap_read_byte(cam, addr,
-							 &data->byte);
-				if (err) {
-					if (w9968cf_smbus_refresh_bus(cam)) {
-						err = -EIO;
-						break;
-					}
-				} else
-					break;
-			}
+			err = w9968cf_i2c_adap_read_byte(cam,addr,&data->byte);
+
 	} else if (size == I2C_SMBUS_BYTE_DATA) {
 		addr <<= 1;
 
@@ -1475,6 +1494,7 @@ w9968cf_i2c_smbus_xfer(struct i2c_adapter *adapter, u16 addr,
 		DBG(4, "Unsupported I2C transfer mode (%d)", size)
 		return -EINVAL;
 	}
+
 	return err;
 }
 
@@ -1487,24 +1507,74 @@ static u32 w9968cf_i2c_func(struct i2c_adapter* adap)
 }
 
 
+static int w9968cf_i2c_attach_inform(struct i2c_client* client)
+{
+	struct w9968cf_device* cam = i2c_get_adapdata(client->adapter);
+	int id = client->driver->id, err = 0;
+
+	if (id == I2C_DRIVERID_OVCAMCHIP) {
+		cam->sensor_client = client;
+		err = w9968cf_sensor_init(cam);
+		if (err) {
+			cam->sensor_client = NULL;
+			return err;
+		}
+	} else {
+		DBG(4, "Rejected client [%s] with driver [%s]",
+		    client->name, client->driver->driver.name)
+		return -EINVAL;
+	}
+
+	DBG(5, "I2C attach client [%s] with driver [%s]",
+	    client->name, client->driver->driver.name)
+
+	return 0;
+}
+
+
+static int w9968cf_i2c_detach_inform(struct i2c_client* client)
+{
+	struct w9968cf_device* cam = i2c_get_adapdata(client->adapter);
+
+	if (cam->sensor_client == client)
+		cam->sensor_client = NULL;
+
+	DBG(5, "I2C detach client [%s]", client->name)
+
+	return 0;
+}
+
+
+static int
+w9968cf_i2c_control(struct i2c_adapter* adapter, unsigned int cmd,
+		    unsigned long arg)
+{
+	return 0;
+}
+
+
 static int w9968cf_i2c_init(struct w9968cf_device* cam)
 {
 	int err = 0;
 
 	static struct i2c_algorithm algo = {
 		.smbus_xfer =    w9968cf_i2c_smbus_xfer,
+		.algo_control =  w9968cf_i2c_control,
 		.functionality = w9968cf_i2c_func,
 	};
 
 	static struct i2c_adapter adap = {
+		.id =                I2C_HW_SMBUS_W9968CF,
+		.class =             I2C_CLASS_CAM_DIGITAL,
 		.owner =             THIS_MODULE,
+		.client_register =   w9968cf_i2c_attach_inform,
+		.client_unregister = w9968cf_i2c_detach_inform,
 		.algo =              &algo,
 	};
 
 	memcpy(&cam->i2c_adapter, &adap, sizeof(struct i2c_adapter));
 	strcpy(cam->i2c_adapter.name, "w9968cf");
-	cam->i2c_adapter.dev.parent = &cam->usbdev->dev;
-	i2c_set_adapdata(&cam->i2c_adapter, &cam->v4l2_dev);
+	i2c_set_adapdata(&cam->i2c_adapter, cam);
 
 	DBG(6, "Registering I2C adapter with kernel...")
 
@@ -1758,23 +1828,24 @@ w9968cf_set_window(struct w9968cf_device* cam, struct video_window win)
 	int err = 0;
 
 	/* Work around to avoid FP arithmetics */
-	#define SC(x) ((x) << 10)
-	#define UNSC(x) ((x) >> 10)
+	#define __SC(x) ((x) << 10)
+	#define __UNSC(x) ((x) >> 10)
 
 	/* Make sure we are using a supported resolution */
-	if ((err = w9968cf_adjust_window_size(cam, &win.width, &win.height)))
+	if ((err = w9968cf_adjust_window_size(cam, (u16*)&win.width,
+					      (u16*)&win.height)))
 		goto error;
 
 	/* Scaling factors */
-	fw = SC(win.width) / cam->maxwidth;
-	fh = SC(win.height) / cam->maxheight;
+	fw = __SC(win.width) / cam->maxwidth;
+	fh = __SC(win.height) / cam->maxheight;
 
 	/* Set up the width and height values used by the chip */
 	if ((win.width > cam->maxwidth) || (win.height > cam->maxheight)) {
 		cam->vpp_flag |= VPP_UPSCALE;
 		/* Calculate largest w,h mantaining the same w/h ratio */
-		w = (fw >= fh) ? cam->maxwidth : SC(win.width)/fh;
-		h = (fw >= fh) ? SC(win.height)/fw : cam->maxheight;
+		w = (fw >= fh) ? cam->maxwidth : __SC(win.width)/fh;
+		h = (fw >= fh) ? __SC(win.height)/fw : cam->maxheight;
 		if (w < cam->minwidth) /* just in case */
 			w = cam->minwidth;
 		if (h < cam->minheight) /* just in case */
@@ -1791,8 +1862,8 @@ w9968cf_set_window(struct w9968cf_device* cam, struct video_window win)
 
 	/* Calculate cropped area manteining the right w/h ratio */
 	if (cam->largeview && !(cam->vpp_flag & VPP_UPSCALE)) {
-		cw = (fw >= fh) ? cam->maxwidth : SC(win.width)/fh;
-		ch = (fw >= fh) ? SC(win.height)/fw : cam->maxheight;
+		cw = (fw >= fh) ? cam->maxwidth : __SC(win.width)/fh;
+		ch = (fw >= fh) ? __SC(win.height)/fw : cam->maxheight;
 	} else {
 		cw = w;
 		ch = h;
@@ -1831,8 +1902,8 @@ w9968cf_set_window(struct w9968cf_device* cam, struct video_window win)
 	/* We have to scale win.x and win.y offsets */
 	if ( (cam->largeview && !(cam->vpp_flag & VPP_UPSCALE))
 	     || (cam->vpp_flag & VPP_UPSCALE) ) {
-		ax = SC(win.x)/fw;
-		ay = SC(win.y)/fh;
+		ax = __SC(win.x)/fw;
+		ay = __SC(win.y)/fh;
 	} else {
 		ax = win.x;
 		ay = win.y;
@@ -1847,8 +1918,8 @@ w9968cf_set_window(struct w9968cf_device* cam, struct video_window win)
 	/* Adjust win.x, win.y */
 	if ( (cam->largeview && !(cam->vpp_flag & VPP_UPSCALE))
 	     || (cam->vpp_flag & VPP_UPSCALE) ) {
-		win.x = UNSC(ax*fw);
-		win.y = UNSC(ay*fh);
+		win.x = __UNSC(ax*fw);
+		win.y = __UNSC(ay*fh);
 	} else {
 		win.x = ax;
 		win.y = ay;
@@ -1912,9 +1983,12 @@ error:
   Return 0 on success, -1 otherwise.
   --------------------------------------------------------------------------*/
 static int
-w9968cf_adjust_window_size(struct w9968cf_device *cam, u32 *width, u32 *height)
+w9968cf_adjust_window_size(struct w9968cf_device* cam, u16* width, u16* height)
 {
-	unsigned int maxw, maxh, align;
+	u16 maxw, maxh;
+
+	if ((*width < cam->minwidth) || (*height < cam->minheight))
+		return -ERANGE;
 
 	maxw = cam->upscaling && !(cam->vpp_flag & VPP_DECOMPRESSION) &&
 	       w9968cf_vpp ? max((u16)W9968CF_MAX_WIDTH, cam->maxwidth)
@@ -1922,10 +1996,16 @@ w9968cf_adjust_window_size(struct w9968cf_device *cam, u32 *width, u32 *height)
 	maxh = cam->upscaling && !(cam->vpp_flag & VPP_DECOMPRESSION) &&
 	       w9968cf_vpp ? max((u16)W9968CF_MAX_HEIGHT, cam->maxheight)
 			   : cam->maxheight;
-	align = (cam->vpp_flag & VPP_DECOMPRESSION) ? 4 : 0;
 
-	v4l_bound_align_image(width, cam->minwidth, maxw, align,
-			      height, cam->minheight, maxh, align, 0);
+	if (*width > maxw)
+		*width = maxw;
+	if (*height > maxh)
+		*height = maxh;
+
+	if (cam->vpp_flag & VPP_DECOMPRESSION) {
+		*width  &= ~15L; /* multiple of 16 */
+		*height &= ~15L;
+	}
 
 	PDBGG("Window size adjusted w=%u, h=%u ", *width, *height)
 
@@ -2097,9 +2177,13 @@ w9968cf_sensor_get_control(struct w9968cf_device* cam, int cid, int* val)
 static int
 w9968cf_sensor_cmd(struct w9968cf_device* cam, unsigned int cmd, void* arg)
 {
-	int rc;
+	struct i2c_client* c = cam->sensor_client;
+	int rc = 0;
 
-	rc = v4l2_subdev_call(cam->sensor_sd, core, ioctl, cmd, arg);
+	if (!c || !c->driver || !c->driver->command)
+		return -EINVAL;
+
+	rc = c->driver->command(c, cmd, arg);
 	/* The I2C driver returns -EPERM on non-supported controls */
 	return (rc < 0 && rc != -EPERM) ? rc : 0;
 }
@@ -2274,7 +2358,7 @@ static int w9968cf_sensor_init(struct w9968cf_device* cam)
 		goto error;
 
 	/* NOTE: Make sure width and height are a multiple of 16 */
-	switch (v4l2_i2c_subdev_addr(cam->sensor_sd)) {
+	switch (cam->sensor_client->addr) {
 		case OV6xx0_SID:
 			cam->maxwidth = 352;
 			cam->maxheight = 288;
@@ -2325,7 +2409,7 @@ error:
 	cam->sensor = CC_UNKNOWN;
 	DBG(1, "Image sensor initialization failed for %s (/dev/video%d). "
 	       "Try to detach and attach this device again",
-	    symbolic(camlist, cam->id), cam->v4ldev->num)
+	    symbolic(camlist, cam->id), cam->v4ldev->minor)
 	return err;
 }
 
@@ -2571,7 +2655,7 @@ static void w9968cf_release_resources(struct w9968cf_device* cam)
 {
 	mutex_lock(&w9968cf_devlist_mutex);
 
-	DBG(2, "V4L device deregistered: /dev/video%d", cam->v4ldev->num)
+	DBG(2, "V4L device deregistered: /dev/video%d", cam->v4ldev->minor)
 
 	video_unregister_device(cam->v4ldev);
 	list_del(&cam->v4llist);
@@ -2579,7 +2663,6 @@ static void w9968cf_release_resources(struct w9968cf_device* cam)
 	w9968cf_deallocate_memory(cam);
 	kfree(cam->control_buffer);
 	kfree(cam->data_buffer);
-	v4l2_device_unregister(&cam->v4l2_dev);
 
 	mutex_unlock(&w9968cf_devlist_mutex);
 }
@@ -2590,14 +2673,14 @@ static void w9968cf_release_resources(struct w9968cf_device* cam)
  * Video4Linux interface                                                    *
  ****************************************************************************/
 
-static int w9968cf_open(struct file *filp)
+static int w9968cf_open(struct inode* inode, struct file* filp)
 {
 	struct w9968cf_device* cam;
 	int err;
 
 	/* This the only safe way to prevent race conditions with disconnect */
 	if (!down_read_trylock(&w9968cf_disconnect))
-		return -EAGAIN;
+		return -ERESTARTSYS;
 
 	cam = (struct w9968cf_device*)video_get_drvdata(video_devdata(filp));
 
@@ -2607,7 +2690,7 @@ static int w9968cf_open(struct file *filp)
 		DBG(2, "No supported image sensor has been detected by the "
 		       "'ovcamchip' module for the %s (/dev/video%d). Make "
 		       "sure it is loaded *before* (re)connecting the camera.",
-		    symbolic(camlist, cam->id), cam->v4ldev->num)
+		    symbolic(camlist, cam->id), cam->v4ldev->minor)
 		mutex_unlock(&cam->dev_mutex);
 		up_read(&w9968cf_disconnect);
 		return -ENODEV;
@@ -2615,7 +2698,7 @@ static int w9968cf_open(struct file *filp)
 
 	if (cam->users) {
 		DBG(2, "%s (/dev/video%d) has been already occupied by '%s'",
-		    symbolic(camlist, cam->id), cam->v4ldev->num, cam->command)
+		    symbolic(camlist, cam->id),cam->v4ldev->minor,cam->command)
 		if ((filp->f_flags & O_NONBLOCK)||(filp->f_flags & O_NDELAY)) {
 			mutex_unlock(&cam->dev_mutex);
 			up_read(&w9968cf_disconnect);
@@ -2637,7 +2720,7 @@ static int w9968cf_open(struct file *filp)
 	}
 
 	DBG(5, "Opening '%s', /dev/video%d ...",
-	    symbolic(camlist, cam->id), cam->v4ldev->num)
+	    symbolic(camlist, cam->id), cam->v4ldev->minor)
 
 	cam->streaming = 0;
 	cam->misconfigured = 0;
@@ -2676,7 +2759,7 @@ deallocate_memory:
 }
 
 
-static int w9968cf_release(struct file *filp)
+static int w9968cf_release(struct inode* inode, struct file* filp)
 {
 	struct w9968cf_device* cam;
 
@@ -2813,12 +2896,12 @@ static int w9968cf_mmap(struct file* filp, struct vm_area_struct *vma)
 }
 
 
-static long
-w9968cf_ioctl(struct file *filp,
+static int
+w9968cf_ioctl(struct inode* inode, struct file* filp,
 	      unsigned int cmd, unsigned long arg)
 {
 	struct w9968cf_device* cam;
-	long err;
+	int err;
 
 	cam = (struct w9968cf_device*)video_get_drvdata(video_devdata(filp));
 
@@ -2837,15 +2920,15 @@ w9968cf_ioctl(struct file *filp,
 		return -EIO;
 	}
 
-	err = w9968cf_v4l_ioctl(filp, cmd, (void __user *)arg);
+	err = w9968cf_v4l_ioctl(inode, filp, cmd, (void __user *)arg);
 
 	mutex_unlock(&cam->fileop_mutex);
 	return err;
 }
 
 
-static long w9968cf_v4l_ioctl(struct file *filp,
-			     unsigned int cmd, void __user *arg)
+static int w9968cf_v4l_ioctl(struct inode* inode, struct file* filp,
+			     unsigned int cmd, void __user * arg)
 {
 	struct w9968cf_device* cam;
 	const char* v4l1_ioctls[] = {
@@ -2875,7 +2958,7 @@ static long w9968cf_v4l_ioctl(struct file *filp,
 			.minheight = cam->minheight,
 		};
 		sprintf(cap.name, "W996[87]CF USB Camera #%d",
-			cam->v4ldev->num);
+			cam->v4ldev->minor);
 		cap.maxwidth = (cam->upscaling && w9968cf_vpp)
 			       ? max((u16)W9968CF_MAX_WIDTH, cam->maxwidth)
 				 : cam->maxwidth;
@@ -3032,8 +3115,8 @@ static long w9968cf_v4l_ioctl(struct file *filp,
 		if (win.clipcount != 0 || win.flags != 0)
 			return -EINVAL;
 
-		if ((err = w9968cf_adjust_window_size(cam, &win.width,
-						      &win.height))) {
+		if ((err = w9968cf_adjust_window_size(cam, (u16*)&win.width,
+						      (u16*)&win.height))) {
 			DBG(4, "Resolution not supported (%ux%u). "
 			       "VIDIOCSWIN failed", win.width, win.height)
 			return err;
@@ -3105,7 +3188,6 @@ static long w9968cf_v4l_ioctl(struct file *filp,
 	{
 		struct video_mmap mmap;
 		struct w9968cf_frame_t* fr;
-		u32 w, h;
 		int err = 0;
 
 		if (copy_from_user(&mmap, arg, sizeof(mmap)))
@@ -3154,10 +3236,8 @@ static long w9968cf_v4l_ioctl(struct file *filp,
 		   }
 		}
 
-		w = mmap.width; h = mmap.height;
-		err = w9968cf_adjust_window_size(cam, &w, &h);
-		mmap.width = w; mmap.height = h;
-		if (err) {
+		if ((err = w9968cf_adjust_window_size(cam, (u16*)&mmap.width,
+						      (u16*)&mmap.height))) {
 			DBG(4, "Resolution not supported (%dx%d). "
 			       "VIDIOCMCAPTURE failed",
 			    mmap.width, mmap.height)
@@ -3387,13 +3467,15 @@ ioctl_fail:
 }
 
 
-static const struct v4l2_file_operations w9968cf_fops = {
+static struct file_operations w9968cf_fops = {
 	.owner =   THIS_MODULE,
 	.open =    w9968cf_open,
 	.release = w9968cf_release,
 	.read =    w9968cf_read,
 	.ioctl =   w9968cf_ioctl,
+	.compat_ioctl = v4l_compat_ioctl32,
 	.mmap =    w9968cf_mmap,
+	.llseek =  no_llseek,
 };
 
 
@@ -3411,12 +3493,7 @@ w9968cf_usb_probe(struct usb_interface* intf, const struct usb_device_id* id)
 	enum w9968cf_model_id mod_id;
 	struct list_head* ptr;
 	u8 sc = 0; /* number of simultaneous cameras */
-	static unsigned short dev_nr; /* 0 - we are handling device number n */
-	static unsigned short addrs[] = {
-		OV7xx0_SID,
-		OV6xx0_SID,
-		I2C_CLIENT_END
-	};
+	static unsigned short dev_nr = 0; /* we are handling device number n */
 
 	if (le16_to_cpu(udev->descriptor.idVendor)  == winbond_id_table[0].idVendor &&
 	    le16_to_cpu(udev->descriptor.idProduct) == winbond_id_table[0].idProduct)
@@ -3432,14 +3509,12 @@ w9968cf_usb_probe(struct usb_interface* intf, const struct usb_device_id* id)
 	if (!cam)
 		return -ENOMEM;
 
-	err = v4l2_device_register(&intf->dev, &cam->v4l2_dev);
-	if (err)
-		goto fail0;
-
 	mutex_init(&cam->dev_mutex);
 	mutex_lock(&cam->dev_mutex);
 
 	cam->usbdev = udev;
+	/* NOTE: a local copy is used to avoid possible race conditions */
+	memcpy(&cam->dev, &udev->dev, sizeof(struct device));
 
 	DBG(2, "%s detected", symbolic(camlist, mod_id))
 
@@ -3484,11 +3559,14 @@ w9968cf_usb_probe(struct usb_interface* intf, const struct usb_device_id* id)
 	}
 
 	strcpy(cam->v4ldev->name, symbolic(camlist, mod_id));
+	cam->v4ldev->owner = THIS_MODULE;
+	cam->v4ldev->type = VID_TYPE_CAPTURE | VID_TYPE_SCALES;
+	cam->v4ldev->hardware = VID_HARDWARE_W9968CF;
 	cam->v4ldev->fops = &w9968cf_fops;
 	cam->v4ldev->minor = video_nr[dev_nr];
 	cam->v4ldev->release = video_device_release;
 	video_set_drvdata(cam->v4ldev, cam);
-	cam->v4ldev->v4l2_dev = &cam->v4l2_dev;
+	cam->v4ldev->dev = &cam->dev;
 
 	err = video_register_device(cam->v4ldev, VFL_TYPE_GRABBER,
 				    video_nr[dev_nr]);
@@ -3501,7 +3579,7 @@ w9968cf_usb_probe(struct usb_interface* intf, const struct usb_device_id* id)
 		goto fail;
 	}
 
-	DBG(2, "V4L device registered as /dev/video%d", cam->v4ldev->num)
+	DBG(2, "V4L device registered as /dev/video%d", cam->v4ldev->minor)
 
 	/* Set some basic constants */
 	w9968cf_configure_camera(cam, udev, mod_id, dev_nr);
@@ -3515,14 +3593,9 @@ w9968cf_usb_probe(struct usb_interface* intf, const struct usb_device_id* id)
 	w9968cf_turn_on_led(cam);
 
 	w9968cf_i2c_init(cam);
-	cam->sensor_sd = v4l2_i2c_new_subdev(&cam->v4l2_dev,
-			&cam->i2c_adapter,
-			"ovcamchip", "ovcamchip", 0, addrs);
 
 	usb_set_intfdata(intf, cam);
 	mutex_unlock(&cam->dev_mutex);
-
-	err = w9968cf_sensor_init(cam);
 	return 0;
 
 fail: /* Free unused memory */
@@ -3531,8 +3604,6 @@ fail: /* Free unused memory */
 	if (cam->v4ldev)
 		video_device_release(cam->v4ldev);
 	mutex_unlock(&cam->dev_mutex);
-	v4l2_device_unregister(&cam->v4l2_dev);
-fail0:
 	kfree(cam);
 	return err;
 }
@@ -3543,16 +3614,15 @@ static void w9968cf_usb_disconnect(struct usb_interface* intf)
 	struct w9968cf_device* cam =
 	   (struct w9968cf_device*)usb_get_intfdata(intf);
 
+	down_write(&w9968cf_disconnect);
+
 	if (cam) {
-		down_write(&w9968cf_disconnect);
 		/* Prevent concurrent accesses to data */
 		mutex_lock(&cam->dev_mutex);
 
 		cam->disconnected = 1;
 
-		DBG(2, "Disconnecting %s...", symbolic(camlist, cam->id));
-
-		v4l2_device_disconnect(&cam->v4l2_dev);
+		DBG(2, "Disconnecting %s...", symbolic(camlist, cam->id))
 
 		wake_up_interruptible_all(&cam->open);
 
@@ -3560,7 +3630,7 @@ static void w9968cf_usb_disconnect(struct usb_interface* intf)
 			DBG(2, "The device is open (/dev/video%d)! "
 			       "Process name: %s. Deregistration and memory "
 			       "deallocation are deferred on close.",
-			    cam->v4ldev->num, cam->command)
+			    cam->v4ldev->minor, cam->command)
 			cam->misconfigured = 1;
 			w9968cf_stop_transfer(cam);
 			wake_up_interruptible(&cam->wait_queue);
@@ -3568,12 +3638,12 @@ static void w9968cf_usb_disconnect(struct usb_interface* intf)
 			w9968cf_release_resources(cam);
 
 		mutex_unlock(&cam->dev_mutex);
-		up_write(&w9968cf_disconnect);
 
-		if (!cam->users) {
+		if (!cam->users)
 			kfree(cam);
-		}
 	}
+
+	up_write(&w9968cf_disconnect);
 }
 
 
@@ -3596,6 +3666,9 @@ static int __init w9968cf_module_init(void)
 
 	KDBG(2, W9968CF_MODULE_NAME" "W9968CF_MODULE_VERSION)
 	KDBG(3, W9968CF_MODULE_AUTHOR)
+
+	if (ovmod_load)
+		request_module("ovcamchip");
 
 	if ((err = usb_register(&w9968cf_usb_driver)))
 		return err;

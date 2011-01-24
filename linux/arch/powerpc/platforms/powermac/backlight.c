@@ -18,11 +18,11 @@
 
 #define OLD_BACKLIGHT_MAX 15
 
-static void pmac_backlight_key_worker(struct work_struct *work);
-static void pmac_backlight_set_legacy_worker(struct work_struct *work);
+static void pmac_backlight_key_worker(void *data);
+static void pmac_backlight_set_legacy_worker(void *data);
 
-static DECLARE_WORK(pmac_backlight_key_work, pmac_backlight_key_worker);
-static DECLARE_WORK(pmac_backlight_set_legacy_work, pmac_backlight_set_legacy_worker);
+static DECLARE_WORK(pmac_backlight_key_work, pmac_backlight_key_worker, NULL);
+static DECLARE_WORK(pmac_backlight_set_legacy_work, pmac_backlight_set_legacy_worker, NULL);
 
 /* Although these variables are used in interrupt context, it makes no sense to
  * protect them. No user is able to produce enough key events per second and
@@ -37,35 +37,32 @@ static int pmac_backlight_set_legacy_queued;
  */
 static atomic_t kernel_backlight_disabled = ATOMIC_INIT(0);
 
-/* Protect the pmac_backlight variable below.
-   You should hold this lock when using the pmac_backlight pointer to
-   prevent its potential removal. */
+/* Protect the pmac_backlight variable */
 DEFINE_MUTEX(pmac_backlight_mutex);
 
 /* Main backlight storage
  *
- * Backlight drivers in this variable are required to have the "ops"
+ * Backlight drivers in this variable are required to have the "props"
  * attribute set and to have an update_status function.
  *
  * We can only store one backlight here, but since Apple laptops have only one
  * internal display, it doesn't matter. Other backlight drivers can be used
  * independently.
  *
+ * Lock ordering:
+ * pmac_backlight_mutex (global, main backlight)
+ *   pmac_backlight->sem (backlight class)
  */
 struct backlight_device *pmac_backlight;
 
 int pmac_has_backlight_type(const char *type)
 {
-	struct device_node* bk_node = of_find_node_by_name(NULL, "backlight");
+	struct device_node* bk_node = find_devices("backlight");
 
 	if (bk_node) {
-		const char *prop = of_get_property(bk_node,
-				"backlight-control", NULL);
-		if (prop && strncmp(prop, type, strlen(type)) == 0) {
-			of_node_put(bk_node);
+		char *prop = get_property(bk_node, "backlight-control", NULL);
+		if (prop && strncmp(prop, type, strlen(type)) == 0)
 			return 1;
-		}
-		of_node_put(bk_node);
 	}
 
 	return 0;
@@ -96,7 +93,7 @@ int pmac_backlight_curve_lookup(struct fb_info *info, int value)
 	return level;
 }
 
-static void pmac_backlight_key_worker(struct work_struct *work)
+static void pmac_backlight_key_worker(void *data)
 {
 	if (atomic_read(&kernel_backlight_disabled))
 		return;
@@ -106,7 +103,8 @@ static void pmac_backlight_key_worker(struct work_struct *work)
 		struct backlight_properties *props;
 		int brightness;
 
-		props = &pmac_backlight->props;
+		down(&pmac_backlight->sem);
+		props = pmac_backlight->props;
 
 		brightness = props->brightness +
 			((pmac_backlight_key_queued?-1:1) *
@@ -118,7 +116,9 @@ static void pmac_backlight_key_worker(struct work_struct *work)
 			brightness = props->max_brightness;
 
 		props->brightness = brightness;
-		backlight_update_status(pmac_backlight);
+		props->update_status(pmac_backlight);
+
+		up(&pmac_backlight->sem);
 	}
 	mutex_unlock(&pmac_backlight_mutex);
 }
@@ -144,7 +144,8 @@ static int __pmac_backlight_set_legacy_brightness(int brightness)
 	if (pmac_backlight) {
 		struct backlight_properties *props;
 
-		props = &pmac_backlight->props;
+		down(&pmac_backlight->sem);
+		props = pmac_backlight->props;
 		props->brightness = brightness *
 			(props->max_brightness + 1) /
 			(OLD_BACKLIGHT_MAX + 1);
@@ -154,7 +155,8 @@ static int __pmac_backlight_set_legacy_brightness(int brightness)
 		else if (props->brightness < 0)
 			props->brightness = 0;
 
-		backlight_update_status(pmac_backlight);
+		props->update_status(pmac_backlight);
+		up(&pmac_backlight->sem);
 
 		error = 0;
 	}
@@ -163,7 +165,7 @@ static int __pmac_backlight_set_legacy_brightness(int brightness)
 	return error;
 }
 
-static void pmac_backlight_set_legacy_worker(struct work_struct *work)
+static void pmac_backlight_set_legacy_worker(void *data)
 {
 	if (atomic_read(&kernel_backlight_disabled))
 		return;
@@ -193,11 +195,14 @@ int pmac_backlight_get_legacy_brightness()
 	if (pmac_backlight) {
 		struct backlight_properties *props;
 
-		props = &pmac_backlight->props;
+		down(&pmac_backlight->sem);
+		props = pmac_backlight->props;
 
 		result = props->brightness *
 			(OLD_BACKLIGHT_MAX + 1) /
 			(props->max_brightness + 1);
+
+		up(&pmac_backlight->sem);
 	}
 	mutex_unlock(&pmac_backlight_mutex);
 

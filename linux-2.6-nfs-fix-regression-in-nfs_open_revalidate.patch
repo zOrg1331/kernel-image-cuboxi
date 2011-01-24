@@ -1,0 +1,43 @@
+From: Jeff Layton <jlayton@redhat.com>
+Date: Wed, 2 Sep 2009 09:05:17 -0400
+Subject: [nfs] fix regression in nfs_open_revalidate
+Message-id: 1251896717-18023-1-git-send-email-jlayton@redhat.com
+O-Subject: [RHEL5.5 PATCH] BZ#511278: nfs: fix regression in nfs_open_revalidate
+Bugzilla: 511278
+RH-Acked-by: Peter Staubach <staubach@redhat.com>
+RH-Acked-by: Steve Dickson <SteveD@redhat.com>
+
+Prior to the patch for BZ#321111, nfs_open_revalidate used to do a
+d_drop on the dentry when nfs4_open_revalidate returned false. That
+patch changed the function such that it did the d_drop when the function
+returned true.
+
+This caused a subtle regression. If a program was being run from an
+NFSv4 mount, then the result of every second readlink call on
+/proc/self/exe would have the string " (deleted)" appended to it. It
+probably also has other effects as well that aren't as easily noticable
+or reproducible.
+
+The issue seems to have been a mistake when doing the backport for
+BZ#321111. One of the patches that was backported did change a "!ret" to
+"ret == 1", but that actually occurred several lines above this spot and
+was eventually removed by a later patch in the series.
+
+Tested with the reproducer provided for the problem. Also did some basic
+regression testing with connectathon et. al.
+
+Signed-off-by: Jeff Layton <jlayton@redhat.com>
+
+diff --git a/fs/nfs/dir.c b/fs/nfs/dir.c
+index 926e26d..6ce4ab9 100644
+--- a/fs/nfs/dir.c
++++ b/fs/nfs/dir.c
+@@ -1053,7 +1053,7 @@ static int nfs_open_revalidate(struct dentry *dentry, struct nameidata *nd)
+ 	unlock_kernel();
+ out:
+ 	dput(parent);
+-	if (ret == 1)
++	if (!ret)
+ 		d_drop(dentry);
+ 	return ret;
+ no_open:

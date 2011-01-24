@@ -1,0 +1,104 @@
+From: Stephen C. Tweedie <sct@redhat.com>
+Subject: [RHEL-5 Patch] Fix agp on x86_64 under Xen
+Date: Tue, 19 Dec 2006 23:08:17 +0000
+Bugzilla: 217715
+Message-Id: <1166569697.6309.144.camel@sisko.scot.redhat.com>
+Changelog: Xen: Fix agp on x86_64 under Xen
+
+
+Hi all,
+
+Fixes blocker bug 217715:
+
+        https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=217715
+        Bugzilla Bug 217715: dom0: panic w/X on i965 (appears to be
+        agpgart?)
+
+Brown-paper-bag bug time.  Xen has its own agp definitions in
+include/asm-$ARCH/mach-xen/asm/agp.h, to cater for the difference
+between logical and machine addresses when running virtualised.
+
+Except --- whoops --- it only actually supplies that header file for
+i386, not x86_64.  So use of AGP on x86_64 doesn't translate addresses,
+and corrupts memory randomly.
+
+Has been fixed upstream in changeset 12606:
+        
+        # HG changeset patch
+        # User kfraser@localhost.localdomain
+        # Date 1164907312 0
+        # Node ID 2c5bed93ffbcc4585a5bdaf4c3224183735942eb
+        # Parent  27a5a62552c039c2d35379095e04c41a0aa34991
+        linux/x86-64: missing agp.h
+        
+        This causes data corruption and/or crashes when AGP is actually
+        used.
+        
+        Signed-off-by: Jan Beulich <jbeulich@novell.com>
+        
+I've tested it on a local box with i965 graphics which would previously
+crash randomly whenever X was used.  Has survived a dozen or so X
+restarts over two reboots with the patch applied.
+
+The attached patch is exactly equivalent to 
+
+	cp include/asm-i386/mach-xen/asm/agp.h include/asm-x86_64/mach-xen/asm/
+
+on our RHEL5 tree.  Will set a scratch build going to test compiles with
+the full kernel config, I've only built it locally on a reduced config
+so far.
+
+Please ACK.
+
+--Stephen
+
+
+commit a489517739c9a8262746e1261b803376a1d129cd
+Author: Stephen Tweedie <sct@redhat.com>
+
+    Copy i386 agp.h to x86-64
+
+diff --git a/include/asm-x86_64/mach-xen/asm/agp.h b/include/asm-x86_64/mach-xen/asm/agp.h
+new file mode 100644
+index 0000000..1389863
+--- /dev/null
++++ b/include/asm-x86_64/mach-xen/asm/agp.h
+@@ -0,0 +1,37 @@
++#ifndef AGP_H
++#define AGP_H 1
++
++#include <asm/pgtable.h>
++#include <asm/cacheflush.h>
++#include <asm/system.h>
++
++/* 
++ * Functions to keep the agpgart mappings coherent with the MMU.
++ * The GART gives the CPU a physical alias of pages in memory. The alias region is
++ * mapped uncacheable. Make sure there are no conflicting mappings
++ * with different cachability attributes for the same page. This avoids
++ * data corruption on some CPUs.
++ */
++
++int map_page_into_agp(struct page *page);
++int unmap_page_from_agp(struct page *page);
++#define flush_agp_mappings() global_flush_tlb()
++
++/* Could use CLFLUSH here if the cpu supports it. But then it would
++   need to be called for each cacheline of the whole page so it may not be 
++   worth it. Would need a page for it. */
++#define flush_agp_cache() wbinvd()
++
++/* Convert a physical address to an address suitable for the GART. */
++#define phys_to_gart(x) phys_to_machine(x)
++#define gart_to_phys(x) machine_to_phys(x)
++
++/* GATT allocation. Returns/accepts GATT kernel virtual address. */
++#define alloc_gatt_pages(order)	({                                          \
++	char *_t; dma_addr_t _d;                                            \
++	_t = dma_alloc_coherent(NULL,PAGE_SIZE<<(order),&_d,GFP_KERNEL);    \
++	_t; })
++#define free_gatt_pages(table, order)	\
++	dma_free_coherent(NULL,PAGE_SIZE<<(order),(table),virt_to_bus(table))
++
++#endif
+

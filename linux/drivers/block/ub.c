@@ -8,7 +8,6 @@
  * and is not licensed separately. See file COPYING for details.
  *
  * TODO (sorted by decreasing priority)
- *  -- Return sense now that rq allows it (we always auto-sense anyway).
  *  -- set readonly flag for CDs, set removable flag for CF readers
  *  -- do inquiry and verify we got a disk and not a tape (for LUN mismatch)
  *  -- verify the 13 conditions and do bulk resets
@@ -26,7 +25,6 @@
 #include <linux/usb_usual.h>
 #include <linux/blkdev.h>
 #include <linux/timer.h>
-#include <linux/scatterlist.h>
 #include <scsi/scsi.h>
 
 #define DRV_NAME "ub"
@@ -205,7 +203,6 @@ struct ub_scsi_cmd {
 	unsigned char key, asc, ascq;	/* May be valid if error==-EIO */
 
 	int stat_count;			/* Retries getting status. */
-	unsigned int timeo;		/* jiffies until rq->timeout changes */
 
 	unsigned int len;		/* Requested length */
 	unsigned int current_sg;
@@ -319,7 +316,6 @@ struct ub_dev {
 	int openc;			/* protected by ub_lock! */
 					/* kref is too implicit for our taste */
 	int reset;			/* Reset is running */
-	int bad_resid;
 	unsigned int tagcnt;
 	char name[12];
 	struct usb_device *dev;
@@ -349,6 +345,8 @@ struct ub_dev {
 
 	struct work_struct reset_work;
 	wait_queue_head_t reset_wait;
+
+	int sg_stat[6];
 };
 
 /*
@@ -360,11 +358,11 @@ static void ub_cmd_build_block(struct ub_dev *sc, struct ub_lun *lun,
 static void ub_cmd_build_packet(struct ub_dev *sc, struct ub_lun *lun,
     struct ub_scsi_cmd *cmd, struct ub_request *urq);
 static void ub_rw_cmd_done(struct ub_dev *sc, struct ub_scsi_cmd *cmd);
-static void ub_end_rq(struct request *rq, unsigned int status);
+static void ub_end_rq(struct request *rq, int uptodate);
 static int ub_rw_cmd_retry(struct ub_dev *sc, struct ub_lun *lun,
     struct ub_request *urq, struct ub_scsi_cmd *cmd);
 static int ub_submit_scsi(struct ub_dev *sc, struct ub_scsi_cmd *cmd);
-static void ub_urb_complete(struct urb *urb);
+static void ub_urb_complete(struct urb *urb, struct pt_regs *pt);
 static void ub_scsi_action(unsigned long _dev);
 static void ub_scsi_dispatch(struct ub_dev *sc);
 static void ub_scsi_urb_compl(struct ub_dev *sc, struct ub_scsi_cmd *cmd);
@@ -378,7 +376,7 @@ static int ub_submit_clear_stall(struct ub_dev *sc, struct ub_scsi_cmd *cmd,
     int stalled_pipe);
 static void ub_top_sense_done(struct ub_dev *sc, struct ub_scsi_cmd *scmd);
 static void ub_reset_enter(struct ub_dev *sc, int try);
-static void ub_reset_task(struct work_struct *work);
+static void ub_reset_task(void *arg);
 static int ub_sync_tur(struct ub_dev *sc, struct ub_lun *lun);
 static int ub_sync_read_cap(struct ub_dev *sc, struct ub_lun *lun,
     struct ub_capacity *ret);
@@ -390,7 +388,7 @@ static int ub_probe_lun(struct ub_dev *sc, int lnum);
  */
 #ifdef CONFIG_USB_LIBUSUAL
 
-#define ub_usb_ids  usb_storage_usb_ids
+#define ub_usb_ids  storage_usb_ids
 #else
 
 static struct usb_device_id ub_usb_ids[] = {
@@ -505,7 +503,7 @@ static void ub_cleanup(struct ub_dev *sc)
 {
 	struct list_head *p;
 	struct ub_lun *lun;
-	struct request_queue *q;
+	request_queue_t *q;
 
 	while (!list_empty(&sc->luns)) {
 		p = sc->luns.next;
@@ -621,12 +619,12 @@ static struct ub_scsi_cmd *ub_cmdq_pop(struct ub_dev *sc)
  * The request function is our main entry point
  */
 
-static void ub_request_fn(struct request_queue *q)
+static void ub_request_fn(request_queue_t *q)
 {
 	struct ub_lun *lun = q->queuedata;
 	struct request *rq;
 
-	while ((rq = blk_peek_request(q)) != NULL) {
+	while ((rq = elv_next_request(q)) != NULL) {
 		if (ub_request_fn_1(lun, rq) != 0) {
 			blk_stop_queue(q);
 			break;
@@ -641,15 +639,9 @@ static int ub_request_fn_1(struct ub_lun *lun, struct request *rq)
 	struct ub_request *urq;
 	int n_elem;
 
-	if (atomic_read(&sc->poison)) {
-		blk_start_request(rq);
-		ub_end_rq(rq, DID_NO_CONNECT << 16);
-		return 0;
-	}
-
-	if (lun->changed && !blk_pc_request(rq)) {
-		blk_start_request(rq);
-		ub_end_rq(rq, SAM_STAT_CHECK_CONDITION);
+	if (atomic_read(&sc->poison) || lun->changed) {
+		blkdev_dequeue_request(rq);
+		ub_end_rq(rq, 0);
 		return 0;
 	}
 
@@ -659,7 +651,7 @@ static int ub_request_fn_1(struct ub_lun *lun, struct request *rq)
 		return -1;
 	memset(cmd, 0, sizeof(struct ub_scsi_cmd));
 
-	blk_start_request(rq);
+	blkdev_dequeue_request(rq);
 
 	urq = &lun->urq;
 	memset(urq, 0, sizeof(struct ub_request));
@@ -668,7 +660,6 @@ static int ub_request_fn_1(struct ub_lun *lun, struct request *rq)
 	/*
 	 * get scatterlist from block layer
 	 */
-	sg_init_table(&urq->sgv[0], UB_MAX_REQ_SG);
 	n_elem = blk_rq_map_sg(lun->disk->queue, rq, &urq->sgv[0]);
 	if (n_elem < 0) {
 		/* Impossible, because blk_rq_map_sg should not hit ENOMEM. */
@@ -682,6 +673,7 @@ static int ub_request_fn_1(struct ub_lun *lun, struct request *rq)
 		goto drop;
 	}
 	urq->nsg = n_elem;
+	sc->sg_stat[n_elem < 5 ? n_elem : 5]++;
 
 	if (blk_pc_request(rq)) {
 		ub_cmd_build_packet(sc, lun, cmd, urq);
@@ -701,7 +693,7 @@ static int ub_request_fn_1(struct ub_lun *lun, struct request *rq)
 
 drop:
 	ub_put_cmd(lun, cmd);
-	ub_end_rq(rq, DID_ERROR << 16);
+	ub_end_rq(rq, 0);
 	return 0;
 }
 
@@ -722,11 +714,11 @@ static void ub_cmd_build_block(struct ub_dev *sc, struct ub_lun *lun,
 	/*
 	 * build the command
 	 *
-	 * The call to blk_queue_logical_block_size() guarantees that request
+	 * The call to blk_queue_hardsect_size() guarantees that request
 	 * is aligned, but it is given in terms of 512 byte units, always.
 	 */
-	block = blk_rq_pos(rq) >> lun->capacity.bshift;
-	nblks = blk_rq_sectors(rq) >> lun->capacity.bshift;
+	block = rq->sector >> lun->capacity.bshift;
+	nblks = rq->nr_sectors >> lun->capacity.bshift;
 
 	cmd->cdb[0] = (cmd->dir == UB_DIR_READ)? READ_10: WRITE_10;
 	/* 10-byte uses 4 bytes of LBA: 2147483648KB, 2097152MB, 2048GB */
@@ -738,7 +730,7 @@ static void ub_cmd_build_block(struct ub_dev *sc, struct ub_lun *lun,
 	cmd->cdb[8] = nblks;
 	cmd->cdb_len = 10;
 
-	cmd->len = blk_rq_bytes(rq);
+	cmd->len = rq->nr_sectors * 512;
 }
 
 static void ub_cmd_build_packet(struct ub_dev *sc, struct ub_lun *lun,
@@ -746,7 +738,7 @@ static void ub_cmd_build_packet(struct ub_dev *sc, struct ub_lun *lun,
 {
 	struct request *rq = urq->rq;
 
-	if (blk_rq_bytes(rq) == 0) {
+	if (rq->data_len == 0) {
 		cmd->dir = UB_DIR_NONE;
 	} else {
 		if (rq_data_dir(rq) == WRITE)
@@ -761,13 +753,7 @@ static void ub_cmd_build_packet(struct ub_dev *sc, struct ub_lun *lun,
 	memcpy(&cmd->cdb, rq->cmd, rq->cmd_len);
 	cmd->cdb_len = rq->cmd_len;
 
-	cmd->len = blk_rq_bytes(rq);
-
-	/*
-	 * To reapply this to every URB is not as incorrect as it looks.
-	 * In return, we avoid any complicated tracking calculations.
-	 */
-	cmd->timeo = rq->timeout;
+	cmd->len = rq->data_len;
 }
 
 static void ub_rw_cmd_done(struct ub_dev *sc, struct ub_scsi_cmd *cmd)
@@ -775,63 +761,49 @@ static void ub_rw_cmd_done(struct ub_dev *sc, struct ub_scsi_cmd *cmd)
 	struct ub_lun *lun = cmd->lun;
 	struct ub_request *urq = cmd->back;
 	struct request *rq;
-	unsigned int scsi_status;
+	int uptodate;
 
 	rq = urq->rq;
 
 	if (cmd->error == 0) {
+		uptodate = 1;
+
 		if (blk_pc_request(rq)) {
-			if (cmd->act_len >= rq->resid_len)
-				rq->resid_len = 0;
+			if (cmd->act_len >= rq->data_len)
+				rq->data_len = 0;
 			else
-				rq->resid_len -= cmd->act_len;
-			scsi_status = 0;
-		} else {
-			if (cmd->act_len != cmd->len) {
-				scsi_status = SAM_STAT_CHECK_CONDITION;
-			} else {
-				scsi_status = 0;
-			}
+				rq->data_len -= cmd->act_len;
 		}
 	} else {
+		uptodate = 0;
+
 		if (blk_pc_request(rq)) {
 			/* UB_SENSE_SIZE is smaller than SCSI_SENSE_BUFFERSIZE */
 			memcpy(rq->sense, sc->top_sense, UB_SENSE_SIZE);
 			rq->sense_len = UB_SENSE_SIZE;
 			if (sc->top_sense[0] != 0)
-				scsi_status = SAM_STAT_CHECK_CONDITION;
+				rq->errors = SAM_STAT_CHECK_CONDITION;
 			else
-				scsi_status = DID_ERROR << 16;
+				rq->errors = DID_ERROR << 16;
 		} else {
-			if (cmd->error == -EIO &&
-			    (cmd->key == 0 ||
-			     cmd->key == MEDIUM_ERROR ||
-			     cmd->key == UNIT_ATTENTION)) {
+			if (cmd->error == -EIO) {
 				if (ub_rw_cmd_retry(sc, lun, urq, cmd) == 0)
 					return;
 			}
-			scsi_status = SAM_STAT_CHECK_CONDITION;
 		}
 	}
 
 	urq->rq = NULL;
 
 	ub_put_cmd(lun, cmd);
-	ub_end_rq(rq, scsi_status);
+	ub_end_rq(rq, uptodate);
 	blk_start_queue(lun->disk->queue);
 }
 
-static void ub_end_rq(struct request *rq, unsigned int scsi_status)
+static void ub_end_rq(struct request *rq, int uptodate)
 {
-	int error;
-
-	if (scsi_status == 0) {
-		error = 0;
-	} else {
-		error = -EIO;
-		rq->errors = scsi_status;
-	}
-	__blk_end_request_all(rq, error);
+	end_that_request_first(rq, uptodate, rq->hard_nr_sectors);
+	end_that_request_last(rq, uptodate);
 }
 
 static int ub_rw_cmd_retry(struct ub_dev *sc, struct ub_lun *lun,
@@ -936,6 +908,11 @@ static int ub_scsi_cmd_start(struct ub_dev *sc, struct ub_scsi_cmd *cmd)
 	usb_fill_bulk_urb(&sc->work_urb, sc->dev, sc->send_bulk_pipe,
 	    bcb, US_BULK_CB_WRAP_LEN, ub_urb_complete, sc);
 
+	/* Fill what we shouldn't be filling, because usb-storage did so. */
+	sc->work_urb.actual_length = 0;
+	sc->work_urb.error_count = 0;
+	sc->work_urb.status = 0;
+
 	if ((rc = usb_submit_urb(&sc->work_urb, GFP_ATOMIC)) != 0) {
 		/* XXX Clear stalls */
 		ub_complete(&sc->work_done);
@@ -970,7 +947,7 @@ static void ub_urb_timeout(unsigned long arg)
  * the sc->lock taken) and from an interrupt (while we do NOT have
  * the sc->lock taken). Therefore, bounce this off to a tasklet.
  */
-static void ub_urb_complete(struct urb *urb)
+static void ub_urb_complete(struct urb *urb, struct pt_regs *pt)
 {
 	struct ub_dev *sc = urb->context;
 
@@ -1015,7 +992,6 @@ static void ub_scsi_urb_compl(struct ub_dev *sc, struct ub_scsi_cmd *cmd)
 {
 	struct urb *urb = &sc->work_urb;
 	struct bulk_cs_wrap *bcs;
-	int endp;
 	int len;
 	int rc;
 
@@ -1023,10 +999,6 @@ static void ub_scsi_urb_compl(struct ub_dev *sc, struct ub_scsi_cmd *cmd)
 		ub_state_done(sc, cmd, -ENODEV);
 		return;
 	}
-
-	endp = usb_pipeendpoint(sc->last_pipe);
-	if (usb_pipein(sc->last_pipe))
-		endp |= USB_DIR_IN;
 
 	if (cmd->state == UB_CMDST_CLEAR) {
 		if (urb->status == -EPIPE) {
@@ -1043,7 +1015,9 @@ static void ub_scsi_urb_compl(struct ub_dev *sc, struct ub_scsi_cmd *cmd)
 		 * We ignore the result for the halt clear.
 		 */
 
-		usb_reset_endpoint(sc->dev, endp);
+		/* reset the endpoint toggle */
+		usb_settoggle(sc->dev, usb_pipeendpoint(sc->last_pipe),
+			usb_pipeout(sc->last_pipe), 0);
 
 		ub_state_sense(sc, cmd);
 
@@ -1058,7 +1032,9 @@ static void ub_scsi_urb_compl(struct ub_dev *sc, struct ub_scsi_cmd *cmd)
 		 * We ignore the result for the halt clear.
 		 */
 
-		usb_reset_endpoint(sc->dev, endp);
+		/* reset the endpoint toggle */
+		usb_settoggle(sc->dev, usb_pipeendpoint(sc->last_pipe),
+			usb_pipeout(sc->last_pipe), 0);
 
 		ub_state_stat(sc, cmd);
 
@@ -1073,7 +1049,9 @@ static void ub_scsi_urb_compl(struct ub_dev *sc, struct ub_scsi_cmd *cmd)
 		 * We ignore the result for the halt clear.
 		 */
 
-		usb_reset_endpoint(sc->dev, endp);
+		/* reset the endpoint toggle */
+		usb_settoggle(sc->dev, usb_pipeendpoint(sc->last_pipe),
+			usb_pipeout(sc->last_pipe), 0);
 
 		ub_state_stat_counted(sc, cmd);
 
@@ -1252,19 +1230,14 @@ static void ub_scsi_urb_compl(struct ub_dev *sc, struct ub_scsi_cmd *cmd)
 			return;
 		}
 
-		if (!sc->bad_resid) {
-			len = le32_to_cpu(bcs->Residue);
-			if (len != cmd->len - cmd->act_len) {
-				/*
-				 * Only start ignoring if this cmd ended well.
-				 */
-				if (cmd->len == cmd->act_len) {
-					printk(KERN_NOTICE "%s: "
-					    "bad residual %d of %d, ignoring\n",
-					    sc->name, len, cmd->len);
-					sc->bad_resid = 1;
-				}
-			}
+		len = le32_to_cpu(bcs->Residue);
+		if (len != cmd->len - cmd->act_len) {
+			/*
+			 * It is all right to transfer less, the caller has
+			 * to check. But it's not all right if the device
+			 * counts disagree with our counts.
+			 */
+			goto Bad_End;
 		}
 
 		switch (bcs->Status) {
@@ -1295,7 +1268,8 @@ static void ub_scsi_urb_compl(struct ub_dev *sc, struct ub_scsi_cmd *cmd)
 		ub_state_done(sc, cmd, -EIO);
 
 	} else {
-		printk(KERN_WARNING "%s: wrong command state %d\n",
+		printk(KERN_WARNING "%s: "
+		    "wrong command state %d\n",
 		    sc->name, cmd->state);
 		ub_state_done(sc, cmd, -EINVAL);
 		return;
@@ -1323,8 +1297,12 @@ static void ub_data_start(struct ub_dev *sc, struct ub_scsi_cmd *cmd)
 	else
 		pipe = sc->send_bulk_pipe;
 	sc->last_pipe = pipe;
-	usb_fill_bulk_urb(&sc->work_urb, sc->dev, pipe, sg_virt(sg),
-	    sg->length, ub_urb_complete, sc);
+	usb_fill_bulk_urb(&sc->work_urb, sc->dev, pipe,
+	    page_address(sg->page) + sg->offset, sg->length,
+	    ub_urb_complete, sc);
+	sc->work_urb.actual_length = 0;
+	sc->work_urb.error_count = 0;
+	sc->work_urb.status = 0;
 
 	if ((rc = usb_submit_urb(&sc->work_urb, GFP_ATOMIC)) != 0) {
 		/* XXX Clear stalls */
@@ -1333,10 +1311,7 @@ static void ub_data_start(struct ub_dev *sc, struct ub_scsi_cmd *cmd)
 		return;
 	}
 
-	if (cmd->timeo)
-		sc->work_timer.expires = jiffies + cmd->timeo;
-	else
-		sc->work_timer.expires = jiffies + UB_DATA_TIMEOUT;
+	sc->work_timer.expires = jiffies + UB_DATA_TIMEOUT;
 	add_timer(&sc->work_timer);
 
 	cmd->state = UB_CMDST_DATA;
@@ -1368,6 +1343,9 @@ static int __ub_state_stat(struct ub_dev *sc, struct ub_scsi_cmd *cmd)
 	sc->last_pipe = sc->recv_bulk_pipe;
 	usb_fill_bulk_urb(&sc->work_urb, sc->dev, sc->recv_bulk_pipe,
 	    &sc->work_bcs, US_BULK_CS_WRAP_LEN, ub_urb_complete, sc);
+	sc->work_urb.actual_length = 0;
+	sc->work_urb.error_count = 0;
+	sc->work_urb.status = 0;
 
 	if ((rc = usb_submit_urb(&sc->work_urb, GFP_ATOMIC)) != 0) {
 		/* XXX Clear stalls */
@@ -1376,10 +1354,7 @@ static int __ub_state_stat(struct ub_dev *sc, struct ub_scsi_cmd *cmd)
 		return -1;
 	}
 
-	if (cmd->timeo)
-		sc->work_timer.expires = jiffies + cmd->timeo;
-	else
-		sc->work_timer.expires = jiffies + UB_STAT_TIMEOUT;
+	sc->work_timer.expires = jiffies + UB_STAT_TIMEOUT;
 	add_timer(&sc->work_timer);
 	return 0;
 }
@@ -1440,9 +1415,9 @@ static void ub_state_sense(struct ub_dev *sc, struct ub_scsi_cmd *cmd)
 	scmd->state = UB_CMDST_INIT;
 	scmd->nsg = 1;
 	sg = &scmd->sgv[0];
-	sg_init_table(sg, UB_MAX_REQ_SG);
-	sg_set_page(sg, virt_to_page(sc->top_sense), UB_SENSE_SIZE,
-			(unsigned long)sc->top_sense & (PAGE_SIZE-1));
+	sg->page = virt_to_page(sc->top_sense);
+	sg->offset = (unsigned long)sc->top_sense & (PAGE_SIZE-1);
+	sg->length = UB_SENSE_SIZE;
 	scmd->len = UB_SENSE_SIZE;
 	scmd->lun = cmd->lun;
 	scmd->done = ub_top_sense_done;
@@ -1485,6 +1460,9 @@ static int ub_submit_clear_stall(struct ub_dev *sc, struct ub_scsi_cmd *cmd,
 
 	usb_fill_control_urb(&sc->work_urb, sc->dev, sc->send_ctrl_pipe,
 	    (unsigned char*) cr, NULL, 0, ub_urb_complete, sc);
+	sc->work_urb.actual_length = 0;
+	sc->work_urb.error_count = 0;
+	sc->work_urb.status = 0;
 
 	if ((rc = usb_submit_urb(&sc->work_urb, GFP_ATOMIC)) != 0) {
 		ub_complete(&sc->work_done);
@@ -1518,7 +1496,8 @@ static void ub_top_sense_done(struct ub_dev *sc, struct ub_scsi_cmd *scmd)
 		return;
 	}
 	if (cmd->state != UB_CMDST_SENSE) {
-		printk(KERN_WARNING "%s: sense done with bad cmd state %d\n",
+		printk(KERN_WARNING "%s: "
+		    "sense done with bad cmd state %d\n",
 		    sc->name, cmd->state);
 		return;
 	}
@@ -1535,6 +1514,8 @@ static void ub_top_sense_done(struct ub_dev *sc, struct ub_scsi_cmd *scmd)
 
 /*
  * Reset management
+ * XXX Move usb_reset_device to khubd. Hogging kevent is not a good thing.
+ * XXX Make usb_sync_reset asynchronous.
  */
 
 static void ub_reset_enter(struct ub_dev *sc, int try)
@@ -1554,8 +1535,10 @@ static void ub_reset_enter(struct ub_dev *sc, int try)
 #endif
 
 #if 0 /* We let them stop themselves. */
+	struct list_head *p;
 	struct ub_lun *lun;
-	list_for_each_entry(lun, &sc->luns, link) {
+	list_for_each(p, &sc->luns) {
+		lun = list_entry(p, struct ub_lun, link);
 		blk_stop_queue(lun->disk->queue);
 	}
 #endif
@@ -1563,12 +1546,13 @@ static void ub_reset_enter(struct ub_dev *sc, int try)
 	schedule_work(&sc->reset_work);
 }
 
-static void ub_reset_task(struct work_struct *work)
+static void ub_reset_task(void *arg)
 {
-	struct ub_dev *sc = container_of(work, struct ub_dev, reset_work);
+	struct ub_dev *sc = arg;
 	unsigned long flags;
+	struct list_head *p;
 	struct ub_lun *lun;
-	int rc;
+	int lkr, rc;
 
 	if (!sc->reset) {
 		printk(KERN_WARNING "%s: Running reset unrequested\n",
@@ -1586,11 +1570,10 @@ static void ub_reset_task(struct work_struct *work)
 	} else if (sc->dev->actconfig->desc.bNumInterfaces != 1) {
 		;
 	} else {
-		rc = usb_lock_device_for_reset(sc->dev, sc->intf);
-		if (rc < 0) {
+		if ((lkr = usb_lock_device_for_reset(sc->dev, sc->intf)) < 0) {
 			printk(KERN_NOTICE
 			    "%s: usb_lock_device_for_reset failed (%d)\n",
-			    sc->name, rc);
+			    sc->name, lkr);
 		} else {
 			rc = usb_reset_device(sc->dev);
 			if (rc < 0) {
@@ -1598,7 +1581,9 @@ static void ub_reset_task(struct work_struct *work)
 				    "usb_lock_device_for_reset failed (%d)\n",
 				    sc->name, rc);
 			}
-			usb_unlock_device(sc->dev);
+
+			if (lkr)
+				usb_unlock_device(sc->dev);
 		}
 	}
 
@@ -1611,27 +1596,12 @@ static void ub_reset_task(struct work_struct *work)
 	spin_lock_irqsave(sc->lock, flags);
 	sc->reset = 0;
 	tasklet_schedule(&sc->tasklet);
-	list_for_each_entry(lun, &sc->luns, link) {
+	list_for_each(p, &sc->luns) {
+		lun = list_entry(p, struct ub_lun, link);
 		blk_start_queue(lun->disk->queue);
 	}
 	wake_up(&sc->reset_wait);
 	spin_unlock_irqrestore(sc->lock, flags);
-}
-
-/*
- * XXX Reset brackets are too much hassle to implement, so just stub them
- * in order to prevent forced unbinding (which deadlocks solid when our
- * ->disconnect method waits for the reset to complete and this kills keventd).
- *
- * XXX Tell Alan to move usb_unlock_device inside of usb_reset_device,
- * or else the post_reset is invoked, and restats I/O on a locked device.
- */
-static int ub_pre_reset(struct usb_interface *iface) {
-	return 0;
-}
-
-static int ub_post_reset(struct usb_interface *iface) {
-	return 0;
 }
 
 /*
@@ -1669,9 +1639,10 @@ static void ub_revalidate(struct ub_dev *sc, struct ub_lun *lun)
  * This is mostly needed to keep refcounting, but also to support
  * media checks on removable media drives.
  */
-static int ub_bd_open(struct block_device *bdev, fmode_t mode)
+static int ub_bd_open(struct inode *inode, struct file *filp)
 {
-	struct ub_lun *lun = bdev->bd_disk->private_data;
+	struct gendisk *disk = inode->i_bdev->bd_disk;
+	struct ub_lun *lun = disk->private_data;
 	struct ub_dev *sc = lun->udev;
 	unsigned long flags;
 	int rc;
@@ -1685,19 +1656,19 @@ static int ub_bd_open(struct block_device *bdev, fmode_t mode)
 	spin_unlock_irqrestore(&ub_lock, flags);
 
 	if (lun->removable || lun->readonly)
-		check_disk_change(bdev);
+		check_disk_change(inode->i_bdev);
 
 	/*
 	 * The sd.c considers ->media_present and ->changed not equivalent,
 	 * under some pretty murky conditions (a failure of READ CAPACITY).
 	 * We may need it one day.
 	 */
-	if (lun->removable && lun->changed && !(mode & FMODE_NDELAY)) {
+	if (lun->removable && lun->changed && !(filp->f_flags & O_NDELAY)) {
 		rc = -ENOMEDIUM;
 		goto err_open;
 	}
 
-	if (lun->readonly && (mode & FMODE_WRITE)) {
+	if (lun->readonly && (filp->f_mode & FMODE_WRITE)) {
 		rc = -EROFS;
 		goto err_open;
 	}
@@ -1711,8 +1682,9 @@ err_open:
 
 /*
  */
-static int ub_bd_release(struct gendisk *disk, fmode_t mode)
+static int ub_bd_release(struct inode *inode, struct file *filp)
 {
+	struct gendisk *disk = inode->i_bdev->bd_disk;
 	struct ub_lun *lun = disk->private_data;
 	struct ub_dev *sc = lun->udev;
 
@@ -1723,17 +1695,17 @@ static int ub_bd_release(struct gendisk *disk, fmode_t mode)
 /*
  * The ioctl interface.
  */
-static int ub_bd_ioctl(struct block_device *bdev, fmode_t mode,
+static int ub_bd_ioctl(struct inode *inode, struct file *filp,
     unsigned int cmd, unsigned long arg)
 {
-	struct gendisk *disk = bdev->bd_disk;
+	struct gendisk *disk = inode->i_bdev->bd_disk;
 	void __user *usermem = (void __user *) arg;
 
-	return scsi_cmd_ioctl(disk->queue, disk, mode, cmd, usermem);
+	return scsi_cmd_ioctl(filp, disk, cmd, usermem);
 }
 
 /*
- * This is called by check_disk_change if we reported a media change.
+ * This is called once a new disk was seen by the block layer or by ub_probe().
  * The main onjective here is to discover the features of the media such as
  * the capacity, read-only status, etc. USB storage generally does not
  * need to be spun up, but if we needed it, this would be the place.
@@ -1749,7 +1721,7 @@ static int ub_bd_revalidate(struct gendisk *disk)
 	ub_revalidate(lun->udev, lun);
 
 	/* XXX Support sector size switching like in sr.c */
-	blk_queue_logical_block_size(disk->queue, lun->capacity.bsize);
+	blk_queue_hardsect_size(disk->queue, lun->capacity.bsize);
 	set_capacity(disk, lun->capacity.nsec);
 	// set_disk_ro(sdkp->disk, lun->readonly);
 
@@ -1789,11 +1761,11 @@ static int ub_bd_media_changed(struct gendisk *disk)
 	return lun->changed;
 }
 
-static const struct block_device_operations ub_bd_fops = {
+static struct block_device_operations ub_bd_fops = {
 	.owner		= THIS_MODULE,
 	.open		= ub_bd_open,
 	.release	= ub_bd_release,
-	.locked_ioctl	= ub_bd_ioctl,
+	.ioctl		= ub_bd_ioctl,
 	.media_changed	= ub_bd_media_changed,
 	.revalidate_disk = ub_bd_revalidate,
 };
@@ -1883,8 +1855,9 @@ static int ub_sync_read_cap(struct ub_dev *sc, struct ub_lun *lun,
 	cmd->state = UB_CMDST_INIT;
 	cmd->nsg = 1;
 	sg = &cmd->sgv[0];
-	sg_init_table(sg, UB_MAX_REQ_SG);
-	sg_set_page(sg, virt_to_page(p), 8, (unsigned long)p & (PAGE_SIZE-1));
+	sg->page = virt_to_page(p);
+	sg->offset = (unsigned long)p & (PAGE_SIZE-1);
+	sg->length = 8;
 	cmd->len = 8;
 	cmd->lun = lun;
 	cmd->done = ub_probe_done;
@@ -1938,7 +1911,7 @@ err_alloc:
 
 /*
  */
-static void ub_probe_urb_complete(struct urb *urb)
+static void ub_probe_urb_complete(struct urb *urb, struct pt_regs *pt)
 {
 	struct completion *cop = urb->context;
 	complete(cop);
@@ -1972,6 +1945,9 @@ static int ub_sync_reset(struct ub_dev *sc)
 
 	usb_fill_control_urb(&sc->work_urb, sc->dev, sc->send_ctrl_pipe,
 	    (unsigned char*) cr, NULL, 0, ub_probe_urb_complete, &compl);
+	sc->work_urb.actual_length = 0;
+	sc->work_urb.error_count = 0;
+	sc->work_urb.status = 0;
 
 	if ((rc = usb_submit_urb(&sc->work_urb, GFP_KERNEL)) != 0) {
 		printk(KERN_WARNING
@@ -2023,6 +1999,9 @@ static int ub_sync_getmaxlun(struct ub_dev *sc)
 
 	usb_fill_control_urb(&sc->work_urb, sc->dev, sc->recv_ctrl_pipe,
 	    (unsigned char*) cr, p, 1, ub_probe_urb_complete, &compl);
+	sc->work_urb.actual_length = 0;
+	sc->work_urb.error_count = 0;
+	sc->work_urb.status = 0;
 
 	if ((rc = usb_submit_urb(&sc->work_urb, GFP_KERNEL)) != 0)
 		goto err_submit;
@@ -2090,6 +2069,9 @@ static int ub_probe_clear_stall(struct ub_dev *sc, int stalled_pipe)
 
 	usb_fill_control_urb(&sc->work_urb, sc->dev, sc->send_ctrl_pipe,
 	    (unsigned char*) cr, NULL, 0, ub_probe_urb_complete, &compl);
+	sc->work_urb.actual_length = 0;
+	sc->work_urb.error_count = 0;
+	sc->work_urb.status = 0;
 
 	if ((rc = usb_submit_urb(&sc->work_urb, GFP_KERNEL)) != 0) {
 		printk(KERN_WARNING
@@ -2108,7 +2090,8 @@ static int ub_probe_clear_stall(struct ub_dev *sc, int stalled_pipe)
 	del_timer_sync(&timer);
 	usb_kill_urb(&sc->work_urb);
 
-	usb_reset_endpoint(sc->dev, endp);
+	/* reset the endpoint toggle */
+	usb_settoggle(sc->dev, endp, usb_pipeout(sc->last_pipe), 0);
 
 	return 0;
 }
@@ -2134,20 +2117,19 @@ static int ub_get_pipes(struct ub_dev *sc, struct usb_device *dev,
 		ep = &altsetting->endpoint[i].desc;
 
 		/* Is it a BULK endpoint? */
-		if (usb_endpoint_xfer_bulk(ep)) {
+		if ((ep->bmAttributes & USB_ENDPOINT_XFERTYPE_MASK)
+				== USB_ENDPOINT_XFER_BULK) {
 			/* BULK in or out? */
-			if (usb_endpoint_dir_in(ep)) {
-				if (ep_in == NULL)
-					ep_in = ep;
-			} else {
-				if (ep_out == NULL)
-					ep_out = ep;
-			}
+			if (ep->bEndpointAddress & USB_DIR_IN)
+				ep_in = ep;
+			else
+				ep_out = ep;
 		}
 	}
 
 	if (ep_in == NULL || ep_out == NULL) {
-		printk(KERN_NOTICE "%s: failed endpoint check\n", sc->name);
+		printk(KERN_NOTICE "%s: failed endpoint check\n",
+		    sc->name);
 		return -ENODEV;
 	}
 
@@ -2155,9 +2137,9 @@ static int ub_get_pipes(struct ub_dev *sc, struct usb_device *dev,
 	sc->send_ctrl_pipe = usb_sndctrlpipe(dev, 0);
 	sc->recv_ctrl_pipe = usb_rcvctrlpipe(dev, 0);
 	sc->send_bulk_pipe = usb_sndbulkpipe(dev,
-		usb_endpoint_num(ep_out));
+		ep_out->bEndpointAddress & USB_ENDPOINT_NUMBER_MASK);
 	sc->recv_bulk_pipe = usb_rcvbulkpipe(dev, 
-		usb_endpoint_num(ep_in));
+		ep_in->bEndpointAddress & USB_ENDPOINT_NUMBER_MASK);
 
 	return 0;
 }
@@ -2185,7 +2167,7 @@ static int ub_probe(struct usb_interface *intf,
 	usb_init_urb(&sc->work_urb);
 	tasklet_init(&sc->tasklet, ub_scsi_action, (unsigned long)sc);
 	atomic_set(&sc->poison, 0);
-	INIT_WORK(&sc->reset_work, ub_reset_task);
+	INIT_WORK(&sc->reset_work, ub_reset_task, sc);
 	init_waitqueue_head(&sc->reset_wait);
 
 	init_timer(&sc->work_timer);
@@ -2280,7 +2262,7 @@ err_core:
 static int ub_probe_lun(struct ub_dev *sc, int lnum)
 {
 	struct ub_lun *lun;
-	struct request_queue *q;
+	request_queue_t *q;
 	struct gendisk *disk;
 	int rc;
 
@@ -2320,10 +2302,11 @@ static int ub_probe_lun(struct ub_dev *sc, int lnum)
 	disk->queue = q;
 
 	blk_queue_bounce_limit(q, BLK_BOUNCE_HIGH);
-	blk_queue_max_segments(q, UB_MAX_REQ_SG);
+	blk_queue_max_hw_segments(q, UB_MAX_REQ_SG);
+	blk_queue_max_phys_segments(q, UB_MAX_REQ_SG);
 	blk_queue_segment_boundary(q, 0xffffffff);	/* Dubious. */
-	blk_queue_max_hw_sectors(q, UB_MAX_SECTORS);
-	blk_queue_logical_block_size(q, lun->capacity.bsize);
+	blk_queue_max_sectors(q, UB_MAX_SECTORS);
+	blk_queue_hardsect_size(q, lun->capacity.bsize);
 
 	lun->disk = disk;
 	q->queuedata = lun;
@@ -2350,6 +2333,7 @@ err_alloc:
 static void ub_disconnect(struct usb_interface *intf)
 {
 	struct ub_dev *sc = usb_get_intfdata(intf);
+	struct list_head *p;
 	struct ub_lun *lun;
 	unsigned long flags;
 
@@ -2363,7 +2347,7 @@ static void ub_disconnect(struct usb_interface *intf)
 	spin_unlock_irqrestore(&ub_lock, flags);
 
 	/*
-	 * Fence stall clearings, operations triggered by unlinkings and so on.
+	 * Fence stall clearnings, operations triggered by unlinkings and so on.
 	 * We do not attempt to unlink any URBs, because we do not trust the
 	 * unlink paths in HC drivers. Also, we get -84 upon disconnect anyway.
 	 */
@@ -2404,11 +2388,12 @@ static void ub_disconnect(struct usb_interface *intf)
 	/*
 	 * Unregister the upper layer.
 	 */
-	list_for_each_entry(lun, &sc->luns, link) {
+	list_for_each (p, &sc->luns) {
+		lun = list_entry(p, struct ub_lun, link);
 		del_gendisk(lun->disk);
 		/*
 		 * I wish I could do:
-		 *    queue_flag_set(QUEUE_FLAG_DEAD, q);
+		 *    set_bit(QUEUE_FLAG_DEAD, &q->queue_flags);
 		 * As it is, we rely on our internal poisoning and let
 		 * the upper levels to spin furiously failing all the I/O.
 		 */
@@ -2426,7 +2411,7 @@ static void ub_disconnect(struct usb_interface *intf)
 	spin_unlock_irqrestore(sc->lock, flags);
 
 	/*
-	 * There is virtually no chance that other CPU runs a timeout so long
+	 * There is virtually no chance that other CPU runs times so long
 	 * after ub_urb_complete should have called del_timer, but only if HCD
 	 * didn't forget to deliver a callback on unlink.
 	 */
@@ -2445,8 +2430,6 @@ static struct usb_driver ub_driver = {
 	.probe =	ub_probe,
 	.disconnect =	ub_disconnect,
 	.id_table =	ub_usb_ids,
-	.pre_reset =	ub_pre_reset,
-	.post_reset =	ub_post_reset,
 };
 
 static int __init ub_init(void)

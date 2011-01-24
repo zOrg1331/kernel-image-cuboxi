@@ -3,6 +3,8 @@
  * Linux driver for Disk-On-Chip 2000 and Millennium
  * (c) 1999 Machine Vision Holdings, Inc.
  * (c) 1999, 2000 David Woodhouse <dwmw2@infradead.org>
+ *
+ * $Id: doc2000.c,v 1.67 2005/11/07 11:14:24 gleixner Exp $
  */
 
 #include <linux/kernel.h>
@@ -10,6 +12,8 @@
 #include <asm/errno.h>
 #include <asm/io.h>
 #include <asm/uaccess.h>
+#include <linux/miscdevice.h>
+#include <linux/pci.h>
 #include <linux/delay.h>
 #include <linux/slab.h>
 #include <linux/sched.h>
@@ -373,7 +377,7 @@ static int DoC_IdentChip(struct DiskOnChip *doc, int floor, int chip)
 	 * hardware restriction. */
 	if (doc->mfr) {
 		if (doc->mfr == mfr && doc->id == id)
-			return 1;	/* This is the same as the first */
+			return 1;	/* This is another the same the first */
 		else
 			printk(KERN_WARNING
 			       "Flash chip at floor %d, chip %d is different:\n",
@@ -565,6 +569,7 @@ void DoC2k_init(struct mtd_info *mtd)
 
 	mtd->type = MTD_NANDFLASH;
 	mtd->flags = MTD_CAP_NANDFLASH;
+	mtd->ecctype = MTD_ECC_RS_DiskOnChip;
 	mtd->size = 0;
 	mtd->erasesize = 0;
 	mtd->writesize = 512;
@@ -629,7 +634,7 @@ static int doc_read(struct mtd_info *mtd, loff_t from, size_t len,
 			len = ((from | 0x1ff) + 1) - from;
 
 		/* The ECC will not be calculated correctly if less than 512 is read */
-		if (len != 0x200)
+		if (len != 0x200 && eccbuf)
 			printk(KERN_WARNING
 			       "ECC needs a full sector read (adr: %lx size %lx)\n",
 			       (long) from, (long) len);
@@ -893,7 +898,7 @@ static int doc_write(struct mtd_info *mtd, loff_t to, size_t len,
 		/* Let the caller know we completed it */
 		*retlen += len;
 
-		{
+		if (eccbuf) {
 			unsigned char x[8];
 			size_t dummy;
 			int ret;

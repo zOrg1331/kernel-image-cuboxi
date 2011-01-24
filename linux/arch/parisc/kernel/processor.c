@@ -1,8 +1,9 @@
-/*
+/*    $Id: processor.c,v 1.1 2002/07/20 16:27:06 rhirst Exp $
+ *
  *    Initial setup-routines for HP 9000 based hardware.
  *
  *    Copyright (C) 1991, 1992, 1995  Linus Torvalds
- *    Modifications for PA-RISC (C) 1999-2008 Helge Deller <deller@gmx.de>
+ *    Modifications for PA-RISC (C) 1999 Helge Deller <deller@gmx.de>
  *    Modifications copyright 1999 SuSE GmbH (Philipp Rumpf)
  *    Modifications copyright 2000 Martin K. Petersen <mkp@mkp.net>
  *    Modifications copyright 2000 Philipp Rumpf <prumpf@tux.org>
@@ -32,7 +33,7 @@
 #include <linux/seq_file.h>
 #include <linux/slab.h>
 #include <linux/cpu.h>
-#include <asm/param.h>
+
 #include <asm/cache.h>
 #include <asm/hardware.h>	/* for register_parisc_driver() stuff */
 #include <asm/processor.h>
@@ -45,9 +46,7 @@
 struct system_cpuinfo_parisc boot_cpu_data __read_mostly;
 EXPORT_SYMBOL(boot_cpu_data);
 
-DEFINE_PER_CPU(struct cpuinfo_parisc, cpu_data);
-
-extern int update_cr16_clocksource(void);	/* from time.c */
+struct cpuinfo_parisc cpu_data[NR_CPUS] __read_mostly;
 
 /*
 **  	PARISC CPU driver - claim "device" and initialize CPU data structures.
@@ -62,27 +61,10 @@ extern int update_cr16_clocksource(void);	/* from time.c */
 ** will call register_parisc_driver(&cpu_driver) before calling do_inventory().
 **
 ** The goal of consolidating CPU initialization into one place is
-** to make sure all CPUs get initialized the same way.
+** to make sure all CPU's get initialized the same way.
 ** The code path not shared is how PDC hands control of the CPU to the OS.
 ** The initialization of OS data structures is the same (done below).
 */
-
-/**
- * init_cpu_profiler - enable/setup per cpu profiling hooks.
- * @cpunum: The processor instance.
- *
- * FIXME: doesn't do much yet...
- */
-static void __cpuinit
-init_percpu_prof(unsigned long cpunum)
-{
-	struct cpuinfo_parisc *p;
-
-	p = &per_cpu(cpu_data, cpunum);
-	p->prof_counter = 1;
-	p->prof_multiplier = 1;
-}
-
 
 /**
  * processor_probe - Determine if processor driver should claim this device.
@@ -92,18 +74,13 @@ init_percpu_prof(unsigned long cpunum)
  * (return 1).  If so, initialize the chip and tell other partners in crime 
  * they have work to do.
  */
-static int __cpuinit processor_probe(struct parisc_device *dev)
+static int __init processor_probe(struct parisc_device *dev)
 {
 	unsigned long txn_addr;
 	unsigned long cpuid;
 	struct cpuinfo_parisc *p;
 
-#ifdef CONFIG_SMP
-	if (num_online_cpus() >= nr_cpu_ids) {
-		printk(KERN_INFO "num_online_cpus() >= nr_cpu_ids\n");
-		return 1;
-	}
-#else
+#ifndef CONFIG_SMP
 	if (boot_cpu_data.cpu_count > 0) {
 		printk(KERN_INFO "CONFIG_SMP=n  ignoring additional CPUs\n");
 		return 1;
@@ -116,32 +93,26 @@ static int __cpuinit processor_probe(struct parisc_device *dev)
 	cpuid = boot_cpu_data.cpu_count;
 	txn_addr = dev->hpa.start;	/* for legacy PDC */
 
-#ifdef CONFIG_64BIT
+#ifdef __LP64__
 	if (is_pdc_pat()) {
 		ulong status;
 		unsigned long bytecnt;
-	        pdc_pat_cell_mod_maddr_block_t *pa_pdc_cell;
+	        pdc_pat_cell_mod_maddr_block_t pa_pdc_cell;
 #undef USE_PAT_CPUID
 #ifdef USE_PAT_CPUID
 		struct pdc_pat_cpu_num cpu_info;
 #endif
 
-		pa_pdc_cell = kmalloc(sizeof (*pa_pdc_cell), GFP_KERNEL);
-		if (!pa_pdc_cell)
-			panic("couldn't allocate memory for PDC_PAT_CELL!");
-
 		status = pdc_pat_cell_module(&bytecnt, dev->pcell_loc,
-			dev->mod_index, PA_VIEW, pa_pdc_cell);
+			dev->mod_index, PA_VIEW, &pa_pdc_cell);
 
 		BUG_ON(PDC_OK != status);
 
 		/* verify it's the same as what do_pat_inventory() found */
-		BUG_ON(dev->mod_info != pa_pdc_cell->mod_info);
-		BUG_ON(dev->pmod_loc != pa_pdc_cell->mod_location);
+		BUG_ON(dev->mod_info != pa_pdc_cell.mod_info);
+		BUG_ON(dev->pmod_loc != pa_pdc_cell.mod_location);
 
-		txn_addr = pa_pdc_cell->mod[0];   /* id_eid for IO sapic */
-
-		kfree(pa_pdc_cell);
+		txn_addr = pa_pdc_cell.mod[0];   /* id_eid for IO sapic */
 
 #ifdef USE_PAT_CPUID
 /* We need contiguous numbers for cpuid. Firmware's notion
@@ -169,12 +140,11 @@ static int __cpuinit processor_probe(struct parisc_device *dev)
 	}
 #endif
 
-	p = &per_cpu(cpu_data, cpuid);
+	p = &cpu_data[cpuid];
 	boot_cpu_data.cpu_count++;
 
-	/* initialize counters - CPU 0 gets it_value set in time_init() */
-	if (cpuid)
-		memset(p, 0, sizeof(struct cpuinfo_parisc));
+	/* initialize counters */
+	memset(p, 0, sizeof(struct cpuinfo_parisc));
 
 	p->loops_per_jiffy = loops_per_jiffy;
 	p->dev = dev;		/* Save IODC data in case we need it */
@@ -182,15 +152,20 @@ static int __cpuinit processor_probe(struct parisc_device *dev)
 	p->cpuid = cpuid;	/* save CPU id */
 	p->txn_addr = txn_addr;	/* save CPU IRQ address */
 #ifdef CONFIG_SMP
+	spin_lock_init(&p->lock);
+
 	/*
 	** FIXME: review if any other initialization is clobbered
-	**	  for boot_cpu by the above memset().
+	**	for boot_cpu by the above memset().
 	*/
-	init_percpu_prof(cpuid);
+
+	/* stolen from init_percpu_prof() */
+	cpu_data[cpuid].prof_counter = 1;
+	cpu_data[cpuid].prof_multiplier = 1;
 #endif
 
 	/*
-	** CONFIG_SMP: init_smp_config() will attempt to get CPUs into
+	** CONFIG_SMP: init_smp_config() will attempt to get CPU's into
 	** OS control. RENDEZVOUS is the default state - see mem_set above.
 	**	p->state = STATE_RENDEZVOUS;
 	*/
@@ -219,16 +194,10 @@ static int __cpuinit processor_probe(struct parisc_device *dev)
 	 */
 #ifdef CONFIG_SMP
 	if (cpuid) {
-		set_cpu_present(cpuid, true);
+		cpu_set(cpuid, cpu_present_map);
 		cpu_up(cpuid);
 	}
 #endif
-
-	/* If we've registered more than one cpu,
-	 * we'll use the jiffies clocksource since cr16
-	 * is not synchronized between CPUs.
-	 */
-	update_cr16_clocksource();
 
 	return 0;
 }
@@ -280,6 +249,19 @@ void __init collect_boot_cpu_data(void)
 }
 
 
+/**
+ * init_cpu_profiler - enable/setup per cpu profiling hooks.
+ * @cpunum: The processor instance.
+ *
+ * FIXME: doesn't do much yet...
+ */
+static inline void __init
+init_percpu_prof(int cpunum)
+{
+	cpu_data[cpunum].prof_counter = 1;
+	cpu_data[cpunum].prof_multiplier = 1;
+}
+
 
 /**
  * init_per_cpu - Handle individual processor initializations.
@@ -299,7 +281,7 @@ void __init collect_boot_cpu_data(void)
  *
  * o Enable CPU profiling hooks.
  */
-int __cpuinit init_per_cpu(int cpunum)
+int __init init_per_cpu(int cpunum)
 {
 	int ret;
 	struct pdc_coproc_cfg coproc_cfg;
@@ -313,8 +295,8 @@ int __cpuinit init_per_cpu(int cpunum)
 		/* FWIW, FP rev/model is a more accurate way to determine
 		** CPU type. CPU rev/model has some ambiguous cases.
 		*/
-		per_cpu(cpu_data, cpunum).fp_rev = coproc_cfg.revision;
-		per_cpu(cpu_data, cpunum).fp_model = coproc_cfg.model;
+		cpu_data[cpunum].fp_rev = coproc_cfg.revision;
+		cpu_data[cpunum].fp_model = coproc_cfg.model;
 
 		printk(KERN_INFO  "FP[%d] enabled: Rev %ld Model %ld\n",
 			cpunum, coproc_cfg.revision, coproc_cfg.model);
@@ -328,11 +310,11 @@ int __cpuinit init_per_cpu(int cpunum)
 	} else {
 		printk(KERN_WARNING  "WARNING: No FP CoProcessor?!"
 			" (coproc_cfg.ccr_functional == 0x%lx, expected 0xc0)\n"
-#ifdef CONFIG_64BIT
+#ifdef __LP64__
 			"Halting Machine - FP required\n"
 #endif
 			, coproc_cfg.ccr_functional);
-#ifdef CONFIG_64BIT
+#ifdef __LP64__
 		mdelay(100);	/* previous chars get pushed to console */
 		panic("FP CoProc not reported");
 #endif
@@ -345,22 +327,24 @@ int __cpuinit init_per_cpu(int cpunum)
 }
 
 /*
- * Display CPU info for all CPUs.
+ * Display cpu info for all cpu's.
  */
 int
 show_cpuinfo (struct seq_file *m, void *v)
 {
-	unsigned long cpu;
+	int	n;
 
-	for_each_online_cpu(cpu) {
-		const struct cpuinfo_parisc *cpuinfo = &per_cpu(cpu_data, cpu);
+	for(n=0; n<boot_cpu_data.cpu_count; n++) {
 #ifdef CONFIG_SMP
-		if (0 == cpuinfo->hpa)
+		if (0 == cpu_data[n].hpa)
 			continue;
+#ifdef ENTRY_SYS_CPUS
+#error iCOD support wants to show CPU state here
 #endif
-		seq_printf(m, "processor\t: %lu\n"
+#endif
+		seq_printf(m, "processor\t: %d\n"
 				"cpu family\t: PA-RISC %s\n",
-				 cpu, boot_cpu_data.family_name);
+				 n, boot_cpu_data.family_name);
 
 		seq_printf(m, "cpu\t\t: %s\n",  boot_cpu_data.cpu_name );
 
@@ -369,18 +353,11 @@ show_cpuinfo (struct seq_file *m, void *v)
 				 boot_cpu_data.cpu_hz / 1000000,
 				 boot_cpu_data.cpu_hz % 1000000  );
 
-		seq_printf(m, "capabilities\t:");
-		if (boot_cpu_data.pdc.capabilities & PDC_MODEL_OS32)
-			seq_printf(m, " os32");
-		if (boot_cpu_data.pdc.capabilities & PDC_MODEL_OS64)
-			seq_printf(m, " os64");
-		seq_printf(m, "\n");
-
 		seq_printf(m, "model\t\t: %s\n"
 				"model name\t: %s\n",
 				 boot_cpu_data.pdc.sys_model_name,
-				 cpuinfo->dev ?
-				 cpuinfo->dev->name : "Unknown");
+				 cpu_data[n].dev ? 
+				 cpu_data[n].dev->name : "Unknown" );
 
 		seq_printf(m, "hversion\t: 0x%08x\n"
 			        "sversion\t: 0x%08x\n",
@@ -391,8 +368,8 @@ show_cpuinfo (struct seq_file *m, void *v)
 		show_cache_info(m);
 
 		seq_printf(m, "bogomips\t: %lu.%02lu\n",
-			     cpuinfo->loops_per_jiffy / (500000 / HZ),
-			     (cpuinfo->loops_per_jiffy / (5000 / HZ)) % 100);
+			     cpu_data[n].loops_per_jiffy / (500000 / HZ),
+			     (cpu_data[n].loops_per_jiffy / (5000 / HZ)) % 100);
 
 		seq_printf(m, "software id\t: %ld\n\n",
 				boot_cpu_data.pdc.model.sw_id);
@@ -400,19 +377,19 @@ show_cpuinfo (struct seq_file *m, void *v)
 	return 0;
 }
 
-static const struct parisc_device_id processor_tbl[] = {
+static struct parisc_device_id processor_tbl[] __read_mostly = {
 	{ HPHW_NPROC, HVERSION_REV_ANY_ID, HVERSION_ANY_ID, SVERSION_ANY_ID },
 	{ 0, }
 };
 
-static struct parisc_driver cpu_driver = {
+static struct parisc_driver cpu_driver __read_mostly = {
 	.name		= "CPU",
 	.id_table	= processor_tbl,
 	.probe		= processor_probe
 };
 
 /**
- * processor_init - Processor initialization procedure.
+ * processor_init - Processor initalization procedure.
  *
  * Register this driver.
  */

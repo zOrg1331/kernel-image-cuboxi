@@ -1,9 +1,11 @@
 #
-# Chelsio T1 driver
+# Chelsio 10Gb NIC driver for Linux.
 #
 
 obj-$(CONFIG_CHELSIO_T1) += cxgb.o
 
-cxgb-$(CONFIG_CHELSIO_T1_1G) += mv88e1xxx.o vsc7326.o
-cxgb-objs := cxgb2.o espi.o tp.o pm3393.o sge.o subr.o \
-	     mv88x201x.o my3126.o $(cxgb-y)
+EXTRA_CFLAGS += -Idrivers/net/chelsio $(DEBUG_FLAGS)
+
+
+cxgb-objs := cxgb2.o espi.o pm3393.o sge.o subr.o mv88x201x.o
+

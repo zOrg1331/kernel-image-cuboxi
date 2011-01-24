@@ -18,16 +18,14 @@
 #include <linux/pagemap.h>
 #include <linux/parser.h>
 #include <linux/bitops.h>
-#include <linux/magic.h>
+#include <linux/smp_lock.h>
 #include "autofs_i.h"
 #include <linux/module.h>
 
 static void ino_lnkfree(struct autofs_info *ino)
 {
-	if (ino->u.symlink) {
-		kfree(ino->u.symlink);
-		ino->u.symlink = NULL;
-	}
+	kfree(ino->u.symlink);
+	ino->u.symlink = NULL;
 }
 
 struct autofs_info *autofs4_init_ino(struct autofs_info *ino,
@@ -43,20 +41,14 @@ struct autofs_info *autofs4_init_ino(struct autofs_info *ino,
 	if (ino == NULL)
 		return NULL;
 
-	if (!reinit) {
-		ino->flags = 0;
-		ino->inode = NULL;
-		ino->dentry = NULL;
-		ino->size = 0;
-		INIT_LIST_HEAD(&ino->active);
-		INIT_LIST_HEAD(&ino->expiring);
-		atomic_set(&ino->count, 0);
-	}
-
-	ino->uid = 0;
-	ino->gid = 0;
+	ino->flags = 0;
 	ino->mode = mode;
+	ino->inode = NULL;
+	ino->dentry = NULL;
+	ino->size = 0;
+
 	ino->last_used = jiffies;
+	atomic_set(&ino->count, 0);
 
 	ino->sbi = sbi;
 
@@ -103,11 +95,8 @@ void autofs4_free_ino(struct autofs_info *ino)
  */
 static void autofs4_force_release(struct autofs_sb_info *sbi)
 {
-	struct dentry *this_parent = sbi->sb->s_root;
+	struct dentry *this_parent = sbi->root;
 	struct list_head *next;
-
-	if (!sbi->sb->s_root)
-		return;
 
 	spin_lock(&dcache_lock);
 repeat:
@@ -137,7 +126,7 @@ resume:
 		spin_lock(&dcache_lock);
 	}
 
-	if (this_parent != sbi->sb->s_root) {
+	if (this_parent != sbi->root) {
 		struct dentry *dentry = this_parent;
 
 		next = this_parent->d_u.d_child.next;
@@ -150,56 +139,47 @@ resume:
 		goto resume;
 	}
 	spin_unlock(&dcache_lock);
+
+	dput(sbi->root);
+	sbi->root = NULL;
+	shrink_dcache_sb(sbi->sb);
+
+	return;
 }
 
-void autofs4_kill_sb(struct super_block *sb)
+static void autofs4_put_super(struct super_block *sb)
 {
 	struct autofs_sb_info *sbi = autofs4_sbi(sb);
 
-	/*
-	 * In the event of a failure in get_sb_nodev the superblock
-	 * info is not present so nothing else has been setup, so
-	 * just call kill_anon_super when we are called from
-	 * deactivate_super.
-	 */
-	if (!sbi)
-		goto out_kill_sb;
+	sb->s_fs_info = NULL;
 
-	/* Free wait queues, close pipe */
-	autofs4_catatonic_mode(sbi);
+	if ( !sbi->catatonic )
+		autofs4_catatonic_mode(sbi); /* Free wait queues, close pipe */
 
 	/* Clean up and release dangling references */
 	autofs4_force_release(sbi);
 
-	sb->s_fs_info = NULL;
 	kfree(sbi);
 
-out_kill_sb:
 	DPRINTK("shutting down");
-	kill_anon_super(sb);
 }
 
 static int autofs4_show_options(struct seq_file *m, struct vfsmount *mnt)
 {
 	struct autofs_sb_info *sbi = autofs4_sbi(mnt->mnt_sb);
-	struct inode *root_inode = mnt->mnt_sb->s_root->d_inode;
 
 	if (!sbi)
 		return 0;
 
 	seq_printf(m, ",fd=%d", sbi->pipefd);
-	if (root_inode->i_uid != 0)
-		seq_printf(m, ",uid=%u", root_inode->i_uid);
-	if (root_inode->i_gid != 0)
-		seq_printf(m, ",gid=%u", root_inode->i_gid);
 	seq_printf(m, ",pgrp=%d", sbi->oz_pgrp);
 	seq_printf(m, ",timeout=%lu", sbi->exp_timeout/HZ);
 	seq_printf(m, ",minproto=%d", sbi->min_proto);
 	seq_printf(m, ",maxproto=%d", sbi->max_proto);
 
-	if (autofs_type_offset(sbi->type))
+	if (sbi->type & AUTOFS_TYPE_OFFSET)
 		seq_printf(m, ",offset");
-	else if (autofs_type_direct(sbi->type))
+	else if (sbi->type & AUTOFS_TYPE_DIRECT)
 		seq_printf(m, ",direct");
 	else
 		seq_printf(m, ",indirect");
@@ -207,7 +187,8 @@ static int autofs4_show_options(struct seq_file *m, struct vfsmount *mnt)
 	return 0;
 }
 
-static const struct super_operations autofs4_sops = {
+static struct super_operations autofs4_sops = {
+	.put_super	= autofs4_put_super,
 	.statfs		= simple_statfs,
 	.show_options	= autofs4_show_options,
 };
@@ -215,7 +196,7 @@ static const struct super_operations autofs4_sops = {
 enum {Opt_err, Opt_fd, Opt_uid, Opt_gid, Opt_pgrp, Opt_minproto, Opt_maxproto,
 	Opt_indirect, Opt_direct, Opt_offset};
 
-static const match_table_t tokens = {
+static match_table_t tokens = {
 	{Opt_fd, "fd=%u"},
 	{Opt_uid, "uid=%u"},
 	{Opt_gid, "gid=%u"},
@@ -229,15 +210,16 @@ static const match_table_t tokens = {
 };
 
 static int parse_options(char *options, int *pipefd, uid_t *uid, gid_t *gid,
-		pid_t *pgrp, unsigned int *type, int *minproto, int *maxproto)
+			 pid_t *pgrp, unsigned int *type,
+			 int *minproto, int *maxproto)
 {
 	char *p;
 	substring_t args[MAX_OPT_ARGS];
 	int option;
 
-	*uid = current_uid();
-	*gid = current_gid();
-	*pgrp = task_pgrp_nr(current);
+	*uid = current->uid;
+	*gid = current->gid;
+	*pgrp = process_group(current);
 
 	*minproto = AUTOFS_MIN_PROTO_VERSION;
 	*maxproto = AUTOFS_MAX_PROTO_VERSION;
@@ -284,13 +266,13 @@ static int parse_options(char *options, int *pipefd, uid_t *uid, gid_t *gid,
 			*maxproto = option;
 			break;
 		case Opt_indirect:
-			set_autofs_type_indirect(type);
+			*type = AUTOFS_TYPE_INDIRECT;
 			break;
 		case Opt_direct:
-			set_autofs_type_direct(type);
+			*type = AUTOFS_TYPE_DIRECT;
 			break;
 		case Opt_offset:
-			set_autofs_type_offset(type);
+			*type = AUTOFS_TYPE_DIRECT | AUTOFS_TYPE_OFFSET;
 			break;
 		default:
 			return 1;
@@ -310,7 +292,7 @@ static struct autofs_info *autofs4_mkroot(struct autofs_sb_info *sbi)
 	return ino;
 }
 
-static const struct dentry_operations autofs4_sb_dentry_operations = {
+static struct dentry_operations autofs4_sb_dentry_operations = {
 	.d_release      = autofs4_dentry_release,
 };
 
@@ -323,30 +305,29 @@ int autofs4_fill_super(struct super_block *s, void *data, int silent)
 	struct autofs_sb_info *sbi;
 	struct autofs_info *ino;
 
-	sbi = kzalloc(sizeof(*sbi), GFP_KERNEL);
-	if (!sbi)
+	sbi = (struct autofs_sb_info *) kmalloc(sizeof(*sbi), GFP_KERNEL);
+	if ( !sbi )
 		goto fail_unlock;
 	DPRINTK("starting up, sbi = %p",sbi);
 
+	memset(sbi, 0, sizeof(*sbi));
+
 	s->s_fs_info = sbi;
 	sbi->magic = AUTOFS_SBI_MAGIC;
+	sbi->root = NULL;
 	sbi->pipefd = -1;
-	sbi->pipe = NULL;
-	sbi->catatonic = 1;
+	sbi->catatonic = 0;
 	sbi->exp_timeout = 0;
-	sbi->oz_pgrp = task_pgrp_nr(current);
+	sbi->oz_pgrp = process_group(current);
 	sbi->sb = s;
 	sbi->version = 0;
 	sbi->sub_version = 0;
-	set_autofs_type_indirect(&sbi->type);
+	sbi->type = 0;
 	sbi->min_proto = 0;
 	sbi->max_proto = 0;
 	mutex_init(&sbi->wq_mutex);
 	spin_lock_init(&sbi->fs_lock);
 	sbi->queues = NULL;
-	spin_lock_init(&sbi->lookup_lock);
-	INIT_LIST_HEAD(&sbi->active_list);
-	INIT_LIST_HEAD(&sbi->expiring_list);
 	s->s_blocksize = 1024;
 	s->s_blocksize_bits = 10;
 	s->s_magic = AUTOFS_SUPER_MAGIC;
@@ -372,15 +353,16 @@ int autofs4_fill_super(struct super_block *s, void *data, int silent)
 	root->d_fsdata = ino;
 
 	/* Can this call block? */
-	if (parse_options(data, &pipefd, &root_inode->i_uid, &root_inode->i_gid,
-				&sbi->oz_pgrp, &sbi->type, &sbi->min_proto,
-				&sbi->max_proto)) {
+	if (parse_options(data, &pipefd,
+			  &root_inode->i_uid, &root_inode->i_gid,
+			  &sbi->oz_pgrp, &sbi->type,
+			  &sbi->min_proto, &sbi->max_proto)) {
 		printk("autofs: called with bogus options\n");
 		goto fail_dput;
 	}
 
 	root_inode->i_fop = &autofs4_root_operations;
-	root_inode->i_op = autofs_type_trigger(sbi->type) ?
+	root_inode->i_op = sbi->type & AUTOFS_TYPE_DIRECT ?
 			&autofs4_direct_root_inode_operations :
 			&autofs4_indirect_root_inode_operations;
 
@@ -404,15 +386,21 @@ int autofs4_fill_super(struct super_block *s, void *data, int silent)
 	DPRINTK("pipe fd = %d, pgrp = %u", pipefd, sbi->oz_pgrp);
 	pipe = fget(pipefd);
 	
-	if (!pipe) {
+	if ( !pipe ) {
 		printk("autofs: could not open pipe file descriptor\n");
 		goto fail_dput;
 	}
-	if (!pipe->f_op || !pipe->f_op->write)
+	if ( !pipe->f_op || !pipe->f_op->write )
 		goto fail_fput;
 	sbi->pipe = pipe;
 	sbi->pipefd = pipefd;
-	sbi->catatonic = 0;
+
+	/*
+	 * Take a reference to the root dentry so we get a chance to
+	 * clean up the dentry tree on umount.
+	 * See autofs4_force_release.
+	 */
+	sbi->root = dget(root);
 
 	/*
 	 * Success! Install the root dentry now to indicate completion.
@@ -437,7 +425,6 @@ fail_ino:
 	kfree(ino);
 fail_free:
 	kfree(sbi);
-	s->s_fs_info = NULL;
 fail_unlock:
 	return -EINVAL;
 }
@@ -455,7 +442,12 @@ struct inode *autofs4_get_inode(struct super_block *sb,
 	if (sb->s_root) {
 		inode->i_uid = sb->s_root->d_inode->i_uid;
 		inode->i_gid = sb->s_root->d_inode->i_gid;
+	} else {
+		inode->i_uid = 0;
+		inode->i_gid = 0;
 	}
+	inode->i_blksize = PAGE_CACHE_SIZE;
+	inode->i_blocks = 0;
 	inode->i_atime = inode->i_mtime = inode->i_ctime = CURRENT_TIME;
 
 	if (S_ISDIR(inf->mode)) {

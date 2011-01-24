@@ -7,22 +7,18 @@
  *
  */
 
+
+#include <asm/uaccess.h>
 #include <linux/capability.h>
-#include <linux/compat.h>
 #include <linux/errno.h>
 #include <linux/fs.h>
 #include <linux/ioctl.h>
 #include <linux/time.h>
 #include <linux/mm.h>
-#include <linux/mount.h>
 #include <linux/highuid.h>
-#include <linux/smp_lock.h>
 #include <linux/vmalloc.h>
-#include <linux/sched.h>
 
 #include <linux/ncp_fs.h>
-
-#include <asm/uaccess.h>
 
 #include "ncplib_kernel.h"
 
@@ -37,13 +33,13 @@ static int
 ncp_get_fs_info(struct ncp_server * server, struct file *file,
 		struct ncp_fs_info __user *arg)
 {
-	struct inode *inode = file->f_path.dentry->d_inode;
+	struct inode *inode = file->f_dentry->d_inode;
 	struct ncp_fs_info info;
 
-	if (file_permission(file, MAY_WRITE) != 0
-	    && current_uid() != server->m.mounted_uid)
+	if ((file_permission(file, MAY_WRITE) != 0)
+	    && (current->uid != server->m.mounted_uid)) {
 		return -EACCES;
-
+	}
 	if (copy_from_user(&info, arg, sizeof(info)))
 		return -EFAULT;
 
@@ -67,13 +63,13 @@ static int
 ncp_get_fs_info_v2(struct ncp_server * server, struct file *file,
 		   struct ncp_fs_info_v2 __user * arg)
 {
-	struct inode *inode = file->f_path.dentry->d_inode;
+	struct inode *inode = file->f_dentry->d_inode;
 	struct ncp_fs_info_v2 info2;
 
-	if (file_permission(file, MAY_WRITE) != 0
-	    && current_uid() != server->m.mounted_uid)
+	if ((file_permission(file, MAY_WRITE) != 0)
+	    && (current->uid != server->m.mounted_uid)) {
 		return -EACCES;
-
+	}
 	if (copy_from_user(&info2, arg, sizeof(info2)))
 		return -EFAULT;
 
@@ -92,82 +88,6 @@ ncp_get_fs_info_v2(struct ncp_server * server, struct file *file,
 		return -EFAULT;
 	return 0;
 }
-
-#ifdef CONFIG_COMPAT
-struct compat_ncp_objectname_ioctl
-{
-	s32		auth_type;
-	u32		object_name_len;
-	compat_caddr_t	object_name;	/* a userspace data, in most cases user name */
-};
-
-struct compat_ncp_fs_info_v2 {
-	s32 version;
-	u32 mounted_uid;
-	u32 connection;
-	u32 buffer_size;
-
-	u32 volume_number;
-	u32 directory_id;
-
-	u32 dummy1;
-	u32 dummy2;
-	u32 dummy3;
-};
-
-struct compat_ncp_ioctl_request {
-	u32 function;
-	u32 size;
-	compat_caddr_t data;
-};
-
-struct compat_ncp_privatedata_ioctl
-{
-	u32		len;
-	compat_caddr_t	data;		/* ~1000 for NDS */
-};
-
-#define NCP_IOC_GET_FS_INFO_V2_32	_IOWR('n', 4, struct compat_ncp_fs_info_v2)
-#define NCP_IOC_NCPREQUEST_32		_IOR('n', 1, struct compat_ncp_ioctl_request)
-#define NCP_IOC_GETOBJECTNAME_32	_IOWR('n', 9, struct compat_ncp_objectname_ioctl)
-#define NCP_IOC_SETOBJECTNAME_32	_IOR('n', 9, struct compat_ncp_objectname_ioctl)
-#define NCP_IOC_GETPRIVATEDATA_32	_IOWR('n', 10, struct compat_ncp_privatedata_ioctl)
-#define NCP_IOC_SETPRIVATEDATA_32	_IOR('n', 10, struct compat_ncp_privatedata_ioctl)
-
-static int
-ncp_get_compat_fs_info_v2(struct ncp_server * server, struct file *file,
-		   struct compat_ncp_fs_info_v2 __user * arg)
-{
-	struct inode *inode = file->f_path.dentry->d_inode;
-	struct compat_ncp_fs_info_v2 info2;
-
-	if (file_permission(file, MAY_WRITE) != 0
-	    && current_uid() != server->m.mounted_uid)
-		return -EACCES;
-
-	if (copy_from_user(&info2, arg, sizeof(info2)))
-		return -EFAULT;
-
-	if (info2.version != NCP_GET_FS_INFO_VERSION_V2) {
-		DPRINTK("info.version invalid: %d\n", info2.version);
-		return -EINVAL;
-	}
-	info2.mounted_uid   = server->m.mounted_uid;
-	info2.connection    = server->connection;
-	info2.buffer_size   = server->buffer_size;
-	info2.volume_number = NCP_FINFO(inode)->volNumber;
-	info2.directory_id  = NCP_FINFO(inode)->DosDirNum;
-	info2.dummy1 = info2.dummy2 = info2.dummy3 = 0;
-
-	if (copy_to_user(arg, &info2, sizeof(info2)))
-		return -EFAULT;
-	return 0;
-}
-#endif
-
-#define NCP_IOC_GETMOUNTUID16		_IOW('n', 2, u16)
-#define NCP_IOC_GETMOUNTUID32		_IOW('n', 2, u32)
-#define NCP_IOC_GETMOUNTUID64		_IOW('n', 2, u64)
 
 #ifdef CONFIG_NCPFS_NLS
 /* Here we are select the iocharset and the codepage for NLS.
@@ -223,8 +143,10 @@ ncp_set_charsets(struct ncp_server* server, struct ncp_nls_ioctl __user *arg)
 	oldset_io = server->nls_io;
 	server->nls_io = iocharset;
 
-	unload_nls(oldset_cp);
-	unload_nls(oldset_io);
+	if (oldset_cp)
+		unload_nls(oldset_cp);
+	if (oldset_io)
+		unload_nls(oldset_io);
 
 	return 0;
 }
@@ -260,7 +182,7 @@ ncp_get_charsets(struct ncp_server* server, struct ncp_nls_ioctl __user *arg)
 }
 #endif /* CONFIG_NCPFS_NLS */
 
-static int __ncp_ioctl(struct inode *inode, struct file *filp,
+int ncp_ioctl(struct inode *inode, struct file *filp,
 	      unsigned int cmd, unsigned long arg)
 {
 	struct ncp_server *server = NCP_SERVER(inode);
@@ -268,27 +190,14 @@ static int __ncp_ioctl(struct inode *inode, struct file *filp,
 	struct ncp_ioctl_request request;
 	char* bouncebuffer;
 	void __user *argp = (void __user *)arg;
-	uid_t uid = current_uid();
 
 	switch (cmd) {
-#ifdef CONFIG_COMPAT
-	case NCP_IOC_NCPREQUEST_32:
-#endif
 	case NCP_IOC_NCPREQUEST:
-		if (file_permission(filp, MAY_WRITE) != 0
-		    && uid != server->m.mounted_uid)
-			return -EACCES;
 
-#ifdef CONFIG_COMPAT
-		if (cmd == NCP_IOC_NCPREQUEST_32) {
-			struct compat_ncp_ioctl_request request32;
-			if (copy_from_user(&request32, argp, sizeof(request32)))
-				return -EFAULT;
-			request.function = request32.function;
-			request.size = request32.size;
-			request.data = compat_ptr(request32.data);
-		} else
-#endif
+		if ((file_permission(filp, MAY_WRITE) != 0)
+		    && (current->uid != server->m.mounted_uid)) {
+			return -EACCES;
+		}
 		if (copy_from_user(&request, argp, sizeof(request)))
 			return -EFAULT;
 
@@ -345,53 +254,38 @@ static int __ncp_ioctl(struct inode *inode, struct file *filp,
 	case NCP_IOC_GET_FS_INFO_V2:
 		return ncp_get_fs_info_v2(server, filp, argp);
 
-#ifdef CONFIG_COMPAT
-	case NCP_IOC_GET_FS_INFO_V2_32:
-		return ncp_get_compat_fs_info_v2(server, filp, argp);
-#endif
-	/* we have too many combinations of CONFIG_COMPAT,
-	 * CONFIG_64BIT and CONFIG_UID16, so just handle
-	 * any of the possible ioctls */
-	case NCP_IOC_GETMOUNTUID16:
-	case NCP_IOC_GETMOUNTUID32:
-	case NCP_IOC_GETMOUNTUID64:
-		if (file_permission(filp, MAY_READ) != 0
-			&& uid != server->m.mounted_uid)
-			return -EACCES;
+	case NCP_IOC_GETMOUNTUID2:
+		{
+			unsigned long tmp = server->m.mounted_uid;
 
-		if (cmd == NCP_IOC_GETMOUNTUID16) {
-			u16 uid;
-			SET_UID(uid, server->m.mounted_uid);
-			if (put_user(uid, (u16 __user *)argp))
+			if ((file_permission(filp, MAY_READ) != 0)
+			    && (current->uid != server->m.mounted_uid))
+			{
+				return -EACCES;
+			}
+			if (put_user(tmp, (unsigned long __user *)argp)) 
 				return -EFAULT;
-		} else if (cmd == NCP_IOC_GETMOUNTUID32) {
-			if (put_user(server->m.mounted_uid,
-						(u32 __user *)argp))
-				return -EFAULT;
-		} else {
-			if (put_user(server->m.mounted_uid,
-						(u64 __user *)argp))
-				return -EFAULT;
+			return 0;
 		}
-		return 0;
 
 	case NCP_IOC_GETROOT:
 		{
 			struct ncp_setroot_ioctl sr;
 
-			if (file_permission(filp, MAY_READ) != 0
-			    && uid != server->m.mounted_uid)
+			if ((file_permission(filp, MAY_READ) != 0)
+			    && (current->uid != server->m.mounted_uid))
+			{
 				return -EACCES;
-
+			}
 			if (server->m.mounted_vol[0]) {
 				struct dentry* dentry = inode->i_sb->s_root;
 
 				if (dentry) {
-					struct inode* s_inode = dentry->d_inode;
+					struct inode* inode = dentry->d_inode;
 				
-					if (s_inode) {
-						sr.volNumber = NCP_FINFO(s_inode)->volNumber;
-						sr.dirEntNum = NCP_FINFO(s_inode)->dirEntNum;
+					if (inode) {
+						sr.volNumber = NCP_FINFO(inode)->volNumber;
+						sr.dirEntNum = NCP_FINFO(inode)->dirEntNum;
 						sr.namespace = server->name_space[sr.volNumber];
 					} else
 						DPRINTK("ncpfs: s_root->d_inode==NULL\n");
@@ -406,7 +300,6 @@ static int __ncp_ioctl(struct inode *inode, struct file *filp,
 				return -EFAULT;
 			return 0;
 		}
-
 	case NCP_IOC_SETROOT:
 		{
 			struct ncp_setroot_ioctl sr;
@@ -438,12 +331,12 @@ static int __ncp_ioctl(struct inode *inode, struct file *filp,
 			dentry = inode->i_sb->s_root;
 			server->root_setuped = 1;
 			if (dentry) {
-				struct inode* s_inode = dentry->d_inode;
+				struct inode* inode = dentry->d_inode;
 				
-				if (s_inode) {
-					NCP_FINFO(s_inode)->volNumber = vnum;
-					NCP_FINFO(s_inode)->dirEntNum = de;
-					NCP_FINFO(s_inode)->DosDirNum = dosde;
+				if (inode) {
+					NCP_FINFO(inode)->volNumber = vnum;
+					NCP_FINFO(inode)->dirEntNum = de;
+					NCP_FINFO(inode)->DosDirNum = dosde;
 				} else
 					DPRINTK("ncpfs: s_root->d_inode==NULL\n");
 			} else
@@ -454,10 +347,11 @@ static int __ncp_ioctl(struct inode *inode, struct file *filp,
 
 #ifdef CONFIG_NCPFS_PACKET_SIGNING	
 	case NCP_IOC_SIGN_INIT:
-		if (file_permission(filp, MAY_WRITE) != 0
-		    && uid != server->m.mounted_uid)
+		if ((file_permission(filp, MAY_WRITE) != 0)
+		    && (current->uid != server->m.mounted_uid))
+		{
 			return -EACCES;
-
+		}
 		if (argp) {
 			if (server->sign_wanted)
 			{
@@ -476,22 +370,24 @@ static int __ncp_ioctl(struct inode *inode, struct file *filp,
 		return 0;		
 		
         case NCP_IOC_SIGN_WANTED:
-		if (file_permission(filp, MAY_READ) != 0
-		    && uid != server->m.mounted_uid)
+		if ((file_permission(filp, MAY_READ) != 0)
+		    && (current->uid != server->m.mounted_uid))
+		{
 			return -EACCES;
+		}
 		
                 if (put_user(server->sign_wanted, (int __user *)argp))
 			return -EFAULT;
                 return 0;
-
 	case NCP_IOC_SET_SIGN_WANTED:
 		{
 			int newstate;
 
-			if (file_permission(filp, MAY_WRITE) != 0
-			    && uid != server->m.mounted_uid)
+			if ((file_permission(filp, MAY_WRITE) != 0)
+			    && (current->uid != server->m.mounted_uid))
+			{
 				return -EACCES;
-
+			}
 			/* get only low 8 bits... */
 			if (get_user(newstate, (unsigned char __user *)argp))
 				return -EFAULT;
@@ -508,12 +404,14 @@ static int __ncp_ioctl(struct inode *inode, struct file *filp,
 
 #ifdef CONFIG_NCPFS_IOCTL_LOCKING
 	case NCP_IOC_LOCKUNLOCK:
-		if (file_permission(filp, MAY_WRITE) != 0
-		    && uid != server->m.mounted_uid)
+		if ((file_permission(filp, MAY_WRITE) != 0)
+		    && (current->uid != server->m.mounted_uid))
+		{
 			return -EACCES;
-
+		}
 		{
 			struct ncp_lock_ioctl	 rqdata;
+			int result;
 
 			if (copy_from_user(&rqdata, argp, sizeof(rqdata)))
 				return -EFAULT;
@@ -578,35 +476,10 @@ outrel:
 		}
 #endif	/* CONFIG_NCPFS_IOCTL_LOCKING */
 
-#ifdef CONFIG_COMPAT
-	case NCP_IOC_GETOBJECTNAME_32:
-		if (uid != server->m.mounted_uid)
-			return -EACCES;
-		{
-			struct compat_ncp_objectname_ioctl user;
-			size_t outl;
-
-			if (copy_from_user(&user, argp, sizeof(user)))
-				return -EFAULT;
-			user.auth_type = server->auth.auth_type;
-			outl = user.object_name_len;
-			user.object_name_len = server->auth.object_name_len;
-			if (outl > user.object_name_len)
-				outl = user.object_name_len;
-			if (outl) {
-				if (copy_to_user(compat_ptr(user.object_name),
-						 server->auth.object_name,
-						 outl)) return -EFAULT;
-			}
-			if (copy_to_user(argp, &user, sizeof(user)))
-				return -EFAULT;
-			return 0;
-		}
-#endif
-
 	case NCP_IOC_GETOBJECTNAME:
-		if (uid != server->m.mounted_uid)
+		if (current->uid != server->m.mounted_uid) {
 			return -EACCES;
+		}
 		{
 			struct ncp_objectname_ioctl user;
 			size_t outl;
@@ -627,13 +500,10 @@ outrel:
 				return -EFAULT;
 			return 0;
 		}
-
-#ifdef CONFIG_COMPAT
-	case NCP_IOC_SETOBJECTNAME_32:
-#endif
 	case NCP_IOC_SETOBJECTNAME:
-		if (uid != server->m.mounted_uid)
+		if (current->uid != server->m.mounted_uid) {
 			return -EACCES;
+		}
 		{
 			struct ncp_objectname_ioctl user;
 			void* newname;
@@ -642,26 +512,18 @@ outrel:
 			void* oldprivate;
 			size_t oldprivatelen;
 
-#ifdef CONFIG_COMPAT
-			if (cmd == NCP_IOC_SETOBJECTNAME_32) {
-				struct compat_ncp_objectname_ioctl user32;
-				if (copy_from_user(&user32, argp, sizeof(user32)))
-					return -EFAULT;
-				user.auth_type = user32.auth_type;
-				user.object_name_len = user32.object_name_len;
-				user.object_name = compat_ptr(user32.object_name);
-			} else
-#endif
 			if (copy_from_user(&user, argp, sizeof(user)))
 				return -EFAULT;
-
 			if (user.object_name_len > NCP_OBJECT_NAME_MAX_LEN)
 				return -ENOMEM;
 			if (user.object_name_len) {
-				newname = memdup_user(user.object_name,
-						      user.object_name_len);
-				if (IS_ERR(newname))
-					return PTR_ERR(newname);
+				newname = kmalloc(user.object_name_len, GFP_USER);
+				if (!newname)
+					return -ENOMEM;
+				if (copy_from_user(newname, user.object_name, user.object_name_len)) {
+					kfree(newname);
+					return -EFAULT;
+				}
 			} else {
 				newname = NULL;
 			}
@@ -682,29 +544,16 @@ outrel:
 			kfree(oldname);
 			return 0;
 		}
-
-#ifdef CONFIG_COMPAT
-	case NCP_IOC_GETPRIVATEDATA_32:
-#endif
 	case NCP_IOC_GETPRIVATEDATA:
-		if (uid != server->m.mounted_uid)
+		if (current->uid != server->m.mounted_uid) {
 			return -EACCES;
+		}
 		{
 			struct ncp_privatedata_ioctl user;
 			size_t outl;
 
-#ifdef CONFIG_COMPAT
-			if (cmd == NCP_IOC_GETPRIVATEDATA_32) {
-				struct compat_ncp_privatedata_ioctl user32;
-				if (copy_from_user(&user32, argp, sizeof(user32)))
-					return -EFAULT;
-				user.len = user32.len;
-				user.data = compat_ptr(user32.data);
-			} else
-#endif
 			if (copy_from_user(&user, argp, sizeof(user)))
 				return -EFAULT;
-
 			outl = user.len;
 			user.len = server->priv.len;
 			if (outl > user.len) outl = user.len;
@@ -713,51 +562,32 @@ outrel:
 						 server->priv.data,
 						 outl)) return -EFAULT;
 			}
-#ifdef CONFIG_COMPAT
-			if (cmd == NCP_IOC_GETPRIVATEDATA_32) {
-				struct compat_ncp_privatedata_ioctl user32;
-				user32.len = user.len;
-				user32.data = (unsigned long) user.data;
-				if (copy_to_user(argp, &user32, sizeof(user32)))
-					return -EFAULT;
-			} else
-#endif
 			if (copy_to_user(argp, &user, sizeof(user)))
 				return -EFAULT;
-
 			return 0;
 		}
-
-#ifdef CONFIG_COMPAT
-	case NCP_IOC_SETPRIVATEDATA_32:
-#endif
 	case NCP_IOC_SETPRIVATEDATA:
-		if (uid != server->m.mounted_uid)
+		if (current->uid != server->m.mounted_uid) {
 			return -EACCES;
+		}
 		{
 			struct ncp_privatedata_ioctl user;
 			void* new;
 			void* old;
 			size_t oldlen;
 
-#ifdef CONFIG_COMPAT
-			if (cmd == NCP_IOC_SETPRIVATEDATA_32) {
-				struct compat_ncp_privatedata_ioctl user32;
-				if (copy_from_user(&user32, argp, sizeof(user32)))
-					return -EFAULT;
-				user.len = user32.len;
-				user.data = compat_ptr(user32.data);
-			} else
-#endif
 			if (copy_from_user(&user, argp, sizeof(user)))
 				return -EFAULT;
-
 			if (user.len > NCP_PRIVATE_DATA_MAX_LEN)
 				return -ENOMEM;
 			if (user.len) {
-				new = memdup_user(user.data, user.len);
-				if (IS_ERR(new))
-					return PTR_ERR(new);
+				new = kmalloc(user.len, GFP_USER);
+				if (!new)
+					return -ENOMEM;
+				if (copy_from_user(new, user.data, user.len)) {
+					kfree(new);
+					return -EFAULT;
+				}
 			} else {
 				new = NULL;
 			}
@@ -781,10 +611,9 @@ outrel:
 #endif /* CONFIG_NCPFS_NLS */
 
 	case NCP_IOC_SETDENTRYTTL:
-		if (file_permission(filp, MAY_WRITE) != 0 &&
-		    uid != server->m.mounted_uid)
+		if ((file_permission(filp, MAY_WRITE) != 0) &&
+				 (current->uid != server->m.mounted_uid))
 			return -EACCES;
-
 		{
 			u_int32_t user;
 
@@ -807,70 +636,20 @@ outrel:
 		}
 
 	}
+/* #ifdef CONFIG_UID16 */
+	/* NCP_IOC_GETMOUNTUID may be same as NCP_IOC_GETMOUNTUID2,
+           so we have this out of switch */
+	if (cmd == NCP_IOC_GETMOUNTUID) {
+		__kernel_uid_t uid = 0;
+		if ((file_permission(filp, MAY_READ) != 0)
+		    && (current->uid != server->m.mounted_uid)) {
+			return -EACCES;
+		}
+		SET_UID(uid, server->m.mounted_uid);
+		if (put_user(uid, (__kernel_uid_t __user *)argp))
+			return -EFAULT;
+		return 0;
+	}
+/* #endif */
 	return -EINVAL;
 }
-
-static int ncp_ioctl_need_write(unsigned int cmd)
-{
-	switch (cmd) {
-	case NCP_IOC_GET_FS_INFO:
-	case NCP_IOC_GET_FS_INFO_V2:
-	case NCP_IOC_NCPREQUEST:
-	case NCP_IOC_SETDENTRYTTL:
-	case NCP_IOC_SIGN_INIT:
-	case NCP_IOC_LOCKUNLOCK:
-	case NCP_IOC_SET_SIGN_WANTED:
-		return 1;
-	case NCP_IOC_GETOBJECTNAME:
-	case NCP_IOC_SETOBJECTNAME:
-	case NCP_IOC_GETPRIVATEDATA:
-	case NCP_IOC_SETPRIVATEDATA:
-	case NCP_IOC_SETCHARSETS:
-	case NCP_IOC_GETCHARSETS:
-	case NCP_IOC_CONN_LOGGED_IN:
-	case NCP_IOC_GETDENTRYTTL:
-	case NCP_IOC_GETMOUNTUID2:
-	case NCP_IOC_SIGN_WANTED:
-	case NCP_IOC_GETROOT:
-	case NCP_IOC_SETROOT:
-		return 0;
-	default:
-		/* unkown IOCTL command, assume write */
-		return 1;
-	}
-}
-
-int ncp_ioctl(struct inode *inode, struct file *filp,
-	      unsigned int cmd, unsigned long arg)
-{
-	int ret;
-
-	if (ncp_ioctl_need_write(cmd)) {
-		/*
-		 * inside the ioctl(), any failures which
-		 * are because of file_permission() are
-		 * -EACCESS, so it seems consistent to keep
-		 *  that here.
-		 */
-		if (mnt_want_write(filp->f_path.mnt))
-			return -EACCES;
-	}
-	ret = __ncp_ioctl(inode, filp, cmd, arg);
-	if (ncp_ioctl_need_write(cmd))
-		mnt_drop_write(filp->f_path.mnt);
-	return ret;
-}
-
-#ifdef CONFIG_COMPAT
-long ncp_compat_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
-{
-	struct inode *inode = file->f_path.dentry->d_inode;
-	int ret;
-
-	lock_kernel();
-	arg = (unsigned long) compat_ptr(arg);
-	ret = ncp_ioctl(inode, file, cmd, arg);
-	unlock_kernel();
-	return ret;
-}
-#endif

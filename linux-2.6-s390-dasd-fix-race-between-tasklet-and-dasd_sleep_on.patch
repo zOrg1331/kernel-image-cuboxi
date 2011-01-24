@@ -1,0 +1,106 @@
+From: Hendrik Brueckner <brueckner@redhat.com>
+Date: Wed, 26 May 2010 08:54:32 -0400
+Subject: [s390] dasd: fix race between tasklet and dasd_sleep_on
+Message-id: <20100526085431.GA31075@redhat.com>
+Patchwork-id: 25806
+O-Subject: [RHEL5.6 PATCH 1/1] [s390x] dasd: fix race between tasklet and
+	dasd_sleep_on
+Bugzilla: 593756
+RH-Acked-by: Jarod Wilson <jarod@redhat.com>
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+
+Description
+-----------
+A panic might occur when calling the callback function of an cqr.
+The various dasd_sleep_on functions use a global wait queue when waiting
+for a cqr.  The wait condition checks the status and devlist fields of
+the cqr to determine if it is safe to continue.  This evaluation may
+return true, although the tasklet has not finished processing of the cqr
+and the callback function has not been called yet.
+When the callback is finally called, the data in the cqr may already be
+invalid.
+
+The sleep_on wait condition needs a safe way to determine if the tasklet
+has finished processing.  Use the callback_data field of the cqr to store
+a token, which is set by the callback function itself.
+
+Bugzilla
+--------
+BZ 593756
+https://bugzilla.redhat.com/show_bug.cgi?id=593756
+
+Upstream status of the patch
+----------------------------
+The patch is upstream as of kernel version 2.6.34
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=1c1e093cbf6d3a7576ba0bd10363362a1c5c74ee
+
+Test status
+-----------
+The patch has been tested and fixes the problem.
+The fix has been verified by the IBM test department.
+
+
+diff --git a/drivers/s390/block/dasd.c b/drivers/s390/block/dasd.c
+index 2ad10fb..9581930 100644
+--- a/drivers/s390/block/dasd.c
++++ b/drivers/s390/block/dasd.c
+@@ -32,6 +32,9 @@
+  */
+ #define DASD_CHANQ_MAX_SIZE 4
+ 
++#define DASD_SLEEPON_START_TAG  (void *) 1
++#define DASD_SLEEPON_END_TAG    (void *) 2
++
+ /*
+  * SECTION: exported variables of dasd.c
+  */
+@@ -1524,7 +1527,10 @@ dasd_add_request_tail(struct dasd_ccw_req *req)
+ static void
+ dasd_wakeup_cb(struct dasd_ccw_req *cqr, void *data)
+ {
+-	wake_up((wait_queue_head_t *) data);
++	spin_lock_irq(get_ccwdev_lock(cqr->device->cdev));
++	cqr->callback_data = DASD_SLEEPON_END_TAG;
++	spin_unlock_irq(get_ccwdev_lock(cqr->device->cdev));
++	wake_up(&generic_waitq);
+ }
+ 
+ static inline int
+@@ -1535,9 +1541,7 @@ _wait_for_wakeup(struct dasd_ccw_req *cqr)
+ 
+ 	device = cqr->device;
+ 	spin_lock_irq(get_ccwdev_lock(device->cdev));
+-	rc = ((cqr->status == DASD_CQR_DONE ||
+-	       cqr->status == DASD_CQR_FAILED) &&
+-	      list_empty(&cqr->list));
++	rc = (cqr->callback_data == DASD_SLEEPON_END_TAG);
+ 	spin_unlock_irq(get_ccwdev_lock(device->cdev));
+ 	return rc;
+ }
+@@ -1555,7 +1559,7 @@ dasd_sleep_on(struct dasd_ccw_req * cqr)
+ 	spin_lock_irq(get_ccwdev_lock(device->cdev));
+ 
+ 	cqr->callback = dasd_wakeup_cb;
+-	cqr->callback_data = (void *) &generic_waitq;
++	cqr->callback_data = DASD_SLEEPON_START_TAG;
+ 	cqr->status = DASD_CQR_QUEUED;
+ 	list_add_tail(&cqr->list, &device->ccw_queue);
+ 
+@@ -1585,7 +1589,7 @@ dasd_sleep_on_interruptible(struct dasd_ccw_req * cqr)
+ 	spin_lock_irq(get_ccwdev_lock(device->cdev));
+ 
+ 	cqr->callback = dasd_wakeup_cb;
+-	cqr->callback_data = (void *) &generic_waitq;
++	cqr->callback_data = DASD_SLEEPON_START_TAG;
+ 	cqr->status = DASD_CQR_QUEUED;
+ 	list_add_tail(&cqr->list, &device->ccw_queue);
+ 
+@@ -1666,7 +1670,7 @@ dasd_sleep_on_immediatly(struct dasd_ccw_req * cqr)
+ 	}
+ 
+ 	cqr->callback = dasd_wakeup_cb;
+-	cqr->callback_data = (void *) &generic_waitq;
++	cqr->callback_data = DASD_SLEEPON_START_TAG;
+ 	cqr->status = DASD_CQR_QUEUED;
+ 	list_add(&cqr->list, &device->ccw_queue);
+ 

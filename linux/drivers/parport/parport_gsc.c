@@ -23,6 +23,7 @@
 
 #include <linux/module.h>
 #include <linux/init.h>
+#include <linux/sched.h>
 #include <linux/delay.h>
 #include <linux/errno.h>
 #include <linux/interrupt.h>
@@ -79,6 +80,12 @@ static int clear_epp_timeout(struct parport *pb)
  * parport_xxx_yyy macros.  extern __inline__ versions of several
  * of these are in parport_gsc.h.
  */
+
+static irqreturn_t parport_gsc_interrupt(int irq, void *dev_id, struct pt_regs *regs)
+{
+	parport_generic_irq(irq, (struct parport *) dev_id, regs);
+	return IRQ_HANDLED;
+}
 
 void parport_gsc_init_state(struct pardevice *dev, struct parport_state *s)
 {
@@ -318,7 +325,7 @@ struct parport *__devinit parport_gsc_probe_port (unsigned long base,
 	printk("]\n");
 
 	if (p->irq != PARPORT_IRQ_NONE) {
-		if (request_irq (p->irq, parport_irq_handler,
+		if (request_irq (p->irq, parport_gsc_interrupt,
 				 0, p->name, p)) {
 			printk (KERN_WARNING "%s: irq %d in use, "
 				"resorting to polled operation\n",
@@ -344,7 +351,7 @@ struct parport *__devinit parport_gsc_probe_port (unsigned long base,
 
 #define PARPORT_GSC_OFFSET 0x800
 
-static int __devinitdata parport_count;
+static int __initdata parport_count;
 
 static int __devinit parport_init_chip(struct parisc_device *dev)
 {
@@ -352,8 +359,8 @@ static int __devinit parport_init_chip(struct parisc_device *dev)
 	unsigned long port;
 
 	if (!dev->irq) {
-		printk(KERN_WARNING "IRQ not found for parallel device at 0x%llx\n",
-			(unsigned long long)dev->hpa.start);
+		printk(KERN_WARNING "IRQ not found for parallel device at 0x%lx\n",
+			dev->hpa.start);
 		return -ENODEV;
 	}
 
@@ -365,25 +372,25 @@ static int __devinit parport_init_chip(struct parisc_device *dev)
 	if (boot_cpu_data.cpu_type > pcxt && !pdc_add_valid(port+4)) {
 
 		/* Initialize bidirectional-mode (0x10) & data-tranfer-mode #1 (0x20) */
-		printk("%s: initialize bidirectional-mode.\n", __func__);
+		printk("%s: initialize bidirectional-mode.\n", __FUNCTION__);
 		parport_writeb ( (0x10 + 0x20), port + 4);
 
 	} else {
-		printk("%s: enhanced parport-modes not supported.\n", __func__);
+		printk("%s: enhanced parport-modes not supported.\n", __FUNCTION__);
 	}
 	
 	p = parport_gsc_probe_port(port, 0, dev->irq,
 			/* PARPORT_IRQ_NONE */ PARPORT_DMA_NONE, NULL);
 	if (p)
 		parport_count++;
-	dev_set_drvdata(&dev->dev, p);
+	dev->dev.driver_data = p;
 
 	return 0;
 }
 
 static int __devexit parport_remove_chip(struct parisc_device *dev)
 {
-	struct parport *p = dev_get_drvdata(&dev->dev);
+	struct parport *p = dev->dev.driver_data;
 	if (p) {
 		struct parport_gsc_private *priv = p->private_data;
 		struct parport_operations *ops = p->ops;

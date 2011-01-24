@@ -1,0 +1,122 @@
+From: Scott Moser <smoser@redhat.com>
+Date: Tue, 23 Oct 2007 15:56:58 -0400
+Subject: [net] ibmveth: h_free_logical_lan err on pool resize
+Message-id: 11931694202322-do-send-email-smoser@redhat.com
+O-Subject: [PATCH RHEL5u2] bz250827 Jumbo frames cannot be enabled on ibmveth [2/3]
+Bugzilla: 250827
+
+Description:
+-----------
+Jumbo frames cannot be enabled on ibmveth. For example, adding MTU=9000 to
+/etc/sysconfig/network-scripts/ifcfg-eth1 does not work since receive
+buffer pools are not getting allocated. When attempting to use the ibmveth
+sysfs interface to allocate the buffer pools prior to activating the
+interface, an oops resulted.
+
+Currently (2.6.18-52.el5), with inf=eth1 and mtu=9000 :
+- ip link set dev $inf mtu $mtu
+ fails with: SIOCSIFMTU: Invalid argument
+- echo 1 > /sys/bus/vio/devices/30000004/pool3/active
+ and
+  echo 65536 > /sys/class/net/$i/device/pool0/size
+ drops into xmon
+
+The patch below fixes the listed crashes above and makes 'ip' able to set
+the mtu as it should.
+
+commit 4aa9c93e1c7911866c546651a5efbbf62914092e
+Author: Brian King <brking@linux.vnet.ibm.com>
+Date:   Fri Jun 8 14:05:16 2007 -0500
+
+ibmveth: Fix h_free_logical_lan error on pool resize
+
+When attempting to activate additional rx buffer pools on an ibmveth
+interface that was not yet up, the error below was seen. The patch fixes
+this by only closing and opening the interface to activate the resize if
+the interface is already opened.
+
+Signed-off-by: Brian King <brking@linux.vnet.ibm.com>
+Signed-off-by: Jeff Garzik <jeff@garzik.org>
+---
+ drivers/net/ibmveth.c |   53 ++++++++++++++++++++++++++++--------------------
+ 1 files changed, 31 insertions(+), 22 deletions(-)
+
+diff --git a/drivers/net/ibmveth.c b/drivers/net/ibmveth.c
+index fbb2d81..3d72317 100644
+--- a/drivers/net/ibmveth.c
++++ b/drivers/net/ibmveth.c
+@@ -1245,16 +1245,19 @@ const char * buf, size_t count)
+ 
+ 	if (attr == &veth_active_attr) {
+ 		if (value && !pool->active) {
+-			if(ibmveth_alloc_buffer_pool(pool)) {
+-                                ibmveth_error_printk("unable to alloc pool\n");
+-                                return -ENOMEM;
+-                        }
+-			pool->active = 1;
+-			adapter->pool_config = 1;
+-			ibmveth_close(netdev);
+-			adapter->pool_config = 0;
+-			if ((rc = ibmveth_open(netdev)))
+-				return rc;
++			if (netif_running(netdev)) {
++				if(ibmveth_alloc_buffer_pool(pool)) {
++					ibmveth_error_printk("unable to alloc pool\n");
++					return -ENOMEM;
++				}
++				pool->active = 1;
++				adapter->pool_config = 1;
++				ibmveth_close(netdev);
++				adapter->pool_config = 0;
++				if ((rc = ibmveth_open(netdev)))
++					return rc;
++			} else
++				pool->active = 1;
+ 		} else if (!value && pool->active) {
+ 			int mtu = netdev->mtu + IBMVETH_BUFF_OH;
+ 			int i;
+@@ -1287,23 +1290,29 @@ const char * buf, size_t count)
+ 		if (value <= 0 || value > IBMVETH_MAX_POOL_COUNT)
+ 			return -EINVAL;
+ 		else {
+-			adapter->pool_config = 1;
+-			ibmveth_close(netdev);
+-			adapter->pool_config = 0;
+-			pool->size = value;
+-			if ((rc = ibmveth_open(netdev)))
+-				return rc;
++			if (netif_running(netdev)) {
++				adapter->pool_config = 1;
++				ibmveth_close(netdev);
++				adapter->pool_config = 0;
++				pool->size = value;
++				if ((rc = ibmveth_open(netdev)))
++					return rc;
++			} else
++				pool->size = value;
+ 		}
+ 	} else if (attr == &veth_size_attr) {
+ 		if (value <= IBMVETH_BUFF_OH || value > IBMVETH_MAX_BUF_SIZE)
+ 			return -EINVAL;
+ 		else {
+-			adapter->pool_config = 1;
+-			ibmveth_close(netdev);
+-			adapter->pool_config = 0;
+-			pool->buff_size = value;
+-			if ((rc = ibmveth_open(netdev)))
+-				return rc;
++			if (netif_running(netdev)) {
++				adapter->pool_config = 1;
++				ibmveth_close(netdev);
++				adapter->pool_config = 0;
++				pool->buff_size = value;
++				if ((rc = ibmveth_open(netdev)))
++					return rc;
++			} else
++				pool->buff_size = value;
+ 		}
+ 	}
+ 
+-- 
+1.5.3.5.645.gbb47
+

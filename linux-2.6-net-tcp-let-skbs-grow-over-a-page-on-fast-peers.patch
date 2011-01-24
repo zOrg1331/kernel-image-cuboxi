@@ -1,0 +1,78 @@
+From: Mark McLoughlin <markmc@redhat.com>
+Date: Tue, 21 Oct 2008 10:09:24 +0100
+Subject: [net] tcp: let skbs grow over a page on fast peers
+Message-id: 1224580164.708.19.camel@blaa
+O-Subject: [RHEL5.3 PATCH] tcp: Let skbs grow over a page on fast peers
+Bugzilla: 467845
+RH-Acked-by: Herbert Xu <herbert.xu@redhat.com>
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+RH-Acked-by: David Miller <davem@redhat.com>
+
+https://bugzilla.redhat.com/467845
+
+Testing RHEL 5.3 virtio_net drivers with RHEL5 KVM, I notice that
+the guest rarely sends packets greater than a page to the host.
+
+Given that we have GSO support, sending 64k GSO packets would be
+much more efficient.
+
+Herbert points out this fix in 2.6.26 which improves a netperf
+benchmark (guest->host with 64k send buffers) of RHEL5 virtio_net
+by 200%:
+
+  Commit 69d1506731168d6845a76a303b2c45f7c05f3f2c
+
+  While testing the virtio-net driver on KVM with TSO I noticed
+  that TSO performance with a 1500 MTU is significantly worse
+  compared to the performance of non-TSO with a 16436 MTU.  The
+  packet dump shows that most of the packets sent are smaller
+  than a page.
+
+  Looking at the code this actually is quite obvious as it always
+  stop extending the packet if it's the first packet yet to be
+  sent and if it's larger than the MSS.  Since each extension is
+  bound by the page size, this means that (given a 1500 MTU) we're
+  very unlikely to construct packets greater than a page, provided
+  that the receiver and the path is fast enough so that packets can
+  always be sent immediately.
+
+  The fix is also quite obvious.  The push calls inside the loop
+  is just an optimisation so that we don't end up doing all the
+  sending at the end of the loop.  Therefore there is no specific
+  reason why it has to do so at MSS boundaries.  For TSO, the
+  most natural extension of this optimisation is to do the pushing
+  once the skb exceeds the TSO size goal.
+
+  This is what the patch does and testing with KVM shows that the
+  TSO performance with a 1500 MTU easily surpasses that of a 16436
+  MTU and indeed the packet sizes sent are generally larger than
+  16436.
+
+  I don't see any obvious downsides for slower peers or connections,
+  but it would be prudent to test this extensively to ensure that
+  those cases don't regress.
+
+Signed-off-by: Mark McLoughlin <markmc@redhat.com>
+
+diff --git a/net/ipv4/tcp.c b/net/ipv4/tcp.c
+index f8c5cff..401983b 100644
+--- a/net/ipv4/tcp.c
++++ b/net/ipv4/tcp.c
+@@ -582,7 +582,7 @@ new_segment:
+ 		if (!(psize -= copy))
+ 			goto out;
+ 
+-		if (skb->len < mss_now || (flags & MSG_OOB))
++		if (skb->len < size_goal || (flags & MSG_OOB))
+ 			continue;
+ 
+ 		if (forced_push(tp)) {
+@@ -826,7 +826,7 @@ new_segment:
+ 			if ((seglen -= copy) == 0 && iovlen == 0)
+ 				goto out;
+ 
+-			if (skb->len < mss_now || (flags & MSG_OOB))
++			if (skb->len < size_goal || (flags & MSG_OOB))
+ 				continue;
+ 
+ 			if (forced_push(tp)) {

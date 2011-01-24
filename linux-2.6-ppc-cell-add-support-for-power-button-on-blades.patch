@@ -1,0 +1,222 @@
+From: AMEET M. PARANJAPE <aparanja@redhat.com>
+Date: Fri, 23 Jan 2009 16:34:29 -0500
+Subject: [ppc] cell: add support for power button on blades
+Message-id: 20090123213317.11133.59871.sendpatchset@squad5-lp1.lab.bos.redhat.com
+O-Subject: [PATCH RHEL5.4 BZ475658 1/2] Add support for power button of IBM cell blades
+Bugzilla: 475658
+RH-Acked-by: David Howells <dhowells@redhat.com>
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+RH-Acked-by: David Howells <dhowells@redhat.com>
+
+RHBZ#:
+======
+https://bugzilla.redhat.com/show_bug.cgi?id=475658
+
+Description:
+===========
+This patch adds support for the power button on IBM cell blades.
+It actually doesn't shut down the machine. Instead it exposes an
+input device /dev/input/event0 to userspace which sends KEY_POWER
+if power button has been pressed.
+
+haldaemon actually recognizes the button, so a platform independent acpid
+replacement should handle it correctly.
+
+RHEL Version Found:
+================
+RHEL 5.3
+
+kABI Status:
+============
+No symbols were harmed.
+
+Brew:
+=====
+Built on all platforms.
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1660808
+
+Upstream Status:
+================
+Commit ID 4795b7801b07e1b7286edb0d9321433fc0eac6cc
+
+Test Status:
+============
+Without this patch the QS22 does not power off when the power button is
+pressed.  With the patch the QS22 powers off.
+
+Note: For this to work BMC firmware version 1.31 must be installed on the
+BladeCenter.
+===============================================================
+Ameet Paranjape 978-392-3903 ext 23903
+IBM on-site partner
+
+Proposed Patch:
+===============
+
+diff --git a/arch/powerpc/platforms/cell/Kconfig b/arch/powerpc/platforms/cell/Kconfig
+index dbd7329..d24e037 100644
+--- a/arch/powerpc/platforms/cell/Kconfig
++++ b/arch/powerpc/platforms/cell/Kconfig
+@@ -42,6 +42,14 @@ config CBE_RAS
+ 	bool "RAS features for bare metal Cell BE"
+ 	default y
+ 
++config PPC_IBM_CELL_POWERBUTTON
++	tristate "IBM Cell Blade power button"
++	depends on PPC_IBM_CELL_BLADE && PPC_PMI && INPUT_EVDEV
++	default y
++	help
++	  Support Powerbutton on IBM Cell blades.
++	  This will enable the powerbutton as an input device.
++
+ config CBE_THERM
+ 	tristate "CBE thermal support"
+ 	default m
+diff --git a/arch/powerpc/platforms/cell/Makefile b/arch/powerpc/platforms/cell/Makefile
+index ffb65fd..4edcc4c 100644
+--- a/arch/powerpc/platforms/cell/Makefile
++++ b/arch/powerpc/platforms/cell/Makefile
+@@ -13,6 +13,8 @@ obj-$(CONFIG_CBE_CPUFREQ_SPU_GOVERNOR)    += cpufreq_spudemand.o
+ obj-$(CONFIG_CBE_AXON_UTL)		+= axon_utl.o
+ obj-$(CONFIG_CBE_AXON_PCI)		+= axon_pci-error.o
+ 
++obj-$(CONFIG_PPC_IBM_CELL_POWERBUTTON)	+= cbe_powerbutton.o
++
+ ifeq ($(CONFIG_SMP),y)
+ obj-$(CONFIG_PPC_CELL_NATIVE)		+= smp.o
+ endif
+diff --git a/arch/powerpc/platforms/cell/cbe_powerbutton.c b/arch/powerpc/platforms/cell/cbe_powerbutton.c
+new file mode 100644
+index 0000000..690e6ec
+--- /dev/null
++++ b/arch/powerpc/platforms/cell/cbe_powerbutton.c
+@@ -0,0 +1,117 @@
++/*
++ * driver for powerbutton on IBM cell blades
++ *
++ * (C) Copyright IBM Corp. 2005-2008
++ *
++ * Author: Christian Krafft <krafft@de.ibm.com>
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 2, or (at your option)
++ * any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program; if not, write to the Free Software
++ * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
++ */
++
++#include <linux/input.h>
++#include <linux/platform_device.h>
++#include <asm/pmi.h>
++#include <asm/prom.h>
++
++static struct input_dev *button_dev;
++static struct platform_device *button_pdev;
++
++static void cbe_powerbutton_handle_pmi(pmi_message_t pmi_msg)
++{
++	BUG_ON(pmi_msg.type != PMI_TYPE_POWER_BUTTON);
++
++	input_report_key(button_dev, KEY_POWER, 1);
++	input_sync(button_dev);
++	input_report_key(button_dev, KEY_POWER, 0);
++	input_sync(button_dev);
++}
++
++static struct pmi_handler cbe_pmi_handler = {
++	.type			= PMI_TYPE_POWER_BUTTON,
++	.handle_pmi_message	= cbe_powerbutton_handle_pmi,
++};
++
++static int __init cbe_powerbutton_init(void)
++{
++	int ret = 0;
++	struct input_dev *dev;
++
++	if (!machine_is_compatible("IBM,CBPLUS-1.0")) {
++		printk(KERN_ERR "%s: Not a cell blade.\n", __func__);
++		ret = -ENODEV;
++		goto out;
++	}
++
++	dev = input_allocate_device();
++	if (!dev) {
++		ret = -ENOMEM;
++		printk(KERN_ERR "%s: Not enough memory.\n", __func__);
++		goto out;
++	}
++
++	set_bit(EV_KEY, dev->evbit);
++	set_bit(KEY_POWER, dev->keybit);
++
++	dev->name = "Power Button";
++	dev->id.bustype = BUS_HOST;
++
++	/* this makes the button look like an acpi power button
++	 * no clue whether anyone relies on that though */
++	dev->id.product = 0x02;
++	dev->phys = "LNXPWRBN/button/input0";
++
++	button_pdev = platform_device_register_simple("power_button", 0, NULL, 0);
++	if (IS_ERR(button_pdev)) {
++		ret = PTR_ERR(button_pdev);
++		goto out_free_input;
++	}
++
++	dev->dev = &button_pdev->dev;
++	ret = input_register_device(dev);
++	if (ret) {
++		printk(KERN_ERR "%s: Failed to register device\n", __func__);
++		goto out_free_pdev;
++	}
++
++	button_dev = dev;
++
++	ret = pmi_register_handler(&cbe_pmi_handler);
++	if (ret) {
++		printk(KERN_ERR "%s: Failed to register with pmi.\n", __func__);
++		goto out_free_pdev;
++	}
++
++	goto out;
++
++out_free_pdev:
++	platform_device_unregister(button_pdev);
++out_free_input:
++	input_free_device(dev);
++out:
++	return ret;
++}
++
++static void __exit cbe_powerbutton_exit(void)
++{
++	pmi_unregister_handler(&cbe_pmi_handler);
++	platform_device_unregister(button_pdev);
++	input_free_device(button_dev);
++}
++
++module_init(cbe_powerbutton_init);
++module_exit(cbe_powerbutton_exit);
++
++MODULE_LICENSE("GPL");
++MODULE_AUTHOR("Christian Krafft <krafft@de.ibm.com>");
+diff --git a/include/asm-powerpc/pmi.h b/include/asm-powerpc/pmi.h
+index 2259d4c..9509186 100644
+--- a/include/asm-powerpc/pmi.h
++++ b/include/asm-powerpc/pmi.h
+@@ -32,6 +32,7 @@
+ #include <asm/of_device.h>
+ 
+ #define PMI_TYPE_FREQ_CHANGE	0x01
++#define PMI_TYPE_POWER_BUTTON	0x02
+ #define PMI_READ_TYPE		0
+ #define PMI_READ_DATA0		1
+ #define PMI_READ_DATA1		2

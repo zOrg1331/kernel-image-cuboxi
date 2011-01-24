@@ -18,7 +18,7 @@
 #include <linux/slab.h>
 #include <linux/string.h>
 
-#include <mach/dma.h>
+#include <asm/dma.h>
 #include <asm/system.h>
 
 #include "mcp.h"
@@ -200,8 +200,9 @@ struct mcp *mcp_host_alloc(struct device *parent, size_t size)
 {
 	struct mcp *mcp;
 
-	mcp = kzalloc(sizeof(struct mcp) + size, GFP_KERNEL);
+	mcp = kmalloc(sizeof(struct mcp) + size, GFP_KERNEL);
 	if (mcp) {
+		memset(mcp, 0, sizeof(struct mcp) + size);
 		spin_lock_init(&mcp->lock);
 		mcp->attached_device.parent = parent;
 		mcp->attached_device.bus = &mcp_bus_type;
@@ -214,7 +215,7 @@ EXPORT_SYMBOL(mcp_host_alloc);
 
 int mcp_host_register(struct mcp *mcp)
 {
-	dev_set_name(&mcp->attached_device, "mcp0");
+	strcpy(mcp->attached_device.bus_id, "mcp0");
 	return device_register(&mcp->attached_device);
 }
 EXPORT_SYMBOL(mcp_host_register);

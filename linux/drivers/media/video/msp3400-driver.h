@@ -5,7 +5,6 @@
 #define MSP3400_DRIVER_H
 
 #include <media/msp3400.h>
-#include <media/v4l2-device.h>
 
 /* ---------------------------------------------------------------------- */
 
@@ -50,9 +49,7 @@ extern int msp_dolby;
 extern int msp_stereo_thresh;
 
 struct msp_state {
-	struct v4l2_subdev sd;
 	int rev1, rev2;
-	int ident;
 	u8 has_nicam;
 	u8 has_radio;
 	u8 has_headphones;
@@ -67,7 +64,6 @@ struct msp_state {
 	u8 has_sound_processing;
 	u8 has_virtual_dolby_surround;
 	u8 has_dolby_pro_logic;
-	u8 force_btsc;
 
 	int radio;
 	int opmode;
@@ -80,8 +76,7 @@ struct msp_state {
 	int i2s_mode;
 	int main, second;	/* sound carrier */
 	int input;
-	u32 route_in;
-	u32 route_out;
+	struct v4l2_routing routing;
 
 	/* v4l2 */
 	int audmode;
@@ -98,11 +93,6 @@ struct msp_state {
 	unsigned int         restart:1;
 	unsigned int         watch_stereo:1;
 };
-
-static inline struct msp_state *to_state(struct v4l2_subdev *sd)
-{
-	return container_of(sd, struct msp_state, sd);
-}
 
 /* msp3400-driver.c */
 int msp_write_dem(struct i2c_client *client, int addr, int val);

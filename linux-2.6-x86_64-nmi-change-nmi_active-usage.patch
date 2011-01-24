@@ -1,0 +1,114 @@
+From: Aristeu Rozanski <aris@redhat.com>
+Date: Wed, 20 Aug 2008 13:16:52 -0400
+Subject: [x86_64] nmi: change nmi_active usage
+Message-id: 20080820171647.960880000@redhat.com
+O-Subject: [RHEL5.3 PATCH 06/25] nmi: change nmi_active usage
+Bugzilla: 447618
+
+https://bugzilla.redhat.com/show_bug.cgi?id=447618
+
+add nmi_watchdog_active and use it to count the number of CPUs with the NMI
+watchdog enabled. keep it in sync with nmi_active variable for kABI reasons.
+
+upstream: f2802e7f571c05f9a901b1f5bd144aa730ccc88e
+
+update: using a different name instead of making nmi_active atomic (kABI)
+
+diff --git a/arch/x86_64/kernel/nmi.c b/arch/x86_64/kernel/nmi.c
+index 8ddd38f..3f4aff5 100644
+--- a/arch/x86_64/kernel/nmi.c
++++ b/arch/x86_64/kernel/nmi.c
+@@ -53,6 +53,12 @@ static unsigned int lapic_nmi_owner;
+ int nmi_active;		/* oprofile uses this */
+ int panic_on_timeout;
+ 
++/*
++ * the upstream variable 'nmi_active' is called 'nmi_watchdog_active' on
++ * RHEL-5 for kABI reasons.
++ */
++atomic_t nmi_watchdog_active = ATOMIC_INIT(0);
++
+ static DEFINE_PER_CPU(short, wd_enabled);
+ 
+ unsigned int nmi_watchdog = NMI_DEFAULT;
+@@ -166,6 +172,9 @@ int __init check_nmi_watchdog (void)
+ 	int *counts;
+ 	int cpu;
+ 
++	if (!atomic_read(&nmi_watchdog_active))
++		return 0;
++
+ 	counts = kmalloc(NR_CPUS * sizeof(int), GFP_KERNEL);
+ 	if (!counts)
+ 		return -1;
+@@ -190,13 +199,20 @@ int __init check_nmi_watchdog (void)
+ 			       cpu,
+ 			       counts[cpu],
+ 			       cpu_pda(cpu)->__nmi_count);
+-			nmi_active = 0;
++			if (atomic_dec_and_test(&nmi_watchdog_active))
++				nmi_active = 0;
+ 			lapic_nmi_owner &= ~LAPIC_NMI_WATCHDOG;
+ 			nmi_perfctr_msr = 0;
+ 			kfree(counts);
+ 			return -1;
+ 		}
+ 	}
++	if (!atomic_read(&nmi_watchdog_active)) {
++		atomic_set(&nmi_watchdog_active, -1);
++		nmi_active = -1;
++		return -1;
++	}
++
+ 	endflag = 1;
+ 	printk("OK.\n");
+ 
+@@ -263,22 +279,27 @@ void release_lapic_nmi(void)
+ 		enable_lapic_nmi_watchdog();
+ }
+ 
++static int old_ioapic_count;
+ void disable_timer_nmi_watchdog(void)
+ {
+-	if ((nmi_watchdog != NMI_IO_APIC) || (nmi_active <= 0))
++	if ((nmi_watchdog != NMI_IO_APIC) ||
++	    (atomic_read(&nmi_watchdog_active) <= 0))
+ 		return;
+ 
+ 	disable_irq(0);
+ 	unset_nmi_callback();
++	old_ioapic_count = atomic_read(&nmi_watchdog_active);
++	atomic_set(&nmi_watchdog_active, -1);
+ 	nmi_active = -1;
+ 	nmi_watchdog = NMI_NONE;
+ }
+ 
+ void enable_timer_nmi_watchdog(void)
+ {
+-	if (nmi_active < 0) {
++	if (atomic_read(&nmi_watchdog_active) < 0) {
+ 		nmi_watchdog = NMI_IO_APIC;
+ 		touch_nmi_watchdog();
++		atomic_set(&nmi_watchdog_active, old_ioapic_count);
+ 		nmi_active = 1;
+ 		enable_irq(0);
+ 	}
+@@ -317,7 +338,7 @@ static int __init init_lapic_nmi_sysfs(void)
+ {
+ 	int error;
+ 
+-	if (nmi_active == 0 || nmi_watchdog != NMI_LOCAL_APIC)
++	if (atomic_read(&nmi_watchdog_active) == 0 || nmi_watchdog != NMI_LOCAL_APIC)
+ 		return 0;
+ 
+ 	error = sysdev_class_register(&nmi_sysclass);
+@@ -358,7 +379,8 @@ void setup_apic_nmi_watchdog(void)
+ 		/* FALL THROUGH */
+ 	case NMI_IO_APIC:
+ 		__get_cpu_var(wd_enabled) = 1;
+-		atomic_inc(&nmi_active);
++		if (atomic_inc_return(&nmi_watchdog_active) == 1)
++			nmi_active = 1;
+  	}
+ }
+ 

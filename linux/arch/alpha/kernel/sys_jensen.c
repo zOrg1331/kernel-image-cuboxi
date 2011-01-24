@@ -118,8 +118,8 @@ jensen_local_end(unsigned int irq)
 		i8259a_end_irq(1);
 }
 
-static struct irq_chip jensen_local_irq_type = {
-	.name		= "LOCAL",
+static struct hw_interrupt_type jensen_local_irq_type = {
+	.typename	= "LOCAL",
 	.startup	= jensen_local_startup,
 	.shutdown	= jensen_local_shutdown,
 	.enable		= jensen_local_enable,
@@ -129,7 +129,7 @@ static struct irq_chip jensen_local_irq_type = {
 };
 
 static void 
-jensen_device_interrupt(unsigned long vector)
+jensen_device_interrupt(unsigned long vector, struct pt_regs * regs)
 {
 	int irq;
 
@@ -189,7 +189,7 @@ jensen_device_interrupt(unsigned long vector)
           if (cc - last_msg > ((JENSEN_CYCLES_PER_SEC) * 3) ||
 	      irq != last_irq) {
                 printk(KERN_CRIT " irq %d count %d cc %u @ %lx\n",
-                       irq, count, cc-last_cc, get_irq_regs()->pc);
+                       irq, count, cc-last_cc, regs->pc);
                 count = 0;
                 last_msg = cc;
                 last_irq = irq;
@@ -198,7 +198,7 @@ jensen_device_interrupt(unsigned long vector)
         }
 #endif
 
-	handle_irq(irq);
+	handle_irq(irq, regs);
 }
 
 static void __init
@@ -244,10 +244,11 @@ jensen_init_arch(void)
 }
 
 static void
-jensen_machine_check(unsigned long vector, unsigned long la)
+jensen_machine_check (u64 vector, u64 la, struct pt_regs *regs)
 {
 	printk(KERN_CRIT "Machine check\n");
 }
+
 
 /*
  * The System Vector
@@ -260,8 +261,6 @@ struct alpha_machine_vector jensen_mv __initmv = {
 	.machine_check		= jensen_machine_check,
 	.max_isa_dma_address	= ALPHA_MAX_ISA_DMA_ADDRESS,
 	.rtc_port		= 0x170,
-	.rtc_get_time		= common_get_rtc_time,
-	.rtc_set_time		= common_set_rtc_time,
 
 	.nr_irqs		= 16,
 	.device_interrupt	= jensen_device_interrupt,

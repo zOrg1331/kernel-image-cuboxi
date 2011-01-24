@@ -1,0 +1,64 @@
+From: Mauro Carvalho Chehab <mchehab@redhat.com>
+Date: Tue, 23 Nov 2010 17:33:53 -0500
+Subject: [edac] i7core_edac: introduce free_i7core_dev
+Message-id: <20101123153353.272b3ac7@pedra>
+Patchwork-id: 29569
+O-Subject: [PATCH RHEL5 13/29] BZ#:651869 i7core_edac: Introduce free_i7core_dev
+Bugzilla: 651869
+RH-Acked-by: Aristeu Rozanski <aris@redhat.com>
+
+Changeset: 2aa9be448dab7433c685b634a4049289cb1913d3
+
+Have a method to make a couple with alloc_i7core_dev() previously
+introduced.  Using in pair will help proper resource handling.
+
+Signed-off-by: Hidetoshi Seto <seto.hidetoshi@jp.fujitsu.com>
+Signed-off-by: Mauro Carvalho Chehab <mchehab@redhat.com>
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/edac/i7core_edac.c b/drivers/edac/i7core_edac.c
+index 9bfba94..f4a8b1b 100644
+--- a/drivers/edac/i7core_edac.c
++++ b/drivers/edac/i7core_edac.c
+@@ -467,6 +467,13 @@ static struct i7core_dev *alloc_i7core_dev(u8 socket,
+ 	return i7core_dev;
+ }
+ 
++static void free_i7core_dev(struct i7core_dev *i7core_dev)
++{
++	list_del(&i7core_dev->list);
++	kfree(i7core_dev->pdev);
++	kfree(i7core_dev);
++}
++
+ /****************************************************************************
+ 			Memory check routines
+  ****************************************************************************/
+@@ -1266,7 +1273,6 @@ static void i7core_put_devices(struct i7core_dev *i7core_dev)
+ 			PCI_SLOT(pdev->devfn), PCI_FUNC(pdev->devfn));
+ 		pci_dev_put(pdev);
+ 	}
+-	kfree(i7core_dev->pdev);
+ }
+ 
+ static void i7core_put_all_devices(void)
+@@ -1275,8 +1281,7 @@ static void i7core_put_all_devices(void)
+ 
+ 	list_for_each_entry_safe(i7core_dev, tmp, &i7core_edac_list, list) {
+ 		i7core_put_devices(i7core_dev);
+-		list_del(&i7core_dev->list);
+-		kfree(i7core_dev);
++		free_i7core_dev(i7core_dev);
+ 	}
+ }
+ 
+@@ -2093,8 +2098,7 @@ static void __devexit i7core_remove(struct pci_dev *pdev)
+ 
+ 			/* Release PCI resources */
+ 			i7core_put_devices(i7core_dev);
+-			list_del(&i7core_dev->list);
+-			kfree(i7core_dev);
++			free_i7core_dev(i7core_dev);
+ 		}
+ 	}
+ 	probed--;

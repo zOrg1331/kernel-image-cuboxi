@@ -1,0 +1,50 @@
+From: Herbert Xu <herbert@gondor.apana.org.au>
+Date: Sun, 6 Jan 2008 16:09:44 +1100
+Subject: [ipsec] make xfrm_lookup flags argument a bit-field
+Message-id: E1JBNlY-0001D7-00@gondolin.me.apana.org.au
+O-Subject: [PATCH 28/32] [IPSEC]: Make xfrm_lookup flags argument a bit-field
+Bugzilla: 427876
+
+[IPSEC]: Make xfrm_lookup flags argument a bit-field
+
+This patch introduces an enum for bits in the flags argument of xfrm_lookup.
+This is so that we can cram more information into it later.
+
+Since all current users use just the values 0 and 1, XFRM_LOOKUP_WAIT has
+been added with the value 1 << 0 to represent the current meaning of flags.
+
+The test in __xfrm_lookup has been changed accordingly.
+
+Signed-off-by: Herbert Xu <herbert@gondor.apana.org.au>
+
+Acked-by: "David S. Miller" <davem@redhat.com>
+
+diff --git a/include/net/dst.h b/include/net/dst.h
+index 7aad0bc..865f823 100644
+--- a/include/net/dst.h
++++ b/include/net/dst.h
+@@ -252,6 +252,11 @@ static inline struct dst_entry *dst_check(struct dst_entry *dst, u32 cookie)
+ 
+ extern void		dst_init(void);
+ 
++/* Flags for xfrm_lookup flags argument. */
++enum {
++	XFRM_LOOKUP_WAIT = 1 << 0,
++};
++
+ struct flowi;
+ #ifndef CONFIG_XFRM
+ static inline int xfrm_lookup(struct dst_entry **dst_p, struct flowi *fl,
+diff --git a/net/xfrm/xfrm_policy.c b/net/xfrm/xfrm_policy.c
+index d5e6cd7..5437bf5 100644
+--- a/net/xfrm/xfrm_policy.c
++++ b/net/xfrm/xfrm_policy.c
+@@ -998,7 +998,7 @@ restart:
+ 				xfrm_pol_put(policy);
+ 				return -EREMOTE;
+ 			}
+-			if (err == -EAGAIN && flags) {
++			if (err == -EAGAIN && (flags & XFRM_LOOKUP_WAIT)) {
+ 				DECLARE_WAITQUEUE(wait, current);
+ 
+ 				add_wait_queue(&km_waitq, &wait);

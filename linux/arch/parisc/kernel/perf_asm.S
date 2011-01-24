@@ -21,9 +21,6 @@
 
 #include <asm/assembly.h>
 
-#include <linux/init.h>
-#include <linux/linkage.h>
-
 #ifdef CONFIG_64BIT
 	.level		2.0w
 #endif /* CONFIG_64BIT */
@@ -44,8 +41,10 @@
 ; starting/stopping the coprocessor with the pmenb/pmdis.
 ;
 	.text
+	.align 32
 
-ENTRY(perf_intrigue_enable_perf_counters)
+	.export perf_intrigue_enable_perf_counters,code
+perf_intrigue_enable_perf_counters:
 	.proc
 	.callinfo  frame=0,NO_CALLS
 	.entry
@@ -70,9 +69,9 @@ ENTRY(perf_intrigue_enable_perf_counters)
 	nop
 	.exit
 	.procend
-ENDPROC(perf_intrigue_enable_perf_counters)
 
-ENTRY(perf_intrigue_disable_perf_counters)
+	.export perf_intrigue_disable_perf_counters,code
+perf_intrigue_disable_perf_counters:
 	.proc
 	.callinfo  frame=0,NO_CALLS
 	.entry
@@ -87,7 +86,6 @@ ENTRY(perf_intrigue_disable_perf_counters)
 	mtctl   %r26,ccr                 ; turn off performance coprocessor
 	.exit
 	.procend
-ENDPROC(perf_intrigue_disable_perf_counters)
 
 ;***********************************************************************
 ;*
@@ -119,7 +117,8 @@ ENDPROC(perf_intrigue_disable_perf_counters)
 ;*
 ;***********************************************************************
 
-ENTRY(perf_rdr_shift_in_W)
+	.export perf_rdr_shift_in_W,code
+perf_rdr_shift_in_W:
 	.proc
 	.callinfo frame=0,NO_CALLS
 	.entry
@@ -551,7 +550,6 @@ perf_rdr_shift_in_W_leave:
 	.exit
 	MTDIAG_2	(24)			; restore DR2
 	.procend
-ENDPROC(perf_rdr_shift_in_W)
 
 
 ;***********************************************************************
@@ -577,7 +575,8 @@ ENDPROC(perf_rdr_shift_in_W)
 ;*
 ;***********************************************************************
 
-ENTRY(perf_rdr_shift_out_W)
+	.export perf_rdr_shift_out_W,code
+perf_rdr_shift_out_W:
 	.proc
 	.callinfo frame=0,NO_CALLS
 	.entry
@@ -984,7 +983,6 @@ perf_rdr_shift_out_W_leave:
 	.exit
 	MTDIAG_2	(23)			; restore DR2
 	.procend
-ENDPROC(perf_rdr_shift_out_W)
 
 
 ;***********************************************************************
@@ -1014,7 +1012,8 @@ ENDPROC(perf_rdr_shift_out_W)
 ;*
 ;***********************************************************************
 
-ENTRY(perf_rdr_shift_in_U)
+	.export perf_rdr_shift_in_U,code
+perf_rdr_shift_in_U:
 	.proc
 	.callinfo frame=0,NO_CALLS
 	.entry
@@ -1344,7 +1343,6 @@ perf_rdr_shift_in_U_leave:
 	.exit
 	MTDIAG_2	(24)			; restore DR2
 	.procend
-ENDPROC(perf_rdr_shift_in_U)
 
 ;***********************************************************************
 ;*
@@ -1371,7 +1369,8 @@ ENDPROC(perf_rdr_shift_in_U)
 ;*
 ;***********************************************************************
 
-ENTRY(perf_rdr_shift_out_U)
+	.export perf_rdr_shift_out_U,code
+perf_rdr_shift_out_U:
 	.proc
 	.callinfo frame=0,NO_CALLS
 	.entry
@@ -1688,5 +1687,4 @@ perf_rdr_shift_out_U_leave:
 	.exit
 	MTDIAG_2	(23)			; restore DR2
 	.procend
-ENDPROC(perf_rdr_shift_out_U)
 

@@ -1,0 +1,349 @@
+From: Jaroslav Kysela <jkysela@redhat.com>
+Date: Wed, 22 Jul 2009 15:10:31 -0400
+Subject: [alsa] add native support for IbexPeak audio
+Message-id: 200907221910.n6MJAVbB006232@ns3.rdu.redhat.com
+O-Subject: [RHEL 5.4 PATCH] [2/2] ALSA: Add native support for IbexPeak audio
+Bugzilla: 509526
+RH-Acked-by: David Miller <davem@redhat.com>
+RH-Acked-by: John Feeney <jfeeney@redhat.com>
+
+Bugzilla
+========
+BZ#509526
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=509526
+
+Description
+===========
+Add native support for IbexPeak ALC889A audio.
+
+Upstream Status of the patch
+============================
+Will be applied.
+
+Test status
+===========
+Tested on Piketon development platform.
+
+diff --git a/sound/pci/hda/patch_realtek.c b/sound/pci/hda/patch_realtek.c
+index e885eae..e585498 100644
+--- a/sound/pci/hda/patch_realtek.c
++++ b/sound/pci/hda/patch_realtek.c
+@@ -235,6 +235,8 @@ enum {
+ 	ALC883_FUJITSU_PI2515,
+ 	ALC888_FUJITSU_XA3530,
+ 	ALC883_3ST_6ch_INTEL,
++	ALC889A_INTEL,
++	ALC889_INTEL,
+ 	ALC888_ASUS_M90V,
+ 	ALC888_ASUS_EEE1601,
+ 	ALC1200_ASUS_P5Q,
+@@ -993,6 +995,16 @@ static void alc888_coef_init(struct hda_codec *codec)
+ 				    AC_VERB_SET_PROC_COEF, 0x3030);
+ }
+ 
++static void alc889_coef_init(struct hda_codec *codec)
++{
++	unsigned int tmp;
++
++	snd_hda_codec_write(codec, 0x20, 0, AC_VERB_SET_COEF_INDEX, 7);
++	tmp = snd_hda_codec_read(codec, 0x20, 0, AC_VERB_GET_PROC_COEF, 0);
++	snd_hda_codec_write(codec, 0x20, 0, AC_VERB_SET_COEF_INDEX, 7);
++	snd_hda_codec_write(codec, 0x20, 0, AC_VERB_SET_PROC_COEF, tmp|0x2010);
++}
++
+ /* 32-bit subsystem ID for BIOS loading in HD Audio codec.
+  *	31 ~ 16 :	Manufacture ID
+  *	15 ~ 8	:	SKU ID
+@@ -1098,15 +1110,7 @@ do_sku:
+ 		case 0x10ec0885:
+ 		case 0x10ec0887:
+ 		case 0x10ec0889:
+-			snd_hda_codec_write(codec, 0x20, 0,
+-					    AC_VERB_SET_COEF_INDEX, 7);
+-			tmp = snd_hda_codec_read(codec, 0x20, 0,
+-						 AC_VERB_GET_PROC_COEF, 0);
+-			snd_hda_codec_write(codec, 0x20, 0,
+-					    AC_VERB_SET_COEF_INDEX, 7);
+-			snd_hda_codec_write(codec, 0x20, 0,
+-					    AC_VERB_SET_PROC_COEF,
+-					    tmp | 0x2010);
++			alc889_coef_init(codec);
+ 			break;
+ 		case 0x10ec0888:
+ 			/*alc888_coef_init(codec);*/ /* called in alc_init() */
+@@ -7273,6 +7277,10 @@ static int patch_alc882(struct hda_codec *codec)
+ 
+ #define ALC1200_DIGOUT_NID	0x10
+ 
++static hda_nid_t alc883_slave_dig_outs[] = {
++	ALC1200_DIGOUT_NID, 0,
++};
++
+ static hda_nid_t alc883_dac_nids[4] = {
+ 	/* front, rear, clfe, rear_surr */
+ 	0x02, 0x03, 0x04, 0x05
+@@ -7350,6 +7358,15 @@ static struct hda_input_mux alc883_fujitsu_pi2515_capture_source = {
+ 	},
+ };
+ 
++static struct hda_input_mux alc889_capture_source = {
++	.num_items = 3,
++	.items = {
++		{ "Front Mic", 0x0 },
++		{ "Mic", 0x3 },
++		{ "Line", 0x2 },
++	},
++};
++
+ static struct hda_input_mux alc883_lenovo_sky_capture_source = {
+ 	.num_items = 3,
+ 	.items = {
+@@ -7461,6 +7478,46 @@ static struct hda_channel_mode alc883_3ST_6ch_intel_modes[3] = {
+ /*
+  * 6ch mode
+  */
++static struct hda_verb alc889_ch6_intel_init[] = {
++	{ 0x14, AC_VERB_SET_PIN_WIDGET_CONTROL, PIN_OUT },
++	{ 0x14, AC_VERB_SET_AMP_GAIN_MUTE, AMP_OUT_UNMUTE },
++	{ 0x16, AC_VERB_SET_PIN_WIDGET_CONTROL, PIN_OUT },
++	{ 0x16, AC_VERB_SET_AMP_GAIN_MUTE, AMP_OUT_UNMUTE },
++	{ 0x17, AC_VERB_SET_PIN_WIDGET_CONTROL, PIN_OUT },
++	{ 0x17, AC_VERB_SET_AMP_GAIN_MUTE, AMP_OUT_UNMUTE },
++	{ 0x19, AC_VERB_SET_PIN_WIDGET_CONTROL, PIN_OUT },
++	{ 0x19, AC_VERB_SET_AMP_GAIN_MUTE, AMP_OUT_UNMUTE },
++	{ 0x1a, AC_VERB_SET_PIN_WIDGET_CONTROL, PIN_VREF80 },
++	{ 0x1a, AC_VERB_SET_AMP_GAIN_MUTE, AMP_OUT_MUTE },
++	{ } /* end */
++};
++
++/*
++ * 8ch mode
++ */
++static struct hda_verb alc889_ch8_intel_init[] = {
++	{ 0x14, AC_VERB_SET_PIN_WIDGET_CONTROL, PIN_OUT },
++	{ 0x14, AC_VERB_SET_AMP_GAIN_MUTE, AMP_OUT_UNMUTE },
++	{ 0x16, AC_VERB_SET_PIN_WIDGET_CONTROL, PIN_OUT },
++	{ 0x16, AC_VERB_SET_AMP_GAIN_MUTE, AMP_OUT_UNMUTE },
++	{ 0x17, AC_VERB_SET_PIN_WIDGET_CONTROL, PIN_OUT },
++	{ 0x17, AC_VERB_SET_AMP_GAIN_MUTE, AMP_OUT_UNMUTE },
++	{ 0x19, AC_VERB_SET_PIN_WIDGET_CONTROL, PIN_OUT },
++	{ 0x19, AC_VERB_SET_AMP_GAIN_MUTE, AMP_OUT_UNMUTE },
++	{ 0x1a, AC_VERB_SET_PIN_WIDGET_CONTROL, PIN_OUT },
++	{ 0x1a, AC_VERB_SET_AMP_GAIN_MUTE, AMP_OUT_UNMUTE },
++	{ 0x1a, AC_VERB_SET_CONNECT_SEL, 0x03 },
++	{ } /* end */
++};
++
++static struct hda_channel_mode alc889_8ch_intel_modes[2] = {
++	{ 6, alc889_ch6_intel_init },
++	{ 8, alc889_ch8_intel_init },
++};
++
++/*
++ * 6ch mode
++ */
+ static struct hda_verb alc883_sixstack_ch6_init[] = {
+ 	{ 0x17, AC_VERB_SET_PIN_WIDGET_CONTROL, 0x00 },
+ 	{ 0x16, AC_VERB_SET_PIN_WIDGET_CONTROL, PIN_OUT },
+@@ -7630,6 +7687,30 @@ static struct snd_kcontrol_new alc883_3ST_6ch_intel_mixer[] = {
+ 	{ } /* end */
+ };
+ 
++static struct snd_kcontrol_new alc885_8ch_intel_mixer[] = {
++	HDA_CODEC_VOLUME("Front Playback Volume", 0x0c, 0x0, HDA_OUTPUT),
++	HDA_BIND_MUTE("Front Playback Switch", 0x0c, 2, HDA_INPUT),
++	HDA_CODEC_VOLUME("Surround Playback Volume", 0x0d, 0x0, HDA_OUTPUT),
++	HDA_BIND_MUTE("Surround Playback Switch", 0x0d, 2, HDA_INPUT),
++	HDA_CODEC_VOLUME_MONO("Center Playback Volume", 0x0e, 1, 0x0,
++			      HDA_OUTPUT),
++	HDA_CODEC_VOLUME_MONO("LFE Playback Volume", 0x0e, 2, 0x0, HDA_OUTPUT),
++	HDA_BIND_MUTE_MONO("Center Playback Switch", 0x0e, 1, 2, HDA_INPUT),
++	HDA_BIND_MUTE_MONO("LFE Playback Switch", 0x0e, 2, 2, HDA_INPUT),
++	HDA_CODEC_VOLUME("Speaker Playback Volume", 0x0f, 0x0, HDA_OUTPUT),
++	HDA_BIND_MUTE("Speaker Playback Switch", 0x0f, 2, HDA_INPUT),
++	HDA_CODEC_MUTE("Headphone Playback Switch", 0x15, 0x0, HDA_OUTPUT),
++	HDA_CODEC_VOLUME("Line Playback Volume", 0x0b, 0x02, HDA_INPUT),
++	HDA_CODEC_MUTE("Line Playback Switch", 0x0b, 0x02, HDA_INPUT),
++	HDA_CODEC_VOLUME("Mic Playback Volume", 0x0b, 0x3, HDA_INPUT),
++	HDA_CODEC_VOLUME("Mic Boost", 0x1b, 0, HDA_INPUT),
++	HDA_CODEC_MUTE("Mic Playback Switch", 0x0b, 0x3, HDA_INPUT),
++	HDA_CODEC_VOLUME("Front Mic Playback Volume", 0x0b, 0x0, HDA_INPUT),
++	HDA_CODEC_VOLUME("Front Mic Boost", 0x18, 0, HDA_INPUT),
++	HDA_CODEC_MUTE("Front Mic Playback Switch", 0x0b, 0x0, HDA_INPUT),
++	{ } /* end */
++};
++
+ static struct snd_kcontrol_new alc883_fivestack_mixer[] = {
+ 	HDA_CODEC_VOLUME("Front Playback Volume", 0x0c, 0x0, HDA_OUTPUT),
+ 	HDA_BIND_MUTE("Front Playback Switch", 0x0c, 2, HDA_INPUT),
+@@ -7899,6 +7980,102 @@ static struct hda_verb alc883_init_verbs[] = {
+ 	{ }
+ };
+ 
++
++static struct hda_verb alc885_init_verbs[] = {
++	/* Front mixer: unmute input/output amp left and right (volume = 0) */
++	{0x0c, AC_VERB_SET_AMP_GAIN_MUTE, AMP_OUT_ZERO},
++	{0x0c, AC_VERB_SET_AMP_GAIN_MUTE, AMP_IN_MUTE(0)},
++	{0x0c, AC_VERB_SET_AMP_GAIN_MUTE, AMP_IN_MUTE(1)},
++	/* Rear mixer */
++	{0x0d, AC_VERB_SET_AMP_GAIN_MUTE, AMP_OUT_ZERO},
++	{0x0d, AC_VERB_SET_AMP_GAIN_MUTE, AMP_IN_MUTE(0)},
++	{0x0d, AC_VERB_SET_AMP_GAIN_MUTE, AMP_IN_MUTE(1)},
++	/* CLFE mixer */
++	{0x0e, AC_VERB_SET_AMP_GAIN_MUTE, AMP_OUT_ZERO},
++	{0x0e, AC_VERB_SET_AMP_GAIN_MUTE, AMP_IN_MUTE(0)},
++	{0x0e, AC_VERB_SET_AMP_GAIN_MUTE, AMP_IN_MUTE(1)},
++	/* Side mixer */
++	{0x0f, AC_VERB_SET_AMP_GAIN_MUTE, AMP_OUT_ZERO},
++	{0x0f, AC_VERB_SET_AMP_GAIN_MUTE, AMP_IN_MUTE(0)},
++	{0x0f, AC_VERB_SET_AMP_GAIN_MUTE, AMP_IN_MUTE(1)},
++
++	/* mute analog input loopbacks */
++	{0x0b, AC_VERB_SET_AMP_GAIN_MUTE, AMP_IN_MUTE(0)},
++	{0x0b, AC_VERB_SET_AMP_GAIN_MUTE, AMP_IN_MUTE(2)},
++	{0x0b, AC_VERB_SET_AMP_GAIN_MUTE, AMP_IN_MUTE(3)},
++
++	/* Front HP Pin: output 0 (0x0c) */
++	{0x15, AC_VERB_SET_PIN_WIDGET_CONTROL, PIN_OUT},
++	{0x15, AC_VERB_SET_AMP_GAIN_MUTE, AMP_OUT_UNMUTE},
++	{0x15, AC_VERB_SET_CONNECT_SEL, 0x00},
++	/* Front Pin: output 0 (0x0c) */
++	{0x14, AC_VERB_SET_PIN_WIDGET_CONTROL, PIN_OUT},
++	{0x14, AC_VERB_SET_AMP_GAIN_MUTE, AMP_OUT_UNMUTE},
++	{0x14, AC_VERB_SET_CONNECT_SEL, 0x00},
++	/* Rear Pin: output 1 (0x0d) */
++	{0x19, AC_VERB_SET_PIN_WIDGET_CONTROL, PIN_OUT},
++	{0x19, AC_VERB_SET_AMP_GAIN_MUTE, AMP_OUT_UNMUTE},
++	{0x19, AC_VERB_SET_CONNECT_SEL, 0x01},
++	/* CLFE Pin: output 2 (0x0e) */
++	{0x16, AC_VERB_SET_PIN_WIDGET_CONTROL, PIN_OUT},
++	{0x16, AC_VERB_SET_AMP_GAIN_MUTE, AMP_OUT_UNMUTE},
++	{0x16, AC_VERB_SET_CONNECT_SEL, 0x02},
++	/* Side Pin: output 3 (0x0f) */
++	{0x17, AC_VERB_SET_PIN_WIDGET_CONTROL, PIN_OUT},
++	{0x17, AC_VERB_SET_AMP_GAIN_MUTE, AMP_OUT_UNMUTE},
++	{0x17, AC_VERB_SET_CONNECT_SEL, 0x03},
++	/* Mic (rear) pin: input vref at 80% */
++	{0x1b, AC_VERB_SET_PIN_WIDGET_CONTROL, PIN_VREF80},
++	{0x1b, AC_VERB_SET_AMP_GAIN_MUTE, AMP_OUT_MUTE},
++	/* Front Mic pin: input vref at 80% */
++	{0x18, AC_VERB_SET_PIN_WIDGET_CONTROL, PIN_VREF80},
++	{0x18, AC_VERB_SET_AMP_GAIN_MUTE, AMP_OUT_MUTE},
++	/* Line In pin: input */
++	{0x1a, AC_VERB_SET_PIN_WIDGET_CONTROL, PIN_IN},
++	{0x1a, AC_VERB_SET_AMP_GAIN_MUTE, AMP_OUT_MUTE},
++
++	/* Mixer elements: 0x18, , 0x1a, 0x1b */
++	/* Input mixer1 */
++	{0x24, AC_VERB_SET_AMP_GAIN_MUTE, AMP_IN_UNMUTE(3)},
++	{0x24, AC_VERB_SET_AMP_GAIN_MUTE, AMP_IN_MUTE(0)},
++	{0x24, AC_VERB_SET_AMP_GAIN_MUTE, AMP_IN_MUTE(2)},
++	/* Input mixer2 */
++	{0x23, AC_VERB_SET_AMP_GAIN_MUTE, AMP_IN_UNMUTE(0)},
++	{0x23, AC_VERB_SET_AMP_GAIN_MUTE, AMP_IN_MUTE(2)},
++	{0x23, AC_VERB_SET_AMP_GAIN_MUTE, AMP_IN_MUTE(3)},
++	/* Input mixer3 */
++	{0x22, AC_VERB_SET_AMP_GAIN_MUTE, AMP_IN_UNMUTE(2)},
++	{0x22, AC_VERB_SET_AMP_GAIN_MUTE, AMP_IN_MUTE(0)},
++	{0x22, AC_VERB_SET_AMP_GAIN_MUTE, AMP_IN_MUTE(3)},
++	/* ADC2: mute amp left and right */
++	{0x08, AC_VERB_SET_AMP_GAIN_MUTE, AMP_IN_MUTE(0)},
++	/* ADC3: mute amp left and right */
++	{0x09, AC_VERB_SET_AMP_GAIN_MUTE, AMP_IN_MUTE(0)},
++
++	{ }
++};
++
++static struct hda_verb alc885_init_input_verbs[] = {
++	{0x24, AC_VERB_SET_AMP_GAIN_MUTE, AMP_IN_UNMUTE(0)},
++	{0x24, AC_VERB_SET_AMP_GAIN_MUTE, AMP_IN_UNMUTE(2)},
++	{0x24, AC_VERB_SET_AMP_GAIN_MUTE, AMP_IN_UNMUTE(3)},
++	{ }
++};
++
++
++/* Unmute Selector 24h and set the default input to front mic */
++static struct hda_verb alc889_init_input_verbs[] = {
++	{0x24, AC_VERB_SET_CONNECT_SEL, 0x00},
++	{0x24, AC_VERB_SET_AMP_GAIN_MUTE, AMP_OUT_UNMUTE},
++	{ }
++};
++
++static struct hda_verb alc889_eapd_verbs[] = {
++	{0x14, AC_VERB_SET_EAPD_BTLENABLE, 2},
++	{0x15, AC_VERB_SET_EAPD_BTLENABLE, 2},
++	{ }
++};
++
+ /* toggle speaker-output according to the hp-jack state */
+ static void alc883_mitac_hp_automute(struct hda_codec *codec)
+ {
+@@ -8645,6 +8822,8 @@ static const char *alc883_models[ALC883_MODEL_LAST] = {
+ 	[ALC883_FUJITSU_PI2515] = "fujitsu-pi2515",
+ 	[ALC888_FUJITSU_XA3530] = "fujitsu-xa3530",
+ 	[ALC883_3ST_6ch_INTEL]	= "3stack-6ch-intel",
++	[ALC889A_INTEL]		= "intel-alc889a",
++	[ALC889_INTEL]		= "intel-x58",
+ 	[ALC1200_ASUS_P5Q]	= "asus-p5q",
+ 	[ALC883_AUTO]		= "auto",
+ };
+@@ -8734,7 +8913,8 @@ static struct snd_pci_quirk alc883_cfg_tbl[] = {
+ 	SND_PCI_QUIRK(0x8086, 0x0001, "DG33BUC", ALC883_3ST_6ch_INTEL),
+ 	SND_PCI_QUIRK(0x8086, 0x0002, "DG33FBC", ALC883_3ST_6ch_INTEL),
+ 	SND_PCI_QUIRK(0x8086, 0x2503, "82801H", ALC883_MITAC),
+-	SND_PCI_QUIRK(0x8086, 0x0022, "DX58SO", ALC883_3ST_6ch_INTEL),
++	SND_PCI_QUIRK(0x8086, 0x0022, "DX58SO", ALC889_INTEL),
++	SND_PCI_QUIRK(0x8086, 0x3b56, "Intel IbexPeak", ALC889A_INTEL),
+ 	SND_PCI_QUIRK(0x8086, 0xd601, "D102GGC", ALC883_3ST_6ch),
+ 	{}
+ };
+@@ -8789,6 +8969,40 @@ static struct alc_config_preset alc883_presets[] = {
+ 		.need_dac_fix = 1,
+ 		.input_mux = &alc883_3stack_6ch_intel,
+ 	},
++	[ALC889A_INTEL] = {
++		.mixers = { alc885_8ch_intel_mixer, alc883_chmode_mixer },
++		.init_verbs = { alc885_init_verbs, alc885_init_input_verbs },
++		.num_dacs = ARRAY_SIZE(alc883_dac_nids),
++		.dac_nids = alc883_dac_nids,
++		.num_adc_nids = ARRAY_SIZE(alc889_adc_nids),
++		.adc_nids = alc889_adc_nids,
++		.dig_out_nid = ALC883_DIGOUT_NID,
++		.dig_in_nid = ALC883_DIGIN_NID,
++		.slave_dig_outs = alc883_slave_dig_outs,
++		.num_channel_mode = ARRAY_SIZE(alc889_8ch_intel_modes),
++		.channel_mode = alc889_8ch_intel_modes,
++		.capsrc_nids = alc889_capsrc_nids,
++		.input_mux = &alc889_capture_source,
++		.need_dac_fix = 1,
++	},
++	[ALC889_INTEL] = {
++		.mixers = { alc885_8ch_intel_mixer, alc883_chmode_mixer },
++		.init_verbs = { alc885_init_verbs, alc889_init_input_verbs,
++				alc889_eapd_verbs },
++		.num_dacs = ARRAY_SIZE(alc883_dac_nids),
++		.dac_nids = alc883_dac_nids,
++		.num_adc_nids = ARRAY_SIZE(alc889_adc_nids),
++		.adc_nids = alc889_adc_nids,
++		.dig_out_nid = ALC883_DIGOUT_NID,
++		.dig_in_nid = ALC883_DIGIN_NID,
++		.slave_dig_outs = alc883_slave_dig_outs,
++		.num_channel_mode = ARRAY_SIZE(alc889_8ch_intel_modes),
++		.channel_mode = alc889_8ch_intel_modes,
++		.capsrc_nids = alc889_capsrc_nids,
++		.input_mux = &alc889_capture_source,
++		.init_hook = alc889_coef_init,
++		.need_dac_fix = 1,
++	},
+ 	[ALC883_6ST_DIG] = {
+ 		.mixers = { alc883_base_mixer, alc883_chmode_mixer },
+ 		.init_verbs = { alc883_init_verbs },
+@@ -9162,6 +9376,7 @@ static void alc883_auto_init_analog_input(struct hda_codec *codec)
+ 	}
+ }
+ 
++
+ #define alc883_auto_init_input_src	alc882_auto_init_input_src
+ 
+ /* almost identical with ALC880 parser... */

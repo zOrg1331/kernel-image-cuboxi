@@ -1,0 +1,51 @@
+From: Wendy Cheng <wcheng@redhat.com>
+Subject: [RHEL 5.1 PATCH] BZ252392 gfs2_writepage(s) workaround
+Date: Mon, 24 Sep 2007 11:46:18 -0400
+Bugzilla: 252392
+Message-Id: <46F7DBCA.1030509@redhat.com>
+Changelog: [GFS2] gfs2_writepage(s) workaround
+
+
+Two changes:
+
+* Simplify gfs2 code path by disabling gfs2_writepages. The 
+implementation currently generates unmapped dirty buffers with mmap 
+calls that do not work well with rest of the journaling code. Defer the 
+writepages implementation to later time.
+* Remove the section of code that implements mmap with data journaling 
+to stabilize GFS2. Add mmap with data journaling as a GFS2 restriction 
+(not working) for now.
+
+-- Wendy
+
+--- e49-b/fs/gfs2/ops_address.c	2007-09-24 11:41:02.000000000 -0400
++++ e49/fs/gfs2/ops_address.c	2007-09-24 11:44:49.000000000 -0400
+@@ -137,19 +137,6 @@ static int gfs2_writepage(struct page *p
+ 		return 0; /* don't care */
+ 	}
+ 
+-	if ((sdp->sd_args.ar_data == GFS2_DATA_ORDERED || gfs2_is_jdata(ip)) &&
+-	    PageChecked(page)) {
+-		ClearPageChecked(page);
+-		error = gfs2_do_trans_begin(sdp, RES_DINODE + 1, 0, 0);
+-		if (error)
+-			goto out_ignore;
+-		if (!page_has_buffers(page)) {
+-			create_empty_buffers(page, inode->i_sb->s_blocksize,
+-					     (1 << BH_Dirty)|(1 << BH_Uptodate));
+-		}
+-		gfs2_page_add_databufs(ip, page, 0, sdp->sd_vfs->s_blocksize-1);
+-		done_trans = 1;
+-	}
+ 	error = block_write_full_page(page, gfs2_get_block_noalloc, wbc);
+ 	if (done_trans)
+ 		gfs2_trans_end(sdp);
+@@ -809,7 +796,6 @@ cannot_release:
+ 
+ const struct address_space_operations gfs2_file_aops = {
+ 	.writepage = gfs2_writepage,
+-	.writepages = gfs2_writepages,
+ 	.readpage = gfs2_readpage,
+ 	.readpages = gfs2_readpages,
+ 	.sync_page = block_sync_page,
+

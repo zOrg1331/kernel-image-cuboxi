@@ -42,21 +42,14 @@ static int writebuf_from_LL(int driverID, int channel, int ack,
 	unsigned skblen;
 
 	if (!(cs = gigaset_get_cs_by_id(driverID))) {
-		pr_err("%s: invalid driver ID (%d)\n", __func__, driverID);
+		err("%s: invalid driver ID (%d)", __func__, driverID);
 		return -ENODEV;
 	}
 	if (channel < 0 || channel >= cs->channels) {
-		dev_err(cs->dev, "%s: invalid channel ID (%d)\n",
-			__func__, channel);
+		err("%s: invalid channel ID (%d)", __func__, channel);
 		return -ENODEV;
 	}
 	bcs = &cs->bcs[channel];
-
-	/* can only handle linear sk_buffs */
-	if (skb_linearize(skb) < 0) {
-		dev_err(cs->dev, "%s: skb_linearize failed\n", __func__);
-		return -ENOMEM;
-	}
 	len = skb->len;
 
 	gig_dbg(DEBUG_LLDATA,
@@ -65,13 +58,11 @@ static int writebuf_from_LL(int driverID, int channel, int ack,
 
 	if (!len) {
 		if (ack)
-			dev_notice(cs->dev, "%s: not ACKing empty packet\n",
-				   __func__);
+			notice("%s: not ACKing empty packet", __func__);
 		return 0;
 	}
 	if (len > MAX_BUF_SIZE) {
-		dev_err(cs->dev, "%s: packet too large (%d bytes)\n",
-			__func__, len);
+		err("%s: packet too large (%d bytes)", __func__, len);
 		return -EINVAL;
 	}
 
@@ -85,14 +76,6 @@ static int writebuf_from_LL(int driverID, int channel, int ack,
 	return cs->ops->send_skb(bcs, skb);
 }
 
-/**
- * gigaset_skb_sent() - acknowledge sending an skb
- * @bcs:	B channel descriptor structure.
- * @skb:	sent data.
- *
- * Called by hardware module {bas,ser,usb}_gigaset when the data in a
- * skb has been successfully sent, for signalling completion to the LL.
- */
 void gigaset_skb_sent(struct bc_state *bcs, struct sk_buff *skb)
 {
 	unsigned len;
@@ -126,14 +109,19 @@ EXPORT_SYMBOL_GPL(gigaset_skb_sent);
 static int command_from_LL(isdn_ctrl *cntrl)
 {
 	struct cardstate *cs = gigaset_get_cs_by_id(cntrl->driver);
+	//isdn_ctrl response;
+	//unsigned long flags;
 	struct bc_state *bcs;
 	int retval = 0;
 	struct setup_parm *sp;
+	unsigned param;
+	unsigned long flags;
 
 	gigaset_debugdrivers();
 
 	if (!cs) {
-		pr_err("%s: invalid driver ID (%d)\n", __func__, cntrl->driver);
+		warn("LL tried to access unknown device with nr. %d",
+		     cntrl->driver);
 		return -ENODEV;
 	}
 
@@ -142,7 +130,7 @@ static int command_from_LL(isdn_ctrl *cntrl)
 		gig_dbg(DEBUG_ANY, "ISDN_CMD_IOCTL (driver: %d, arg: %ld)",
 			cntrl->driver, cntrl->arg);
 
-		dev_warn(cs->dev, "ISDN_CMD_IOCTL not supported\n");
+		warn("ISDN_CMD_IOCTL is not supported.");
 		return -EINVAL;
 
 	case ISDN_CMD_DIAL:
@@ -154,29 +142,32 @@ static int command_from_LL(isdn_ctrl *cntrl)
 			cntrl->parm.setup.si1, cntrl->parm.setup.si2);
 
 		if (cntrl->arg >= cs->channels) {
-			dev_err(cs->dev,
-				"ISDN_CMD_DIAL: invalid channel (%d)\n",
-				(int) cntrl->arg);
+			err("ISDN_CMD_DIAL: invalid channel (%d)",
+			    (int) cntrl->arg);
 			return -EINVAL;
 		}
 
 		bcs = cs->bcs + cntrl->arg;
 
 		if (!gigaset_get_channel(bcs)) {
-			dev_err(cs->dev, "ISDN_CMD_DIAL: channel not free\n");
+			err("ISDN_CMD_DIAL: channel not free");
 			return -EBUSY;
 		}
 
 		sp = kmalloc(sizeof *sp, GFP_ATOMIC);
 		if (!sp) {
 			gigaset_free_channel(bcs);
-			dev_err(cs->dev, "ISDN_CMD_DIAL: out of memory\n");
+			err("ISDN_CMD_DIAL: out of memory");
 			return -ENOMEM;
 		}
 		*sp = cntrl->parm.setup;
 
-		if (!gigaset_add_event(cs, &bcs->at_state, EV_DIAL, sp,
-				       bcs->at_state.seq_index, NULL)) {
+		spin_lock_irqsave(&cs->lock, flags);
+		param = bcs->at_state.seq_index;
+		spin_unlock_irqrestore(&cs->lock, flags);
+
+		if (!gigaset_add_event(cs, &bcs->at_state, EV_DIAL, sp, param,
+				       NULL)) {
 			//FIXME what should we do?
 			kfree(sp);
 			gigaset_free_channel(bcs);
@@ -190,9 +181,8 @@ static int command_from_LL(isdn_ctrl *cntrl)
 		gig_dbg(DEBUG_ANY, "ISDN_CMD_ACCEPTD");
 
 		if (cntrl->arg >= cs->channels) {
-			dev_err(cs->dev,
-				"ISDN_CMD_ACCEPTD: invalid channel (%d)\n",
-				(int) cntrl->arg);
+			err("ISDN_CMD_ACCEPTD: invalid channel (%d)",
+			    (int) cntrl->arg);
 			return -EINVAL;
 		}
 
@@ -214,9 +204,8 @@ static int command_from_LL(isdn_ctrl *cntrl)
 			(int) cntrl->arg);
 
 		if (cntrl->arg >= cs->channels) {
-			dev_err(cs->dev,
-				"ISDN_CMD_HANGUP: invalid channel (%d)\n",
-				(int) cntrl->arg);
+			err("ISDN_CMD_HANGUP: invalid channel (%u)",
+			    (unsigned) cntrl->arg);
 			return -EINVAL;
 		}
 
@@ -243,9 +232,8 @@ static int command_from_LL(isdn_ctrl *cntrl)
 			cntrl->arg & 0xff, (cntrl->arg >> 8));
 
 		if ((cntrl->arg & 0xff) >= cs->channels) {
-			dev_err(cs->dev,
-				"ISDN_CMD_SETL2: invalid channel (%d)\n",
-				(int) cntrl->arg & 0xff);
+			err("ISDN_CMD_SETL2: invalid channel (%u)",
+			    (unsigned) cntrl->arg & 0xff);
 			return -EINVAL;
 		}
 
@@ -264,16 +252,14 @@ static int command_from_LL(isdn_ctrl *cntrl)
 			cntrl->arg & 0xff, (cntrl->arg >> 8));
 
 		if ((cntrl->arg & 0xff) >= cs->channels) {
-			dev_err(cs->dev,
-				"ISDN_CMD_SETL3: invalid channel (%d)\n",
-				(int) cntrl->arg & 0xff);
+			err("ISDN_CMD_SETL3: invalid channel (%u)",
+			    (unsigned) cntrl->arg & 0xff);
 			return -EINVAL;
 		}
 
 		if (cntrl->arg >> 8 != ISDN_PROTO_L3_TRANS) {
-			dev_err(cs->dev,
-				"ISDN_CMD_SETL3: invalid protocol %lu\n",
-				cntrl->arg >> 8);
+			err("ISDN_CMD_SETL3: invalid protocol %lu",
+			    cntrl->arg >> 8);
 			return -EINVAL;
 		}
 
@@ -284,9 +270,8 @@ static int command_from_LL(isdn_ctrl *cntrl)
 	case ISDN_CMD_ALERT:
 		gig_dbg(DEBUG_ANY, "ISDN_CMD_ALERT"); //FIXME
 		if (cntrl->arg >= cs->channels) {
-			dev_err(cs->dev,
-				"ISDN_CMD_ALERT: invalid channel (%d)\n",
-				(int) cntrl->arg);
+			err("ISDN_CMD_ALERT: invalid channel (%d)",
+			    (int) cntrl->arg);
 			return -EINVAL;
 		}
 		//bcs = cs->bcs + cntrl->arg;
@@ -318,8 +303,7 @@ static int command_from_LL(isdn_ctrl *cntrl)
 		gig_dbg(DEBUG_ANY, "ISDN_CMD_GETSIL");
 		break;
 	default:
-		dev_err(cs->dev, "unknown command %d from LL\n",
-			cntrl->command);
+		err("unknown command %d from LL", cntrl->command);
 		return -EINVAL;
 	}
 
@@ -469,15 +453,6 @@ int gigaset_isdn_setup_accept(struct at_state_t *at_state)
 	return 0;
 }
 
-/**
- * gigaset_isdn_icall() - signal incoming call
- * @at_state:	connection state structure.
- *
- * Called by main module to notify the LL that an incoming call has been
- * received. @at_state contains the parameters of the call.
- *
- * Return value: call disposition (ICALL_*)
- */
 int gigaset_isdn_icall(struct at_state_t *at_state)
 {
 	struct cardstate *cs = at_state->cs;
@@ -567,11 +542,11 @@ int gigaset_register_to_LL(struct cardstate *cs, const char *isdnid)
 
 	gig_dbg(DEBUG_ANY, "Register driver capabilities to LL");
 
+	//iif->id[sizeof(iif->id) - 1]=0;
+	//strncpy(iif->id, isdnid, sizeof(iif->id) - 1);
 	if (snprintf(iif->id, sizeof iif->id, "%s_%u", isdnid, cs->minor_index)
-	    >= sizeof iif->id) {
-		pr_err("ID too long: %s\n", isdnid);
-		return 0;
-	}
+	    >= sizeof iif->id)
+		return -ENOMEM; //FIXME EINVAL/...??
 
 	iif->owner = THIS_MODULE;
 	iif->channels = cs->channels;
@@ -591,10 +566,8 @@ int gigaset_register_to_LL(struct cardstate *cs, const char *isdnid)
 	iif->rcvcallb_skb = NULL;		/* Will be set by LL */
 	iif->statcallb = NULL;			/* Will be set by LL */
 
-	if (!register_isdn(iif)) {
-		pr_err("register_isdn failed\n");
+	if (!register_isdn(iif))
 		return 0;
-	}
 
 	cs->myid = iif->channels;		/* Set my device id */
 	return 1;

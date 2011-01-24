@@ -7,6 +7,8 @@
  *                            Hitoshi Yamamoto
  */
 
+/* $Id$ */
+
 #include <linux/init.h>
 __INIT
 __INITDATA
@@ -23,12 +25,13 @@ __INITDATA
 /*
  * References to members of the boot_cpu_data structure.
  */
-__HEAD
+	.text
 	.global	start_kernel
 	.global __bss_start
 	.global _end
 ENTRY(stext)
 ENTRY(_stext)
+ENTRY(startup_32)
 	/* Setup up the stack pointer */
 	LDIMM	(r0, spi_stack_top)
 	LDIMM	(r1, spu_stack_top)
@@ -133,6 +136,7 @@ loop1:
 /*
  * AP startup routine
  */
+	.text
 	.global	eit_vector
 ENTRY(startup_AP)
 ;; setup EVB
@@ -229,7 +233,6 @@ ENTRY(startup_AP)
 	nop
 #endif  /* CONFIG_SMP */
 
-	.text
 ENTRY(stack_start)
 	.long	init_thread_union+8192
 	.long	__KERNEL_DS
@@ -268,13 +271,13 @@ ENTRY(empty_zero_page)
 /*------------------------------------------------------------------------
  * Stack area
  */
-	.section .init.data, "aw"
+	.section .spi
 	ALIGN
 	.global spi_stack_top
 	.zero	1024
 spi_stack_top:
 
-	.section .init.data, "aw"
+	.section .spu
 	ALIGN
 	.global spu_stack_top
 	.zero	1024

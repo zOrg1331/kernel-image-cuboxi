@@ -1,0 +1,28 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Subject: [RHEL5.1 PATCH] BZ 226869 : change serial8250_console_setup to __init
+Date: Mon, 5 Feb 2007 10:33:39 -0500
+Bugzilla: 226869
+Message-Id: <20070205153339.4025.37179.sendpatchset@prarit.boston.redhat.com>
+Changelog: [serial] change serial8250_console_setup to __init
+
+
+Backport of first chunk of
+
+http://marc.theaimsgroup.com/?l=linux-kernel&m=116722052610092&w=2
+
+which resolves 226869.
+
+Tested successfully by me.
+
+--- linux-2.6.18.i386.orig/drivers/serial/8250.c	2007-02-01 16:08:23.000000000 -0500
++++ linux-2.6.18.i386/drivers/serial/8250.c	2007-02-05 09:51:11.000000000 -0500
+@@ -2312,7 +2312,7 @@ serial8250_console_write(struct console 
+ 	local_irq_restore(flags);
+ }
+ 
+-static int serial8250_console_setup(struct console *co, char *options)
++static int __init serial8250_console_setup(struct console *co, char *options)
+ {
+ 	struct uart_port *port;
+ 	int baud = 9600;
+

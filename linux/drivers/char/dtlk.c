@@ -56,14 +56,13 @@
 #include <linux/errno.h>	/* for -EBUSY */
 #include <linux/ioport.h>	/* for request_region */
 #include <linux/delay.h>	/* for loops_per_jiffy */
-#include <linux/sched.h>
-#include <linux/smp_lock.h>	/* cycle_kernel_lock() */
 #include <asm/io.h>		/* for inb_p, outb_p, inb, outb, etc. */
 #include <asm/uaccess.h>	/* for get_user, etc. */
 #include <linux/wait.h>		/* for wait_queue */
 #include <linux/init.h>		/* for __init, module_{init,exit} */
 #include <linux/poll.h>		/* for POLLIN, etc. */
 #include <linux/dtlk.h>		/* local header file for DoubleTalk values */
+#include <linux/smp_lock.h>
 
 #ifdef TRACING
 #define TRACE_TEXT(str) printk(str);
@@ -73,7 +72,6 @@
 #define TRACE_RET ((void) 0)
 #endif				/* TRACING */
 
-static void dtlk_timer_tick(unsigned long data);
 
 static int dtlk_major;
 static int dtlk_port_lpc;
@@ -83,7 +81,7 @@ static int dtlk_has_indexing;
 static unsigned int dtlk_portlist[] =
 {0x25e, 0x29e, 0x2de, 0x31e, 0x35e, 0x39e, 0};
 static wait_queue_head_t dtlk_process_list;
-static DEFINE_TIMER(dtlk_timer, dtlk_timer_tick, 0, 0);
+static struct timer_list dtlk_timer;
 
 /* prototypes for file_operations struct */
 static ssize_t dtlk_read(struct file *, char __user *,
@@ -119,11 +117,12 @@ static char dtlk_write_tts(char);
 /*
    static void dtlk_handle_error(char, char, unsigned int);
  */
+static void dtlk_timer_tick(unsigned long data);
 
 static ssize_t dtlk_read(struct file *file, char __user *buf,
 			 size_t count, loff_t * ppos)
 {
-	unsigned int minor = iminor(file->f_path.dentry->d_inode);
+	unsigned int minor = iminor(file->f_dentry->d_inode);
 	char ch;
 	int i = 0, retries;
 
@@ -175,7 +174,7 @@ static ssize_t dtlk_write(struct file *file, const char __user *buf,
 	}
 #endif
 
-	if (iminor(file->f_path.dentry->d_inode) != DTLK_MINOR)
+	if (iminor(file->f_dentry->d_inode) != DTLK_MINOR)
 		return -EINVAL;
 
 	while (1) {
@@ -290,12 +289,10 @@ static int dtlk_ioctl(struct inode *inode,
 	}
 }
 
-/* Note that nobody ever sets dtlk_busy... */
 static int dtlk_open(struct inode *inode, struct file *file)
 {
 	TRACE_TEXT("(dtlk_open");
 
-	cycle_kernel_lock();
 	nonseekable_open(inode, file);
 	switch (iminor(inode)) {
 	case DTLK_MINOR:
@@ -321,30 +318,26 @@ static int dtlk_release(struct inode *inode, struct file *file)
 	}
 	TRACE_RET;
 	
-	del_timer_sync(&dtlk_timer);
+	del_timer(&dtlk_timer);
 
 	return 0;
 }
 
 static int __init dtlk_init(void)
 {
-	int err;
-
 	dtlk_port_lpc = 0;
 	dtlk_port_tts = 0;
 	dtlk_busy = 0;
 	dtlk_major = register_chrdev(0, "dtlk", &dtlk_fops);
-	if (dtlk_major < 0) {
+	if (dtlk_major == 0) {
 		printk(KERN_ERR "DoubleTalk PC - cannot register device\n");
-		return dtlk_major;
+		return 0;
 	}
-	err = dtlk_dev_probe();
-	if (err) {
-		unregister_chrdev(dtlk_major, "dtlk");
-		return err;
-	}
-	printk(", MAJOR %d\n", dtlk_major);
+	if (dtlk_dev_probe() == 0)
+		printk(", MAJOR %d\n", dtlk_major);
 
+	init_timer(&dtlk_timer);
+	dtlk_timer.function = dtlk_timer_tick;
 	init_waitqueue_head(&dtlk_process_list);
 
 	return 0;
@@ -572,7 +565,7 @@ static char dtlk_read_tts(void)
 		portval = inb_p(dtlk_port_tts);
 	} while ((portval & TTS_READABLE) == 0 &&
 		 retries++ < DTLK_MAX_RETRIES);
-	if (retries > DTLK_MAX_RETRIES)
+	if (retries == DTLK_MAX_RETRIES)
 		printk(KERN_ERR "dtlk_read_tts() timeout\n");
 
 	ch = inb_p(dtlk_port_tts);	/* input from TTS port */
@@ -584,7 +577,7 @@ static char dtlk_read_tts(void)
 		portval = inb_p(dtlk_port_tts);
 	} while ((portval & TTS_READABLE) != 0 &&
 		 retries++ < DTLK_MAX_RETRIES);
-	if (retries > DTLK_MAX_RETRIES)
+	if (retries == DTLK_MAX_RETRIES)
 		printk(KERN_ERR "dtlk_read_tts() timeout\n");
 
 	TRACE_RET;
@@ -641,7 +634,7 @@ static char dtlk_write_tts(char ch)
 		while ((inb_p(dtlk_port_tts) & TTS_WRITABLE) == 0 &&
 		       retries++ < DTLK_MAX_RETRIES)	/* DT ready? */
 			;
-	if (retries > DTLK_MAX_RETRIES)
+	if (retries == DTLK_MAX_RETRIES)
 		printk(KERN_ERR "dtlk_write_tts() timeout\n");
 
 	outb_p(ch, dtlk_port_tts);	/* output to TTS port */

@@ -15,7 +15,7 @@
 #include <linux/module.h>
 #include <linux/types.h>
 #include <linux/string.h>
-#if defined(__mc68000__)
+#if defined(__mc68000__) || defined(CONFIG_APUS)
 #include <asm/setup.h>
 #endif
 #include <linux/font.h>
@@ -98,8 +98,6 @@ const struct font_desc *find_font(const char *name)
  *	get_default_font - get default font
  *	@xres: screen size of X
  *	@yres: screen size of Y
- *      @font_w: bit array of supported widths (1 - 32)
- *      @font_h: bit array of supported heights (1 - 32)
  *
  *	Get the default font for a specified screen size.
  *	Dimensions are in pixels.
@@ -109,8 +107,7 @@ const struct font_desc *find_font(const char *name)
  *
  */
 
-const struct font_desc *get_default_font(int xres, int yres, u32 font_w,
-					 u32 font_h)
+const struct font_desc *get_default_font(int xres, int yres)
 {
     int i, c, cc;
     const struct font_desc *f, *g;
@@ -120,7 +117,7 @@ const struct font_desc *get_default_font(int xres, int yres, u32 font_w,
     for(i=0; i<num_fonts; i++) {
 	f = fonts[i];
 	c = f->pref;
-#if defined(__mc68000__)
+#if defined(__mc68000__) || defined(CONFIG_APUS)
 #ifdef CONFIG_FONT_PEARL_8x8
 	if (MACH_IS_AMIGA && f->idx == PEARL8x8_IDX)
 	    c = 100;
@@ -132,11 +129,6 @@ const struct font_desc *get_default_font(int xres, int yres, u32 font_w,
 #endif
 	if ((yres < 400) == (f->height <= 8))
 	    c += 1000;
-
-	if ((font_w & (1 << (f->width - 1))) &&
-	    (font_h & (1 << (f->height - 1))))
-	    c += 1000;
-
 	if (c > cc) {
 	    cc = c;
 	    g = f;

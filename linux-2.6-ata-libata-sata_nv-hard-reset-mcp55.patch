@@ -1,0 +1,207 @@
+From: David Milburn <dmilburn@redhat.com>
+Date: Fri, 28 Nov 2008 09:01:18 -0600
+Subject: [ata] libata: sata_nv hard reset mcp55
+Message-id: 20081128150118.GA5688@dhcp-210.hsv.redhat.com
+O-Subject: [RHEL5.3 PATCH] libata: sata_nv hardreset mcp55
+Bugzilla: 473152
+RH-Acked-by: Jeff Garzik <jgarzik@redhat.com>
+
+This patch resolves BZ 473152, Sun reports -124.el5 sata_nv
+may not recognize drive when using the MCP55 chipset. They
+have verified a -124.el5 test kernel built with this patch.
+
+ata_wait_idle reports abnormal status for each port and
+the status of each link is down.
+
+ata_eh_recover: ENTER
+__ata_port_freeze: ata1 port frozen
+sata_link_hardreset: ENTER
+sata_link_hardreset: EXIT, rc=0
+sata_sff_hardreset: EXIT, class=0
+ata1: abnormal Status 0x7F
+ata_eh_thaw_port: ata1 port thawed
+ata_std_postreset: ENTER
+ata1: SATA link down (SStatus 100 SControl 300)
+
+This patch is a net backport of these 3 commits fixing
+upstream problem where hardreset may succeed but link
+doesn't come online.
+
+commit 2fd673ecf0378ddeeeb87b3605e50212e0c0ddc6
+Author: Tejun Heo <tj@kernel.org>
+Date:   Fri Aug 29 16:13:12 2008 +0200
+
+    sata_nv: disable hardreset for generic
+
+    of them being unifying probing, hotplug and EH reset paths uniform.
+    Previously, broken hardreset could go unnoticed as it wasn't used
+    during probing but when something goes wrong or after hotplug the
+    problem will surface and bite hard.
+
+    OSDL bug 11195 reports that sata_nv generic flavor falls into this
+    category.  Hardreset itself succeeds but PHY stays offline after
+    hardreset.  I tried longer debounce timing but the result was the
+    same.
+
+      http://bugzilla.kernel.org/show_bug.cgi?id=11195
+
+    So, it seems we'll have to drop hardreset from the generic flavor.
+
+commit 4c1eb90a0908c0c60db2169dce08fb672e7582f1
+Author: Tejun Heo <tj@kernel.org>
+Date:   Sun Sep 28 07:39:01 2008 +0900
+
+    sata_nv: reinstate nv_hardreset() for non generic controllers
+
+    Commit 2fd673ecf0378ddeeeb87b3605e50212e0c0ddc6 which tried to remove
+    hardreset for generic accidentally removed it for all flavors as all
+    others were inheriting from nv_generic_ops.  This patch reinstates
+    nv_hardreset() and puts it into nv_common_ops which all flavors
+    inherit from.  nv_generic_ops now inherits from nv_common_ops and
+    overrides .hardreset to ATA_OP_NULL.
+
+    While at it, explain why nv_hardreset and ATA_OP_NULL override are
+    necessary.
+
+commit 3c324283e6cdb79210cf7975c3e40d3ba3e672b2
+Author: Tejun Heo <tj@kernel.org>
+Date:   Mon Nov 3 12:37:49 2008 +0900
+
+    sata_nv: fix generic, nf2/3 detection regression
+
+    All three flavors of sata_nv's are different in how their hardreset
+    behaves.
+
+    * generic: Hardreset is not reliable.  Link often doesn't come online
+      after hardreset.
+
+    * nf2/3: A little bit better - link comes online with longer debounce
+      timing.  However, nf2/3 can't reliable wait for the first D2H
+      Register FIS, so it can't wait for device readiness or classify the
+      device after hardreset.  Follow-up SRST required.
+
+    * ck804: Hardreset finally works.
+
+    The core layer change to prefer hardreset and follow up changes
+    exposed the above issues and caused various detection regressions for
+    all three flavors.  This patch, hopefully, fixes all the known issues
+    and should make sata_nv error handling more reliable.
+
+Currently building all arches thru brew
+
+https://brewweb.devel.redhat.com/taskinfo?taskID=1591045
+
+ drivers/ata/sata_nv.c |   62 ++++++++++++++++++++++++++++++-------------------
+ 1 files changed, 38 insertions(+), 24 deletions(-)
+
+diff --git a/drivers/ata/sata_nv.c b/drivers/ata/sata_nv.c
+index e620ca1..b19fce7 100644
+--- a/drivers/ata/sata_nv.c
++++ b/drivers/ata/sata_nv.c
+@@ -310,10 +310,10 @@ static int nv_scr_write(struct ata_port *ap, unsigned int sc_reg, u32 val);
+ 
+ static void nv_nf2_freeze(struct ata_port *ap);
+ static void nv_nf2_thaw(struct ata_port *ap);
++static int nv_nf2_hardreset(struct ata_link *link, unsigned int *class,
++			    unsigned long deadline);
+ static void nv_ck804_freeze(struct ata_port *ap);
+ static void nv_ck804_thaw(struct ata_port *ap);
+-static int nv_hardreset(struct ata_link *link, unsigned int *class,
+-			unsigned long deadline);
+ static int nv_adma_slave_config(struct scsi_device *sdev);
+ static int nv_adma_check_atapi_dma(struct ata_queued_cmd *qc);
+ static void nv_adma_qc_prep(struct ata_queued_cmd *qc);
+@@ -408,28 +408,46 @@ static struct scsi_host_template nv_swncq_sht = {
+ 	.slave_configure	= nv_swncq_slave_config,
+ };
+ 
++static struct ata_port_operations nv_common_ops = {
++	.inherits               = &ata_bmdma_port_ops,
++        .scr_read               = nv_scr_read,
++        .scr_write              = nv_scr_write,
++};
++
++/* OSDL bz11195 reports that link doesn't come online after hardreset
++ * on generic nv's and there have been several other similar reports
++ * on linux-ide.  Disable hardreset for generic nv's.
++ */
+ static struct ata_port_operations nv_generic_ops = {
+-	.inherits		= &ata_bmdma_port_ops,
+-	.hardreset		= nv_hardreset,
+-	.scr_read		= nv_scr_read,
+-	.scr_write		= nv_scr_write,
++	.inherits		= &nv_common_ops,
++	.hardreset		= ATA_OP_NULL,
+ };
+ 
++/* OSDL bz3352 reports that nf2/3 controllers can't determine device
++ * signature reliably.  Also, the following thread reports detection
++ * failure on cold boot with the standard debouncing timing.
++ *
++ * http://thread.gmane.org/gmane.linux.ide/34098
++ *
++ * Debounce with hotplug timing and request follow-up SRST.
++ */
+ static struct ata_port_operations nv_nf2_ops = {
+-	.inherits		= &nv_generic_ops,
++	.inherits		= &nv_common_ops,
+ 	.freeze			= nv_nf2_freeze,
+ 	.thaw			= nv_nf2_thaw,
++	.hardreset              = nv_nf2_hardreset,
+ };
+ 
++/* CK804 finally gets hardreset right */
+ static struct ata_port_operations nv_ck804_ops = {
+-	.inherits		= &nv_generic_ops,
++	.inherits		= &nv_common_ops,
+ 	.freeze			= nv_ck804_freeze,
+ 	.thaw			= nv_ck804_thaw,
+ 	.host_stop		= nv_ck804_host_stop,
+ };
+ 
+ static struct ata_port_operations nv_adma_ops = {
+-	.inherits		= &nv_generic_ops,
++	.inherits		= &nv_ck804_ops,
+ 
+ 	.check_atapi_dma	= nv_adma_check_atapi_dma,
+ 	.sff_tf_read		= nv_adma_tf_read,
+@@ -1544,6 +1562,17 @@ static void nv_nf2_thaw(struct ata_port *ap)
+ 	iowrite8(mask, scr_addr + NV_INT_ENABLE);
+ }
+ 
++static int nv_nf2_hardreset(struct ata_link *link, unsigned int *class,
++			    unsigned long deadline)
++{
++	bool online;
++	int rc;
++
++	rc = sata_link_hardreset(link, sata_deb_timing_hotplug, deadline,
++				 &online, NULL);
++	return online ? -EAGAIN : rc;
++}
++
+ static void nv_ck804_freeze(struct ata_port *ap)
+ {
+ 	void __iomem *mmio_base = ap->host->iomap[NV_MMIO_BAR];
+@@ -1596,21 +1625,6 @@ static void nv_mcp55_thaw(struct ata_port *ap)
+ 	ata_sff_thaw(ap);
+ }
+ 
+-static int nv_hardreset(struct ata_link *link, unsigned int *class,
+-			unsigned long deadline)
+-{
+-	int rc;
+-
+-	/* SATA hardreset fails to retrieve proper device signature on
+-	 * some controllers.  Request follow up SRST.  For more info,
+-	 * see http://bugzilla.kernel.org/show_bug.cgi?id=3352
+-	 */
+-	rc = sata_sff_hardreset(link, class, deadline);
+-	if (rc)
+-		return rc;
+-	return -EAGAIN;
+-}
+-
+ static void nv_adma_error_handler(struct ata_port *ap)
+ {
+ 	struct nv_adma_port_priv *pp = ap->private_data;

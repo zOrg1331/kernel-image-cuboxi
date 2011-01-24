@@ -32,7 +32,6 @@
 #include <linux/thread_info.h>
 #include <linux/ptrace.h>
 #include <linux/hardirq.h>
-#include <linux/kbuild.h>
 
 #include <asm/pgtable.h>
 #include <asm/ptrace.h>
@@ -40,7 +39,12 @@
 #include <asm/pdc.h>
 #include <asm/uaccess.h>
 
-#ifdef CONFIG_64BIT
+#define DEFINE(sym, val) \
+	asm volatile("\n->" #sym " %0 " #val : : "i" (val))
+
+#define BLANK() asm volatile("\n->" : : )
+
+#ifdef __LP64__
 #define FRAME_SIZE	128
 #else
 #define FRAME_SIZE	64
@@ -50,7 +54,7 @@
 
 int main(void)
 {
-	DEFINE(TASK_THREAD_INFO, offsetof(struct task_struct, stack));
+	DEFINE(TASK_THREAD_INFO, offsetof(struct task_struct, thread_info));
 	DEFINE(TASK_STATE, offsetof(struct task_struct, state));
 	DEFINE(TASK_FLAGS, offsetof(struct task_struct, flags));
 	DEFINE(TASK_SIGPENDING, offsetof(struct task_struct, pending));
@@ -270,8 +274,8 @@ int main(void)
 	DEFINE(DTLB_OFF_COUNT, offsetof(struct pdc_cache_info, dt_off_count));
 	DEFINE(DTLB_LOOP, offsetof(struct pdc_cache_info, dt_loop));
 	BLANK();
-	DEFINE(TIF_BLOCKSTEP_PA_BIT, 31-TIF_BLOCKSTEP);
-	DEFINE(TIF_SINGLESTEP_PA_BIT, 31-TIF_SINGLESTEP);
+	DEFINE(PA_BLOCKSTEP_BIT, 31-PT_BLOCKSTEP_BIT);
+	DEFINE(PA_SINGLESTEP_BIT, 31-PT_SINGLESTEP_BIT);
 	BLANK();
 	DEFINE(ASM_PMD_SHIFT, PMD_SHIFT);
 	DEFINE(ASM_PGDIR_SHIFT, PGDIR_SHIFT);
@@ -286,12 +290,12 @@ int main(void)
 	DEFINE(ASM_PTE_ENTRY_SIZE, PTE_ENTRY_SIZE);
 	DEFINE(ASM_PFN_PTE_SHIFT, PFN_PTE_SHIFT);
 	DEFINE(ASM_PT_INITIAL, PT_INITIAL);
+	DEFINE(ASM_PAGE_SIZE, PAGE_SIZE);
+	DEFINE(ASM_PAGE_SIZE_DIV64, PAGE_SIZE/64);
+	DEFINE(ASM_PAGE_SIZE_DIV128, PAGE_SIZE/128);
 	BLANK();
 	DEFINE(EXCDATA_IP, offsetof(struct exception_data, fault_ip));
 	DEFINE(EXCDATA_SPACE, offsetof(struct exception_data, fault_space));
 	DEFINE(EXCDATA_ADDR, offsetof(struct exception_data, fault_addr));
-	BLANK();
-	DEFINE(ASM_PDC_RESULT_SIZE, NUM_PDC_RESULT * sizeof(unsigned long));
-	BLANK();
 	return 0;
 }

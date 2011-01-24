@@ -163,14 +163,17 @@ static void __rb_erase_color(struct rb_node *node, struct rb_node *parent,
 			{
 				if (!other->rb_right || rb_is_black(other->rb_right))
 				{
-					rb_set_black(other->rb_left);
+					struct rb_node *o_left;
+					if ((o_left = other->rb_left))
+						rb_set_black(o_left);
 					rb_set_red(other);
 					__rb_rotate_right(other, root);
 					other = parent->rb_right;
 				}
 				rb_set_color(other, rb_color(parent));
 				rb_set_black(parent);
-				rb_set_black(other->rb_right);
+				if (other->rb_right)
+					rb_set_black(other->rb_right);
 				__rb_rotate_left(parent, root);
 				node = root->rb_node;
 				break;
@@ -197,14 +200,17 @@ static void __rb_erase_color(struct rb_node *node, struct rb_node *parent,
 			{
 				if (!other->rb_left || rb_is_black(other->rb_left))
 				{
-					rb_set_black(other->rb_right);
+					register struct rb_node *o_right;
+					if ((o_right = other->rb_right))
+						rb_set_black(o_right);
 					rb_set_red(other);
 					__rb_rotate_left(other, root);
 					other = parent->rb_left;
 				}
 				rb_set_color(other, rb_color(parent));
 				rb_set_black(parent);
-				rb_set_black(other->rb_left);
+				if (other->rb_left)
+					rb_set_black(other->rb_left);
 				__rb_rotate_right(parent, root);
 				node = root->rb_node;
 				break;
@@ -231,8 +237,24 @@ void rb_erase(struct rb_node *node, struct rb_root *root)
 		node = node->rb_right;
 		while ((left = node->rb_left) != NULL)
 			node = left;
+		child = node->rb_right;
+		parent = rb_parent(node);
+		color = rb_color(node);
 
-		if (rb_parent(old)) {
+		if (child)
+			rb_set_parent(child, parent);
+		if (parent == old) {
+			parent->rb_right = child;
+			parent = node;
+		} else
+			parent->rb_left = child;
+
+		node->rb_parent_color = old->rb_parent_color;
+		node->rb_right = old->rb_right;
+		node->rb_left = old->rb_left;
+
+		if (rb_parent(old))
+		{
 			if (rb_parent(old)->rb_left == old)
 				rb_parent(old)->rb_left = node;
 			else
@@ -240,25 +262,9 @@ void rb_erase(struct rb_node *node, struct rb_root *root)
 		} else
 			root->rb_node = node;
 
-		child = node->rb_right;
-		parent = rb_parent(node);
-		color = rb_color(node);
-
-		if (parent == old) {
-			parent = node;
-		} else {
-			if (child)
-				rb_set_parent(child, parent);
-			parent->rb_left = child;
-
-			node->rb_right = old->rb_right;
-			rb_set_parent(old->rb_right, node);
-		}
-
-		node->rb_parent_color = old->rb_parent_color;
-		node->rb_left = old->rb_left;
 		rb_set_parent(old->rb_left, node);
-
+		if (old->rb_right)
+			rb_set_parent(old->rb_right, node);
 		goto color;
 	}
 
@@ -286,7 +292,7 @@ EXPORT_SYMBOL(rb_erase);
 /*
  * This function returns the first node (in sort order) of the tree.
  */
-struct rb_node *rb_first(const struct rb_root *root)
+struct rb_node *rb_first(struct rb_root *root)
 {
 	struct rb_node	*n;
 
@@ -299,7 +305,7 @@ struct rb_node *rb_first(const struct rb_root *root)
 }
 EXPORT_SYMBOL(rb_first);
 
-struct rb_node *rb_last(const struct rb_root *root)
+struct rb_node *rb_last(struct rb_root *root)
 {
 	struct rb_node	*n;
 
@@ -312,12 +318,9 @@ struct rb_node *rb_last(const struct rb_root *root)
 }
 EXPORT_SYMBOL(rb_last);
 
-struct rb_node *rb_next(const struct rb_node *node)
+struct rb_node *rb_next(struct rb_node *node)
 {
 	struct rb_node *parent;
-
-	if (rb_parent(node) == node)
-		return NULL;
 
 	/* If we have a right-hand child, go down and then left as far
 	   as we can. */
@@ -325,7 +328,7 @@ struct rb_node *rb_next(const struct rb_node *node)
 		node = node->rb_right; 
 		while (node->rb_left)
 			node=node->rb_left;
-		return (struct rb_node *)node;
+		return node;
 	}
 
 	/* No right-hand children.  Everything down and left is
@@ -341,12 +344,9 @@ struct rb_node *rb_next(const struct rb_node *node)
 }
 EXPORT_SYMBOL(rb_next);
 
-struct rb_node *rb_prev(const struct rb_node *node)
+struct rb_node *rb_prev(struct rb_node *node)
 {
 	struct rb_node *parent;
-
-	if (rb_parent(node) == node)
-		return NULL;
 
 	/* If we have a left-hand child, go down and then right as far
 	   as we can. */
@@ -354,7 +354,7 @@ struct rb_node *rb_prev(const struct rb_node *node)
 		node = node->rb_left; 
 		while (node->rb_right)
 			node=node->rb_right;
-		return (struct rb_node *)node;
+		return node;
 	}
 
 	/* No left-hand children. Go up till we find an ancestor which

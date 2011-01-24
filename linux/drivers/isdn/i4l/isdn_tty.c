@@ -13,7 +13,6 @@
 
 #include <linux/isdn.h>
 #include <linux/delay.h>
-#include <linux/smp_lock.h>
 #include "isdn_common.h"
 #include "isdn_tty.h"
 #ifdef CONFIG_ISDN_AUDIO
@@ -86,8 +85,6 @@ isdn_tty_try_read(modem_info * info, struct sk_buff *skb)
 								tty_insert_flip_char(tty, DLE, 0);
 							tty_insert_flip_char(tty, *dp++, 0);
 						}
-						if (*dp == DLE)
-							tty_insert_flip_char(tty, DLE, 0);
 						last = *dp;
 					} else {
 #endif
@@ -1264,6 +1261,7 @@ isdn_tty_flush_buffer(struct tty_struct *tty)
 	}
 	isdn_tty_cleanup_xmit(info);
 	info->xmit_count = 0;
+	wake_up_interruptible(&tty->write_wait);
 	tty_wakeup(tty);
 }
 
@@ -1348,19 +1346,17 @@ isdn_tty_tiocmget(struct tty_struct *tty, struct file *file)
 	modem_info *info = (modem_info *) tty->driver_data;
 	u_char control, status;
 
-	if (isdn_tty_paranoia_check(info, tty->name, __func__))
+	if (isdn_tty_paranoia_check(info, tty->name, __FUNCTION__))
 		return -ENODEV;
 	if (tty->flags & (1 << TTY_IO_ERROR))
 		return -EIO;
 
-	lock_kernel();
 #ifdef ISDN_DEBUG_MODEM_IOCTL
 	printk(KERN_DEBUG "ttyI%d ioctl TIOCMGET\n", info->line);
 #endif
 
 	control = info->mcr;
 	status = info->msr;
-	unlock_kernel();
 	return ((control & UART_MCR_RTS) ? TIOCM_RTS : 0)
 	    | ((control & UART_MCR_DTR) ? TIOCM_DTR : 0)
 	    | ((status & UART_MSR_DCD) ? TIOCM_CAR : 0)
@@ -1375,7 +1371,7 @@ isdn_tty_tiocmset(struct tty_struct *tty, struct file *file,
 {
 	modem_info *info = (modem_info *) tty->driver_data;
 
-	if (isdn_tty_paranoia_check(info, tty->name, __func__))
+	if (isdn_tty_paranoia_check(info, tty->name, __FUNCTION__))
 		return -ENODEV;
 	if (tty->flags & (1 << TTY_IO_ERROR))
 		return -EIO;
@@ -1384,7 +1380,6 @@ isdn_tty_tiocmset(struct tty_struct *tty, struct file *file,
 	printk(KERN_DEBUG "ttyI%d ioctl TIOCMxxx: %x %x\n", info->line, set, clear);
 #endif
 
-	lock_kernel();
 	if (set & TIOCM_RTS)
 		info->mcr |= UART_MCR_RTS;
 	if (set & TIOCM_DTR) {
@@ -1406,7 +1401,6 @@ isdn_tty_tiocmset(struct tty_struct *tty, struct file *file,
 			isdn_tty_modem_hup(info, 1);
 		}
 	}
-	unlock_kernel();
 	return 0;
 }
 
@@ -1440,6 +1434,21 @@ isdn_tty_ioctl(struct tty_struct *tty, struct file *file,
 				return retval;
 			tty_wait_until_sent(tty, 0);
 			return 0;
+		case TIOCGSOFTCAR:
+#ifdef ISDN_DEBUG_MODEM_IOCTL
+			printk(KERN_DEBUG "ttyI%d ioctl TIOCGSOFTCAR\n", info->line);
+#endif
+			return put_user(C_CLOCAL(tty) ? 1 : 0, (ulong __user *) arg);
+		case TIOCSSOFTCAR:
+#ifdef ISDN_DEBUG_MODEM_IOCTL
+			printk(KERN_DEBUG "ttyI%d ioctl TIOCSSOFTCAR\n", info->line);
+#endif
+			if (get_user(arg, (ulong __user *) arg))
+				return -EFAULT;
+			tty->termios->c_cflag =
+			    ((tty->termios->c_cflag & ~CLOCAL) |
+			     (arg ? CLOCAL : 0));
+			return 0;
 		case TIOCSERGETLSR:	/* Get line status register */
 #ifdef ISDN_DEBUG_MODEM_IOCTL
 			printk(KERN_DEBUG "ttyI%d ioctl TIOCSERGETLSR\n", info->line);
@@ -1455,21 +1464,20 @@ isdn_tty_ioctl(struct tty_struct *tty, struct file *file,
 }
 
 static void
-isdn_tty_set_termios(struct tty_struct *tty, struct ktermios *old_termios)
+isdn_tty_set_termios(struct tty_struct *tty, struct termios *old_termios)
 {
 	modem_info *info = (modem_info *) tty->driver_data;
 
 	if (!old_termios)
 		isdn_tty_change_speed(info);
 	else {
-		if (tty->termios->c_cflag == old_termios->c_cflag &&
-		    tty->termios->c_ispeed == old_termios->c_ispeed &&
-		    tty->termios->c_ospeed == old_termios->c_ospeed)
+		if (tty->termios->c_cflag == old_termios->c_cflag)
 			return;
 		isdn_tty_change_speed(info);
 		if ((old_termios->c_cflag & CRTSCTS) &&
-		    !(tty->termios->c_cflag & CRTSCTS))
+		    !(tty->termios->c_cflag & CRTSCTS)) {
 			tty->hw_stopped = 0;
+		}
 	}
 }
 
@@ -1593,13 +1601,13 @@ isdn_tty_open(struct tty_struct *tty, struct file *filp)
 	int retval, line;
 
 	line = tty->index;
-	if (line < 0 || line >= ISDN_MAX_CHANNELS)
+	if (line < 0 || line > ISDN_MAX_CHANNELS)
 		return -ENODEV;
 	info = &dev->mdm.info[line];
 	if (isdn_tty_paranoia_check(info, tty->name, "isdn_tty_open"))
 		return -ENODEV;
 	if (!try_module_get(info->owner)) {
-		printk(KERN_WARNING "%s: cannot reserve module\n", __func__);
+		printk(KERN_WARNING "%s: cannot reserve module\n", __FUNCTION__);
 		return -ENODEV;
 	}
 #ifdef ISDN_DEBUG_MODEM_OPEN
@@ -1709,7 +1717,9 @@ isdn_tty_close(struct tty_struct *tty, struct file *filp)
 	}
 	dev->modempoll--;
 	isdn_tty_shutdown(info);
-	isdn_tty_flush_buffer(tty);
+	
+	if (tty->driver->flush_buffer)
+		tty->driver->flush_buffer(tty);
 	tty_ldisc_flush(tty);
 	info->tty = NULL;
 	info->ncarrier = 0;
@@ -1850,7 +1860,7 @@ modem_write_profile(atemu * m)
 		send_sig(SIGIO, dev->profd, 1);
 }
 
-static const struct tty_operations modem_ops = {
+static struct tty_operations modem_ops = {
         .open = isdn_tty_open,
 	.close = isdn_tty_close,
 	.write = isdn_tty_write,
@@ -1906,6 +1916,7 @@ isdn_tty_modem_init(void)
 		info->owner = THIS_MODULE;
 #endif
 		spin_lock_init(&info->readlock);
+		init_MUTEX(&info->write_sem);
 		sprintf(info->last_cause, "0000");
 		sprintf(info->last_num, "none");
 		info->last_dir = 0;
@@ -2635,12 +2646,7 @@ isdn_tty_modem_result(int code, modem_info * info)
 		if ((info->flags & ISDN_ASYNC_CLOSING) || (!info->tty)) {
 			return;
 		}
-#ifdef CONFIG_ISDN_AUDIO
-		if ( !info->vonline )
-			tty_ldisc_flush(info->tty);
-#else
 		tty_ldisc_flush(info->tty);
-#endif
 		if ((info->flags & ISDN_ASYNC_CHECK_CD) &&
 		    (!((info->flags & ISDN_ASYNC_CALLOUT_ACTIVE) &&
 		       (info->flags & ISDN_ASYNC_CALLOUT_NOHUP)))) {
@@ -2688,9 +2694,8 @@ isdn_tty_getdial(char *p, char *q,int cnt)
 	int limit = ISDN_MSNLEN - 1;	/* MUST match the size of interface var to avoid
 					buffer overflow */
 
-	while (strchr(" 0123456789,#.*WPTSR-", *p) && *p && --cnt>0) {
+	while (strchr(" 0123456789,#.*WPTS-", *p) && *p && --cnt>0) {
 		if ((*p >= '0' && *p <= '9') || ((*p == 'S') && first) ||
-		    ((*p == 'R') && first) ||
 		    (*p == '*') || (*p == '#')) {
 			*q++ = *p;
 			limit--;

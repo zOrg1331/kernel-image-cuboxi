@@ -1,0 +1,35 @@
+From: Geoff Gustafson <grgustaf@redhat.com>
+Date: Tue, 25 Mar 2008 14:42:49 -0400
+Subject: [x86] oprofile: support for Penryn-class processors
+Message-id: 20080325184249.GA1588@samurai.boston.redhat.com
+O-Subject: [RHEL5.2 PATCH] oprofile support for Penryn-class processors (bz 253056)
+Bugzilla: 253056
+
+This patch is upstream and just makes model 23 processors (45nm Penryn,
+Wolfdale, Yorkfield, Harpertown, etc) recognized as Core 2 processors for
+oprofile purposes.
+
+Thanks to wcohen, I verified that w/o the patch on my Yorkfield box, ophelp
+reported "Using timer interrupt" but no events. With the patch, a number of
+events are reported that can be monitored, like I see on older processors.
+
+Please ACK this one-liner.
+
+- Geoff
+
+Acked-by: Jarod Wilson <jwilson@redhat.com>
+Acked-by: Markus Armbruster <armbru@redhat.com>
+
+diff --git a/arch/i386/oprofile/nmi_int.c b/arch/i386/oprofile/nmi_int.c
+index a5d9107..6b50231 100644
+--- a/arch/i386/oprofile/nmi_int.c
++++ b/arch/i386/oprofile/nmi_int.c
+@@ -337,7 +337,7 @@ static int __init ppro_init(char ** cpu_type)
+ 
+ 	if (cpu_model == 14)
+ 		*cpu_type = "i386/core";
+-	else if (cpu_model == 15)
++	else if (cpu_model == 15 || cpu_model == 23)
+ 		*cpu_type = "i386/core_2";
+ 	else if (cpu_model > 0xd)
+ 		return 0;

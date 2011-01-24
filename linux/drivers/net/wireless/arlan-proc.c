@@ -402,7 +402,7 @@ static int arlan_setup_card_by_book(struct net_device *dev)
 
 static char arlan_drive_info[ARLAN_STR_SIZE] = "A655\n\0";
 
-static int arlan_sysctl_info(ctl_table * ctl, int write,
+static int arlan_sysctl_info(ctl_table * ctl, int write, struct file *filp,
 		      void __user *buffer, size_t * lenp, loff_t *ppos)
 {
 	int i;
@@ -435,7 +435,7 @@ static int arlan_sysctl_info(ctl_table * ctl, int write,
 		goto final;
 	}
 	else
-		priva = netdev_priv(arlan_device[devnum]);
+		priva = arlan_device[devnum]->priv;
 
 	if (priva == NULL)
 	{
@@ -629,7 +629,7 @@ final:
 	*lenp = pos;
 
 	if (!write)
-		retv = proc_dostring(ctl, write, buffer, lenp, ppos);
+		retv = proc_dostring(ctl, write, filp, buffer, lenp, ppos);
 	else
 	{
 		*lenp = 0;
@@ -639,7 +639,7 @@ final:
 }
 
 
-static int arlan_sysctl_info161719(ctl_table * ctl, int write,
+static int arlan_sysctl_info161719(ctl_table * ctl, int write, struct file *filp,
 			    void __user *buffer, size_t * lenp, loff_t *ppos)
 {
 	int i;
@@ -654,7 +654,7 @@ static int arlan_sysctl_info161719(ctl_table * ctl, int write,
 		goto final;
 	}
 	else
-		priva = netdev_priv(arlan_device[devnum]);
+		priva = arlan_device[devnum]->priv;
 	if (priva == NULL)
 	{
 		printk(KERN_WARNING " Could not find the device private in arlan procsys, bad\n ");
@@ -669,11 +669,11 @@ static int arlan_sysctl_info161719(ctl_table * ctl, int write,
 
 final:
 	*lenp = pos;
-	retv = proc_dostring(ctl, write, buffer, lenp, ppos);
+	retv = proc_dostring(ctl, write, filp, buffer, lenp, ppos);
 	return retv;
 }
 
-static int arlan_sysctl_infotxRing(ctl_table * ctl, int write,
+static int arlan_sysctl_infotxRing(ctl_table * ctl, int write, struct file *filp,
 			    void __user *buffer, size_t * lenp, loff_t *ppos)
 {
 	int i;
@@ -688,7 +688,7 @@ static int arlan_sysctl_infotxRing(ctl_table * ctl, int write,
 		  goto final;
 	}
 	else
-		priva = netdev_priv(arlan_device[devnum]);
+		priva = arlan_device[devnum]->priv;
 	if (priva == NULL)
 	{
 		printk(KERN_WARNING " Could not find the device private in arlan procsys, bad\n ");
@@ -698,11 +698,11 @@ static int arlan_sysctl_infotxRing(ctl_table * ctl, int write,
 	SARLBNpln(u_char, txBuffer, 0x800);
 final:
 	*lenp = pos;
-	retv = proc_dostring(ctl, write, buffer, lenp, ppos);
+	retv = proc_dostring(ctl, write, filp, buffer, lenp, ppos);
 	return retv;
 }
 
-static int arlan_sysctl_inforxRing(ctl_table * ctl, int write,
+static int arlan_sysctl_inforxRing(ctl_table * ctl, int write, struct file *filp,
 			    void __user *buffer, size_t * lenp, loff_t *ppos)
 {
 	int i;
@@ -716,7 +716,7 @@ static int arlan_sysctl_inforxRing(ctl_table * ctl, int write,
 		  pos += sprintf(arlan_drive_info + pos, "No device found here \n");
 		  goto final;
 	} else
-		priva = netdev_priv(arlan_device[devnum]);
+		priva = arlan_device[devnum]->priv;
 	if (priva == NULL)
 	{
 		printk(KERN_WARNING " Could not find the device private in arlan procsys, bad\n ");
@@ -726,11 +726,11 @@ static int arlan_sysctl_inforxRing(ctl_table * ctl, int write,
 	SARLBNpln(u_char, rxBuffer, 0x800);
 final:
 	*lenp = pos;
-	retv = proc_dostring(ctl, write, buffer, lenp, ppos);
+	retv = proc_dostring(ctl, write, filp, buffer, lenp, ppos);
 	return retv;
 }
 
-static int arlan_sysctl_info18(ctl_table * ctl, int write,
+static int arlan_sysctl_info18(ctl_table * ctl, int write, struct file *filp,
 			void __user *buffer, size_t * lenp, loff_t *ppos)
 {
 	int i;
@@ -745,7 +745,7 @@ static int arlan_sysctl_info18(ctl_table * ctl, int write,
 		goto final;
 	}
 	else
-		priva = netdev_priv(arlan_device[devnum]);
+		priva = arlan_device[devnum]->priv;
 	if (priva == NULL)
 	{
 		printk(KERN_WARNING " Could not find the device private in arlan procsys, bad\n ");
@@ -756,7 +756,7 @@ static int arlan_sysctl_info18(ctl_table * ctl, int write,
 
 final:
 	*lenp = pos;
-	retv = proc_dostring(ctl, write, buffer, lenp, ppos);
+	retv = proc_dostring(ctl, write, filp, buffer, lenp, ppos);
 	return retv;
 }
 
@@ -766,7 +766,7 @@ final:
 
 static char conf_reset_result[200];
 
-static int arlan_configure(ctl_table * ctl, int write,
+static int arlan_configure(ctl_table * ctl, int write, struct file *filp,
 		    void __user *buffer, size_t * lenp, loff_t *ppos)
 {
 	int pos = 0;
@@ -780,7 +780,7 @@ static int arlan_configure(ctl_table * ctl, int write,
 	}
 	else if (arlan_device[devnum] != NULL)
 	{
-		  priv = netdev_priv(arlan_device[devnum]);
+		  priv = arlan_device[devnum]->priv;
 
 		  arlan_command(arlan_device[devnum], ARLAN_COMMAND_CLEAN_AND_CONF);
 	}
@@ -788,10 +788,10 @@ static int arlan_configure(ctl_table * ctl, int write,
 		return -1;
 
 	*lenp = pos;
-	return proc_dostring(ctl, write, buffer, lenp, ppos);
+	return proc_dostring(ctl, write, filp, buffer, lenp, ppos);
 }
 
-static int arlan_sysctl_reset(ctl_table * ctl, int write,
+static int arlan_sysctl_reset(ctl_table * ctl, int write, struct file *filp,
 		       void __user *buffer, size_t * lenp, loff_t *ppos)
 {
 	int pos = 0;
@@ -805,13 +805,13 @@ static int arlan_sysctl_reset(ctl_table * ctl, int write,
 	}
 	else if (arlan_device[devnum] != NULL)
 	{
-		priv = netdev_priv(arlan_device[devnum]);
+		priv = arlan_device[devnum]->priv;
 		arlan_command(arlan_device[devnum], ARLAN_COMMAND_CLEAN_AND_RESET);
 
 	} else
 		return -1;
 	*lenp = pos + 3;
-	return proc_dostring(ctl, write, buffer, lenp, ppos);
+	return proc_dostring(ctl, write, filp, buffer, lenp, ppos);
 }
 
 
@@ -1202,6 +1202,13 @@ static ctl_table arlan_table[MAX_ARLANS + 1] =
 	{ .ctl_name = 0 }
 };
 #endif
+#else
+
+static ctl_table arlan_table[MAX_ARLANS + 1] =
+{
+	{ .ctl_name = 0 }
+};
+#endif
 
 
 // static int mmtu = 1234;
@@ -1209,7 +1216,7 @@ static ctl_table arlan_table[MAX_ARLANS + 1] =
 static ctl_table arlan_root_table[] =
 {
 	{
-		.ctl_name	= CTL_ARLAN,
+		.ctl_name	= 254,
 		.procname	= "arlan",
 		.maxlen		= 0,
 		.mode		= 0555,
@@ -1226,6 +1233,7 @@ static ctl_table arlan_root_table[] =
 //};
 
 
+#ifdef CONFIG_PROC_FS
 static struct ctl_table_header *arlan_device_sysctl_header;
 
 int __init init_arlan_proc(void)
@@ -1236,7 +1244,7 @@ int __init init_arlan_proc(void)
 		return 0;
 	for (i = 0; i < MAX_ARLANS && arlan_device[i]; i++)
 		arlan_table[i].ctl_name = i + 1;
-	arlan_device_sysctl_header = register_sysctl_table(arlan_root_table);
+	arlan_device_sysctl_header = register_sysctl_table(arlan_root_table, 0);
 	if (!arlan_device_sysctl_header)
 		return -1;
 

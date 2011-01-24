@@ -1,0 +1,43 @@
+From: Ivan Vecera <ivecera@redhat.com>
+Date: Thu, 25 Feb 2010 09:56:26 -0500
+Subject: [net] be2net: critical bugfix from upstream
+Message-id: <1267091786-2082-1-git-send-email-ivecera@redhat.com>
+Patchwork-id: 23426
+O-Subject: [RHEL5.5 PATCH] be2net: critical bugfix from upstream
+Bugzilla: 567718
+RH-Acked-by: Stanislaw Gruszka <sgruszka@redhat.com>
+RH-Acked-by: Michal Schmidt <mschmidt@redhat.com>
+RH-Acked-by: David S. Miller <davem@redhat.com>
+RH-Acked-by: Andy Gospodarek <gospo@redhat.com>
+
+BZ #567718 - be2net bug fixes for be3 hardware from Alpha testing
+
+Description:
+Before sending a command to the ASIC, version in the request header has to
+be set properly. This is necessary for the ARM firmware to send correct
+data to the driver.
+The be2net is  using the structure for the older generation of the ASIC
+and the version should be 0. If it has 1, FW will DMA extended response
+information that requires a larger response buffer. This will cause memory
+corruption and a system crash could follow.
+
+Upstream commits:
+07793d33b4fba00f5bd1dac78fa038bb0e23fa5c
+be2net: set proper value to version field in req hdr
+
+The patch should be included in Snap4 so please review it ASAP.
+
+Signed-off-by: Ivan Vecera <ivecera@redhat.com>
+
+diff --git a/drivers/net/benet/be_cmds.c b/drivers/net/benet/be_cmds.c
+index 0fa0ef7..0df9d4c 100644
+--- a/drivers/net/benet/be_cmds.c
++++ b/drivers/net/benet/be_cmds.c
+@@ -277,6 +277,7 @@ static void be_cmd_hdr_prepare(struct be_cmd_req_hdr *req_hdr,
+ 	req_hdr->opcode = opcode;
+ 	req_hdr->subsystem = subsystem;
+ 	req_hdr->request_length = cpu_to_le32(cmd_len - sizeof(*req_hdr));
++	req_hdr->version = 0;
+ }
+ 
+ static void be_cmd_page_addrs_prepare(struct phys_addr *pages, u32 max_pages,

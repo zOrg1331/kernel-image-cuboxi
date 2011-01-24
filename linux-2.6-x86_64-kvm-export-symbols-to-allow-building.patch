@@ -1,0 +1,58 @@
+From: john cooper <john.cooper@redhat.com>
+Date: Tue, 2 Jun 2009 11:07:32 -0400
+Subject: [x86_64] kvm: export symbols to allow building
+Message-id: 4A254034.2000700@redhat.com
+O-Subject: [RHEL5.4 PATCH] Bug 501777 - kvm doesn't build on newer RHEL-5.4 kernels, BZ #501777
+Bugzilla: 504038
+RH-Acked-by: Don Dutile <ddutile@redhat.com>
+RH-Acked-by: Chris Wright <chrisw@redhat.com>
+
+BZ #501777  https://bugzilla.redhat.com/show_bug.cgi?id=501777
+
+The KVM kernel module requires the export of
+get_user_pages_fast() and smp_send_reschedule()
+from RHEL-5.4 kernels as implemented by the
+patch below.
+
+The patch has been verified against build version
+kernel-2.6.18-151.el5 which may be found here:
+
+https://brewweb.devel.redhat.com/taskinfo?taskID=1822468
+
+The proposed KVM-side patch may be found attached
+to the BZ case (link above).
+
+ kernel/smp.c |    1 +
+ mm/gup.c     |    2 ++
+ 2 files changed, 3 insertions(+)
+=================================================================
+
+diff --git a/arch/x86_64/kernel/smp.c b/arch/x86_64/kernel/smp.c
+index ac38b08..ce4d348 100644
+--- a/arch/x86_64/kernel/smp.c
++++ b/arch/x86_64/kernel/smp.c
+@@ -294,6 +294,7 @@ void smp_send_reschedule(int cpu)
+ {
+ 	send_IPI_mask(cpumask_of_cpu(cpu), RESCHEDULE_VECTOR);
+ }
++EXPORT_SYMBOL_GPL(smp_send_reschedule);
+ 
+ /*
+  * Structure and data for smp_call_function(). This is designed to minimise
+diff --git a/arch/x86_64/mm/gup.c b/arch/x86_64/mm/gup.c
+index 750f186..f53ff80 100644
+--- a/arch/x86_64/mm/gup.c
++++ b/arch/x86_64/mm/gup.c
+@@ -9,6 +9,7 @@
+ #include <linux/vmstat.h>
+ #include <linux/highmem.h>
+ #include <linux/uaccess.h>
++#include <linux/module.h>
+ 
+ #include <asm/pgtable.h>
+ 
+@@ -281,3 +282,4 @@ slow_irqon:
+ 		return ret;
+ 	}
+ }
++EXPORT_SYMBOL_GPL(get_user_pages_fast);

@@ -1,0 +1,30 @@
+From: Brad Peters <bpeters@redhat.com>
+Date: Thu, 20 Mar 2008 18:10:02 -0400
+Subject: [ppc64] hardware watchpoints: add DABRX definitions
+Message-id: 47E2E0BA.9010308@redhat.com
+O-Subject: Re: [RHEL 5.2 Patch 1/2] Fix Hardware Watchpoints - Add DABRX definitions
+Bugzilla: 438259
+
+Description:
+Adds DABRX register define and access mode definitions
+
+Patch:
+Tested against 2.6.18-86.el5 <bpeters@redhat.com>
+----------
+
+Acked-by: Rik van Riel <riel@redhat.com>
+
+diff --git a/include/asm-powerpc/reg.h b/include/asm-powerpc/reg.h
+index a22bcca..a1694be 100644
+--- a/include/asm-powerpc/reg.h
++++ b/include/asm-powerpc/reg.h
+@@ -152,6 +152,9 @@
+ #define   CTRL_RUNLATCH	0x1
+ #define SPRN_DABR	0x3F5	/* Data Address Breakpoint Register */
+ #define   DABR_TRANSLATION	(1UL << 2)
++#define SPRN_DABRX	0x3F7	/* Data Address Breakpoint Register Extension */
++#define   DABRX_USER	(1UL << 0)
++#define   DABRX_KERNEL	(1UL << 1)
+ #define SPRN_DAR	0x013	/* Data Address Register */
+ #define SPRN_DSISR	0x012	/* Data Storage Interrupt Status Register */
+ #define   DSISR_NOHPTE		0x40000000	/* no translation found */

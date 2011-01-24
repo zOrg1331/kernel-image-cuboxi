@@ -1,0 +1,87 @@
+From: Rob Evers <revers@redhat.com>
+Date: Thu, 28 May 2009 11:50:42 -0400
+Subject: [scsi] mvsas: comment cleanup
+Message-id: 20090528154706.16475.20453.sendpatchset@localhost.localdomain
+O-Subject: [RHEL5.4 PATCH 3/5 V5] Comment cleanup
+Bugzilla: 485126
+
+https://bugzilla.redhat.com/show_bug.cgi?id=485126
+
+diff --git a/drivers/scsi/mvsas.c b/drivers/scsi/mvsas.c
+index 907a611..c16dd24 100644
+--- a/drivers/scsi/mvsas.c
++++ b/drivers/scsi/mvsas.c
+@@ -42,7 +42,7 @@
+ #include <asm/io.h>
+ 
+ #define DRV_NAME	"mvsas"
+-#define DRV_VERSION	"0.5.3"
++#define DRV_VERSION	"0.5.4"
+ 
+ #define mr32(reg)	readl(regs + MVS_##reg)
+ #define mw32(reg,val)	writel((val), regs + MVS_##reg)
+@@ -808,7 +808,8 @@ static void mvs_tag_init(struct mvs_info *mvi)
+ 		mvs_tag_clear(mvi, i);
+ }
+ 
+-/* FIXME , For SAS target mode */
++/* Target mode need store port SAS address in NVRAM, while for
++   initiator mode set by default. */
+ static int mvs_nvram_read(struct mvs_info *mvi, u32 addr,
+ 			  void *buf, u32 buflen)
+ {
+@@ -1521,11 +1522,10 @@ static int mvs_task_prep_ata(struct mvs_info *mvi,
+ 			flags |= MCH_ATAPI;
+ 	}
+ 
+-	/* FIXME: fill in port multiplier number */
+-
++	/* If libsas support Port Multiplier later, add the device port
++		number field*/
+ 	hdr->flags = cpu_to_le32(flags);
+ 
+-	/* FIXME: the low order order 5 bits for the TAG if enable NCQ */
+ 	if (task->ata_task.use_ncq && mvs_get_ncq_tag(task, &hdr->tags))
+ 		task->ata_task.fis.sector_count |= hdr->tags << 3;
+ 	else
+@@ -1565,9 +1565,6 @@ static int mvs_task_prep_ata(struct mvs_info *mvi,
+ 	buf_tmp_dma += i;
+ 
+ 	/* region 4: status buffer (larger the PRD, smaller this buf) ****** */
+-	/* FIXME: probably unused, for SATA.  kept here just in case
+-	 * we get a STP/SATA error information record
+-	 */
+ 	slot->response = buf_tmp;
+ 	hdr->status_buf = cpu_to_le64(buf_tmp_dma);
+ 
+@@ -1930,7 +1927,7 @@ static int mvs_phy_control_wrap(struct asd_sas_phy *sas_phy, enum phy_func func)
+ {
+ 	return mvs_phy_control(sas_phy, func, NULL);
+ }
+-/* FIXME: locking? */
++
+ static int mvs_phy_control(struct asd_sas_phy *sas_phy, enum phy_func func,void * funcdata)
+ {
+ 	struct mvs_info *mvi = sas_phy->ha->lldd_ha;
+@@ -2573,7 +2570,6 @@ static int __devinit mvs_hw_init(struct mvs_info *mvi)
+ 	else
+ 		mw32_f(CTL, cctl | CCTL_RST);
+ 
+-	/* write to device control _AND_ device status register? - A.C. */
+ 	pci_read_config_dword(mvi->pdev, PCR_DEV_CTRL, &tmp);
+ 	tmp &= ~PRD_REQ_MASK;
+ 	tmp |= PRD_REQ_SIZE;
+@@ -2650,11 +2646,9 @@ static int __devinit mvs_hw_init(struct mvs_info *mvi)
+ 		mvs_enable_xmt(mvi, i);
+ 	}
+ 
+-	/* FIXME: update wide port bitmaps */
+ 
+-	/* little endian for open address and command table, etc. */
+-	/* A.C.
+-	 * it seems that ( from the spec ) turning on big-endian won't
++	/* little endian for open address and command table, etc.
++	 * TODO: it seems that ( from the spec ) turning on big-endian won't
+ 	 * do us any good on big-endian machines, need further confirmation
+ 	 */
+ 	cctl = mr32(CTL);

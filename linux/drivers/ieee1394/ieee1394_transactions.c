@@ -9,22 +9,19 @@
  * directory of the kernel sources for details.
  */
 
+#include <linux/sched.h>
 #include <linux/bitops.h>
-#include <linux/compiler.h>
-#include <linux/hardirq.h>
-#include <linux/spinlock.h>
-#include <linux/string.h>
-#include <linux/sched.h>  /* because linux/wait.h is broken if CONFIG_SMP=n */
-#include <linux/wait.h>
+#include <linux/smp_lock.h>
+#include <linux/interrupt.h>
 
-#include <asm/bug.h>
 #include <asm/errno.h>
-#include <asm/system.h>
 
 #include "ieee1394.h"
 #include "ieee1394_types.h"
 #include "hosts.h"
 #include "ieee1394_core.h"
+#include "highlevel.h"
+#include "nodemgr.h"
 #include "ieee1394_transactions.h"
 
 #define PREP_ASYNC_HEAD_ADDRESS(tc) \
@@ -33,13 +30,6 @@
                 | (1 << 8) | (tc << 4); \
         packet->header[1] = (packet->host->node_id << 16) | (addr >> 32); \
         packet->header[2] = addr & 0xffffffff
-
-#ifndef HPSB_DEBUG_TLABELS
-static
-#endif
-DEFINE_SPINLOCK(hpsb_tlabel_lock);
-
-static DECLARE_WAIT_QUEUE_HEAD(tlabel_wq);
 
 static void fill_async_readquad(struct hpsb_packet *packet, u64 addr)
 {
@@ -89,6 +79,18 @@ static void fill_async_lock(struct hpsb_packet *packet, u64 addr, int extcode,
 	packet->expect_response = 1;
 }
 
+static void fill_iso_packet(struct hpsb_packet *packet, int length, int channel,
+			    int tag, int sync)
+{
+	packet->header[0] = (length << 16) | (tag << 14) | (channel << 8)
+	    | (TCODE_ISO_DATA << 4) | sync;
+
+	packet->header_size = 4;
+	packet->data_size = length;
+	packet->type = hpsb_iso;
+	packet->tcode = TCODE_ISO_DATA;
+}
+
 static void fill_phy_packet(struct hpsb_packet *packet, quadlet_t data)
 {
 	packet->header[0] = data;
@@ -112,41 +114,9 @@ static void fill_async_stream_packet(struct hpsb_packet *packet, int length,
 	packet->tcode = TCODE_ISO_DATA;
 }
 
-/* same as hpsb_get_tlabel, except that it returns immediately */
-static int hpsb_get_tlabel_atomic(struct hpsb_packet *packet)
-{
-	unsigned long flags, *tp;
-	u8 *next;
-	int tlabel, n = NODEID_TO_NODE(packet->node_id);
-
-	/* Broadcast transactions are complete once the request has been sent.
-	 * Use the same transaction label for all broadcast transactions. */
-	if (unlikely(n == ALL_NODES)) {
-		packet->tlabel = 0;
-		return 0;
-	}
-	tp = packet->host->tl_pool[n].map;
-	next = &packet->host->next_tl[n];
-
-	spin_lock_irqsave(&hpsb_tlabel_lock, flags);
-	tlabel = find_next_zero_bit(tp, 64, *next);
-	if (tlabel > 63)
-		tlabel = find_first_zero_bit(tp, 64);
-	if (tlabel > 63) {
-		spin_unlock_irqrestore(&hpsb_tlabel_lock, flags);
-		return -EAGAIN;
-	}
-	__set_bit(tlabel, tp);
-	*next = (tlabel + 1) & 63;
-	spin_unlock_irqrestore(&hpsb_tlabel_lock, flags);
-
-	packet->tlabel = tlabel;
-	return 0;
-}
-
 /**
  * hpsb_get_tlabel - allocate a transaction label
- * @packet: the packet whose tlabel and tl_pool we set
+ * @packet: the packet who's tlabel/tpool we set
  *
  * Every asynchronous transaction on the 1394 bus needs a transaction
  * label to match the response to the request.  This label has to be
@@ -160,25 +130,42 @@ static int hpsb_get_tlabel_atomic(struct hpsb_packet *packet)
  * Return value: Zero on success, otherwise non-zero. A non-zero return
  * generally means there are no available tlabels. If this is called out
  * of interrupt or atomic context, then it will sleep until can return a
- * tlabel or a signal is received.
+ * tlabel.
  */
 int hpsb_get_tlabel(struct hpsb_packet *packet)
 {
-	if (irqs_disabled() || in_atomic())
-		return hpsb_get_tlabel_atomic(packet);
+	unsigned long flags;
+	struct hpsb_tlabel_pool *tp;
+	int n = NODEID_TO_NODE(packet->node_id);
 
-	/* NB: The macro wait_event_interruptible() is called with a condition
-	 * argument with side effect.  This is only possible because the side
-	 * effect does not occur until the condition became true, and
-	 * wait_event_interruptible() won't evaluate the condition again after
-	 * that. */
-	return wait_event_interruptible(tlabel_wq,
-					!hpsb_get_tlabel_atomic(packet));
+	if (unlikely(n == ALL_NODES))
+		return 0;
+	tp = &packet->host->tpool[n];
+
+	if (irqs_disabled() || in_atomic()) {
+		if (down_trylock(&tp->count))
+			return 1;
+	} else {
+		down(&tp->count);
+	}
+
+	spin_lock_irqsave(&tp->lock, flags);
+
+	packet->tlabel = find_next_zero_bit(tp->pool, 64, tp->next);
+	if (packet->tlabel > 63)
+		packet->tlabel = find_first_zero_bit(tp->pool, 64);
+	tp->next = (packet->tlabel + 1) % 64;
+	/* Should _never_ happen */
+	BUG_ON(test_and_set_bit(packet->tlabel, tp->pool));
+	tp->allocations++;
+	spin_unlock_irqrestore(&tp->lock, flags);
+
+	return 0;
 }
 
 /**
  * hpsb_free_tlabel - free an allocated transaction label
- * @packet: packet whose tlabel and tl_pool needs to be cleared
+ * @packet: packet whos tlabel/tpool needs to be cleared
  *
  * Frees the transaction label allocated with hpsb_get_tlabel().  The
  * tlabel has to be freed after the transaction is complete (i.e. response
@@ -189,31 +176,23 @@ int hpsb_get_tlabel(struct hpsb_packet *packet)
  */
 void hpsb_free_tlabel(struct hpsb_packet *packet)
 {
-	unsigned long flags, *tp;
-	int tlabel, n = NODEID_TO_NODE(packet->node_id);
+	unsigned long flags;
+	struct hpsb_tlabel_pool *tp;
+	int n = NODEID_TO_NODE(packet->node_id);
 
 	if (unlikely(n == ALL_NODES))
 		return;
-	tp = packet->host->tl_pool[n].map;
-	tlabel = packet->tlabel;
-	BUG_ON(tlabel > 63 || tlabel < 0);
+	tp = &packet->host->tpool[n];
 
-	spin_lock_irqsave(&hpsb_tlabel_lock, flags);
-	BUG_ON(!__test_and_clear_bit(tlabel, tp));
-	spin_unlock_irqrestore(&hpsb_tlabel_lock, flags);
+	BUG_ON(packet->tlabel > 63 || packet->tlabel < 0);
 
-	wake_up_interruptible(&tlabel_wq);
+	spin_lock_irqsave(&tp->lock, flags);
+	BUG_ON(!test_and_clear_bit(packet->tlabel, tp->pool));
+	spin_unlock_irqrestore(&tp->lock, flags);
+
+	up(&tp->count);
 }
 
-/**
- * hpsb_packet_success - Make sense of the ack and reply codes
- *
- * Make sense of the ack and reply codes and return more convenient error codes:
- * 0 = success.  -%EBUSY = node is busy, try again.  -%EAGAIN = error which can
- * probably resolved by retry.  -%EREMOTEIO = node suffers from an internal
- * error.  -%EACCES = this transaction is not allowed on requested address.
- * -%EINVAL = invalid address at node.
- */
 int hpsb_packet_success(struct hpsb_packet *packet)
 {
 	switch (packet->ack_code) {
@@ -235,6 +214,7 @@ int hpsb_packet_success(struct hpsb_packet *packet)
 				 packet->node_id);
 			return -EAGAIN;
 		}
+		HPSB_PANIC("reached unreachable code 1 in %s", __FUNCTION__);
 
 	case ACK_BUSY_X:
 	case ACK_BUSY_A:
@@ -281,6 +261,8 @@ int hpsb_packet_success(struct hpsb_packet *packet)
 			 packet->ack_code, packet->node_id, packet->tcode);
 		return -EAGAIN;
 	}
+
+	HPSB_PANIC("reached unreachable code 2 in %s", __FUNCTION__);
 }
 
 struct hpsb_packet *hpsb_make_readpacket(struct hpsb_host *host, nodeid_t node,
@@ -363,13 +345,6 @@ struct hpsb_packet *hpsb_make_streampacket(struct hpsb_host *host, u8 * buffer,
 		packet->data[length >> 2] = 0;
 	}
 	packet->host = host;
-
-	/* Because it is too difficult to determine all PHY speeds and link
-	 * speeds here, we use S100... */
-	packet->speed_code = IEEE1394_SPEED_100;
-
-	/* ...and prevent hpsb_send_packet() from overriding it. */
-	packet->node_id = LOCAL_BUS | ALL_NODES;
 
 	if (hpsb_get_tlabel(packet)) {
 		hpsb_free_packet(packet);
@@ -477,21 +452,29 @@ struct hpsb_packet *hpsb_make_phypacket(struct hpsb_host *host, quadlet_t data)
 	return p;
 }
 
+struct hpsb_packet *hpsb_make_isopacket(struct hpsb_host *host,
+					int length, int channel,
+					int tag, int sync)
+{
+	struct hpsb_packet *p;
+
+	p = hpsb_alloc_packet(length);
+	if (!p)
+		return NULL;
+
+	p->host = host;
+	fill_iso_packet(p, length, channel, tag, sync);
+
+	p->generation = get_hpsb_generation(host);
+
+	return p;
+}
+
 /*
  * FIXME - these functions should probably read from / write to user space to
  * avoid in kernel buffers for user space callers
  */
 
-/**
- * hpsb_read - generic read function
- *
- * Recognizes the local node ID and act accordingly.  Automatically uses a
- * quadlet read request if @length == 4 and and a block read request otherwise.
- * It does not yet support lengths that are not a multiple of 4.
- *
- * You must explicitly specifiy the @generation for which the node ID is valid,
- * to avoid sending packets to the wrong nodes when we race with a bus reset.
- */
 int hpsb_read(struct hpsb_host *host, nodeid_t node, unsigned int generation,
 	      u64 addr, quadlet_t * buffer, size_t length)
 {
@@ -500,6 +483,8 @@ int hpsb_read(struct hpsb_host *host, nodeid_t node, unsigned int generation,
 
 	if (length == 0)
 		return -EINVAL;
+
+	BUG_ON(in_interrupt());	// We can't be called in an interrupt, yet
 
 	packet = hpsb_make_readpacket(host, node, addr, length);
 
@@ -529,16 +514,6 @@ int hpsb_read(struct hpsb_host *host, nodeid_t node, unsigned int generation,
 	return retval;
 }
 
-/**
- * hpsb_write - generic write function
- *
- * Recognizes the local node ID and act accordingly.  Automatically uses a
- * quadlet write request if @length == 4 and and a block write request
- * otherwise.  It does not yet support lengths that are not a multiple of 4.
- *
- * You must explicitly specifiy the @generation for which the node ID is valid,
- * to avoid sending packets to the wrong nodes when we race with a bus reset.
- */
 int hpsb_write(struct hpsb_host *host, nodeid_t node, unsigned int generation,
 	       u64 addr, quadlet_t * buffer, size_t length)
 {
@@ -547,6 +522,8 @@ int hpsb_write(struct hpsb_host *host, nodeid_t node, unsigned int generation,
 
 	if (length == 0)
 		return -EINVAL;
+
+	BUG_ON(in_interrupt());	// We can't be called in an interrupt, yet
 
 	packet = hpsb_make_writepacket(host, node, addr, buffer, length);
 
@@ -567,11 +544,15 @@ int hpsb_write(struct hpsb_host *host, nodeid_t node, unsigned int generation,
 	return retval;
 }
 
+#if 0
+
 int hpsb_lock(struct hpsb_host *host, nodeid_t node, unsigned int generation,
-	      u64 addr, int extcode, quadlet_t *data, quadlet_t arg)
+	      u64 addr, int extcode, quadlet_t * data, quadlet_t arg)
 {
 	struct hpsb_packet *packet;
 	int retval = 0;
+
+	BUG_ON(in_interrupt());	// We can't be called in an interrupt, yet
 
 	packet = hpsb_make_lockpacket(host, node, addr, extcode, data, arg);
 	if (!packet)
@@ -584,12 +565,49 @@ int hpsb_lock(struct hpsb_host *host, nodeid_t node, unsigned int generation,
 
 	retval = hpsb_packet_success(packet);
 
-	if (retval == 0)
+	if (retval == 0) {
 		*data = packet->data[0];
+	}
 
-hpsb_lock_fail:
+      hpsb_lock_fail:
 	hpsb_free_tlabel(packet);
 	hpsb_free_packet(packet);
 
 	return retval;
 }
+
+int hpsb_send_gasp(struct hpsb_host *host, int channel, unsigned int generation,
+		   quadlet_t * buffer, size_t length, u32 specifier_id,
+		   unsigned int version)
+{
+	struct hpsb_packet *packet;
+	int retval = 0;
+	u16 specifier_id_hi = (specifier_id & 0x00ffff00) >> 8;
+	u8 specifier_id_lo = specifier_id & 0xff;
+
+	HPSB_VERBOSE("Send GASP: channel = %d, length = %Zd", channel, length);
+
+	length += 8;
+
+	packet = hpsb_make_streampacket(host, NULL, length, channel, 3, 0);
+	if (!packet)
+		return -ENOMEM;
+
+	packet->data[0] = cpu_to_be32((host->node_id << 16) | specifier_id_hi);
+	packet->data[1] =
+	    cpu_to_be32((specifier_id_lo << 24) | (version & 0x00ffffff));
+
+	memcpy(&(packet->data[2]), buffer, length - 8);
+
+	packet->generation = generation;
+
+	packet->no_waiter = 1;
+
+	retval = hpsb_send_packet(packet);
+	if (retval < 0)
+		hpsb_free_packet(packet);
+
+	return retval;
+}
+
+#endif				/*  0  */

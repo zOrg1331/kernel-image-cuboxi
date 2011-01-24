@@ -36,10 +36,8 @@ struct spi_transport_attrs {
 	unsigned int width:1;	/* 0 - narrow, 1 - wide */
 	unsigned int max_width:1;
 	unsigned int iu:1;	/* Information Units enabled */
-	unsigned int max_iu:1;
 	unsigned int dt:1;	/* DT clocking enabled */
 	unsigned int qas:1;	/* Quick Arbitration and Selection enabled */
-	unsigned int max_qas:1;
 	unsigned int wr_flow:1;	/* Write Flow control enabled */
 	unsigned int rd_strm:1;	/* Read streaming enabled */
 	unsigned int rti:1;	/* Retain Training Information */
@@ -55,8 +53,7 @@ struct spi_transport_attrs {
 	unsigned int support_ius; /* support Information Units */
 	unsigned int support_qas; /* supports quick arbitration and selection */
 	/* Private Fields */
-	unsigned int dv_pending:1; /* Internal flag: DV Requested */
-	unsigned int dv_in_progress:1;	/* Internal: DV started */
+	unsigned int dv_pending:1; /* Internal flag */
 	struct mutex dv_mutex; /* semaphore to serialise dv */
 };
 
@@ -79,17 +76,14 @@ struct spi_host_attrs {
 #define spi_width(x)	(((struct spi_transport_attrs *)&(x)->starget_data)->width)
 #define spi_max_width(x) (((struct spi_transport_attrs *)&(x)->starget_data)->max_width)
 #define spi_iu(x)	(((struct spi_transport_attrs *)&(x)->starget_data)->iu)
-#define spi_max_iu(x)	(((struct spi_transport_attrs *)&(x)->starget_data)->max_iu)
 #define spi_dt(x)	(((struct spi_transport_attrs *)&(x)->starget_data)->dt)
 #define spi_qas(x)	(((struct spi_transport_attrs *)&(x)->starget_data)->qas)
-#define spi_max_qas(x)	(((struct spi_transport_attrs *)&(x)->starget_data)->max_qas)
 #define spi_wr_flow(x)	(((struct spi_transport_attrs *)&(x)->starget_data)->wr_flow)
 #define spi_rd_strm(x)	(((struct spi_transport_attrs *)&(x)->starget_data)->rd_strm)
 #define spi_rti(x)	(((struct spi_transport_attrs *)&(x)->starget_data)->rti)
 #define spi_pcomp_en(x)	(((struct spi_transport_attrs *)&(x)->starget_data)->pcomp_en)
 #define spi_hold_mcs(x)	(((struct spi_transport_attrs *)&(x)->starget_data)->hold_mcs)
 #define spi_initial_dv(x)	(((struct spi_transport_attrs *)&(x)->starget_data)->initial_dv)
-#define spi_dv_pending(x) (((struct spi_transport_attrs *)&(x)->starget_data)->dv_pending)
 
 #define spi_support_sync(x)	(((struct spi_transport_attrs *)&(x)->starget_data)->support_sync)
 #define spi_support_wide(x)	(((struct spi_transport_attrs *)&(x)->starget_data)->support_wide)

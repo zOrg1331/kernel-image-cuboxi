@@ -1,0 +1,59 @@
+From: Chris Lalancette <clalance@redhat.com>
+Date: Thu, 17 Jul 2008 17:29:41 +0200
+Subject: [xen] remove blktap sysfs entries before shutdown
+Message-id: 487F6565.2020004@redhat.com
+O-Subject: [RHEL5.3 PATCH 7/7]: Remove blktap sysfs entries before shutdown v2
+Bugzilla: 250104
+RH-Acked-by: Stephen Tweedie <sct@redhat.com>
+RH-Acked-by: Bill Burns <bburns@redhat.com>
+RH-Acked-by: Don Dutile <ddutile@redhat.com>
+
+This patch removes the sysfs entries for blktap and blkback before freeing any
+of the other associated structures.  From xen-3.1-testing.hg c/s 15402
+
+diff --git a/drivers/xen/blkback/xenbus.c b/drivers/xen/blkback/xenbus.c
+index a298afc..18d5caa 100644
+--- a/drivers/xen/blkback/xenbus.c
++++ b/drivers/xen/blkback/xenbus.c
+@@ -172,6 +172,9 @@ static int blkback_remove(struct xenbus_device *dev)
+ 
+ 	DPRINTK("");
+ 
++	if (be->major || be->minor)
++		xenvbd_sysfs_delif(dev);
++
+ 	if (be->backend_watch.node) {
+ 		unregister_xenbus_watch(&be->backend_watch);
+ 		kfree(be->backend_watch.node);
+@@ -185,9 +188,6 @@ static int blkback_remove(struct xenbus_device *dev)
+ 		be->blkif = NULL;
+ 	}
+ 
+-	if (be->major || be->minor)
+-		xenvbd_sysfs_delif(dev);
+-
+ 	kfree(be);
+ 	dev->dev.driver_data = NULL;
+ 	return 0;
+diff --git a/drivers/xen/blktap/xenbus.c b/drivers/xen/blktap/xenbus.c
+index 3ace069..989fd8f 100644
+--- a/drivers/xen/blktap/xenbus.c
++++ b/drivers/xen/blktap/xenbus.c
+@@ -170,6 +170,8 @@ static int blktap_remove(struct xenbus_device *dev)
+ {
+ 	struct backend_info *be = dev->dev.driver_data;
+ 
++	if (be->group_added)
++		xentap_sysfs_delif(be->dev);
+ 	if (be->backend_watch.node) {
+ 		unregister_xenbus_watch(&be->backend_watch);
+ 		kfree(be->backend_watch.node);
+@@ -182,8 +184,6 @@ static int blktap_remove(struct xenbus_device *dev)
+ 		tap_blkif_free(be->blkif);
+ 		be->blkif = NULL;
+ 	}
+-	if (be->group_added)
+-		xentap_sysfs_delif(be->dev);
+ 	kfree(be);
+ 	dev->dev.driver_data = NULL;
+ 	return 0;

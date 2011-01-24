@@ -1,6 +1,6 @@
 /*
  *  Driver for Cirrus Logic CS4281 based PCI soundcard
- *  Copyright (c) by Jaroslav Kysela <perex@perex.cz>,
+ *  Copyright (c) by Jaroslav Kysela <perex@suse.cz>,
  *
  *
  *   This program is free software; you can redistribute it and/or modify
@@ -19,6 +19,7 @@
  *
  */
 
+#include <sound/driver.h>
 #include <asm/io.h>
 #include <linux/delay.h>
 #include <linux/interrupt.h>
@@ -32,12 +33,11 @@
 #include <sound/pcm.h>
 #include <sound/rawmidi.h>
 #include <sound/ac97_codec.h>
-#include <sound/tlv.h>
 #include <sound/opl3.h>
 #include <sound/initval.h>
 
 
-MODULE_AUTHOR("Jaroslav Kysela <perex@perex.cz>");
+MODULE_AUTHOR("Jaroslav Kysela <perex@suse.cz>");
 MODULE_DESCRIPTION("Cirrus Logic CS4281");
 MODULE_LICENSE("GPL");
 MODULE_SUPPORTED_DEVICE("{{Cirrus Logic,CS4281}}");
@@ -492,10 +492,10 @@ struct cs4281 {
 
 };
 
-static irqreturn_t snd_cs4281_interrupt(int irq, void *dev_id);
+static irqreturn_t snd_cs4281_interrupt(int irq, void *dev_id, struct pt_regs *regs);
 
 static struct pci_device_id snd_cs4281_ids[] = {
-	{ PCI_VDEVICE(CIRRUS, 0x6005), 0, },	/* CS4281 */
+	{ 0x1013, 0x6005, PCI_ANY_ID, PCI_ANY_ID, 0, 0, 0, },	/* CS4281 */
 	{ 0, }
 };
 
@@ -766,13 +766,13 @@ static void snd_cs4281_mode(struct cs4281 *chip, struct cs4281_dma *dma,
 	if (!capture) {
 		if (dma->left_slot == chip->src_left_play_slot) {
 			unsigned int val = snd_cs4281_rate(runtime->rate, NULL);
-			snd_BUG_ON(dma->right_slot != chip->src_right_play_slot);
+			snd_assert(dma->right_slot == chip->src_right_play_slot, );
 			snd_cs4281_pokeBA0(chip, BA0_DACSR, val);
 		}
 	} else {
 		if (dma->left_slot == chip->src_left_rec_slot) {
 			unsigned int val = snd_cs4281_rate(runtime->rate, NULL);
-			snd_BUG_ON(dma->right_slot != chip->src_right_rec_slot);
+			snd_assert(dma->right_slot == chip->src_right_rec_slot, );
 			snd_cs4281_pokeBA0(chip, BA0_ADCSR, val);
 		}
 	}
@@ -834,22 +834,19 @@ static snd_pcm_uframes_t snd_cs4281_pointer(struct snd_pcm_substream *substream)
 	struct cs4281_dma *dma = runtime->private_data;
 	struct cs4281 *chip = snd_pcm_substream_chip(substream);
 
-	/*
-	printk(KERN_DEBUG "DCC = 0x%x, buffer_size = 0x%x, jiffies = %li\n",
-	       snd_cs4281_peekBA0(chip, dma->regDCC), runtime->buffer_size,
-	       jiffies);
-	*/
+	// printk("DCC = 0x%x, buffer_size = 0x%x, jiffies = %li\n", snd_cs4281_peekBA0(chip, dma->regDCC), runtime->buffer_size, jiffies);
 	return runtime->buffer_size -
 	       snd_cs4281_peekBA0(chip, dma->regDCC) - 1;
 }
 
 static struct snd_pcm_hardware snd_cs4281_playback =
 {
-	.info =			SNDRV_PCM_INFO_MMAP |
-				SNDRV_PCM_INFO_INTERLEAVED |
-				SNDRV_PCM_INFO_MMAP_VALID |
-				SNDRV_PCM_INFO_PAUSE |
-				SNDRV_PCM_INFO_RESUME,
+	.info =			(SNDRV_PCM_INFO_MMAP |
+				 SNDRV_PCM_INFO_INTERLEAVED |
+				 SNDRV_PCM_INFO_MMAP_VALID |
+				 SNDRV_PCM_INFO_PAUSE |
+				 SNDRV_PCM_INFO_RESUME |
+				 SNDRV_PCM_INFO_SYNC_START),
 	.formats =		SNDRV_PCM_FMTBIT_U8 | SNDRV_PCM_FMTBIT_S8 |
 				SNDRV_PCM_FMTBIT_U16_LE | SNDRV_PCM_FMTBIT_S16_LE |
 				SNDRV_PCM_FMTBIT_U16_BE | SNDRV_PCM_FMTBIT_S16_BE |
@@ -870,11 +867,12 @@ static struct snd_pcm_hardware snd_cs4281_playback =
 
 static struct snd_pcm_hardware snd_cs4281_capture =
 {
-	.info =			SNDRV_PCM_INFO_MMAP |
-				SNDRV_PCM_INFO_INTERLEAVED |
-				SNDRV_PCM_INFO_MMAP_VALID |
-				SNDRV_PCM_INFO_PAUSE |
-				SNDRV_PCM_INFO_RESUME,
+	.info =			(SNDRV_PCM_INFO_MMAP |
+				 SNDRV_PCM_INFO_INTERLEAVED |
+				 SNDRV_PCM_INFO_MMAP_VALID |
+				 SNDRV_PCM_INFO_PAUSE |
+				 SNDRV_PCM_INFO_RESUME |
+				 SNDRV_PCM_INFO_SYNC_START),
 	.formats =		SNDRV_PCM_FMTBIT_U8 | SNDRV_PCM_FMTBIT_S8 |
 				SNDRV_PCM_FMTBIT_U16_LE | SNDRV_PCM_FMTBIT_S16_LE |
 				SNDRV_PCM_FMTBIT_U16_BE | SNDRV_PCM_FMTBIT_S16_BE |
@@ -905,6 +903,7 @@ static int snd_cs4281_playback_open(struct snd_pcm_substream *substream)
 	dma->right_slot = 1;
 	runtime->private_data = dma;
 	runtime->hw = snd_cs4281_playback;
+	snd_pcm_set_sync(substream);
 	/* should be detected from the AC'97 layer, but it seems
 	   that although CS4297A rev B reports 18-bit ADC resolution,
 	   samples are 20-bit */
@@ -924,6 +923,7 @@ static int snd_cs4281_capture_open(struct snd_pcm_substream *substream)
 	dma->right_slot = 11;
 	runtime->private_data = dma;
 	runtime->hw = snd_cs4281_capture;
+	snd_pcm_set_sync(substream);
 	/* should be detected from the AC'97 layer, but it seems
 	   that although CS4297A rev B reports 18-bit ADC resolution,
 	   samples are 20-bit */
@@ -1054,8 +1054,6 @@ static int snd_cs4281_put_volume(struct snd_kcontrol *kcontrol,
 	return change;
 }
 
-static const DECLARE_TLV_DB_SCALE(db_scale_dsp, -4650, 150, 0);
-
 static struct snd_kcontrol_new snd_cs4281_fm_vol = 
 {
 	.iface = SNDRV_CTL_ELEM_IFACE_MIXER,
@@ -1064,7 +1062,6 @@ static struct snd_kcontrol_new snd_cs4281_fm_vol =
 	.get = snd_cs4281_get_volume,
 	.put = snd_cs4281_put_volume, 
 	.private_value = ((BA0_FMLVC << 16) | BA0_FMRVC),
-	.tlv = { .p = db_scale_dsp },
 };
 
 static struct snd_kcontrol_new snd_cs4281_pcm_vol = 
@@ -1075,7 +1072,6 @@ static struct snd_kcontrol_new snd_cs4281_pcm_vol =
 	.get = snd_cs4281_get_volume,
 	.put = snd_cs4281_put_volume, 
 	.private_value = ((BA0_PPLVC << 16) | BA0_PPRVC),
-	.tlv = { .p = db_scale_dsp },
 };
 
 static void snd_cs4281_mixer_free_ac97_bus(struct snd_ac97_bus *bus)
@@ -1213,8 +1209,7 @@ static void snd_cs4281_gameport_trigger(struct gameport *gameport)
 {
 	struct cs4281 *chip = gameport_get_port_data(gameport);
 
-	if (snd_BUG_ON(!chip))
-		return;
+	snd_assert(chip, return);
 	snd_cs4281_pokeBA0(chip, BA0_JSPT, 0xff);
 }
 
@@ -1222,8 +1217,7 @@ static unsigned char snd_cs4281_gameport_read(struct gameport *gameport)
 {
 	struct cs4281 *chip = gameport_get_port_data(gameport);
 
-	if (snd_BUG_ON(!chip))
-		return 0;
+	snd_assert(chip, return 0);
 	return snd_cs4281_peekBA0(chip, BA0_JSPT);
 }
 
@@ -1234,8 +1228,7 @@ static int snd_cs4281_gameport_cooked_read(struct gameport *gameport,
 	struct cs4281 *chip = gameport_get_port_data(gameport);
 	unsigned js1, js2, jst;
 	
-	if (snd_BUG_ON(!chip))
-		return 0;
+	snd_assert(chip, return 0);
 
 	js1 = snd_cs4281_peekBA0(chip, BA0_JSC1);
 	js2 = snd_cs4281_peekBA0(chip, BA0_JSC2);
@@ -1386,14 +1379,14 @@ static int __devinit snd_cs4281_create(struct snd_card *card,
 	chip->ba0_addr = pci_resource_start(pci, 0);
 	chip->ba1_addr = pci_resource_start(pci, 1);
 
-	chip->ba0 = pci_ioremap_bar(pci, 0);
-	chip->ba1 = pci_ioremap_bar(pci, 1);
+	chip->ba0 = ioremap_nocache(chip->ba0_addr, pci_resource_len(pci, 0));
+	chip->ba1 = ioremap_nocache(chip->ba1_addr, pci_resource_len(pci, 1));
 	if (!chip->ba0 || !chip->ba1) {
 		snd_cs4281_free(chip);
 		return -ENOMEM;
 	}
 	
-	if (request_irq(pci->irq, snd_cs4281_interrupt, IRQF_SHARED,
+	if (request_irq(pci->irq, snd_cs4281_interrupt, IRQF_DISABLED|IRQF_SHARED,
 			"CS4281", chip)) {
 		snd_printk(KERN_ERR "unable to grab IRQ %d\n", pci->irq);
 		snd_cs4281_free(chip);
@@ -1816,7 +1809,7 @@ static int __devinit snd_cs4281_midi(struct cs4281 * chip, int device,
  *  Interrupt handler
  */
 
-static irqreturn_t snd_cs4281_interrupt(int irq, void *dev_id)
+static irqreturn_t snd_cs4281_interrupt(int irq, void *dev_id, struct pt_regs *regs)
 {
 	struct cs4281 *chip = dev_id;
 	unsigned int status, dma, val;
@@ -1929,9 +1922,9 @@ static int __devinit snd_cs4281_probe(struct pci_dev *pci,
 		return -ENOENT;
 	}
 
-	err = snd_card_create(index[dev], id[dev], THIS_MODULE, 0, &card);
-	if (err < 0)
-		return err;
+	card = snd_card_new(index[dev], id[dev], THIS_MODULE, 0);
+	if (card == NULL)
+		return -ENOMEM;
 
 	if ((err = snd_cs4281_create(card, pci, &chip, dual_codec[dev])) < 0) {
 		snd_card_free(card);
@@ -2052,7 +2045,6 @@ static int cs4281_suspend(struct pci_dev *pci, pm_message_t state)
 
 	pci_disable_device(pci);
 	pci_save_state(pci);
-	pci_set_power_state(pci, pci_choose_state(pci, state));
 	return 0;
 }
 
@@ -2063,14 +2055,8 @@ static int cs4281_resume(struct pci_dev *pci)
 	unsigned int i;
 	u32 ulCLK;
 
-	pci_set_power_state(pci, PCI_D0);
 	pci_restore_state(pci);
-	if (pci_enable_device(pci) < 0) {
-		printk(KERN_ERR "cs4281: pci_enable_device failed, "
-		       "disabling device\n");
-		snd_card_disconnect(card);
-		return -EIO;
-	}
+	pci_enable_device(pci);
 	pci_set_master(pci);
 
 	ulCLK = snd_cs4281_peekBA0(chip, BA0_CLKCR1);

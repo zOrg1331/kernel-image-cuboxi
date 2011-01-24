@@ -1,0 +1,58 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Date: Mon, 10 May 2010 18:52:04 -0400
+Subject: [net] tg3: compat header cleanup
+Message-id: <20100510184948.2781.10379.sendpatchset@prarit.bos.redhat.com>
+Patchwork-id: 24977
+O-Subject: [RHEL5 PATCH 17/27] compat.h cleanup: tg3 driver changes
+Bugzilla: 546740
+RH-Acked-by: John Feeney <jfeeney@redhat.com>
+RH-Acked-by: Ivan Vecera <ivecera@redhat.com>
+
+>From a4ff95aed8d03e07b3c4446bb1d300efb6ccbde0 Mon Sep 17 00:00:00 2001
+From: Prarit Bhargava <prarit@redhat.com>
+Date: Mon, 10 May 2010 09:38:32 -0400
+Subject: [PATCH] tg3 driver changes
+
+Resolves 546740.
+
+diff --git a/drivers/net/tg3.c b/drivers/net/tg3.c
+index c5f8763..c2023ec 100644
+--- a/drivers/net/tg3.c
++++ b/drivers/net/tg3.c
+@@ -47,8 +47,6 @@
+ #include <asm/byteorder.h>
+ #include <asm/uaccess.h>
+ 
+-#include "tg3_compat.h"
+-
+ #ifdef CONFIG_SPARC
+ #include <asm/idprom.h>
+ #include <asm/prom.h>
+@@ -152,6 +150,7 @@
+ 
+ #define TG3_NUM_TEST		6
+ 
++#define TG3_DIST_FLAG_IN_RESET_TASK	0x00000001
+ static char version[] __devinitdata =
+ 	DRV_MODULE_NAME ".c:v" DRV_MODULE_VERSION " (" DRV_MODULE_RELDATE ")\n";
+ 
+diff --git a/drivers/net/tg3_compat.h b/drivers/net/tg3_compat.h
+deleted file mode 100644
+index 9128f73..0000000
+--- a/drivers/net/tg3_compat.h
++++ /dev/null
+@@ -1,14 +0,0 @@
+-#ifndef __TG3_COMPAT_H__
+-#define __TG3_COMPAT_H__
+-
+-#define PCI_X_CMD_READ_2K	0x0008  /* 2Kbyte maximum read byte count */
+-
+-#define TG3_DIST_FLAG_IN_RESET_TASK	0x00000001
+-
+-#define ETH_FCS_LEN		4
+-
+-#define PCI_DEVICE(vend,dev) \
+-        .vendor = (vend), .device = (dev), \
+-        .subvendor = PCI_ANY_ID, .subdevice = PCI_ANY_ID
+-
+-#endif

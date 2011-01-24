@@ -1,0 +1,102 @@
+From: Danny Feng <dfeng@redhat.com>
+Date: Tue, 25 Aug 2009 06:44:17 -0400
+Subject: [net] use netlink notifications to track neighbour states
+Message-id: <20090825064428.28685.34140.sendpatchset@danny>
+Patchwork-id: 20796
+O-Subject: [PATCH RHEL5.5 2/2] [NETLINK]: Netlink notifications
+Bugzilla: 516589
+RH-Acked-by: David S. Miller <davem@redhat.com>
+RH-Acked-by: Thomas Graf <tgraf@redhat.com>
+RH-Acked-by: Jiri Pirko <jpirko@redhat.com>
+
+RHBZ#:
+https://bugzilla.redhat.com/show_bug.cgi?id=516589
+
+Description:
+Currently neighbour event notifications are limited to update
+notifications and only sent if the ARP daemon is enabled. This
+patch extends the existing notification code by also reporting
+neighbours being removed due to gc or administratively and
+removes the dependency on the ARP daemon. This allows to keep
+track of neighbour states without periodically fetching the
+complete neighbour table.
+
+Upstream status:
+http://git.kernel.org/?p=linux/kernel/git/stable/linux-2.6-stable.git;a=commitdiff;h=d961db358f41033a8fc7b62948bc7cff1b4bb1fe
+
+diff --git a/net/core/neighbour.c b/net/core/neighbour.c
+index 96841cc..bf9121e 100644
+--- a/net/core/neighbour.c
++++ b/net/core/neighbour.c
+@@ -54,9 +54,8 @@
+ #define PNEIGH_HASHMASK		0xF
+ 
+ static void neigh_timer_handler(unsigned long arg);
+-#ifdef CONFIG_ARPD
+-static void neigh_app_notify(struct neighbour *n);
+-#endif
++static void __neigh_notify(struct neighbour *n, int type, int flags);
++static void neigh_update_notify(struct neighbour *neigh);
+ static int pneigh_ifdown(struct neigh_table *tbl, struct net_device *dev);
+ void neigh_changeaddr(struct neigh_table *tbl, struct net_device *dev);
+ 
+@@ -109,6 +108,7 @@ static void neigh_cleanup_and_release(struct neighbour *neigh)
+ 	if (neigh->parms->neigh_destructor)
+ 		neigh->parms->neigh_destructor(neigh);
+ 
++	__neigh_notify(neigh, RTM_DELNEIGH, 0);
+ 	neigh_release(neigh);
+ }
+ 
+@@ -829,12 +829,8 @@ out:
+ 		write_unlock(&neigh->lock);
+ 	}
+ 	if (notify)
+-		call_netevent_notifiers(NETEVENT_NEIGH_UPDATE, neigh);
++		neigh_update_notify(neigh);
+ 
+-#ifdef CONFIG_ARPD
+-	if (notify && neigh->parms->app_probes)
+-		neigh_app_notify(neigh);
+-#endif
+ 	neigh_release(neigh);
+ }
+ 
+@@ -1064,11 +1060,8 @@ out:
+ 	write_unlock_bh(&neigh->lock);
+ 
+ 	if (notify)
+-		call_netevent_notifiers(NETEVENT_NEIGH_UPDATE, neigh);
+-#ifdef CONFIG_ARPD
+-	if (notify && neigh->parms->app_probes)
+-		neigh_app_notify(neigh);
+-#endif
++		neigh_update_notify(neigh);
++
+ 	return err;
+ }
+ 
+@@ -1925,6 +1918,11 @@ rtattr_failure:
+ 	return -1;
+ }
+ 
++static void neigh_update_notify(struct neighbour *neigh)
++{
++	call_netevent_notifiers(NETEVENT_NEIGH_UPDATE, neigh);
++	__neigh_notify(neigh, RTM_NEWNEIGH, 0);
++}
+ 
+ static int neigh_dump_table(struct neigh_table *tbl, struct sk_buff *skb,
+ 			    struct netlink_callback *cb)
+@@ -2370,11 +2368,6 @@ void neigh_app_ns(struct neighbour *n)
+ 	__neigh_notify(n, RTM_GETNEIGH, NLM_F_REQUEST);
+ }
+ 
+-static void neigh_app_notify(struct neighbour *n)
+-{
+-	__neigh_notify(n, RTM_NEWNEIGH, 0);
+-}
+-
+ #endif /* CONFIG_ARPD */
+ 
+ #ifdef CONFIG_SYSCTL

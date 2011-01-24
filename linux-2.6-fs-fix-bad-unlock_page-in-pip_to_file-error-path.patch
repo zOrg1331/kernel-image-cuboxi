@@ -1,0 +1,41 @@
+From: Larry Woodman <lwoodman@redhat.com>
+Date: Tue, 15 Apr 2008 13:31:39 -0400
+Subject: [fs] fix bad unlock_page in pip_to_file() error path
+Message-id: 1208280700.19199.27.camel@dhcp83-220.boston.redhat.com
+O-Subject: [RHEL5-U3 patch] Fix bad unlock_page() in pip_to_file() error path
+Bugzilla: 439917
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+RH-Acked-by: Jeff Moyer <jmoyer@redhat.com>
+
+If add_to_page_cache_lru() fails in pipe_to_file(), the page will not be
+locked. Since the pipe_to_file() code jumps to an error path that does a
+page release and unlock, this causes a BUG() in unlock_page().
+
+The attached upstream patch was applied to 2.6.23 and fixes this BUG()
+as well as BZ 439917.
+
+diff --git a/fs/splice.c b/fs/splice.c
+index d108451..cee12d8 100644
+--- a/fs/splice.c
++++ b/fs/splice.c
+@@ -615,7 +615,7 @@ find_page:
+ 			ret = add_to_page_cache_lru(page, mapping, index,
+ 						    gfp_mask);
+ 			if (unlikely(ret))
+-				goto out;
++				goto out_release;
+ 		}
+ 
+ 		/*
+@@ -696,8 +696,9 @@ find_page:
+ 		goto find_page;
+ 	}
+ out:
+-	page_cache_release(page);
+ 	unlock_page(page);
++out_release:
++	page_cache_release(page);
+ out_ret:
+ 	return ret;
+ }

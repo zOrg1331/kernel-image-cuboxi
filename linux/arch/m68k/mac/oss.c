@@ -8,7 +8,7 @@
  *
  * 990502 (jmt) - Major rewrite for new interrupt architecture as well as some
  *		  recent insights into OSS operational details.
- * 990610 (jmt) - Now taking full advantage of the OSS. Interrupts are mapped
+ * 990610 (jmt) - Now taking fulll advantage of the OSS. Interrupts are mapped
  *		  to mostly match the A/UX interrupt scheme supported on the
  *		  VIA side. Also added support for enabling the ISM irq again
  *		  since we now have a functional IOP manager.
@@ -21,6 +21,7 @@
 #include <linux/init.h>
 
 #include <asm/bootinfo.h>
+#include <asm/machw.h>
 #include <asm/macintosh.h>
 #include <asm/macints.h>
 #include <asm/mac_via.h>
@@ -29,11 +30,11 @@
 int oss_present;
 volatile struct mac_oss *oss;
 
-static irqreturn_t oss_irq(int, void *);
-static irqreturn_t oss_nubus_irq(int, void *);
+irqreturn_t oss_irq(int, void *, struct pt_regs *);
+irqreturn_t oss_nubus_irq(int, void *, struct pt_regs *);
 
-extern irqreturn_t via1_irq(int, void *);
-extern irqreturn_t mac_scc_dispatch(int, void *);
+extern irqreturn_t via1_irq(int, void *, struct pt_regs *);
+extern irqreturn_t mac_scc_dispatch(int, void *, struct pt_regs *);
 
 /*
  * Initialize the OSS
@@ -66,21 +67,16 @@ void __init oss_init(void)
 
 void __init oss_register_interrupts(void)
 {
-	if (request_irq(OSS_IRQLEV_SCSI, oss_irq, IRQ_FLG_LOCK,
-			"scsi", (void *) oss))
-		pr_err("Couldn't register %s interrupt\n", "scsi");
-	if (request_irq(OSS_IRQLEV_IOPSCC, mac_scc_dispatch, IRQ_FLG_LOCK,
-			"scc", mac_scc_dispatch))
-		pr_err("Couldn't register %s interrupt\n", "scc");
-	if (request_irq(OSS_IRQLEV_NUBUS, oss_nubus_irq, IRQ_FLG_LOCK,
-			"nubus", (void *) oss))
-		pr_err("Couldn't register %s interrupt\n", "nubus");
-	if (request_irq(OSS_IRQLEV_SOUND, oss_irq, IRQ_FLG_LOCK,
-			"sound", (void *) oss))
-		pr_err("Couldn't register %s interrupt\n", "sound");
-	if (request_irq(OSS_IRQLEV_VIA1, via1_irq, IRQ_FLG_LOCK,
-			"via1", (void *) via1))
-		pr_err("Couldn't register %s interrupt\n", "via1");
+	request_irq(OSS_IRQLEV_SCSI, oss_irq, IRQ_FLG_LOCK,
+			"scsi", (void *) oss);
+	request_irq(OSS_IRQLEV_IOPSCC, mac_scc_dispatch, IRQ_FLG_LOCK,
+			"scc", mac_scc_dispatch);
+	request_irq(OSS_IRQLEV_NUBUS, oss_nubus_irq, IRQ_FLG_LOCK,
+			"nubus", (void *) oss);
+	request_irq(OSS_IRQLEV_SOUND, oss_irq, IRQ_FLG_LOCK,
+			"sound", (void *) oss);
+	request_irq(OSS_IRQLEV_VIA1, via1_irq, IRQ_FLG_LOCK,
+			"via1", (void *) via1);
 }
 
 /*
@@ -96,7 +92,7 @@ void __init oss_nubus_init(void)
  * and SCSI; everything else is routed to its own autovector IRQ.
  */
 
-static irqreturn_t oss_irq(int irq, void *dev_id)
+irqreturn_t oss_irq(int irq, void *dev_id, struct pt_regs *regs)
 {
 	int events;
 
@@ -113,11 +109,13 @@ static irqreturn_t oss_irq(int irq, void *dev_id)
 	/* FIXME: how do you clear a pending IRQ?    */
 
 	if (events & OSS_IP_SOUND) {
-		oss->irq_pending &= ~OSS_IP_SOUND;
 		/* FIXME: call sound handler */
+		oss->irq_pending &= ~OSS_IP_SOUND;
 	} else if (events & OSS_IP_SCSI) {
+		oss->irq_level[OSS_SCSI] = OSS_IRQLEV_DISABLED;
+		m68k_handle_int(IRQ_MAC_SCSI, regs);
 		oss->irq_pending &= ~OSS_IP_SCSI;
-		m68k_handle_int(IRQ_MAC_SCSI);
+		oss->irq_level[OSS_SCSI] = OSS_IRQLEV_SCSI;
 	} else {
 		/* FIXME: error check here? */
 	}
@@ -130,7 +128,7 @@ static irqreturn_t oss_irq(int irq, void *dev_id)
  * Unlike the VIA/RBV this is on its own autovector interrupt level.
  */
 
-static irqreturn_t oss_nubus_irq(int irq, void *dev_id)
+irqreturn_t oss_nubus_irq(int irq, void *dev_id, struct pt_regs *regs)
 {
 	int events, irq_bit, i;
 
@@ -145,16 +143,14 @@ static irqreturn_t oss_nubus_irq(int irq, void *dev_id)
 #endif
 	/* There are only six slots on the OSS, not seven */
 
-	i = 6;
-	irq_bit = 0x40;
-	do {
-		--i;
-		irq_bit >>= 1;
+	for (i = 0, irq_bit = 1 ; i < 6 ; i++, irq_bit <<= 1) {
 		if (events & irq_bit) {
+			oss->irq_level[i] = OSS_IRQLEV_DISABLED;
+			m68k_handle_int(NUBUS_SOURCE_BASE + i, regs);
 			oss->irq_pending &= ~irq_bit;
-			m68k_handle_int(NUBUS_SOURCE_BASE + i);
+			oss->irq_level[i] = OSS_IRQLEV_NUBUS;
 		}
-	} while(events & (irq_bit - 1));
+	}
 	return IRQ_HANDLED;
 }
 
@@ -194,7 +190,7 @@ void oss_irq_enable(int irq) {
 			break;
 #ifdef DEBUG_IRQUSE
 		default:
-			printk("%s unknown irq %d\n", __func__, irq);
+			printk("%s unknown irq %d\n",__FUNCTION__, irq);
 			break;
 #endif
 	}
@@ -234,7 +230,7 @@ void oss_irq_disable(int irq) {
 			break;
 #ifdef DEBUG_IRQUSE
 		default:
-			printk("%s unknown irq %d\n", __func__, irq);
+			printk("%s unknown irq %d\n", __FUNCTION__, irq);
 			break;
 #endif
 	}

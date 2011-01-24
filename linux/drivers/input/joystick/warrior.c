@@ -1,4 +1,6 @@
 /*
+ * $Id: warrior.c,v 1.14 2002/01/22 20:32:10 vojtech Exp $
+ *
  *  Copyright (c) 1999-2001 Vojtech Pavlik
  */
 
@@ -62,12 +64,14 @@ struct warrior {
  * Warrior. It updates the data accordingly.
  */
 
-static void warrior_process_packet(struct warrior *warrior)
+static void warrior_process_packet(struct warrior *warrior, struct pt_regs *regs)
 {
 	struct input_dev *dev = warrior->dev;
 	unsigned char *data = warrior->data;
 
 	if (!warrior->idx) return;
+
+	input_regs(dev, regs);
 
 	switch ((data[0] >> 4) & 7) {
 		case 1:					/* Button data */
@@ -97,12 +101,12 @@ static void warrior_process_packet(struct warrior *warrior)
  */
 
 static irqreturn_t warrior_interrupt(struct serio *serio,
-		unsigned char data, unsigned int flags)
+		unsigned char data, unsigned int flags, struct pt_regs *regs)
 {
 	struct warrior *warrior = serio_get_drvdata(serio);
 
 	if (data & 0x80) {
-		if (warrior->idx) warrior_process_packet(warrior);
+		if (warrior->idx) warrior_process_packet(warrior, regs);
 		warrior->idx = 0;
 		warrior->len = warrior_lengths[(data >> 4) & 7];
 	}
@@ -111,7 +115,7 @@ static irqreturn_t warrior_interrupt(struct serio *serio,
 		warrior->data[warrior->idx++] = data;
 
 	if (warrior->idx == warrior->len) {
-		if (warrior->idx) warrior_process_packet(warrior);
+		if (warrior->idx) warrior_process_packet(warrior, regs);
 		warrior->idx = 0;
 		warrior->len = 0;
 	}
@@ -147,7 +151,7 @@ static int warrior_connect(struct serio *serio, struct serio_driver *drv)
 	warrior = kzalloc(sizeof(struct warrior), GFP_KERNEL);
 	input_dev = input_allocate_device();
 	if (!warrior || !input_dev)
-		goto fail1;
+		goto fail;
 
 	warrior->dev = input_dev;
 	snprintf(warrior->phys, sizeof(warrior->phys), "%s/input0", serio->phys);
@@ -158,13 +162,12 @@ static int warrior_connect(struct serio *serio, struct serio_driver *drv)
 	input_dev->id.vendor = SERIO_WARRIOR;
 	input_dev->id.product = 0x0001;
 	input_dev->id.version = 0x0100;
-	input_dev->dev.parent = &serio->dev;
+	input_dev->cdev.dev = &serio->dev;
+	input_dev->private = warrior;
 
-	input_dev->evbit[0] = BIT_MASK(EV_KEY) | BIT_MASK(EV_REL) |
-		BIT_MASK(EV_ABS);
-	input_dev->keybit[BIT_WORD(BTN_TRIGGER)] = BIT_MASK(BTN_TRIGGER) |
-		BIT_MASK(BTN_THUMB) | BIT_MASK(BTN_TOP) | BIT_MASK(BTN_TOP2);
-	input_dev->relbit[0] = BIT_MASK(REL_DIAL);
+	input_dev->evbit[0] = BIT(EV_KEY) | BIT(EV_REL) | BIT(EV_ABS);
+	input_dev->keybit[LONG(BTN_TRIGGER)] = BIT(BTN_TRIGGER) | BIT(BTN_THUMB) | BIT(BTN_TOP) | BIT(BTN_TOP2);
+	input_dev->relbit[0] = BIT(REL_DIAL);
 	input_set_abs_params(input_dev, ABS_X, -64, 64, 0, 8);
 	input_set_abs_params(input_dev, ABS_Y, -64, 64, 0, 8);
 	input_set_abs_params(input_dev, ABS_THROTTLE, -112, 112, 0, 0);
@@ -175,17 +178,13 @@ static int warrior_connect(struct serio *serio, struct serio_driver *drv)
 
 	err = serio_open(serio, drv);
 	if (err)
-		goto fail2;
+		goto fail;
 
-	err = input_register_device(warrior->dev);
-	if (err)
-		goto fail3;
-
+	input_register_device(warrior->dev);
 	return 0;
 
- fail3:	serio_close(serio);
- fail2:	serio_set_drvdata(serio, NULL);
- fail1:	input_free_device(input_dev);
+ fail:	serio_set_drvdata(serio, NULL);
+	input_free_device(input_dev);
 	kfree(warrior);
 	return err;
 }
@@ -223,7 +222,8 @@ static struct serio_driver warrior_drv = {
 
 static int __init warrior_init(void)
 {
-	return serio_register_driver(&warrior_drv);
+	serio_register_driver(&warrior_drv);
+	return 0;
 }
 
 static void __exit warrior_exit(void)

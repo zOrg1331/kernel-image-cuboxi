@@ -13,6 +13,7 @@
 #include <linux/socket.h>
 #include <linux/in.h>
 #include <linux/kernel.h>
+#include <linux/sched.h>
 #include <linux/timer.h>
 #include <linux/string.h>
 #include <linux/sockios.h>
@@ -86,9 +87,8 @@ static void nr_remove_neigh(struct nr_neigh *);
  *	Add a new route to a node, and in the process add the node and the
  *	neighbour if it is new.
  */
-static int __must_check nr_add_node(ax25_address *nr, const char *mnemonic,
-	ax25_address *ax25, ax25_digi *ax25_digi, struct net_device *dev,
-	int quality, int obs_count)
+static int nr_add_node(ax25_address *nr, const char *mnemonic, ax25_address *ax25,
+	ax25_digi *ax25_digi, struct net_device *dev, int quality, int obs_count)
 {
 	struct nr_node  *nr_node;
 	struct nr_neigh *nr_neigh;
@@ -155,15 +155,14 @@ static int __must_check nr_add_node(ax25_address *nr, const char *mnemonic,
 		atomic_set(&nr_neigh->refcount, 1);
 
 		if (ax25_digi != NULL && ax25_digi->ndigi > 0) {
-			nr_neigh->digipeat = kmemdup(ax25_digi,
-						     sizeof(*ax25_digi),
-						     GFP_KERNEL);
-			if (nr_neigh->digipeat == NULL) {
+			if ((nr_neigh->digipeat = kmalloc(sizeof(*ax25_digi), GFP_KERNEL)) == NULL) {
 				kfree(nr_neigh);
 				if (nr_node)
 					nr_node_put(nr_node);
 				return -ENOMEM;
 			}
+			memcpy(nr_neigh->digipeat, ax25_digi,
+					sizeof(*ax25_digi));
 		}
 
 		spin_lock_bh(&nr_neigh_list_lock);
@@ -406,8 +405,7 @@ static int nr_del_node(ax25_address *callsign, ax25_address *neighbour, struct n
 /*
  *	Lock a neighbour with a quality.
  */
-static int __must_check nr_add_neigh(ax25_address *callsign,
-	ax25_digi *ax25_digi, struct net_device *dev, unsigned int quality)
+static int nr_add_neigh(ax25_address *callsign, ax25_digi *ax25_digi, struct net_device *dev, unsigned int quality)
 {
 	struct nr_neigh *nr_neigh;
 
@@ -434,12 +432,11 @@ static int __must_check nr_add_neigh(ax25_address *callsign,
 	atomic_set(&nr_neigh->refcount, 1);
 
 	if (ax25_digi != NULL && ax25_digi->ndigi > 0) {
-		nr_neigh->digipeat = kmemdup(ax25_digi, sizeof(*ax25_digi),
-					     GFP_KERNEL);
-		if (nr_neigh->digipeat == NULL) {
+		if ((nr_neigh->digipeat = kmalloc(sizeof(*ax25_digi), GFP_KERNEL)) == NULL) {
 			kfree(nr_neigh);
 			return -ENOMEM;
 		}
+		memcpy(nr_neigh->digipeat, ax25_digi, sizeof(*ax25_digi));
 	}
 
 	spin_lock_bh(&nr_neigh_list_lock);
@@ -580,7 +577,7 @@ static struct net_device *nr_ax25_dev_get(char *devname)
 {
 	struct net_device *dev;
 
-	if ((dev = dev_get_by_name(&init_net, devname)) == NULL)
+	if ((dev = dev_get_by_name(devname)) == NULL)
 		return NULL;
 
 	if ((dev->flags & IFF_UP) && dev->type == ARPHRD_AX25)
@@ -598,7 +595,7 @@ struct net_device *nr_dev_first(void)
 	struct net_device *dev, *first = NULL;
 
 	read_lock(&dev_base_lock);
-	for_each_netdev(&init_net, dev) {
+	for (dev = dev_base; dev != NULL; dev = dev->next) {
 		if ((dev->flags & IFF_UP) && dev->type == ARPHRD_NETROM)
 			if (first == NULL || strncmp(dev->name, first->name, 3) < 0)
 				first = dev;
@@ -618,35 +615,34 @@ struct net_device *nr_dev_get(ax25_address *addr)
 	struct net_device *dev;
 
 	read_lock(&dev_base_lock);
-	for_each_netdev(&init_net, dev) {
+	for (dev = dev_base; dev != NULL; dev = dev->next) {
 		if ((dev->flags & IFF_UP) && dev->type == ARPHRD_NETROM && ax25cmp(addr, (ax25_address *)dev->dev_addr) == 0) {
 			dev_hold(dev);
 			goto out;
 		}
 	}
-	dev = NULL;
 out:
 	read_unlock(&dev_base_lock);
 	return dev;
 }
 
-static ax25_digi *nr_call_to_digi(ax25_digi *digi, int ndigis,
-	ax25_address *digipeaters)
+static ax25_digi *nr_call_to_digi(int ndigis, ax25_address *digipeaters)
 {
+	static ax25_digi ax25_digi;
 	int i;
 
 	if (ndigis == 0)
 		return NULL;
 
 	for (i = 0; i < ndigis; i++) {
-		digi->calls[i]    = digipeaters[i];
-		digi->repeated[i] = 0;
+		ax25_digi.calls[i]    = digipeaters[i];
+		ax25_digi.repeated[i] = 0;
 	}
 
-	digi->ndigi      = ndigis;
-	digi->lastrepeat = -1;
+	ax25_digi.ndigi      = ndigis;
+	ax25_digi.lastrepeat = -1;
 
-	return digi;
+	return &ax25_digi;
 }
 
 /*
@@ -656,7 +652,6 @@ int nr_rt_ioctl(unsigned int cmd, void __user *arg)
 {
 	struct nr_route_struct nr_route;
 	struct net_device *dev;
-	ax25_digi digi;
 	int ret;
 
 	switch (cmd) {
@@ -674,15 +669,13 @@ int nr_rt_ioctl(unsigned int cmd, void __user *arg)
 			ret = nr_add_node(&nr_route.callsign,
 				nr_route.mnemonic,
 				&nr_route.neighbour,
-				nr_call_to_digi(&digi, nr_route.ndigis,
-						nr_route.digipeaters),
+				nr_call_to_digi(nr_route.ndigis, nr_route.digipeaters),
 				dev, nr_route.quality,
 				nr_route.obs_count);
 			break;
 		case NETROM_NEIGH:
 			ret = nr_add_neigh(&nr_route.callsign,
-				nr_call_to_digi(&digi, nr_route.ndigis,
-						nr_route.digipeaters),
+				nr_call_to_digi(nr_route.ndigis, nr_route.digipeaters),
 				dev, nr_route.quality);
 			break;
 		default:
@@ -782,13 +775,9 @@ int nr_route_frame(struct sk_buff *skb, ax25_cb *ax25)
 	nr_src  = (ax25_address *)(skb->data + 0);
 	nr_dest = (ax25_address *)(skb->data + 7);
 
-	if (ax25 != NULL) {
-		ret = nr_add_node(nr_src, "", &ax25->dest_addr, ax25->digipeat,
-				  ax25->ax25_dev->dev, 0,
-				  sysctl_netrom_obsolescence_count_initialiser);
-		if (ret)
-			return ret;
-	}
+	if (ax25 != NULL)
+		nr_add_node(nr_src, "", &ax25->dest_addr, ax25->digipeat,
+			    ax25->ax25_dev->dev, 0, sysctl_netrom_obsolescence_count_initialiser);
 
 	if ((dev = nr_dev_get(nr_dest)) != NULL) {	/* Its for me */
 		if (ax25 == NULL)			/* Its from me */
@@ -853,7 +842,6 @@ int nr_route_frame(struct sk_buff *skb, ax25_cb *ax25)
 	ret = (nr_neigh->ax25 != NULL);
 	nr_node_unlock(nr_node);
 	nr_node_put(nr_node);
-
 	return ret;
 }
 
@@ -864,8 +852,8 @@ static void *nr_node_start(struct seq_file *seq, loff_t *pos)
 	struct nr_node *nr_node;
 	struct hlist_node *node;
 	int i = 1;
-
-	spin_lock_bh(&nr_node_list_lock);
+ 
+ 	spin_lock_bh(&nr_node_list_lock);
 	if (*pos == 0)
 		return SEQ_START_TOKEN;
 
@@ -882,8 +870,8 @@ static void *nr_node_next(struct seq_file *seq, void *v, loff_t *pos)
 {
 	struct hlist_node *node;
 	++*pos;
-
-	node = (v == SEQ_START_TOKEN)
+	
+	node = (v == SEQ_START_TOKEN)  
 		? nr_node_list.first
 		: ((struct nr_node *)v)->node_node.next;
 
@@ -925,7 +913,7 @@ static int nr_node_show(struct seq_file *seq, void *v)
 	return 0;
 }
 
-static const struct seq_operations nr_node_seqops = {
+static struct seq_operations nr_node_seqops = {
 	.start = nr_node_start,
 	.next = nr_node_next,
 	.stop = nr_node_stop,
@@ -937,7 +925,7 @@ static int nr_node_info_open(struct inode *inode, struct file *file)
 	return seq_open(file, &nr_node_seqops);
 }
 
-const struct file_operations nr_nodes_fops = {
+struct file_operations nr_nodes_fops = {
 	.owner = THIS_MODULE,
 	.open = nr_node_info_open,
 	.read = seq_read,
@@ -966,8 +954,8 @@ static void *nr_neigh_next(struct seq_file *seq, void *v, loff_t *pos)
 {
 	struct hlist_node *node;
 	++*pos;
-
-	node = (v == SEQ_START_TOKEN)
+	
+	node = (v == SEQ_START_TOKEN)  
 		? nr_neigh_list.first
 		: ((struct nr_neigh *)v)->neigh_node.next;
 
@@ -1000,7 +988,7 @@ static int nr_neigh_show(struct seq_file *seq, void *v)
 
 		if (nr_neigh->digipeat != NULL) {
 			for (i = 0; i < nr_neigh->digipeat->ndigi; i++)
-				seq_printf(seq, " %s",
+				seq_printf(seq, " %s", 
 					   ax2asc(buf, &nr_neigh->digipeat->calls[i]));
 		}
 
@@ -1009,7 +997,7 @@ static int nr_neigh_show(struct seq_file *seq, void *v)
 	return 0;
 }
 
-static const struct seq_operations nr_neigh_seqops = {
+static struct seq_operations nr_neigh_seqops = {
 	.start = nr_neigh_start,
 	.next = nr_neigh_next,
 	.stop = nr_neigh_stop,
@@ -1021,7 +1009,7 @@ static int nr_neigh_info_open(struct inode *inode, struct file *file)
 	return seq_open(file, &nr_neigh_seqops);
 }
 
-const struct file_operations nr_neigh_fops = {
+struct file_operations nr_neigh_fops = {
 	.owner = THIS_MODULE,
 	.open = nr_neigh_info_open,
 	.read = seq_read,

@@ -1,0 +1,44 @@
+From: Steven Whitehouse <swhiteho@redhat.com>
+Subject: [RHEL5.1] [GFS2] Fix bz 230143, rgrp flushing
+Date: Wed, 18 Apr 2007 15:02:07 +0100
+Bugzilla: 230143
+Message-Id: <1176904927.1636.304.camel@quoit.chygwyn.com>
+Changelog: [GFS2] incorrect flushing of rgrps
+
+
+Hi,
+
+This patch applies _after_ the patch for bz 235349. This fix has been
+upstream for some time and is known to work. It is taken directly from
+the git tree.
+
+Steve.
+
+
+X-Git-Url: http://git.kernel.org/?p=linux%2Fkernel%2Fgit%2Fsteve%2Fgfs2-2.6-nmw.git;a=commitdiff_plain;h=cad5b9392754910ee7dbe551eb004010a864c882
+
+[GFS2] Fix bz 230143, incorrect flushing of rgrps
+
+The below patch fixes a problem where we were not flushing rgrps
+correctly. It only occurred in the specific case that a callback was
+received for an rgrp which was dirty and when a journal log flush had
+not already resulted in the rgrp being flushed anyway. This fixes Red
+Hat bz 230143,
+
+Signed-off-by: Steven Whitehouse <swhiteho@redhat.com>
+---
+
+diff --git a/fs/gfs2/glops.c b/fs/gfs2/glops.c
+index 46af553..4221110 100644
+--- a/fs/gfs2/glops.c
++++ b/fs/gfs2/glops.c
+@@ -459,6 +459,8 @@ const struct gfs2_glock_operations gfs2_inode_glops = {
+ };
+ 
+ const struct gfs2_glock_operations gfs2_rgrp_glops = {
++	.go_xmote_th = meta_go_sync,
++	.go_drop_th = meta_go_sync,
+ 	.go_inval = meta_go_inval,
+ 	.go_demote_ok = rgrp_go_demote_ok,
+ 	.go_lock = rgrp_go_lock,
+

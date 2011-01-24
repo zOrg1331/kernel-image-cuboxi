@@ -1,0 +1,85 @@
+From: Wendy Cheng <wcheng@redhat.com>
+Subject: Re: [RHEL 5.2 PATCH] GFS2 - handle multiple demote requests
+Date: Fri, 05 Oct 2007 00:33:12 -0400
+Bugzilla: 295641
+Message-Id: <4705BE88.5000605@redhat.com>
+Changelog: [GFS2] handle multiple demote requests
+
+
+Make a correction based on Josef's comment on cluster-devel (bugzilla 
+295641) ..... Wendy
+
+Fix a race condition where multiple glock demote requests are sent to
+a node back-to-back. This patch does a check inside handle_callback()
+to see whether a demote request is in progress. If true, it sets a flag
+to make sure run_queue() will loop again to handle the new request, 
+instead of erronously setting gl_demote_state to a different state.
+
+--- e48-brew/fs/gfs2/incore.h	2007-09-20 17:29:00.000000000 -0500
++++ e48/fs/gfs2/incore.h	2007-10-02 16:45:38.000000000 -0500
+@@ -171,6 +171,7 @@ enum {
+ 	GLF_DEMOTE		= 3,
+ 	GLF_PENDING_DEMOTE	= 4,
+ 	GLF_DIRTY		= 5,
++	GLF_DEMOTE_IN_PROGRESS	= 6,
+ };
+ 
+ struct gfs2_glock {
+@@ -190,6 +191,7 @@ struct gfs2_glock {
+ 	struct list_head gl_holders;
+ 	struct list_head gl_waiters1;	/* HIF_MUTEX */
+ 	struct list_head gl_waiters3;	/* HIF_PROMOTE */
++	int gl_waiters2;		/* GIF_DEMOTE */
+ 
+ 	const struct gfs2_glock_operations *gl_ops;
+ 
+--- e48-brew/fs/gfs2/glock.c	2007-09-18 11:26:53.000000000 -0500
++++ e48/fs/gfs2/glock.c	2007-10-04 22:44:43.000000000 -0500
+@@ -566,7 +566,10 @@ static int rq_demote(struct gfs2_glock *
+ 		gfs2_demote_wake(gl);
+ 		return 0;
+ 	}
++
+ 	set_bit(GLF_LOCK, &gl->gl_flags);
++	set_bit(GLF_DEMOTE_IN_PROGRESS, &gl->gl_flags);
++
+ 	if (gl->gl_demote_state == LM_ST_UNLOCKED ||
+ 	    gl->gl_state != LM_ST_EXCLUSIVE) {
+ 		spin_unlock(&gl->gl_spin);
+@@ -575,7 +578,9 @@ static int rq_demote(struct gfs2_glock *
+ 		spin_unlock(&gl->gl_spin);
+ 		gfs2_glock_xmote_th(gl, NULL);
+ 	}
++
+ 	spin_lock(&gl->gl_spin);
++	clear_bit(GLF_DEMOTE_IN_PROGRESS, &gl->gl_flags);
+ 
+ 	return 0;
+ }
+@@ -605,6 +610,11 @@ static void run_queue(struct gfs2_glock 
+ 
+ 		} else if (test_bit(GLF_DEMOTE, &gl->gl_flags)) {
+ 			blocked = rq_demote(gl);
++			if (gl->gl_waiters2 && !blocked) {
++				set_bit(GLF_DEMOTE, &gl->gl_flags);
++				gl->gl_demote_state = LM_ST_UNLOCKED;
++			}
++			gl->gl_waiters2 = 0;
+ 		} else if (!list_empty(&gl->gl_waiters3)) {
+ 			gh = list_entry(gl->gl_waiters3.next,
+ 					struct gfs2_holder, gh_list);
+@@ -721,7 +731,10 @@ static void handle_callback(struct gfs2_
+ 		}
+ 	} else if (gl->gl_demote_state != LM_ST_UNLOCKED &&
+ 			gl->gl_demote_state != state) {
+-		gl->gl_demote_state = LM_ST_UNLOCKED;
++		if (test_bit(GLF_DEMOTE_IN_PROGRESS,  &gl->gl_flags)) 
++			gl->gl_waiters2 = 1;
++		else 
++			gl->gl_demote_state = LM_ST_UNLOCKED;
+ 	}
+ 	spin_unlock(&gl->gl_spin);
+ }
+
+
+

@@ -21,9 +21,7 @@
 #define SCSI_TRANSPORT_H
 
 #include <linux/transport_class.h>
-#include <linux/blkdev.h>
 #include <scsi/scsi_host.h>
-#include <scsi/scsi_device.h>
 
 struct scsi_transport_template {
 	/* the attribute containers */
@@ -65,23 +63,11 @@ struct scsi_transport_template {
 	 *			begin counting again
 	 * EH_NOT_HANDLED	Begin normal error recovery
 	 */
-	enum blk_eh_timer_return (*eh_timed_out)(struct scsi_cmnd *);
-
-	/*
-	 * Used as callback for the completion of i_t_nexus request
-	 * for target drivers.
-	 */
-	int (* it_nexus_response)(struct Scsi_Host *, u64, int);
-
-	/*
-	 * Used as callback for the completion of task management
-	 * request for target drivers.
-	 */
-	int (* tsk_mgmt_response)(struct Scsi_Host *, u64, u64, int);
+	enum scsi_eh_timer_return (* eh_timed_out)(struct scsi_cmnd *);
 };
 
 #define transport_class_to_shost(tc) \
-	dev_to_shost((tc)->parent)
+	dev_to_shost((tc)->dev)
 
 
 /* Private area maintenance. The driver requested allocations come

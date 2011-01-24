@@ -32,10 +32,10 @@
 #include <linux/delay.h>
 #include <linux/module.h>
 #include <linux/pci.h>
+#include <linux/smp_lock.h>
 #include <linux/init.h>
 #include <linux/mutex.h>
-#include <linux/sched.h>
-#include <linux/kthread.h>
+
 #include "ibmphp.h"
 
 static int to_debug = 0;
@@ -101,11 +101,12 @@ static int to_debug = 0;
 //----------------------------------------------------------------------------
 // global variables
 //----------------------------------------------------------------------------
+static int ibmphp_shutdown;
+static int tid_poll;
 static struct mutex sem_hpcaccess;	// lock access to HPC
 static struct semaphore semOperations;	// lock all operations and
 					// access to data structures
 static struct semaphore sem_exit;	// make sure polling thread goes away
-static struct task_struct *ibmphp_poll_thread;
 //----------------------------------------------------------------------------
 // local function prototypes
 //----------------------------------------------------------------------------
@@ -115,9 +116,10 @@ static u8 hpc_writecmdtoindex (u8, u8);
 static u8 hpc_readcmdtoindex (u8, u8);
 static void get_hpc_access (void);
 static void free_hpc_access (void);
-static int poll_hpc(void *data);
+static void poll_hpc (void);
 static int process_changeinstatus (struct slot *, struct slot *);
 static int process_changeinlatch (u8, u8, struct controller *);
+static int hpc_poll_thread (void *);
 static int hpc_wait_ctlr_notworking (int, struct controller *, void __iomem *, u8 *);
 //----------------------------------------------------------------------------
 
@@ -129,14 +131,16 @@ static int hpc_wait_ctlr_notworking (int, struct controller *, void __iomem *, u
 *---------------------------------------------------------------------*/
 void __init ibmphp_hpc_initvars (void)
 {
-	debug ("%s - Entry\n", __func__);
+	debug ("%s - Entry\n", __FUNCTION__);
 
 	mutex_init(&sem_hpcaccess);
 	init_MUTEX (&semOperations);
 	init_MUTEX_LOCKED (&sem_exit);
 	to_debug = 0;
+	ibmphp_shutdown = 0;
+	tid_poll = 0;
 
-	debug ("%s - Exit\n", __func__);
+	debug ("%s - Exit\n", __FUNCTION__);
 }
 
 /*----------------------------------------------------------------------
@@ -154,7 +158,7 @@ static u8 i2c_ctrl_read (struct controller *ctlr_ptr, void __iomem *WPGBbar, u8 
 	unsigned long ultemp;
 	unsigned long data;	// actual data HILO format
 
-	debug_polling ("%s - Entry WPGBbar[%p] index[%x] \n", __func__, WPGBbar, index);
+	debug_polling ("%s - Entry WPGBbar[%p] index[%x] \n", __FUNCTION__, WPGBbar, index);
 
 	//--------------------------------------------------------------------
 	// READ - step 1
@@ -213,7 +217,7 @@ static u8 i2c_ctrl_read (struct controller *ctlr_ptr, void __iomem *WPGBbar, u8 
 		i--;
 	}
 	if (i == 0) {
-		debug ("%s - Error : WPG timeout\n", __func__);
+		debug ("%s - Error : WPG timeout\n", __FUNCTION__);
 		return HPC_ERROR;
 	}
 	//--------------------------------------------------------------------
@@ -241,7 +245,7 @@ static u8 i2c_ctrl_read (struct controller *ctlr_ptr, void __iomem *WPGBbar, u8 
 
 	status = (u8) data;
 
-	debug_polling ("%s - Exit index[%x] status[%x]\n", __func__, index, status);
+	debug_polling ("%s - Exit index[%x] status[%x]\n", __FUNCTION__, index, status);
 
 	return (status);
 }
@@ -262,7 +266,7 @@ static u8 i2c_ctrl_write (struct controller *ctlr_ptr, void __iomem *WPGBbar, u8
 	unsigned long data;	// actual data HILO format
 	int i;
 
-	debug_polling ("%s - Entry WPGBbar[%p] index[%x] cmd[%x]\n", __func__, WPGBbar, index, cmd);
+	debug_polling ("%s - Entry WPGBbar[%p] index[%x] cmd[%x]\n", __FUNCTION__, WPGBbar, index, cmd);
 
 	rc = 0;
 	//--------------------------------------------------------------------
@@ -324,7 +328,7 @@ static u8 i2c_ctrl_write (struct controller *ctlr_ptr, void __iomem *WPGBbar, u8
 		i--;
 	}
 	if (i == 0) {
-		debug ("%s - Exit Error:WPG timeout\n", __func__);
+		debug ("%s - Exit Error:WPG timeout\n", __FUNCTION__);
 		rc = HPC_ERROR;
 	}
 
@@ -345,7 +349,7 @@ static u8 i2c_ctrl_write (struct controller *ctlr_ptr, void __iomem *WPGBbar, u8
 		rc = HPC_ERROR;
 	}
 
-	debug_polling ("%s Exit rc[%x]\n", __func__, rc);
+	debug_polling ("%s Exit rc[%x]\n", __FUNCTION__, rc);
 	return (rc);
 }
 
@@ -527,7 +531,7 @@ static u8 hpc_readcmdtoindex (u8 cmd, u8 index)
 *
 * Action:  issue a READ command to HPC
 *
-* Input:   pslot   - cannot be NULL for READ_ALLSTAT
+* Input:   pslot   - can not be NULL for READ_ALLSTAT
 *          pstatus - can be NULL for READ_ALLSTAT
 *
 * Return   0 or error codes
@@ -541,12 +545,12 @@ int ibmphp_hpc_readslot (struct slot * pslot, u8 cmd, u8 * pstatus)
 	int rc = 0;
 	int busindex;
 
-	debug_polling ("%s - Entry pslot[%p] cmd[%x] pstatus[%p]\n", __func__, pslot, cmd, pstatus);
+	debug_polling ("%s - Entry pslot[%p] cmd[%x] pstatus[%p]\n", __FUNCTION__, pslot, cmd, pstatus);
 
 	if ((pslot == NULL)
 	    || ((pstatus == NULL) && (cmd != READ_ALLSTAT) && (cmd != READ_BUSSTATUS))) {
 		rc = -EINVAL;
-		err ("%s - Error invalid pointer, rc[%d]\n", __func__, rc);
+		err ("%s - Error invalid pointer, rc[%d]\n", __FUNCTION__, rc);
 		return rc;
 	}
 
@@ -554,7 +558,7 @@ int ibmphp_hpc_readslot (struct slot * pslot, u8 cmd, u8 * pstatus)
 		busindex = ibmphp_get_bus_index (pslot->bus);
 		if (busindex < 0) {
 			rc = -EINVAL;
-			err ("%s - Exit Error:invalid bus, rc[%d]\n", __func__, rc);
+			err ("%s - Exit Error:invalid bus, rc[%d]\n", __FUNCTION__, rc);
 			return rc;
 		} else
 			index = (u8) busindex;
@@ -565,7 +569,7 @@ int ibmphp_hpc_readslot (struct slot * pslot, u8 cmd, u8 * pstatus)
 
 	if (index == HPC_ERROR) {
 		rc = -EINVAL;
-		err ("%s - Exit Error:invalid index, rc[%d]\n", __func__, rc);
+		err ("%s - Exit Error:invalid index, rc[%d]\n", __FUNCTION__, rc);
 		return rc;
 	}
 
@@ -641,7 +645,7 @@ int ibmphp_hpc_readslot (struct slot * pslot, u8 cmd, u8 * pstatus)
 						    ctrl_read (ctlr_ptr, wpg_bbar,
 								index + WPG_1ST_EXTSLOT_INDEX);
 				} else {
-					err ("%s - Error ctrl_read failed\n", __func__);
+					err ("%s - Error ctrl_read failed\n", __FUNCTION__);
 					rc = -EINVAL;
 					break;
 				}
@@ -662,7 +666,7 @@ int ibmphp_hpc_readslot (struct slot * pslot, u8 cmd, u8 * pstatus)
 	
 	free_hpc_access ();
 
-	debug_polling ("%s - Exit rc[%d]\n", __func__, rc);
+	debug_polling ("%s - Exit rc[%d]\n", __FUNCTION__, rc);
 	return rc;
 }
 
@@ -681,10 +685,10 @@ int ibmphp_hpc_writeslot (struct slot * pslot, u8 cmd)
 	int rc = 0;
 	int timeout;
 
-	debug_polling ("%s - Entry pslot[%p] cmd[%x]\n", __func__, pslot, cmd);
+	debug_polling ("%s - Entry pslot[%p] cmd[%x]\n", __FUNCTION__, pslot, cmd);
 	if (pslot == NULL) {
 		rc = -EINVAL;
-		err ("%s - Error Exit rc[%d]\n", __func__, rc);
+		err ("%s - Error Exit rc[%d]\n", __FUNCTION__, rc);
 		return rc;
 	}
 
@@ -694,7 +698,7 @@ int ibmphp_hpc_writeslot (struct slot * pslot, u8 cmd)
 		busindex = ibmphp_get_bus_index (pslot->bus);
 		if (busindex < 0) {
 			rc = -EINVAL;
-			err ("%s - Exit Error:invalid bus, rc[%d]\n", __func__, rc);
+			err ("%s - Exit Error:invalid bus, rc[%d]\n", __FUNCTION__, rc);
 			return rc;
 		} else
 			index = (u8) busindex;
@@ -705,7 +709,7 @@ int ibmphp_hpc_writeslot (struct slot * pslot, u8 cmd)
 
 	if (index == HPC_ERROR) {
 		rc = -EINVAL;
-		err ("%s - Error Exit rc[%d]\n", __func__, rc);
+		err ("%s - Error Exit rc[%d]\n", __FUNCTION__, rc);
 		return rc;
 	}
 
@@ -719,7 +723,7 @@ int ibmphp_hpc_writeslot (struct slot * pslot, u8 cmd)
 	if ((ctlr_ptr->ctlr_type == 2) || (ctlr_ptr->ctlr_type == 4)) {
 		wpg_bbar = ioremap (ctlr_ptr->u.wpeg_ctlr.wpegbbar, WPG_I2C_IOREMAP_SIZE);
 
-		debug ("%s - ctlr id[%x] physical[%lx] logical[%lx] i2c[%x]\n", __func__,
+		debug ("%s - ctlr id[%x] physical[%lx] logical[%lx] i2c[%x]\n", __FUNCTION__,
 		ctlr_ptr->ctlr_id, (ulong) (ctlr_ptr->u.wpeg_ctlr.wpegbbar), (ulong) wpg_bbar,
 		ctlr_ptr->u.wpeg_ctlr.i2c_addr);
 	}
@@ -750,7 +754,7 @@ int ibmphp_hpc_writeslot (struct slot * pslot, u8 cmd)
 				msleep(1000);
 				if (timeout < 1) {
 					done = 1;
-					err ("%s - Error command complete timeout\n", __func__);
+					err ("%s - Error command complete timeout\n", __FUNCTION__);
 					rc = -EFAULT;
 				} else
 					timeout--;
@@ -765,7 +769,7 @@ int ibmphp_hpc_writeslot (struct slot * pslot, u8 cmd)
 		iounmap (wpg_bbar);
 	free_hpc_access ();
 
-	debug_polling ("%s - Exit rc[%d]\n", __func__, rc);
+	debug_polling ("%s - Exit rc[%d]\n", __FUNCTION__, rc);
 	return rc;
 }
 
@@ -803,10 +807,10 @@ void ibmphp_lock_operations (void)
 *---------------------------------------------------------------------*/
 void ibmphp_unlock_operations (void)
 {
-	debug ("%s - Entry\n", __func__);
+	debug ("%s - Entry\n", __FUNCTION__);
 	up (&semOperations);
 	to_debug = 0;
-	debug ("%s - Exit\n", __func__);
+	debug ("%s - Exit\n", __FUNCTION__);
 }
 
 /*----------------------------------------------------------------------
@@ -815,7 +819,7 @@ void ibmphp_unlock_operations (void)
 #define POLL_LATCH_REGISTER	0
 #define POLL_SLOTS		1
 #define POLL_SLEEP		2
-static int poll_hpc(void *data)
+static void poll_hpc (void)
 {
 	struct slot myslot;
 	struct slot *pslot = NULL;
@@ -827,9 +831,12 @@ static int poll_hpc(void *data)
 	int poll_count = 0;
 	u8 ctrl_count = 0x00;
 
-	debug ("%s - Entry\n", __func__);
+	debug ("%s - Entry\n", __FUNCTION__);
 
-	while (!kthread_should_stop()) {
+	while (!ibmphp_shutdown) {
+		if (ibmphp_shutdown) 
+			break;
+		
 		/* try to get the lock to do some kind of hardware access */
 		down (&semOperations);
 
@@ -889,7 +896,7 @@ static int poll_hpc(void *data)
 			up (&semOperations);
 			msleep(POLL_INTERVAL_SEC * 1000);
 
-			if (kthread_should_stop())
+			if (ibmphp_shutdown) 
 				break;
 			
 			down (&semOperations);
@@ -907,8 +914,7 @@ static int poll_hpc(void *data)
 		msleep(100);
 	}
 	up (&sem_exit);
-	debug ("%s - Exit\n", __func__);
-	return 0;
+	debug ("%s - Exit\n", __FUNCTION__);
 }
 
 
@@ -999,7 +1005,7 @@ static int process_changeinstatus (struct slot *pslot, struct slot *poldslot)
 		ibmphp_update_slot_info (pslot);
 	}
 
-	debug ("%s - Exit rc[%d] disable[%x] update[%x]\n", __func__, rc, disable, update);
+	debug ("%s - Exit rc[%d] disable[%x] update[%x]\n", __FUNCTION__, rc, disable, update);
 
 	return rc;
 }
@@ -1021,7 +1027,7 @@ static int process_changeinlatch (u8 old, u8 new, struct controller *ctrl)
 	u8 mask;
 	int rc = 0;
 
-	debug ("%s - Entry old[%x], new[%x]\n", __func__, old, new);
+	debug ("%s - Entry old[%x], new[%x]\n", __FUNCTION__, old, new);
 	// bit 0 reserved, 0 is LSB, check bit 1-6 for 6 slots
 
 	for (i = ctrl->starting_slot_num; i <= ctrl->ending_slot_num; i++) {
@@ -1031,17 +1037,40 @@ static int process_changeinlatch (u8 old, u8 new, struct controller *ctrl)
 			if (pslot) {
 				memcpy ((void *) &myslot, (void *) pslot, sizeof (struct slot));
 				rc = ibmphp_hpc_readslot (pslot, READ_ALLSTAT, NULL);
-				debug ("%s - call process_changeinstatus for slot[%d]\n", __func__, i);
+				debug ("%s - call process_changeinstatus for slot[%d]\n", __FUNCTION__, i);
 				process_changeinstatus (pslot, &myslot);
 			} else {
 				rc = -EINVAL;
-				err ("%s - Error bad pointer for slot[%d]\n", __func__, i);
+				err ("%s - Error bad pointer for slot[%d]\n", __FUNCTION__, i);
 			}
 		}
 	}
-	debug ("%s - Exit rc[%d]\n", __func__, rc);
+	debug ("%s - Exit rc[%d]\n", __FUNCTION__, rc);
 	return rc;
 }
+
+/*----------------------------------------------------------------------
+* Name:    hpc_poll_thread
+*
+* Action:  polling
+*
+* Return   0
+* Value:
+*---------------------------------------------------------------------*/
+static int hpc_poll_thread (void *data)
+{
+	debug ("%s - Entry\n", __FUNCTION__);
+
+	daemonize("hpc_poll");
+	allow_signal(SIGKILL);
+
+	poll_hpc ();
+
+	tid_poll = 0;
+	debug ("%s - Exit\n", __FUNCTION__);
+	return 0;
+}
+
 
 /*----------------------------------------------------------------------
 * Name:    ibmphp_hpc_start_poll_thread
@@ -1050,14 +1079,18 @@ static int process_changeinlatch (u8 old, u8 new, struct controller *ctrl)
 *---------------------------------------------------------------------*/
 int __init ibmphp_hpc_start_poll_thread (void)
 {
-	debug ("%s - Entry\n", __func__);
+	int rc = 0;
 
-	ibmphp_poll_thread = kthread_run(poll_hpc, NULL, "hpc_poll");
-	if (IS_ERR(ibmphp_poll_thread)) {
-		err ("%s - Error, thread not started\n", __func__);
-		return PTR_ERR(ibmphp_poll_thread);
+	debug ("%s - Entry\n", __FUNCTION__);
+
+	tid_poll = kernel_thread (hpc_poll_thread, NULL, 0);
+	if (tid_poll < 0) {
+		err ("%s - Error, thread not started\n", __FUNCTION__);
+		rc = -1;
 	}
-	return 0;
+
+	debug ("%s - Exit tid_poll[%d] rc[%d]\n", __FUNCTION__, tid_poll, rc);
+	return rc;
 }
 
 /*----------------------------------------------------------------------
@@ -1067,9 +1100,9 @@ int __init ibmphp_hpc_start_poll_thread (void)
 *---------------------------------------------------------------------*/
 void __exit ibmphp_hpc_stop_poll_thread (void)
 {
-	debug ("%s - Entry\n", __func__);
+	debug ("%s - Entry\n", __FUNCTION__);
 
-	kthread_stop(ibmphp_poll_thread);
+	ibmphp_shutdown = 1;
 	debug ("before locking operations \n");
 	ibmphp_lock_operations ();
 	debug ("after locking operations \n");
@@ -1088,7 +1121,7 @@ void __exit ibmphp_hpc_stop_poll_thread (void)
 	up (&sem_exit);
 	debug ("after sem exit up\n");
 
-	debug ("%s - Exit\n", __func__);
+	debug ("%s - Exit\n", __FUNCTION__);
 }
 
 /*----------------------------------------------------------------------

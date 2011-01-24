@@ -1,0 +1,56 @@
+From: Neil Horman <nhorman@redhat.com>
+Subject: Re: [RHEL 5.1 PATCH] Fix regression in x86_64 kexec
+Date: Thu, 14 Jun 2007 07:10:25 -0400
+Bugzilla: 242648
+Message-Id: <20070614111025.GD7150@hmsendeavour.rdu.redhat.com>
+Changelog: [x86_64] Fix regression in kexec
+
+
+> On Wed, Jun 06, 2007 at 02:33:48PM -0400, Neil Horman wrote:
+> > Hey-
+> > 	RHEL5 x86_64 kernels have a kexec regression stemming from some
+> > crashkernel parameter bounds checking that got added in -14.  Nominally we
+> > validate the crashkernel reserved memory size and location against max_low_pfn
+> > and min_low_pfn, which works great on x86 systems.  However on x86_64 systems,
+> > max_low_pfn and min_low_pfn are not initalized, and so the check fails
+> > regardless of the values specified for the crashkernel parameter.  On x86_64,
+> > since we should be able to use any physically present memory as reserved space
+> > for kexec, we should be validating against end_pfn rather than max_low_pfn to
+> > ensure that we are reserving physically present RAM.  This is a repo patch
+> > against linux-2.6-kdump-bounds-checking-for-crashkernel-args.patch to correct
+> > this.  I've tested it on my x86_64 system here and it works fine.  Fixes bz
+> > 242648.
+> 
+
+--- linux-2.6.18.noarch/arch/x86_64/kernel/setup.c.kexec	2007-06-14 07:05:56.000000000 -0400
++++ linux-2.6.18.noarch/arch/x86_64/kernel/setup.c	2007-06-14 07:06:05.000000000 -0400
+@@ -641,7 +641,7 @@
+ #endif
+ #ifdef CONFIG_KEXEC
+ 	if ((crashk_res.start < crashk_res.end) &&
+-	    (crashk_res.end <= (max_low_pfn << PAGE_SHIFT))) {
++	    (crashk_res.end <= (end_pfn << PAGE_SHIFT))) {
+ 		reserve_bootmem_generic(crashk_res.start,
+ 					crashk_res.end - crashk_res.start + 1);
+ 	}
+--- linux-2.6.18.noarch/arch/x86_64/kernel/setup-xen.c.kexec	2007-06-14 07:06:13.000000000 -0400
++++ linux-2.6.18.noarch/arch/x86_64/kernel/setup-xen.c	2007-06-14 07:06:37.000000000 -0400
+@@ -759,7 +759,7 @@
+ #endif	/* !CONFIG_XEN */
+ #ifdef CONFIG_KEXEC
+ 	if ((crashk_res.start < crashk_res.end) &&
+-	    (crashk_res.end <= (max_low_pfn << PAGE_SHIFT))) {
++	    (crashk_res.end <= (end_pfn << PAGE_SHIFT))) {
+ 		reserve_bootmem_generic(crashk_res.start,
+ 					crashk_res.end - crashk_res.start + 1);
+ 	}
+-- 
+/***************************************************
+ *Neil Horman
+ *Software Engineer
+ *Red Hat, Inc.
+ *nhorman@redhat.com
+ *gpg keyid: 1024D / 0x92A74FA1
+ *http://pgp.mit.edu
+ ***************************************************/
+

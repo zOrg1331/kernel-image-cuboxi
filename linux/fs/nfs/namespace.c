@@ -2,10 +2,11 @@
  * linux/fs/nfs/namespace.c
  *
  * Copyright (C) 2005 Trond Myklebust <Trond.Myklebust@netapp.com>
- * - Modified by David Howells <dhowells@redhat.com>
  *
  * NFS namespace
  */
+
+#include <linux/config.h>
 
 #include <linux/dcache.h>
 #include <linux/mount.h>
@@ -18,21 +19,15 @@
 
 #define NFSDBG_FACILITY		NFSDBG_VFS
 
-static void nfs_expire_automounts(struct work_struct *work);
+static void nfs_expire_automounts(void *list);
 
-static LIST_HEAD(nfs_automount_list);
-static DECLARE_DELAYED_WORK(nfs_automount_task, nfs_expire_automounts);
+LIST_HEAD(nfs_automount_list);
+static DECLARE_WORK(nfs_automount_task, nfs_expire_automounts, &nfs_automount_list);
 int nfs_mountpoint_expiry_timeout = 500 * HZ;
-
-static struct vfsmount *nfs_do_submount(const struct vfsmount *mnt_parent,
-					const struct dentry *dentry,
-					struct nfs_fh *fh,
-					struct nfs_fattr *fattr);
 
 /*
  * nfs_path - reconstruct the path given an arbitrary dentry
  * @base - arbitrary string to prepend to the path
- * @droot - pointer to root dentry for mountpoint
  * @dentry - pointer to dentry
  * @buffer - result buffer
  * @buflen - length of buffer
@@ -43,9 +38,7 @@ static struct vfsmount *nfs_do_submount(const struct vfsmount *mnt_parent,
  * This is mainly for use in figuring out the path on the
  * server side when automounting on top of an existing partition.
  */
-char *nfs_path(const char *base,
-	       const struct dentry *droot,
-	       const struct dentry *dentry,
+char *nfs_path(const char *base, const struct dentry *dentry,
 	       char *buffer, ssize_t buflen)
 {
 	char *end = buffer+buflen;
@@ -54,7 +47,7 @@ char *nfs_path(const char *base,
 	*--end = '\0';
 	buflen--;
 	spin_lock(&dcache_lock);
-	while (!IS_ROOT(dentry) && dentry != droot) {
+	while (!IS_ROOT(dentry)) {
 		namelen = dentry->d_name.len;
 		buflen -= namelen + 1;
 		if (buflen < 0)
@@ -65,11 +58,6 @@ char *nfs_path(const char *base,
 		dentry = dentry->d_parent;
 	}
 	spin_unlock(&dcache_lock);
-	if (*end != '/') {
-		if (--buflen < 0)
-			goto Elong;
-		*--end = '/';
-	}
 	namelen = strlen(base);
 	/* Strip off excess slashes in base string */
 	while (namelen > 0 && base[namelen - 1] == '/')
@@ -104,87 +92,69 @@ static void * nfs_follow_mountpoint(struct dentry *dentry, struct nameidata *nd)
 	struct vfsmount *mnt;
 	struct nfs_server *server = NFS_SERVER(dentry->d_inode);
 	struct dentry *parent;
-	struct nfs_fh *fh = NULL;
-	struct nfs_fattr *fattr = NULL;
+	struct nfs_fh fh;
+	struct nfs_fattr fattr;
 	int err;
 
-	dprintk("--> nfs_follow_mountpoint()\n");
-
-	err = -ESTALE;
-	if (IS_ROOT(dentry))
-		goto out_err;
-
-	err = -ENOMEM;
-	fh = nfs_alloc_fhandle();
-	fattr = nfs_alloc_fattr();
-	if (fh == NULL || fattr == NULL)
-		goto out_err;
-
-	dprintk("%s: enter\n", __func__);
-	dput(nd->path.dentry);
-	nd->path.dentry = dget(dentry);
-
+	BUG_ON(IS_ROOT(dentry));
+	dprintk("%s: enter\n", __FUNCTION__);
+	dput(nd->dentry);
+	nd->dentry = dget(dentry);
+	if (d_mountpoint(nd->dentry))
+		goto out_follow;
 	/* Look it up again */
-	parent = dget_parent(nd->path.dentry);
-	err = server->nfs_client->rpc_ops->lookup(parent->d_inode,
-						  &nd->path.dentry->d_name,
-						  fh, fattr);
+	parent = dget_parent(nd->dentry);
+	err = server->rpc_ops->lookup(parent->d_inode, &nd->dentry->d_name, &fh, &fattr);
 	dput(parent);
 	if (err != 0)
 		goto out_err;
 
-	if (fattr->valid & NFS_ATTR_FATTR_V4_REFERRAL)
-		mnt = nfs_do_refmount(nd->path.mnt, nd->path.dentry);
+	if (fattr.valid & NFS_ATTR_FATTR_V4_REFERRAL)
+		mnt = nfs_do_refmount(nd->mnt, nd->dentry);
 	else
-		mnt = nfs_do_submount(nd->path.mnt, nd->path.dentry, fh,
-				      fattr);
+		mnt = nfs_do_submount(nd->mnt, nd->dentry, &fh, &fattr);
 	err = PTR_ERR(mnt);
 	if (IS_ERR(mnt))
 		goto out_err;
 
 	mntget(mnt);
-	err = do_add_mount(mnt, &nd->path, nd->path.mnt->mnt_flags|MNT_SHRINKABLE,
-			   &nfs_automount_list);
+	err = do_add_mount(mnt, nd, nd->mnt->mnt_flags|MNT_SHRINKABLE, &nfs_automount_list);
 	if (err < 0) {
 		mntput(mnt);
 		if (err == -EBUSY)
 			goto out_follow;
 		goto out_err;
 	}
-	path_put(&nd->path);
-	nd->path.mnt = mnt;
-	nd->path.dentry = dget(mnt->mnt_root);
+	mntput(nd->mnt);
+	dput(nd->dentry);
+	nd->mnt = mnt;
+	nd->dentry = dget(mnt->mnt_root);
 	schedule_delayed_work(&nfs_automount_task, nfs_mountpoint_expiry_timeout);
 out:
-	nfs_free_fattr(fattr);
-	nfs_free_fhandle(fh);
-	dprintk("%s: done, returned %d\n", __func__, err);
-
-	dprintk("<-- nfs_follow_mountpoint() = %d\n", err);
+	dprintk("%s: done, returned %d\n", __FUNCTION__, err);
 	return ERR_PTR(err);
 out_err:
-	path_put(&nd->path);
+	path_release(nd);
 	goto out;
 out_follow:
-	while (d_mountpoint(nd->path.dentry) &&
-	       follow_down(&nd->path))
+	while(d_mountpoint(nd->dentry) && follow_down(&nd->mnt, &nd->dentry))
 		;
 	err = 0;
 	goto out;
 }
 
-const struct inode_operations nfs_mountpoint_inode_operations = {
+struct inode_operations nfs_mountpoint_inode_operations = {
 	.follow_link	= nfs_follow_mountpoint,
 	.getattr	= nfs_getattr,
 };
 
-const struct inode_operations nfs_referral_inode_operations = {
+struct inode_operations nfs_referral_inode_operations = {
 	.follow_link	= nfs_follow_mountpoint,
 };
 
-static void nfs_expire_automounts(struct work_struct *work)
+static void nfs_expire_automounts(void *data)
 {
-	struct list_head *list = &nfs_automount_list;
+	struct list_head *list = (struct list_head *)data;
 
 	mark_mounts_for_expiry(list);
 	if (!list_empty(list))
@@ -193,30 +163,31 @@ static void nfs_expire_automounts(struct work_struct *work)
 
 void nfs_release_automount_timer(void)
 {
-	if (list_empty(&nfs_automount_list))
+	if (list_empty(&nfs_automount_list)) {
 		cancel_delayed_work(&nfs_automount_task);
+		flush_scheduled_work();
+	}
 }
 
 /*
  * Clone a mountpoint of the appropriate type
  */
-static struct vfsmount *nfs_do_clone_mount(struct nfs_server *server,
-					   const char *devname,
+static struct vfsmount *nfs_do_clone_mount(struct nfs_server *server, char *devname,
 					   struct nfs_clone_mount *mountdata)
 {
 #ifdef CONFIG_NFS_V4
-	struct vfsmount *mnt = ERR_PTR(-EINVAL);
-	switch (server->nfs_client->rpc_ops->version) {
+	struct vfsmount *mnt = NULL;
+	switch (server->rpc_ops->version) {
 		case 2:
 		case 3:
-			mnt = vfs_kern_mount(&nfs_xdev_fs_type, 0, devname, mountdata);
+			mnt = vfs_kern_mount(&clone_nfs_fs_type, 0, devname, mountdata);
 			break;
 		case 4:
-			mnt = vfs_kern_mount(&nfs4_xdev_fs_type, 0, devname, mountdata);
+			mnt = vfs_kern_mount(&clone_nfs4_fs_type, 0, devname, mountdata);
 	}
 	return mnt;
 #else
-	return vfs_kern_mount(&nfs_xdev_fs_type, 0, devname, mountdata);
+	return vfs_kern_mount(&clone_nfs_fs_type, 0, devname, mountdata);
 #endif
 }
 
@@ -228,10 +199,9 @@ static struct vfsmount *nfs_do_clone_mount(struct nfs_server *server,
  * @fattr - attributes for new root inode
  *
  */
-static struct vfsmount *nfs_do_submount(const struct vfsmount *mnt_parent,
-					const struct dentry *dentry,
-					struct nfs_fh *fh,
-					struct nfs_fattr *fattr)
+struct vfsmount *nfs_do_submount(const struct vfsmount *mnt_parent,
+		const struct dentry *dentry, struct nfs_fh *fh,
+		struct nfs_fattr *fattr)
 {
 	struct nfs_clone_mount mountdata = {
 		.sb = mnt_parent->mnt_sb,
@@ -243,9 +213,7 @@ static struct vfsmount *nfs_do_submount(const struct vfsmount *mnt_parent,
 	char *page = (char *) __get_free_page(GFP_USER);
 	char *devname;
 
-	dprintk("--> nfs_do_submount()\n");
-
-	dprintk("%s: submounting on %s/%s\n", __func__,
+	dprintk("%s: submounting on %s/%s\n", __FUNCTION__,
 			dentry->d_parent->d_name.name,
 			dentry->d_name.name);
 	if (page == NULL)
@@ -258,8 +226,6 @@ static struct vfsmount *nfs_do_submount(const struct vfsmount *mnt_parent,
 free_page:
 	free_page((unsigned long)page);
 out:
-	dprintk("%s: done\n", __func__);
-
-	dprintk("<-- nfs_do_submount() = %p\n", mnt);
+	dprintk("%s: done\n", __FUNCTION__);
 	return mnt;
 }

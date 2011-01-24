@@ -1,0 +1,61 @@
+From: Herbert Xu <herbert.xu@redhat.com>
+Date: Sat, 2 Feb 2008 18:06:14 +1100
+Subject: [net] icmp: restore pskb_pull calls in receive func
+Message-id: 20080202070614.GA1456@gondor.apana.org.au
+O-Subject: [RHEL5.2 PATCH] [ICMP]: Restore pskb_pull calls in receive function
+Bugzilla: 431293
+
+Hi:
+
+RHEL5.2 BZ 431293
+
+The ICMP relookup patch (BZ 427876) which has been merged contains a
+serious bug where it incorrectly removed the ICMP header length check
+in the non-IPsec case.  The following patch is needed to correct this.
+
+[ICMP]: Restore pskb_pull calls in receive function
+
+Somewhere along the development of my ICMP relookup patch the header
+length check went AWOL on the non-IPsec path.  This patch restores the
+check.
+
+Signed-off-by: Herbert Xu <herbert@gondor.apana.org.au>
+
+Please ack.
+
+Thanks,
+--
+Visit Openswan at http://www.openswan.org/
+Email: Herbert Xu ~{PmV>HI~} <herbert@gondor.apana.org.au>
+Home Page: http://gondor.apana.org.au/~herbert/
+PGP Key: http://gondor.apana.org.au/~herbert/pubkey.txt
+--
+
+diff --git a/net/ipv4/icmp.c b/net/ipv4/icmp.c
+index 275ebd8..f8d0789 100644
+--- a/net/ipv4/icmp.c
++++ b/net/ipv4/icmp.c
+@@ -999,7 +999,8 @@ int icmp_rcv(struct sk_buff *skb)
+ 			goto error;
+ 	}
+ 
+-	__skb_pull(skb, sizeof(*icmph));
++	if (!pskb_pull(skb, sizeof(*icmph)))
++		goto error;
+ 
+ 	icmph = skb->h.icmph;
+ 
+diff --git a/net/ipv6/icmp.c b/net/ipv6/icmp.c
+index 4d5bc4c..a3d2aa9 100644
+--- a/net/ipv6/icmp.c
++++ b/net/ipv6/icmp.c
+@@ -670,7 +670,8 @@ static int icmpv6_rcv(struct sk_buff **pskb)
+ 		}
+ 	}
+ 
+-	__skb_pull(skb, sizeof(*hdr));
++	if (!pskb_pull(skb, sizeof(*hdr)))
++		goto discard_it;
+ 
+ 	hdr = (struct icmp6hdr *) skb->h.raw;
+ 

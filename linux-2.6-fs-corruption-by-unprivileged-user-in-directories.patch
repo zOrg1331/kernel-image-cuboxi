@@ -1,0 +1,53 @@
+From: Vitaly Mayatskikh <vmayatsk@redhat.com>
+Date: Tue, 15 Jan 2008 15:25:36 +0100
+Subject: [fs] corruption by unprivileged user in directories
+Message-id: m3wsqb2mjj.fsf@gravicapa.englab.brq.redhat.com
+O-Subject: [RHEL-5.2 PATCH] BZ428797 CVE-2008-0001 kernel: filesystem corruption by unprivileged user via directory truncation [rhel-5.2]
+Bugzilla: 428797
+
+BZ#428797
+
+https://bugzilla.redhat.com/show_bug.cgi?id=428797
+
+Description:
+============
+In kernel versions beginning with 2.6.15 and including 2.6.24-rc7, it
+is possible for unprivileged local users to truncate any directory for
+which they have write permission.  This renders all the contents of
+the directory inaccessible.  It is then possible (given appropriate
+privileges) to remove the apparently empty directory.  This can orphan
+inodes that had their only link from that directory.
+
+Upstream status:
+================
+Patch is upstream: commit 974a9f0b47da74e28f68b9c8645c3786aa5ace1a
+
+Test status of the patch:
+=========================
+Patch fixes the problem
+
+Acked-by: Jeff Layton <jlayton@redhat.com>
+Acked-by: "Stephen C. Tweedie" <sct@redhat.com>
+
+diff --git a/fs/namei.c b/fs/namei.c
+index 77a8460..cece729 100644
+--- a/fs/namei.c
++++ b/fs/namei.c
+@@ -1527,7 +1527,7 @@ int may_open(struct nameidata *nd, int acc_mode, int flag)
+ 	if (S_ISLNK(inode->i_mode))
+ 		return -ELOOP;
+ 	
+-	if (S_ISDIR(inode->i_mode) && (flag & FMODE_WRITE))
++	if (S_ISDIR(inode->i_mode) && (acc_mode & MAY_WRITE))
+ 		return -EISDIR;
+ 
+ 	error = vfs_permission(nd, acc_mode);
+@@ -1546,7 +1546,7 @@ int may_open(struct nameidata *nd, int acc_mode, int flag)
+ 			return -EACCES;
+ 
+ 		flag &= ~O_TRUNC;
+-	} else if (IS_RDONLY(inode) && (flag & FMODE_WRITE))
++	} else if (IS_RDONLY(inode) && (acc_mode & MAY_WRITE))
+ 		return -EROFS;
+ 	/*
+ 	 * An append-only file must be opened in append mode for writing.

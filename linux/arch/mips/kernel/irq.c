@@ -21,53 +21,10 @@
 #include <linux/sched.h>
 #include <linux/seq_file.h>
 #include <linux/kallsyms.h>
-#include <linux/kgdb.h>
 
 #include <asm/atomic.h>
 #include <asm/system.h>
 #include <asm/uaccess.h>
-
-#ifdef CONFIG_KGDB
-int kgdb_early_setup;
-#endif
-
-static unsigned long irq_map[NR_IRQS / BITS_PER_LONG];
-
-int allocate_irqno(void)
-{
-	int irq;
-
-again:
-	irq = find_first_zero_bit(irq_map, NR_IRQS);
-
-	if (irq >= NR_IRQS)
-		return -ENOSPC;
-
-	if (test_and_set_bit(irq, irq_map))
-		goto again;
-
-	return irq;
-}
-
-/*
- * Allocate the 16 legacy interrupts for i8259 devices.  This happens early
- * in the kernel initialization so treating allocation failure as BUG() is
- * ok.
- */
-void __init alloc_legacy_irqno(void)
-{
-	int i;
-
-	for (i = 0; i <= 16; i++)
-		BUG_ON(test_and_set_bit(i, irq_map));
-}
-
-void free_irqno(unsigned int irq)
-{
-	smp_mb__before_clear_bit();
-	clear_bit(irq, irq_map);
-	smp_mb__after_clear_bit();
-}
 
 /*
  * 'what should we do if we get a hw irq event on an illegal vector'.
@@ -75,11 +32,38 @@ void free_irqno(unsigned int irq)
  */
 void ack_bad_irq(unsigned int irq)
 {
-	smtc_im_ack_irq(irq);
 	printk("unexpected IRQ # %d\n", irq);
 }
 
 atomic_t irq_err_count;
+
+#ifdef CONFIG_MIPS_MT_SMTC
+/*
+ * SMTC Kernel needs to manipulate low-level CPU interrupt mask
+ * in do_IRQ. These are passed in setup_irq_smtc() and stored
+ * in this table.
+ */
+unsigned long irq_hwmask[NR_IRQS];
+#endif /* CONFIG_MIPS_MT_SMTC */
+
+#undef do_IRQ
+
+/*
+ * do_IRQ handles all normal device IRQ's (the special
+ * SMP cross-CPU interrupts have their own specific
+ * handlers).
+ */
+asmlinkage unsigned int do_IRQ(unsigned int irq, struct pt_regs *regs)
+{
+	irq_enter();
+
+	__DO_IRQ_SMTC_HOOK();
+	__do_IRQ(irq, regs);
+
+	irq_exit();
+
+	return 1;
+}
 
 /*
  * Generic, controller-independent functions:
@@ -94,7 +78,7 @@ int show_interrupts(struct seq_file *p, void *v)
 	if (i == 0) {
 		seq_printf(p, "           ");
 		for_each_online_cpu(j)
-			seq_printf(p, "CPU%d       ", j);
+			seq_printf(p, "CPU%d       ",j);
 		seq_putc(p, '\n');
 	}
 
@@ -103,14 +87,14 @@ int show_interrupts(struct seq_file *p, void *v)
 		action = irq_desc[i].action;
 		if (!action)
 			goto skip;
-		seq_printf(p, "%3d: ", i);
+		seq_printf(p, "%3d: ",i);
 #ifndef CONFIG_SMP
 		seq_printf(p, "%10u ", kstat_irqs(i));
 #else
 		for_each_online_cpu(j)
-			seq_printf(p, "%10u ", kstat_irqs_cpu(i, j));
+			seq_printf(p, "%10u ", kstat_cpu(j).irqs[i]);
 #endif
-		seq_printf(p, " %14s", irq_desc[i].chip->name);
+		seq_printf(p, " %14s", irq_desc[i].chip->typename);
 		seq_printf(p, "  %s", action->name);
 
 		for (action=action->next; action; action = action->next)
@@ -126,27 +110,46 @@ skip:
 	return 0;
 }
 
-asmlinkage void spurious_interrupt(void)
+asmlinkage void spurious_interrupt(struct pt_regs *regs)
 {
 	atomic_inc(&irq_err_count);
 }
+
+#ifdef CONFIG_KGDB
+extern void breakpoint(void);
+extern void set_debug_traps(void);
+
+static int kgdb_flag = 1;
+static int __init nokgdb(char *str)
+{
+	kgdb_flag = 0;
+	return 1;
+}
+__setup("nokgdb", nokgdb);
+#endif
 
 void __init init_IRQ(void)
 {
 	int i;
 
-#ifdef CONFIG_KGDB
-	if (kgdb_early_setup)
-		return;
-#endif
-
-	for (i = 0; i < NR_IRQS; i++)
-		set_irq_noprobe(i);
+	for (i = 0; i < NR_IRQS; i++) {
+		irq_desc[i].status  = IRQ_DISABLED;
+		irq_desc[i].action  = NULL;
+		irq_desc[i].depth   = 1;
+		irq_desc[i].chip = &no_irq_chip;
+		spin_lock_init(&irq_desc[i].lock);
+#ifdef CONFIG_MIPS_MT_SMTC
+		irq_hwmask[i] = 0;
+#endif /* CONFIG_MIPS_MT_SMTC */
+	}
 
 	arch_init_irq();
 
 #ifdef CONFIG_KGDB
-	if (!kgdb_early_setup)
-		kgdb_early_setup = 1;
+	if (kgdb_flag) {
+		printk("Wait for gdb client connection ...\n");
+		set_debug_traps();
+		breakpoint();
+	}
 #endif
 }

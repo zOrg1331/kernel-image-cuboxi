@@ -1,0 +1,335 @@
+From: Amerigo Wang <amwang@redhat.com>
+Date: Wed, 16 Sep 2009 02:39:10 -0400
+Subject: [misc] pipe: fix fd leaks
+Message-id: 20090916064141.4109.27542.sendpatchset@localhost.localdomain
+O-Subject: [PATCH RHEL5.x] pipe: fix fd leaks
+Bugzilla: 509625
+RH-Acked-by: Alexander Viro <aviro@redhat.com>
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+
+BZ509625:
+https://bugzilla.redhat.com/show_bug.cgi?id=509625
+
+Description:
+fd leak if pipe() is called with an invalid address.
+Though -EFAULT is returned, the file descriptors opened by pipe() call are left
+open.
+
+Brew:
+https://brewweb.devel.redhat.com/taskinfo?taskID=1988011
+
+KABI:
+No harm.
+
+Upstream status:
+Commit 4c711576b9 merged the part for ia32. Other arch already
+the generic sys_pipe() for a long time.
+
+Test status:
+Run-test on x86_64, i386 and ia64, compile-test on all arch supported
+by RHEL5.
+
+Signed-off-by: WANG Cong <amwang@redhat.com>
+
+diff --git a/arch/i386/kernel/sys_i386.c b/arch/i386/kernel/sys_i386.c
+index 8fdb1fb..486bca4 100644
+--- a/arch/i386/kernel/sys_i386.c
++++ b/arch/i386/kernel/sys_i386.c
+@@ -23,23 +23,6 @@
+ #include <asm/uaccess.h>
+ #include <asm/ipc.h>
+ 
+-/*
+- * sys_pipe() is the normal C calling standard for creating
+- * a pipe. It's not the way Unix traditionally does this, though.
+- */
+-asmlinkage int sys_pipe(unsigned long __user * fildes)
+-{
+-	int fd[2];
+-	int error;
+-
+-	error = do_pipe(fd);
+-	if (!error) {
+-		if (copy_to_user(fildes, fd, 2*sizeof(int)))
+-			error = -EFAULT;
+-	}
+-	return error;
+-}
+-
+ asmlinkage long sys_mmap2(unsigned long addr, unsigned long len,
+ 			  unsigned long prot, unsigned long flags,
+ 			  unsigned long fd, unsigned long pgoff)
+diff --git a/arch/ia64/kernel/entry.S b/arch/ia64/kernel/entry.S
+index a4da084..ad517e4 100644
+--- a/arch/ia64/kernel/entry.S
++++ b/arch/ia64/kernel/entry.S
+@@ -1345,7 +1345,7 @@ sys_call_table:
+ 	data8 sys_mkdir				// 1055
+ 	data8 sys_rmdir
+ 	data8 sys_dup
+-	data8 sys_pipe
++	data8 sys_ia64_pipe
+ 	data8 sys_times
+ 	data8 ia64_brk				// 1060
+ 	data8 sys_setgid
+diff --git a/arch/ia64/kernel/sys_ia64.c b/arch/ia64/kernel/sys_ia64.c
+index 9ef62a3..3db8d1f 100644
+--- a/arch/ia64/kernel/sys_ia64.c
++++ b/arch/ia64/kernel/sys_ia64.c
+@@ -148,7 +148,7 @@ out:
+  * and r9) as this is faster than doing a copy_to_user().
+  */
+ asmlinkage long
+-sys_pipe (void)
++sys_ia64_pipe (void)
+ {
+ 	struct pt_regs *regs = task_pt_regs(current);
+ 	int fd[2];
+diff --git a/arch/powerpc/kernel/syscalls.c b/arch/powerpc/kernel/syscalls.c
+index 9b69d99..692a2b2 100644
+--- a/arch/powerpc/kernel/syscalls.c
++++ b/arch/powerpc/kernel/syscalls.c
+@@ -138,23 +138,6 @@ int sys_ipc(uint call, int first, unsigned long second, long third,
+ 	return ret;
+ }
+ 
+-/*
+- * sys_pipe() is the normal C calling standard for creating
+- * a pipe. It's not the way unix traditionally does this, though.
+- */
+-int sys_pipe(int __user *fildes)
+-{
+-	int fd[2];
+-	int error;
+-
+-	error = do_pipe(fd);
+-	if (!error) {
+-		if (copy_to_user(fildes, fd, 2*sizeof(int)))
+-			error = -EFAULT;
+-	}
+-	return error;
+-}
+-
+ static inline unsigned long do_mmap2(unsigned long addr, size_t len,
+ 			unsigned long prot, unsigned long flags,
+ 			unsigned long fd, unsigned long off, int shift)
+diff --git a/arch/s390/kernel/sys_s390.c b/arch/s390/kernel/sys_s390.c
+index 6b39d17..6834805 100644
+--- a/arch/s390/kernel/sys_s390.c
++++ b/arch/s390/kernel/sys_s390.c
+@@ -31,23 +31,6 @@
+ #include <asm/uaccess.h>
+ #include <asm/ipc.h>
+ 
+-/*
+- * sys_pipe() is the normal C calling standard for creating
+- * a pipe. It's not the way Unix traditionally does this, though.
+- */
+-asmlinkage long sys_pipe(unsigned long __user *fildes)
+-{
+-	int fd[2];
+-	int error;
+-
+-	error = do_pipe(fd);
+-	if (!error) {
+-		if (copy_to_user(fildes, fd, 2*sizeof(int)))
+-			error = -EFAULT;
+-	}
+-	return error;
+-}
+-
+ /* common code for old and new mmaps */
+ static inline long do_mmap2(
+ 	unsigned long addr, unsigned long len,
+diff --git a/arch/x86_64/ia32/ia32entry-xen.S b/arch/x86_64/ia32/ia32entry-xen.S
+index b0838f8..f1938b4 100644
+--- a/arch/x86_64/ia32/ia32entry-xen.S
++++ b/arch/x86_64/ia32/ia32entry-xen.S
+@@ -459,7 +459,7 @@ ia32_sys_call_table:
+ 	.quad sys_mkdir
+ 	.quad sys_rmdir		/* 40 */
+ 	.quad sys_dup
+-	.quad sys32_pipe
++	.quad sys_pipe
+ 	.quad compat_sys_times
+ 	.quad quiet_ni_syscall			/* old prof syscall holder */
+ 	.quad sys_brk		/* 45 */
+diff --git a/arch/x86_64/ia32/ia32entry.S b/arch/x86_64/ia32/ia32entry.S
+index b365454..8d7e812 100644
+--- a/arch/x86_64/ia32/ia32entry.S
++++ b/arch/x86_64/ia32/ia32entry.S
+@@ -434,7 +434,7 @@ ia32_sys_call_table:
+ 	.quad sys_mkdir
+ 	.quad sys_rmdir		/* 40 */
+ 	.quad sys_dup
+-	.quad sys32_pipe
++	.quad sys_pipe
+ 	.quad compat_sys_times
+ 	.quad quiet_ni_syscall			/* old prof syscall holder */
+ 	.quad sys_brk		/* 45 */
+diff --git a/arch/x86_64/ia32/sys_ia32.c b/arch/x86_64/ia32/sys_ia32.c
+index 7f83d82..07ae9ab 100644
+--- a/arch/x86_64/ia32/sys_ia32.c
++++ b/arch/x86_64/ia32/sys_ia32.c
+@@ -258,21 +258,6 @@ sys32_mprotect(unsigned long start, size_t len, unsigned long prot)
+ }
+ 
+ asmlinkage long
+-sys32_pipe(int __user *fd)
+-{
+-	int retval;
+-	int fds[2];
+-
+-	retval = do_pipe(fds);
+-	if (retval)
+-		goto out;
+-	if (copy_to_user(fd, fds, sizeof(fds)))
+-		retval = -EFAULT;
+-  out:
+-	return retval;
+-}
+-
+-asmlinkage long
+ sys32_rt_sigaction(int sig, struct sigaction32 __user *act,
+ 		   struct sigaction32 __user *oact,  unsigned int sigsetsize)
+ {
+diff --git a/arch/x86_64/kernel/sys_x86_64.c b/arch/x86_64/kernel/sys_x86_64.c
+index 6bdde10..272bfa9 100644
+--- a/arch/x86_64/kernel/sys_x86_64.c
++++ b/arch/x86_64/kernel/sys_x86_64.c
+@@ -21,23 +21,6 @@
+ #include <asm/ia32.h>
+ #include <linux/random.h>
+ 
+-/*
+- * sys_pipe() is the normal C calling standard for creating
+- * a pipe. It's not the way Unix traditionally does this, though.
+- */
+-asmlinkage long sys_pipe(int __user *fildes)
+-{
+-	int fd[2];
+-	int error;
+-
+-	error = do_pipe(fd);
+-	if (!error) {
+-		if (copy_to_user(fildes, fd, 2*sizeof(int)))
+-			error = -EFAULT;
+-	}
+-	return error;
+-}
+-
+ asmlinkage long sys_mmap(unsigned long addr, unsigned long len, unsigned long prot, unsigned long flags,
+ 	unsigned long fd, unsigned long off)
+ {
+diff --git a/fs/pipe.c b/fs/pipe.c
+index 974591c..77c2356 100644
+--- a/fs/pipe.c
++++ b/fs/pipe.c
+@@ -17,6 +17,7 @@
+ #include <linux/highmem.h>
+ #include <linux/pagemap.h>
+ #include <linux/audit.h>
++#include <linux/syscalls.h>
+ 
+ #include <asm/uaccess.h>
+ #include <asm/ioctls.h>
+@@ -1016,6 +1017,26 @@ int do_pipe(int *fd)
+ EXPORT_SYMBOL_GPL(do_pipe);
+ 
+ /*
++ * sys_pipe() is the normal C calling standard for creating
++ * a pipe. It's not the way Unix traditionally does this, though.
++ */
++asmlinkage long sys_pipe(int __user *fildes)
++{
++	int fd[2];
++	int error;
++
++	error = do_pipe(fd);
++	if (!error) {
++		if (copy_to_user(fildes, fd, sizeof(fd))) {
++			sys_close(fd[0]);
++			sys_close(fd[1]);
++			error = -EFAULT;
++		}
++	}
++	return error;
++}
++
++/*
+  * pipefs should _never_ be mounted by userland - too much of security hassle,
+  * no real gain from having the whole whorehouse mounted. So we don't need
+  * any operations on the root directory. However, we need a non-trivial
+diff --git a/include/asm-i386/unistd.h b/include/asm-i386/unistd.h
+index 73b0e90..809d950 100644
+--- a/include/asm-i386/unistd.h
++++ b/include/asm-i386/unistd.h
+@@ -489,7 +489,6 @@ asmlinkage int sys_execve(struct pt_regs regs);
+ asmlinkage int sys_clone(struct pt_regs regs);
+ asmlinkage int sys_fork(struct pt_regs regs);
+ asmlinkage int sys_vfork(struct pt_regs regs);
+-asmlinkage int sys_pipe(unsigned long __user *fildes);
+ asmlinkage long sys_iopl(unsigned long unused);
+ struct sigaction;
+ asmlinkage long sys_rt_sigaction(int sig,
+diff --git a/include/asm-ia64/unistd.h b/include/asm-ia64/unistd.h
+index 1b73341..0697cbb 100644
+--- a/include/asm-ia64/unistd.h
++++ b/include/asm-ia64/unistd.h
+@@ -408,7 +408,7 @@ struct pt_regs;
+ struct sigaction;
+ long sys_execve(char __user *filename, char __user * __user *argv,
+ 			   char __user * __user *envp, struct pt_regs *regs);
+-asmlinkage long sys_pipe(void);
++asmlinkage long sys_ia64_pipe(void);
+ asmlinkage long sys_rt_sigaction(int sig,
+ 				 const struct sigaction __user *act,
+ 				 struct sigaction __user *oact,
+diff --git a/include/asm-powerpc/syscalls.h b/include/asm-powerpc/syscalls.h
+index 54283bf..bc96b76 100644
+--- a/include/asm-powerpc/syscalls.h
++++ b/include/asm-powerpc/syscalls.h
+@@ -30,7 +30,6 @@ asmlinkage int sys_fork(unsigned long p1, unsigned long p2,
+ asmlinkage int sys_vfork(unsigned long p1, unsigned long p2,
+ 		unsigned long p3, unsigned long p4, unsigned long p5,
+ 		unsigned long p6, struct pt_regs *regs);
+-asmlinkage int sys_pipe(int __user *fildes);
+ asmlinkage long sys_rt_sigaction(int sig,
+ 		const struct sigaction __user *act,
+ 		struct sigaction __user *oact, size_t sigsetsize);
+diff --git a/include/asm-s390/unistd.h b/include/asm-s390/unistd.h
+index c39b90e..e06a504 100644
+--- a/include/asm-s390/unistd.h
++++ b/include/asm-s390/unistd.h
+@@ -620,7 +620,6 @@ asmlinkage long sys_execve(struct pt_regs regs);
+ asmlinkage long sys_clone(struct pt_regs regs);
+ asmlinkage long sys_fork(struct pt_regs regs);
+ asmlinkage long sys_vfork(struct pt_regs regs);
+-asmlinkage long sys_pipe(unsigned long __user *fildes);
+ struct sigaction;
+ asmlinkage long sys_rt_sigaction(int sig,
+ 				const struct sigaction __user *act,
+diff --git a/include/asm-x86_64/unistd.h b/include/asm-x86_64/unistd.h
+index 7d17bba..bb01083 100644
+--- a/include/asm-x86_64/unistd.h
++++ b/include/asm-x86_64/unistd.h
+@@ -840,7 +840,6 @@ asmlinkage long sys_clone(unsigned long clone_flags, unsigned long newsp,
+ 			struct pt_regs regs);
+ asmlinkage long sys_fork(struct pt_regs regs);
+ asmlinkage long sys_vfork(struct pt_regs regs);
+-asmlinkage long sys_pipe(int *fildes);
+ 
+ #ifndef __ASSEMBLY__
+ 
+diff --git a/include/linux/syscalls.h b/include/linux/syscalls.h
+index b258284..5a10f9c 100644
+--- a/include/linux/syscalls.h
++++ b/include/linux/syscalls.h
+@@ -302,6 +302,7 @@ asmlinkage long sys_fcntl(unsigned int fd, unsigned int cmd, unsigned long arg);
+ asmlinkage long sys_fcntl64(unsigned int fd,
+ 				unsigned int cmd, unsigned long arg);
+ #endif
++asmlinkage long sys_pipe(int __user *fildes);
+ asmlinkage long sys_dup(unsigned int fildes);
+ asmlinkage long sys_dup2(unsigned int oldfd, unsigned int newfd);
+ asmlinkage long sys_ioperm(unsigned long from, unsigned long num, int on);

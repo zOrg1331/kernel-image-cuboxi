@@ -16,14 +16,24 @@
 
 #include <asm/byteorder.h>
 
-#include <linux/netfilter/x_tables.h>
 #include <linux/netfilter_ipv6/ip6_tables.h>
 #include <linux/netfilter_ipv6/ip6t_opts.h>
 
+#define HOPBYHOP	1
+
 MODULE_LICENSE("GPL");
-MODULE_DESCRIPTION("Xtables: IPv6 Hop-By-Hop and Destination Header match");
+#if HOPBYHOP
+MODULE_DESCRIPTION("IPv6 HbH match");
+#else
+MODULE_DESCRIPTION("IPv6 DST match");
+#endif
 MODULE_AUTHOR("Andras Kis-Szabo <kisza@sch.bme.hu>");
-MODULE_ALIAS("ip6t_dst");
+
+#if 0
+#define DEBUGP printk
+#else
+#define DEBUGP(format, args...)
+#endif
 
 /*
  *  (Type & 0xC0) >> 6
@@ -41,49 +51,52 @@ MODULE_ALIAS("ip6t_dst");
  *	5	-> RTALERT 2 x x
  */
 
-static bool
-hbh_mt6(const struct sk_buff *skb, const struct xt_match_param *par)
+static int
+match(const struct sk_buff *skb,
+      const struct net_device *in,
+      const struct net_device *out,
+      const struct xt_match *match,
+      const void *matchinfo,
+      int offset,
+      unsigned int protoff,
+      int *hotdrop)
 {
-	struct ipv6_opt_hdr _optsh;
-	const struct ipv6_opt_hdr *oh;
-	const struct ip6t_opts *optinfo = par->matchinfo;
+	struct ipv6_opt_hdr _optsh, *oh;
+	const struct ip6t_opts *optinfo = matchinfo;
 	unsigned int temp;
 	unsigned int ptr;
 	unsigned int hdrlen = 0;
-	bool ret = false;
-	u8 _opttype;
-	u8 _optlen;
-	const u_int8_t *tp = NULL;
-	const u_int8_t *lp = NULL;
+	unsigned int ret = 0;
+	u8 _opttype, *tp = NULL;
+	u8 _optlen, *lp = NULL;
 	unsigned int optlen;
-	int err;
 
-	err = ipv6_find_hdr(skb, &ptr, par->match->data, NULL);
-	if (err < 0) {
-		if (err != -ENOENT)
-			*par->hotdrop = true;
-		return false;
-	}
+#if HOPBYHOP
+	if (ipv6_find_hdr(skb, &ptr, NEXTHDR_HOP, NULL) < 0)
+#else
+	if (ipv6_find_hdr(skb, &ptr, NEXTHDR_DEST, NULL) < 0)
+#endif
+		return 0;
 
 	oh = skb_header_pointer(skb, ptr, sizeof(_optsh), &_optsh);
 	if (oh == NULL) {
-		*par->hotdrop = true;
-		return false;
+		*hotdrop = 1;
+		return 0;
 	}
 
 	hdrlen = ipv6_optlen(oh);
 	if (skb->len - ptr < hdrlen) {
 		/* Packet smaller than it's length field */
-		return false;
+		return 0;
 	}
 
-	pr_debug("IPv6 OPTS LEN %u %u ", hdrlen, oh->hdrlen);
+	DEBUGP("IPv6 OPTS LEN %u %u ", hdrlen, oh->hdrlen);
 
-	pr_debug("len %02X %04X %02X ",
-		 optinfo->hdrlen, hdrlen,
-		 (!(optinfo->flags & IP6T_OPTS_LEN) ||
-		  ((optinfo->hdrlen == hdrlen) ^
-		   !!(optinfo->invflags & IP6T_OPTS_INV_LEN))));
+	DEBUGP("len %02X %04X %02X ",
+	       optinfo->hdrlen, hdrlen,
+	       (!(optinfo->flags & IP6T_OPTS_LEN) ||
+		((optinfo->hdrlen == hdrlen) ^
+		 !!(optinfo->invflags & IP6T_OPTS_INV_LEN))));
 
 	ret = (oh != NULL) &&
 	      (!(optinfo->flags & IP6T_OPTS_LEN) ||
@@ -94,9 +107,11 @@ hbh_mt6(const struct sk_buff *skb, const struct xt_match_param *par)
 	hdrlen -= 2;
 	if (!(optinfo->flags & IP6T_OPTS_OPTS)) {
 		return ret;
+	} else if (optinfo->flags & IP6T_OPTS_NSTRICT) {
+		DEBUGP("Not strict - not implemented");
 	} else {
-		pr_debug("Strict ");
-		pr_debug("#%d ", optinfo->optsnr);
+		DEBUGP("Strict ");
+		DEBUGP("#%d ", optinfo->optsnr);
 		for (temp = 0; temp < optinfo->optsnr; temp++) {
 			/* type field exists ? */
 			if (hdrlen < 1)
@@ -108,11 +123,12 @@ hbh_mt6(const struct sk_buff *skb, const struct xt_match_param *par)
 
 			/* Type check */
 			if (*tp != (optinfo->opts[temp] & 0xFF00) >> 8) {
-				pr_debug("Tbad %02X %02X\n", *tp,
-					 (optinfo->opts[temp] & 0xFF00) >> 8);
-				return false;
+				DEBUGP("Tbad %02X %02X\n",
+				       *tp,
+				       (optinfo->opts[temp] & 0xFF00) >> 8);
+				return 0;
 			} else {
-				pr_debug("Tok ");
+				DEBUGP("Tok ");
 			}
 			/* Length check */
 			if (*tp) {
@@ -129,23 +145,23 @@ hbh_mt6(const struct sk_buff *skb, const struct xt_match_param *par)
 				spec_len = optinfo->opts[temp] & 0x00FF;
 
 				if (spec_len != 0x00FF && spec_len != *lp) {
-					pr_debug("Lbad %02X %04X\n", *lp,
-						 spec_len);
-					return false;
+					DEBUGP("Lbad %02X %04X\n", *lp,
+					       spec_len);
+					return 0;
 				}
-				pr_debug("Lok ");
+				DEBUGP("Lok ");
 				optlen = *lp + 2;
 			} else {
-				pr_debug("Pad1\n");
+				DEBUGP("Pad1\n");
 				optlen = 1;
 			}
 
 			/* Step to the next */
-			pr_debug("len%04X \n", optlen);
+			DEBUGP("len%04X \n", optlen);
 
 			if ((ptr > skb->len - optlen || hdrlen < optlen) &&
-			    temp < optinfo->optsnr - 1) {
-				pr_debug("new pointer is too large! \n");
+			    (temp < optinfo->optsnr - 1)) {
+				DEBUGP("new pointer is too large! \n");
 				break;
 			}
 			ptr += optlen;
@@ -154,59 +170,51 @@ hbh_mt6(const struct sk_buff *skb, const struct xt_match_param *par)
 		if (temp == optinfo->optsnr)
 			return ret;
 		else
-			return false;
+			return 0;
 	}
 
-	return false;
+	return 0;
 }
 
-static bool hbh_mt6_check(const struct xt_mtchk_param *par)
+/* Called when user tries to insert an entry of this type. */
+static int
+checkentry(const char *tablename,
+	   const void *entry,
+	   const struct xt_match *match,
+	   void *matchinfo,
+	   unsigned int matchinfosize,
+	   unsigned int hook_mask)
 {
-	const struct ip6t_opts *optsinfo = par->matchinfo;
+	const struct ip6t_opts *optsinfo = matchinfo;
 
 	if (optsinfo->invflags & ~IP6T_OPTS_INV_MASK) {
-		pr_debug("ip6t_opts: unknown flags %X\n", optsinfo->invflags);
-		return false;
+		DEBUGP("ip6t_opts: unknown flags %X\n", optsinfo->invflags);
+		return 0;
 	}
-
-	if (optsinfo->flags & IP6T_OPTS_NSTRICT) {
-		pr_debug("ip6t_opts: Not strict - not implemented");
-		return false;
-	}
-
-	return true;
+	return 1;
 }
 
-static struct xt_match hbh_mt6_reg[] __read_mostly = {
-	{
-		.name		= "hbh",
-		.family		= NFPROTO_IPV6,
-		.match		= hbh_mt6,
-		.matchsize	= sizeof(struct ip6t_opts),
-		.checkentry	= hbh_mt6_check,
-		.me		= THIS_MODULE,
-		.data		= NEXTHDR_HOP,
-	},
-	{
-		.name		= "dst",
-		.family		= NFPROTO_IPV6,
-		.match		= hbh_mt6,
-		.matchsize	= sizeof(struct ip6t_opts),
-		.checkentry	= hbh_mt6_check,
-		.me		= THIS_MODULE,
-		.data		= NEXTHDR_DEST,
-	},
+static struct ip6t_match opts_match = {
+#if HOPBYHOP
+	.name		= "hbh",
+#else
+	.name		= "dst",
+#endif
+	.match		= match,
+	.matchsize	= sizeof(struct ip6t_opts),
+	.checkentry	= checkentry,
+	.me		= THIS_MODULE,
 };
 
-static int __init hbh_mt6_init(void)
+static int __init ip6t_hbh_init(void)
 {
-	return xt_register_matches(hbh_mt6_reg, ARRAY_SIZE(hbh_mt6_reg));
+	return ip6t_register_match(&opts_match);
 }
 
-static void __exit hbh_mt6_exit(void)
+static void __exit ip6t_hbh_fini(void)
 {
-	xt_unregister_matches(hbh_mt6_reg, ARRAY_SIZE(hbh_mt6_reg));
+	ip6t_unregister_match(&opts_match);
 }
 
-module_init(hbh_mt6_init);
-module_exit(hbh_mt6_exit);
+module_init(ip6t_hbh_init);
+module_exit(ip6t_hbh_fini);

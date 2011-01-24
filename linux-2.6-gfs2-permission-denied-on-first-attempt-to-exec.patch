@@ -1,0 +1,42 @@
+From: Abhijith Das <adas@redhat.com>
+Date: Mon, 7 Jan 2008 13:17:52 -0600
+Subject: [gfs2] permission denied on first attempt to exec
+Message-id: 47827AE0.3040803@redhat.com
+O-Subject: [RHEL5.2][PATCH] GFS2 : bz 422681 - with gfs2, permission denied on first attempt to run an executable
+Bugzilla: 422681
+
+There was a corner case where inodes were not always uptodate at
+the point at which permissions checks were being carried out, this was resulting in
+refusal of execute permission, but only on the first lookup, subsequent requests
+worked correctly.
+
+Signed-off-by: Steven Whitehouse <swhiteho@redhat.com>
+Signed-off-by: Abhijith Das <adas@redhat.com>
+
+Acked-by: Bob Peterson <rpeterso@redhat.com>
+Acked-by: Steven Whitehouse <swhiteho@redhat.com>
+
+diff --git a/fs/gfs2/ops_inode.c b/fs/gfs2/ops_inode.c
+index 3a88992..8141b3c 100644
+--- a/fs/gfs2/ops_inode.c
++++ b/fs/gfs2/ops_inode.c
+@@ -113,8 +113,18 @@ static struct dentry *gfs2_lookup(struct inode *dir, struct dentry *dentry,
+ 	if (inode && IS_ERR(inode))
+ 		return ERR_PTR(PTR_ERR(inode));
+ 
+-	if (inode)
++	if (inode) {
++		struct gfs2_glock *gl = GFS2_I(inode)->i_gl;
++		struct gfs2_holder gh;
++		int error;
++		error = gfs2_glock_nq_init(gl, LM_ST_SHARED, LM_FLAG_ANY, &gh);
++		if (error) {
++			iput(inode);
++			return ERR_PTR(error);
++		}
++		gfs2_glock_dq_uninit(&gh);
+ 		return d_splice_alias(inode, dentry);
++	}
+ 	d_add(dentry, inode);
+ 
+ 	return NULL;

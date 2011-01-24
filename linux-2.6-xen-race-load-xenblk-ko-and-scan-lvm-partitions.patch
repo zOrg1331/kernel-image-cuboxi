@@ -1,0 +1,92 @@
+From: Richard Jones <rjones@redhat.com>
+Subject: [RHEL5.1 PATCH] race between loading xenblk.ko and scanning for LVM partitions etc.
+Date: Fri, 20 Jul 2007 13:25:36 -0400
+Bugzilla: 247265
+Message-Id: <46A0F010.5080201@redhat.com>
+Changelog: [xen] race loading xenblk.ko and scanning for LVM partitions
+
+
+Don Zickus wrote:
+>On Fri, Jul 13, 2007 at 10:49:12AM +0100, Richard W.M. Jones wrote:
+>>https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=247265
+>>
+>>The attached patch is the upstream Xen fix which fixes this race 
+>>condition, just modified so it applies cleanly to 2.6.18-32.el5.
+>>
+>>Rich.
+>
+--- linux-2.6.18.x86_64/drivers/xen/blkfront/blkfront.c	2007-07-13 10:34:31.000000000 +0100
++++ linux-2.6.18.x86_64/drivers/xen/blkfront/blkfront.c	2007-07-13 10:35:14.000000000 +0100
+@@ -340,6 +340,8 @@
+ 	spin_unlock_irq(&blkif_io_lock);
+ 
+ 	add_disk(info->gd);
++
++	info->is_ready = 1;
+ }
+ 
+ /**
+@@ -815,6 +817,13 @@
+ 	spin_unlock_irq(&blkif_io_lock);
+ }
+ 
++int blkfront_is_ready(struct xenbus_device *dev)
++{
++	struct blkfront_info *info = dev->dev.driver_data;
++
++	return info->is_ready;
++}
++
+ 
+ /* ** Driver Registration ** */
+ 
+@@ -833,6 +842,7 @@
+ 	.remove = blkfront_remove,
+ 	.resume = blkfront_resume,
+ 	.otherend_changed = backend_changed,
++	.is_ready = blkfront_is_ready,
+ };
+ 
+ 
+--- linux-2.6.18.x86_64/drivers/xen/blkfront/block.h	2007-07-13 10:34:31.000000000 +0100
++++ linux-2.6.18.x86_64/drivers/xen/blkfront/block.h	2007-07-13 10:36:01.000000000 +0100
+@@ -124,6 +124,7 @@
+ 	struct gnttab_free_callback callback;
+ 	struct blk_shadow shadow[BLK_RING_SIZE];
+ 	unsigned long shadow_free;
++	int is_ready;
+ 
+ 	/**
+ 	 * The number of people holding this device open.  We won't allow a
+--- linux-2.6.18.x86_64/drivers/xen/xenbus/xenbus_probe.c	2007-07-13 10:34:31.000000000 +0100
++++ linux-2.6.18.x86_64/drivers/xen/xenbus/xenbus_probe.c	2007-07-13 10:35:14.000000000 +0100
+@@ -1100,6 +1100,7 @@
+ {
+ 	struct xenbus_device *xendev = to_xenbus_device(dev);
+ 	struct device_driver *drv = data;
++	struct xenbus_driver *xendrv;
+ 
+ 	/*
+ 	 * A device with no driver will never connect. We care only about
+@@ -1112,7 +1113,9 @@
+ 	if (drv && (dev->driver != drv))
+ 		return 0;
+ 
+-	return (xendev->state != XenbusStateConnected);
++	xendrv = to_xenbus_driver(dev->driver);
++	return (xendev->state != XenbusStateConnected ||
++		(xendrv->is_ready && !xendrv->is_ready(xendev)));
+ }
+ 
+ static int exists_disconnected_device(struct device_driver *drv)
+--- linux-2.6.18.x86_64/include/xen/xenbus.h	2007-07-13 10:34:31.000000000 +0100
++++ linux-2.6.18.x86_64/include/xen/xenbus.h	2007-07-13 10:35:14.000000000 +0100
+@@ -104,6 +104,7 @@
+ 	int (*uevent)(struct xenbus_device *, char **, int, char *, int);
+ 	struct device_driver driver;
+ 	int (*read_otherend_details)(struct xenbus_device *dev);
++	int (*is_ready)(struct xenbus_device *dev);
+ };
+ 
+ static inline struct xenbus_driver *to_xenbus_driver(struct device_driver *drv)
+

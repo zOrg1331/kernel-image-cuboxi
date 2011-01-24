@@ -23,16 +23,14 @@ quiet_cmd_keywords.c = GPERF   $@
 
 $(obj)/keywords.c: $(obj)/keywords.gperf FORCE
 	$(call if_changed,keywords.c)
-	cp $@ $@_shipped
 
 # flex
 
 quiet_cmd_lex.c = FLEX    $@
-      cmd_lex.c = flex -o$@ -d $< $(obj)/parse.h
+      cmd_lex.c = flex -o$@ -d $(filter-out FORCE,$^)
 
-$(obj)/lex.c: $(obj)/lex.l $(obj)/parse.h $(obj)/keywords.c FORCE
+$(obj)/lex.c: $(obj)/lex.l $(obj)/parse.h FORCE
 	$(call if_changed,lex.c)
-	cp $@ $@_shipped
 
 # bison
 
@@ -41,8 +39,6 @@ quiet_cmd_parse.c = BISON   $@
 
 $(obj)/parse.c: $(obj)/parse.y FORCE
 	$(call if_changed,parse.c)
-	cp $@ $@_shipped
-	cp $(@:.c=.h) $(@:.c=.h)_shipped
 
 $(obj)/parse.h: $(obj)/parse.c ;
 

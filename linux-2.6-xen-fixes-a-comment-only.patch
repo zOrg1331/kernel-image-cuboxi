@@ -1,0 +1,32 @@
+From: Bill Burns <bburns@redhat.com>
+Date: Thu, 20 Dec 2007 13:29:10 -0500
+Subject: [xen] fixes a comment only
+Message-id: 20071220182910.7320.57199.sendpatchset@localhost.localdomain
+O-Subject: [RHEL5.2 PATCH 6/6] Fixes a comment only
+Bugzilla: 328321
+
+# HG changeset patch
+# User kfraser@localhost.localdomain
+# Date 1184147749 -3600
+# Node ID bab198e12e83e55677a0cd0e44aaf46b96515b75
+# Parent  0894e8230ec9a3bc00412a5853c4dac52d1c14c5
+Fix a stale comment.
+Signed-off-by: Jun Koi <junkoi2004@gmail.com>
+linux-2.6.18-xen changeset: 106:9942e31a3ec5dae997a43c1bb43d59a238e98b61
+linux-2.6.18-xen date: Wed Jul 11 10:55:49 2007 +0100
+
+Acked-by: "David S. Miller" <davem@redhat.com>
+
+diff --git a/arch/i386/mm/ioremap-xen.c b/arch/i386/mm/ioremap-xen.c
+index ccb421f..b9d379a 100644
+--- a/arch/i386/mm/ioremap-xen.c
++++ b/arch/i386/mm/ioremap-xen.c
+@@ -74,7 +74,7 @@ static int __direct_remap_pfn_range(struct mm_struct *mm,
+ 
+ 		/*
+ 		 * Fill in the machine address: PTE ptr is done later by
+-		 * __direct_remap_area_pages(). 
++		 * apply_to_page_range(). 
+ 		 */
+ 		v->val = pte_val_ma(pfn_pte_ma(mfn, prot));
+ 

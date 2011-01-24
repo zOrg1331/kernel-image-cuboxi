@@ -1,0 +1,45 @@
+From: Bill Burns <bburns@redhat.com>
+Date: Wed, 28 May 2008 14:49:50 -0400
+Subject: [xen] kexec: allocate correct memory reservation
+Message-id: 20080528184948.14249.14467.sendpatchset@localhost.localdomain
+O-Subject: [RHEL5.3 PATCH] Xen Fix Kexec reservation
+Bugzilla: 442661
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+RH-Acked-by: Don Dutile <ddutile@redhat.com>
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+
+Fixes bz 442661
+
+The memory reservation for kexec in the Xen Hypervisor
+was incorrect. The parameters for the call to reserve the
+memory are start address and end address. The supplied
+parameters were start address and size, resulting in an
+improper allocation and a failure to produce a usefull dump.
+
+Credit to Dave Anderson who tracked down the bug and supplied
+the fix.
+
+The fix has been accepted upstream:
+Xen unstable cset 17653 http://xenbits.xensource.com/xen-unstable.hg?rev/e66aefdfedcc
+
+Brew build:
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1337121
+
+Please review and ACK.
+
+Thanks,
+ Bill
+
+diff --git a/arch/x86/setup.c b/arch/x86/setup.c
+index f9b25d5..f3c7b8a 100644
+--- a/arch/x86/setup.c
++++ b/arch/x86/setup.c
+@@ -389,7 +389,7 @@ void __init kexec_reserve_area(struct e820map *e820)
+ 
+     is_reserved = 1;
+ 
+-    if ( !reserve_e820_ram(e820, kdump_start, kdump_size) )
++    if ( !reserve_e820_ram(e820, kdump_start, kdump_start + kdump_size) )
+     {
+         printk("Kdump: DISABLED (failed to reserve %luMB (%lukB) at 0x%lx)"
+                "\n", kdump_size >> 20, kdump_size >> 10, kdump_start);

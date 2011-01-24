@@ -5,6 +5,7 @@
  *
  */
 
+#include <sound/driver.h>
 #include <linux/time.h>
 #include <linux/init.h>
 #include <sound/core.h>

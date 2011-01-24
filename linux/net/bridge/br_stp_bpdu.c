@@ -5,6 +5,8 @@
  *	Authors:
  *	Lennert Buytenhek		<buytenh@gnu.org>
  *
+ *	$Id: br_stp_bpdu.c,v 1.3 2001/11/10 02:35:25 davem Exp $
+ *
  *	This program is free software; you can redistribute it and/or
  *	modify it under the terms of the GNU General Public License
  *	as published by the Free Software Foundation; either version
@@ -15,10 +17,8 @@
 #include <linux/netfilter_bridge.h>
 #include <linux/etherdevice.h>
 #include <linux/llc.h>
-#include <net/net_namespace.h>
 #include <net/llc.h>
 #include <net/llc_pdu.h>
-#include <net/stp.h>
 #include <asm/unaligned.h>
 
 #include "br_private.h"
@@ -29,9 +29,12 @@
 #define LLC_RESERVE sizeof(struct llc_pdu_un)
 
 static void br_send_bpdu(struct net_bridge_port *p,
-			 const unsigned char *data, int length)
+ 			 const unsigned char *data, int length)
 {
 	struct sk_buff *skb;
+
+	if (!p->br->stp_enabled)
+		return;
 
 	skb = dev_alloc_skb(length+LLC_RESERVE);
 	if (!skb)
@@ -57,23 +60,20 @@ static inline void br_set_ticks(unsigned char *dest, int j)
 {
 	unsigned long ticks = (STP_HZ * j)/ HZ;
 
-	put_unaligned_be16(ticks, dest);
+	put_unaligned(htons(ticks), (__be16 *)dest);
 }
 
 static inline int br_get_ticks(const unsigned char *src)
 {
-	unsigned long ticks = get_unaligned_be16(src);
+	unsigned long ticks = ntohs(get_unaligned((__be16 *)src));
 
-	return DIV_ROUND_UP(ticks * HZ, STP_HZ);
+	return (ticks * HZ + STP_HZ - 1) / STP_HZ;
 }
 
 /* called under bridge lock */
 void br_send_config_bpdu(struct net_bridge_port *p, struct br_config_bpdu *bpdu)
 {
 	unsigned char buf[35];
-
-	if (p->br->stp_enabled != BR_KERNEL_STP)
-		return;
 
 	buf[0] = 0;
 	buf[1] = 0;
@@ -117,9 +117,6 @@ void br_send_tcn_bpdu(struct net_bridge_port *p)
 {
 	unsigned char buf[4];
 
-	if (p->br->stp_enabled != BR_KERNEL_STP)
-		return;
-
 	buf[0] = 0;
 	buf[1] = 0;
 	buf[2] = 0;
@@ -132,15 +129,21 @@ void br_send_tcn_bpdu(struct net_bridge_port *p)
  *
  * NO locks, but rcu_read_lock (preempt_disabled)
  */
-void br_stp_rcv(const struct stp_proto *proto, struct sk_buff *skb,
-		struct net_device *dev)
+int br_stp_rcv(struct sk_buff *skb, struct net_device *dev,
+	       struct packet_type *pt, struct net_device *orig_dev)
 {
+	const struct llc_pdu_un *pdu = llc_pdu_un_hdr(skb);
 	const unsigned char *dest = eth_hdr(skb)->h_dest;
 	struct net_bridge_port *p = rcu_dereference(dev->br_port);
 	struct net_bridge *br;
 	const unsigned char *buf;
 
 	if (!p)
+		goto err;
+
+	if (pdu->ssap != LLC_SAP_BSPAN
+	    || pdu->dsap != LLC_SAP_BSPAN
+	    || pdu->ctrl_1 != LLC_PDU_TYPE_U)
 		goto err;
 
 	if (!pskb_may_pull(skb, 4))
@@ -154,13 +157,9 @@ void br_stp_rcv(const struct stp_proto *proto, struct sk_buff *skb,
 	br = p->br;
 	spin_lock(&br->lock);
 
-	if (br->stp_enabled != BR_KERNEL_STP)
-		goto out;
-
-	if (!(br->dev->flags & IFF_UP))
-		goto out;
-
-	if (p->state == BR_STATE_DISABLED)
+	if (p->state == BR_STATE_DISABLED
+	    || !br->stp_enabled
+	    || !(br->dev->flags & IFF_UP))
 		goto out;
 
 	if (compare_ether_addr(dest, br->group_addr) != 0)
@@ -216,4 +215,5 @@ void br_stp_rcv(const struct stp_proto *proto, struct sk_buff *skb,
 	spin_unlock(&br->lock);
  err:
 	kfree_skb(skb);
+	return 0;
 }

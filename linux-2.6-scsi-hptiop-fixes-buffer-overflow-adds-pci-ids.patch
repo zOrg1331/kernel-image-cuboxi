@@ -1,0 +1,88 @@
+From: Chip Coldwell <coldwell@redhat.com>
+Date: Thu, 6 Mar 2008 17:22:57 -0500
+Subject: [scsi] hptiop: fixes buffer overflow, adds pci-ids
+Message-id: alpine.LRH.0.9999.0803061706190.1456@bogart.boston.redhat.com
+O-Subject: [RHEL-5.2 PATCH] bz430662: backport hptiop driver bugfixes
+Bugzilla: 430662
+
+This is a backport of some bugfixes in the hptiop driver.  All of them
+sound like really Good Things:
+
+* Avoid buffer overflow when returning sense data
+* Fix resource releasing bug in hptiop_probe
+* Update resid when finishing requests
+* Add more PCI device IDs
+
+The patch is straightforward and only touches drivers/scsi/hptiop.c,
+so is low-risk.
+
+All archs build here
+
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1202220
+
+Exception flag is set to ? awaiting pm-ack.
+
+commit 9d52e9e385ab1fff504ac3451a4c30354307f9ec
+Author: Chip Coldwell <coldwell@bogart.boston.redhat.com>
+Date:   Thu Mar 6 14:17:24 2008 -0500
+
+    BZ430662: backport hptiop bugfixes from upstream.
+
+Acked-by: Doug Ledford <dledford@redhat.com>
+
+diff --git a/drivers/scsi/hptiop.c b/drivers/scsi/hptiop.c
+index 28bfb8f..2d994fd 100644
+--- a/drivers/scsi/hptiop.c
++++ b/drivers/scsi/hptiop.c
+@@ -356,6 +356,8 @@ static void hptiop_host_request_callback(struct hptiop_hba *hba, u32 tag)
+ 
+ 	switch (le32_to_cpu(req->header.result)) {
+ 	case IOP_RESULT_SUCCESS:
++		scp->resid = scp->request_bufflen -
++				le32_to_cpu(req->dataxfer_length);
+ 		scp->result = (DID_OK<<16);
+ 		break;
+ 	case IOP_RESULT_BAD_TARGET:
+@@ -377,8 +379,9 @@ static void hptiop_host_request_callback(struct hptiop_hba *hba, u32 tag)
+ 		scp->result = SAM_STAT_CHECK_CONDITION;
+ 		memset(&scp->sense_buffer,
+ 				0, sizeof(scp->sense_buffer));
+-		memcpy(&scp->sense_buffer,
+-			&req->sg_list, le32_to_cpu(req->dataxfer_length));
++		memcpy(&scp->sense_buffer, &req->sg_list,
++				min_t(size_t, sizeof(scp->sense_buffer),
++					le32_to_cpu(req->dataxfer_length)));
+ 		break;
+ 
+ 	default:
+@@ -846,12 +849,12 @@ free_request_irq:
+ unmap_pci_bar:
+ 	iounmap(hba->iop);
+ 
+-free_pci_regions:
+-	pci_release_regions(pcidev) ;
+-
+ free_scsi_host:
+ 	scsi_host_put(host);
+ 
++free_pci_regions:
++	pci_release_regions(pcidev);
++
+ disable_pci_device:
+ 	pci_disable_device(pcidev);
+ 
+@@ -911,6 +914,14 @@ static void hptiop_remove(struct pci_dev *pcidev)
+ static struct pci_device_id hptiop_id_table[] = {
+ 	{ PCI_DEVICE(0x1103, 0x3220) },
+ 	{ PCI_DEVICE(0x1103, 0x3320) },
++	{ PCI_DEVICE(0x1103, 0x3520) },
++	{ PCI_DEVICE(0x1103, 0x4320) },
++	{ PCI_DEVICE(0x1103, 0x3510) },
++	{ PCI_DEVICE(0x1103, 0x3511) },
++	{ PCI_DEVICE(0x1103, 0x3521) },
++	{ PCI_DEVICE(0x1103, 0x3522) },
++	{ PCI_DEVICE(0x1103, 0x3410) },
++	{ PCI_DEVICE(0x1103, 0x3540) },
+ 	{},
+ };
+ 

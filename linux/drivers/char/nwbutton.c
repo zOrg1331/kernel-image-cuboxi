@@ -23,11 +23,8 @@
 #define __NWBUTTON_C		/* Tell the header file who we are */
 #include "nwbutton.h"
 
-static void button_sequence_finished (unsigned long parameters);
-
 static int button_press_count;		/* The count of button presses */
-/* Times for the end of a sequence */
-static DEFINE_TIMER(button_timer, button_sequence_finished, 0, 0);
+static struct timer_list button_timer;	/* Times for the end of a sequence */ 
 static DECLARE_WAIT_QUEUE_HEAD(button_wait_queue); /* Used for blocking read */
 static char button_output_buffer[32];	/* Stores data to write out of device */
 static int bcount;			/* The number of bytes in the buffer */
@@ -130,8 +127,9 @@ static void button_consume_callbacks (int bpcount)
 static void button_sequence_finished (unsigned long parameters)
 {
 #ifdef CONFIG_NWBUTTON_REBOOT		/* Reboot using button is enabled */
-	if (button_press_count == reboot_count)
-		kill_cad_pid(SIGINT, 1);	/* Ask init to reboot us */
+	if (button_press_count == reboot_count) {
+		kill_proc (1, SIGINT, 1);	/* Ask init to reboot us */
+	}
 #endif /* CONFIG_NWBUTTON_REBOOT */
 	button_consume_callbacks (button_press_count);
 	bcount = sprintf (button_output_buffer, "%d\n", button_press_count);
@@ -147,10 +145,16 @@ static void button_sequence_finished (unsigned long parameters)
  *  increments the counter.
  */ 
 
-static irqreturn_t button_handler (int irq, void *dev_id)
+static irqreturn_t button_handler (int irq, void *dev_id, struct pt_regs *regs)
 {
+	if (button_press_count) {
+		del_timer (&button_timer);
+	}
 	button_press_count++;
-	mod_timer(&button_timer, jiffies + bdelay);
+	init_timer (&button_timer);
+	button_timer.function = button_sequence_finished;
+	button_timer.expires = (jiffies + bdelay);
+	add_timer (&button_timer);
 
 	return IRQ_HANDLED;
 }

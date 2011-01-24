@@ -1,0 +1,77 @@
+From: Eric Sandeen <sandeen@redhat.com>
+Date: Tue, 18 Dec 2007 12:16:41 -0600
+Subject: [fs] ecryptfs: backport to rhel5 netlink api
+Message-id: 47680E89.6050905@redhat.com
+O-Subject: [RHEL 5.2 PATCH] 13/15: eCryptfs: backport to RHEL5 netlink API
+Bugzilla: 228341
+
+Backport ecryptfs to use RHEL5 netlink API; define
+NETLINK_ECRYPTFS in kernel headers.
+
+ fs/ecryptfs/netlink.c   |   22 +++++++++++++++++-----
+ include/linux/netlink.h |    1 +
+ 2 files changed, 18 insertions(+), 5 deletions(-)
+
+diff --git a/fs/ecryptfs/netlink.c b/fs/ecryptfs/netlink.c
+index 9aa3451..9d41560 100644
+--- a/fs/ecryptfs/netlink.c
++++ b/fs/ecryptfs/netlink.c
+@@ -97,7 +97,7 @@ out:
+  */
+ static int ecryptfs_process_nl_response(struct sk_buff *skb)
+ {
+-	struct nlmsghdr *nlh = nlmsg_hdr(skb);
++	struct nlmsghdr *nlh = (struct nlmsghdr *)skb->data;
+ 	struct ecryptfs_message *msg = NLMSG_DATA(nlh);
+ 	int rc;
+ 
+@@ -165,11 +165,23 @@ static int ecryptfs_process_nl_quit(struct sk_buff *skb)
+  * it to its desired netlink context element and wake up the process
+  * that is waiting for a response.
+  */
+-static void ecryptfs_receive_nl_message(struct sk_buff *skb)
++static void ecryptfs_receive_nl_message(struct sock *sk, int len)
+ {
++	struct sk_buff *skb;
+ 	struct nlmsghdr *nlh;
++	int rc = 0;
+ 
+-	nlh = nlmsg_hdr(skb);
++receive:
++	skb = skb_recv_datagram(sk, 0, 0, &rc);
++	if (rc == -EINTR)
++		goto receive;
++	else if (rc < 0) {
++		ecryptfs_printk(KERN_ERR, "Error occurred while "
++				"receiving eCryptfs netlink message; "
++				"rc = [%d]\n", rc);
++		return;
++	}
++	nlh = (struct nlmsghdr *)skb->data;
+ 	if (!NLMSG_OK(nlh, skb->len)) {
+ 		ecryptfs_printk(KERN_ERR, "Received corrupt netlink "
+ 				"message\n");
+@@ -215,9 +227,9 @@ int ecryptfs_init_netlink(void)
+ {
+ 	int rc;
+ 
+-	ecryptfs_nl_sock = netlink_kernel_create(&init_net, NETLINK_ECRYPTFS, 0,
++	ecryptfs_nl_sock = netlink_kernel_create(NETLINK_ECRYPTFS, 0,
+ 						 ecryptfs_receive_nl_message,
+-						 NULL, THIS_MODULE);
++						 THIS_MODULE);
+ 	if (!ecryptfs_nl_sock) {
+ 		rc = -EIO;
+ 		ecryptfs_printk(KERN_ERR, "Failed to create netlink socket\n");
+diff --git a/include/linux/netlink.h b/include/linux/netlink.h
+index 6641162..13b154c 100644
+--- a/include/linux/netlink.h
++++ b/include/linux/netlink.h
+@@ -23,6 +23,7 @@
+ #define NETLINK_GENERIC		16
+ /* leave room for NETLINK_DM (DM Events) */
+ #define NETLINK_SCSITRANSPORT	18	/* SCSI Transports */
++#define NETLINK_ECRYPTFS	19
+ 
+ #define MAX_LINKS 32		
+ 

@@ -7,29 +7,28 @@
 #include <linux/pci.h>
 #include <linux/mm.h>
 #include <asm/io.h>
-#include <asm/pci-bridge.h>
 
 /*
  * Here comes the ppc64 implementation of the IOMAP 
  * interfaces.
  */
-unsigned int ioread8(void __iomem *addr)
+unsigned int fastcall ioread8(void __iomem *addr)
 {
 	return readb(addr);
 }
-unsigned int ioread16(void __iomem *addr)
+unsigned int fastcall ioread16(void __iomem *addr)
 {
 	return readw(addr);
 }
-unsigned int ioread16be(void __iomem *addr)
+unsigned int fastcall ioread16be(void __iomem *addr)
 {
 	return in_be16(addr);
 }
-unsigned int ioread32(void __iomem *addr)
+unsigned int fastcall ioread32(void __iomem *addr)
 {
 	return readl(addr);
 }
-unsigned int ioread32be(void __iomem *addr)
+unsigned int fastcall ioread32be(void __iomem *addr)
 {
 	return in_be32(addr);
 }
@@ -39,23 +38,23 @@ EXPORT_SYMBOL(ioread16be);
 EXPORT_SYMBOL(ioread32);
 EXPORT_SYMBOL(ioread32be);
 
-void iowrite8(u8 val, void __iomem *addr)
+void fastcall iowrite8(u8 val, void __iomem *addr)
 {
 	writeb(val, addr);
 }
-void iowrite16(u16 val, void __iomem *addr)
+void fastcall iowrite16(u16 val, void __iomem *addr)
 {
 	writew(val, addr);
 }
-void iowrite16be(u16 val, void __iomem *addr)
+void fastcall iowrite16be(u16 val, void __iomem *addr)
 {
 	out_be16(addr, val);
 }
-void iowrite32(u32 val, void __iomem *addr)
+void fastcall iowrite32(u32 val, void __iomem *addr)
 {
 	writel(val, addr);
 }
-void iowrite32be(u32 val, void __iomem *addr)
+void fastcall iowrite32be(u32 val, void __iomem *addr)
 {
 	out_be32(addr, val);
 }
@@ -107,7 +106,7 @@ EXPORT_SYMBOL(iowrite32_rep);
 
 void __iomem *ioport_map(unsigned long port, unsigned int len)
 {
-	return (void __iomem *) (port + _IO_BASE);
+	return (void __iomem *) (port+pci_io_base);
 }
 
 void ioport_unmap(void __iomem *addr)
@@ -119,8 +118,8 @@ EXPORT_SYMBOL(ioport_unmap);
 
 void __iomem *pci_iomap(struct pci_dev *dev, int bar, unsigned long max)
 {
-	resource_size_t start = pci_resource_start(dev, bar);
-	resource_size_t len = pci_resource_len(dev, bar);
+	unsigned long start = pci_resource_start(dev, bar);
+	unsigned long len = pci_resource_len(dev, bar);
 	unsigned long flags = pci_resource_flags(dev, bar);
 
 	if (!len)
@@ -137,12 +136,7 @@ void __iomem *pci_iomap(struct pci_dev *dev, int bar, unsigned long max)
 
 void pci_iounmap(struct pci_dev *dev, void __iomem *addr)
 {
-	if (isa_vaddr_is_ioport(addr))
-		return;
-	if (pcibios_vaddr_is_ioport(addr))
-		return;
-	iounmap(addr);
+	/* Nothing to do */
 }
-
 EXPORT_SYMBOL(pci_iomap);
 EXPORT_SYMBOL(pci_iounmap);

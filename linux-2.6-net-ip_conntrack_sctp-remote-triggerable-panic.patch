@@ -1,0 +1,67 @@
+From: Don Howard <dhoward@redhat.com>
+Subject: [rhel5.1 security patch] ip_conntrack_sctp: fix remotely triggerable NULL ptr dereference (243244)
+Date: Sun, 10 Jun 2007 15:38:06 -0700 (PDT)
+Bugzilla: 243244
+Message-Id: <Pine.LNX.4.64.0706101522070.6012@sugarmagnolia.remotee.org>
+Changelog: [net] ip_conntrack_sctp: fix remotely triggerable NULL ptr dereference
+
+
+
+Fixes bz243244 / CVE-2007-2876
+Built in brew.
+Patch is upstream in 2.6.21.4
+
+
+diff-tree 8c640bd0c68201dd0d71b78a07bb224973580ad3 (from c23e7e4c94647c2c47d2c835b21cc7d745f62d05)
+Author: Patrick McHardy <kaber@trash.net>
+
+    [PATCH] NETFILTER: {ip, nf}_conntrack_sctp: fix remotely triggerable NULL ptr dereference (CVE-2007-2876)
+    
+    When creating a new connection by sending an unknown chunk type, we
+    don't transition to a valid state, causing a NULL pointer dereference in
+    sctp_packet when accessing sctp_timeouts[SCTP_CONNTRACK_NONE].
+    
+    Fix by don't creating new conntrack entry if initial state is invalid.
+    
+    Noticed by Vilmos Nebehaj <vilmos.nebehaj@ramsys.hu>
+    
+    CC: Kiran Kumar Immidi <immidi_kiran@yahoo.com>
+    Cc: David Miller <davem@davemloft.net>
+    Signed-off-by: Patrick McHardy <kaber@trash.net>
+    Signed-off-by: Greg Kroah-Hartman <gregkh@suse.de>
+    Signed-off-by: Chris Wright <chrisw@sous-sol.org>
+
+diff --git a/net/ipv4/netfilter/ip_conntrack_proto_sctp.c b/net/ipv4/netfilter/ip_conntrack_proto_sctp.c
+index e694299..b86479a 100644
+--- a/net/ipv4/netfilter/ip_conntrack_proto_sctp.c
++++ b/net/ipv4/netfilter/ip_conntrack_proto_sctp.c
+@@ -460,7 +460,8 @@ static int sctp_new(struct ip_conntrack 
+ 						SCTP_CONNTRACK_NONE, sch->type);
+ 
+ 		/* Invalid: delete conntrack */
+-		if (newconntrack == SCTP_CONNTRACK_MAX) {
++		if (newconntrack == SCTP_CONNTRACK_NONE ||
++		    newconntrack == SCTP_CONNTRACK_MAX) {
+ 			DEBUGP("ip_conntrack_sctp: invalid new deleting.\n");
+ 			return 0;
+ 		}
+diff --git a/net/netfilter/nf_conntrack_proto_sctp.c b/net/netfilter/nf_conntrack_proto_sctp.c
+index 3c80558..b53bc64 100644
+--- a/net/netfilter/nf_conntrack_proto_sctp.c
++++ b/net/netfilter/nf_conntrack_proto_sctp.c
+@@ -469,7 +469,8 @@ static int sctp_new(struct nf_conn *conn
+ 					 SCTP_CONNTRACK_NONE, sch->type);
+ 
+ 		/* Invalid: delete conntrack */
+-		if (newconntrack == SCTP_CONNTRACK_MAX) {
++		if (newconntrack == SCTP_CONNTRACK_NONE ||
++		    newconntrack == SCTP_CONNTRACK_MAX) {
+ 			DEBUGP("nf_conntrack_sctp: invalid new deleting.\n");
+ 			return 0;
+ 		}
+
+
+-- 
+-Don
+dhoward@redhat.com
+

@@ -1,0 +1,106 @@
+From: Don Dutile <ddutile@redhat.com>
+Date: Tue, 1 Dec 2009 23:43:07 -0500
+Subject: [pci] dmar: check for DMAR at zero BIOS error earlier
+Message-id: <4B15AA0B.2080600@redhat.com>
+Patchwork-id: 21632
+O-Subject: [RHEL5.5 PATCH V2] 4/9: INTEL_IOMMU: check for DMAR at zero BIOS
+	error earlier
+Bugzilla: 516811 518103
+RH-Acked-by: Chris Wright <chrisw@redhat.com>
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+V2: cleaned up/out space/ident patches that belonged
+     in 1/9 or 2/9.
+
+BZ 516727  (BZ 533952 in F12)
+
+Backport of following patch from iommu-2.6.32.git tree:
+intel-iommu: Check for 'DMAR at zero' BIOS error earlier.
+commit 86cf898e1d0fca245173980e3897580db38569a8
+
+0/9 states build & tests.
+
+Please review & ACK.
+
+- Don
+>From 1f28ed45b0ebbea16ace2b0c8f857ff02599934e Mon Sep 17 00:00:00 2001
+From: Donald Dutile <ddutile@redhat.com>
+Date: Mon, 16 Nov 2009 18:07:24 -0500
+Subject: [PATCH 4/9]   INTEL_IOMMU: check for DMAR at zero BIOS error earlier
+
+
+diff --git a/drivers/pci/dmar.c b/drivers/pci/dmar.c
+index 65513e9..dda81f4 100644
+--- a/drivers/pci/dmar.c
++++ b/drivers/pci/dmar.c
+@@ -175,15 +175,7 @@ dmar_parse_one_drhd(struct acpi_dmar_header *header)
+ 	int ret = 0;
+ 
+ 	drhd = (struct acpi_dmar_hardware_unit *)header;
+-	if (!drhd->address) {
+-		/* Promote an attitude of violence to a BIOS engineer today */
+-		printk(KERN_WARNING PREFIX "Your BIOS is broken; DMAR reported at address zero!\n"
+-		     "BIOS vendor: %s; Ver: %s; Product Version: %s\n",
+-		     dmi_get_system_info(DMI_BIOS_VENDOR),
+-		     dmi_get_system_info(DMI_BIOS_VERSION),
+-		     dmi_get_system_info(DMI_PRODUCT_VERSION));
+-		return -ENODEV;
+-	}
++
+ 	dmaru = kzalloc(sizeof(*dmaru), GFP_KERNEL);
+ 	if (!dmaru)
+ 		return -ENOMEM;
+@@ -563,12 +555,52 @@ int __init dmar_table_init(void)
+ 	return 0;
+ }
+ 
++int __init check_zero_address(void)
++{
++	struct acpi_table_dmar *dmar;
++	struct acpi_dmar_header *entry_header;
++	struct acpi_dmar_hardware_unit *drhd;
++
++	dmar = (struct acpi_table_dmar *)dmar_tbl;
++	entry_header = (struct acpi_dmar_header *)(dmar + 1);
++
++	while (((unsigned long)entry_header) <
++			(((unsigned long)dmar) + dmar_tbl->length)) {
++		/* Avoid looping forever on bad ACPI tables */
++		if (entry_header->length == 0) {
++			printk(KERN_WARNING PREFIX
++				"Invalid 0-length structure\n");
++			return 0;
++		}
++
++		if (entry_header->type == ACPI_DMAR_TYPE_HARDWARE_UNIT) {
++			drhd = (void *)entry_header;
++
++			if (!drhd->address) {
++				/* Promote an attitude of violence to a BIOS engineer today */
++				printk(KERN_WARNING PREFIX 
++					"Your BIOS is broken; DMAR reported at address zero!\n"
++					"BIOS vendor: %s; Ver: %s; Product Version: %s\n",
++					dmi_get_system_info(DMI_BIOS_VENDOR),
++					dmi_get_system_info(DMI_BIOS_VERSION),
++					dmi_get_system_info(DMI_PRODUCT_VERSION));
++				return 0;
++			}
++			break;
++		}
++
++		entry_header = ((void *)entry_header + entry_header->length);
++	}
++	return 1;
++}
++
+ void __init detect_intel_iommu(void)
+ {
+ 	int ret;
+ 
+ 	ret = dmar_table_detect();
+-
++	if (ret)
++		ret = check_zero_address();
+ 	{
+ #ifdef CONFIG_INTR_REMAP
+ 		struct acpi_table_dmar *dmar;

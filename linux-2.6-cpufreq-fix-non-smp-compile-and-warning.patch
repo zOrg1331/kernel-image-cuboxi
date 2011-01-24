@@ -1,0 +1,61 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Date: Fri, 7 Dec 2007 09:33:14 -0500
+Subject: [cpufreq] fix non-smp compile and warning
+Message-id: 20071207143314.26001.77904.sendpatchset@prarit.boston.redhat.com
+O-Subject: [RHEL5 PATCH]: Fix UP compile and warning
+Bugzilla: 413941
+
+Fix UP compile on RHEL5.
+
+(Yes, I know we don't ship a UP RHEL5 kernel.  But it should compile.)
+
+We changed the boot message in the K8 PowerNow driver a while ago and that
+broke UP compiles.
+
+Resolves BZ 413941.
+
+Sucessfully tested by me.
+
+Acked-by: Brian Maly <bmaly@redhat.com>
+Acked-by: Jon Masters <jcm@redhat.com>
+
+diff --git a/arch/i386/kernel/cpu/cpufreq/powernow-k8.c b/arch/i386/kernel/cpu/cpufreq/powernow-k8.c
+index 76275a8..9206298 100644
+--- a/arch/i386/kernel/cpu/cpufreq/powernow-k8.c
++++ b/arch/i386/kernel/cpu/cpufreq/powernow-k8.c
+@@ -1183,6 +1183,7 @@ static int powernowk8_verify(struct cpufreq_policy *pol)
+ 	return cpufreq_frequency_table_verify(pol, data->powernow_table);
+ }
+ 
++#ifdef CONFIG_SMP
+ /* On an MP system that is transitioning all cores in sync, adjust the
+  * vids for each frequency to the highest.  Otherwise, systems made up
+  * of different steppings may fail.
+@@ -1209,6 +1210,8 @@ static void sync_tables(int curcpu)
+ 		}
+ 	}
+ }
++#endif
++
+ /* per CPU init entry point to the driver */
+ static int __cpuinit powernowk8_cpu_init(struct cpufreq_policy *pol)
+ {
+@@ -1421,9 +1424,16 @@ static int __cpuinit powernowk8_init(void)
+ 				req_state[i] = 99;
+ 		}
+ 		powernow_k8_cpu_preinit_acpi();
++#ifdef CONFIG_SMP
+ 		printk(KERN_INFO PFX "Found %d %s "
+-			"processors (%d cpu cores) (" VERSION ")\n", supported_cpus/cpu_data[0].booted_cores,
+-			boot_cpu_data.x86_model_id, supported_cpus);
++		       "processors (%d cpu cores) (" VERSION ")\n",
++		       supported_cpus/cpu_data[0].booted_cores,
++		       boot_cpu_data.x86_model_id, supported_cpus);
++#else
++		printk(KERN_INFO PFX "Found 1 %s "
++		       "processors (%d cpu cores) (" VERSION ")\n",
++		       boot_cpu_data.x86_model_id, supported_cpus);
++#endif
+ 		return cpufreq_register_driver(&cpufreq_amd64_driver);
+ 	}
+ 

@@ -199,19 +199,16 @@ int hfsplus_get_block(struct inode *inode, sector_t iblock,
 		goto done;
 	}
 
-	if (inode->i_ino == HFSPLUS_EXT_CNID)
-		return -EIO;
-
-	mutex_lock(&HFSPLUS_I(inode).extents_lock);
+	down(&HFSPLUS_I(inode).extents_lock);
 	res = hfsplus_ext_read_extent(inode, ablock);
 	if (!res) {
 		dblock = hfsplus_ext_find_block(HFSPLUS_I(inode).cached_extents, ablock -
 					     HFSPLUS_I(inode).cached_start);
 	} else {
-		mutex_unlock(&HFSPLUS_I(inode).extents_lock);
+		up(&HFSPLUS_I(inode).extents_lock);
 		return -EIO;
 	}
-	mutex_unlock(&HFSPLUS_I(inode).extents_lock);
+	up(&HFSPLUS_I(inode).extents_lock);
 
 done:
 	dprint(DBG_EXTENT, "get_block(%lu): %llu - %u\n", inode->i_ino, (long long)iblock, dblock);
@@ -358,7 +355,7 @@ int hfsplus_file_extend(struct inode *inode)
 		return -ENOSPC;
 	}
 
-	mutex_lock(&HFSPLUS_I(inode).extents_lock);
+	down(&HFSPLUS_I(inode).extents_lock);
 	if (HFSPLUS_I(inode).alloc_blocks == HFSPLUS_I(inode).first_blocks)
 		goal = hfsplus_ext_lastblock(HFSPLUS_I(inode).first_extents);
 	else {
@@ -411,7 +408,7 @@ int hfsplus_file_extend(struct inode *inode)
 			goto insert_extent;
 	}
 out:
-	mutex_unlock(&HFSPLUS_I(inode).extents_lock);
+	up(&HFSPLUS_I(inode).extents_lock);
 	if (!res) {
 		HFSPLUS_I(inode).alloc_blocks += len;
 		mark_inode_dirty(inode);
@@ -446,18 +443,21 @@ void hfsplus_file_truncate(struct inode *inode)
 	if (inode->i_size > HFSPLUS_I(inode).phys_size) {
 		struct address_space *mapping = inode->i_mapping;
 		struct page *page;
-		void *fsdata;
-		u32 size = inode->i_size;
+		u32 size = inode->i_size - 1;
 		int res;
 
-		res = pagecache_write_begin(NULL, mapping, size, 0,
-						AOP_FLAG_UNINTERRUPTIBLE,
-						&page, &fsdata);
+		page = grab_cache_page(mapping, size >> PAGE_CACHE_SHIFT);
+		if (!page)
+			return;
+		size &= PAGE_CACHE_SIZE - 1;
+		size++;
+		res = mapping->a_ops->prepare_write(NULL, page, size, size);
+		if (!res)
+			res = mapping->a_ops->commit_write(NULL, page, size, size);
 		if (res)
-			return;
-		res = pagecache_write_end(NULL, mapping, size, 0, 0, page, fsdata);
-		if (res < 0)
-			return;
+			inode->i_size = HFSPLUS_I(inode).phys_size;
+		unlock_page(page);
+		page_cache_release(page);
 		mark_inode_dirty(inode);
 		return;
 	} else if (inode->i_size == HFSPLUS_I(inode).phys_size)
@@ -468,7 +468,7 @@ void hfsplus_file_truncate(struct inode *inode)
 	if (blk_cnt == alloc_cnt)
 		goto out;
 
-	mutex_lock(&HFSPLUS_I(inode).extents_lock);
+	down(&HFSPLUS_I(inode).extents_lock);
 	hfs_find_init(HFSPLUS_SB(sb).ext_tree, &fd);
 	while (1) {
 		if (alloc_cnt == HFSPLUS_I(inode).first_blocks) {
@@ -495,7 +495,7 @@ void hfsplus_file_truncate(struct inode *inode)
 		hfs_brec_remove(&fd);
 	}
 	hfs_find_exit(&fd);
-	mutex_unlock(&HFSPLUS_I(inode).extents_lock);
+	up(&HFSPLUS_I(inode).extents_lock);
 
 	HFSPLUS_I(inode).alloc_blocks = blk_cnt;
 out:

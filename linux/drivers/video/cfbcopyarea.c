@@ -22,6 +22,8 @@
  *  help moving some redundant computations and branches out of the loop, too.
  */
 
+
+
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/string.h>
@@ -29,7 +31,6 @@
 #include <linux/slab.h>
 #include <asm/types.h>
 #include <asm/io.h>
-#include "fb_draw.h"
 
 #if BITS_PER_LONG == 32
 #  define FB_WRITEL fb_writel
@@ -40,20 +41,30 @@
 #endif
 
     /*
+     *  Compose two values, using a bitmask as decision value
+     *  This is equivalent to (a & mask) | (b & ~mask)
+     */
+
+static inline unsigned long
+comp(unsigned long a, unsigned long b, unsigned long mask)
+{
+    return ((a ^ b) & mask) ^ b;
+}
+
+    /*
      *  Generic bitwise copy algorithm
      */
 
 static void
-bitcpy(struct fb_info *p, unsigned long __iomem *dst, int dst_idx,
-		const unsigned long __iomem *src, int src_idx, int bits,
-		unsigned n, u32 bswapmask)
+bitcpy(unsigned long __iomem *dst, int dst_idx, const unsigned long __iomem *src,
+	int src_idx, int bits, unsigned n)
 {
 	unsigned long first, last;
 	int const shift = dst_idx-src_idx;
 	int left, right;
 
-	first = fb_shifted_pixels_mask_long(p, dst_idx, bswapmask);
-	last = ~fb_shifted_pixels_mask_long(p, (dst_idx+n) % bits, bswapmask);
+	first = FB_SHIFT_HIGH(~0UL, dst_idx);
+	last = ~(FB_SHIFT_HIGH(~0UL, (dst_idx+n) % bits));
 
 	if (!shift) {
 		// Same alignment for source and dest
@@ -95,34 +106,29 @@ bitcpy(struct fb_info *p, unsigned long __iomem *dst, int dst_idx,
 				FB_WRITEL( comp( FB_READL(src), FB_READL(dst), last), dst);
 		}
 	} else {
-		/* Different alignment for source and dest */
 		unsigned long d0, d1;
 		int m;
+		// Different alignment for source and dest
 
 		right = shift & (bits - 1);
 		left = -shift & (bits - 1);
-		bswapmask &= shift;
 
 		if (dst_idx+n <= bits) {
 			// Single destination word
 			if (last)
 				first &= last;
-			d0 = FB_READL(src);
-			d0 = fb_rev_pixels_in_long(d0, bswapmask);
 			if (shift > 0) {
 				// Single source word
-				d0 >>= right;
+				FB_WRITEL( comp( FB_READL(src) >> right, FB_READL(dst), first), dst);
 			} else if (src_idx+n <= bits) {
 				// Single source word
-				d0 <<= left;
+				FB_WRITEL( comp(FB_READL(src) << left, FB_READL(dst), first), dst);
 			} else {
 				// 2 source words
-				d1 = FB_READL(src + 1);
-				d1 = fb_rev_pixels_in_long(d1, bswapmask);
-				d0 = d0<<left | d1>>right;
+				d0 = FB_READL(src++);
+				d1 = FB_READL(src);
+				FB_WRITEL( comp(d0<<left | d1>>right, FB_READL(dst), first), dst);
 			}
-			d0 = fb_rev_pixels_in_long(d0, bswapmask);
-			FB_WRITEL(comp(d0, FB_READL(dst), first), dst);
 		} else {
 			// Multiple destination words
 			/** We must always remember the last value read, because in case
@@ -131,31 +137,25 @@ bitcpy(struct fb_info *p, unsigned long __iomem *dst, int dst_idx,
 			overlap with the current long from SRC. We store this value in
 			'd0'. */
 			d0 = FB_READL(src++);
-			d0 = fb_rev_pixels_in_long(d0, bswapmask);
 			// Leading bits
 			if (shift > 0) {
 				// Single source word
-				d1 = d0;
-				d0 >>= right;
+				FB_WRITEL( comp(d0 >> right, FB_READL(dst), first), dst);
 				dst++;
 				n -= bits - dst_idx;
 			} else {
 				// 2 source words
 				d1 = FB_READL(src++);
-				d1 = fb_rev_pixels_in_long(d1, bswapmask);
-
-				d0 = d0<<left | d1>>right;
+				FB_WRITEL( comp(d0<<left | d1>>right, FB_READL(dst), first), dst);
+				d0 = d1;
 				dst++;
 				n -= bits - dst_idx;
 			}
-			d0 = fb_rev_pixels_in_long(d0, bswapmask);
-			FB_WRITEL(comp(d0, FB_READL(dst), first), dst);
-			d0 = d1;
 
 			// Main chunk
 			m = n % bits;
 			n /= bits;
-			while ((n >= 4) && !bswapmask) {
+			while (n >= 4) {
 				d1 = FB_READL(src++);
 				FB_WRITEL(d0 << left | d1 >> right, dst++);
 				d0 = d1;
@@ -172,10 +172,7 @@ bitcpy(struct fb_info *p, unsigned long __iomem *dst, int dst_idx,
 			}
 			while (n--) {
 				d1 = FB_READL(src++);
-				d1 = fb_rev_pixels_in_long(d1, bswapmask);
-				d0 = d0 << left | d1 >> right;
-				d0 = fb_rev_pixels_in_long(d0, bswapmask);
-				FB_WRITEL(d0, dst++);
+				FB_WRITEL(d0 << left | d1 >> right, dst++);
 				d0 = d1;
 			}
 
@@ -183,16 +180,12 @@ bitcpy(struct fb_info *p, unsigned long __iomem *dst, int dst_idx,
 			if (last) {
 				if (m <= right) {
 					// Single source word
-					d0 <<= left;
+					FB_WRITEL( comp(d0 << left, FB_READL(dst), last), dst);
 				} else {
 					// 2 source words
 					d1 = FB_READL(src);
-					d1 = fb_rev_pixels_in_long(d1,
-								bswapmask);
-					d0 = d0<<left | d1>>right;
+					FB_WRITEL( comp(d0<<left | d1>>right, FB_READL(dst), last), dst);
 				}
-				d0 = fb_rev_pixels_in_long(d0, bswapmask);
-				FB_WRITEL(comp(d0, FB_READL(dst), last), dst);
 			}
 		}
 	}
@@ -203,9 +196,8 @@ bitcpy(struct fb_info *p, unsigned long __iomem *dst, int dst_idx,
      */
 
 static void
-bitcpy_rev(struct fb_info *p, unsigned long __iomem *dst, int dst_idx,
-		const unsigned long __iomem *src, int src_idx, int bits,
-		unsigned n, u32 bswapmask)
+bitcpy_rev(unsigned long __iomem *dst, int dst_idx, const unsigned long __iomem *src,
+		int src_idx, int bits, unsigned n)
 {
 	unsigned long first, last;
 	int shift;
@@ -223,9 +215,8 @@ bitcpy_rev(struct fb_info *p, unsigned long __iomem *dst, int dst_idx,
 
 	shift = dst_idx-src_idx;
 
-	first = fb_shifted_pixels_mask_long(p, bits - 1 - dst_idx, bswapmask);
-	last = ~fb_shifted_pixels_mask_long(p, bits - 1 - ((dst_idx-n) % bits),
-					    bswapmask);
+	first = FB_SHIFT_LOW(~0UL, bits - 1 - dst_idx);
+	last = ~(FB_SHIFT_LOW(~0UL, bits - 1 - ((dst_idx-n) % bits)));
 
 	if (!shift) {
 		// Same alignment for source and dest
@@ -268,32 +259,24 @@ bitcpy_rev(struct fb_info *p, unsigned long __iomem *dst, int dst_idx,
 		}
 	} else {
 		// Different alignment for source and dest
-		unsigned long d0, d1;
-		int m;
 
 		int const left = -shift & (bits-1);
 		int const right = shift & (bits-1);
-		bswapmask &= shift;
 
 		if ((unsigned long)dst_idx+1 >= n) {
 			// Single destination word
 			if (last)
 				first &= last;
-			d0 = FB_READL(src);
 			if (shift < 0) {
 				// Single source word
-				d0 <<= left;
+				FB_WRITEL( comp( FB_READL(src)<<left, FB_READL(dst), first), dst);
 			} else if (1+(unsigned long)src_idx >= n) {
 				// Single source word
-				d0 >>= right;
+				FB_WRITEL( comp( FB_READL(src)>>right, FB_READL(dst), first), dst);
 			} else {
 				// 2 source words
-				d1 = FB_READL(src - 1);
-				d1 = fb_rev_pixels_in_long(d1, bswapmask);
-				d0 = d0>>right | d1<<left;
+				FB_WRITEL( comp( (FB_READL(src)>>right | FB_READL(src-1)<<left), FB_READL(dst), first), dst);
 			}
-			d0 = fb_rev_pixels_in_long(d0, bswapmask);
-			FB_WRITEL(comp(d0, FB_READL(dst), first), dst);
 		} else {
 			// Multiple destination words
 			/** We must always remember the last value read, because in case
@@ -301,30 +284,27 @@ bitcpy_rev(struct fb_info *p, unsigned long __iomem *dst, int dst_idx,
 			1bpp), we always collect one full long for DST and that might
 			overlap with the current long from SRC. We store this value in
 			'd0'. */
+			unsigned long d0, d1;
+			int m;
 
 			d0 = FB_READL(src--);
-			d0 = fb_rev_pixels_in_long(d0, bswapmask);
 			// Leading bits
 			if (shift < 0) {
 				// Single source word
-				d1 = d0;
-				d0 <<= left;
+				FB_WRITEL( comp( (d0 << left), FB_READL(dst), first), dst);
 			} else {
 				// 2 source words
 				d1 = FB_READL(src--);
-				d1 = fb_rev_pixels_in_long(d1, bswapmask);
-				d0 = d0>>right | d1<<left;
+				FB_WRITEL( comp( (d0>>right | d1<<left), FB_READL(dst), first), dst);
+				d0 = d1;
 			}
-			d0 = fb_rev_pixels_in_long(d0, bswapmask);
-			FB_WRITEL(comp(d0, FB_READL(dst), first), dst);
-			d0 = d1;
 			dst--;
 			n -= dst_idx+1;
 
 			// Main chunk
 			m = n % bits;
 			n /= bits;
-			while ((n >= 4) && !bswapmask) {
+			while (n >= 4) {
 				d1 = FB_READL(src--);
 				FB_WRITEL(d0 >> right | d1 << left, dst--);
 				d0 = d1;
@@ -341,10 +321,7 @@ bitcpy_rev(struct fb_info *p, unsigned long __iomem *dst, int dst_idx,
 			}
 			while (n--) {
 				d1 = FB_READL(src--);
-				d1 = fb_rev_pixels_in_long(d1, bswapmask);
-				d0 = d0 >> right | d1 << left;
-				d0 = fb_rev_pixels_in_long(d0, bswapmask);
-				FB_WRITEL(d0, dst--);
+				FB_WRITEL(d0 >> right | d1 << left, dst--);
 				d0 = d1;
 			}
 
@@ -352,16 +329,12 @@ bitcpy_rev(struct fb_info *p, unsigned long __iomem *dst, int dst_idx,
 			if (last) {
 				if (m <= left) {
 					// Single source word
-					d0 >>= right;
+					FB_WRITEL( comp(d0 >> right, FB_READL(dst), last), dst);
 				} else {
 					// 2 source words
 					d1 = FB_READL(src);
-					d1 = fb_rev_pixels_in_long(d1,
-								bswapmask);
-					d0 = d0>>right | d1<<left;
+					FB_WRITEL( comp(d0>>right | d1<<left, FB_READL(dst), last), dst);
 				}
-				d0 = fb_rev_pixels_in_long(d0, bswapmask);
-				FB_WRITEL(comp(d0, FB_READL(dst), last), dst);
 			}
 		}
 	}
@@ -375,7 +348,6 @@ void cfb_copyarea(struct fb_info *p, const struct fb_copyarea *area)
 	unsigned long __iomem *dst = NULL, *src = NULL;
 	int bits = BITS_PER_LONG, bytes = bits >> 3;
 	int dst_idx = 0, src_idx = 0, rev_copy = 0;
-	u32 bswapmask = fb_compute_bswapmask(p);
 
 	if (p->state != FBINFO_STATE_RUNNING)
 		return;
@@ -407,8 +379,8 @@ void cfb_copyarea(struct fb_info *p, const struct fb_copyarea *area)
 			dst_idx &= (bytes - 1);
 			src += src_idx >> (ffs(bits) - 1);
 			src_idx &= (bytes - 1);
-			bitcpy_rev(p, dst, dst_idx, src, src_idx, bits,
-				width*p->var.bits_per_pixel, bswapmask);
+			bitcpy_rev(dst, dst_idx, src, src_idx, bits,
+				width*p->var.bits_per_pixel);
 		}
 	} else {
 		while (height--) {
@@ -416,8 +388,8 @@ void cfb_copyarea(struct fb_info *p, const struct fb_copyarea *area)
 			dst_idx &= (bytes - 1);
 			src += src_idx >> (ffs(bits) - 1);
 			src_idx &= (bytes - 1);
-			bitcpy(p, dst, dst_idx, src, src_idx, bits,
-				width*p->var.bits_per_pixel, bswapmask);
+			bitcpy(dst, dst_idx, src, src_idx, bits,
+				width*p->var.bits_per_pixel);
 			dst_idx += bits_per_line;
 			src_idx += bits_per_line;
 		}

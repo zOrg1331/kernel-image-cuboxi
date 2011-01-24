@@ -1,4 +1,7 @@
 /*
+ *  arch/mips/pci/pci-emma2rh.c
+ *      This file defines the PCI configration.
+ *
  *  Copyright (C) NEC Electronics Corporation 2004-2006
  *
  *  This file is based on the arch/mips/ddb5xxx/ddb5477/pci.c
@@ -26,8 +29,9 @@
 #include <linux/pci.h>
 
 #include <asm/bootinfo.h>
+#include <asm/debug.h>
 
-#include <asm/emma/emma2rh.h>
+#include <asm/emma2rh/emma2rh.h>
 
 static struct resource pci_io_resource = {
 	.name = "pci IO space",

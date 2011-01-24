@@ -17,13 +17,11 @@
 #include <linux/sched.h>
 #include <linux/device.h>
 #include <linux/serial_8250.h>
-#include <linux/ata_platform.h>
-#include <linux/io.h>
-#include <linux/i2c.h>
 
 #include <asm/elf.h>
+#include <asm/io.h>
 #include <asm/mach-types.h>
-#include <mach/hardware.h>
+#include <asm/hardware.h>
 #include <asm/page.h>
 #include <asm/domain.h>
 #include <asm/setup.h>
@@ -88,7 +86,7 @@ static void __init rpc_map_io(void)
 	/*
 	 * Turn off floppy.
 	 */
-	writeb(0xc, PCIO_BASE + (0x3f2 << 2));
+	outb(0xc, 0x3f2);
 
 	/*
 	 * RiscPC can't handle half-word loads and stores
@@ -161,54 +159,15 @@ static struct platform_device serial_device = {
 	},
 };
 
-static struct pata_platform_info pata_platform_data = {
-	.ioport_shift		= 2,
-};
-
-static struct resource pata_resources[] = {
-	[0] = {
-		.start		= 0x030107c0,
-		.end		= 0x030107df,
-		.flags		= IORESOURCE_MEM,
-	},
-	[1] = {
-		.start		= 0x03010fd8,
-		.end		= 0x03010fdb,
-		.flags		= IORESOURCE_MEM,
-	},
-	[2] = {
-		.start		= IRQ_HARDDISK,
-		.end		= IRQ_HARDDISK,
-		.flags		= IORESOURCE_IRQ,
-	},
-};
-
-static struct platform_device pata_device = {
-	.name			= "pata_platform",
-	.id			= -1,
-	.num_resources		= ARRAY_SIZE(pata_resources),
-	.resource		= pata_resources,
-	.dev			= {
-		.platform_data	= &pata_platform_data,
-		.coherent_dma_mask = ~0,	/* grumble */
-	},
-};
-
 static struct platform_device *devs[] __initdata = {
 	&iomd_device,
 	&kbd_device,
 	&serial_device,
 	&acornfb_device,
-	&pata_device,
-};
-
-static struct i2c_board_info i2c_rtc = {
-	I2C_BOARD_INFO("pcf8583", 0x50)
 };
 
 static int __init rpc_init(void)
 {
-	i2c_register_board_info(0, &i2c_rtc, 1);
 	return platform_add_devices(devs, ARRAY_SIZE(devs));
 }
 

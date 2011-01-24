@@ -1,0 +1,59 @@
+From: Aristeu Rozanski <aris@redhat.com>
+Date: Wed, 20 Aug 2008 13:16:53 -0400
+Subject: [x86_64] nmi: use new setup/stop routines in suspend/resume
+Message-id: 20080820171648.198922000@redhat.com
+O-Subject: [RHEL5.3 PATCH 07/25] nmi: use setup_apic_nmi_watchdog and stop_apic_nmi_watchdog in suspend/resume
+Bugzilla: 447618
+
+https://bugzilla.redhat.com/show_bug.cgi?id=447618
+
+Change{setup,stop}_apic_nmi_watchdog on suspend/resume functions
+
+upstream: 4038f901cf102a40715b900984ed7540a9fa637f
+
+diff --git a/arch/x86_64/kernel/nmi.c b/arch/x86_64/kernel/nmi.c
+index 3f4aff5..c25934c 100644
+--- a/arch/x86_64/kernel/nmi.c
++++ b/arch/x86_64/kernel/nmi.c
+@@ -312,14 +312,16 @@ static int nmi_pm_active; /* nmi_active before suspend */
+ static int lapic_nmi_suspend(struct sys_device *dev, pm_message_t state)
+ {
+ 	nmi_pm_active = nmi_active;
+-	disable_lapic_nmi_watchdog();
++	stop_apic_nmi_watchdog();
+ 	return 0;
+ }
+ 
+ static int lapic_nmi_resume(struct sys_device *dev)
+ {
+-	if (nmi_pm_active > 0)
+-	enable_lapic_nmi_watchdog();
++	if (nmi_pm_active > 0) {
++		setup_apic_nmi_watchdog();
++		touch_nmi_watchdog();
++	}
+ 	return 0;
+ }
+ 
+@@ -384,6 +386,21 @@ void setup_apic_nmi_watchdog(void)
+  	}
+ }
+ 
++void stop_apic_nmi_watchdog(void)
++{
++	/* only support LOCAL and IO APICs for now */
++	if ((nmi_watchdog != NMI_LOCAL_APIC) &&
++	    (nmi_watchdog != NMI_IO_APIC))
++		return;
++	if (__get_cpu_var(wd_enabled) == 0)
++		return;
++	if (nmi_watchdog == NMI_LOCAL_APIC)
++		lapic_watchdog_stop();
++	__get_cpu_var(wd_enabled) = 0;
++	if (atomic_dec_and_test(&nmi_watchdog_active))
++		nmi_active = 0;
++}
++
+ /*
+  * the best way to detect whether a CPU has a 'hard lockup' problem
+  * is to check it's local APIC timer IRQ counts. If they are not

@@ -1,0 +1,112 @@
+From: Amerigo Wang <amwang@redhat.com>
+Date: Tue, 16 Jun 2009 21:50:52 -0400
+Subject: [misc] hrtimer: fix a soft lockup
+Message-id: 20090617015310.5893.10064.sendpatchset@localhost.localdomain
+O-Subject: [PATCH RHEL5.x] hrtimer: fix a soft lockup
+Bugzilla: 418071
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+RH-Acked-by: Eugene Teo <eugene@redhat.com>
+CVE: CVE-2007-5966
+
+BZ 453135
+
+Description:
+With the reproduce program in
+
+https://bugzilla.redhat.com/show_bug.cgi?id=453135
+
+we can easily get the following soft lockup (just wait for 1 or 2 minutes):
+
+setitimer: test (pid = 13892) provided invalid timeval it_value: tv_sec =
+9223372036854775807 tv_usec = 9223372036854775807
+setitimer: test (pid = 13892) provided invalid timeval it_interval: tv_sec =
+9223372036854775807 tv_usec = 9223372036854775807
+CPU 1:
+Modules linked in: ip_conntrack_netbios_ns ipt_REJECT xt_state ip_conntrack
+nfnetlink iptable_filter ip_tables ip6t_REJECT xt_tcpudp ip6table_filter
+ip6_tables x_tables ipv6 xfrm_nalgo crypto_api dm_multipath scsi_dh video hwmon
+backlight sbs i2c_ec button battery asus_acpi acpi_memhotplug ac parport_pc lp
+parport floppy i2c_piix4 i2c_core ide_cd cdrom pcspkr 8139too 8139cp serio_raw
+mii dm_snapshot dm_zero dm_mirror dm_log dm_mod ata_piix libata sd_mod scsi_mod
+ext3 jbd uhci_hcd ohci_hcd ehci_hcd
+Pid: 13892, comm: test Not tainted 2.6.18-128.1.13.el5 #1
+RIP: 0010:[<ffffffff8009756e>]  [<ffffffff8009756e>]
+send_group_sig_info+0x30/0x35
+RSP: 0000:ffff81001fc1beb8  EFLAGS: 00000216
+RAX: 0000000000000000 RBX: ffff81001e17f130 RCX: 000000000000000d
+RDX: 000000000000000d RSI: 0000000000000282 RDI: ffff81001e325988
+RBP: ffff81001fc1be30 R08: 00000000ffffffff R09: ffff81001f52c040
+R10: 0000000000000008 R11: 0000000000000282 R12: ffffffff8005dc8e
+R13: ffff81001e17f0c0 R14: ffffffff8007752c R15: ffff81001fc1be30
+FS:  00002b76cf25a210(0000) GS:ffff8100011f0840(0000) knlGS:0000000000000000
+CS:  0010 DS: 0000 ES: 0000 CR0: 000000008005003b
+CR2: 0000003c43479540 CR3: 0000000012bde000 CR4: 00000000000006e0
+
+Call Trace:
+ <IRQ>  [<ffffffff80091381>] it_real_fn+0x23/0x4f
+ [<ffffffff8009135e>] it_real_fn+0x0/0x4f
+ [<ffffffff8004f077>] hrtimer_run_queues+0x12a/0x197
+ [<ffffffff80094cfb>] run_timer_softirq+0x21/0x1af
+ [<ffffffff80011fbc>] __do_softirq+0x89/0x133
+ [<ffffffff8005e2fc>] call_softirq+0x1c/0x28
+ [<ffffffff8006cada>] do_softirq+0x2c/0x85
+ [<ffffffff8005dc8e>] apic_timer_interrupt+0x66/0x6c
+ <EOI>
+
+Upstream did fix this but we miss some important part of that.
+
+Upstream status:
+In upstream, commit 62f0f61e6673e67151a7c8c0f9a09c7ea43fe2b5 and
+5a7780e725d1bb4c3094fcc12f1c5c5faea1e988 are the fixes.
+
+Test status:
+I tested it on x86_64 and after waiting for more than 20 minutes,
+I can't see any soft lockup.
+
+Please review and ack.
+
+diff --git a/include/linux/ktime.h b/include/linux/ktime.h
+index 84eeecd..8b419a4 100644
+--- a/include/linux/ktime.h
++++ b/include/linux/ktime.h
+@@ -266,6 +266,7 @@ static inline u64 ktime_to_ns(const ktime_t kt)
+ 
+ /* Get the monotonic time in timespec format: */
+ extern void ktime_get_ts(struct timespec *ts);
++extern ktime_t ktime_add_safe(const ktime_t lhs, const ktime_t rhs);
+ 
+ /* Get the real (wall-) time in timespec format: */
+ #define ktime_get_real_ts(ts)	getnstimeofday(ts)
+diff --git a/kernel/hrtimer.c b/kernel/hrtimer.c
+index 8904a61..652e660 100644
+--- a/kernel/hrtimer.c
++++ b/kernel/hrtimer.c
+@@ -360,13 +360,7 @@ hrtimer_forward(struct hrtimer *timer, ktime_t now, ktime_t interval)
+ 		 */
+ 		orun++;
+ 	}
+-	timer->expires = ktime_add(timer->expires, interval);
+-	/*
+-	 * Make sure, that the result did not wrap with a very large
+-	 * interval.
+-	 */
+-	if (timer->expires.tv64 < 0)
+-		timer->expires = ktime_set(KTIME_SEC_MAX, 0);
++	timer->expires = ktime_add_safe(timer->expires, interval);
+ 
+ 	return orun;
+ }
+diff --git a/kernel/posix-timers.c b/kernel/posix-timers.c
+index 3f52c08..a12c7e1 100644
+--- a/kernel/posix-timers.c
++++ b/kernel/posix-timers.c
+@@ -745,7 +745,7 @@ common_timer_set(struct k_itimer *timr, int flags,
+ 	if (((timr->it_sigev_notify & ~SIGEV_THREAD_ID) == SIGEV_NONE)) {
+ 		/* Setup correct expiry time for relative timers */
+ 		if (mode == HRTIMER_REL)
+-			timer->expires = ktime_add(timer->expires,
++			timer->expires = ktime_add_safe(timer->expires,
+ 						   timer->base->get_time());
+ 		return 0;
+ 	}

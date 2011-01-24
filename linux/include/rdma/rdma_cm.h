@@ -2,33 +2,29 @@
  * Copyright (c) 2005 Voltaire Inc.  All rights reserved.
  * Copyright (c) 2005 Intel Corporation.  All rights reserved.
  *
- * This software is available to you under a choice of one of two
- * licenses.  You may choose to be licensed under the terms of the GNU
- * General Public License (GPL) Version 2, available from the file
- * COPYING in the main directory of this source tree, or the
- * OpenIB.org BSD license below:
+ * This Software is licensed under one of the following licenses:
  *
- *     Redistribution and use in source and binary forms, with or
- *     without modification, are permitted provided that the following
- *     conditions are met:
+ * 1) under the terms of the "Common Public License 1.0" a copy of which is
+ *    available from the Open Source Initiative, see
+ *    http://www.opensource.org/licenses/cpl.php.
  *
- *      - Redistributions of source code must retain the above
- *        copyright notice, this list of conditions and the following
- *        disclaimer.
+ * 2) under the terms of the "The BSD License" a copy of which is
+ *    available from the Open Source Initiative, see
+ *    http://www.opensource.org/licenses/bsd-license.php.
  *
- *      - Redistributions in binary form must reproduce the above
- *        copyright notice, this list of conditions and the following
- *        disclaimer in the documentation and/or other materials
- *        provided with the distribution.
+ * 3) under the terms of the "GNU General Public License (GPL) Version 2" a
+ *    copy of which is available from the Open Source Initiative, see
+ *    http://www.opensource.org/licenses/gpl-license.php.
  *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
- * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
- * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
- * NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS
- * BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
- * ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
- * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
+ * Licensee has the right to choose one of the above licenses.
+ *
+ * Redistributions of source code must retain the above copyright
+ * notice and one of the license notices.
+ *
+ * Redistributions in binary form must reproduce both the above copyright
+ * notice, one of the license notices in the documentation
+ * and/or other materials provided with the distribution.
+ *
  */
 
 #if !defined(RDMA_CM_H)
@@ -56,22 +52,22 @@ enum rdma_cm_event_type {
 	RDMA_CM_EVENT_ESTABLISHED,
 	RDMA_CM_EVENT_DISCONNECTED,
 	RDMA_CM_EVENT_DEVICE_REMOVAL,
-	RDMA_CM_EVENT_MULTICAST_JOIN,
-	RDMA_CM_EVENT_MULTICAST_ERROR,
-	RDMA_CM_EVENT_ADDR_CHANGE,
-	RDMA_CM_EVENT_TIMEWAIT_EXIT
 };
 
 enum rdma_port_space {
-	RDMA_PS_SDP   = 0x0001,
-	RDMA_PS_IPOIB = 0x0002,
-	RDMA_PS_TCP   = 0x0106,
-	RDMA_PS_UDP   = 0x0111,
+	RDMA_PS_SDP  = 0x0001,
+	RDMA_PS_TCP  = 0x0106,
+	RDMA_PS_UDP  = 0x0111,
+	RDMA_PS_SCTP = 0x0183
 };
 
 struct rdma_addr {
-	struct sockaddr_storage src_addr;
-	struct sockaddr_storage dst_addr;
+	struct sockaddr src_addr;
+	u8		src_pad[sizeof(struct sockaddr_in6) -
+				sizeof(struct sockaddr)];
+	struct sockaddr dst_addr;
+	u8		dst_pad[sizeof(struct sockaddr_in6) -
+				sizeof(struct sockaddr)];
 	struct rdma_dev_addr dev_addr;
 };
 
@@ -81,34 +77,11 @@ struct rdma_route {
 	int num_paths;
 };
 
-struct rdma_conn_param {
-	const void *private_data;
-	u8 private_data_len;
-	u8 responder_resources;
-	u8 initiator_depth;
-	u8 flow_control;
-	u8 retry_count;		/* ignored when accepting */
-	u8 rnr_retry_count;
-	/* Fields below ignored if a QP is created on the rdma_cm_id. */
-	u8 srq;
-	u32 qp_num;
-};
-
-struct rdma_ud_param {
-	const void *private_data;
-	u8 private_data_len;
-	struct ib_ah_attr ah_attr;
-	u32 qp_num;
-	u32 qkey;
-};
-
 struct rdma_cm_event {
 	enum rdma_cm_event_type	 event;
 	int			 status;
-	union {
-		struct rdma_conn_param	conn;
-		struct rdma_ud_param	ud;
-	} param;
+	void			*private_data;
+	u8			 private_data_len;
 };
 
 struct rdma_cm_id;
@@ -144,14 +117,6 @@ struct rdma_cm_id {
 struct rdma_cm_id *rdma_create_id(rdma_cm_event_handler event_handler,
 				  void *context, enum rdma_port_space ps);
 
-/**
-  * rdma_destroy_id - Destroys an RDMA identifier.
-  *
-  * @id: RDMA identifier.
-  *
-  * Note: calling this function has the effect of canceling in-flight
-  * asynchronous operations associated with the id.
-  */
 void rdma_destroy_id(struct rdma_cm_id *id);
 
 /**
@@ -231,17 +196,25 @@ void rdma_destroy_qp(struct rdma_cm_id *id);
 int rdma_init_qp_attr(struct rdma_cm_id *id, struct ib_qp_attr *qp_attr,
 		       int *qp_attr_mask);
 
+struct rdma_conn_param {
+	const void *private_data;
+	u8 private_data_len;
+	u8 responder_resources;
+	u8 initiator_depth;
+	u8 flow_control;
+	u8 retry_count;		/* ignored when accepting */
+	u8 rnr_retry_count;
+	/* Fields below ignored if a QP is created on the rdma_cm_id. */
+	u8 srq;
+	u32 qp_num;
+	enum ib_qp_type qp_type;
+};
+
 /**
  * rdma_connect - Initiate an active connection request.
- * @id: Connection identifier to connect.
- * @conn_param: Connection information used for connected QPs.
  *
  * Users must have resolved a route for the rdma_cm_id to connect with
  * by having called rdma_resolve_route before calling this routine.
- *
- * This call will either connect to a remote QP or obtain remote QP
- * information for unconnected rdma_cm_id's.  The actual operation is
- * based on the rdma_cm_id's port space.
  */
 int rdma_connect(struct rdma_cm_id *id, struct rdma_conn_param *conn_param);
 
@@ -264,27 +237,8 @@ int rdma_listen(struct rdma_cm_id *id, int backlog);
  * Typically, this routine is only called by the listener to accept a connection
  * request.  It must also be called on the active side of a connection if the
  * user is performing their own QP transitions.
- *
- * In the case of error, a reject message is sent to the remote side and the
- * state of the qp associated with the id is modified to error, such that any
- * previously posted receive buffers would be flushed.
  */
 int rdma_accept(struct rdma_cm_id *id, struct rdma_conn_param *conn_param);
-
-/**
- * rdma_notify - Notifies the RDMA CM of an asynchronous event that has
- * occurred on the connection.
- * @id: Connection identifier to transition to established.
- * @event: Asynchronous event.
- *
- * This routine should be invoked by users to notify the CM of relevant
- * communication events.  Events that should be reported to the CM and
- * when to report them are:
- *
- * IB_EVENT_COMM_EST - Used when a message is received on a connected
- *    QP before an RTU has been received.
- */
-int rdma_notify(struct rdma_cm_id *id, enum ib_event_type event);
 
 /**
  * rdma_reject - Called to reject a connection request or response.
@@ -298,35 +252,5 @@ int rdma_reject(struct rdma_cm_id *id, const void *private_data,
  */
 int rdma_disconnect(struct rdma_cm_id *id);
 
-/**
- * rdma_join_multicast - Join the multicast group specified by the given
- *   address.
- * @id: Communication identifier associated with the request.
- * @addr: Multicast address identifying the group to join.
- * @context: User-defined context associated with the join request, returned
- * to the user through the private_data pointer in multicast events.
- */
-int rdma_join_multicast(struct rdma_cm_id *id, struct sockaddr *addr,
-			void *context);
-
-/**
- * rdma_leave_multicast - Leave the multicast group specified by the given
- *   address.
- */
-void rdma_leave_multicast(struct rdma_cm_id *id, struct sockaddr *addr);
-
-/**
- * rdma_set_service_type - Set the type of service associated with a
- *   connection identifier.
- * @id: Communication identifier to associated with service type.
- * @tos: Type of service.
- *
- * The type of service is interpretted as a differentiated service
- * field (RFC 2474).  The service type should be specified before
- * performing route resolution, as existing communication on the
- * connection identifier may be unaffected.  The type of service
- * requested may not be supported by the network to all destinations.
- */
-void rdma_set_service_type(struct rdma_cm_id *id, int tos);
-
 #endif /* RDMA_CM_H */
+

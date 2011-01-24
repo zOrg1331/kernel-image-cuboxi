@@ -1,0 +1,48 @@
+From: Michal Schmidt <mschmidt@redhat.com>
+Date: Mon, 5 Nov 2007 13:09:52 +0100
+Subject: [x86] use pci=bfsort on Dell R900
+Message-id: 472F0810.4010804@redhat.com
+O-Subject: [RHEL5.2 PATCH] Use pci=bfsort on Dell R900
+Bugzilla: 242990
+
+Fixes https://bugzilla.redhat.com/show_bug.cgi?id=306531
+
+Dell PowerEdge R900 systems need pci=bfsort to enumerate PCI devices in
+the expected order. The expected order for embedded NICs is the order in
+which they are labeled on the server chassis and how the BIOS numbers them.
+
+The patch adds R900 to the list of systems for which bfsort is
+automatically chosen.
+
+The patch is upstream since v2.6.21. The same change was already made in
+RHEL4.5. Not doing it in RHEL5 could be considered a regression. This
+will probably need a release note, most likely merged with the note for
+bug 242990 (bfsort for two HP systems).
+
+Tested by Dell.
+
+Michal
+
+Acked-by: Prarit Bhargava <prarit@redhat.com>
+Acked-by: Jarod Wilson <jwilson@redhat.com>
+Acked-by: John Feeney <jfeeney@redhat.com>
+
+diff --git a/arch/i386/pci/common.c b/arch/i386/pci/common.c
+index e4e418a..cd742ac 100644
+--- a/arch/i386/pci/common.c
++++ b/arch/i386/pci/common.c
+@@ -224,6 +224,14 @@ static struct dmi_system_id __devinitdata pciprobe_dmi_table[] = {
+ 	},
+ 	{
+ 		.callback = set_bf_sort,
++		.ident = "Dell PowerEdge R900",
++		.matches = {
++			DMI_MATCH(DMI_SYS_VENDOR, "Dell"),
++			DMI_MATCH(DMI_PRODUCT_NAME, "PowerEdge R900"),
++		},
++	},
++	{
++		.callback = set_bf_sort,
+ 		.ident = "HP ProLiant BL20p G3",
+ 		.matches = {
+ 			DMI_MATCH(DMI_SYS_VENDOR, "HP"),

@@ -1,5 +1,5 @@
 /*
- * linux/arch/alpha/lib/memset.S
+ * linux/arch/alpha/memset.S
  *
  * This is an efficient (and small) implementation of the C library "memset()"
  * function for the alpha.

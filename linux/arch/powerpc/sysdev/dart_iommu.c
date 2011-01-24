@@ -36,8 +36,6 @@
 #include <linux/pci.h>
 #include <linux/dma-mapping.h>
 #include <linux/vmalloc.h>
-#include <linux/suspend.h>
-#include <linux/lmb.h>
 #include <asm/io.h>
 #include <asm/prom.h>
 #include <asm/iommu.h>
@@ -45,9 +43,13 @@
 #include <asm/machdep.h>
 #include <asm/abs_addr.h>
 #include <asm/cacheflush.h>
+#include <asm/lmb.h>
 #include <asm/ppc-pci.h>
 
 #include "dart.h"
+
+extern int iommu_is_off;
+extern int iommu_force_on;
 
 /* Physical base address and size of the DART table */
 unsigned long dart_tablebase; /* exported to htab_initialize */
@@ -55,9 +57,6 @@ static unsigned long dart_tablesize;
 
 /* Virtual base address of the DART table */
 static u32 *dart_vbase;
-#ifdef CONFIG_PM
-static u32 *dart_copy;
-#endif
 
 /* Mapped base address for the dart */
 static unsigned int __iomem *dart;
@@ -147,16 +146,18 @@ static void dart_flush(struct iommu_table *tbl)
 	}
 }
 
-static int dart_build(struct iommu_table *tbl, long index,
+static void dart_build(struct iommu_table *tbl, long index,
 		       long npages, unsigned long uaddr,
-		       enum dma_data_direction direction,
-		       struct dma_attrs *attrs)
+		       enum dma_data_direction direction)
 {
 	unsigned int *dp;
 	unsigned int rpn;
 	long l;
 
 	DBG("dart: build at: %lx, %lx, addr: %x\n", index, npages, uaddr);
+
+	index <<= DART_PAGE_FACTOR;
+	npages <<= DART_PAGE_FACTOR;
 
 	dp = ((unsigned int*)tbl->it_base) + index;
 
@@ -184,7 +185,6 @@ static int dart_build(struct iommu_table *tbl, long index,
 	} else {
 		dart_dirty = 1;
 	}
-	return 0;
 }
 
 
@@ -199,6 +199,9 @@ static void dart_free(struct iommu_table *tbl, long index, long npages)
 
 	DBG("dart: free at: %lx, %lx\n", index, npages);
 
+	index <<= DART_PAGE_FACTOR;
+	npages <<= DART_PAGE_FACTOR;
+
 	dp  = ((unsigned int *)tbl->it_base) + index;
 
 	while (npages--)
@@ -206,7 +209,7 @@ static void dart_free(struct iommu_table *tbl, long index, long npages)
 }
 
 
-static int __init dart_init(struct device_node *dart_node)
+static int dart_init(struct device_node *dart_node)
 {
 	unsigned int i;
 	unsigned long tmp, base, size;
@@ -278,7 +281,7 @@ static void iommu_table_dart_setup(void)
 	iommu_table_dart.it_busno = 0;
 	iommu_table_dart.it_offset = 0;
 	/* it_size is in number of entries */
-	iommu_table_dart.it_size = dart_tablesize / sizeof(u32);
+	iommu_table_dart.it_size = (dart_tablesize / sizeof(u32)) >> DART_PAGE_FACTOR;
 
 	/* Initialize the common IOMMU code */
 	iommu_table_dart.it_base = (unsigned long)dart_vbase;
@@ -292,15 +295,24 @@ static void iommu_table_dart_setup(void)
 	set_bit(iommu_table_dart.it_size - 1, iommu_table_dart.it_map);
 }
 
-static void pci_dma_dev_setup_dart(struct pci_dev *dev)
+static void iommu_dev_setup_dart(struct pci_dev *dev)
 {
+	struct device_node *dn;
+
 	/* We only have one iommu table on the mac for now, which makes
 	 * things simple. Setup all PCI devices to point to this table
+	 *
+	 * We must use pci_device_to_OF_node() to make sure that
+	 * we get the real "final" pointer to the device in the
+	 * pci_dev sysdata and not the temporary PHB one
 	 */
-	set_iommu_table_base(&dev->dev, &iommu_table_dart);
+	dn = pci_device_to_OF_node(dev);
+
+	if (dn)
+		PCI_DN(dn)->iommu_table = &iommu_table_dart;
 }
 
-static void pci_dma_bus_setup_dart(struct pci_bus *bus)
+static void iommu_bus_setup_dart(struct pci_bus *bus)
 {
 	struct device_node *dn;
 
@@ -315,7 +327,10 @@ static void pci_dma_bus_setup_dart(struct pci_bus *bus)
 		PCI_DN(dn)->iommu_table = &iommu_table_dart;
 }
 
-void __init iommu_init_early_dart(void)
+static void iommu_dev_setup_null(struct pci_dev *dev) { }
+static void iommu_bus_setup_null(struct pci_bus *bus) { }
+
+void iommu_init_early_dart(void)
 {
 	struct device_node *dn;
 
@@ -335,65 +350,24 @@ void __init iommu_init_early_dart(void)
 
 	/* Initialize the DART HW */
 	if (dart_init(dn) == 0) {
-		ppc_md.pci_dma_dev_setup = pci_dma_dev_setup_dart;
-		ppc_md.pci_dma_bus_setup = pci_dma_bus_setup_dart;
+		ppc_md.iommu_dev_setup = iommu_dev_setup_dart;
+		ppc_md.iommu_bus_setup = iommu_bus_setup_dart;
 
 		/* Setup pci_dma ops */
-		set_pci_dma_ops(&dma_iommu_ops);
+		pci_iommu_init();
+
 		return;
 	}
 
  bail:
 	/* If init failed, use direct iommu and null setup functions */
-	ppc_md.pci_dma_dev_setup = NULL;
-	ppc_md.pci_dma_bus_setup = NULL;
+	ppc_md.iommu_dev_setup = iommu_dev_setup_null;
+	ppc_md.iommu_bus_setup = iommu_bus_setup_null;
 
 	/* Setup pci_dma ops */
-	set_pci_dma_ops(&dma_direct_ops);
+	pci_direct_iommu_init();
 }
 
-#ifdef CONFIG_PM
-static void iommu_dart_save(void)
-{
-	memcpy(dart_copy, dart_vbase, 2*1024*1024);
-}
-
-static void iommu_dart_restore(void)
-{
-	memcpy(dart_vbase, dart_copy, 2*1024*1024);
-	dart_tlb_invalidate_all();
-}
-
-static int __init iommu_init_late_dart(void)
-{
-	unsigned long tbasepfn;
-	struct page *p;
-
-	/* if no dart table exists then we won't need to save it
-	 * and the area has also not been reserved */
-	if (!dart_tablebase)
-		return 0;
-
-	tbasepfn = __pa(dart_tablebase) >> PAGE_SHIFT;
-	register_nosave_region_late(tbasepfn,
-				    tbasepfn + ((1<<24) >> PAGE_SHIFT));
-
-	/* For suspend we need to copy the dart contents because
-	 * it is not part of the regular mapping (see above) and
-	 * thus not saved automatically. The memory for this copy
-	 * must be allocated early because we need 2 MB. */
-	p = alloc_pages(GFP_KERNEL, 21 - PAGE_SHIFT);
-	BUG_ON(!p);
-	dart_copy = page_address(p);
-
-	ppc_md.iommu_save = iommu_dart_save;
-	ppc_md.iommu_restore = iommu_dart_restore;
-
-	return 0;
-}
-
-late_initcall(iommu_init_late_dart);
-#endif
 
 void __init alloc_dart_table(void)
 {

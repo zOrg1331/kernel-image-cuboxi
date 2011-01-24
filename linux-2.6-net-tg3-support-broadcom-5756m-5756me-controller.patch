@@ -1,0 +1,100 @@
+From: John Feeney <jfeeney@redhat.com>
+Subject: [RHEL-5 PATCH] TG3 Update required to support Broadcom 5756M/5756ME  Controller
+Date: Thu, 30 Nov 2006 14:17:35 -0500
+Bugzilla: 213204
+Message-Id: <456F2E4F.3020200@redhat.com>
+Changelog: TG3 support Broadcom 5756M/5756ME  Controller
+
+
+bugzilla 213204
+FEAT PPORT: TG3 Update required to support Broadcom 5756M/5756ME Controller
+
+http://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=213204
+
+Backported patch from 2.6.19-rc1: will be tested by Broadcom due
+to an arrangement as detailed in the bugzilla entry (QE "has no problems
+including this modification in RHEL5 before RC even though Dell has
+no hardware to test it.")
+
+Description:
+>From 2.6.19-rc1 changelog:
+ [TG3]: Add 5722 and 5756 support.
+
+   Add IDs to support 5722 and 5756.
+
+   Signed-off-by: Michael Chan <mchan@broadcom.com>
+   Signed-off-by: David S. Miller <davem@davemloft.net>
+
+Patch has been accepted upstream and encorporated in 2.6.19-rc1.
+Note: The only change made when backporting to RHEL-5 was to
+undo part that converted pci_device_id table to PCI_DEVICE().
+
+
+
+--- linux-2.6.18.noarch/include/linux/pci_ids.h.orig
++++ linux-2.6.18.noarch/include/linux/pci_ids.h
+@@ -1904,6 +1904,7 @@
+ #define PCI_DEVICE_ID_TIGON3_5705_2	0x1654
+ #define PCI_DEVICE_ID_TIGON3_5720	0x1658
+ #define PCI_DEVICE_ID_TIGON3_5721	0x1659
++#define PCI_DEVICE_ID_TIGON3_5722	0x165a
+ #define PCI_DEVICE_ID_TIGON3_5705M	0x165d
+ #define PCI_DEVICE_ID_TIGON3_5705M_2	0x165e
+ #define PCI_DEVICE_ID_TIGON3_5714	0x1668
+@@ -1913,6 +1914,7 @@
+ #define PCI_DEVICE_ID_TIGON3_5705F	0x166e
+ #define PCI_DEVICE_ID_TIGON3_5754M	0x1672
+ #define PCI_DEVICE_ID_TIGON3_5755M	0x1673
++#define PCI_DEVICE_ID_TIGON3_5756	0x1674
+ #define PCI_DEVICE_ID_TIGON3_5750	0x1676
+ #define PCI_DEVICE_ID_TIGON3_5751	0x1677
+ #define PCI_DEVICE_ID_TIGON3_5715	0x1678
+--- linux-2.6.18.noarch/drivers/net/tg3.c.orig
++++ linux-2.6.18.noarch/drivers/net/tg3.c
+@@ -197,6 +197,8 @@ static struct pci_device_id tg3_pci_tbl[
+ 	  PCI_ANY_ID, PCI_ANY_ID, 0, 0, 0UL },
+ 	{ PCI_VENDOR_ID_BROADCOM, PCI_DEVICE_ID_TIGON3_5721,
+ 	  PCI_ANY_ID, PCI_ANY_ID, 0, 0, 0UL },
++	{ PCI_VENDOR_ID_BROADCOM, PCI_DEVICE_ID_TIGON3_5722,
++	  PCI_ANY_ID, PCI_ANY_ID, 0, 0, 0UL },
+ 	{ PCI_VENDOR_ID_BROADCOM, PCI_DEVICE_ID_TIGON3_5750,
+ 	  PCI_ANY_ID, PCI_ANY_ID, 0, 0, 0UL },
+ 	{ PCI_VENDOR_ID_BROADCOM, PCI_DEVICE_ID_TIGON3_5751,
+@@ -225,6 +227,8 @@ static struct pci_device_id tg3_pci_tbl[
+ 	  PCI_ANY_ID, PCI_ANY_ID, 0, 0, 0UL },
+ 	{ PCI_VENDOR_ID_BROADCOM, PCI_DEVICE_ID_TIGON3_5755M,
+ 	  PCI_ANY_ID, PCI_ANY_ID, 0, 0, 0UL },
++	{ PCI_VENDOR_ID_BROADCOM, PCI_DEVICE_ID_TIGON3_5756,
++	  PCI_ANY_ID, PCI_ANY_ID, 0, 0, 0UL },
+ 	{ PCI_VENDOR_ID_BROADCOM, PCI_DEVICE_ID_TIGON3_5786,
+ 	  PCI_ANY_ID, PCI_ANY_ID, 0, 0, 0UL },
+ 	{ PCI_VENDOR_ID_BROADCOM, PCI_DEVICE_ID_TIGON3_5787,
+@@ -11279,6 +11283,7 @@ static char * __devinit tg3_phy_string(s
+ 	case PHY_ID_BCM5780:	return "5780";
+ 	case PHY_ID_BCM5755:	return "5755";
+ 	case PHY_ID_BCM5787:	return "5787";
++	case PHY_ID_BCM5756:	return "5722/5756";
+ 	case PHY_ID_BCM8002:	return "8002/serdes";
+ 	case 0:			return "serdes";
+ 	default:		return "unknown";
+--- linux-2.6.18.noarch/drivers/net/tg3.h.orig
++++ linux-2.6.18.noarch/drivers/net/tg3.h
+@@ -2276,6 +2276,7 @@ struct tg3 {
+ #define PHY_ID_BCM5780			0x60008350
+ #define PHY_ID_BCM5755			0xbc050cc0
+ #define PHY_ID_BCM5787			0xbc050ce0
++#define PHY_ID_BCM5756			0xbc050ed0
+ #define PHY_ID_BCM8002			0x60010140
+ #define PHY_ID_INVALID			0xffffffff
+ #define PHY_ID_REV_MASK			0x0000000f
+@@ -2302,7 +2303,8 @@ struct tg3 {
+ 	 (X) == PHY_ID_BCM5705 || (X) == PHY_ID_BCM5750 || \
+ 	 (X) == PHY_ID_BCM5752 || (X) == PHY_ID_BCM5714 || \
+ 	 (X) == PHY_ID_BCM5780 || (X) == PHY_ID_BCM5787 || \
+-	 (X) == PHY_ID_BCM5755 || (X) == PHY_ID_BCM8002)
++	 (X) == PHY_ID_BCM5755 || (X) == PHY_ID_BCM5756 || \
++	 (X) == PHY_ID_BCM8002)
+ 
+ 	struct tg3_hw_stats		*hw_stats;
+ 	dma_addr_t			stats_mapping;
+

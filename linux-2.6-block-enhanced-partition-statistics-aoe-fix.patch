@@ -1,0 +1,33 @@
+From: Jerome Marchand <jmarchand@redhat.com>
+Date: Tue, 15 Jul 2008 15:55:44 +0200
+Subject: [block] Enhanced Partition Statistics: aoe fix
+Message-id: 20080715135910.278131159@redhat.com
+O-Subject: [Patch RHEL5.3 3/9] Enhanced Partition Statistics: aoe fix
+Bugzilla: 224322
+RH-Acked-by: Anton Arapov <aarapov@redhat.com>
+
+bz224322
+
+Updates the enhanced partition statistics in ATA Over Ethernet driver
+
+commit: a890d62b9e8743341f62548104d1ac29fa8a5a88
+
+diff --git a/drivers/block/aoe/aoecmd.c b/drivers/block/aoe/aoecmd.c
+index 39da28d..3341a72 100644
+--- a/drivers/block/aoe/aoecmd.c
++++ b/drivers/block/aoe/aoecmd.c
+@@ -569,10 +569,10 @@ aoecmd_ata_rsp(struct sk_buff *skb)
+ 			struct gendisk *disk = d->gd;
+ 			const int rw = bio_data_dir(buf->bio);
+ 
+-			disk_stat_inc(disk, ios[rw]);
+-			disk_stat_add(disk, ticks[rw], duration);
+-			disk_stat_add(disk, sectors[rw], n_sect);
+-			disk_stat_add(disk, io_ticks, duration);
++			all_stat_inc(disk, ios[rw], buf->sector);
++			all_stat_add(disk, ticks[rw], duration, buf->sector);
++			all_stat_add(disk, sectors[rw], n_sect, buf->sector);
++			all_stat_add(disk, io_ticks, duration, buf->sector);
+ 			n = (buf->flags & BUFFL_FAIL) ? -EIO : 0;
+ 			bio_endio(buf->bio, buf->bio->bi_size, n);
+ 			mempool_free(buf, d->bufpool);

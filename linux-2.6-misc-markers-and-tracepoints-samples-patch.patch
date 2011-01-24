@@ -1,0 +1,50 @@
+From: jbaron@redhat.com <jbaron@redhat.com>
+Date: Fri, 22 Aug 2008 14:04:46 -0400
+Subject: [misc] markers and tracepoints: samples patch
+Message-id: 1219428298-7519-3-git-send-email-jbaron@redhat.com
+O-Subject: [rhel5.3 patch 02/14] markers and tracepoints - samples patch
+Bugzilla: 329821
+
+bz# 329821
+
+diff --git a/Makefile b/Makefile
+index 8d2c892..54dabda 100644
+--- a/Makefile
++++ b/Makefile
+@@ -729,6 +729,9 @@ endif # ifdef CONFIG_KALLSYMS
+ 
+ # vmlinux image - including updated kernel symbols
+ vmlinux: $(vmlinux-lds) $(vmlinux-init) $(vmlinux-main) $(kallsyms.o) FORCE
++ifdef CONFIG_SAMPLES
++	$(Q)$(MAKE) $(build)=samples
++endif
+ 	$(call if_changed_rule,vmlinux__)
+ 	$(Q)rm -f .old_version
+ 
+diff --git a/lib/Kconfig.debug b/lib/Kconfig.debug
+index 65b4e68..5a5f05a 100644
+--- a/lib/Kconfig.debug
++++ b/lib/Kconfig.debug
+@@ -390,3 +390,5 @@ config RCU_TORTURE_TEST
+ 	  at boot time (you probably don't).
+ 	  Say M if you want the RCU torture tests to build as a module.
+ 	  Say N if you are unsure.
++
++source "samples/Kconfig"
+diff --git a/samples/Kconfig b/samples/Kconfig
+new file mode 100644
+index 0000000..b46b4cf
+--- /dev/null
++++ b/samples/Kconfig
+@@ -0,0 +1,11 @@
++# samples/Kconfig
++
++menuconfig SAMPLES
++	bool "Sample kernel code"
++	help
++	  You can build and test sample kernel code here.
++
++if SAMPLES
++
++
++endif # SAMPLES

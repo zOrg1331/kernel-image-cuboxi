@@ -22,10 +22,12 @@
 #include <asm/hardware.h>
 #include <asm/parisc-device.h>
 #include <asm/io.h>
+#include <asm/serial.h> /* for LASI_BASE_BAUD */
 
 #include "8250.h"
 
-static int __init serial_init_chip(struct parisc_device *dev)
+static int __init 
+serial_init_chip(struct parisc_device *dev)
 {
 	struct uart_port port;
 	unsigned long address;
@@ -37,22 +39,22 @@ static int __init serial_init_chip(struct parisc_device *dev)
 		 * what we have here is a missing parent device, so tell
 		 * the user what they're missing.
 		 */
-		if (parisc_parent(dev)->id.hw_type != HPHW_IOA)
-			printk(KERN_INFO
-				"Serial: device 0x%llx not configured.\n"
+		if (parisc_parent(dev)->id.hw_type != HPHW_IOA) {
+			printk(KERN_INFO "Serial: device 0x%lx not configured.\n"
 				"Enable support for Wax, Lasi, Asp or Dino.\n",
-				(unsigned long long)dev->hpa.start);
+				dev->hpa.start);
+		}
 		return -ENODEV;
 	}
 
 	address = dev->hpa.start;
-	if (dev->id.sversion != 0x8d)
+	if (dev->id.sversion != 0x8d) {
 		address += 0x800;
+	}
 
 	memset(&port, 0, sizeof(port));
 	port.iotype	= UPIO_MEM;
-	/* 7.272727MHz on Lasi.  Assumed the same for Dino, Wax and Timi. */
-	port.uartclk	= 7272727;
+	port.uartclk	= LASI_BASE_BAUD * 16;
 	port.mapbase	= address;
 	port.membase	= ioremap_nocache(address, 16);
 	port.irq	= dev->irq;
@@ -61,12 +63,10 @@ static int __init serial_init_chip(struct parisc_device *dev)
 
 	err = serial8250_register_port(&port);
 	if (err < 0) {
-		printk(KERN_WARNING
-			"serial8250_register_port returned error %d\n", err);
-		iounmap(port.membase);
+		printk(KERN_WARNING "serial8250_register_port returned error %d\n", err);
 		return err;
 	}
-
+        
 	return 0;
 }
 
@@ -111,7 +111,7 @@ static struct parisc_driver serial_driver = {
 	.probe		= serial_init_chip,
 };
 
-static int __init probe_serial_gsc(void)
+int __init probe_serial_gsc(void)
 {
 	register_parisc_driver(&lasi_driver);
 	register_parisc_driver(&serial_driver);
@@ -119,5 +119,3 @@ static int __init probe_serial_gsc(void)
 }
 
 module_init(probe_serial_gsc);
-
-MODULE_LICENSE("GPL");

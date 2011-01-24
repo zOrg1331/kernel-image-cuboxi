@@ -27,19 +27,24 @@
 	
 	prefetch(x)  	- prefetches the cacheline at "x" for read
 	prefetchw(x)	- prefetches the cacheline at "x" for write
-	spin_lock_prefetch(x) - prefetches the spinlock *x for taking
+	spin_lock_prefetch(x) - prefectches the spinlock *x for taking
 	
 	there is also PREFETCH_STRIDE which is the architecure-prefered 
 	"lookahead" size for prefetching streamed operations.
 	
 */
 
+/*
+ *	These cannot be do{}while(0) macros. See the mental gymnastics in
+ *	the loop macro.
+ */
+ 
 #ifndef ARCH_HAS_PREFETCH
-#define prefetch(x) __builtin_prefetch(x)
+static inline void prefetch(const void *x) {;}
 #endif
 
 #ifndef ARCH_HAS_PREFETCHW
-#define prefetchw(x) __builtin_prefetch(x,1)
+static inline void prefetchw(const void *x) {;}
 #endif
 
 #ifndef ARCH_HAS_SPINLOCK_PREFETCH

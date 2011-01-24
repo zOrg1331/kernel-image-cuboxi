@@ -1,0 +1,128 @@
+Date: Mon, 02 Oct 2006 11:52:23 +0200
+From: Jan Glauber <jglauber@redhat.com>
+Subject: [RHEL5 PATCH] kprobes s390: larl instruction fixup
+
+BZ: 205738
+
+The larl (load address relative long) loads an address relative to
+the instruction counter into a register. If a kprobe hits a larl
+instruction the stored address must be fixed. The instruction
+counter must also be updated.
+
+Without this patch the instruction counter is not fixed and still points
+to the kprobes code. The kernel is therefore crashing if a kprobe is
+placed on a larl.
+
+This can be avoided by setting the fixup code to FIXUP_PSW_NORMAL _and_
+FIXUP_RETURN_REGISTER.
+
+Patch is upstream and tested by IBM.
+
+Jan
+-- 
+jglauber@redhat.com
+jang@de.ibm.com
+
+--- linux-2.6.18.s390/arch/s390/kernel/kprobes.c.fix
++++ linux-2.6.18.s390/arch/s390/kernel/kprobes.c
+@@ -134,10 +134,9 @@ void __kprobes get_instruction_type(stru
+ 		}
+ 		break;
+ 	case 0xc0:
+-		if ((*ainsn->insn & 0x0f) == 0x00) /* larl */
+-			ainsn->fixup = FIXUP_RETURN_REGISTER;
+-		if ((*ainsn->insn & 0x0f) == 0x05) /* brasl*/
+-			ainsn->fixup |= FIXUP_RETURN_REGISTER;
++		if ((*ainsn->insn & 0x0f) == 0x00  /* larl  */
++			|| (*ainsn->insn & 0x0f) == 0x05) /* brasl */
++		ainsn->fixup |= FIXUP_RETURN_REGISTER;
+ 		break;
+ 	case 0xeb:
+ 		if (*(((__u8 *) ainsn->insn) + 5 ) == 0x44 ||	/* bxhg  */
+
+Date: Mon, 02 Oct 2006 12:13:05 +0200
+From: Jan Glauber <jglauber@redhat.com>
+Subject: [RHEL5 PATCH] kprobes break user-space single stepping on s390
+
+BZ: 205739
+
+With kprobes we must distinguish between user-space single stepping
+and SS in the kernel. This is done by checking if the instruction counter
+was in the kernel.
+
+Unfortunately we did scan the wrong PSW. That breaks user-space single
+stepping since the SS flag (PER event) is cleared and handled as a 
+kprobe single-step.
+
+The patch looks at the kernel PSW on the stack which is the correct one to check.
+
+Patch is upstream and tested by IBM.
+
+Jan
+-- 
+jglauber@redhat.com
+jang@de.ibm.com
+
+diff -urNp linux-2.6.18.s390/arch/s390/kernel/entry64.S linux-2.6.18.s390_xxx/arch/s390/kernel/entry64.S
+--- linux-2.6.18.s390/arch/s390/kernel/entry64.S	2006-09-29 12:52:27.000000000 +0200
++++ linux-2.6.18.s390_xxx/arch/s390/kernel/entry64.S	2006-09-29 15:30:15.000000000 +0200
+@@ -518,7 +518,7 @@ pgm_no_vtime2:
+ #endif
+ 	lg	%r9,__LC_THREAD_INFO	# load pointer to thread_info struct
+ 	lg	%r1,__TI_task(%r9)
+-	tm	__LC_PGM_OLD_PSW+1(%r15),0x01	# kernel per event ?
++	tm	SP_PSW+1(%r15),0x01	# kernel per event ?
+ 	jz	kernel_per
+ 	mvc	__THREAD_per+__PER_atmid(2,%r1),__LC_PER_ATMID
+ 	mvc	__THREAD_per+__PER_address(8,%r1),__LC_PER_ADDRESS
+diff -urNp linux-2.6.18.s390/arch/s390/kernel/entry.S linux-2.6.18.s390_xxx/arch/s390/kernel/entry.S
+--- linux-2.6.18.s390/arch/s390/kernel/entry.S	2006-09-29 12:52:27.000000000 +0200
++++ linux-2.6.18.s390_xxx/arch/s390/kernel/entry.S	2006-09-29 15:30:15.000000000 +0200
+@@ -505,7 +505,7 @@ pgm_no_vtime2:
+ 	mvc	__THREAD_per+__PER_address(4,%r1),__LC_PER_ADDRESS
+ 	mvc	__THREAD_per+__PER_access_id(1,%r1),__LC_PER_ACCESS_ID
+ 	oi	__TI_flags+3(%r9),_TIF_SINGLE_STEP # set TIF_SINGLE_STEP
+-	tm	__LC_PGM_OLD_PSW+1(%r15),0x01	# kernel per event ?
++	tm	SP_PSW+1(%r15),0x01	# kernel per event ?
+ 	bz	BASED(kernel_per)
+ 	l	%r3,__LC_PGM_ILC	 # load program interruption code
+ 	la	%r8,0x7f
+
+Date: Mon, 02 Oct 2006 13:56:13 +0200
+From: Jan Glauber <jglauber@redhat.com>
+Subject: [RHEL5 Patch] s390 hypfs crashes when specifying invalid mount
+	option
+
+The same problem that was posted for RHEL4 is also in RHEL5, see
+Josef Whiter's post from Sep 26. 
+
+A misspelled entry in /etc/fstab for hypfs crashes the mount process.
+I'm not sure if this is a security issue since mount is setuid.
+
+The RHEL5 BZ is 207717. Patch is tested by IBM and upstream.
+
+Jan
+-- 
+jglauber@redhat.com
+jang@de.ibm.com
+
+--- linux-2.6.18.s390/arch/s390/hypfs/inode.c.fix
++++ linux-2.6.18.s390/arch/s390/hypfs/inode.c
+@@ -311,10 +311,12 @@ static void hypfs_kill_super(struct supe
+ {
+ 	struct hypfs_sb_info *sb_info = sb->s_fs_info;
+ 
+-	hypfs_delete_tree(sb->s_root);
+-	hypfs_remove(sb_info->update_file);
+-	kfree(sb->s_fs_info);
+-	sb->s_fs_info = NULL;
++	if (sb->s_root) {
++		hypfs_delete_tree(sb->s_root);
++		hypfs_remove(sb_info->update_file);
++		kfree(sb->s_fs_info);
++		sb->s_fs_info = NULL;
++	}
+ 	kill_litter_super(sb);
+ }
+ 
+

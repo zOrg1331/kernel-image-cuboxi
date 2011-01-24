@@ -2,8 +2,7 @@
 #include <linux/errno.h>
 #include <asm/uaccess.h>
 
-#include <asm/sfp-machine.h>
-#include <math-emu/soft-fp.h>
+#include "soft-fp.h"
 
 int
 mcrfs(u32 *ccr, u32 crfD, u32 crfS)
@@ -11,7 +10,7 @@ mcrfs(u32 *ccr, u32 crfD, u32 crfS)
 	u32 value, clear;
 
 #ifdef DEBUG
-	printk("%s: %p (%08x) %d %d\n", __func__, ccr, *ccr, crfD, crfS);
+	printk("%s: %p (%08x) %d %d\n", __FUNCTION__, ccr, *ccr, crfD, crfS);
 #endif
 
 	clear = 15 << ((7 - crfS) << 2);
@@ -25,7 +24,7 @@ mcrfs(u32 *ccr, u32 crfD, u32 crfS)
 	*ccr |= (value << ((7 - crfD) << 2));
 
 #ifdef DEBUG
-	printk("CR: %08x\n", __func__, *ccr);
+	printk("CR: %08x\n", __FUNCTION__, *ccr);
 #endif
 
 	return 0;

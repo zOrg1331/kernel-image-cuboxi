@@ -1020,7 +1020,7 @@ static struct SYM_FWA_SCR SYM_FWA_SCR = {
 	 *  It shall be a tagged command.
 	 *  Read SIMPLE+TAG.
 	 *  The C code will deal with errors.
-	 *  Aggressive optimization, isn't it? :)
+	 *  Agressive optimization, is'nt it? :)
 	 */
 	SCR_MOVE_ABS (2) ^ SCR_MSG_IN,
 		HADDR_1 (msgin),
@@ -1044,7 +1044,7 @@ static struct SYM_FWA_SCR SYM_FWA_SCR = {
 		RADDR_1 (dsa),
 	/*
 	 *  The SIDL still contains the TAG value.
-	 *  Aggressive optimization, isn't it? :):)
+	 *  Agressive optimization, isn't it? :):)
 	 */
 	SCR_REG_SFBR (sidl, SCR_SHL, 0),
 		0,

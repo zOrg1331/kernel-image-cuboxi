@@ -1,0 +1,80 @@
+From: Tomas Henzl <thenzl@redhat.com>
+Subject: [PATCH RHEL-5] RHEL 5.1 cciss driver updates
+Date: Fri, 13 Jul 2007 16:48:25 +0200
+Bugzilla: 248121
+Message-Id: <469790B9.3090406@redhat.com>
+Changelog: [scsi] cciss: increase max sectors to 2048
+
+
+bz248121
+
+This patch changes the blk_queue_max_sectors from 512 to 2048. This helps
+increase performance.
+
+The patch was tested by me on a x86-64 16TB machine and on a smaller one
+-i686.
+
+Tomas
+
+diff -puN drivers/block/cciss.c~cciss_sector_size_for_lx2619-rc4 drivers/block/cciss.c
+--- linux-2.6.18.x86_64/drivers/block/cciss.c~cciss_sector_size_for_lx2619-rc4	2007-03-30 16:09:03.000000000 -0500
++++ linux-2.6.18.x86_64-root/drivers/block/cciss.c	2007-03-30 16:09:03.000000000 -0500
+@@ -269,6 +269,7 @@ static int cciss_proc_get_info(char *buf
+ 		       "Firmware Version: %c%c%c%c\n"
+ 		       "IRQ: %d\n"
+ 		       "Logical drives: %d\n"
++		       "Sector size: %d\n"
+ 		       "Current Q depth: %d\n"
+ 		       "Current # commands on controller: %d\n"
+ 		       "Max Q depth since init: %d\n"
+@@ -279,7 +280,9 @@ static int cciss_proc_get_info(char *buf
+ 		       (unsigned long)h->board_id,
+ 		       h->firm_ver[0], h->firm_ver[1], h->firm_ver[2],
+ 		       h->firm_ver[3], (unsigned int)h->intr[SIMPLE_MODE_INT],
+-		       h->num_luns, h->Qdepth, h->commands_outstanding,
++		       h->num_luns,
++		       h->cciss_sector_size,
++		       h->Qdepth, h->commands_outstanding,
+ 		       h->maxQsinceinit, h->max_outstanding, h->maxSG);
+ 
+ 	pos += size;
+@@ -1390,7 +1393,7 @@ static void cciss_update_drive_info(int 
+ 		/* This is a limit in the driver and could be eliminated. */
+ 		blk_queue_max_phys_segments(disk->queue, MAXSGENTRIES);
+ 
+-		blk_queue_max_sectors(disk->queue, 512);
++		blk_queue_max_sectors(disk->queue, h->cciss_sector_size);
+ 
+ 		blk_queue_softirq_done(disk->queue, cciss_softirq_done);
+ 
+@@ -3260,6 +3263,9 @@ static int __devinit cciss_init_one(stru
+ 	hba[i]->access.set_intr_mask(hba[i], CCISS_INTR_ON);
+ 
+ 	cciss_procinit(i);
++
++	hba[i]->cciss_sector_size = 2048;
++
+ 	hba[i]->busy_initializing = 0;
+ 
+ 	for (j = 0; j < NWD; j++) {	/* mfm */
+@@ -3284,7 +3290,7 @@ static int __devinit cciss_init_one(stru
+ 		/* This is a limit in the driver and could be eliminated. */
+ 		blk_queue_max_phys_segments(q, MAXSGENTRIES);
+ 
+-		blk_queue_max_sectors(q, 512);
++		blk_queue_max_sectors(q, hba[i]->cciss_sector_size);
+ 
+ 		blk_queue_softirq_done(q, cciss_softirq_done);
+ 
+diff -puN drivers/block/cciss.h~cciss_sector_size_for_lx2619-rc4 drivers/block/cciss.h
+--- linux-2.6.18.x86_64/drivers/block/cciss.h~cciss_sector_size_for_lx2619-rc4	2007-03-30 16:09:03.000000000 -0500
++++ linux-2.6.18.x86_64-root/drivers/block/cciss.h	2007-03-30 16:09:03.000000000 -0500
+@@ -77,6 +77,7 @@ struct ctlr_info 
+	unsigned int msi_vector;
+	BYTE	cciss_read;
+	BYTE	cciss_write;
++	int	cciss_sector_size;	
+ 
+ 	// information about each logical volume
+ 	drive_info_struct drv[CISS_MAX_LUN];
+

@@ -24,7 +24,6 @@
 #include <asm/processor.h>
 #include <asm/time.h>
 #include <asm/lppaca.h>
-#include <asm/firmware.h>
 #include <asm/iseries/hv_call_xm.h>
 
 #include "processor_vpd.h"
@@ -32,12 +31,7 @@
 
 static int __init iseries_proc_create(void)
 {
-	struct proc_dir_entry *e;
-
-	if (!firmware_has_feature(FW_FEATURE_ISERIES))
-		return 0;
-
-	e = proc_mkdir("iSeries", 0);
+	struct proc_dir_entry *e = proc_mkdir("iSeries", 0);
 	if (!e)
 		return 1;
 
@@ -101,7 +95,7 @@ static int proc_titantod_open(struct inode *inode, struct file *file)
 	return single_open(file, proc_titantod_show, NULL);
 }
 
-static const struct file_operations proc_titantod_operations = {
+static struct file_operations proc_titantod_operations = {
 	.open		= proc_titantod_open,
 	.read		= seq_read,
 	.llseek		= seq_lseek,
@@ -110,11 +104,12 @@ static const struct file_operations proc_titantod_operations = {
 
 static int __init iseries_proc_init(void)
 {
-	if (!firmware_has_feature(FW_FEATURE_ISERIES))
-		return 0;
+	struct proc_dir_entry *e;
 
-	proc_create("iSeries/titanTod", S_IFREG|S_IRUGO, NULL,
-		    &proc_titantod_operations);
+	e = create_proc_entry("iSeries/titanTod", S_IFREG|S_IRUGO, NULL);
+	if (e)
+		e->proc_fops = &proc_titantod_operations;
+
 	return 0;
 }
 __initcall(iseries_proc_init);

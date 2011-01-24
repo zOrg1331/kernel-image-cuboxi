@@ -1,0 +1,35 @@
+From: Chip Coldwell <coldwell@redhat.com>
+Subject: [RHEL5.1 PATCH] BZ#208256 SCSI blacklist touch-up
+Date: Tue, 13 Mar 2007 16:13:37 -0400 (EDT)
+Bugzilla: 232074
+Message-Id: <Pine.LNX.4.64.0703131611050.4236@dhcp83-29.boston.redhat.com>
+Changelog: [scsi] blacklist touch-up
+
+
+
+Apropos RHEL4.5 bug 197381, we need the same change in RHEL5.  This is
+a touch-up to a SCSI blacklist entry we added for the SEAGATE DAT72;
+apparently the device reports its name with a few extra spaces.  I
+re-opened bug 208256 since this was the bug that brought in the
+original entry.  If that wasn't the right thing to do, we can open a
+new bug.
+
+--- linux-2.6.18.i686/drivers/scsi/scsi_devinfo.c.orig	2007-03-13 16:08:01.929524000 -0400
++++ linux-2.6.18.i686/drivers/scsi/scsi_devinfo.c	2007-03-13 16:08:17.768669000 -0400
+@@ -211,7 +211,7 @@ static struct {
+ 	{"PIONEER", "CD-ROM DRM-624X", NULL, BLIST_FORCELUN | BLIST_SINGLELUN},
+ 	{"REGAL", "CDC-4X", NULL, BLIST_MAX5LUN | BLIST_SINGLELUN},
+ 	{"SanDisk", "ImageMate CF-SD1", NULL, BLIST_FORCELUN},
+-	{"SEAGATE", "DAT DAT72-400", "*", BLIST_FORCELUN},
++	{"SEAGATE", "DAT    DAT72-400", "*", BLIST_FORCELUN},
+ 	{"SEAGATE", "ST34555N", "0930", BLIST_NOTQ},	/* Chokes on tagged INQUIRY */
+ 	{"SEAGATE", "ST3390N", "9546", BLIST_NOTQ},
+ 	{"SGI", "RAID3", "*", BLIST_SPARSELUN},
+
+
+-- 
+Charles M. "Chip" Coldwell
+Senior Software Engineer
+Red Hat, Inc
+978-392-2426
+

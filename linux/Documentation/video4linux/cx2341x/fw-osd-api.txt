@@ -21,11 +21,7 @@ Enum 	66/0x42
 Description
 	Query OSD format
 Result[0]
-	0=8bit index
-	1=16bit RGB 5:6:5
-	2=16bit ARGB 1:5:5:5
-	3=16bit ARGB 1:4:4:4
-	4=32bit ARGB 8:8:8:8
+	0=8bit index, 4=AlphaRGB 8:8:8:8
 
 -------------------------------------------------------------------------------
 
@@ -34,11 +30,7 @@ Enum 	67/0x43
 Description
 	Assign pixel format
 Param[0]
-	0=8bit index
-	1=16bit RGB 5:6:5
-	2=16bit ARGB 1:5:5:5
-	3=16bit ARGB 1:4:4:4
-	4=32bit ARGB 8:8:8:8
+	0=8bit index, 4=AlphaRGB 8:8:8:8
 
 -------------------------------------------------------------------------------
 
@@ -105,7 +97,7 @@ Result[0]
 Result[1]
 	top left vertical offset
 Result[2]
-	bottom right horizontal offset
+	bottom right hotizontal offset
 Result[3]
 	bottom right vertical offset
 

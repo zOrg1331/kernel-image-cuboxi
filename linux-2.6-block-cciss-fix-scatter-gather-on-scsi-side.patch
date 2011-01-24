@@ -1,0 +1,222 @@
+From: Tomas Henzl <thenzl@redhat.com>
+Date: Sun, 29 Aug 2010 15:49:50 -0400
+Subject: [block] cciss: fix scatter-gather on scsi side
+Message-id: <1283097002-3341-52-git-send-email-thenzl@redhat.com>
+Patchwork-id: 27887
+O-Subject: [RHEL6 PATCH 51/63] cciss: fix scatter-gather on scsi side
+Bugzilla: 568830
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+
+Allow scatter gather chaining on scsi side of driver for larger transfers.
+
+diff --git a/drivers/block/cciss_scsi.c b/drivers/block/cciss_scsi.c
+index 08e938f..99e8602 100644
+--- a/drivers/block/cciss_scsi.c
++++ b/drivers/block/cciss_scsi.c
+@@ -86,7 +86,6 @@ static struct scsi_host_template cciss_driver_template = {
+ 	.proc_info		= cciss_scsi_proc_info,
+ 	.queuecommand		= cciss_scsi_queue_command,
+ 	.this_id		= 7,
+-	.sg_tablesize		= MAXSGENTRIES,
+ 	.cmd_per_lun		= 1,
+ 	.use_clustering		= DISABLE_CLUSTERING,
+ 	/* Can't have eh_bus_reset_handler or eh_host_reset_handler for cciss */
+@@ -99,7 +98,8 @@ struct cciss_scsi_cmd_stack_elem_t {
+ 	CommandList_struct cmd;
+ 	ErrorInfo_struct Err;
+ 	__u32 busaddr;
+-	__u32 pad;
++	int cmdindex;
++	unsigned char pad[0];
+ };
+ 
+ struct cciss_scsi_cmd_stack_t {
+@@ -114,6 +114,7 @@ struct cciss_scsi_cmd_stack_t {
+ struct cciss_scsi_adapter_data_t {
+ 	struct Scsi_Host *scsi_host;
+ 	struct cciss_scsi_cmd_stack_t cmd_stack;
++	SGDescriptor_struct **cmd_sg_list;
+ 	int registered;
+ 	spinlock_t lock; // to protect ccissscsi[ctlr]; 
+ };
+@@ -147,7 +148,8 @@ scsi_cmd_alloc(ctlr_info_t *h)
+ 	memset(&c->cmd, 0, sizeof(c->cmd));
+ 	memset(&c->Err, 0, sizeof(c->Err));
+ 	/* set physical addr of cmd and addr of scsi parameters */
+-	c->cmd.busaddr = c->busaddr; 
++	c->cmd.busaddr = c->busaddr;
++	c->cmd.cmdindex = c->cmdindex;
+ 	/* (__u32) (stk->cmd_pool_handle + 
+ 		(sizeof(struct cciss_scsi_cmd_stack_elem_t)*stk->top)); */
+ 
+@@ -193,6 +195,11 @@ scsi_cmd_stack_setup(int ctlr, struct cciss_scsi_adapter_data_t *sa)
+ 	struct cciss_scsi_cmd_stack_t *stk;
+ 	size_t size;
+ 
++	sa->cmd_sg_list = cciss_allocate_sg_chain_blocks(hba[ctlr],
++		hba[ctlr]->chainsize, cciss_tape_cmds + 2);
++	if (!sa->cmd_sg_list && hba[ctlr]->chainsize > 0)
++		return -ENOMEM;
++
+ 	stk = &sa->cmd_stack; 
+ 	stk->nelems = cciss_tape_cmds + 2;
+ 	size = sizeof(struct cciss_scsi_cmd_stack_elem_t) * stk->nelems;
+@@ -206,8 +213,9 @@ scsi_cmd_stack_setup(int ctlr, struct cciss_scsi_adapter_data_t *sa)
+ 		pci_alloc_consistent(hba[ctlr]->pdev, size, &stk->cmd_pool_handle);
+ 
+ 	if (stk->pool == NULL) {
+-		printk("stk->pool is null\n");
+-		return -1;
++		cciss_free_sg_chain_blocks(sa->cmd_sg_list, cciss_tape_cmds + 2);
++		sa->cmd_sg_list = NULL;
++		return -ENOMEM;
+ 	}
+ 
+ 	stk->elem = kmalloc(sizeof(stk->elem[0]) * stk->nelems, GFP_KERNEL);
+@@ -220,6 +228,7 @@ scsi_cmd_stack_setup(int ctlr, struct cciss_scsi_adapter_data_t *sa)
+ 		stk->elem[i] = &stk->pool[i];
+ 		stk->elem[i]->busaddr = (__u32) (stk->cmd_pool_handle + 
+ 			(sizeof(struct cciss_scsi_cmd_stack_elem_t) * i));
++		stk->elem[i]->cmdindex = i;
+ 	}
+ 	stk->top = stk->nelems-1;
+ 	return 0;
+@@ -244,6 +253,7 @@ scsi_cmd_stack_free(int ctlr)
+ 
+ 	pci_free_consistent(hba[ctlr]->pdev, size, stk->pool, stk->cmd_pool_handle);
+ 	stk->pool = NULL;
++	cciss_free_sg_chain_blocks(sa->cmd_sg_list, cciss_tape_cmds + 2);
+ }
+ 
+ /* scsi_device_types comes from scsi.h */
+@@ -692,6 +702,7 @@ cciss_scsi_detect(int ctlr)
+ 	sh->n_io_port = 0;	// I don't think we use these two...
+ 	sh->this_id = SELF_SCSI_ID;  
+ 	sh->can_queue = cciss_tape_cmds;
++	sh->sg_tablesize = hba[ctlr]->maxsgentries;
+ 
+ 	((struct cciss_scsi_adapter_data_t *) 
+ 		hba[ctlr]->scsi_ctlr)->scsi_host = sh;
+@@ -1185,52 +1196,79 @@ cciss_scsi_proc_info(struct Scsi_Host *sh,
+ /* cciss_scatter_gather takes a struct scsi_cmnd, (cmd), and does the pci 
+    dma mapping  and fills in the scatter gather entries of the 
+    cciss command, cp. */
+-
+-static void
+-cciss_scatter_gather(struct pci_dev *pdev, 
+-		CommandList_struct *cp,	
++static void cciss_scatter_gather(ctlr_info_t *h, CommandList_struct *cp,
+ 		struct scsi_cmnd *cmd)
+ {
+ 	unsigned int use_sg, nsegs=0, len;
+ 	struct scatterlist *scatter = (struct scatterlist *) cmd->request_buffer;
+-	__u64 addr64;
++	u64 addr64;
++	int sg_index, chained;
++	struct cciss_scsi_adapter_data_t *sa = h->scsi_ctlr;
++	SGDescriptor_struct *curr_sg;
+ 
+ 	/* is it just one virtual address? */	
+ 	if (!cmd->use_sg) {
+ 		if (cmd->request_bufflen) {	/* anything to xfer? */
+ 
+-			addr64 = (__u64) pci_map_single(pdev, 
++			addr64 = (u64) pci_map_single(h->pdev,
+ 				cmd->request_buffer, 
+ 				cmd->request_bufflen, 
+ 				cmd->sc_data_direction);
+ 	
+ 			cp->SG[0].Addr.lower = 
+-			  (__u32) (addr64 & (__u64) 0x00000000FFFFFFFF);
++			  (u32) (addr64 & (u64) 0x00000000FFFFFFFF);
+ 			cp->SG[0].Addr.upper =
+-			  (__u32) ((addr64 >> 32) & (__u64) 0x00000000FFFFFFFF);
++			  (u32) ((addr64 >> 32) & (u64) 0x00000000FFFFFFFF);
+ 			cp->SG[0].Len = cmd->request_bufflen;
+ 			nsegs=1;
+ 		}
+-	} /* else, must be a list of virtual addresses.... */
+-	else if (cmd->use_sg <= MAXSGENTRIES) {	/* not too many addrs? */
+-
+-		use_sg = pci_map_sg(pdev, cmd->request_buffer, cmd->use_sg,
+-			cmd->sc_data_direction);
++		cp->Header.SGList = (u8) nsegs;   /* no. SGs in cmd block */
++		cp->Header.SGTotal = (u16) nsegs; /* total sgs in cmd */
++		return;
++	}
+ 
+-		for (nsegs=0; nsegs < use_sg; nsegs++) {
+-			addr64 = (__u64) sg_dma_address(&scatter[nsegs]);
+-			len  = sg_dma_len(&scatter[nsegs]);
+-			cp->SG[nsegs].Addr.lower =
+-			  (__u32) (addr64 & (__u64) 0x00000000FFFFFFFF);
+-			cp->SG[nsegs].Addr.upper =
+-			  (__u32) ((addr64 >> 32) & (__u64) 0x00000000FFFFFFFF);
+-			cp->SG[nsegs].Len = len;
+-			cp->SG[nsegs].Ext = 0;  // we are not chaining
++	BUG_ON(cmd->use_sg > h->maxsgentries);
++
++	use_sg = pci_map_sg(h->pdev, cmd->request_buffer, cmd->use_sg,
++		cmd->sc_data_direction);
++
++	sg_index = 0;
++	chained = 0;
++	curr_sg = cp->SG;
++	for (nsegs=0; nsegs < use_sg; nsegs++) {
++		if (nsegs == h->max_cmd_sgentries - 1 &&
++			use_sg - nsegs > 1) {
++			/* in-cmd sgs full, switch to chain block */
++			chained = 1;
++			sg_index = 0;
++			curr_sg = sa->cmd_sg_list[cp->cmdindex];
+ 		}
+-	} else BUG();
++		addr64 = (u64) sg_dma_address(&scatter[nsegs]);
++		len  = sg_dma_len(&scatter[nsegs]);
++		curr_sg[sg_index].Addr.lower =
++			(u32) (addr64 & 0x0FFFFFFFFULL);
++		curr_sg[sg_index].Addr.upper =
++			(u32) ((addr64 >> 32) & 0x0FFFFFFFFULL);
++		curr_sg[sg_index].Len = len;
++		curr_sg[sg_index].Ext = 0;  // we are not chaining
++		sg_index++;
++	}
+ 
+-	cp->Header.SGList = (__u8) nsegs;   /* no. SGs contig in this cmd */
+-	cp->Header.SGTotal = (__u16) nsegs; /* total sgs in this cmd list */
++	if (chained)
++		cciss_map_sg_chain_block(h, cp,
++			sa->cmd_sg_list[cp->cmdindex],
++			(use_sg - (h->max_cmd_sgentries - 1)) *
++				sizeof(SGDescriptor_struct));
++
++	/* Track how many SGs we are using. */
++	if (nsegs > h->maxSG)
++		h->maxSG = nsegs;
++
++	cp->Header.SGTotal = (u16) nsegs + chained;
++	if (nsegs > h->max_cmd_sgentries)
++		cp->Header.SGList = (u8) h->max_cmd_sgentries;
++	else
++		cp->Header.SGList = cp->Header.SGTotal;
+ 	return;
+ }
+ 
+@@ -1242,6 +1280,8 @@ static void cciss_scatter_gather_unmap(ctlr_info_t *h, CommandList_struct *c,
+ 	if (cmd->use_sg) {
+ 		pci_unmap_sg(h->pdev, cmd->request_buffer, cmd->use_sg,
+ 				cmd->sc_data_direction);
++		if (c->Header.SGTotal > h->max_cmd_sgentries)
++			cciss_unmap_sg_chain_block(h, c);
+ 		return;
+ 	}
+ 	if (cmd->request_bufflen) {
+@@ -1345,7 +1385,7 @@ cciss_scsi_queue_command (struct scsi_cmnd *cmd, void (* done)(struct scsi_cmnd
+ 		BUG();
+ 		break;
+ 	}
+-	cciss_scatter_gather(c->pdev, cp, cmd);
++	cciss_scatter_gather(c, cp, cmd);
+ 
+ 	/* Put the request on the tail of the request queue */
+ 

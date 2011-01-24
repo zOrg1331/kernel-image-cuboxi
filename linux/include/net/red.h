@@ -151,17 +151,17 @@ static inline void red_set_parms(struct red_parms *p,
 
 static inline int red_is_idling(struct red_parms *p)
 {
-	return p->qidlestart != PSCHED_PASTPERFECT;
+	return !PSCHED_IS_PASTPERFECT(p->qidlestart);
 }
 
 static inline void red_start_of_idle_period(struct red_parms *p)
 {
-	p->qidlestart = psched_get_time();
+	PSCHED_GET_TIME(p->qidlestart);
 }
 
 static inline void red_end_of_idle_period(struct red_parms *p)
 {
-	p->qidlestart = PSCHED_PASTPERFECT;
+	PSCHED_SET_PASTPERFECT(p->qidlestart);
 }
 
 static inline void red_restart(struct red_parms *p)
@@ -177,8 +177,8 @@ static inline unsigned long red_calc_qavg_from_idle_time(struct red_parms *p)
 	long us_idle;
 	int  shift;
 
-	now = psched_get_time();
-	us_idle = psched_tdiff_bounded(now, p->qidlestart, p->Scell_max);
+	PSCHED_GET_TIME(now);
+	us_idle = PSCHED_TDIFF_SAFE(now, p->qidlestart, p->Scell_max);
 
 	/*
 	 * The problem: ideally, average length queue recalcultion should

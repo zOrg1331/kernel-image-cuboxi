@@ -1,0 +1,340 @@
+From: Ian Kent <ikent@redhat.com>
+Subject: [RHEL 5 PATCH 1/3] autofs - fix panic on mount fail - missing 	autofs module update
+Date: Tue, 02 Jan 2007 15:40:38 +0900
+Bugzilla: 221118
+Message-Id: <1167720038.3545.32.camel@raven.themaw.net>
+Changelog: autofs - fix panic on mount fail - missing autofs module update
+
+
+Hi all,
+
+The bug is 221118.
+
+Due to changes in the VFS super block handling in patches posted by
+David Howells some changes were needed to the autofs and autofs4 kernel
+modules.
+
+This patch updates the autofs module in the same way as the autofs4
+module has been updated to accommodate the super block handling changes.
+
+Ian
+
+---
+--- linux-2.6.18.noarch/fs/autofs/autofs_i.h.kill_sb-cleanup	2006-09-20 11:42:06.000000000 +0800
++++ linux-2.6.18.noarch/fs/autofs/autofs_i.h	2007-01-02 14:11:37.000000000 +0900
+@@ -151,6 +151,7 @@
+ /* Initializing function */
+ 
+ int autofs_fill_super(struct super_block *, void *, int);
++void autofs_kill_sb(struct super_block *);
+ 
+ /* Queue management functions */
+ 
+--- linux-2.6.18.noarch/fs/autofs/inode.c.kill_sb-cleanup	2007-01-02 14:10:14.000000000 +0900
++++ linux-2.6.18.noarch/fs/autofs/inode.c	2007-01-02 14:11:58.000000000 +0900
+@@ -19,7 +19,7 @@
+ #include "autofs_i.h"
+ #include <linux/module.h>
+ 
+-static void autofs_put_super(struct super_block *sb)
++void autofs4_kill_sb(struct super_block *sb)
+ {
+ 	struct autofs_sb_info *sbi = autofs_sbi(sb);
+ 	unsigned int n;
+@@ -36,13 +36,13 @@
+ 	kfree(sb->s_fs_info);
+ 
+ 	DPRINTK(("autofs: shutting down\n"));
++	kill_anon_super(sb);
+ }
+ 
+ static void autofs_read_inode(struct inode *inode);
+ 
+ static struct super_operations autofs_sops = {
+ 	.read_inode	= autofs_read_inode,
+-	.put_super	= autofs_put_super,
+ 	.statfs		= simple_statfs,
+ };
+ 
+--- linux-2.6.18.noarch/fs/autofs/dirhash.c.kill_sb-cleanup	2006-09-20 11:42:06.000000000 +0800
++++ linux-2.6.18.noarch/fs/autofs/dirhash.c	2007-01-02 14:11:37.000000000 +0900
+@@ -246,5 +246,4 @@
+ 			kfree(ent);
+ 		}
+ 	}
+-	shrink_dcache_sb(sbi->sb);
+ }
+--- linux-2.6.18.noarch/fs/autofs/init.c.kill_sb-cleanup	2006-09-20 11:42:06.000000000 +0800
++++ linux-2.6.18.noarch/fs/autofs/init.c	2007-01-02 14:11:37.000000000 +0900
+@@ -24,7 +24,7 @@
+ 	.owner		= THIS_MODULE,
+ 	.name		= "autofs",
+ 	.get_sb		= autofs_get_sb,
+-	.kill_sb	= kill_anon_super,
++	.kill_sb	= autofs_kill_sb,
+ };
+ 
+ static int __init init_autofs_fs(void)
+
+This patch addresses two issues that happen after an autofs mount fail.
+The first is a NULL pointer reference to a field (pipe) in the autofs
+superblock info structure and second the lack of super block cleanup by
+the autofs and autofs4 modules.
+
+Ian
+
+---
+--- linux-2.6.18.noarch/fs/autofs4/waitq.c.mount-fail-panic	2007-01-02
+14:21:11.000000000 +0900
++++ linux-2.6.18.noarch/fs/autofs4/waitq.c	2007-01-02 14:23:03.000000000
++0900
+@@ -41,10 +41,8 @@
+ 		wake_up_interruptible(&wq->queue);
+ 		wq = nwq;
+ 	}
+-	if (sbi->pipe) {
+-		fput(sbi->pipe);	/* Close the pipe */
+-		sbi->pipe = NULL;
+-	}
++	fput(sbi->pipe);	/* Close the pipe */
++	sbi->pipe = NULL;
+ }
+ 
+ static int autofs4_write(struct file *file, const void *addr, int
+bytes)
+--- linux-2.6.18.noarch/fs/autofs4/inode.c.mount-fail-panic	2007-01-02
+14:21:11.000000000 +0900
++++ linux-2.6.18.noarch/fs/autofs4/inode.c	2007-01-02 14:23:03.000000000
++0900
+@@ -98,6 +98,9 @@
+ 	struct dentry *this_parent = sbi->sb->s_root;
+ 	struct list_head *next;
+ 
++	if (!sbi->sb->s_root)
++		return;
++
+ 	spin_lock(&dcache_lock);
+ repeat:
+ 	next = this_parent->d_subdirs.next;
+@@ -145,6 +148,14 @@
+ {
+ 	struct autofs_sb_info *sbi = autofs4_sbi(sb);
+ 
++	/*
++	 * In the event of a failure in get_sb_nodev the superblock
++	 * info is not present so nothing else has been setup, so
++	 * just exit when we are called from deactivate_super.
++	 */
++	if (!sbi)
++		return;
++
+ 	sb->s_fs_info = NULL;
+ 
+ 	if ( !sbi->catatonic )
+@@ -309,7 +320,8 @@
+ 	s->s_fs_info = sbi;
+ 	sbi->magic = AUTOFS_SBI_MAGIC;
+ 	sbi->pipefd = -1;
+-	sbi->catatonic = 0;
++	sbi->pipe = NULL;
++	sbi->catatonic = 1;
+ 	sbi->exp_timeout = 0;
+ 	sbi->oz_pgrp = process_group(current);
+ 	sbi->sb = s;
+@@ -387,6 +399,7 @@
+ 		goto fail_fput;
+ 	sbi->pipe = pipe;
+ 	sbi->pipefd = pipefd;
++	sbi->catatonic = 0;
+ 
+ 	/*
+ 	 * Success! Install the root dentry now to indicate completion.
+@@ -411,6 +424,8 @@
+ 	kfree(ino);
+ fail_free:
+ 	kfree(sbi);
++	s->s_fs_info = NULL;
++	kill_anon_super(s);
+ fail_unlock:
+ 	return -EINVAL;
+ }
+--- linux-2.6.18.noarch/fs/autofs/waitq.c.mount-fail-panic	2006-09-20
+11:42:06.000000000 +0800
++++ linux-2.6.18.noarch/fs/autofs/waitq.c	2007-01-02 14:23:03.000000000
++0900
+@@ -41,6 +41,7 @@
+ 		wq = nwq;
+ 	}
+ 	fput(sbi->pipe);	/* Close the pipe */
++	sbi->pipe = NULL;
+ 	autofs_hash_dputall(&sbi->dirhash); /* Remove all dentry pointers */
+ }
+ 
+--- linux-2.6.18.noarch/fs/autofs/inode.c.mount-fail-panic	2007-01-02
+14:22:31.000000000 +0900
++++ linux-2.6.18.noarch/fs/autofs/inode.c	2007-01-02 14:23:03.000000000
++0900
+@@ -24,6 +24,14 @@
+ 	struct autofs_sb_info *sbi = autofs_sbi(sb);
+ 	unsigned int n;
+ 
++	/*
++	 * In the event of a failure in get_sb_nodev the superblock
++	 * info is not present so nothing else has been setup, so
++	 * just exit when we are called from deactivate_super.
++	 */
++	if (!sbi)
++		return;
++
+ 	if ( !sbi->catatonic )
+ 		autofs_catatonic_mode(sbi); /* Free wait queues, close pipe */
+ 
+@@ -136,7 +144,8 @@
+ 
+ 	s->s_fs_info = sbi;
+ 	sbi->magic = AUTOFS_SBI_MAGIC;
+-	sbi->catatonic = 0;
++	sbi->pipe = NULL;
++	sbi->catatonic = 1;
+ 	sbi->exp_timeout = 0;
+ 	sbi->oz_pgrp = process_group(current);
+ 	autofs_initialize_hash(&sbi->dirhash);
+@@ -180,6 +189,7 @@
+ 	if ( !pipe->f_op || !pipe->f_op->write )
+ 		goto fail_fput;
+ 	sbi->pipe = pipe;
++	sbi->catatonic = 0;
+ 
+ 	/*
+ 	 * Success! Install the root dentry now to indicate completion.
+@@ -198,6 +208,8 @@
+ 	iput(root_inode);
+ fail_free:
+ 	kfree(sbi);
++	s->s_fs_info = NULL;
++	kill_anon_super(s);
+ fail_unlock:
+ 	return -EINVAL;
+ }
+
+This is the report posted to LKML by Jiri Kosima who also posted the
+correction. I added a minor change to the comment text for the final
+patch.
+
+When kernel is compiled with old version of autofs (CONFIG_AUTOFS_FS),
+and new (observed at least with 5.x.x) automount deamon is started,
+kernel correctly reports incompatible version of kernel and userland
+daemon, but then screws things up instead of correct handling of the
+error:
+
+autofs: kernel does not match daemon version
+=====================================
+[ BUG: bad unlock balance detected! ]
+-------------------------------------
+automount/4199 is trying to release lock (&type->s_umount_key) at:
+[<c0163b9e>] get_sb_nodev+0x76/0xa4
+but there are no more locks to release!
+
+other info that might help us debug this:
+no locks held by automount/4199.
+
+stack backtrace:
+ [<c0103b15>] dump_trace+0x68/0x1b2
+ [<c0103c77>] show_trace_log_lvl+0x18/0x2c
+ [<c01041db>] show_trace+0xf/0x11
+ [<c010424d>] dump_stack+0x12/0x14
+ [<c012e02c>] print_unlock_inbalance_bug+0xe7/0xf3
+ [<c012fd4f>] lock_release+0x8d/0x164
+ [<c012b452>] up_write+0x14/0x27
+ [<c0163b9e>] get_sb_nodev+0x76/0xa4
+ [<c0163689>] vfs_kern_mount+0x83/0xf6
+ [<c016373e>] do_kern_mount+0x2d/0x3e
+ [<c017513f>] do_mount+0x607/0x67a
+ [<c0175224>] sys_mount+0x72/0xa4
+ [<c0102b96>] sysenter_past_esp+0x5f/0x99
+DWARF2 unwinder stuck at sysenter_past_esp+0x5f/0x99
+Leftover inexact backtrace:
+ =======================
+
+and then deadlock comes.
+
+The problem: autofs_fill_super() returns EINVAL to get_sb_nodev(), but
+before that, it calls kill_anon_super() to destroy the superblock which
+won't be needed. This is however way too soon to call kill_anon_super(),
+because get_sb_nodev() has to perform its own cleanup of the superblock
+first (deactivate_super(), etc.). The correct time to call
+kill_anon_super() is in the autofs_kill_sb() callback, which is called
+by deactivate_super() at proper time, when the superblock is ready to be
+killed.
+
+I can see the same faulty codepath also in autofs4. This patch solves
+issues in both filesystems in a same way - it postpones the
+kill_anon_super() until the proper time is signalized by
+deactivate_super() calling the kill_sb() callback.
+
+---
+--- linux-2.6.18.noarch/fs/autofs4/inode.c.fix-error-code-path-in-autofs_fill_sb-fix	2007-01-02 14:23:03.000000000 +0900
++++ linux-2.6.18.noarch/fs/autofs4/inode.c	2007-01-02 14:26:39.000000000 +0900
+@@ -151,10 +151,11 @@
+ 	/*
+ 	 * In the event of a failure in get_sb_nodev the superblock
+ 	 * info is not present so nothing else has been setup, so
+-	 * just exit when we are called from deactivate_super.
++	 * just call kill_anon_super when we are called from
++	 * deactivate_super.
+ 	 */
+ 	if (!sbi)
+-		return;
++		goto out_kill_sb;
+ 
+ 	sb->s_fs_info = NULL;
+ 
+@@ -166,6 +167,7 @@
+ 
+ 	kfree(sbi);
+ 
++out_kill_sb:
+ 	DPRINTK("shutting down");
+ 	kill_anon_super(sb);
+ }
+@@ -425,7 +427,6 @@
+ fail_free:
+ 	kfree(sbi);
+ 	s->s_fs_info = NULL;
+-	kill_anon_super(s);
+ fail_unlock:
+ 	return -EINVAL;
+ }
+--- linux-2.6.18.noarch/fs/autofs/inode.c.fix-error-code-path-in-autofs_fill_sb-fix	2007-01-02 14:23:03.000000000 +0900
++++ linux-2.6.18.noarch/fs/autofs/inode.c	2007-01-02 14:26:39.000000000 +0900
+@@ -27,10 +27,11 @@
+ 	/*
+ 	 * In the event of a failure in get_sb_nodev the superblock
+ 	 * info is not present so nothing else has been setup, so
+-	 * just exit when we are called from deactivate_super.
++	 * just call kill_anon_super when we are called from
++	 * deactivate_super.
+ 	 */
+ 	if (!sbi)
+-		return;
++		goto out_kill_sb;
+ 
+ 	if ( !sbi->catatonic )
+ 		autofs_catatonic_mode(sbi); /* Free wait queues, close pipe */
+@@ -43,6 +44,7 @@
+ 
+ 	kfree(sb->s_fs_info);
+ 
++out_kill_sb:
+ 	DPRINTK(("autofs: shutting down\n"));
+ 	kill_anon_super(sb);
+ }
+@@ -209,7 +211,6 @@
+ fail_free:
+ 	kfree(sbi);
+ 	s->s_fs_info = NULL;
+-	kill_anon_super(s);
+ fail_unlock:
+ 	return -EINVAL;
+ }
+

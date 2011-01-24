@@ -1,0 +1,30 @@
+From: Steven Whitehouse <swhiteho@redhat.com>
+Date: Wed, 10 Mar 2010 15:56:10 -0500
+Subject: [fs] gfs2: locking fix for potential dos
+Message-id: <1268236570.8777.11.camel@localhost>
+Patchwork-id: 23536
+O-Subject: [RHEL 5.5] GFS2: Mandatory locking fix (bz #570863/#571298) -
+	EMBARGOED
+Bugzilla: 572390
+CVE: CVE-2010-0727
+
+Here is the very simple fix for this bz. This is the RHEL5 version of
+the fix for which I posted the RHEL6 version earlier. This fixes bz
+#572390.
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/fs/gfs2/ops_file.c b/fs/gfs2/ops_file.c
+index 3b8d44e..2e684bf 100644
+--- a/fs/gfs2/ops_file.c
++++ b/fs/gfs2/ops_file.c
+@@ -694,7 +694,8 @@ static int gfs2_lock(struct file *file, int cmd, struct file_lock *fl)
+ 
+ 	if (!(fl->fl_flags & FL_POSIX))
+ 		return -ENOLCK;
+-	if ((ip->i_inode.i_mode & (S_ISGID | S_IXGRP)) == S_ISGID)
++	if ((ip->i_inode.i_mode & (S_ISGID | S_IXGRP)) == S_ISGID &&
++		fl->fl_type != F_UNLCK)
+ 		return -ENOLCK;
+ 
+ 	if (sdp->sd_args.ar_localflocks) {

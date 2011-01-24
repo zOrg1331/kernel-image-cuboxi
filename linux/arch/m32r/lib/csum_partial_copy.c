@@ -27,8 +27,9 @@
 /*
  * Copy while checksumming, otherwise like csum_partial
  */
-__wsum
-csum_partial_copy_nocheck (const void *src, void *dst, int len, __wsum sum)
+unsigned int
+csum_partial_copy_nocheck (const unsigned char *src, unsigned char *dst,
+                           int len, unsigned int sum)
 {
 	sum = csum_partial(src, len, sum);
 	memcpy(dst, src, len);
@@ -41,9 +42,10 @@ EXPORT_SYMBOL(csum_partial_copy_nocheck);
  * Copy from userspace and compute checksum.  If we catch an exception
  * then zero the rest of the buffer.
  */
-__wsum
-csum_partial_copy_from_user (const void __user *src, void *dst,
-			     int len, __wsum sum, int *err_ptr)
+unsigned int
+csum_partial_copy_from_user (const unsigned char __user *src,
+			     unsigned char *dst,
+			     int len, unsigned int sum, int *err_ptr)
 {
 	int missing;
 

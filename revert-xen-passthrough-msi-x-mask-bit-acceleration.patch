@@ -1,0 +1,600 @@
+From: Don Dugger <ddugger@redhat.com>
+Date: Fri, 18 Dec 2009 20:46:32 -0500
+Subject: Revert: [xen] passthrough msi-x mask bit acceleration
+Message-id: <200912182046.nBIKkWbs018212@sobek.n0ano.com>
+Patchwork-id: 22181
+O-Subject: [RHEL5.5 PATCH 1/3 V2] BZ 537734: MSI-X mask bit acceleration
+Bugzilla: 537734
+
+Reverting due to xen hv abi breakage:
+
+    Message-id: <200911302157.nAULvLlG008710@sobek.n0ano.com>
+    Patchwork-id: 21555
+    O-Subject: [RHEL5.5 PATCH 3/3] BZ 537734: xen: passthrough MSI-X mask bit
+        acceleration
+    Bugzilla: 537734
+    RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+    RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+
+    backporting xen-unstable changeset 19246, 19306 and
+    fixes from 19902 and partly 19263.
+
+    changeset:   19246:9bc5799566be
+        hvm: passthrough MSI-X mask bit acceleration
+
+        Add a new parameter to DOMCTL_bind_pt_irq to allow Xen to know the
+        guest physical address of MSI-X table. Also add a new MMIO intercept
+        handler to intercept that gpa in order to handle MSI-X vector mask
+        bit operation in the hypervisor. This reduces the load of device model
+        considerably if the guest does mask and unmask frequently
+
+        Signed-off-by: Qing He <qing.he@intel.com>
+
+    changeset:   19306:e6b7b747d122
+        passthrough: fix some spinlock issues in vmsi
+
+        Apart from efficiency, I hasten to fix the assertion failure.
+        - acquire pcidevs_lock before calling pt_irq_xxx_bind_vtd
+        - allocate msixtbl_entry beforehand
+        - check return value from domain_spin_lock_irq_desc()
+        - typo: spin_unlock(&irq_desc->lock) ->
+        - spin_unlock_irq(&irq_desc->lock)
+        - acquire msixtbl_list_lock with irq_disabled
+
+        Signed-off-by: Kouya Shimura <kouya@jp.fujitsu.com>
+
+    changeset:   19902:d768628c28a4
+        x86, hvm:  fix get msix entry error
+
+        There is a mistake to get the msix entry number. It should be
+        divide instead of modulus.
+
+        Signed-off-by: Yang Zhang <yang.zhang@intel.com>
+        Signed-off-by: Qing He <qing.he@intel.com>
+
+    changeset:   19263:9c5b4efc934d
+        hvm: passthrough MSI-X: fix ia64 link and MSI-X clean up
+
+        This patch fixes the ia64 link error and some clean up of MSI-X code.
+        - add ia64 dummy function to link
+        - fix unmatched prototype
+        - add error check
+
+        Signed-off-by: Isaku Yamahata <yamahata@valinux.co.jp>
+
+    Signed-off-by: Qing He <qing.he@intel.com>
+    Signed-off-by: Don Dugger <donald.d.dugger@intel.com>
+
+Signed-off-by: Don Dugger <donald.d.dugger@intel.com>
+---
+ arch/x86/domctl.c            |    8 -
+ arch/x86/hvm/hvm.c           |    7 -
+ arch/x86/hvm/intercept.c     |    6 +-
+ arch/x86/hvm/vmsi.c          |  292 ------------------------------------------
+ arch/x86/msi.c               |   20 ---
+ drivers/passthrough/io.c     |   14 +--
+ include/asm-x86/hvm/domain.h |    4 -
+ include/asm-x86/msi.h        |    2 -
+ include/public/domctl.h      |    1 -
+ include/xen/pci.h            |    6 +-
+ 10 files changed, 4 insertions(+), 356 deletions(-)
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/arch/x86/domctl.c b/arch/x86/domctl.c
+index 33f4eb0..e24bfe1 100644
+--- a/arch/x86/domctl.c
++++ b/arch/x86/domctl.c
+@@ -568,11 +568,7 @@ long arch_do_domctl(
+ 
+         ret = -ESRCH;
+         if ( iommu_enabled )
+-        {
+-            spin_lock(&pcidevs_lock);
+             ret = pt_irq_create_bind_vtd(d, bind);
+-            spin_unlock(&pcidevs_lock);
+-        }
+         if ( ret < 0 )
+             gdprintk(XENLOG_ERR, "pt_irq_create_bind failed!\n");
+ 
+@@ -590,11 +586,7 @@ long arch_do_domctl(
+             break;
+         bind = &(domctl->u.bind_pt_irq);
+         if ( iommu_enabled )
+-        {
+-            spin_lock(&pcidevs_lock);
+             ret = pt_irq_destroy_bind_vtd(d, bind);
+-            spin_unlock(&pcidevs_lock);
+-        }
+         if ( ret < 0 )
+             gdprintk(XENLOG_ERR, "pt_irq_destroy_bind failed!\n");
+         rcu_unlock_domain(d);
+diff --git a/arch/x86/hvm/hvm.c b/arch/x86/hvm/hvm.c
+index 696d37e..227b3d8 100644
+--- a/arch/x86/hvm/hvm.c
++++ b/arch/x86/hvm/hvm.c
+@@ -246,9 +246,6 @@ int hvm_domain_initialise(struct domain *d)
+     spin_lock_init(&d->arch.hvm_domain.irq_lock);
+     spin_lock_init(&d->arch.hvm_domain.vapic_access_lock);
+ 
+-    INIT_LIST_HEAD(&d->arch.hvm_domain.msixtbl_list);
+-    spin_lock_init(&d->arch.hvm_domain.msixtbl_list_lock);
+-
+     rc = paging_enable(d, PG_refcounts|PG_translate|PG_external);
+     if ( rc != 0 )
+         return rc;
+@@ -265,15 +262,11 @@ int hvm_domain_initialise(struct domain *d)
+     return rc;
+ }
+ 
+-extern void msixtbl_pt_cleanup(struct domain *d);
+-
+ void hvm_domain_relinquish_resources(struct domain *d)
+ {
+     hvm_destroy_ioreq_page(d, &d->arch.hvm_domain.ioreq);
+     hvm_destroy_ioreq_page(d, &d->arch.hvm_domain.buf_ioreq);
+ 
+-    msixtbl_pt_cleanup(d);
+-
+     pit_deinit(d);
+     rtc_deinit(d);
+     pmtimer_deinit(d);
+diff --git a/arch/x86/hvm/intercept.c b/arch/x86/hvm/intercept.c
+index 29cd0b1..8e8ee9a 100644
+--- a/arch/x86/hvm/intercept.c
++++ b/arch/x86/hvm/intercept.c
+@@ -34,16 +34,14 @@
+ extern struct hvm_mmio_handler hpet_mmio_handler;
+ extern struct hvm_mmio_handler vlapic_mmio_handler;
+ extern struct hvm_mmio_handler vioapic_mmio_handler;
+-extern struct hvm_mmio_handler msixtbl_mmio_handler;
+ 
+-#define HVM_MMIO_HANDLER_NR 4
++#define HVM_MMIO_HANDLER_NR 3
+ 
+ static struct hvm_mmio_handler *hvm_mmio_handlers[HVM_MMIO_HANDLER_NR] =
+ {
+     &hpet_mmio_handler,
+     &vlapic_mmio_handler,
+-    &vioapic_mmio_handler,
+-    &msixtbl_mmio_handler
++    &vioapic_mmio_handler
+ };
+ 
+ struct hvm_buffered_io_range {
+diff --git a/arch/x86/hvm/vmsi.c b/arch/x86/hvm/vmsi.c
+index a544bc0..2ce5722 100644
+--- a/arch/x86/hvm/vmsi.c
++++ b/arch/x86/hvm/vmsi.c
+@@ -194,295 +194,3 @@ int vmsi_deliver(struct domain *d, int pirq)
+     return 1;
+ }
+ 
+-/* MSI-X mask bit hypervisor interception */
+-struct msixtbl_entry
+-{
+-    struct list_head list;
+-    atomic_t refcnt;    /* how many bind_pt_irq called for the device */
+-
+-    /* TODO: resolve the potential race by destruction of pdev */
+-    struct pci_dev *pdev;
+-    unsigned long gtable;       /* gpa of msix table */
+-    unsigned long table_len;
+-    unsigned long table_flags[MAX_MSIX_TABLE_ENTRIES / BITS_PER_LONG + 1];
+-
+-    struct rcu_head rcu;
+-};
+-
+-static struct msixtbl_entry *msixtbl_find_entry(
+-    struct vcpu *v, unsigned long addr)
+-{
+-    struct msixtbl_entry *entry;
+-    struct domain *d = v->domain;
+-
+-    list_for_each_entry( entry, &d->arch.hvm_domain.msixtbl_list, list )
+-        if ( addr >= entry->gtable &&
+-             addr < entry->gtable + entry->table_len )
+-            return entry;
+-
+-    return NULL;
+-}
+-
+-static void __iomem *msixtbl_addr_to_virt(
+-    struct msixtbl_entry *entry, unsigned long addr)
+-{
+-    int idx, nr_page;
+-
+-    if ( !entry )
+-        return NULL;
+-
+-    nr_page = (addr >> PAGE_SHIFT) -
+-              (entry->gtable >> PAGE_SHIFT);
+-
+-    if ( !entry->pdev )
+-        return NULL;
+-
+-    idx = entry->pdev->msix_table_idx[nr_page];
+-    if ( !idx )
+-        return NULL;
+-
+-    return (void *)(fix_to_virt(idx) +
+-                    (addr & ((1UL << PAGE_SHIFT) - 1)));
+-}
+-
+-static int msixtbl_read(
+-    struct vcpu *v, unsigned long address,
+-    unsigned long len, unsigned long *pval)
+-{
+-    unsigned long offset;
+-    struct msixtbl_entry *entry;
+-    void *virt;
+-    int r = 0;
+-
+-    rcu_read_lock();
+-
+-    if ( len != 4 )
+-        goto out;
+-
+-    offset = address & (PCI_MSIX_ENTRY_SIZE - 1);
+-    if ( offset != PCI_MSIX_ENTRY_VECTOR_CTRL_OFFSET)
+-        goto out;
+-
+-    entry = msixtbl_find_entry(v, address);
+-    virt = msixtbl_addr_to_virt(entry, address);
+-    if ( !virt )
+-        goto out;
+-
+-    *pval = readl(virt);
+-    r = 1;
+-
+-out:
+-    rcu_read_unlock();
+-    return r;
+-}
+-
+-static int msixtbl_write(struct vcpu *v, unsigned long address,
+-                        unsigned long len, unsigned long val)
+-{
+-    unsigned long offset;
+-    struct msixtbl_entry *entry;
+-    void *virt;
+-    int nr_entry;
+-    int r = 0;
+-
+-    rcu_read_lock();
+-
+-    if ( len != 4 )
+-        goto out;
+-
+-    entry = msixtbl_find_entry(v, address);
+-    nr_entry = (address - entry->gtable) / PCI_MSIX_ENTRY_SIZE;
+-
+-    offset = address & (PCI_MSIX_ENTRY_SIZE - 1);
+-    if ( offset != PCI_MSIX_ENTRY_VECTOR_CTRL_OFFSET)
+-    {
+-        set_bit(nr_entry, &entry->table_flags);
+-        goto out;
+-    }
+-
+-    /* exit to device model if address/data has been modified */
+-    if ( test_and_clear_bit(nr_entry, &entry->table_flags) )
+-        goto out;
+-
+-    virt = msixtbl_addr_to_virt(entry, address);
+-    if ( !virt )
+-        goto out;
+-
+-    writel(val, virt);
+-    r = 1;
+-
+-out:
+-    rcu_read_unlock();
+-    return r;
+-}
+-
+-static int msixtbl_range(struct vcpu *v, unsigned long addr)
+-{
+-    struct msixtbl_entry *entry;
+-    void *virt;
+-
+-    rcu_read_lock();
+-
+-    entry = msixtbl_find_entry(v, addr);
+-    virt = msixtbl_addr_to_virt(entry, addr);
+-
+-    rcu_read_unlock();
+-
+-    return !!virt;
+-}
+-
+-struct hvm_mmio_handler msixtbl_mmio_handler = {
+-    .check_handler = msixtbl_range,
+-    .read_handler = msixtbl_read,
+-    .write_handler = msixtbl_write
+-};
+-
+-static void add_msixtbl_entry(struct domain *d,
+-                              struct pci_dev *pdev,
+-                              uint64_t gtable,
+-                              struct msixtbl_entry *entry)
+-{
+-    u32 len;
+-
+-    memset(entry, 0, sizeof(struct msixtbl_entry));
+-
+-    INIT_LIST_HEAD(&entry->list);
+-    INIT_RCU_HEAD(&entry->rcu);
+-    atomic_set(&entry->refcnt, 0);
+-
+-    len = pci_msix_get_table_len(pdev);
+-    entry->table_len = len;
+-    entry->pdev = pdev;
+-    entry->gtable = (unsigned long) gtable;
+-
+-    list_add_rcu(&entry->list, &d->arch.hvm_domain.msixtbl_list);
+-}
+-
+-static void free_msixtbl_entry(struct rcu_head *rcu)
+-{
+-    struct msixtbl_entry *entry;
+-
+-    entry = container_of (rcu, struct msixtbl_entry, rcu);
+-
+-    xfree(entry);
+-}
+-
+-static void del_msixtbl_entry(struct msixtbl_entry *entry)
+-{
+-    list_del_rcu(&entry->list);
+-    call_rcu(&entry->rcu, free_msixtbl_entry);
+-}
+-
+-int msixtbl_pt_register(struct domain *d, int pirq, uint64_t gtable)
+-{
+-    irq_desc_t *irq_desc;
+-    struct msi_desc *msi_desc;
+-    struct pci_dev *pdev;
+-    struct msixtbl_entry *entry, *new_entry;
+-    int r = -EINVAL;
+-
+-    ASSERT(spin_is_locked(&pcidevs_lock));
+-
+-    /*
+-     * xmalloc() with irq_disabled causes the failure of check_lock() 
+-     * for xenpool->lock. So we allocate an entry beforehand.
+-     */
+-    new_entry = xmalloc(struct msixtbl_entry);
+-    if ( !new_entry )
+-        return -ENOMEM;
+-
+-    irq_desc = domain_spin_lock_irq_desc(d, pirq, NULL);
+-    if ( !irq_desc )
+-    {
+-        xfree(new_entry);
+-        return r;
+-    }
+-
+-    if ( irq_desc->handler != &pci_msi_type )
+-        goto out;
+-
+-    msi_desc = irq_desc->msi_desc;
+-    if ( !msi_desc )
+-        goto out;
+-
+-    pdev = msi_desc->dev;
+-
+-    spin_lock(&d->arch.hvm_domain.msixtbl_list_lock);
+-
+-    list_for_each_entry( entry, &d->arch.hvm_domain.msixtbl_list, list )
+-        if ( pdev == entry->pdev )
+-            goto found;
+-
+-    entry = new_entry;
+-    new_entry = NULL;
+-    add_msixtbl_entry(d, pdev, gtable, entry);
+-
+-found:
+-    atomic_inc(&entry->refcnt);
+-    spin_unlock(&d->arch.hvm_domain.msixtbl_list_lock);
+-    r = 0;
+-
+-out:
+-    spin_unlock_irq(&irq_desc->lock);
+-    xfree(new_entry);
+-    return r;
+-}
+-
+-void msixtbl_pt_unregister(struct domain *d, int pirq)
+-{
+-    irq_desc_t *irq_desc;
+-    struct msi_desc *msi_desc;
+-    struct pci_dev *pdev;
+-    struct msixtbl_entry *entry;
+-
+-    ASSERT(spin_is_locked(&pcidevs_lock));
+-
+-    irq_desc = domain_spin_lock_irq_desc(d, pirq, NULL);
+-    if ( !irq_desc )
+-        return;
+-
+-    if ( irq_desc->handler != &pci_msi_type )
+-        goto out;
+-
+-    msi_desc = irq_desc->msi_desc;
+-    if ( !msi_desc )
+-        goto out;
+-
+-    pdev = msi_desc->dev;
+-
+-    spin_lock(&d->arch.hvm_domain.msixtbl_list_lock);
+-
+-    list_for_each_entry( entry, &d->arch.hvm_domain.msixtbl_list, list )
+-        if ( pdev == entry->pdev )
+-            goto found;
+-
+-    spin_unlock(&d->arch.hvm_domain.msixtbl_list_lock);
+-
+-
+-out:
+-    spin_unlock_irq(&irq_desc->lock);
+-    return;
+-
+-found:
+-    if ( !atomic_dec_and_test(&entry->refcnt) )
+-        del_msixtbl_entry(entry);
+-
+-    spin_unlock(&d->arch.hvm_domain.msixtbl_list_lock);
+-    spin_unlock_irq(&irq_desc->lock);
+-}
+-void msixtbl_pt_cleanup(struct domain *d, int pirq)
+-{
+-    struct msixtbl_entry *entry, *temp;
+-    unsigned long flags;
+-
+-    /* msixtbl_list_lock must be acquired with irq_disabled for check_lock() */
+-    local_irq_save(flags);
+-    spin_lock(&d->arch.hvm_domain.msixtbl_list_lock);
+-
+-    list_for_each_entry_safe( entry, temp,
+-                              &d->arch.hvm_domain.msixtbl_list, list )
+-        del_msixtbl_entry(entry);
+-
+-    spin_unlock(&d->arch.hvm_domain.msixtbl_list_lock);
+-    local_irq_restore(flags);
+-}
+diff --git a/arch/x86/msi.c b/arch/x86/msi.c
+index 6333e18..4c13ad3 100644
+--- a/arch/x86/msi.c
++++ b/arch/x86/msi.c
+@@ -830,23 +830,3 @@ int pci_restore_msi_state(struct pci_dev *pdev)
+     return 0;
+ }
+ 
+-unsigned int pci_msix_get_table_len(struct pci_dev *pdev)
+-{
+-    int pos;
+-    u16 control;
+-    u8 bus, slot, func;
+-    unsigned int len;
+-
+-    bus = pdev->bus;
+-    slot = PCI_SLOT(pdev->devfn);
+-    func = PCI_FUNC(pdev->devfn);
+-
+-    pos = pci_find_cap_offset(bus, slot, func, PCI_CAP_ID_MSIX);
+-    if ( !pos )
+-        return 0;
+-
+-    control = pci_conf_read16(bus, slot, func, msix_control_reg(pos));
+-    len = msix_table_size(control) * PCI_MSIX_ENTRY_SIZE;
+-
+-    return len;
+-}
+diff --git a/drivers/passthrough/io.c b/drivers/passthrough/io.c
+index 8a818c2..f62421b 100644
+--- a/drivers/passthrough/io.c
++++ b/drivers/passthrough/io.c
+@@ -90,7 +90,7 @@ int pt_irq_create_bind_vtd(
+ 
+     if ( pt_irq_bind->irq_type == PT_IRQ_TYPE_MSI )
+     {
+-#ifdef SUPPORT_MSI_REMAPPING
++
+         if ( !test_and_set_bit(pirq, hvm_irq_dpci->mapping))
+         {
+             set_bit(_HVM_IRQ_DPCI_MSI, &hvm_irq_dpci->mirq[pirq].flags);
+@@ -99,12 +99,6 @@ int pt_irq_create_bind_vtd(
+             hvm_irq_dpci->msi_gvec_pirq[pt_irq_bind->u.msi.gvec] = pirq;
+             /* bind after hvm_irq_dpci is setup to avoid race with irq handler*/
+             rc = pirq_guest_bind(d->vcpu[0], pirq, 0);
+-            if ( rc == 0 && pt_irq_bind->u.msi.gtable )
+-            {
+-                rc = msixtbl_pt_register(d, pirq, pt_irq_bind->u.msi.gtable);
+-                if ( unlikely(rc) )
+-                    pirq_guest_unbind(d, pirq);
+-            }
+             if ( unlikely(rc) )
+             {
+                 hvm_irq_dpci->msi_gvec_pirq[pt_irq_bind->u.msi.gvec] = 0;
+@@ -133,9 +127,6 @@ int pt_irq_create_bind_vtd(
+             hvm_irq_dpci->mirq[pirq].gmsi.gflags = pt_irq_bind->u.msi.gflags;
+             hvm_irq_dpci->msi_gvec_pirq[pt_irq_bind->u.msi.gvec] = pirq;
+         }
+-#else
+-        return -ENOSYS;
+-#endif
+     }
+     else
+     {
+@@ -256,9 +247,6 @@ int pt_irq_destroy_bind_vtd(
+         if ( list_empty(&hvm_irq_dpci->mirq[machine_gsi].digl_list) )
+         {
+             pirq_guest_unbind(d, machine_gsi);
+-#ifdef SUPPORT_MSI_REMAPPING
+-            msixtbl_pt_unregister(d, machine_gsi);
+-#endif
+             kill_timer(&hvm_irq_dpci->hvm_timer[domain_irq_to_vector(d, machine_gsi)]);
+             hvm_irq_dpci->mirq[machine_gsi].dom   = NULL;
+             hvm_irq_dpci->mirq[machine_gsi].flags = 0;
+diff --git a/include/asm-x86/hvm/domain.h b/include/asm-x86/hvm/domain.h
+index 367ebae..f6c4c61 100644
+--- a/include/asm-x86/hvm/domain.h
++++ b/include/asm-x86/hvm/domain.h
+@@ -66,10 +66,6 @@ struct hvm_domain {
+     /* Pass-through */
+     struct hvm_iommu       hvm_iommu;
+ 
+-    /* hypervisor intercepted msix table */
+-    struct list_head       msixtbl_list;
+-    spinlock_t             msixtbl_list_lock;
+-
+ #if CONFIG_PAGING_LEVELS == 3
+     bool_t                 amd_npt_4gb_warning;
+ #endif
+diff --git a/include/asm-x86/msi.h b/include/asm-x86/msi.h
+index 56387c6..a5f67e1 100644
+--- a/include/asm-x86/msi.h
++++ b/include/asm-x86/msi.h
+@@ -81,8 +81,6 @@ extern void teardown_msi_vector(int vector);
+ extern int msi_free_vector(struct msi_desc *entry);
+ extern int pci_restore_msi_state(struct pci_dev *pdev);
+ 
+-extern unsigned int pci_msix_get_table_len(struct pci_dev *pdev);
+-
+ struct msi_desc {
+ 	struct {
+ 		__u8	type	: 5; 	/* {0: unused, 5h:MSI, 11h:MSI-X} */
+diff --git a/include/public/domctl.h b/include/public/domctl.h
+index 38ac7a9..8542381 100644
+--- a/include/public/domctl.h
++++ b/include/public/domctl.h
+@@ -480,7 +480,6 @@ struct xen_domctl_bind_pt_irq {
+         struct {
+             uint8_t gvec;
+             uint32_t gflags;
+-            uint64_t gtable;
+         } msi;
+     } u;
+ };
+diff --git a/include/xen/pci.h b/include/xen/pci.h
+index 120c02c..0fd22f0 100644
+--- a/include/xen/pci.h
++++ b/include/xen/pci.h
+@@ -29,8 +29,7 @@
+ #define PCI_BDF(b,d,f)  ((((b) & 0xff) << 8) | PCI_DEVFN(d,f))
+ #define PCI_BDF2(b,df)  ((((b) & 0xff) << 8) | ((df) & 0xff))
+ 
+-#define MAX_MSIX_TABLE_ENTRIES  2048
+-#define MAX_MSIX_TABLE_PAGES    8
++#define MAX_MSIX_TABLE_PAGES    8    /* 2048 entries */
+ struct pci_dev {
+     struct list_head alldevs_list;
+     struct list_head domain_list;
+@@ -85,7 +84,4 @@ void pci_conf_write32(
+ int pci_find_cap_offset(u8 bus, u8 dev, u8 func, u8 cap);
+ int pci_find_next_cap(u8 bus, unsigned int devfn, u8 pos, int cap);
+ 
+-int msixtbl_pt_register(struct domain *d, int pirq, uint64_t gtable);
+-void msixtbl_pt_unregister(struct domain *d, int pirq);
+-
+ #endif /* __XEN_PCI_H__ */

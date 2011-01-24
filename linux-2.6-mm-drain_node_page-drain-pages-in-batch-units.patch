@@ -1,0 +1,54 @@
+From: George Beshers <gbeshers@redhat.com>
+Date: Tue, 29 Jul 2008 11:34:40 -0400
+Subject: [mm] drain_node_page: drain pages in batch units
+Message-id: 488F3890.60909@redhat.com
+O-Subject: [RHEL5.3 PATCH] drain_node_page(): Drain pages in batch units
+Bugzilla: 442179
+RH-Acked-by: Larry Woodman <lwoodman@redhat.com>
+
+[PATCH] drain_node_page(): Drain pages in batch units
+
+BZ442179.
+http://git2.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=bc4ba393c007248f76c05945abb7b7b892cdd1cc
+patch against 2.6.18-99.
+
+Tested both at SGI and by me on ia64/altix.  Brew build is
+http://porkchop.redhat.com/brewroot/scratch/gbeshers/task_1413055/
+for further testing.
+
+drain_node_pages() currently drains the complete pageset of all pages.  If
+there are a large number of pages in the queues then we may hold off
+interrupts for too long.
+
+Duplicate the method used in free_hot_cold_page.  Only drain pcp->batch
+pages at one time.
+
+Signed-off-by: Christoph Lameter <clameter@sgi.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+Signed-off-by: Linus Torvalds <torvalds@osdl.org>
+
+Please ACK or comment.
+
+diff --git a/mm/page_alloc.c b/mm/page_alloc.c
+index 45e6c43..46f8b2f 100644
+--- a/mm/page_alloc.c
++++ b/mm/page_alloc.c
+@@ -642,9 +642,16 @@ void drain_node_pages(int nodeid)
+ 
+ 			pcp = &pset->pcp[i];
+ 			if (pcp->count) {
++				int to_drain;
++
+ 				local_irq_save(flags);
+-				free_pages_bulk(zone, pcp->count, &pcp->list, 0);
+-				pcp->count = 0;
++				if (pcp->count >= pcp->batch)
++					to_drain = pcp->batch;
++				else
++					to_drain = pcp->count;
++				free_pages_bulk(zone, to_drain, &pcp->list, 0);
++				pcp->count -= to_drain;
++
+ 				touch_softlockup_watchdog();
+ 				local_irq_restore(flags);
+ 			}

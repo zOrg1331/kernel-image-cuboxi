@@ -1,0 +1,136 @@
+From: John Feeney <jfeeney@redhat.com>
+Date: Thu, 17 Jan 2008 14:17:33 -0500
+Subject: [misc] ioat: support for 1.9
+Message-id: 478FA9CD.8070108@redhat.com
+O-Subject: Re: [RHEL-5.2 PATCH] Support for I/O AT level 1.9
+Bugzilla: 209411
+
+bz209411
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=209411
+ioatdma 1.8 or higher required for better I/OAT performance
+
+Solution:
+According to Intel, there are two upstream -mm patches:
+
+   I/OAT: Only offload copies for TCP when there will be a context switch
+   The performance wins come with having the DMA copy engine doing the copies
+   in parallel with the context switch.  If there is enough data ready on the
+   socket at recv time just use a regular copy.
+
+and
+
+   ioatdma: Push pending transactions to hardware more frequently
+   Every 20 descriptors turns out to be to few append commands with
+   newer/faster CPUs.  Pushing every 4 still cuts down on MMIO writes to an
+   acceptable level without letting the DMA engine run out of work.
+
+Both of these patches are listed in the bugzilla and were backported
+to RHEL-5.1.
+
+Testing:
+I ported the Dell patch to the RHEL 5.1 code base and built a release
+in brew. Unfortunately, still waiting for test results from Dell but I
+have
+posted so it can get posted before the deadline.
+
+Acks would be appreciated. Thanks.
+
+After discussing this with Linda, I promised to provide a
+patch for what I believe you guys want, the parameter
+and a global ioat_pending_level variable so the high water
+mark is configurable. This removes just this functionality
+(5 lines) from 7bb67c14fd3778504fb77da30ce11582336dfced
+and leaves ioatdma.c and the remaining 6 files of that
+upstream patch untouched.
+
+Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+Acked-by: "David S. Miller" <davem@redhat.com>
+
+diff --git a/drivers/dma/ioatdma.c b/drivers/dma/ioatdma.c
+index dc29723..2f30270 100644
+--- a/drivers/dma/ioatdma.c
++++ b/drivers/dma/ioatdma.c
+@@ -40,6 +40,11 @@
+ #define to_ioat_device(dev) container_of(dev, struct ioat_device, common)
+ #define to_ioat_desc(lh) container_of(lh, struct ioat_desc_sw, node)
+ 
++static int ioat_pending_level = 4;
++module_param(ioat_pending_level, int, 0644);
++MODULE_PARM_DESC(ioat_pending_level,
++		 "high-water mark for pushing ioat descriptors (default: 4)");
++
+ /* internal functions */
+ static int __devinit ioat_probe(struct pci_dev *pdev, const struct pci_device_id *ent);
+ static void __devexit ioat_remove(struct pci_dev *pdev);
+@@ -310,7 +315,8 @@ static dma_cookie_t do_ioat_dma_memcpy(struct ioat_dma_chan *ioat_chan,
+ 	list_splice_init(&new_chain, ioat_chan->used_desc.prev);
+ 
+ 	ioat_chan->pending += desc_count;
+-	if (ioat_chan->pending >= 20) {
++	if (ioat_chan->pending >= ioat_pending_level)
++	{
+ 		append = 1;
+ 		ioat_chan->pending = 0;
+ 	}
+@@ -820,7 +826,7 @@ static void __devexit ioat_remove(struct pci_dev *pdev)
+ }
+ 
+ /* MODULE API */
+-MODULE_VERSION("1.7");
++MODULE_VERSION("1.9");
+ MODULE_LICENSE("GPL");
+ MODULE_AUTHOR("Intel Corporation");
+ 
+diff --git a/net/ipv4/tcp.c b/net/ipv4/tcp.c
+index 05bb4ce..f3fd4f1 100644
+--- a/net/ipv4/tcp.c
++++ b/net/ipv4/tcp.c
+@@ -1108,6 +1108,7 @@ int tcp_recvmsg(struct kiocb *iocb, struct sock *sk, struct msghdr *msg,
+ 	long timeo;
+ 	struct task_struct *user_recv = NULL;
+ 	int copied_early = 0;
++	struct sk_buff *skb;
+ 
+ 	lock_sock(sk);
+ 
+@@ -1134,16 +1135,25 @@ int tcp_recvmsg(struct kiocb *iocb, struct sock *sk, struct msghdr *msg,
+ #ifdef CONFIG_NET_DMA
+ 	tp->ucopy.dma_chan = NULL;
+ 	preempt_disable();
+-	if ((len > sysctl_tcp_dma_copybreak) && !(flags & MSG_PEEK) &&
+-	    !sysctl_tcp_low_latency && __get_cpu_var(softnet_data).net_dma) {
+-		preempt_enable_no_resched();
+-		tp->ucopy.pinned_list = dma_pin_iovec_pages(msg->msg_iov, len);
+-	} else
+-		preempt_enable_no_resched();
++	skb = skb_peek_tail(&sk->sk_receive_queue);
++	{
++		int available = 0;
++		if (skb)
++			available = TCP_SKB_CB(skb)->seq + skb->len - (*seq);
++		if ((available < target) &&
++		    (len > sysctl_tcp_dma_copybreak) && !(flags & MSG_PEEK) &&
++		    !sysctl_tcp_low_latency && 
++		    __get_cpu_var(softnet_data).net_dma) {
++			preempt_enable_no_resched();
++			tp->ucopy.pinned_list = 
++					dma_pin_iovec_pages(msg->msg_iov, len);
++		} else {
++			preempt_enable_no_resched();
++		}
++	}
+ #endif
+ 
+ 	do {
+-		struct sk_buff *skb;
+ 		u32 offset;
+ 
+ 		/* Are we at urgent data? Stop if we have read anything or have SIGURG pending. */
+@@ -1431,7 +1441,6 @@ skip_copy:
+ 
+ #ifdef CONFIG_NET_DMA
+ 	if (tp->ucopy.dma_chan) {
+-		struct sk_buff *skb;
+ 		dma_cookie_t done, used;
+ 
+ 		dma_async_memcpy_issue_pending(tp->ucopy.dma_chan);

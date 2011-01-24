@@ -1,0 +1,34 @@
+From: Michal Schmidt <mschmidt@redhat.com>
+Date: Fri, 3 Sep 2010 16:43:33 -0400
+Subject: [net] bnx2x: fail when trying to setup unsupported features
+Message-id: <20100903164333.25415.24535.stgit@brian.englab.brq.redhat.com>
+Patchwork-id: 28104
+O-Subject: [RHEL5.6 BZ572012 PATCH 29/46] bnx2x: fail when try to setup
+	unsupported features
+Bugzilla: 572012
+RH-Acked-by: David S. Miller <davem@redhat.com>
+RH-Acked-by: Stanislaw Gruszka <sgruszka@redhat.com>
+
+From: Stanislaw Gruszka <sgruszka@redhat.com>
+
+Signed-off-by: Stanislaw Gruszka <sgruszka@redhat.com>
+Signed-off-by: Eilon Greenstein <eilong@broadcom.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+(cherry picked from commit e0d904ffd052930504913fb105dd25764f5f0bd8)
+
+RHEL: in #if 0, no effect
+
+diff --git a/drivers/net/bnx2x_main.c b/drivers/net/bnx2x_main.c
+index bc00d84..86a71c6 100644
+--- a/drivers/net/bnx2x_main.c
++++ b/drivers/net/bnx2x_main.c
+@@ -11012,6 +11012,9 @@ static int bnx2x_set_flags(struct net_device *dev, u32 data)
+ 	int changed = 0;
+ 	int rc = 0;
+ 
++	if (data & ~(ETH_FLAG_LRO | ETH_FLAG_RXHASH))
++		return -EOPNOTSUPP;
++
+ 	if (bp->recovery_state != BNX2X_RECOVERY_DONE) {
+ 		printk(KERN_ERR "Handling parity error recovery. Try again later\n");
+ 		return -EAGAIN;

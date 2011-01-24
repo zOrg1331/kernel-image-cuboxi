@@ -1,0 +1,57 @@
+From: Don Dugger <ddugger@redhat.com>
+Date: Wed, 20 Oct 2010 16:39:48 -0400
+Subject: [xen] vtd: let IOMMU use another IRQ without conflict
+Message-id: <201010201639.o9KGdmvZ032716@sobek.n0ano.com>
+Patchwork-id: 28883
+O-Subject: [RHEL 5.6 PATCH V2] BZ 575790: Xen: Let IOMMU use another IRQ without
+	conflict
+Bugzilla: 575790
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+
+Bug is that guest prints repeated characters when using a VTd assigned
+USB keyboard.
+
+This issue should always happen to the physical devices in dom0 or in HVM
+guest, as long as there are enough CPUs and devices in the platform to make
+some physical device's IRQ >= 32.
+
+Upstream has fixed this via 2 changesets (r19175 and r19195) that
+introduces a new API that can setup interrupt with vector only. that is,
+request_irq_vector and setup_irq_vector.
+
+The upstream solution is rather intrusive and potentially error prone (it
+modifies the heart of the interrupt handling).
+
+A much simpler solution is to just have MSI interrupts not fill the
+irq_vector array as that array is only used for ioapic IRQs.
+
+Upstream status: fixed in another way
+
+Brew build: http://brewweb.devel.redhat.com/brew/taskinfo?taskID=2661894
+
+Testing: Patch tested and causes no problems on a Weybridge system and Intel
+QA has verified that this patch solves the problem.
+
+Signed-off-by: Xintao Zhang <xintao.zhang@intel.com>
+Signed-off-by: Don Dugger <donald.d.dugger@intel.com>
+---
+ drivers/passthrough/vtd/iommu.c |    4 ----
+ 1 files changed, 0 insertions(+), 4 deletions(-)
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/passthrough/vtd/iommu.c b/drivers/passthrough/vtd/iommu.c
+index 85251b2..0691255 100644
+--- a/drivers/passthrough/vtd/iommu.c
++++ b/drivers/passthrough/vtd/iommu.c
+@@ -878,10 +878,6 @@ int iommu_set_interrupt(struct iommu *iommu)
+     vector = assign_irq_vector(AUTO_ASSIGN);
+     vector_to_iommu[vector] = iommu;
+ 
+-    /* VT-d fault is a MSI, make irq == vector */
+-    irq_vector[vector] = vector;
+-    vector_irq[vector] = vector;
+-
+     if ( !vector )
+     {
+         gdprintk(XENLOG_ERR VTDPREFIX, "IOMMU: no vectors\n");

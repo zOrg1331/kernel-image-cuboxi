@@ -1,0 +1,238 @@
+From: Herbert Xu <herbert@gondor.apana.org.au>
+Date: Wed, 27 May 2009 15:31:17 +1000
+Subject: [net] ipv4: add GRO infrastructure
+Message-id: E1M9BjR-0002Bp-BG@gondolin.me.apana.org.au
+O-Subject: [PATCH 12/17] ipv4: Add GRO infrastructure
+Bugzilla: 499347
+RH-Acked-by: David Miller <davem@redhat.com>
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+RH-Acked-by: Thomas Graf <tgraf@redhat.com>
+
+RHEL5 bugzilla #499347
+
+ipv4: Add GRO infrastructure
+
+This patch adds GRO support for IPv4.
+
+The criteria for merging is more stringent than LRO, in particular,
+we require all fields in the IP header to be identical except for
+the length, ID and checksum.  In addition, the ID must form an
+arithmetic sequence with a difference of one.
+
+The ID requirement might seem overly strict, however, most hardware
+TSO solutions already obey this rule.  Linux itself also obeys this
+whether GSO is in use or not.
+
+In future we could relax this rule by storing the IDs (or rather
+making sure that we don't drop them when pulling the aggregate
+skb's tail).
+
+Signed-off-by: Herbert Xu <herbert@gondor.apana.org.au>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+
+diff --git a/include/net/protocol.h b/include/net/protocol.h
+index c643bce..38d4bf6 100644
+--- a/include/net/protocol.h
++++ b/include/net/protocol.h
+@@ -42,6 +42,12 @@ struct net_protocol {
+ 	int			no_policy;
+ };
+ 
++struct net_gro_protocol {
++	struct sk_buff	      **(*gro_receive)(struct sk_buff **head,
++					       struct sk_buff *skb);
++	int			(*gro_complete)(struct sk_buff *skb);
++};
++
+ #if defined(CONFIG_IPV6) || defined (CONFIG_IPV6_MODULE)
+ struct inet6_protocol 
+ {
+@@ -89,12 +95,15 @@ struct inet_protosw {
+ 
+ extern struct net_protocol *inet_protocol_base;
+ extern struct net_protocol *inet_protos[MAX_INET_PROTOS];
++extern struct net_gro_protocol *inet_gro_protos[MAX_INET_PROTOS];
+ 
+ #if defined(CONFIG_IPV6) || defined (CONFIG_IPV6_MODULE)
+ extern struct inet6_protocol *inet6_protos[MAX_INET_PROTOS];
+ #endif
+ 
+ extern int	inet_add_protocol(struct net_protocol *prot, unsigned char num);
++extern int	inet_add_gro_protocol(struct net_gro_protocol *prot,
++				      unsigned char protocol);
+ extern int	inet_del_protocol(struct net_protocol *prot, unsigned char num);
+ extern void	inet_register_protosw(struct inet_protosw *p);
+ extern void	inet_unregister_protosw(struct inet_protosw *p);
+diff --git a/net/ipv4/af_inet.c b/net/ipv4/af_inet.c
+index af39956..ce3ac46 100644
+--- a/net/ipv4/af_inet.c
++++ b/net/ipv4/af_inet.c
+@@ -1189,6 +1189,110 @@ out:
+ 	return segs;
+ }
+ 
++static struct sk_buff **inet_gro_receive(struct sk_buff **head,
++					 struct sk_buff *skb)
++{
++	struct net_gro_protocol *ops;
++	struct sk_buff **pp = NULL;
++	struct sk_buff *p;
++	struct iphdr *iph;
++	unsigned int hlen;
++	unsigned int off;
++	int flush = 1;
++	int proto;
++	int id;
++
++	off = skb_gro_offset(skb);
++	hlen = off + sizeof(*iph);
++	iph = skb_gro_header_fast(skb, off);
++	if (skb_gro_header_hard(skb, hlen)) {
++		iph = skb_gro_header_slow(skb, hlen, off);
++		if (unlikely(!iph))
++			goto out;
++	}
++
++	proto = iph->protocol & (MAX_INET_PROTOS - 1);
++
++	rcu_read_lock();
++	ops = rcu_dereference(inet_gro_protos[proto]);
++	if (!ops || !ops->gro_receive)
++		goto out_unlock;
++
++	if (*(u8 *)iph != 0x45)
++		goto out_unlock;
++
++	if (unlikely(ip_fast_csum((u8 *)iph, iph->ihl)))
++		goto out_unlock;
++
++	flush = ntohs(iph->tot_len) != skb_gro_len(skb) ||
++		iph->frag_off != htons(IP_DF);
++	id = ntohs(iph->id);
++
++	for (p = *head; p; p = p->next) {
++		struct iphdr *iph2;
++
++		if (!NAPI_GRO_CB(p)->same_flow)
++			continue;
++
++		iph2 = ip_hdr(p);
++
++		if ((iph->protocol ^ iph2->protocol) |
++		    (iph->tos ^ iph2->tos) |
++		    (iph->saddr ^ iph2->saddr) |
++		    (iph->daddr ^ iph2->daddr)) {
++			NAPI_GRO_CB(p)->same_flow = 0;
++			continue;
++		}
++
++		/* All fields must match except length and checksum. */
++		NAPI_GRO_CB(p)->flush |=
++			(iph->ttl ^ iph2->ttl) |
++			((u16)(ntohs(iph2->id) + NAPI_GRO_CB(p)->count) ^ id);
++
++		NAPI_GRO_CB(p)->flush |= flush;
++	}
++
++	NAPI_GRO_CB(skb)->flush |= flush;
++	skb_gro_pull(skb, sizeof(*iph));
++	skb_set_transport_header(skb, skb_gro_offset(skb));
++
++	pp = ops->gro_receive(head, skb);
++
++out_unlock:
++	rcu_read_unlock();
++
++out:
++	NAPI_GRO_CB(skb)->flush |= flush;
++
++	return pp;
++}
++
++static int inet_gro_complete(struct sk_buff *skb)
++{
++	struct net_gro_protocol *ops;
++	struct iphdr *iph = ip_hdr(skb);
++	int proto = iph->protocol & (MAX_INET_PROTOS - 1);
++	int err = -ENOSYS;
++	__be16 newlen = htons(skb->len - skb_network_offset(skb));
++
++	csum_replace2(&iph->check, iph->tot_len, newlen);
++	iph->tot_len = newlen;
++
++	rcu_read_lock();
++	ops = rcu_dereference(inet_gro_protos[proto]);
++	if (unlikely(!ops || !ops->gro_complete)) {
++		WARN_ON(1);
++		goto out_unlock;
++	}
++
++	err = ops->gro_complete(skb);
++
++out_unlock:
++	rcu_read_unlock();
++
++	return err;
++}
++
+ #ifdef CONFIG_IP_MULTICAST
+ static struct net_protocol igmp_protocol = {
+ 	.handler =	igmp_rcv,
+@@ -1253,6 +1357,12 @@ static struct packet_type ip_packet_type = {
+ 	.gso_segment = inet_gso_segment,
+ };
+ 
++static struct gro_packet_type ip_gro_packet_type = {
++	.type = __constant_htons(ETH_P_IP),
++	.gro_receive = inet_gro_receive,
++	.gro_complete = inet_gro_complete,
++};
++
+ static int __init inet_init(void)
+ {
+ 	struct sk_buff *dummy_skb;
+@@ -1349,6 +1459,7 @@ static int __init inet_init(void)
+ 	ipfrag_init();
+ 
+ 	dev_add_pack(&ip_packet_type);
++	dev_add_pack_gro(&ip_gro_packet_type);
+ 
+ 	rc = 0;
+ out:
+diff --git a/net/ipv4/protocol.c b/net/ipv4/protocol.c
+index 05f5114..f79baab 100644
+--- a/net/ipv4/protocol.c
++++ b/net/ipv4/protocol.c
+@@ -47,6 +47,7 @@
+ #include <linux/igmp.h>
+ 
+ struct net_protocol *inet_protos[MAX_INET_PROTOS];
++struct net_gro_protocol *inet_gro_protos[MAX_INET_PROTOS];
+ static DEFINE_SPINLOCK(inet_proto_lock);
+ 
+ /*
+@@ -71,6 +72,24 @@ int inet_add_protocol(struct net_protocol *prot, unsigned char protocol)
+ 	return ret;
+ }
+ 
++int inet_add_gro_protocol(struct net_gro_protocol *prot, unsigned char protocol)
++{
++	int hash, ret;
++
++	hash = protocol & (MAX_INET_PROTOS - 1);
++
++	spin_lock_bh(&inet_proto_lock);
++	if (inet_gro_protos[hash]) {
++		ret = -1;
++	} else {
++		inet_gro_protos[hash] = prot;
++		ret = 0;
++	}
++	spin_unlock_bh(&inet_proto_lock);
++
++	return ret;
++}
++
+ /*
+  *	Remove a protocol from the hash tables.
+  */

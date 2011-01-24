@@ -18,16 +18,17 @@
  *    Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  */
 
-#include <asm/unistd.h>
-#include <asm/assembly.h>
 #include <linux/sys.h>
 #include <linux/linkage.h>
+#include <asm/unistd.h>
 
-#define ENTRY_NAME(_name_) ASM_ULONG_INSN _name_
+#define ENTRY_NAME(_name_) .word _name_
 
 	.section .rodata,"a"
+	.align 4
+	.export hpux_call_table
 	.import hpux_unimplemented_wrapper
-ENTRY(hpux_call_table)
+hpux_call_table:
 	ENTRY_NAME(sys_ni_syscall)	/* 0 */
 	ENTRY_NAME(sys_exit)
 	ENTRY_NAME(hpux_fork_wrapper)
@@ -541,6 +542,5 @@ ENTRY(hpux_call_table)
 	ENTRY_NAME(hpux_unimplemented_wrapper)      /* 510 */
 	ENTRY_NAME(hpux_unimplemented_wrapper)
 	ENTRY_NAME(hpux_unimplemented_wrapper)
-END(hpux_call_table)
 .end
 

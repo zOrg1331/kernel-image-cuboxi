@@ -1,0 +1,87 @@
+From: Hendrik Brueckner <brueckner@redhat.com>
+Date: Wed, 13 Jan 2010 08:08:54 -0500
+Subject: [misc] do not evaluate WARN_ON condition twice
+Message-id: <20100113080854.GA13657@redhat.com>
+Patchwork-id: 22483
+O-Subject: [RHEL5.5 PATCH 1/1 UPDATE] [kernel] Do not evaluate WARN_ON()
+	condition twice
+Bugzilla: 548653
+RH-Acked-by: Amerigo Wang <amwang@redhat.com>
+
+Description
+-----------
+Commit "[net] wireless support updates from 2.6.32"
+(c10c3a3a74d30cf16e82b55577b72879a039c582) changed the WARN_ON()
+statement in a way that the condition is evaluated twice.
+
+Checking the condition twice can lead to duplicate execution of
+functions when they are used as the WARN_ON() condition.
+
+For example, in the s390x DASD device driver:
+
+        list_del corruption. prev->next should be 0000000020862fd0, but was
+        a784000fc020
+        000b
+	illegal operation: 0001 [#1]
+        CPU: 0 Not tainted 2.6.18-182.el5 #1
+        Process rmmod (pid: 237, task: 000000001ee87788, ksp: 0000000000823a20)
+        Krnl PSW : 0704000180000000 0000000000267e1e (list_del+0x9e/0xcc)
+        Krnl GPRS: 0000000000000002 0000000000823cd8 0000000000000026 0400000000000000
+               000000000012acda 0000000000000e73 0000000080120fa8 0000000000000204
+               0000000020862fd0 000000000000003f 0000000020862fb8 0000000000000001
+               00000000005332d0 0000000000369808 0000000000267e1a 0000000000823d30
+        Krnl Code: d2 07 10 08 20 08 e3 10 d0 08 00 04 e3 10 20 08 00 24 e3 10
+        Call Trace:
+        ([<0000000000267e1a>] list_del+0x9a/0xcc)
+        [<0000000000276026>] misc_deregister+0x7e/0x120
+        [<000000002085186c>] dasd_eer_exit+0x34/0x7c [dasd_mod]
+        [<0000000020848cf0>] dasd_exit+0x34/0x9c [dasd_mod]
+        [<000000000014e4c6>] sys_delete_module+0x1d6/0x20c
+        [<000000000010e760>] sysc_noemu+0x10/0x16
+        [<0000000080174952>] 0x80174952
+
+Bugzilla
+--------
+BZ 548653
+https://bugzilla.redhat.com/show_bug.cgi?id=548653
+
+
+diff --git a/include/asm-generic/bug.h b/include/asm-generic/bug.h
+index 04be02e..eb72204 100644
+--- a/include/asm-generic/bug.h
++++ b/include/asm-generic/bug.h
+@@ -22,7 +22,7 @@ extern const char *print_tainted(void);
+ #ifndef HAVE_ARCH_WARN_ON
+ #define WARN_ON(condition) ({ \
+ 	int __ret_warn_on = !!(condition); \
+-	if (unlikely((condition)!=0)) { \
++	if (unlikely((__ret_warn_on)!=0)) { \
+ 		printk("BUG: warning at %s:%d/%s() (%s)\n", __FILE__, __LINE__, __FUNCTION__, print_tainted()); \
+ 		dump_stack(); \
+ 	} \
+diff --git a/include/asm-powerpc/bug.h b/include/asm-powerpc/bug.h
+index cce5b59..748f150 100644
+--- a/include/asm-powerpc/bug.h
++++ b/include/asm-powerpc/bug.h
+@@ -81,7 +81,7 @@ struct bug_entry *find_bug(unsigned long bugaddr);
+ 		".section __bug_table,\"a\"\n"			\
+ 		"\t"PPC_LONG"	1b,%1,%2,%3\n"			\
+ 		".previous"					\
+-		: : "r" ((long)(x)),				\
++		: : "r" ((long)(__ret_warn_on)),				\
+ 		    "i" (__LINE__ + BUG_WARNING_TRAP),		\
+ 		    "i" (__FILE__), "i" (__FUNCTION__));	\
+ 	}							\
+diff --git a/include/asm-xtensa/bug.h b/include/asm-xtensa/bug.h
+index bf36648..48bbaf1 100644
+--- a/include/asm-xtensa/bug.h
++++ b/include/asm-xtensa/bug.h
+@@ -33,7 +33,7 @@
+ #define PAGE_BUG(page) do {  BUG(); } while (0)
+ #define WARN_ON(condition) ({						   \
+   int __ret_warn_on = !!(condition);					   \
+-  if (unlikely((condition)!=0)) {					   \
++  if (unlikely((__ret_warn_on)!=0)) {					   \
+     printk ("Warning in %s at %s:%d\n", __FUNCTION__, __FILE__, __LINE__); \
+       dump_stack();							   \
+   }									   \

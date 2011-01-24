@@ -2,114 +2,70 @@
 # Kernel configuration targets
 # These targets are used from top-level makefile
 
-PHONY += oldconfig xconfig gconfig menuconfig config silentoldconfig update-po-config \
-	localmodconfig localyesconfig
-
-ifdef KBUILD_KCONFIG
-Kconfig := $(KBUILD_KCONFIG)
-else
-Kconfig := arch/$(SRCARCH)/Kconfig
-endif
+PHONY += oldconfig xconfig gconfig menuconfig config silentoldconfig update-po-config
 
 xconfig: $(obj)/qconf
-	$< $(Kconfig)
+	$< arch/$(ARCH)/Kconfig
 
 gconfig: $(obj)/gconf
-	$< $(Kconfig)
+	$< arch/$(ARCH)/Kconfig
 
 menuconfig: $(obj)/mconf
-	$< $(Kconfig)
+	$(Q)$(MAKE) $(build)=scripts/kconfig/lxdialog
+	$< arch/$(ARCH)/Kconfig
 
 config: $(obj)/conf
-	$< $(Kconfig)
+	$< arch/$(ARCH)/Kconfig
 
 oldconfig: $(obj)/conf
-	$< -o $(Kconfig)
+	$< -o arch/$(ARCH)/Kconfig
 
 silentoldconfig: $(obj)/conf
-	$< -s $(Kconfig)
+	$< -s arch/$(ARCH)/Kconfig
 
-localmodconfig: $(obj)/streamline_config.pl $(obj)/conf
-	$(Q)perl $< $(srctree) $(Kconfig) > .tmp.config
-	$(Q)if [ -f .config ]; then 				\
-			cmp -s .tmp.config .config ||		\
-			(mv -f .config .config.old.1;		\
-			 mv -f .tmp.config .config;		\
-			 $(obj)/conf -s $(Kconfig);		\
-			 mv -f .config.old.1 .config.old)	\
-	else							\
-			mv -f .tmp.config .config;		\
-			$(obj)/conf -s $(Kconfig);		\
-	fi
-	$(Q)rm -f .tmp.config
-
-localyesconfig: $(obj)/streamline_config.pl $(obj)/conf
-	$(Q)perl $< $(srctree) $(Kconfig) > .tmp.config
-	$(Q)sed -i s/=m/=y/ .tmp.config
-	$(Q)if [ -f .config ]; then 				\
-			cmp -s .tmp.config .config ||		\
-			(mv -f .config .config.old.1;		\
-			 mv -f .tmp.config .config;		\
-			 $(obj)/conf -s $(Kconfig);		\
-			 mv -f .config.old.1 .config.old)	\
-	else							\
-			mv -f .tmp.config .config;		\
-			$(obj)/conf -s $(Kconfig);		\
-	fi
-	$(Q)rm -f .tmp.config
-
-nonint_oldconfig: $(obj)/conf
-	$< -b $(Kconfig)
-loose_nonint_oldconfig: $(obj)/conf
-	$< -B $(Kconfig)
-
-# Create new linux.pot file
-# Adjust charset to UTF-8 in .po file to accept UTF-8 in Kconfig files
-# The symlink is used to repair a deficiency in arch/um
-update-po-config: $(obj)/kxgettext $(obj)/gconf.glade.h
-	$(Q)echo "  GEN config"
-	$(Q)xgettext --default-domain=linux              \
-	    --add-comments --keyword=_ --keyword=N_      \
-	    --from-code=UTF-8                            \
-	    --files-from=scripts/kconfig/POTFILES.in     \
-	    --output $(obj)/config.pot
-	$(Q)sed -i s/CHARSET/UTF-8/ $(obj)/config.pot
-	$(Q)ln -fs Kconfig.i386 arch/um/Kconfig.arch
-	$(Q)(for i in `ls arch/*/Kconfig`;               \
-	    do                                           \
-		echo "  GEN $$i";                        \
-		$(obj)/kxgettext $$i                     \
-		     >> $(obj)/config.pot;               \
-	    done )
-	$(Q)msguniq --sort-by-file --to-code=UTF-8 $(obj)/config.pot \
-	    --output $(obj)/linux.pot
-	$(Q)rm -f arch/um/Kconfig.arch
-	$(Q)rm -f $(obj)/config.pot
+update-po-config: $(obj)/kxgettext
+	xgettext --default-domain=linux \
+          --add-comments --keyword=_ --keyword=N_ \
+          --files-from=scripts/kconfig/POTFILES.in \
+          --output scripts/kconfig/config.pot
+	$(Q)ln -fs Kconfig_i386 arch/um/Kconfig_arch
+	$(Q)for i in `ls arch/`; \
+	do \
+	  scripts/kconfig/kxgettext arch/$$i/Kconfig \
+	    | msguniq -o scripts/kconfig/linux_$${i}.pot; \
+	done
+	$(Q)msgcat scripts/kconfig/config.pot \
+	  `find scripts/kconfig/ -type f -name linux_*.pot` \
+	  --output scripts/kconfig/linux_raw.pot
+	$(Q)msguniq --sort-by-file scripts/kconfig/linux_raw.pot \
+	    --output scripts/kconfig/linux.pot
+	$(Q)rm -f arch/um/Kconfig_arch
+	$(Q)rm -f scripts/kconfig/linux_*.pot scripts/kconfig/config.pot
 
 PHONY += randconfig allyesconfig allnoconfig allmodconfig defconfig
 
 randconfig: $(obj)/conf
-	$< -r $(Kconfig)
+	$< -r arch/$(ARCH)/Kconfig
 
 allyesconfig: $(obj)/conf
-	$< -y $(Kconfig)
+	$< -y arch/$(ARCH)/Kconfig
 
 allnoconfig: $(obj)/conf
-	$< -n $(Kconfig)
+	$< -n arch/$(ARCH)/Kconfig
 
 allmodconfig: $(obj)/conf
-	$< -m $(Kconfig)
+	$< -m arch/$(ARCH)/Kconfig
 
 defconfig: $(obj)/conf
 ifeq ($(KBUILD_DEFCONFIG),)
-	$< -d $(Kconfig)
+	$< -d arch/$(ARCH)/Kconfig
 else
-	@echo "*** Default configuration is based on '$(KBUILD_DEFCONFIG)'"
-	$(Q)$< -D arch/$(SRCARCH)/configs/$(KBUILD_DEFCONFIG) $(Kconfig)
+	@echo *** Default configuration is based on '$(KBUILD_DEFCONFIG)'
+	$(Q)$< -D arch/$(ARCH)/configs/$(KBUILD_DEFCONFIG) arch/$(ARCH)/Kconfig
 endif
 
 %_defconfig: $(obj)/conf
-	$(Q)$< -D arch/$(SRCARCH)/configs/$@ $(Kconfig)
+	$(Q)$< -D arch/$(ARCH)/configs/$@ arch/$(ARCH)/Kconfig
 
 # Help text used by make help
 help:
@@ -118,30 +74,16 @@ help:
 	@echo  '  xconfig	  - Update current config utilising a QT based front-end'
 	@echo  '  gconfig	  - Update current config utilising a GTK based front-end'
 	@echo  '  oldconfig	  - Update current config utilising a provided .config as base'
-	@echo  '  localmodconfig  - Update current config disabling modules not loaded'
-	@echo  '  localyesconfig  - Update current config converting local mods to core'
-	@echo  '  silentoldconfig - Same as oldconfig, but quietly, additionally update deps'
 	@echo  '  randconfig	  - New config with random answer to all options'
 	@echo  '  defconfig	  - New config with default answer to all options'
 	@echo  '  allmodconfig	  - New config selecting modules when possible'
 	@echo  '  allyesconfig	  - New config where all options are accepted with yes'
 	@echo  '  allnoconfig	  - New config where all options are answered with no'
 
-# lxdialog stuff
-check-lxdialog  := $(srctree)/$(src)/lxdialog/check-lxdialog.sh
-
-# Use recursively expanded variables so we do not call gcc unless
-# we really need to do so. (Do not call gcc as part of make mrproper)
-HOST_EXTRACFLAGS = $(shell $(CONFIG_SHELL) $(check-lxdialog) -ccflags)
-HOST_LOADLIBES   = $(shell $(CONFIG_SHELL) $(check-lxdialog) -ldflags $(HOSTCC))
-
-HOST_EXTRACFLAGS += -DLOCALE
-
-
 # ===========================================================================
 # Shared Makefile for the various kconfig executables:
 # conf:	  Used for defconfig, oldconfig and related targets
-# mconf:  Used for the menuconfig target
+# mconf:  Used for the mconfig target.
 #         Utilizes the lxdialog package
 # qconf:  Used for the xconfig target
 #         Based on QT which needs to be installed to compile it
@@ -149,18 +91,10 @@ HOST_EXTRACFLAGS += -DLOCALE
 #         Based on GTK which needs to be installed to compile it
 # object files used by all kconfig flavours
 
-lxdialog := lxdialog/checklist.o lxdialog/util.o lxdialog/inputbox.o
-lxdialog += lxdialog/textbox.o lxdialog/yesno.o lxdialog/menubox.o
-
+hostprogs-y	:= conf mconf qconf gconf kxgettext
 conf-objs	:= conf.o  zconf.tab.o
-mconf-objs	:= mconf.o zconf.tab.o $(lxdialog)
+mconf-objs	:= mconf.o zconf.tab.o
 kxgettext-objs	:= kxgettext.o zconf.tab.o
-
-hostprogs-y := conf qconf gconf kxgettext
-
-ifeq ($(MAKECMDGOALS),menuconfig)
-	hostprogs-y += mconf
-endif
 
 ifeq ($(MAKECMDGOALS),xconfig)
 	qconf-target := 1
@@ -180,20 +114,17 @@ gconf-objs	:= gconf.o kconfig_load.o zconf.tab.o
 endif
 
 clean-files	:= lkc_defs.h qconf.moc .tmp_qtcheck \
-		   .tmp_gtkcheck zconf.tab.c lex.zconf.c zconf.hash.c gconf.glade.h
-clean-files     += mconf qconf gconf
-clean-files     += config.pot linux.pot
+		   .tmp_gtkcheck zconf.tab.c lex.zconf.c zconf.hash.c
+subdir- += lxdialog
 
-# Check that we have the required ncurses stuff installed for lxdialog (menuconfig)
-PHONY += $(obj)/dochecklxdialog
-$(addprefix $(obj)/,$(lxdialog)): $(obj)/dochecklxdialog
-$(obj)/dochecklxdialog:
-	$(Q)$(CONFIG_SHELL) $(check-lxdialog) -check $(HOSTCC) $(HOST_EXTRACFLAGS) $(HOST_LOADLIBES)
-
-always := dochecklxdialog
-
-# Add environment specific flags
-HOST_EXTRACFLAGS += $(shell $(CONFIG_SHELL) $(srctree)/$(src)/check.sh $(HOSTCC) $(HOSTCFLAGS))
+# Needed for systems without gettext
+KBUILD_HAVE_NLS := $(shell \
+     if echo "\#include <libintl.h>" | $(HOSTCC) $(HOSTCFLAGS) -E - > /dev/null 2>&1 ; \
+     then echo yes ; \
+     else echo no ; fi)
+ifeq ($(KBUILD_HAVE_NLS),no)
+HOSTCFLAGS	+= -DKBUILD_NO_NLS
+endif
 
 # generated files seem to need this to find local include files
 HOSTCFLAGS_lex.zconf.o	:= -I$(src)
@@ -228,8 +159,8 @@ $(obj)/.tmp_qtcheck:
 	  done; \
 	  if [ -z "$$dir" ]; then \
 	    echo "*"; \
-	    echo "* Unable to find the QT3 installation. Please make sure that"; \
-	    echo "* the QT3 development package is correctly installed and"; \
+	    echo "* Unable to find the QT installation. Please make sure that"; \
+	    echo "* the QT development package is correctly installed and"; \
 	    echo "* either install pkg-config or set the QTDIR environment"; \
 	    echo "* variable to the correct location."; \
 	    echo "*"; \
@@ -295,9 +226,6 @@ $(obj)/%.moc: $(src)/%.h
 $(obj)/lkc_defs.h: $(src)/lkc_proto.h
 	sed < $< > $@ 's/P(\([^,]*\),.*/#define \1 (\*\1_p)/'
 
-# Extract gconf menu items for I18N support
-$(obj)/gconf.glade.h: $(obj)/gconf.glade
-	intltool-extract --type=gettext/glade $(obj)/gconf.glade
 
 ###
 # The following requires flex/bison/gperf

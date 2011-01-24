@@ -5,12 +5,12 @@
 # This software may be freely redistributed under the terms of the GNU
 # General Public License (GPL).
 #
-# Takes a directory prefix, then outputs the kernel ABI dependencies.
+# Takes a directory prefix, then outputs the kabideps file contents.
 
 __author__ = "Jon Masters <jcm@redhat.com>"
-__version__ = "2.0"
-__date__ = "Sat 1 Aug 2009 10:00 EDT"
-__copyright__ = "Copyright (C) 2009 Red Hat, Inc"
+__version__ = "1.0"
+__date__ = "Tue 25 Jul 2006 04:00 GMT"
+__copyright__ = "Copyright (C) 2006 Red Hat, Inc"
 __license__ = "GPL"
 
 import os

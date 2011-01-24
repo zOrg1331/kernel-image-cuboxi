@@ -1,0 +1,230 @@
+From: Chris Lalancette <clalance@redhat.com>
+Date: Thu, 24 Sep 2009 13:44:21 +0200
+Subject: [xen] mask out more CPUID bits for PV guests
+Message-id: 4ABB5B95.1030806@redhat.com
+O-Subject: [RHEL5.5 PATCH v2]: Xen: Mask out more CPUID bits for PV guests
+Bugzilla: 502826
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+RH-Nacked-by: Chris Lalancette <clalance@redhat.com>
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+
+All,
+      While testing out Fedora 11 PV guests on a RHEL-5 dom0, I found that F-11
+guests with > 2G of memory would fail to boot.  What was happening was that with
+enough memory in the guest, the F-11 guest would try to use gigabyte pages,
+since those were advertised in the CPU flags.  However, the RHEL-5 Xen
+hypervisor doesn't support gigabytes pages for PV guests, so the boot would
+fail.  Additionally we've had reports that guests fail to start on machines with
+XSAVE.
+     The problem ultimately is that the hypervisor should mask out the CPUID
+bits thatit is not willing to support.  With this in place, the gigabyte page
+and the xsave features are masked out, and newer pv_ops guests will now boot.
+     This is a straightforward backport of xen-unstable c/s 16101, 17238, and
+19288, with cherry-picks for a few #defines from 15803, 16102, and 16117.
+     Tested by me to fix F-11 guests booting with > 2G of memory on a RHEL-5
+dom0.  Also tested by a reporter to fix the problem with XSAVE.  This should
+solve BZ 502826.  Please review and ACK.
+
+--
+Chris Lalancette
+
+diff --git a/arch/x86/traps.c b/arch/x86/traps.c
+index bc67f70..ffc6267 100644
+--- a/arch/x86/traps.c
++++ b/arch/x86/traps.c
+@@ -604,7 +604,7 @@ static int emulate_forced_invalid_op(struct cpu_user_regs *regs)
+         : "=a" (a), "=b" (b), "=c" (c), "=d" (d)
+         : "0" (a), "1" (b), "2" (c), "3" (d) );
+ 
+-    if ( regs->eax == 1 )
++    if ( (regs->eax & 0x7fffffff) == 1 )
+     {
+         /* Modify Feature Information. */
+         clear_bit(X86_FEATURE_VME, &d);
+@@ -613,21 +613,62 @@ static int emulate_forced_invalid_op(struct cpu_user_regs *regs)
+         clear_bit(X86_FEATURE_DE,  &d);
+         clear_bit(X86_FEATURE_PSE, &d);
+         clear_bit(X86_FEATURE_PGE, &d);
+-        if ( !supervisor_mode_kernel )
+-            clear_bit(X86_FEATURE_SEP, &d);
++        clear_bit(X86_FEATURE_MCE, &d);
++        clear_bit(X86_FEATURE_MCA, &d);
+         if ( !IS_PRIV(current->domain) )
+             clear_bit(X86_FEATURE_MTRR, &d);
++        clear_bit(X86_FEATURE_PSE36, &d);
+     }
+-    else if ( regs->eax == 0x80000001 )
++    switch ( (uint32_t)regs->eax )
+     {
++    case 1:
++      /* Modify Feature Information. */
++        if ( !supervisor_mode_kernel )
++            clear_bit(X86_FEATURE_SEP, &d);
++        clear_bit(X86_FEATURE_DS, &d);
++        clear_bit(X86_FEATURE_ACC, &d);
++        clear_bit(X86_FEATURE_PBE, &d);
++
++        clear_bit(X86_FEATURE_DTES64 % 32, &c);
++        clear_bit(X86_FEATURE_MWAIT % 32, &c);
++        clear_bit(X86_FEATURE_DSCPL % 32, &c);
++        clear_bit(X86_FEATURE_VMXE % 32, &c);
++        clear_bit(X86_FEATURE_SMXE % 32, &c);
++        clear_bit(X86_FEATURE_EST % 32, &c);
++        clear_bit(X86_FEATURE_TM2 % 32, &c);
++        if ( is_pv_32bit_vcpu(current) )
++            clear_bit(X86_FEATURE_CX16 % 32, &c);
++        clear_bit(X86_FEATURE_XTPR % 32, &c);
++        clear_bit(X86_FEATURE_PDCM % 32, &c);
++        clear_bit(X86_FEATURE_DCA % 32, &c);
++        clear_bit(X86_FEATURE_XSAVE % 32, &c);
++        break;
++    case 0x80000001:
+         /* Modify Feature Information. */
+         if ( is_pv_32bit_vcpu(current) )
++        {
+             clear_bit(X86_FEATURE_SYSCALL % 32, &d);
++            clear_bit(X86_FEATURE_LM % 32, &d);
++            clear_bit(X86_FEATURE_LAHF_LM % 32, &c);
++        }
++        clear_bit(X86_FEATURE_PAGE1GB % 32, &d);
+         clear_bit(X86_FEATURE_RDTSCP % 32, &d);
+-    }
+-    else
+-    {
++
++        clear_bit(X86_FEATURE_SVME % 32, &c);
++        clear_bit(X86_FEATURE_OSVW % 32, &c);
++        clear_bit(X86_FEATURE_IBS % 32, &c);
++        clear_bit(X86_FEATURE_SKINIT % 32, &c);
++        clear_bit(X86_FEATURE_WDT % 32, &c);
++        break;
++    case 5: /* MONITOR/MWAIT */
++    case 0xa: /* Architectural Performance Monitor Features */
++    case 0x8000000a: /* SVM revision and features */
++    case 0x8000001b: /* Instruction Based Sampling */
++        a = b = c = d = 0;
++        break;
++    default:
+         (void)cpuid_hypervisor_leaves(regs->eax, &a, &b, &c, &d);
++        break;
+     }
+ 
+     regs->eax = a;
+@@ -1894,6 +1935,15 @@ static int emulate_privileged_op(struct cpu_user_regs *regs)
+             if ( rdmsr_safe(regs->ecx, regs->eax, regs->edx) )
+                 goto fail;
+             break;
++        case MSR_IA32_MISC_ENABLE:
++            if ( rdmsr_safe(regs->ecx, regs->eax, regs->edx) )
++                goto fail;
++            regs->eax &= ~(MSR_IA32_MISC_ENABLE_PERF_AVAIL |
++                           MSR_IA32_MISC_ENABLE_MONITOR_ENABLE);
++            regs->eax |= MSR_IA32_MISC_ENABLE_BTS_UNAVAIL |
++                         MSR_IA32_MISC_ENABLE_PEBS_UNAVAIL |
++                         MSR_IA32_MISC_ENABLE_XTPR_DISABLE;
++            break;
+         default:
+             if ( rdmsr_hypervisor_regs(regs->ecx, &l, &h) )
+             {
+diff --git a/include/asm-x86/cpufeature.h b/include/asm-x86/cpufeature.h
+index 130a7f7..ec86f05 100644
+--- a/include/asm-x86/cpufeature.h
++++ b/include/asm-x86/cpufeature.h
+@@ -31,7 +31,7 @@
+ #define X86_FEATURE_PSE36	(0*32+17) /* 36-bit PSEs */
+ #define X86_FEATURE_PN		(0*32+18) /* Processor serial number */
+ #define X86_FEATURE_CLFLSH	(0*32+19) /* Supports the CLFLUSH instruction */
+-#define X86_FEATURE_DTES	(0*32+21) /* Debug Trace Store */
++#define X86_FEATURE_DS		(0*32+21) /* Debug Store */
+ #define X86_FEATURE_ACPI	(0*32+22) /* ACPI via MSR */
+ #define X86_FEATURE_MMX		(0*32+23) /* Multimedia Extensions */
+ #define X86_FEATURE_FXSR	(0*32+24) /* FXSAVE and FXRSTOR instructions (fast save and restore */
+@@ -42,6 +42,7 @@
+ #define X86_FEATURE_HT		(0*32+28) /* Hyper-Threading */
+ #define X86_FEATURE_ACC		(0*32+29) /* Automatic clock control */
+ #define X86_FEATURE_IA64	(0*32+30) /* IA-64 processor */
++#define X86_FEATURE_PBE		(0*32+31) /* Pending Break Enable */
+ 
+ /* AMD-defined CPU features, CPUID level 0x80000001, word 1 */
+ /* Don't duplicate feature flags which are redundant with Intel! */
+@@ -49,6 +50,7 @@
+ #define X86_FEATURE_MP		(1*32+19) /* MP Capable. */
+ #define X86_FEATURE_NX		(1*32+20) /* Execute Disable */
+ #define X86_FEATURE_MMXEXT	(1*32+22) /* AMD MMX extensions */
++#define X86_FEATURE_PAGE1GB	(1*32+26) /* 1Gb large page support */
+ #define X86_FEATURE_RDTSCP	(1*32+27) /* RDTSCP */
+ #define X86_FEATURE_LM		(1*32+29) /* Long Mode (x86-64) */
+ #define X86_FEATURE_3DNOWEXT	(1*32+30) /* AMD 3DNow! extensions */
+@@ -74,25 +76,42 @@
+ 
+ /* Intel-defined CPU features, CPUID level 0x00000001 (ecx), word 4 */
+ #define X86_FEATURE_XMM3	(4*32+ 0) /* Streaming SIMD Extensions-3 */
++#define X86_FEATURE_DTES64	(4*32+ 2) /* 64-bit Debug Store */
+ #define X86_FEATURE_MWAIT	(4*32+ 3) /* Monitor/Mwait support */
+ #define X86_FEATURE_DSCPL	(4*32+ 4) /* CPL Qualified Debug Store */
+ #define X86_FEATURE_VMXE	(4*32+ 5) /* Virtual Machine Extensions */
++#define X86_FEATURE_SMXE	(4*32+ 6) /* Safer Mode Extensions */
+ #define X86_FEATURE_EST		(4*32+ 7) /* Enhanced SpeedStep */
+ #define X86_FEATURE_TM2		(4*32+ 8) /* Thermal Monitor 2 */
+ #define X86_FEATURE_CID		(4*32+10) /* Context ID */
+ #define X86_FEATURE_CX16        (4*32+13) /* CMPXCHG16B */
+ #define X86_FEATURE_XTPR	(4*32+14) /* Send Task Priority Messages */
++#define X86_FEATURE_PDCM	(4*32+15) /* Perf/Debug Capability MSR */
++#define X86_FEATURE_DCA		(4*32+18) /* Direct Cache Access */
++#define X86_FEATURE_XSAVE	(4*32+26) /* XSAVE/XRSTOR/XSETBV/XGETBV */
+ 
+ /* VIA/Cyrix/Centaur-defined CPU features, CPUID level 0xC0000001, word 5 */
+ #define X86_FEATURE_XSTORE	(5*32+ 2) /* on-CPU RNG present (xstore insn) */
+ #define X86_FEATURE_XSTORE_EN	(5*32+ 3) /* on-CPU RNG enabled */
+ #define X86_FEATURE_XCRYPT	(5*32+ 6) /* on-CPU crypto (xcrypt insn) */
+ #define X86_FEATURE_XCRYPT_EN	(5*32+ 7) /* on-CPU crypto enabled */
++#define X86_FEATURE_ACE2	(5*32+ 8) /* Advanced Cryptography Engine v2 */
++#define X86_FEATURE_ACE2_EN	(5*32+ 9) /* ACE v2 enabled */
++#define X86_FEATURE_PHE		(5*32+ 10) /* PadLock Hash Engine */
++#define X86_FEATURE_PHE_EN	(5*32+ 11) /* PHE enabled */
++#define X86_FEATURE_PMM		(5*32+ 12) /* PadLock Montgomery Multiplier */
++#define X86_FEATURE_PMM_EN	(5*32+ 13) /* PMM enabled */
++
+ 
+ /* More extended AMD flags: CPUID level 0x80000001, ecx, word 6 */
+ #define X86_FEATURE_LAHF_LM	(6*32+ 0) /* LAHF/SAHF in long mode */
+ #define X86_FEATURE_CMP_LEGACY	(6*32+ 1) /* If yes HyperThreading not valid */
+ #define X86_FEATURE_SVME        (6*32+ 2) /* Secure Virtual Machine */
++#define X86_FEATURE_OSVW	(6*32+ 9) /* OS Visible Workaround */
++#define X86_FEATURE_SKINIT	(6*32+ 12) /* SKINIT, STGI/CLGI, DEV */
++#define X86_FEATURE_WDT		(6*32+ 13) /* Watchdog Timer */
++#define X86_FEATURE_IBS		(6*32+ 10) /* Instruction Based Sampling */
++#define X86_FEATURE_SSE5	(6*32+ 11) /* AMD Streaming SIMD Extensions-5 */
+ #define X86_FEATURE_FFXSR       (6*32+25) /* FFXSR instruction optimizations */
+ 
+ #define cpu_has(c, bit)		test_bit(bit, (c)->x86_capability)
+@@ -122,6 +141,7 @@
+ #define cpu_has_cyrix_arr	boot_cpu_has(X86_FEATURE_CYRIX_ARR)
+ #define cpu_has_centaur_mcr	boot_cpu_has(X86_FEATURE_CENTAUR_MCR)
+ #define cpu_has_clflush		boot_cpu_has(X86_FEATURE_CLFLSH)
++#define cpu_has_page1gb		0
+ #define cpu_has_efer            (boot_cpu_data.x86_capability[1] & 0x20100800)
+ #else /* __x86_64__ */
+ #define cpu_has_vme		0
+@@ -147,6 +167,7 @@
+ #define cpu_has_cyrix_arr	0
+ #define cpu_has_centaur_mcr	0
+ #define cpu_has_clflush		boot_cpu_has(X86_FEATURE_CLFLSH)
++#define cpu_has_page1gb		boot_cpu_has(X86_FEATURE_PAGE1GB)
+ #define cpu_has_efer            1
+ #endif
+ 
+diff --git a/include/asm-x86/msr.h b/include/asm-x86/msr.h
+index eaca741..fdcb8d8 100644
+--- a/include/asm-x86/msr.h
++++ b/include/asm-x86/msr.h
+@@ -209,6 +209,8 @@ static inline void write_efer(u64 val)
+ #define MSR_IA32_MISC_ENABLE_PERF_AVAIL   (1<<7)
+ #define MSR_IA32_MISC_ENABLE_BTS_UNAVAIL  (1<<11)
+ #define MSR_IA32_MISC_ENABLE_PEBS_UNAVAIL (1<<12)
++#define MSR_IA32_MISC_ENABLE_MONITOR_ENABLE (1<<18)
++#define MSR_IA32_MISC_ENABLE_XTPR_DISABLE (1<<23)
+ 
+ #define MSR_IA32_DEBUGCTLMSR		0x1d9
+ #define MSR_IA32_LASTBRANCHFROMIP	0x1db

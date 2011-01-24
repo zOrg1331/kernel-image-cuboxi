@@ -1,0 +1,45 @@
+From: Jiri Pirko <jpirko@redhat.com>
+Date: Thu, 14 Aug 2008 16:40:29 +0200
+Subject: [net] pppoe: fix skb_unshare_check call position
+Message-id: 20080814164029.00299eae@psychotron.englab.brq.redhat.com
+O-Subject: [RHEL5.3 patch] BZ459062 pppoe: Fix skb_unshare_check call position [rhel-5.3]
+Bugzilla: 459062
+RH-Acked-by: David S. Miller <davem@redhat.com>
+RH-Acked-by: Thomas Graf <tgraf@redhat.com>
+
+BZ459062
+
+Description:
+The skb_unshare_check call needs to be made before pskb_may_pull, not after. Similar like BZ457018.
+
+Upstream status:
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=31bac44468257986484703cc09da8a9dcae88a36
+
+Brew build:
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1431158
+
+Test status:
+Booted on x86_64.
+
+Jirka
+
+diff --git a/drivers/net/pppoe.c b/drivers/net/pppoe.c
+index 8b21b72..e2cacb4 100644
+--- a/drivers/net/pppoe.c
++++ b/drivers/net/pppoe.c
+@@ -383,12 +383,12 @@ static int pppoe_rcv(struct sk_buff *skb,
+ 	struct pppoe_hdr *ph;
+ 	struct pppox_sock *po;
+ 
+-	if (!pskb_may_pull(skb, sizeof(struct pppoe_hdr)))
+-		goto drop;
+-
+ 	if (!(skb = skb_share_check(skb, GFP_ATOMIC))) 
+ 		goto out;
+ 
++	if (!pskb_may_pull(skb, sizeof(struct pppoe_hdr)))
++		goto drop;
++
+ 	ph = (struct pppoe_hdr *) skb->nh.raw;
+ 
+ 	po = get_item((unsigned long) ph->sid, eth_hdr(skb)->h_source);

@@ -1,0 +1,36 @@
+From: Neil Horman <nhorman@redhat.com>
+Date: Thu, 8 May 2008 16:17:58 -0400
+Subject: [net] ipv6: don't handle default routes specially
+Message-id: 20080508201758.GB14523@hmsendeavour.rdu.redhat.com
+O-Subject: [RHEL 5.3 PATCH] [ipv6]: Don't handle default routes specially (bz 426895)
+Bugzilla: 426895 243526
+RH-Acked-by: David S. Miller <davem@redhat.com>
+RH-Acked-by: Thomas Graf <tgraf@redhat.com>
+RH-Acked-by: James Morris <jmorris@redhat.com>
+
+Hey all-
+	Backport of upstream commit 7ebba6d14f8d63cad583bf1cc0330b601d5a8171
+Fixes our ability to manually set default route for ipv6 (bz 426895)
+
+Regards
+Neil
+
+diff --git a/net/ipv6/ip6_fib.c b/net/ipv6/ip6_fib.c
+index 7ee4e03..e54fa46 100644
+--- a/net/ipv6/ip6_fib.c
++++ b/net/ipv6/ip6_fib.c
+@@ -600,14 +600,6 @@ static int fib6_add_rt2node(struct fib6_node *fn, struct rt6_info *rt,
+ 
+ 	ins = &fn->leaf;
+ 
+-	if (fn->fn_flags&RTN_TL_ROOT &&
+-	    fn->leaf == &ip6_null_entry &&
+-	    !(rt->rt6i_flags & (RTF_DEFAULT | RTF_ADDRCONF)) ){
+-		fn->leaf = rt;
+-		rt->u.next = NULL;
+-		goto out;
+-	}
+-
+ 	for (iter = fn->leaf; iter; iter=iter->u.next) {
+ 		/*
+ 		 *	Search for duplicates

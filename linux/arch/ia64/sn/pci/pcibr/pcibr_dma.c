@@ -96,14 +96,10 @@ pcibr_dmamap_ate32(struct pcidev_info *info,
 	}
 
 	/*
-	 * If we're mapping for MSI, set the MSI bit in the ATE.  If it's a
-	 * TIOCP based pci bus, we also need to set the PIO bit in the ATE.
+	 * If we're mapping for MSI, set the MSI bit in the ATE
 	 */
-	if (dma_flags & SN_DMA_MSI) {
+	if (dma_flags & SN_DMA_MSI)
 		ate |= PCI32_ATE_MSI;
-		if (IS_TIOCP_SOFT(pcibus_info))
-			ate |= PCI32_ATE_PIO;
-	}
 
 	ate_write(pcibus_info, ate_index, ate_count, ate);
 
@@ -135,10 +131,11 @@ pcibr_dmatrans_direct64(struct pcidev_info * info, u64 paddr,
 	if (SN_DMA_ADDRTYPE(dma_flags) == SN_DMA_ADDR_PHYS)
 		pci_addr = IS_PIC_SOFT(pcibus_info) ?
 				PHYS_TO_DMA(paddr) :
-				PHYS_TO_TIODMA(paddr);
+		    		PHYS_TO_TIODMA(paddr) | dma_attributes;
 	else
-		pci_addr = paddr;
-	pci_addr |= dma_attributes;
+		pci_addr = IS_PIC_SOFT(pcibus_info) ?
+				paddr :
+				paddr | dma_attributes;
 
 	/* Handle Bus mode */
 	if (IS_PCIX(pcibus_info))
@@ -200,7 +197,7 @@ pcibr_dmatrans_direct32(struct pcidev_info * info,
 }
 
 /*
- * Wrapper routine for freeing DMA maps
+ * Wrapper routine for free'ing DMA maps
  * DMA mappings for Direct 64 and 32 do not have any DMA maps.
  */
 void
@@ -240,7 +237,7 @@ void sn_dma_flush(u64 addr)
 	int is_tio;
 	int wid_num;
 	int i, j;
-	unsigned long flags;
+	u64 flags;
 	u64 itte;
 	struct hubdev_info *hubinfo;
 	struct sn_flush_device_kernel *p;
@@ -256,7 +253,9 @@ void sn_dma_flush(u64 addr)
 
 	hubinfo = (NODEPDA(nasid_to_cnodeid(nasid)))->pdinfo;
 
-	BUG_ON(!hubinfo);
+	if (!hubinfo) {
+		BUG();
+	}
 
 	flush_nasid_list = &hubinfo->hdi_flush_nasid_list;
 	if (flush_nasid_list->widget_p == NULL)

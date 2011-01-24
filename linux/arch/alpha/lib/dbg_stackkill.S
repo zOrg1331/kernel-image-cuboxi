@@ -1,5 +1,5 @@
 /*
- * arch/alpha/lib/dbg_stackkill.S
+ * arch/alpha/lib/killstack.S
  * Contributed by Richard Henderson (rth@cygnus.com)
  *
  * Clobber the balance of the kernel stack, hoping to catch

@@ -45,6 +45,7 @@
 #include <linux/spinlock.h>
 #include <linux/dma-mapping.h>
 
+#include <sound/driver.h>
 #include <sound/core.h>
 #include <sound/pcm.h>
 #include <sound/control.h>
@@ -192,7 +193,7 @@ harmony_set_control(struct snd_harmony *h)
 }
 
 static irqreturn_t
-snd_harmony_interrupt(int irq, void *dev)
+snd_harmony_interrupt(int irq, void *dev, struct pt_regs *regs)
 {
 	u32 dstatus;
 	struct snd_harmony *h = dev;
@@ -624,9 +625,6 @@ snd_harmony_pcm_init(struct snd_harmony *h)
 	struct snd_pcm *pcm;
 	int err;
 
-	if (snd_BUG_ON(!h))
-		return -EINVAL;
-
 	harmony_disable_interrupts(h);
 	
    	err = snd_pcm_new(h->card, "harmony", 0, 1, 1, &pcm);
@@ -856,7 +854,7 @@ static struct snd_kcontrol_new snd_harmony_controls[] = {
 		       HARMONY_GAIN_HE_SHIFT, 1, 0),
 };
 
-static void __devinit
+static void __init 
 snd_harmony_mixer_reset(struct snd_harmony *h)
 {
 	harmony_mute(h);
@@ -865,15 +863,13 @@ snd_harmony_mixer_reset(struct snd_harmony *h)
 	harmony_unmute(h);
 }
 
-static int __devinit
+static int __init 
 snd_harmony_mixer_init(struct snd_harmony *h)
 {
-	struct snd_card *card;
+	struct snd_card *card = h->card;
 	int idx, err;
 
-	if (snd_BUG_ON(!h))
-		return -EINVAL;
-	card = h->card;
+	snd_assert(h != NULL, return -EINVAL);
 	strcpy(card->mixername, "Harmony Gain control interface");
 
 	for (idx = 0; idx < HARMONY_CONTROLS; idx++) {
@@ -939,7 +935,7 @@ snd_harmony_create(struct snd_card *card,
 	h->iobase = ioremap_nocache(padev->hpa.start, HARMONY_SIZE);
 	if (h->iobase == NULL) {
 		printk(KERN_ERR PFX "unable to remap hpa 0x%lx\n",
-		       (unsigned long)padev->hpa.start);
+		       padev->hpa.start);
 		err = -EBUSY;
 		goto free_and_ret;
 	}
@@ -979,9 +975,9 @@ snd_harmony_probe(struct parisc_device *padev)
 	struct snd_card *card;
 	struct snd_harmony *h;
 
-	err = snd_card_create(index, id, THIS_MODULE, 0, &card);
-	if (err < 0)
-		return err;
+	card = snd_card_new(index, id, THIS_MODULE, 0);
+	if (card == NULL)
+		return -ENOMEM;
 
 	err = snd_harmony_create(card, padev, &h);
 	if (err < 0)
@@ -1024,7 +1020,7 @@ static struct parisc_driver snd_harmony_driver = {
 	.name = "harmony",
 	.id_table = snd_harmony_devtable,
 	.probe = snd_harmony_probe,
-	.remove = __devexit_p(snd_harmony_remove),
+	.remove = snd_harmony_remove,
 };
 
 static int __init 

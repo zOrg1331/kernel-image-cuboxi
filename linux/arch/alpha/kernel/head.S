@@ -1,5 +1,5 @@
 /*
- * arch/alpha/kernel/head.S
+ * alpha/boot/head.S
  *
  * initial boot stuff.. At this point, the bootloader has already
  * switched into OSF/1 PAL-code, and loaded us at the correct address
@@ -7,11 +7,9 @@
  * the kernel global pointer and jump to the kernel entry-point.
  */
 
-#include <linux/init.h>
 #include <asm/system.h>
 #include <asm/asm-offsets.h>
 
-__HEAD
 .globl swapper_pg_dir
 .globl _stext
 swapper_pg_dir=SWAPPER_PGD

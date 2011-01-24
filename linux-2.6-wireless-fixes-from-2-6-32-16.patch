@@ -1,0 +1,420 @@
+From: Stanislaw Gruszka <sgruszka@redhat.com>
+Date: Fri, 3 Sep 2010 12:23:41 -0400
+Subject: [wireless] fixes from 2.6.32.16
+Message-id: <1283516623-11659-9-git-send-email-sgruszka@redhat.com>
+Patchwork-id: 28071
+O-Subject: [RHEL5 PATCH 08/10] wireless fixes from 2.6.32.16
+Bugzilla: 621105
+RH-Acked-by: David S. Miller <davem@redhat.com>
+RH-Acked-by: Thomas Graf <tgraf@redhat.com>
+
+Included commits:
+0c23a92af291cc1cf208477194bf225cd522a353 rtl8180: fix tx status reporting
+ea85171617b466c677bfa9e67fc1e526b65d4bea mac80211: Fix robust management frame handling (MFP)
+5eef7398c31fcbb13555c8a64ae691034b2cd8be mac80211: fix rts threshold check
+0a1a8d8443d8deeb30985b531f34542c97c095a6 ath5k: retain promiscuous setting
+6b2c1eb8b7f909c827020d2966a7088bd4b253e0 ath9k: add support for 802.11n bonded out AR2427
+d0b76ade96c3964f29de46f74c3b1d8aa558cc8e iwlwifi: check for aggregation frame and queue
+85bb667730fc53cf6616214105e879cb12cc7924 iwlwifi: recalculate average tpt if not current
+b1f2cb1c72fe65ea0a8c91b31478541529fa4de1 iwlwifi: update supported PCI_ID list for 5xx0 series
+
+Already applied commits:
+46615c1f8958e669cce7ded58ae135c425d0d361 wireless: report reasonable bitrate for MCS rates through wext
+
+Omitted commits:
+eb3c5bcef88d19924822c747de6fbf0b0f594208 ar9170usb: add a couple more USB IDs
+1d3ee54a9a486cb279a61590f3d84e878aeb88c0 ar9170usb: fix panic triggered by undersized rxstream buffer
+7e2b79273b6d672b6c7851a7dcbebdcfdaad5762 mac80211: give warning if building w/out rate ctrl algorithm
+6ca3f51a983b03ba92fd1851cc9f281a39003a04 p54usb: Add device ID for Dell WLA3310 USB
+6e3312e22f1cb180d7512d4717fad8145db2b436 wl1251: fix a memory leak in probe
+
+diff --git a/drivers/net/wireless/ath/ath5k/base.c b/drivers/net/wireless/ath/ath5k/base.c
+index 7c57547..d7a6adb 100644
+--- a/drivers/net/wireless/ath/ath5k/base.c
++++ b/drivers/net/wireless/ath/ath5k/base.c
+@@ -2993,13 +2993,15 @@ static void ath5k_configure_filter(struct ieee80211_hw *hw,
+ 
+ 	if (changed_flags & (FIF_PROMISC_IN_BSS | FIF_OTHER_BSS)) {
+ 		if (*new_flags & FIF_PROMISC_IN_BSS) {
+-			rfilt |= AR5K_RX_FILTER_PROM;
+ 			__set_bit(ATH_STAT_PROMISC, sc->status);
+ 		} else {
+ 			__clear_bit(ATH_STAT_PROMISC, sc->status);
+ 		}
+ 	}
+ 
++	if (test_bit(ATH_STAT_PROMISC, sc->status))
++		rfilt |= AR5K_RX_FILTER_PROM;
++
+ 	/* Note, AR5K_RX_FILTER_MCAST is already enabled */
+ 	if (*new_flags & FIF_ALLMULTI) {
+ 		mfilt[0] =  ~0;
+diff --git a/drivers/net/wireless/ath/ath9k/hw.c b/drivers/net/wireless/ath/ath9k/hw.c
+index f735a96..2185f97 100644
+--- a/drivers/net/wireless/ath/ath9k/hw.c
++++ b/drivers/net/wireless/ath/ath9k/hw.c
+@@ -398,7 +398,6 @@ static void ath9k_hw_init_config(struct ath_hw *ah)
+ 	ah->config.pcie_clock_req = 0;
+ 	ah->config.pcie_waen = 0;
+ 	ah->config.analog_shiftreg = 1;
+-	ah->config.ht_enable = 1;
+ 	ah->config.ofdm_trig_low = 200;
+ 	ah->config.ofdm_trig_high = 500;
+ 	ah->config.cck_trig_high = 200;
+@@ -412,6 +411,11 @@ static void ath9k_hw_init_config(struct ath_hw *ah)
+ 		ah->config.spurchans[i][1] = AR_NO_SPUR;
+ 	}
+ 
++	if (ah->hw_version.devid != AR2427_DEVID_PCIE)
++		ah->config.ht_enable = 1;
++	else
++		ah->config.ht_enable = 0;
++
+ 	ah->config.intr_mitigation = true;
+ 
+ 	/*
+@@ -617,6 +621,7 @@ static bool ath9k_hw_devid_supported(u16 devid)
+ 	case AR9285_DEVID_PCIE:
+ 	case AR5416_DEVID_AR9287_PCI:
+ 	case AR5416_DEVID_AR9287_PCIE:
++	case AR2427_DEVID_PCIE:
+ 		return true;
+ 	default:
+ 		break;
+diff --git a/drivers/net/wireless/ath/ath9k/hw.h b/drivers/net/wireless/ath/ath9k/hw.h
+index ff4383b..262556a 100644
+--- a/drivers/net/wireless/ath/ath9k/hw.h
++++ b/drivers/net/wireless/ath/ath9k/hw.h
+@@ -37,6 +37,7 @@
+ #define AR9280_DEVID_PCI	0x0029
+ #define AR9280_DEVID_PCIE	0x002a
+ #define AR9285_DEVID_PCIE	0x002b
++#define AR2427_DEVID_PCIE	0x002c
+ #define AR5416_AR9100_DEVID	0x000b
+ #define	AR_SUBVENDOR_ID_NOG	0x0e11
+ #define AR_SUBVENDOR_ID_NEW_A	0x7065
+diff --git a/drivers/net/wireless/ath/ath9k/main.c b/drivers/net/wireless/ath/ath9k/main.c
+index 68b2e7d..34935ee 100644
+--- a/drivers/net/wireless/ath/ath9k/main.c
++++ b/drivers/net/wireless/ath/ath9k/main.c
+@@ -1540,12 +1540,14 @@ void ath_set_hw_capab(struct ath_softc *sc, struct ieee80211_hw *hw)
+ 	hw->flags = IEEE80211_HW_RX_INCLUDES_FCS |
+ 		IEEE80211_HW_HOST_BROADCAST_PS_BUFFERING |
+ 		IEEE80211_HW_SIGNAL_DBM |
+-		IEEE80211_HW_AMPDU_AGGREGATION |
+ 		IEEE80211_HW_SUPPORTS_PS |
+ 		IEEE80211_HW_PS_NULLFUNC_STACK |
+ 		IEEE80211_HW_REPORTS_TX_ACK_STATUS |
+ 		IEEE80211_HW_SPECTRUM_MGMT;
+ 
++	if (sc->sc_ah->caps.hw_caps & ATH9K_HW_CAP_HT)
++		 hw->flags |= IEEE80211_HW_AMPDU_AGGREGATION;
++
+ 	if (AR_SREV_9160_10_OR_LATER(sc->sc_ah) || modparam_nohwcrypt)
+ 		hw->flags |= IEEE80211_HW_MFP_CAPABLE;
+ 
+diff --git a/drivers/net/wireless/ath/ath9k/pci.c b/drivers/net/wireless/ath/ath9k/pci.c
+index 903dd8a..14cf3fe 100644
+--- a/drivers/net/wireless/ath/ath9k/pci.c
++++ b/drivers/net/wireless/ath/ath9k/pci.c
+@@ -25,6 +25,7 @@ static struct pci_device_id ath_pci_id_table[] __devinitdata = {
+ 	{ PCI_VDEVICE(ATHEROS, 0x0029) }, /* PCI   */
+ 	{ PCI_VDEVICE(ATHEROS, 0x002A) }, /* PCI-E */
+ 	{ PCI_VDEVICE(ATHEROS, 0x002B) }, /* PCI-E */
++	{ PCI_VDEVICE(ATHEROS, 0x002C) }, /* PCI-E 802.11n bonded out */
+ 	{ PCI_VDEVICE(ATHEROS, 0x002D) }, /* PCI   */
+ 	{ PCI_VDEVICE(ATHEROS, 0x002E) }, /* PCI-E */
+ 	{ 0 }
+diff --git a/drivers/net/wireless/iwlwifi/iwl-5000.c b/drivers/net/wireless/iwlwifi/iwl-5000.c
+index 7477266..56685af 100644
+--- a/drivers/net/wireless/iwlwifi/iwl-5000.c
++++ b/drivers/net/wireless/iwlwifi/iwl-5000.c
+@@ -1680,12 +1680,12 @@ struct iwl_cfg iwl5300_agn_cfg = {
+ 	.use_rts_for_ht = true, /* use rts/cts protection */
+ };
+ 
+-struct iwl_cfg iwl5100_bg_cfg = {
+-	.name = "5100BG",
++struct iwl_cfg iwl5100_bgn_cfg = {
++	.name = "5100BGN",
+ 	.fw_name_pre = IWL5000_FW_PRE,
+ 	.ucode_api_max = IWL5000_UCODE_API_MAX,
+ 	.ucode_api_min = IWL5000_UCODE_API_MIN,
+-	.sku = IWL_SKU_G,
++	.sku = IWL_SKU_G|IWL_SKU_N,
+ 	.ops = &iwl5000_ops,
+ 	.eeprom_size = IWL_5000_EEPROM_IMG_SIZE,
+ 	.eeprom_ver = EEPROM_5000_EEPROM_VERSION,
+@@ -1711,7 +1711,6 @@ struct iwl_cfg iwl5100_abg_cfg = {
+ 	.valid_tx_ant = ANT_B,
+ 	.valid_rx_ant = ANT_AB,
+ 	.need_pll_cfg = true,
+-	.ht_greenfield_support = true,
+ };
+ 
+ struct iwl_cfg iwl5100_agn_cfg = {
+@@ -1768,6 +1767,22 @@ struct iwl_cfg iwl5150_agn_cfg = {
+ 	.use_rts_for_ht = true, /* use rts/cts protection */
+ };
+ 
++struct iwl_cfg iwl5150_abg_cfg = {
++	.name = "5150ABG",
++	.fw_name_pre = IWL5150_FW_PRE,
++	.ucode_api_max = IWL5150_UCODE_API_MAX,
++	.ucode_api_min = IWL5150_UCODE_API_MIN,
++	.sku = IWL_SKU_A|IWL_SKU_G,
++	.ops = &iwl5150_ops,
++	.eeprom_size = IWL_5000_EEPROM_IMG_SIZE,
++	.eeprom_ver = EEPROM_5050_EEPROM_VERSION,
++	.eeprom_calib_ver = EEPROM_5050_TX_POWER_VERSION,
++	.mod_params = &iwl50_mod_params,
++	.valid_tx_ant = ANT_A,
++	.valid_rx_ant = ANT_AB,
++	.need_pll_cfg = true,
++};
++
+ MODULE_FIRMWARE(IWL5000_MODULE_FIRMWARE(IWL5000_UCODE_API_MAX));
+ MODULE_FIRMWARE(IWL5150_MODULE_FIRMWARE(IWL5150_UCODE_API_MAX));
+ 
+diff --git a/drivers/net/wireless/iwlwifi/iwl-agn-rs.c b/drivers/net/wireless/iwlwifi/iwl-agn-rs.c
+index 0855191..219b337 100644
+--- a/drivers/net/wireless/iwlwifi/iwl-agn-rs.c
++++ b/drivers/net/wireless/iwlwifi/iwl-agn-rs.c
+@@ -404,10 +404,23 @@ static void rs_tl_turn_on_agg_for_tid(struct iwl_priv *priv,
+ 				      struct iwl_lq_sta *lq_data, u8 tid,
+ 				      struct ieee80211_sta *sta)
+ {
++	int ret;
++
+ 	if (rs_tl_get_load(lq_data, tid) > IWL_AGG_LOAD_THRESHOLD) {
+ 		IWL_DEBUG_HT(priv, "Starting Tx agg: STA: %pM tid: %d\n",
+ 				sta->addr, tid);
+-		ieee80211_start_tx_ba_session(priv->hw, sta->addr, tid);
++		ret = ieee80211_start_tx_ba_session(priv->hw, sta->addr, tid);
++		if (ret == -EAGAIN) {
++			/*
++			 * driver and mac80211 is out of sync
++			 * this might be cause by reloading firmware
++			 * stop the tx ba session here
++			 */
++			IWL_DEBUG_HT(priv, "Fail start Tx agg on tid: %d\n",
++				tid);
++			ret = ieee80211_stop_tx_ba_session(priv->hw, sta->addr, tid,
++						WLAN_BACK_INITIATOR);
++		}
+ 	}
+ }
+ 
+@@ -2182,9 +2195,12 @@ static void rs_rate_scale_perform(struct iwl_priv *priv,
+ 
+ 	/* Else we have enough samples; calculate estimate of
+ 	 * actual average throughput */
+-
+-	BUG_ON(window->average_tpt != ((window->success_ratio *
+-			tbl->expected_tpt[index] + 64) / 128));
++	if (window->average_tpt != ((window->success_ratio *
++			tbl->expected_tpt[index] + 64) / 128)) {
++		IWL_ERR(priv, "expected_tpt should have been calculated by now\n");
++		window->average_tpt = ((window->success_ratio *
++					tbl->expected_tpt[index] + 64) / 128);
++	}
+ 
+ 	/* If we are searching for better modulation mode, check success. */
+ 	if (lq_sta->search_better_tbl &&
+diff --git a/drivers/net/wireless/iwlwifi/iwl-agn.c b/drivers/net/wireless/iwlwifi/iwl-agn.c
+index 3a7091c..a019de8 100644
+--- a/drivers/net/wireless/iwlwifi/iwl-agn.c
++++ b/drivers/net/wireless/iwlwifi/iwl-agn.c
+@@ -3208,23 +3208,63 @@ static struct pci_device_id iwl_hw_card_ids[] = {
+ 	{IWL_PCI_DEVICE(0x4230, PCI_ANY_ID, iwl4965_agn_cfg)},
+ #endif /* CONFIG_IWL4965 */
+ #ifdef CONFIG_IWL5000
+-	{IWL_PCI_DEVICE(0x4232, 0x1205, iwl5100_bg_cfg)},
+-	{IWL_PCI_DEVICE(0x4232, 0x1305, iwl5100_bg_cfg)},
+-	{IWL_PCI_DEVICE(0x4232, 0x1206, iwl5100_abg_cfg)},
+-	{IWL_PCI_DEVICE(0x4232, 0x1306, iwl5100_abg_cfg)},
+-	{IWL_PCI_DEVICE(0x4232, 0x1326, iwl5100_abg_cfg)},
+-	{IWL_PCI_DEVICE(0x4237, 0x1216, iwl5100_abg_cfg)},
+-	{IWL_PCI_DEVICE(0x4232, PCI_ANY_ID, iwl5100_agn_cfg)},
+-	{IWL_PCI_DEVICE(0x4235, PCI_ANY_ID, iwl5300_agn_cfg)},
+-	{IWL_PCI_DEVICE(0x4236, PCI_ANY_ID, iwl5300_agn_cfg)},
+-	{IWL_PCI_DEVICE(0x4237, PCI_ANY_ID, iwl5100_agn_cfg)},
+-/* 5350 WiFi/WiMax */
+-	{IWL_PCI_DEVICE(0x423A, 0x1001, iwl5350_agn_cfg)},
+-	{IWL_PCI_DEVICE(0x423A, 0x1021, iwl5350_agn_cfg)},
+-	{IWL_PCI_DEVICE(0x423B, 0x1011, iwl5350_agn_cfg)},
+-/* 5150 Wifi/WiMax */
+-	{IWL_PCI_DEVICE(0x423C, PCI_ANY_ID, iwl5150_agn_cfg)},
+-	{IWL_PCI_DEVICE(0x423D, PCI_ANY_ID, iwl5150_agn_cfg)},
++/* 5100 Series WiFi */
++	{IWL_PCI_DEVICE(0x4232, 0x1201, iwl5100_agn_cfg)}, /* Mini Card */
++	{IWL_PCI_DEVICE(0x4232, 0x1301, iwl5100_agn_cfg)}, /* Half Mini Card */
++	{IWL_PCI_DEVICE(0x4232, 0x1204, iwl5100_agn_cfg)}, /* Mini Card */
++	{IWL_PCI_DEVICE(0x4232, 0x1304, iwl5100_agn_cfg)}, /* Half Mini Card */
++	{IWL_PCI_DEVICE(0x4232, 0x1205, iwl5100_bgn_cfg)}, /* Mini Card */
++	{IWL_PCI_DEVICE(0x4232, 0x1305, iwl5100_bgn_cfg)}, /* Half Mini Card */
++	{IWL_PCI_DEVICE(0x4232, 0x1206, iwl5100_abg_cfg)}, /* Mini Card */
++	{IWL_PCI_DEVICE(0x4232, 0x1306, iwl5100_abg_cfg)}, /* Half Mini Card */
++	{IWL_PCI_DEVICE(0x4232, 0x1221, iwl5100_agn_cfg)}, /* Mini Card */
++	{IWL_PCI_DEVICE(0x4232, 0x1321, iwl5100_agn_cfg)}, /* Half Mini Card */
++	{IWL_PCI_DEVICE(0x4232, 0x1224, iwl5100_agn_cfg)}, /* Mini Card */
++	{IWL_PCI_DEVICE(0x4232, 0x1324, iwl5100_agn_cfg)}, /* Half Mini Card */
++	{IWL_PCI_DEVICE(0x4232, 0x1225, iwl5100_bgn_cfg)}, /* Mini Card */
++	{IWL_PCI_DEVICE(0x4232, 0x1325, iwl5100_bgn_cfg)}, /* Half Mini Card */
++	{IWL_PCI_DEVICE(0x4232, 0x1226, iwl5100_abg_cfg)}, /* Mini Card */
++	{IWL_PCI_DEVICE(0x4232, 0x1326, iwl5100_abg_cfg)}, /* Half Mini Card */
++	{IWL_PCI_DEVICE(0x4237, 0x1211, iwl5100_agn_cfg)}, /* Mini Card */
++	{IWL_PCI_DEVICE(0x4237, 0x1311, iwl5100_agn_cfg)}, /* Half Mini Card */
++	{IWL_PCI_DEVICE(0x4237, 0x1214, iwl5100_agn_cfg)}, /* Mini Card */
++	{IWL_PCI_DEVICE(0x4237, 0x1314, iwl5100_agn_cfg)}, /* Half Mini Card */
++	{IWL_PCI_DEVICE(0x4237, 0x1215, iwl5100_bgn_cfg)}, /* Mini Card */
++	{IWL_PCI_DEVICE(0x4237, 0x1315, iwl5100_bgn_cfg)}, /* Half Mini Card */
++	{IWL_PCI_DEVICE(0x4237, 0x1216, iwl5100_abg_cfg)}, /* Mini Card */
++	{IWL_PCI_DEVICE(0x4237, 0x1316, iwl5100_abg_cfg)}, /* Half Mini Card */
++
++/* 5300 Series WiFi */
++	{IWL_PCI_DEVICE(0x4235, 0x1021, iwl5300_agn_cfg)}, /* Mini Card */
++	{IWL_PCI_DEVICE(0x4235, 0x1121, iwl5300_agn_cfg)}, /* Half Mini Card */
++	{IWL_PCI_DEVICE(0x4235, 0x1024, iwl5300_agn_cfg)}, /* Mini Card */
++	{IWL_PCI_DEVICE(0x4235, 0x1124, iwl5300_agn_cfg)}, /* Half Mini Card */
++	{IWL_PCI_DEVICE(0x4235, 0x1001, iwl5300_agn_cfg)}, /* Mini Card */
++	{IWL_PCI_DEVICE(0x4235, 0x1101, iwl5300_agn_cfg)}, /* Half Mini Card */
++	{IWL_PCI_DEVICE(0x4235, 0x1004, iwl5300_agn_cfg)}, /* Mini Card */
++	{IWL_PCI_DEVICE(0x4235, 0x1104, iwl5300_agn_cfg)}, /* Half Mini Card */
++	{IWL_PCI_DEVICE(0x4236, 0x1011, iwl5300_agn_cfg)}, /* Mini Card */
++	{IWL_PCI_DEVICE(0x4236, 0x1111, iwl5300_agn_cfg)}, /* Half Mini Card */
++	{IWL_PCI_DEVICE(0x4236, 0x1014, iwl5300_agn_cfg)}, /* Mini Card */
++	{IWL_PCI_DEVICE(0x4236, 0x1114, iwl5300_agn_cfg)}, /* Half Mini Card */
++
++/* 5350 Series WiFi/WiMax */
++	{IWL_PCI_DEVICE(0x423A, 0x1001, iwl5350_agn_cfg)}, /* Mini Card */
++	{IWL_PCI_DEVICE(0x423A, 0x1021, iwl5350_agn_cfg)}, /* Mini Card */
++	{IWL_PCI_DEVICE(0x423B, 0x1011, iwl5350_agn_cfg)}, /* Mini Card */
++
++/* 5150 Series Wifi/WiMax */
++	{IWL_PCI_DEVICE(0x423C, 0x1201, iwl5150_agn_cfg)}, /* Mini Card */
++	{IWL_PCI_DEVICE(0x423C, 0x1301, iwl5150_agn_cfg)}, /* Half Mini Card */
++	{IWL_PCI_DEVICE(0x423C, 0x1206, iwl5150_abg_cfg)}, /* Mini Card */
++	{IWL_PCI_DEVICE(0x423C, 0x1306, iwl5150_abg_cfg)}, /* Half Mini Card */
++	{IWL_PCI_DEVICE(0x423C, 0x1221, iwl5150_agn_cfg)}, /* Mini Card */
++	{IWL_PCI_DEVICE(0x423C, 0x1321, iwl5150_agn_cfg)}, /* Half Mini Card */
++
++	{IWL_PCI_DEVICE(0x423D, 0x1211, iwl5150_agn_cfg)}, /* Mini Card */
++	{IWL_PCI_DEVICE(0x423D, 0x1311, iwl5150_agn_cfg)}, /* Half Mini Card */
++	{IWL_PCI_DEVICE(0x423D, 0x1216, iwl5150_abg_cfg)}, /* Mini Card */
++	{IWL_PCI_DEVICE(0x423D, 0x1316, iwl5150_abg_cfg)}, /* Half Mini Card */
+ /* 6000/6050 Series */
+ 	{IWL_PCI_DEVICE(0x008D, PCI_ANY_ID, iwl6000h_2agn_cfg)},
+ 	{IWL_PCI_DEVICE(0x008E, PCI_ANY_ID, iwl6000h_2agn_cfg)},
+diff --git a/drivers/net/wireless/iwlwifi/iwl-dev.h b/drivers/net/wireless/iwlwifi/iwl-dev.h
+index 472edeb..354964e 100644
+--- a/drivers/net/wireless/iwlwifi/iwl-dev.h
++++ b/drivers/net/wireless/iwlwifi/iwl-dev.h
+@@ -53,9 +53,10 @@ extern struct iwl_cfg iwl4965_agn_cfg;
+ extern struct iwl_cfg iwl5300_agn_cfg;
+ extern struct iwl_cfg iwl5100_agn_cfg;
+ extern struct iwl_cfg iwl5350_agn_cfg;
+-extern struct iwl_cfg iwl5100_bg_cfg;
++extern struct iwl_cfg iwl5100_bgn_cfg;
+ extern struct iwl_cfg iwl5100_abg_cfg;
+ extern struct iwl_cfg iwl5150_agn_cfg;
++extern struct iwl_cfg iwl5150_abg_cfg;
+ extern struct iwl_cfg iwl6000h_2agn_cfg;
+ extern struct iwl_cfg iwl6000i_2agn_cfg;
+ extern struct iwl_cfg iwl6000_3agn_cfg;
+diff --git a/drivers/net/wireless/iwlwifi/iwl-tx.c b/drivers/net/wireless/iwlwifi/iwl-tx.c
+index 8c5c127..990e635 100644
+--- a/drivers/net/wireless/iwlwifi/iwl-tx.c
++++ b/drivers/net/wireless/iwlwifi/iwl-tx.c
+@@ -799,8 +799,10 @@ int iwl_tx_skb(struct iwl_priv *priv, struct sk_buff *skb)
+ 		hdr->seq_ctrl |= cpu_to_le16(seq_number);
+ 		seq_number += 0x10;
+ 		/* aggregation is on for this <sta,tid> */
+-		if (info->flags & IEEE80211_TX_CTL_AMPDU)
++		if (info->flags & IEEE80211_TX_CTL_AMPDU &&
++		    priv->stations[sta_id].tid[tid].agg.state == IWL_AGG_ON) {
+ 			txq_id = priv->stations[sta_id].tid[tid].agg.txq_id;
++		}
+ 	}
+ 
+ 	txq = &priv->txq[txq_id];
+@@ -1283,7 +1285,7 @@ int iwl_tx_agg_stop(struct iwl_priv *priv , const u8 *ra, u16 tid)
+ {
+ 	int tx_fifo_id, txq_id, sta_id, ssn = -1;
+ 	struct iwl_tid_data *tid_data;
+-	int ret, write_ptr, read_ptr;
++	int write_ptr, read_ptr;
+ 	unsigned long flags;
+ 
+ 	if (!ra) {
+@@ -1335,13 +1337,17 @@ int iwl_tx_agg_stop(struct iwl_priv *priv , const u8 *ra, u16 tid)
+ 	priv->stations[sta_id].tid[tid].agg.state = IWL_AGG_OFF;
+ 
+ 	spin_lock_irqsave(&priv->lock, flags);
+-	ret = priv->cfg->ops->lib->txq_agg_disable(priv, txq_id, ssn,
++	/*
++	 * the only reason this call can fail is queue number out of range,
++	 * which can happen if uCode is reloaded and all the station
++	 * information are lost. if it is outside the range, there is no need
++	 * to deactivate the uCode queue, just return "success" to allow
++	 *  mac80211 to clean up it own data.
++	 */
++	priv->cfg->ops->lib->txq_agg_disable(priv, txq_id, ssn,
+ 						   tx_fifo_id);
+ 	spin_unlock_irqrestore(&priv->lock, flags);
+ 
+-	if (ret)
+-		return ret;
+-
+ 	ieee80211_stop_tx_ba_cb_irqsafe(priv->hw, ra, tid);
+ 
+ 	return 0;
+diff --git a/drivers/net/wireless/rtl818x/rtl8180_dev.c b/drivers/net/wireless/rtl818x/rtl8180_dev.c
+index 96b20d1..14a5090 100644
+--- a/drivers/net/wireless/rtl818x/rtl8180_dev.c
++++ b/drivers/net/wireless/rtl818x/rtl8180_dev.c
+@@ -190,6 +190,7 @@ static void rtl8180_handle_tx(struct ieee80211_hw *dev, unsigned int prio)
+ 			info->flags |= IEEE80211_TX_STAT_ACK;
+ 
+ 		info->status.rates[0].count = (flags & 0xFF) + 1;
++		info->status.rates[1].idx = -1;
+ 
+ 		ieee80211_tx_status_irqsafe(dev, skb);
+ 		if (ring->entries - skb_queue_len(&ring->queue) == 2)
+diff --git a/net/mac80211/rx.c b/net/mac80211/rx.c
+index 8f63c17..6026bff 100644
+--- a/net/mac80211/rx.c
++++ b/net/mac80211/rx.c
+@@ -1230,7 +1230,8 @@ ieee80211_drop_unencrypted(struct ieee80211_rx_data *rx, __le16 fc)
+ 		     (rx->key || rx->sdata->drop_unencrypted)))
+ 		return -EACCES;
+ 	if (rx->sta && test_sta_flags(rx->sta, WLAN_STA_MFP)) {
+-		if (unlikely(ieee80211_is_unicast_robust_mgmt_frame(rx->skb) &&
++		if (unlikely(!ieee80211_has_protected(fc) &&
++			     ieee80211_is_unicast_robust_mgmt_frame(rx->skb) &&
+ 			     rx->key))
+ 			return -EACCES;
+ 		/* BIP does not use Protected field, so need to check MMIE */
+diff --git a/net/mac80211/tx.c b/net/mac80211/tx.c
+index 23ddf51..b5155e0 100644
+--- a/net/mac80211/tx.c
++++ b/net/mac80211/tx.c
+@@ -500,7 +500,8 @@ ieee80211_tx_h_rate_ctrl(struct ieee80211_tx_data *tx)
+ 	struct ieee80211_hdr *hdr = (void *)tx->skb->data;
+ 	struct ieee80211_supported_band *sband;
+ 	struct ieee80211_rate *rate;
+-	int i, len;
++	int i;
++	u32 len;
+ 	bool inval = false, rts = false, short_preamble = false;
+ 	struct ieee80211_tx_rate_control txrc;
+ 	u32 sta_flags;
+@@ -509,7 +510,7 @@ ieee80211_tx_h_rate_ctrl(struct ieee80211_tx_data *tx)
+ 
+ 	sband = tx->local->hw.wiphy->bands[tx->channel->band];
+ 
+-	len = min_t(int, tx->skb->len + FCS_LEN,
++	len = min_t(u32, tx->skb->len + FCS_LEN,
+ 			 tx->local->hw.wiphy->frag_threshold);
+ 
+ 	/* set up the tx rate control struct we give the RC algo */

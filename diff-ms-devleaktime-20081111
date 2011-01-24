@@ -1,0 +1,18 @@
+net: give at least 50 seconds to try to free all reference of netdevice
+
+Right now we are trying to do this only 2.5 seconds. This effectively means
+that even detailed warning about netdevice unregistering is not printed.
+
+Signed-off-by: Denis V. Lunev <den@openvz.org>
+===================================================================
+--- ./net/core/dev.c.leak1	2008-11-10 19:37:42.000000000 +0300
++++ ./net/core/dev.c	2008-11-11 13:27:18.000000000 +0300
+@@ -3373,7 +3373,7 @@ static void netdev_wait_allrefs(struct n
+ 			warning_time = jiffies;
+ 		}
+ 
+-		if (++i > 10) {
++		if (++i > 200) {	/* give 50 seconds to try */
+ 			dev->is_leaked = 1;
+ 			printk(KERN_EMERG "unregister_netdevice: "
+ 			       "device %p marked to leak\n", dev);

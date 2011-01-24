@@ -12,7 +12,6 @@
 
 #include <linux/types.h>
 #include <linux/sched.h>
-#include <linux/timer.h>
 #include <linux/wait.h>
 #include <linux/list.h>
 #include <linux/fs.h>
@@ -25,7 +24,7 @@
 /*
  * Tracks changes to rchan/rchan_buf structs
  */
-#define RELAYFS_CHANNEL_VERSION		7
+#define RELAYFS_CHANNEL_VERSION		6
 
 /*
  * Per-cpu relay channel buffer
@@ -39,7 +38,7 @@ struct rchan_buf
 	size_t subbufs_consumed;	/* count of sub-buffers consumed */
 	struct rchan *chan;		/* associated channel */
 	wait_queue_head_t read_wait;	/* reader wait queue */
-	struct timer_list timer; 	/* reader wake-up timer */
+	struct work_struct wake_readers; /* reader wake-up work struct */
 	struct dentry *dentry;		/* channel file dentry */
 	struct kref kref;		/* channel buffer refcount */
 	struct page **page_array;	/* array of current buffer pages */
@@ -48,7 +47,6 @@ struct rchan_buf
 	size_t *padding;		/* padding counts per sub-buffer */
 	size_t prev_padding;		/* temporary variable */
 	size_t bytes_consumed;		/* bytes consumed in cur read subbuf */
-	size_t early_bytes;		/* bytes consumed before VFS inited */
 	unsigned int cpu;		/* this buf's cpu */
 } ____cacheline_aligned;
 
@@ -66,11 +64,6 @@ struct rchan
 	void *private_data;		/* for user-defined data */
 	size_t last_toobig;		/* tried to log event > subbuf size */
 	struct rchan_buf *buf[NR_CPUS]; /* per-cpu channel buffers */
-	int is_global;			/* One global buffer ? */
-	struct list_head list;		/* for channel list */
-	struct dentry *parent;		/* parent dentry passed to open */
-	int has_base_filename;		/* has a filename associated? */
-	char base_filename[NAME_MAX];	/* saved base filename */
 };
 
 /*
@@ -140,7 +133,7 @@ struct rchan_callbacks
 	 * cause relay_open() to create a single global buffer rather
 	 * than the default set of per-cpu buffers.
 	 *
-	 * See Documentation/filesystems/relay.txt for more info.
+	 * See Documentation/filesystems/relayfs.txt for more info.
 	 */
 	struct dentry *(*create_buf_file)(const char *filename,
 					  struct dentry *parent,
@@ -169,11 +162,7 @@ struct rchan *relay_open(const char *base_filename,
 			 struct dentry *parent,
 			 size_t subbuf_size,
 			 size_t n_subbufs,
-			 struct rchan_callbacks *cb,
-			 void *private_data);
-extern int relay_late_setup_files(struct rchan *chan,
-				  const char *base_filename,
-				  struct dentry *parent);
+			 struct rchan_callbacks *cb);
 extern void relay_close(struct rchan *chan);
 extern void relay_flush(struct rchan *chan);
 extern void relay_subbufs_consumed(struct rchan *chan,
@@ -285,7 +274,7 @@ static inline void subbuf_start_reserve(struct rchan_buf *buf,
 /*
  * exported relay file operations, kernel/relay.c
  */
-extern const struct file_operations relay_file_operations;
+extern struct file_operations relay_file_operations;
 
 #endif /* _LINUX_RELAY_H */
 

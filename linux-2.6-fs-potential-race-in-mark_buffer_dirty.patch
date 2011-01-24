@@ -1,0 +1,43 @@
+From: Mikulas Patocka <mpatocka@redhat.com>
+Date: Wed, 30 Apr 2008 01:03:46 -0400
+Subject: [fs] potential race in mark_buffer_dirty
+Message-id: Pine.LNX.4.64.0804300059020.31147@engineering.redhat.com
+O-Subject: [RHEL 5.3 PATCH] backport potential race in mark_buffer_dirty
+Bugzilla: 442577
+RH-Acked-by: Josef Bacik <jbacik@redhat.com>
+RH-Acked-by: Larry Woodman <lwoodman@redhat.com>
+RH-Acked-by: Eric Sandeen <sandeen@redhat.com>
+
+Hi
+
+This is a backport of a bugfix in 2.6.25, fixing a potential race
+condition in mark_buffer_dirty. For discussion, see
+http://www.uwsg.indiana.edu/hypermail/linux/kernel/0804.0/0854.html
+
+Bugzilla: https://bugzilla.redhat.com/show_bug.cgi?id=442577
+
+diff --git a/fs/buffer.c b/fs/buffer.c
+index a360f5f..a70fa87 100644
+--- a/fs/buffer.c
++++ b/fs/buffer.c
+@@ -1273,7 +1273,19 @@ __getblk_slow(struct block_device *bdev, sector_t block, int size)
+  */
+ void fastcall mark_buffer_dirty(struct buffer_head *bh)
+ {
+-	if (!buffer_dirty(bh) && !test_set_buffer_dirty(bh))
++	/*
++	 * Very *carefully* optimize the it-is-already-dirty case.
++	 *
++	 * Don't let the final "is it dirty" escape to before we
++	 * perhaps modified the buffer.
++	 */
++	if (buffer_dirty(bh)) {
++		smp_mb();
++		if (buffer_dirty(bh))
++			return;
++	}
++
++	if (!test_set_buffer_dirty(bh))
+ 		__set_page_dirty_nobuffers(bh->b_page);
+ }
+ 

@@ -1,0 +1,124 @@
+From: Steve Best <sbest@redhat.com>
+Date: Mon, 30 Aug 2010 15:17:03 -0400
+Subject: [scsi] ipr: implement fixes for 64-bit adapter support
+Message-id: <20100830150516.5212.53387.sendpatchset@squad5-lp1.lab.bos.redhat.com>
+Patchwork-id: 27917
+O-Subject: [PATCH RHEL5.6 BZ626566 2/16] [SCSI] ipr: implement fixes for 64 bit
+	adapter support
+Bugzilla: 626566
+
+RHBZ#:
+------
+https://bugzilla.redhat.com/show_bug.cgi?id=626566
+
+Description:
+------------
+Implement some small fixes for 64 bit support that were preventing
+the adapter from becoming operational.
+
+Signed-off-by: Wayne Boyer <wayneb@linux.vnet.ibm.com>
+Acked-by: Brian King <brking@linux.vnet.ibm.com>
+Signed-off-by: James Bottomley <James.Bottomley@suse.de>
+
+RHEL Version Found:
+-------------------
+5.6
+
+Brew:
+-----
+Built on all platforms. All patches brewed together.
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=2713332
+
+Upstream Status:
+----------------
+http://git.kernel.org/?p=linux/kernel/git/jejb/scsi-misc-2.6.git;a=commit;
+h=438b03311108b05a7b794bcf3941700853c62d1e
+
+Steve Best
+IBM on-site partner
+
+Proposed Patch:
+---------------
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/scsi/ipr.c b/drivers/scsi/ipr.c
+index f9a23a2..bc634be 100644
+--- a/drivers/scsi/ipr.c
++++ b/drivers/scsi/ipr.c
+@@ -1038,7 +1038,7 @@ static void ipr_init_res_entry(struct ipr_resource_entry *res,
+ 		proto = cfgtew->u.cfgte64->proto;
+ 		res->res_flags = cfgtew->u.cfgte64->res_flags;
+ 		res->qmodel = IPR_QUEUEING_MODEL64(res);
+-		res->type = cfgtew->u.cfgte64->res_type & 0x0f;
++		res->type = cfgtew->u.cfgte64->res_type;
+ 
+ 		memcpy(res->res_path, &cfgtew->u.cfgte64->res_path,
+ 			sizeof(res->res_path));
+@@ -4986,6 +4986,8 @@ static int ipr_build_ioadl64(struct ipr_ioa_cfg *ioa_cfg,
+ 
+ 	ipr_cmd->dma_use_sg = nseg;
+ 
++	ioarcb->data_transfer_length = cpu_to_be32(length);
++
+ 	if (scsi_cmd->sc_data_direction == DMA_TO_DEVICE) {
+ 		ioadl_flags = IPR_IOADL_FLAGS_WRITE;
+ 		ioarcb->cmd_pkt.flags_hi |= IPR_FLAGS_HI_WRITE_NOT_READ;
+@@ -6679,7 +6681,7 @@ static int ipr_init_res_table(struct ipr_cmnd *ipr_cmd)
+ 		list_move_tail(&res->queue, &old_res);
+ 
+ 	if (ioa_cfg->sis64)
+-		entries = ioa_cfg->u.cfg_table64->hdr64.num_entries;
++		entries = be16_to_cpu(ioa_cfg->u.cfg_table64->hdr64.num_entries);
+ 	else
+ 		entries = ioa_cfg->u.cfg_table->hdr.num_entries;
+ 
+@@ -6765,6 +6767,7 @@ static int ipr_ioafp_query_ioa_cfg(struct ipr_cmnd *ipr_cmd)
+ 	ioarcb->res_handle = cpu_to_be32(IPR_IOA_RES_HANDLE);
+ 
+ 	ioarcb->cmd_pkt.cdb[0] = IPR_QUERY_IOA_CONFIG;
++	ioarcb->cmd_pkt.cdb[6] = (ioa_cfg->cfg_table_size >> 16) & 0xff;
+ 	ioarcb->cmd_pkt.cdb[7] = (ioa_cfg->cfg_table_size >> 8) & 0xff;
+ 	ioarcb->cmd_pkt.cdb[8] = ioa_cfg->cfg_table_size & 0xff;
+ 
+@@ -7095,7 +7098,9 @@ static int ipr_reset_next_stage(struct ipr_cmnd *ipr_cmd)
+ 	ipr_dbg("IPL stage = 0x%lx, IPL stage time = %ld\n", stage, stage_time);
+ 
+ 	/* sanity check the stage_time value */
+-	if (stage_time < IPR_IPL_INIT_MIN_STAGE_TIME)
++	if (stage_time == 0)
++		stage_time = IPR_IPL_INIT_DEFAULT_STAGE_TIME;
++	else if (stage_time < IPR_IPL_INIT_MIN_STAGE_TIME)
+ 		stage_time = IPR_IPL_INIT_MIN_STAGE_TIME;
+ 	else if (stage_time > IPR_LONG_OPERATIONAL_TIMEOUT)
+ 		stage_time = IPR_LONG_OPERATIONAL_TIMEOUT;
+@@ -7336,7 +7341,7 @@ static int ipr_reset_restore_cfg_space(struct ipr_cmnd *ipr_cmd)
+ 		}
+ 	}
+ 
+-	ENTER;
++	LEAVE;
+ 	return IPR_RC_JOB_CONTINUE;
+ }
+ 
+diff --git a/drivers/scsi/ipr.h b/drivers/scsi/ipr.h
+index c678c2a..42309e2 100644
+--- a/drivers/scsi/ipr.h
++++ b/drivers/scsi/ipr.h
+@@ -244,6 +244,7 @@
+ #define IPR_RUNTIME_RESET				0x40000000
+ 
+ #define IPR_IPL_INIT_MIN_STAGE_TIME			5
++#define IPR_IPL_INIT_DEFAULT_STAGE_TIME                 15
+ #define IPR_IPL_INIT_STAGE_UNKNOWN			0x0
+ #define IPR_IPL_INIT_STAGE_TRANSOP			0xB0000000
+ #define IPR_IPL_INIT_STAGE_MASK				0xff000000
+@@ -804,7 +805,7 @@ struct ipr_hostrcb_array_data_entry_enhanced {
+ }__attribute__((packed, aligned (4)));
+ 
+ struct ipr_hostrcb_type_ff_error {
+-	__be32 ioa_data[502];
++	__be32 ioa_data[758];
+ }__attribute__((packed, aligned (4)));
+ 
+ struct ipr_hostrcb_type_01_error {

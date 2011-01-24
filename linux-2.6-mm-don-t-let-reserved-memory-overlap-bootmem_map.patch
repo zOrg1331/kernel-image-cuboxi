@@ -1,0 +1,1280 @@
+From: Amerigo Wang <amwang@redhat.com>
+Date: Tue, 30 Mar 2010 08:27:45 -0400
+Subject: [mm] don't let reserved memory overlap bootmem_map
+Message-id: <20100330083130.4812.31920.sendpatchset@localhost.localdomain>
+Patchwork-id: 23823
+O-Subject: [PATCH RHEL5] bootmem: don't allow reserved memory to be overlapped
+	with bootmem_map
+Bugzilla: 550974
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+RH-Acked-by: Dave Anderson <anderson@redhat.com>
+RH-Acked-by: Larry Woodman <lwoodman@redhat.com>
+
+BZ:
+==
+https://bugzilla.redhat.com/show_bug.cgi?id=550974
+
+Description:
+===========
+A customer met a rare problem when using kdump, they booted the
+kernel with crashkernel=128M@16M, but failed to boot kdump kernel
+after crash. The cause is that ->node_bootmem_map area, which is
+a bitmap of all bootmem pages during boot, sits exactly near 16M,
+thus conflicts with crashkernel reserved area.
+
+The pages used by ->node_bootmem_map is reserved before
+crashkernel area is reserved. However, when crashkernel area
+overlaps with the pages used by ->node_bootmem_map, after
+->node_bootmem_map is freed, the overlapped part will not be
+usable by crashkernel later.
+
+The solution is rejecting the reservation when it has an overlap
+with ->node_bootmem_map area, to make this work, we also need to
+backport 3 related commits from upstream, see below.
+
+Brew:
+====
+https://brewweb.devel.redhat.com/taskinfo?taskID=2348066
+
+Upstream status:
+===============
+commit a5645a61b3b7e7d7de15e1a642ead600150ce94d
+commit 71c2742f5e6348d76ee62085cf0a13e5eff0f00e
+commit 72a7fe3967dbf86cb34e24fbf1d957fe24d2f246
+
+Plus another fix which is not needed by upstream, because
+upstream now uses early reserve_early() which uses a different
+algorithm.
+
+Test status:
+===========
+This is tested by the customer, with this patch, crashkernel
+memory reservation will fail as expected. The solution is
+picking other number as base address, because RHEL5 kernel
+doesn't support using 0 as base address.
+
+Based on the previous backport patch from Neil Horman.
+
+Signed-off-by: WANG Cong <amwang@redhat.com>
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/arch/alpha/kernel/setup.c b/arch/alpha/kernel/setup.c
+index a94e6d9..d26a57c 100644
+--- a/arch/alpha/kernel/setup.c
++++ b/arch/alpha/kernel/setup.c
+@@ -422,7 +422,7 @@ setup_memory(void *kernel_end)
+ 	}
+ 
+ 	/* Reserve the bootmap memory.  */
+-	reserve_bootmem(PFN_PHYS(bootmap_start), bootmap_size);
++	reserve_bootmem(PFN_PHYS(bootmap_start), bootmap_size, BOOTMEM_DEFAULT);
+ 	printk("reserving pages %ld:%ld\n", bootmap_start, bootmap_start+PFN_UP(bootmap_size));
+ 
+ #ifdef CONFIG_BLK_DEV_INITRD
+@@ -440,7 +440,7 @@ setup_memory(void *kernel_end)
+ 				       phys_to_virt(PFN_PHYS(max_low_pfn)));
+ 		} else {
+ 			reserve_bootmem(virt_to_phys((void *)initrd_start),
+-					INITRD_SIZE);
++					INITRD_SIZE, BOOTMEM_DEFAULT);
+ 		}
+ 	}
+ #endif /* CONFIG_BLK_DEV_INITRD */
+diff --git a/arch/arm/mm/init.c b/arch/arm/mm/init.c
+index fe3f7f6..db7e263 100644
+--- a/arch/arm/mm/init.c
++++ b/arch/arm/mm/init.c
+@@ -188,9 +188,9 @@ static __init void reserve_node_zero(pg_data_t *pgdat)
+ 	 * Note that this can only be in node 0.
+ 	 */
+ #ifdef CONFIG_XIP_KERNEL
+-	reserve_bootmem_node(pgdat, __pa(&__data_start), &_end - &__data_start);
++	reserve_bootmem_node(pgdat, __pa(&__data_start), &_end - &__data_start, BOOTMEM_DEFAULT);
+ #else
+-	reserve_bootmem_node(pgdat, __pa(&_stext), &_end - &_stext);
++	reserve_bootmem_node(pgdat, __pa(&_stext), &_end - &_stext, BOOTMEM_DEFAULT);
+ #endif
+ 
+ 	/*
+@@ -198,7 +198,7 @@ static __init void reserve_node_zero(pg_data_t *pgdat)
+ 	 * and can only be in node 0.
+ 	 */
+ 	reserve_bootmem_node(pgdat, __pa(swapper_pg_dir),
+-			     PTRS_PER_PGD * sizeof(pgd_t));
++			     PTRS_PER_PGD * sizeof(pgd_t), BOOTMEM_DEFAULT);
+ 
+ 	/*
+ 	 * Hmm... This should go elsewhere, but we really really need to
+@@ -226,7 +226,7 @@ static __init void reserve_node_zero(pg_data_t *pgdat)
+ 	res_size = __pa(swapper_pg_dir) - PHYS_OFFSET;
+ #endif
+ 	if (res_size)
+-		reserve_bootmem_node(pgdat, PHYS_OFFSET, res_size);
++		reserve_bootmem_node(pgdat, PHYS_OFFSET, res_size, BOOTMEM_DEFAULT);
+ }
+ 
+ void __init build_mem_type_table(void);
+@@ -294,7 +294,7 @@ bootmem_init_node(int node, int initrd_node, struct meminfo *mi)
+ 	 * Reserve the bootmem bitmap for this node.
+ 	 */
+ 	reserve_bootmem_node(pgdat, boot_pfn << PAGE_SHIFT,
+-			     boot_pages << PAGE_SHIFT);
++			     boot_pages << PAGE_SHIFT, BOOTMEM_DEFAULT);
+ 
+ #ifdef CONFIG_BLK_DEV_INITRD
+ 	/*
+@@ -302,7 +302,7 @@ bootmem_init_node(int node, int initrd_node, struct meminfo *mi)
+ 	 */
+ 	if (node == initrd_node) {
+ 		reserve_bootmem_node(pgdat, phys_initrd_start,
+-				     phys_initrd_size);
++				     phys_initrd_size, BOOTMEM_EXCLUSIVE);
+ 		initrd_start = __phys_to_virt(phys_initrd_start);
+ 		initrd_end = initrd_start + phys_initrd_size;
+ 	}
+diff --git a/arch/arm/plat-omap/fb.c b/arch/arm/plat-omap/fb.c
+index 56acb87..f214fcd 100644
+--- a/arch/arm/plat-omap/fb.c
++++ b/arch/arm/plat-omap/fb.c
+@@ -50,7 +50,8 @@ void omapfb_reserve_mem(void)
+ 			pr_info("Reserving %u bytes SDRAM for frame buffer\n",
+ 				fbmem_conf->fb_sdram_size);
+ 			reserve_bootmem(fbmem_conf->fb_sdram_start,
+-					fbmem_conf->fb_sdram_size);
++					fbmem_conf->fb_sdram_size,
++					BOOTMEM_DEFAULT);
+ 		}
+ 	}
+ }
+diff --git a/arch/cris/kernel/setup.c b/arch/cris/kernel/setup.c
+index 7af3d5d..26a41dd 100644
+--- a/arch/cris/kernel/setup.c
++++ b/arch/cris/kernel/setup.c
+@@ -137,7 +137,7 @@ setup_arch(char **cmdline_p)
+ 	 * Arguments are start, size
+          */
+ 
+-        reserve_bootmem(PFN_PHYS(start_pfn), bootmap_size);
++        reserve_bootmem(PFN_PHYS(start_pfn), bootmap_size, BOOTMEM_DEFAULT);
+ 
+ 	/* paging_init() sets up the MMU and marks all pages as reserved */
+ 
+diff --git a/arch/frv/kernel/setup.c b/arch/frv/kernel/setup.c
+index af08ccd..e377ab7 100644
+--- a/arch/frv/kernel/setup.c
++++ b/arch/frv/kernel/setup.c
+@@ -942,13 +942,13 @@ static void __init setup_linux_memory(void)
+ #endif
+ 
+ 	/* take back the memory occupied by the kernel image and the bootmem alloc map */
+-	reserve_bootmem(kstart, kend - kstart + bootmap_size);
++	reserve_bootmem(kstart, kend - kstart + bootmap_size, BOOTMEM_DEFAULT);
+ 
+ 	/* reserve the memory occupied by the initial ramdisk */
+ #ifdef CONFIG_BLK_DEV_INITRD
+ 	if (LOADER_TYPE && INITRD_START) {
+ 		if (INITRD_START + INITRD_SIZE <= (low_top_pfn << PAGE_SHIFT)) {
+-			reserve_bootmem(INITRD_START, INITRD_SIZE);
++			reserve_bootmem(INITRD_START, INITRD_SIZE, BOOTMEM_DEFAULT);
+ 			initrd_start = INITRD_START ? INITRD_START + PAGE_OFFSET : 0;
+ 			initrd_end = initrd_start + INITRD_SIZE;
+ 		}
+@@ -1003,9 +1003,10 @@ static void __init setup_uclinux_memory(void)
+ 
+ 	/* now take back the bits the core kernel is occupying */
+ #ifndef CONFIG_PROTECT_KERNEL
+-	reserve_bootmem(kend, bootmap_size);
++	reserve_bootmem(kend, bootmap_size, BOOTMEM_DEFAULT);
+ 	reserve_bootmem((unsigned long) &__kernel_image_start,
+-			kend - (unsigned long) &__kernel_image_start);
++			kend - (unsigned long) &__kernel_image_start,
++			BOOTMEM_DEFAULT);
+ 
+ #else
+ 	dampr = __get_DAMPR(0);
+@@ -1013,14 +1014,15 @@ static void __init setup_uclinux_memory(void)
+ 	dampr = (dampr >> 4) + 17;
+ 	dampr = 1 << dampr;
+ 
+-	reserve_bootmem(__get_DAMPR(0) & xAMPRx_PPFN, dampr);
++	reserve_bootmem(__get_DAMPR(0) & xAMPRx_PPFN, dampr, BOOTMEM_DEFAULT);
+ #endif
+ 
+ 	/* reserve some memory to do uncached DMA through if requested */
+ #ifdef CONFIG_RESERVE_DMA_COHERENT
+ 	if (dma_coherent_mem_start)
+ 		reserve_bootmem(dma_coherent_mem_start,
+-				dma_coherent_mem_end - dma_coherent_mem_start);
++				dma_coherent_mem_end - dma_coherent_mem_start,
++				BOOTMEM_DEFAULT);
+ #endif
+ 
+ } /* end setup_uclinux_memory() */
+diff --git a/arch/h8300/kernel/setup.c b/arch/h8300/kernel/setup.c
+index 1077b71..9ae6f61 100644
+--- a/arch/h8300/kernel/setup.c
++++ b/arch/h8300/kernel/setup.c
+@@ -176,7 +176,7 @@ void __init setup_arch(char **cmdline_p)
+ 	 * the bootmem bitmap so we then reserve it after freeing it :-)
+ 	 */
+ 	free_bootmem(memory_start, memory_end - memory_start);
+-	reserve_bootmem(memory_start, bootmap_size);
++	reserve_bootmem(memory_start, bootmap_size, BOOTMEM_DEFAULT);
+ 	/*
+ 	 * get kmalloc into gear
+ 	 */
+diff --git a/arch/i386/kernel/mpparse-xen.c b/arch/i386/kernel/mpparse-xen.c
+index 49f23d8..c1c965f 100644
+--- a/arch/i386/kernel/mpparse-xen.c
++++ b/arch/i386/kernel/mpparse-xen.c
+@@ -757,7 +757,8 @@ static int __init smp_scan_config (unsigned long base, unsigned long length)
+ #ifndef CONFIG_XEN
+ 			printk(KERN_INFO "found SMP MP-table at %08lx\n",
+ 						virt_to_phys(mpf));
+-			reserve_bootmem(virt_to_phys(mpf), PAGE_SIZE);
++			reserve_bootmem(virt_to_phys(mpf), PAGE_SIZE,
++					BOOTMEM_DEFAULT);
+ 			if (mpf->mpf_physptr) {
+ 				/*
+ 				 * We cannot access to MPC table to compute
+@@ -772,7 +773,8 @@ static int __init smp_scan_config (unsigned long base, unsigned long length)
+ 				unsigned long end = max_low_pfn * PAGE_SIZE;
+ 				if (mpf->mpf_physptr + size > end)
+ 					size = end - mpf->mpf_physptr;
+-				reserve_bootmem(mpf->mpf_physptr, size);
++				reserve_bootmem(mpf->mpf_physptr, size,
++						BOOTMEM_DEFAULT);
+ 			}
+ #else
+ 			printk(KERN_INFO "found SMP MP-table at %08lx\n",
+diff --git a/arch/i386/kernel/mpparse.c b/arch/i386/kernel/mpparse.c
+index 8ecee55..3350e08 100644
+--- a/arch/i386/kernel/mpparse.c
++++ b/arch/i386/kernel/mpparse.c
+@@ -749,7 +749,7 @@ static int __init smp_scan_config (unsigned long base, unsigned long length)
+ 			smp_found_config = 1;
+ 			printk(KERN_INFO "found SMP MP-table at %08lx\n",
+ 						virt_to_phys(mpf));
+-			reserve_bootmem(virt_to_phys(mpf), PAGE_SIZE);
++			reserve_bootmem(virt_to_phys(mpf), PAGE_SIZE, BOOTMEM_DEFAULT);
+ 			if (mpf->mpf_physptr) {
+ 				/*
+ 				 * We cannot access to MPC table to compute
+@@ -764,7 +764,7 @@ static int __init smp_scan_config (unsigned long base, unsigned long length)
+ 				unsigned long end = max_low_pfn * PAGE_SIZE;
+ 				if (mpf->mpf_physptr + size > end)
+ 					size = end - mpf->mpf_physptr;
+-				reserve_bootmem(mpf->mpf_physptr, size);
++				reserve_bootmem(mpf->mpf_physptr, size, BOOTMEM_DEFAULT);
+ 			}
+ 
+ 			mpf_found = mpf;
+diff --git a/arch/i386/kernel/setup-xen.c b/arch/i386/kernel/setup-xen.c
+index a567e6a..cb1671b 100644
+--- a/arch/i386/kernel/setup-xen.c
++++ b/arch/i386/kernel/setup-xen.c
+@@ -1274,7 +1274,7 @@ static void __init reserve_ebda_region(void)
+ 	unsigned int addr;
+ 	addr = get_bios_ebda();
+ 	if (addr)
+-		reserve_bootmem(addr, PAGE_SIZE);	
++		reserve_bootmem(addr, PAGE_SIZE, BOOTMEM_DEFAULT);
+ }
+ #endif
+ 
+@@ -1357,14 +1357,15 @@ void __init setup_bootmem_allocator(void)
+ 	 * bootmem allocator with an invalid RAM area.
+ 	 */
+ 	reserve_bootmem(__pa_symbol(_text), (PFN_PHYS(min_low_pfn) +
+-			 bootmap_size + PAGE_SIZE-1) - __pa_symbol(_text));
++			 bootmap_size + PAGE_SIZE-1) - __pa_symbol(_text),
++			 BOOTMEM_DEFAULT);
+ 
+ #ifndef CONFIG_XEN
+ 	/*
+ 	 * reserve physical page 0 - it's a special BIOS page on many boxes,
+ 	 * enabling clean reboots, SMP operation, laptop functions.
+ 	 */
+-	reserve_bootmem(0, PAGE_SIZE);
++	reserve_bootmem(0, PAGE_SIZE, BOOTMEM_DEFAULT);
+ 
+ 	/* reserve EBDA region, it's a 4K region */
+ 	reserve_ebda_region();
+@@ -1374,7 +1375,7 @@ void __init setup_bootmem_allocator(void)
+        unless you have no PS/2 mouse plugged in. */
+ 	if (boot_cpu_data.x86_vendor == X86_VENDOR_AMD &&
+ 	    boot_cpu_data.x86 == 6)
+-	     reserve_bootmem(0xa0000 - 4096, 4096);
++	     reserve_bootmem(0xa0000 - 4096, 4096, BOOTMEM_DEFAULT);
+ 
+ #ifdef CONFIG_SMP
+ 	/*
+@@ -1382,7 +1383,7 @@ void __init setup_bootmem_allocator(void)
+ 	 * FIXME: Don't need the extra page at 4K, but need to fix
+ 	 * trampoline before removing it. (see the GDT stuff)
+ 	 */
+-	reserve_bootmem(PAGE_SIZE, PAGE_SIZE);
++	reserve_bootmem(PAGE_SIZE, PAGE_SIZE, BOOTMEM_DEFAULT);
+ #endif
+ #ifdef CONFIG_ACPI_SLEEP
+ 	/*
+@@ -1415,8 +1416,13 @@ void __init setup_bootmem_allocator(void)
+ #else
+ 	if ((crashk_res.start < crashk_res.end) &&
+ 	    (crashk_res.end <= (max_low_pfn << PAGE_SHIFT))) {
+-		reserve_bootmem(crashk_res.start,
+-				crashk_res.end - crashk_res.start + 1);
++		if (reserve_bootmem(crashk_res.start,
++				crashk_res.end - crashk_res.start + 1,
++				BOOTMEM_EXCLUSIVE) < 0) {
++			printk(KERN_ERR "crashkernel reservation failed - "
++				"memory is in use\n");
++			crashk_res.start = crashk_res.end = 0;
++		}
+ 	}
+ 	else {
+ 		printk(KERN_ERR "Memory for crash kernel (0x%lx to 0x%lx) not"
+diff --git a/arch/i386/kernel/setup.c b/arch/i386/kernel/setup.c
+index 2b3a5f6..d5e4fa6 100644
+--- a/arch/i386/kernel/setup.c
++++ b/arch/i386/kernel/setup.c
+@@ -1202,7 +1202,7 @@ static void __init reserve_ebda_region(void)
+ 	unsigned int addr;
+ 	addr = get_bios_ebda();
+ 	if (addr)
+-		reserve_bootmem(addr, PAGE_SIZE);
++		reserve_bootmem(addr, PAGE_SIZE, BOOTMEM_DEFAULT);
+ }
+ 
+ #ifndef CONFIG_NEED_MULTIPLE_NODES
+@@ -1289,7 +1289,7 @@ static void __init reserve_initrd(void)
+ 	}
+ 	if (ramdisk_end <= end_of_lowmem) {
+ 		/* All in lowmem, easy case */
+-		reserve_bootmem(ramdisk_image, ramdisk_size);
++		reserve_bootmem(ramdisk_image, ramdisk_size, BOOTMEM_DEFAULT);
+ 		initrd_start = ramdisk_image + PAGE_OFFSET;
+ 		initrd_end = initrd_start+ramdisk_size;
+ 		return;
+@@ -1300,7 +1300,7 @@ static void __init reserve_initrd(void)
+ 
+ 	/* Note: this includes all the lowmem currently occupied by
+ 	   the initrd, we rely on that fact to keep the data intact. */
+-	reserve_bootmem(ramdisk_here, ramdisk_size);
++	reserve_bootmem(ramdisk_here, ramdisk_size, BOOTMEM_DEFAULT);
+ 	initrd_start = ramdisk_here + PAGE_OFFSET;
+ 	initrd_end   = initrd_start + ramdisk_size;
+ 
+@@ -1370,13 +1370,14 @@ void __init setup_bootmem_allocator(void)
+ 	 * bootmem allocator with an invalid RAM area.
+ 	 */
+ 	reserve_bootmem(__pa_symbol(_text), (PFN_PHYS(min_low_pfn) +
+-			 bootmap_size + PAGE_SIZE-1) - __pa_symbol(_text));
++			 bootmap_size + PAGE_SIZE-1) - __pa_symbol(_text),
++			 BOOTMEM_DEFAULT);
+ 
+ 	/*
+ 	 * reserve physical page 0 - it's a special BIOS page on many boxes,
+ 	 * enabling clean reboots, SMP operation, laptop functions.
+ 	 */
+-	reserve_bootmem(0, PAGE_SIZE);
++	reserve_bootmem(0, PAGE_SIZE, BOOTMEM_DEFAULT);
+ 
+ 	/* reserve EBDA region, it's a 4K region */
+ 	reserve_ebda_region();
+@@ -1386,7 +1387,7 @@ void __init setup_bootmem_allocator(void)
+        unless you have no PS/2 mouse plugged in. */
+ 	if (boot_cpu_data.x86_vendor == X86_VENDOR_AMD &&
+ 	    boot_cpu_data.x86 == 6)
+-	     reserve_bootmem(0xa0000 - 4096, 4096);
++	     reserve_bootmem(0xa0000 - 4096, 4096, BOOTMEM_DEFAULT);
+ 
+ #ifdef CONFIG_SMP
+ 	/*
+@@ -1394,7 +1395,7 @@ void __init setup_bootmem_allocator(void)
+ 	 * FIXME: Don't need the extra page at 4K, but need to fix
+ 	 * trampoline before removing it. (see the GDT stuff)
+ 	 */
+-	reserve_bootmem(PAGE_SIZE, PAGE_SIZE);
++	reserve_bootmem(PAGE_SIZE, PAGE_SIZE, BOOTMEM_DEFAULT);
+ #endif
+ #ifdef CONFIG_ACPI_SLEEP
+ 	/*
+@@ -1416,8 +1417,13 @@ void __init setup_bootmem_allocator(void)
+ #ifdef CONFIG_KEXEC
+ 	if ((crashk_res.start < crashk_res.end) &&
+ 	    (crashk_res.end <= (max_low_pfn << PAGE_SHIFT))) {
+-		reserve_bootmem(crashk_res.start,
+-				crashk_res.end - crashk_res.start + 1);
++		if (reserve_bootmem(crashk_res.start,
++				crashk_res.end - crashk_res.start + 1,
++				BOOTMEM_EXCLUSIVE) < 0) {
++			printk(KERN_ERR "crashkernel reservation failed - "
++				"memory is in use\n");
++			crashk_res.start = crashk_res.end = 0;
++		}
+ 	}
+ 	else {
+ 		printk(KERN_ERR "Memory for crash kernel (0x%lx to 0x%lx) not"
+diff --git a/arch/ia64/mm/contig.c b/arch/ia64/mm/contig.c
+index 8023a90..e4329df 100644
+--- a/arch/ia64/mm/contig.c
++++ b/arch/ia64/mm/contig.c
+@@ -194,7 +194,7 @@ find_memory (void)
+ 
+ 	/* Free all available memory, then mark bootmem-map as being in use. */
+ 	efi_memmap_walk(filter_rsvd_memory, free_bootmem);
+-	reserve_bootmem(bootmap_start, bootmap_size);
++	reserve_bootmem(bootmap_start, bootmap_size, BOOTMEM_DEFAULT);
+ 
+ 	find_initrd();
+ }
+diff --git a/arch/ia64/mm/discontig.c b/arch/ia64/mm/discontig.c
+index 49bbf44..3a88925 100644
+--- a/arch/ia64/mm/discontig.c
++++ b/arch/ia64/mm/discontig.c
+@@ -300,12 +300,12 @@ static void __init reserve_pernode_space(void)
+ 		pages = bdp->node_low_pfn - (bdp->node_boot_start>>PAGE_SHIFT);
+ 		size = bootmem_bootmap_pages(pages) << PAGE_SHIFT;
+ 		base = __pa(bdp->node_bootmem_map);
+-		reserve_bootmem_node(pdp, base, size);
++		reserve_bootmem_node(pdp, base, size, BOOTMEM_DEFAULT);
+ 
+ 		/* Now the per-node space */
+ 		size = mem_data[node].pernode_size;
+ 		base = __pa(mem_data[node].pernode_addr);
+-		reserve_bootmem_node(pdp, base, size);
++		reserve_bootmem_node(pdp, base, size, BOOTMEM_DEFAULT);
+ 	}
+ }
+ 
+diff --git a/arch/m32r/kernel/setup.c b/arch/m32r/kernel/setup.c
+index 3f35ab3..2f1bd00 100644
+--- a/arch/m32r/kernel/setup.c
++++ b/arch/m32r/kernel/setup.c
+@@ -177,25 +177,25 @@ static unsigned long __init setup_memory(void)
+ 	 */
+ 	reserve_bootmem(CONFIG_MEMORY_START + PAGE_SIZE,
+ 		(PFN_PHYS(start_pfn) + bootmap_size + PAGE_SIZE - 1)
+-		- CONFIG_MEMORY_START);
++		- CONFIG_MEMORY_START, BOOTMEM_DEFAULT);
+ 
+ 	/*
+ 	 * reserve physical page 0 - it's a special BIOS page on many boxes,
+ 	 * enabling clean reboots, SMP operation, laptop functions.
+ 	 */
+-	reserve_bootmem(CONFIG_MEMORY_START, PAGE_SIZE);
++	reserve_bootmem(CONFIG_MEMORY_START, PAGE_SIZE, BOOTMEM_DEFAULT);
+ 
+ 	/*
+ 	 * reserve memory hole
+ 	 */
+ #ifdef CONFIG_MEMHOLE
+-	reserve_bootmem(CONFIG_MEMHOLE_START, CONFIG_MEMHOLE_SIZE);
++	reserve_bootmem(CONFIG_MEMHOLE_START, CONFIG_MEMHOLE_SIZE, BOOTMEM_DEFAULT);
+ #endif
+ 
+ #ifdef CONFIG_BLK_DEV_INITRD
+ 	if (LOADER_TYPE && INITRD_START) {
+ 		if (INITRD_START + INITRD_SIZE <= (max_low_pfn << PAGE_SHIFT)) {
+-			reserve_bootmem(INITRD_START, INITRD_SIZE);
++			reserve_bootmem(INITRD_START, INITRD_SIZE, BOOTMEM_DEFAULT);
+ 			initrd_start = INITRD_START ?
+ 				INITRD_START + PAGE_OFFSET : 0;
+ 
+diff --git a/arch/m68k/atari/stram.c b/arch/m68k/atari/stram.c
+index bf4588c..246d195 100644
+--- a/arch/m68k/atari/stram.c
++++ b/arch/m68k/atari/stram.c
+@@ -153,7 +153,7 @@ void __init atari_stram_reserve_pages(void *start_mem)
+ 	/* always reserve first page of ST-RAM, the first 2 kB are
+ 	 * supervisor-only! */
+ 	if (!kernel_in_stram)
+-		reserve_bootmem (0, PAGE_SIZE);
++		reserve_bootmem (0, PAGE_SIZE, BOOTMEM_DEFAULT);
+ 
+ }
+ 
+diff --git a/arch/m68k/kernel/setup.c b/arch/m68k/kernel/setup.c
+index f2d7ee0..daf3037 100644
+--- a/arch/m68k/kernel/setup.c
++++ b/arch/m68k/kernel/setup.c
+@@ -358,11 +358,13 @@ void __init setup_arch(char **cmdline_p)
+ 	for (i = 0; i < m68k_num_memory; i++)
+ 		free_bootmem(m68k_memory[i].addr, m68k_memory[i].size);
+ 
+-	reserve_bootmem(m68k_memory[0].addr, availmem - m68k_memory[0].addr);
++	reserve_bootmem(m68k_memory[0].addr, availmem - m68k_memory[0].addr,
++			BOOTMEM_DEFAULT);
+ 
+ #ifdef CONFIG_BLK_DEV_INITRD
+ 	if (m68k_ramdisk.size) {
+-		reserve_bootmem(m68k_ramdisk.addr, m68k_ramdisk.size);
++		reserve_bootmem(m68k_ramdisk.addr, m68k_ramdisk.size,
++				BOOTMEM_DEFAULT);
+ 		initrd_start = (unsigned long)phys_to_virt(m68k_ramdisk.addr);
+ 		initrd_end = initrd_start + m68k_ramdisk.size;
+ 		printk ("initrd: %08lx - %08lx\n", initrd_start, initrd_end);
+diff --git a/arch/m68knommu/kernel/setup.c b/arch/m68knommu/kernel/setup.c
+index bde9811..e3f6f0c 100644
+--- a/arch/m68knommu/kernel/setup.c
++++ b/arch/m68knommu/kernel/setup.c
+@@ -260,7 +260,7 @@ void setup_arch(char **cmdline_p)
+ 	 * the bootmem bitmap so we then reserve it after freeing it :-)
+ 	 */
+ 	free_bootmem(memory_start, memory_end - memory_start);
+-	reserve_bootmem(memory_start, bootmap_size);
++	reserve_bootmem(memory_start, bootmap_size, BOOTMEM_DEFAULT);
+ 
+ 	/*
+ 	 * Get kmalloc into gear.
+diff --git a/arch/mips/kernel/setup.c b/arch/mips/kernel/setup.c
+index 8c2b596..bd0063b 100644
+--- a/arch/mips/kernel/setup.c
++++ b/arch/mips/kernel/setup.c
+@@ -411,7 +411,8 @@ static inline void bootmem_init(void)
+ 	}
+ 
+ 	/* Reserve the bootmap memory.  */
+-	reserve_bootmem(PFN_PHYS(first_usable_pfn), bootmap_size);
++	reserve_bootmem(PFN_PHYS(first_usable_pfn), bootmap_size,
++			BOOTMEM_DEFAULT);
+ #endif /* CONFIG_SGI_IP27 */
+ 
+ #ifdef CONFIG_BLK_DEV_INITRD
+@@ -436,7 +437,8 @@ static inline void bootmem_init(void)
+ 		}
+ 
+ 		if (initrd_reserve_bootmem)
+-			reserve_bootmem(CPHYSADDR(initrd_start), initrd_size);
++			reserve_bootmem(CPHYSADDR(initrd_start), initrd_size,
++					BOOTMEM_DEFAULT);
+ 	}
+ #endif /* CONFIG_BLK_DEV_INITRD  */
+ }
+diff --git a/arch/powerpc/mm/mem.c b/arch/powerpc/mm/mem.c
+index 1b44f7b..f6576bb 100644
+--- a/arch/powerpc/mm/mem.c
++++ b/arch/powerpc/mm/mem.c
+@@ -275,7 +275,8 @@ void __init do_init_bootmem(void)
+ 	/* reserve the sections we're already using */
+ 	for (i = 0; i < lmb.reserved.cnt; i++)
+ 		reserve_bootmem(lmb.reserved.region[i].base,
+-				lmb_size_bytes(&lmb.reserved, i));
++				lmb_size_bytes(&lmb.reserved, i),
++				BOOTMEM_DEFAULT);
+ 
+ 	/* XXX need to clip this if using highmem? */
+ 	for (i = 0; i < lmb.memory.cnt; i++)
+diff --git a/arch/powerpc/mm/numa.c b/arch/powerpc/mm/numa.c
+index fbe2393..956074f 100644
+--- a/arch/powerpc/mm/numa.c
++++ b/arch/powerpc/mm/numa.c
+@@ -709,7 +709,7 @@ void __init do_init_bootmem(void)
+ 				dbg("reserve_bootmem %lx %lx\n", physbase,
+ 				    size);
+ 				reserve_bootmem_node(NODE_DATA(nid), physbase,
+-						     size);
++						     size, BOOTMEM_DEFAULT);
+ 			}
+ 		}
+ 
+diff --git a/arch/s390/kernel/setup.c b/arch/s390/kernel/setup.c
+index b2837a6..c24457c 100644
+--- a/arch/s390/kernel/setup.c
++++ b/arch/s390/kernel/setup.c
+@@ -734,12 +734,13 @@ setup_memory(void)
+ 	 * the (very unlikely) case of us accidentally initializing the
+ 	 * bootmem allocator with an invalid RAM area.
+ 	 */
+-	reserve_bootmem(start_pfn << PAGE_SHIFT, bootmap_size);
++	reserve_bootmem(start_pfn << PAGE_SHIFT, bootmap_size, BOOTMEM_DEFAULT);
+ 
+ #ifdef CONFIG_BLK_DEV_INITRD
+ 	if (INITRD_START) {
+ 		if (INITRD_START + INITRD_SIZE <= memory_end) {
+-			reserve_bootmem(INITRD_START, INITRD_SIZE);
++			reserve_bootmem(INITRD_START, INITRD_SIZE,
++					BOOTMEM_DEFAULT);
+ 			initrd_start = INITRD_START;
+ 			initrd_end = initrd_start + INITRD_SIZE;
+ 		} else {
+diff --git a/arch/sh/kernel/setup.c b/arch/sh/kernel/setup.c
+index e75189c..658fa88 100644
+--- a/arch/sh/kernel/setup.c
++++ b/arch/sh/kernel/setup.c
+@@ -331,13 +331,14 @@ void __init setup_arch(char **cmdline_p)
+ 	 * an invalid RAM area.
+ 	 */
+ 	reserve_bootmem_node(NODE_DATA(0), __MEMORY_START+PAGE_SIZE,
+-		(PFN_PHYS(start_pfn)+bootmap_size+PAGE_SIZE-1)-__MEMORY_START);
++		(PFN_PHYS(start_pfn)+bootmap_size+PAGE_SIZE-1)-__MEMORY_START,
++		BOOTMEM_DEFAULT);
+ 
+ 	/*
+ 	 * reserve physical page 0 - it's a special BIOS page on many boxes,
+ 	 * enabling clean reboots, SMP operation, laptop functions.
+ 	 */
+-	reserve_bootmem_node(NODE_DATA(0), __MEMORY_START, PAGE_SIZE);
++	reserve_bootmem_node(NODE_DATA(0), __MEMORY_START, PAGE_SIZE, BOOTMEM_DEFAULT);
+ 
+ #ifdef CONFIG_BLK_DEV_INITRD
+ 	ROOT_DEV = MKDEV(RAMDISK_MAJOR, 0);
+@@ -349,7 +350,8 @@ void __init setup_arch(char **cmdline_p)
+ 
+ 	if (LOADER_TYPE && INITRD_START) {
+ 		if (INITRD_START + INITRD_SIZE <= (max_low_pfn << PAGE_SHIFT)) {
+-			reserve_bootmem_node(NODE_DATA(0), INITRD_START+__MEMORY_START, INITRD_SIZE);
++			reserve_bootmem_node(NODE_DATA(0), INITRD_START+__MEMORY_START,
++					     INITRD_SIZE, BOOTMEM_DEFAULT);
+ 			initrd_start =
+ 				INITRD_START ? INITRD_START + PAGE_OFFSET + __MEMORY_START : 0;
+ 			initrd_end = initrd_start + INITRD_SIZE;
+diff --git a/arch/sh64/kernel/setup.c b/arch/sh64/kernel/setup.c
+index ffb310e..1225029 100644
+--- a/arch/sh64/kernel/setup.c
++++ b/arch/sh64/kernel/setup.c
+@@ -231,7 +231,8 @@ void __init setup_arch(char **cmdline_p)
+ 	 * Reserve all kernel sections + bootmem bitmap + a guard page.
+ 	 */
+ 	reserve_bootmem_node(NODE_DATA(0), PFN_PHYS(first_pfn),
+-		        (PFN_PHYS(start_pfn) + bootmap_size + PAGE_SIZE) - PFN_PHYS(first_pfn));
++		        (PFN_PHYS(start_pfn) + bootmap_size + PAGE_SIZE) - PFN_PHYS(first_pfn),
++			BOOTMEM_DEFAULT);
+ 
+ 	/*
+ 	 * Reserve platform dependent sections
+@@ -241,7 +242,8 @@ void __init setup_arch(char **cmdline_p)
+ #ifdef CONFIG_BLK_DEV_INITRD
+ 	if (LOADER_TYPE && INITRD_START) {
+ 		if (INITRD_START + INITRD_SIZE <= (PFN_PHYS(last_pfn))) {
+-		        reserve_bootmem_node(NODE_DATA(0), INITRD_START + __MEMORY_START, INITRD_SIZE);
++		        reserve_bootmem_node(NODE_DATA(0), INITRD_START + __MEMORY_START,
++						INITRD_SIZE, BOOTMEM_DEFAULT);
+ 
+ 			initrd_start =
+ 			  (long) INITRD_START ? INITRD_START + PAGE_OFFSET +  __MEMORY_START : 0;
+diff --git a/arch/sparc/mm/init.c b/arch/sparc/mm/init.c
+index c85ddf3..dcfceb0 100644
+--- a/arch/sparc/mm/init.c
++++ b/arch/sparc/mm/init.c
+@@ -259,7 +259,7 @@ unsigned long __init bootmem_init(unsigned long *pages_avail)
+ 	if (initrd_start) {
+ 		/* Reserve the initrd image area. */
+ 		size = initrd_end - initrd_start;
+-		reserve_bootmem(initrd_start, size);
++		reserve_bootmem(initrd_start, size, BOOTMEM_DEFAULT);
+ 		*pages_avail -= PAGE_ALIGN(size) >> PAGE_SHIFT;
+ 
+ 		initrd_start = (initrd_start - phys_base) + PAGE_OFFSET;
+@@ -268,7 +268,7 @@ unsigned long __init bootmem_init(unsigned long *pages_avail)
+ #endif
+ 	/* Reserve the kernel text/data/bss. */
+ 	size = (start_pfn << PAGE_SHIFT) - phys_base;
+-	reserve_bootmem(phys_base, size);
++	reserve_bootmem(phys_base, size, BOOTMEM_DEFAULT);
+ 	*pages_avail -= PAGE_ALIGN(size) >> PAGE_SHIFT;
+ 
+ 	/* Reserve the bootmem map.   We do not account for it
+@@ -276,7 +276,8 @@ unsigned long __init bootmem_init(unsigned long *pages_avail)
+ 	 * in free_all_bootmem.
+ 	 */
+ 	size = bootmap_size;
+-	reserve_bootmem((bootmap_pfn << PAGE_SHIFT), size);
++	reserve_bootmem((bootmap_pfn << PAGE_SHIFT), size,
++			BOOTMEM_DEFAULT);
+ 	*pages_avail -= PAGE_ALIGN(size) >> PAGE_SHIFT;
+ 
+ 	return max_pfn;
+diff --git a/arch/sparc64/mm/init.c b/arch/sparc64/mm/init.c
+index 09cb7fc..39c1af4 100644
+--- a/arch/sparc64/mm/init.c
++++ b/arch/sparc64/mm/init.c
+@@ -965,7 +965,7 @@ static unsigned long __init bootmem_init(unsigned long *pages_avail,
+ 		prom_printf("reserve_bootmem(initrd): base[%llx] size[%lx]\n",
+ 			initrd_start, initrd_end);
+ #endif
+-		reserve_bootmem(initrd_start, size);
++		reserve_bootmem(initrd_start, size, BOOTMEM_DEFAULT);
+ 		*pages_avail -= PAGE_ALIGN(size) >> PAGE_SHIFT;
+ 
+ 		initrd_start += PAGE_OFFSET;
+@@ -976,7 +976,7 @@ static unsigned long __init bootmem_init(unsigned long *pages_avail,
+ #ifdef CONFIG_DEBUG_BOOTMEM
+ 	prom_printf("reserve_bootmem(kernel): base[%lx] size[%lx]\n", kern_base, kern_size);
+ #endif
+-	reserve_bootmem(kern_base, kern_size);
++	reserve_bootmem(kern_base, kern_size, BOOTMEM_DEFAULT);
+ 	*pages_avail -= PAGE_ALIGN(kern_size) >> PAGE_SHIFT;
+ 
+ 	/* Reserve the bootmem map.   We do not account for it
+@@ -988,7 +988,7 @@ static unsigned long __init bootmem_init(unsigned long *pages_avail,
+ 	prom_printf("reserve_bootmem(bootmap): base[%lx] size[%lx]\n",
+ 		    (bootmap_pfn << PAGE_SHIFT), size);
+ #endif
+-	reserve_bootmem((bootmap_pfn << PAGE_SHIFT), size);
++	reserve_bootmem((bootmap_pfn << PAGE_SHIFT), size, BOOTMEM_DEFAULT);
+ 	*pages_avail -= PAGE_ALIGN(size) >> PAGE_SHIFT;
+ 
+ 	for (i = 0; i < pavail_ents; i++) {
+@@ -1409,7 +1409,7 @@ static void __init taint_real_pages(void)
+ 					goto do_next_page;
+ 				}
+ 			}
+-			reserve_bootmem(old_start, PAGE_SIZE);
++			reserve_bootmem(old_start, PAGE_SIZE, BOOTMEM_DEFAULT);
+ 
+ 		do_next_page:
+ 			old_start += PAGE_SIZE;
+diff --git a/arch/v850/kernel/anna.c b/arch/v850/kernel/anna.c
+index 40892d3..8ccc769 100644
+--- a/arch/v850/kernel/anna.c
++++ b/arch/v850/kernel/anna.c
+@@ -85,7 +85,8 @@ void __init mach_reserve_bootmem ()
+ 	/* The space between SRAM and SDRAM is filled with duplicate
+ 	   images of SRAM.  Prevent the kernel from using them.  */
+ 	reserve_bootmem (SRAM_ADDR + SRAM_SIZE,
+-			 SDRAM_ADDR - (SRAM_ADDR + SRAM_SIZE));
++			 SDRAM_ADDR - (SRAM_ADDR + SRAM_SIZE),
++			 BOOTMEM_DEFAULT);
+ }
+ 
+ void mach_gettimeofday (struct timespec *tv)
+diff --git a/arch/v850/kernel/as85ep1.c b/arch/v850/kernel/as85ep1.c
+index 5352f8a..f094701 100644
+--- a/arch/v850/kernel/as85ep1.c
++++ b/arch/v850/kernel/as85ep1.c
+@@ -116,7 +116,8 @@ void __init mach_reserve_bootmem ()
+ 	if (SDRAM_ADDR < RAM_END && SDRAM_ADDR > RAM_START)
+ 		/* We can't use the space between SRAM and SDRAM, so
+ 		   prevent the kernel from trying.  */
+-		reserve_bootmem (SRAM_END, SDRAM_ADDR - SRAM_END);
++		reserve_bootmem (SRAM_END, SDRAM_ADDR - SRAM_END,
++				 BOOTMEM_DEFAULT);
+ }
+ 
+ void mach_gettimeofday (struct timespec *tv)
+diff --git a/arch/v850/kernel/rte_ma1_cb.c b/arch/v850/kernel/rte_ma1_cb.c
+index 9a716f9..5a9535e 100644
+--- a/arch/v850/kernel/rte_ma1_cb.c
++++ b/arch/v850/kernel/rte_ma1_cb.c
+@@ -46,13 +46,14 @@ void __init mach_reserve_bootmem ()
+ {
+ #ifdef CONFIG_RTE_CB_MULTI
+ 	/* Prevent the kernel from touching the monitor's scratch RAM.  */
+-	reserve_bootmem (MON_SCRATCH_ADDR, MON_SCRATCH_SIZE);
++	reserve_bootmem (MON_SCRATCH_ADDR, MON_SCRATCH_SIZE, BOOTMEM_DEFAULT);
+ #endif
+ 
+ 	/* The space between SRAM and SDRAM is filled with duplicate
+ 	   images of SRAM.  Prevent the kernel from using them.  */
+ 	reserve_bootmem (SRAM_ADDR + SRAM_SIZE,
+-			 SDRAM_ADDR - (SRAM_ADDR + SRAM_SIZE));
++			 SDRAM_ADDR - (SRAM_ADDR + SRAM_SIZE),
++			 BOOTMEM_DEFAULT);
+ }
+ 
+ void mach_gettimeofday (struct timespec *tv)
+diff --git a/arch/v850/kernel/setup.c b/arch/v850/kernel/setup.c
+index 1bf672a..cf75612 100644
+--- a/arch/v850/kernel/setup.c
++++ b/arch/v850/kernel/setup.c
+@@ -241,15 +241,17 @@ init_bootmem_alloc (unsigned long ram_start, unsigned long ram_len)
+ 	if (kram_end > kram_start)
+ 		/* Reserve the RAM part of the kernel's address space, so it
+ 		   doesn't get allocated.  */
+-		reserve_bootmem (kram_start, kram_end - kram_start);
++		reserve_bootmem (kram_start, kram_end - kram_start,
++				 BOOTMEM_DEFAULT);
+ 	
+ 	if (intv_in_ram && !intv_in_kram)
+ 		/* Reserve the interrupt vector space.  */
+-		reserve_bootmem (intv_start, intv_end - intv_start);
++		reserve_bootmem (intv_start, intv_end - intv_start,
++				 BOOTMEM_DEFAULT);
+ 
+ 	if (bootmap >= ram_start && bootmap < ram_end)
+ 		/* Reserve the bootmap space.  */
+-		reserve_bootmem (bootmap, bootmap_len);
++		reserve_bootmem (bootmap, bootmap_len, BOOTMEM_DEFAULT);
+ 
+ 	/* Reserve the memory used by the root filesystem image if it's
+ 	   in RAM.  */
+@@ -257,7 +259,8 @@ init_bootmem_alloc (unsigned long ram_start, unsigned long ram_len)
+ 	    && (unsigned long)&_root_fs_image_start >= ram_start
+ 	    && (unsigned long)&_root_fs_image_start < ram_end)
+ 		reserve_bootmem ((unsigned long)&_root_fs_image_start,
+-				 &_root_fs_image_end - &_root_fs_image_start);
++				 &_root_fs_image_end - &_root_fs_image_start,
++				 BOOTMEM_DEFAULT);
+ 
+ 	/* Let the platform-dependent code reserve some too.  */
+ 	if (mrb)
+diff --git a/arch/x86_64/kernel/mpparse.c b/arch/x86_64/kernel/mpparse.c
+index 2f720ba..bf6cd76 100644
+--- a/arch/x86_64/kernel/mpparse.c
++++ b/arch/x86_64/kernel/mpparse.c
+@@ -604,9 +604,11 @@ static int __init smp_scan_config (unsigned long base, unsigned long length)
+ 				|| (mpf->mpf_specification == 4)) ) {
+ 
+ 			smp_found_config = 1;
+-			reserve_bootmem_generic(virt_to_phys(mpf), PAGE_SIZE);
++			reserve_bootmem_generic(virt_to_phys(mpf), PAGE_SIZE,
++						BOOTMEM_DEFAULT);
+ 			if (mpf->mpf_physptr)
+-				reserve_bootmem_generic(mpf->mpf_physptr, PAGE_SIZE);
++				reserve_bootmem_generic(mpf->mpf_physptr, PAGE_SIZE,
++							BOOTMEM_DEFAULT);
+ 			mpf_found = mpf;
+ 			return 1;
+ 		}
+diff --git a/arch/x86_64/kernel/setup-xen.c b/arch/x86_64/kernel/setup-xen.c
+index 666ecd7..a4d6a81 100644
+--- a/arch/x86_64/kernel/setup-xen.c
++++ b/arch/x86_64/kernel/setup-xen.c
+@@ -541,7 +541,7 @@ contig_initmem_init(unsigned long start_pfn, unsigned long end_pfn)
+ #else
+ 	e820_bootmem_free(NODE_DATA(0), 0, end_pfn << PAGE_SHIFT);
+ #endif
+-	reserve_bootmem(bootmap, bootmap_size);
++	reserve_bootmem(bootmap, bootmap_size, BOOTMEM_DEFAULT);
+ } 
+ #endif
+ 
+@@ -710,30 +710,34 @@ void __init setup_arch(char **cmdline_p)
+ 
+ 	/* Reserve direct mapping */
+ 	reserve_bootmem_generic(table_start << PAGE_SHIFT, 
+-				(table_end - table_start) << PAGE_SHIFT);
++				(table_end - table_start) << PAGE_SHIFT,
++				BOOTMEM_DEFAULT);
+ 
+ 	/* reserve kernel */
+ 	reserve_bootmem_generic(__pa_symbol(&_text),
+-				__pa_symbol(&_end) - __pa_symbol(&_text));
++				__pa_symbol(&_end) - __pa_symbol(&_text),
++				BOOTMEM_DEFAULT);
+ 
+ #ifdef CONFIG_XEN
+ 	/* reserve physmap, start info and initial page tables */
+-	reserve_bootmem(__pa_symbol(&_end), (table_start<<PAGE_SHIFT)-__pa_symbol(&_end));
++	reserve_bootmem(__pa_symbol(&_end), (table_start<<PAGE_SHIFT)-__pa_symbol(&_end),
++			BOOTMEM_DEFAULT);
+ #else
+ 	/*
+ 	 * reserve physical page 0 - it's a special BIOS page on many boxes,
+ 	 * enabling clean reboots, SMP operation, laptop functions.
+ 	 */
+-	reserve_bootmem_generic(0, PAGE_SIZE);
++	reserve_bootmem_generic(0, PAGE_SIZE, BOOTMEM_DEFAULT);
+ 
+ 	/* reserve ebda region */
+ 	if (ebda_addr)
+-		reserve_bootmem_generic(ebda_addr, ebda_size);
++		reserve_bootmem_generic(ebda_addr, ebda_size, BOOTMEM_DEFAULT);
+ #endif
+ 
+ #ifdef CONFIG_SMP
+ 	/* Reserve SMP trampoline */
+-	reserve_bootmem_generic(SMP_TRAMPOLINE_BASE, 2*PAGE_SIZE);
++	reserve_bootmem_generic(SMP_TRAMPOLINE_BASE, 2*PAGE_SIZE,
++				BOOTMEM_DEFAULT);
+ #endif
+ 
+ #ifdef CONFIG_ACPI_SLEEP
+@@ -763,7 +767,8 @@ void __init setup_arch(char **cmdline_p)
+ #ifdef CONFIG_BLK_DEV_INITRD
+ 	if (LOADER_TYPE && INITRD_START) {
+ 		if (INITRD_START + INITRD_SIZE <= (end_pfn << PAGE_SHIFT)) {
+-			reserve_bootmem_generic(INITRD_START, INITRD_SIZE);
++			reserve_bootmem_generic(INITRD_START, INITRD_SIZE,
++						BOOTMEM_DEFAULT);
+ 			initrd_start =
+ 				INITRD_START ? INITRD_START + PAGE_OFFSET : 0;
+ 			initrd_end = initrd_start+INITRD_SIZE;
+@@ -785,7 +790,8 @@ void __init setup_arch(char **cmdline_p)
+ 	if ((crashk_res.start < crashk_res.end) &&
+ 	    (crashk_res.end <= (end_pfn << PAGE_SHIFT))) {
+ 		reserve_bootmem_generic(crashk_res.start,
+-					crashk_res.end - crashk_res.start + 1);
++					crashk_res.end - crashk_res.start + 1,
++					BOOTMEM_EXCLUSIVE);
+ 	}
+ 	else {
+ 		printk(KERN_ERR "Memory for crash kernel (0x%lx to 0x%lx) not"
+diff --git a/arch/x86_64/kernel/setup.c b/arch/x86_64/kernel/setup.c
+index 13fc8ea..0a112ae 100644
+--- a/arch/x86_64/kernel/setup.c
++++ b/arch/x86_64/kernel/setup.c
+@@ -468,7 +468,7 @@ contig_initmem_init(unsigned long start_pfn, unsigned long end_pfn)
+ 		panic("Cannot find bootmem map of size %ld\n",bootmap_size);
+ 	bootmap_size = init_bootmem(bootmap >> PAGE_SHIFT, end_pfn);
+ 	e820_bootmem_free(NODE_DATA(0), 0, end_pfn << PAGE_SHIFT);
+-	reserve_bootmem(bootmap, bootmap_size);
++	reserve_bootmem(bootmap, bootmap_size, BOOTMEM_DEFAULT);
+ } 
+ #endif
+ 
+@@ -615,25 +615,29 @@ void __init setup_arch(char **cmdline_p)
+ 
+ 	/* Reserve direct mapping */
+ 	reserve_bootmem_generic(table_start << PAGE_SHIFT, 
+-				(table_end - table_start) << PAGE_SHIFT);
++				(table_end - table_start) << PAGE_SHIFT,
++				BOOTMEM_DEFAULT);
+ 
+ 	/* reserve kernel */
+ 	reserve_bootmem_generic(__pa_symbol(&_text),
+-				__pa_symbol(&_end) - __pa_symbol(&_text));
++				__pa_symbol(&_end) - __pa_symbol(&_text),
++				BOOTMEM_DEFAULT);
+ 
+ 	/*
+ 	 * reserve physical page 0 - it's a special BIOS page on many boxes,
+ 	 * enabling clean reboots, SMP operation, laptop functions.
+ 	 */
+-	reserve_bootmem_generic(0, PAGE_SIZE);
++	reserve_bootmem_generic(0, PAGE_SIZE, BOOTMEM_DEFAULT);
+ 
+ 	/* reserve ebda region */
+ 	if (ebda_addr)
+-		reserve_bootmem_generic(ebda_addr, ebda_size);
++		reserve_bootmem_generic(ebda_addr, ebda_size,
++					BOOTMEM_DEFAULT);
+ 
+ #ifdef CONFIG_SMP
+ 	/* Reserve SMP trampoline */
+-	reserve_bootmem_generic(SMP_TRAMPOLINE_BASE, 2*PAGE_SIZE);
++	reserve_bootmem_generic(SMP_TRAMPOLINE_BASE, 2*PAGE_SIZE,
++				BOOTMEM_DEFAULT);
+ #endif
+ 
+ #ifdef CONFIG_ACPI_SLEEP
+@@ -651,7 +655,8 @@ void __init setup_arch(char **cmdline_p)
+ #ifdef CONFIG_BLK_DEV_INITRD
+ 	if (LOADER_TYPE && INITRD_START) {
+ 		if (INITRD_START + INITRD_SIZE <= (end_pfn << PAGE_SHIFT)) {
+-			reserve_bootmem_generic(INITRD_START, INITRD_SIZE);
++			reserve_bootmem_generic(INITRD_START, INITRD_SIZE,
++						BOOTMEM_DEFAULT);
+ 			initrd_start =
+ 				INITRD_START ? INITRD_START + PAGE_OFFSET : 0;
+ 			initrd_end = initrd_start+INITRD_SIZE;
+@@ -668,8 +673,13 @@ void __init setup_arch(char **cmdline_p)
+ #ifdef CONFIG_KEXEC
+ 	if ((crashk_res.start < crashk_res.end) &&
+ 	    (crashk_res.end <= (end_pfn << PAGE_SHIFT))) {
+-		reserve_bootmem_generic(crashk_res.start,
+-					crashk_res.end - crashk_res.start + 1);
++		if (reserve_bootmem_generic(crashk_res.start,
++					crashk_res.end - crashk_res.start + 1,
++					BOOTMEM_EXCLUSIVE) < 0) {
++			printk(KERN_ERR "crashkernel reservation failed - "
++					"memory is in use\n");
++			crashk_res.start = crashk_res.end = 0;
++		}
+ 	}
+ 	else {
+ 		printk(KERN_ERR "Memory for crash kernel (0x%lx to 0x%lx) not"
+diff --git a/arch/x86_64/mm/init-xen.c b/arch/x86_64/mm/init-xen.c
+index d433ecb..a1f8ae8 100644
+--- a/arch/x86_64/mm/init-xen.c
++++ b/arch/x86_64/mm/init-xen.c
+@@ -1167,17 +1167,20 @@ void free_initrd_mem(unsigned long start, unsigned long end)
+ }
+ #endif
+ 
+-void __init reserve_bootmem_generic(unsigned long phys, unsigned len) 
++int __init reserve_bootmem_generic(unsigned long phys, unsigned len,
++				    unsigned long flags)
+ { 
++	int ret;
+ 	/* Should check here against the e820 map to avoid double free */ 
+ #ifdef CONFIG_NUMA
+ 	int nid = phys_to_nid(phys);
+-  	reserve_bootmem_node(NODE_DATA(nid), phys, len);
++	ret = reserve_bootmem_node(NODE_DATA(nid), phys, len, BOOTMEM_DEFAULT);
+ #else       		
+-	reserve_bootmem(phys, len);    
++	ret = reserve_bootmem(phys, len, flags);
+ #endif
+ 	if (phys+len <= MAX_DMA_PFN*PAGE_SIZE)
+ 		dma_reserve += len / PAGE_SIZE;
++	return ret;
+ }
+ 
+ int kern_addr_valid(unsigned long addr) 
+diff --git a/arch/x86_64/mm/init.c b/arch/x86_64/mm/init.c
+index 16d58db..3b3eda4 100644
+--- a/arch/x86_64/mm/init.c
++++ b/arch/x86_64/mm/init.c
+@@ -768,8 +768,10 @@ void free_initrd_mem(unsigned long start, unsigned long end)
+ }
+ #endif
+ 
+-void __init reserve_bootmem_generic(unsigned long phys, unsigned len) 
++int __init reserve_bootmem_generic(unsigned long phys, unsigned len,
++				    unsigned long flags)
+ { 
++	int ret;
+ #ifdef CONFIG_NUMA
+ 	int nid = phys_to_nid(phys);
+ #endif
+@@ -778,20 +780,21 @@ void __init reserve_bootmem_generic(unsigned long phys, unsigned len)
+ 		/* This can happen with kdump kernels when accessing firmware
+ 		   tables. */
+ 		if (pfn < end_pfn_map)
+-			return;
++			return -1;
+ 		printk(KERN_ERR "reserve_bootmem: illegal reserve %lx %u\n",
+ 				phys, len);
+-		return;
++		return -1;
+ 	}
+ 
+ 	/* Should check here against the e820 map to avoid double free */
+ #ifdef CONFIG_NUMA
+-  	reserve_bootmem_node(NODE_DATA(nid), phys, len);
++	ret = reserve_bootmem_node(NODE_DATA(nid), phys, len, flags);
+ #else       		
+-	reserve_bootmem(phys, len);    
++	ret = reserve_bootmem(phys, len, flags);
+ #endif
+ 	if (phys+len <= MAX_DMA_PFN*PAGE_SIZE)
+ 		dma_reserve += len / PAGE_SIZE;
++	return ret;
+ }
+ 
+ int kern_addr_valid(unsigned long addr) 
+diff --git a/arch/x86_64/mm/numa.c b/arch/x86_64/mm/numa.c
+index b2fac14..9555dc8 100644
+--- a/arch/x86_64/mm/numa.c
++++ b/arch/x86_64/mm/numa.c
+@@ -163,8 +163,8 @@ void __init setup_node_bootmem(int nodeid, unsigned long start, unsigned long en
+ 
+ 	e820_bootmem_free(NODE_DATA(nodeid), start, end);
+ 
+-	reserve_bootmem_node(NODE_DATA(nodeid), nodedata_phys, pgdat_size); 
+-	reserve_bootmem_node(NODE_DATA(nodeid), bootmap_start, bootmap_pages<<PAGE_SHIFT);
++	reserve_bootmem_node(NODE_DATA(nodeid), nodedata_phys, pgdat_size, BOOTMEM_DEFAULT);
++	reserve_bootmem_node(NODE_DATA(nodeid), bootmap_start, bootmap_pages<<PAGE_SHIFT, BOOTMEM_DEFAULT);
+ #ifdef CONFIG_ACPI_NUMA
+ 	srat_reserve_add_area(nodeid);
+ #endif
+diff --git a/arch/x86_64/mm/srat.c b/arch/x86_64/mm/srat.c
+index 371241a..1d26f82 100644
+--- a/arch/x86_64/mm/srat.c
++++ b/arch/x86_64/mm/srat.c
+@@ -415,7 +415,7 @@ void __init srat_reserve_add_area(int nodeid)
+ 		printk(KERN_INFO "SRAT: This will cost you %Lu MB of "
+ 				"pre-allocated memory.\n", (unsigned long long)total_mb);
+ 		reserve_bootmem_node(NODE_DATA(nodeid), nodes_add[nodeid].start,
+-			       nodes_add[nodeid].end - nodes_add[nodeid].start);
++			       nodes_add[nodeid].end - nodes_add[nodeid].start, BOOTMEM_DEFAULT);
+ 	}
+ }
+ 
+diff --git a/drivers/firmware/iscsi_ibft_find.c b/drivers/firmware/iscsi_ibft_find.c
+index 45a7818..f60e25b 100644
+--- a/drivers/firmware/iscsi_ibft_find.c
++++ b/drivers/firmware/iscsi_ibft_find.c
+@@ -77,6 +77,6 @@ void __init reserve_ibft_region(void)
+ 		}
+ 	}
+ 	if (ibft_addr)
+-		reserve_bootmem(pos, PAGE_ALIGN(len));
++		reserve_bootmem(pos, PAGE_ALIGN(len), BOOTMEM_DEFAULT);
+ }
+ EXPORT_SYMBOL(reserve_ibft_region);
+diff --git a/include/asm-x86_64/proto.h b/include/asm-x86_64/proto.h
+index b625442..3e3c238 100644
+--- a/include/asm-x86_64/proto.h
++++ b/include/asm-x86_64/proto.h
+@@ -64,7 +64,8 @@ extern int k8_scan_nodes(unsigned long start, unsigned long end);
+ extern void numa_initmem_init(unsigned long start_pfn, unsigned long end_pfn);
+ extern unsigned long numa_free_all_bootmem(void);
+ 
+-extern void reserve_bootmem_generic(unsigned long phys, unsigned len);
++extern int reserve_bootmem_generic(unsigned long phys, unsigned len,
++				    unsigned long flags);
+ extern void free_bootmem_generic(unsigned long phys, unsigned len);
+ 
+ extern void load_gs_index(unsigned gs);
+diff --git a/include/linux/bootmem.h b/include/linux/bootmem.h
+index e229f98..d6b47a7 100644
+--- a/include/linux/bootmem.h
++++ b/include/linux/bootmem.h
+@@ -58,8 +58,16 @@ extern void * __init __alloc_bootmem_core(struct bootmem_data *bdata,
+ 		unsigned long limit);
+ extern void *alloc_bootmem_high_node(pg_data_t *pgdat, unsigned long size);
+ 
++/*
++ * flags for reserve_bootmem (also if CONFIG_HAVE_ARCH_BOOTMEM_NODE,
++ * the architecture-specific code should honor this)
++ */
++#define BOOTMEM_DEFAULT         0
++#define BOOTMEM_EXCLUSIVE       (1<<0)
++
+ #ifndef CONFIG_HAVE_ARCH_BOOTMEM_NODE
+-extern void __init reserve_bootmem (unsigned long addr, unsigned long size);
++extern int __init reserve_bootmem (unsigned long addr, unsigned long size,
++				    unsigned long flags);
+ #define alloc_bootmem(x) \
+ 	__alloc_bootmem((x), SMP_CACHE_BYTES, __pa(MAX_DMA_ADDRESS))
+ #define alloc_bootmem_low(x) \
+@@ -72,7 +80,7 @@ extern void __init reserve_bootmem (unsigned long addr, unsigned long size);
+ extern unsigned long __init free_all_bootmem (void);
+ extern void * __init __alloc_bootmem_node (pg_data_t *pgdat, unsigned long size, unsigned long align, unsigned long goal);
+ extern unsigned long __init init_bootmem_node (pg_data_t *pgdat, unsigned long freepfn, unsigned long startpfn, unsigned long endpfn);
+-extern void __init reserve_bootmem_node (pg_data_t *pgdat, unsigned long physaddr, unsigned long size);
++extern int __init reserve_bootmem_node (pg_data_t *pgdat, unsigned long physaddr, unsigned long size, unsigned long flags);
+ extern void __init free_bootmem_node (pg_data_t *pgdat, unsigned long addr, unsigned long size);
+ extern unsigned long __init free_all_bootmem_node (pg_data_t *pgdat);
+ #ifndef CONFIG_HAVE_ARCH_BOOTMEM_NODE
+diff --git a/mm/bootmem.c b/mm/bootmem.c
+index 50353e0..c5ab67e 100644
+--- a/mm/bootmem.c
++++ b/mm/bootmem.c
+@@ -17,6 +17,7 @@
+ #include <linux/bootmem.h>
+ #include <linux/mmzone.h>
+ #include <linux/module.h>
++#include <linux/pfn.h>
+ #include <asm/dma.h>
+ #include <asm/io.h>
+ #include "internal.h"
+@@ -102,29 +103,81 @@ static unsigned long __init init_bootmem_core (pg_data_t *pgdat,
+  * might be used for boot-time allocations - or it might get added
+  * to the free page pool later on.
+  */
+-static void __init reserve_bootmem_core(bootmem_data_t *bdata, unsigned long addr, unsigned long size)
++static int __init can_reserve_bootmem_core(bootmem_data_t *bdata,
++			unsigned long addr, unsigned long size, int flags)
+ {
++	unsigned long sidx, eidx;
+ 	unsigned long i;
++	unsigned long boot_map = (unsigned long)bdata->node_bootmem_map;
++	unsigned long boot_map_size;
++
++	BUG_ON(!size);
++
++	/* out of range, don't hold other */
++	if (addr + size < bdata->node_boot_start ||
++		PFN_DOWN(addr) > bdata->node_low_pfn)
++		return 0;
++
+ 	/*
+-	 * round up, partially reserved pages are considered
+-	 * fully reserved.
++	 * Round up to index to the range.
+ 	 */
+-	unsigned long sidx = (addr - bdata->node_boot_start)/PAGE_SIZE;
+-	unsigned long eidx = (addr + size - bdata->node_boot_start + 
+-							PAGE_SIZE-1)/PAGE_SIZE;
+-	unsigned long end = (addr + size + PAGE_SIZE-1)/PAGE_SIZE;
++	if (addr > bdata->node_boot_start)
++		sidx= PFN_DOWN(addr - bdata->node_boot_start);
++	else
++		sidx = 0;
++
++	boot_map_size = ((bdata->node_low_pfn-(bdata->node_boot_start >> PAGE_SHIFT))/8 + PAGE_SIZE -1)/PAGE_SIZE;
++	boot_map_size *= PAGE_SIZE;
++	if (!(addr + size < boot_map || addr >=  boot_map + boot_map_size))
++		return -EBUSY;
++
++	eidx = PFN_UP(addr + size - bdata->node_boot_start);
++	if (eidx > bdata->node_low_pfn - PFN_DOWN(bdata->node_boot_start))
++		eidx = bdata->node_low_pfn - PFN_DOWN(bdata->node_boot_start);
++
++	for (i = sidx; i < eidx; i++) {
++		if (test_bit(i, bdata->node_bootmem_map)) {
++			if (flags & BOOTMEM_EXCLUSIVE)
++				return -EBUSY;
++		}
++	}
++
++	return 0;
++}
++
++static int __init reserve_bootmem_core(bootmem_data_t *bdata,
++			unsigned long addr, unsigned long size, int flags)
++{
++	unsigned long sidx, eidx;
++	unsigned long i;
+ 
+ 	BUG_ON(!size);
+-	BUG_ON(sidx >= eidx);
+-	BUG_ON((addr >> PAGE_SHIFT) >= bdata->node_low_pfn);
+-	BUG_ON(end > bdata->node_low_pfn);
+ 
+-	for (i = sidx; i < eidx; i++)
++	/* out of range */
++	if (addr + size < bdata->node_boot_start ||
++		PFN_DOWN(addr) > bdata->node_low_pfn)
++		return -1;
++
++	/*
++	 * Round up to index to the range.
++	 */
++	if (addr > bdata->node_boot_start)
++		sidx= PFN_DOWN(addr - bdata->node_boot_start);
++	else
++		sidx = 0;
++
++	eidx = PFN_UP(addr + size - bdata->node_boot_start);
++	if (eidx > bdata->node_low_pfn - PFN_DOWN(bdata->node_boot_start))
++		eidx = bdata->node_low_pfn - PFN_DOWN(bdata->node_boot_start);
++
++	for (i = sidx; i < eidx; i++) {
+ 		if (test_and_set_bit(i, bdata->node_bootmem_map)) {
+ #ifdef CONFIG_DEBUG_BOOTMEM
+ 			printk("hm, page %08lx reserved twice.\n", i*PAGE_SIZE);
+ #endif
+ 		}
++	}
++	return 0;
+ }
+ 
+ static void __init free_bootmem_core(bootmem_data_t *bdata, unsigned long addr, unsigned long size)
+@@ -360,9 +413,16 @@ unsigned long __init init_bootmem_node (pg_data_t *pgdat, unsigned long freepfn,
+ 	return(init_bootmem_core(pgdat, freepfn, startpfn, endpfn));
+ }
+ 
+-void __init reserve_bootmem_node (pg_data_t *pgdat, unsigned long physaddr, unsigned long size)
++int __init reserve_bootmem_node (pg_data_t *pgdat, unsigned long physaddr,
++				  unsigned long size, unsigned long flags)
+ {
+-	reserve_bootmem_core(pgdat->bdata, physaddr, size);
++	int ret;
++
++	ret = can_reserve_bootmem_core(pgdat->bdata, physaddr, size, flags);
++	if (ret < 0)
++		return ret;
++
++	return reserve_bootmem_core(pgdat->bdata, physaddr, size, flags);
+ }
+ 
+ void __init free_bootmem_node (pg_data_t *pgdat, unsigned long physaddr, unsigned long size)
+@@ -383,9 +443,20 @@ unsigned long __init init_bootmem (unsigned long start, unsigned long pages)
+ }
+ 
+ #ifndef CONFIG_HAVE_ARCH_BOOTMEM_NODE
+-void __init reserve_bootmem (unsigned long addr, unsigned long size)
++int __init reserve_bootmem (unsigned long addr, unsigned long size,
++			    unsigned long flags)
+ {
+-	reserve_bootmem_core(NODE_DATA(0)->bdata, addr, size);
++	bootmem_data_t *bdata;
++	int ret;
++
++	list_for_each_entry(bdata, &bdata_list, list) {
++		ret = can_reserve_bootmem_core(bdata, addr, size, flags);
++		if (ret < 0)
++			return ret;
++	}
++	list_for_each_entry(bdata, &bdata_list, list)
++		reserve_bootmem_core(bdata, addr, size, flags);
++	return 0;
+ }
+ #endif /* !CONFIG_HAVE_ARCH_BOOTMEM_NODE */
+ 

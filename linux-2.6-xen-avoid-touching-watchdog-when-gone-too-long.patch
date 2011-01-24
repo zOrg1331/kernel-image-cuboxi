@@ -1,0 +1,58 @@
+From: Glauber de Oliveira Costa <gcosta@redhat.com>
+Subject: [RHEL-5 PATCH] Avoid touching the softlockup watchdog when gone for too long (#216467)
+Date: Wed, 29 Nov 2006 12:31:33 -0200
+Bugzilla: 216467
+Message-Id: <20061129143132.GG23434@redhat.com>
+Changelog: Xen: Avoid touching the watchdog when gone for too long
+
+
+This patch, pulled directly from upstream avoids the softlockup watchdog
+getting called when a domain is paused for a long timeframe, and then
+unpaused. 
+
+Being without a call to the softlockup watchdog in this situation is
+normal, and all we have to do is call it when we're back. We can find
+out that we were back by looking into the stolen variable.
+
+It fixes #216467, but it won't work properly without the patch for
+#209534, sent some time ago, but not yet included (I resent it to
+dzickus today)
+
+please ACK for inclusion
+
+-- 
+Glauber de Oliveira Costa
+Red Hat Inc.
+"Free as in Freedom"
+
+# HG changeset patch
+# User kfraser@localhost.localdomain
+# Date 1164802619 0
+# Node ID 53795f0a41b116d0fb428bd3ee4a099b42fca97f
+# Parent  f32abd365ae006e4dfda7ec206a9955b3cd57da2
+[LINUX] Avoid triggering the softlockup BUG when offline for too long.
+
+After being offline for a long time, the softlockup  watchdog triggers
+a BUG() on our faces. This is expected, as in fact, we spent more than
+a fixed 10*HZ amount of time without touching the watchdog.
+
+However, by inspecting the contents of stolen inside timer irq handler,
+we can gain awareness of the fact, and do better than that.
+
+Signed-off-by: Glauber de Oliveira Costa <gcosta@redhat.com>
+
+Index: latest/arch/i386/kernel/time-xen.c
+===================================================================
+--- latest.orig/arch/i386/kernel/time-xen.c
++++ latest/arch/i386/kernel/time-xen.c
+@@ -709,6 +709,10 @@ irqreturn_t timer_interrupt(int irq, voi
+ 					    (cputime_t)delta_cpu);
+ 	}
+ 
++	/* Offlined for more than a few seconds? Avoid lockup warnings. */
++	if (stolen > 5*HZ)
++		touch_softlockup_watchdog();
++
+ 	/* Local timer processing (see update_process_times()). */
+ 	run_local_timers();
+ 	if (rcu_pending(cpu))

@@ -1,0 +1,110 @@
+From: Jeff Layton <jlayton@redhat.com>
+Date: Tue, 11 Dec 2007 10:05:54 -0500
+Subject: [fs] cifs: reduce corrupt list in find_writable_file
+Message-id: 1197385560-21991-10-git-send-email-jlayton@redhat.com
+O-Subject: [RHEL5.2 PATCH 09/15] BZ#417961: [CIFS] Reduce chance of list corruption in find_writable_file
+Bugzilla: 417961
+
+When find_writable_file is racing with close and the session
+to the server goes down, Shaggy noticed that there was a
+chance that an open file in the list of files off the inode
+could have been freed by close since cifs_reconnect can
+block (the spinlock thus not held). This means that
+we have to start over at the beginning of the list in some
+cases.
+
+There is a 2nd change that needs to be made later
+(pointed out by Jeremy Allison and Shaggy) in order to
+prevent cifs_close ever freeing the cifs per file info
+when a write is pending.  Although we delay close from
+freeing this memory for sufficiently long for all known
+cases, ultimately on a very, very slow write
+overlapping a close pending we need to allow close to return
+(without freeing the cifs file info) and defer freeing the
+memory to be the responsibility of the (sloooow) write
+thread (presumably have to look at every place wrtPending
+is decremented - and add a flag for deferred free for
+after wrtPending goes to zero).
+
+Acked-by: Shaggy <shaggy@us.ibm.com>
+Acked-by: Shirish Pargaonkar <shirishp@us.ibm.com>
+Signed-off-by: Steve French <sfrench@us.ibm.com>
+
+diff --git a/fs/cifs/file.c b/fs/cifs/file.c
+index 482aba3..7b85580 100644
+--- a/fs/cifs/file.c
++++ b/fs/cifs/file.c
+@@ -1212,6 +1212,7 @@ struct cifsFileInfo *find_writable_file(struct cifsInodeInfo *cifs_inode)
+ 	}
+ 
+ 	read_lock(&GlobalSMBSeslock);
++refind_writable:
+ 	list_for_each_entry(open_file, &cifs_inode->openFileList, flist) {
+ 		if (open_file->closePend)
+ 			continue;
+@@ -1219,27 +1220,51 @@ struct cifsFileInfo *find_writable_file(struct cifsInodeInfo *cifs_inode)
+ 		    ((open_file->pfile->f_flags & O_RDWR) ||
+ 		     (open_file->pfile->f_flags & O_WRONLY))) {
+ 			atomic_inc(&open_file->wrtPending);
++
++			if (!open_file->invalidHandle) {
++				/* found a good writable file */
++				read_unlock(&GlobalSMBSeslock);
++				return open_file;
++			}
++
+ 			read_unlock(&GlobalSMBSeslock);
+-			if (open_file->invalidHandle) {
+-				rc = cifs_reopen_file(open_file->pfile, FALSE);
+-				/* if it fails, try another handle - might be */
+-				/* dangerous to hold up writepages with retry */
+-				if (rc) {
+-					cFYI(1, ("wp failed on reopen file"));
++			/* Had to unlock since following call can block */
++			rc = cifs_reopen_file(open_file->pfile, FALSE);
++			if (!rc) {
++				if (!open_file->closePend)
++					return open_file;
++				else { /* start over in case this was deleted */
++					/* since the list could be modified */
+ 					read_lock(&GlobalSMBSeslock);
+ 					/* can not use this handle, no write
+ 					pending on this one after all */
+ 					atomic_dec(&open_file->wrtPending);
+-					continue;
+-
++					goto refind_writable;
+ 				}
+ 			}
+-			if (open_file->closePend) {
+-				read_lock(&GlobalSMBSeslock);
+-				atomic_dec(&open_file->wrtPending);
+-				continue;
+-			}
+-			return open_file;
++
++			/* if it fails, try another handle if possible -
++			(we can not do this if closePending since
++			loop could be modified - in which case we
++			have to start at the beginning of the list
++			again. Note that it would be bad
++			to hold up writepages here (rather than
++			in caller) with continuous retries */
++			cFYI(1, ("wp failed on reopen file"));
++			read_lock(&GlobalSMBSeslock);
++			/* can not use this handle, no write
++			   pending on this one after all */
++			atomic_dec(&open_file->wrtPending);
++
++			if (open_file->closePend) /* list could have changed */
++				goto refind_writable;
++			/* else we simply continue to the next entry. Thus
++			   we do not loop on reopen errors.  If we
++			   can not reopen the file, for example if we
++			   reconnected to a server with another client
++			   racing to delete or lock the file we would not
++			   make progress if we restarted before the beginning
++			   of the loop here. */
+ 		}
+ 	}
+ 	read_unlock(&GlobalSMBSeslock);

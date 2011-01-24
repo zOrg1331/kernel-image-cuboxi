@@ -1,0 +1,97 @@
+From: Jiri Olsa <jolsa@redhat.com>
+Date: Mon, 6 Sep 2010 16:06:24 -0400
+Subject: [misc] clone: fix race between copy_process and de_thread
+Message-id: <1283789184-13909-1-git-send-email-jolsa@redhat.com>
+Patchwork-id: 28160
+O-Subject: [PATCH RHEL5] BZ#590864 - clone(): fix race between copy_process()
+	and de_thread()
+Bugzilla: 590864
+RH-Acked-by: Oleg Nesterov <oleg@redhat.com>
+RH-Acked-by: Larry Woodman <lwoodman@redhat.com>
+RH-Acked-by: Jerome Marchand <jmarchan@redhat.com>
+
+Bugzilla: 590864
+https://bugzilla.redhat.com/show_bug.cgi?id=56610://bugzilla.redhat.com/show_bug.cgi?id=590864
+
+Description:
+============
+copy_process() uses signal->count as a reference counter, but it is not.
+If copy_process(CLONE_THREAD) races with de_thread()
+copy_signal()->atomic(signal->count) breaks the signal->notify_count
+logic, and the execing thread can hang forever in kernel space.
+
+Change copy_process() to increment count/live only when we know for sure
+we can't fail.  In this case the forked thread will take care of its
+reference to signal correctly.
+
+If copy_process() fails, check CLONE_THREAD flag.  If it it set - do
+nothing, the counters were not changed and current belongs to the same
+thread group.  If it is not set, ->signal must be released in any case
+(and ->count must be == 1), the forked child is the only thread in the
+thread group.
+
+Upstream status:
+================
+- clone(): fix race between copy_process() and de_thread()
+	commit 4ab6c08336535f8c8e42cf45d7adeda882eff06e
+	Author: Oleg Nesterov <oleg@redhat.com>
+
+Brew:
+=====
+https://brewweb.devel.redhat.com/taskinfo?taskID=2738772
+
+Tested:
+=======
+tested with the reproducer described in the upsteram commit.
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/kernel/fork.c b/kernel/fork.c
+index 63ec9a4..4c55843 100644
+--- a/kernel/fork.c
++++ b/kernel/fork.c
+@@ -962,8 +962,6 @@ static inline int copy_signal(unsigned long clone_flags, struct task_struct * ts
+ 	int ret;
+ 
+ 	if (clone_flags & CLONE_THREAD) {
+-		atomic_inc(&current->signal->count);
+-		atomic_inc(&current->signal->live);
+ 		taskstats_tgid_alloc(current->signal);
+ 		return 0;
+ 	}
+@@ -1039,16 +1037,6 @@ void __cleanup_signal(struct signal_struct *sig)
+ 	kmem_cache_free(signal_cachep, sig);
+ }
+ 
+-static inline void cleanup_signal(struct task_struct *tsk)
+-{
+-	struct signal_struct *sig = tsk->signal;
+-
+-	atomic_dec(&sig->live);
+-
+-	if (atomic_dec_and_test(&sig->count))
+-		__cleanup_signal(sig);
+-}
+-
+ static inline void copy_flags(unsigned long clone_flags, struct task_struct *p)
+ {
+ 	unsigned long new_flags = p->flags;
+@@ -1347,6 +1335,8 @@ static struct task_struct *copy_process(unsigned long clone_flags,
+ 	}
+ 
+ 	if (clone_flags & CLONE_THREAD) {
++		atomic_inc(&current->signal->count);
++		atomic_inc(&current->signal->live);
+ 		p->group_leader = current->group_leader;
+ 		list_add_tail_rcu(&p->thread_group, &p->group_leader->thread_group);
+ 
+@@ -1403,7 +1393,8 @@ bad_fork_cleanup_mm:
+ 	if (p->mm)
+ 		mmput(p->mm);
+ bad_fork_cleanup_signal:
+-	cleanup_signal(p);
++	if (!(clone_flags & CLONE_THREAD))
++		__cleanup_signal(p->signal);
+ bad_fork_cleanup_sighand:
+ 	__cleanup_sighand(p->sighand);
+ bad_fork_cleanup_fs:

@@ -1,0 +1,60 @@
+From: Chris Lalancette <clalance@redhat.com>
+Subject: [RHEL5.1 PATCH]: Xen: FIx privcmd to remove nopage handler
+Date: Fri, 24 Aug 2007 13:05:29 -0400
+Bugzilla: 249409
+Message-Id: <46CF0FD9.8000905@redhat.com>
+Changelog: [xen] Fix privcmd to remove nopage handler
+
+
+All,
+     Attached is a simple patch to set the nopage handler in the Xen privcmd
+stuff to NULL.  As Rik pointed out, when your vma has VM_PFNMAP, you should
+*not* define a nopage handler, because handle_pte_fault() calls do_no_page iff
+your vma has a nopage handler defined.  If you do have VM_PFNMAP on your vma,
+and you also have a nopage handler, it leads to this BUG_ON:
+
+Kernel BUG at mm/memory.c:2290
+invalid opcode: 0000 [1] SMP
+
+By setting the nopage handler to NULL, we never even call do_no_page(), so we do
+not hit this BUG_ON anymore.
+
+Before this patch, doing an HVM live migrate from an x86_64 box to another
+x86_64 box would crash the target box fairly reliably.  After the patch, doing
+the same live migrate did not crash the target box.  Note that there is another
+bug in the userland portion of the code that still causes the live migrate to
+have problems; that will be posted as a separate patch.
+
+I tested this in the following ways:
+1)  x86_64 live-migrate, off-line migrate, save/restore of PV and HVM guests;
+all succeeded
+2)  i686 live-migrate, off-line migrate, save/restore of PV and HVM guests; all
+succeeded
+3)  The tester program from BZ 253479; before the patch, it would crash the box
+you ran it on; after the patch, the box would no longer crash.
+
+This fixes BZ 249409.  Please ACK.
+
+Chris Lalancette
+
+--- linux-2.6.18.noarch/drivers/xen/privcmd/privcmd.c.orig	2007-08-22 13:38:09.000000000 -0400
++++ linux-2.6.18.noarch/drivers/xen/privcmd/privcmd.c	2007-08-22 13:38:28.000000000 -0400
+@@ -217,15 +217,8 @@ static int privcmd_ioctl(struct inode *i
+ }
+ 
+ #ifndef HAVE_ARCH_PRIVCMD_MMAP
+-static struct page *privcmd_nopage(struct vm_area_struct *vma,
+-				unsigned long address,
+-				int *type)
+-{
+-	return NOPAGE_SIGBUS;
+-}
+-
+ static struct vm_operations_struct privcmd_vm_ops = {
+-	.nopage = privcmd_nopage
++	.nopage = NULL
+ };
+ 
+ static int privcmd_mmap(struct file * file, struct vm_area_struct * vma)
+
+

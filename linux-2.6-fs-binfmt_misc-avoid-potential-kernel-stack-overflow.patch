@@ -1,0 +1,75 @@
+From: Vitaly Mayatskikh <vmayatsk@redhat.com>
+Date: Mon, 25 Aug 2008 10:15:51 +0200
+Subject: [fs] binfmt_misc: avoid potential kernel stack overflow
+Message-id: m38wulqzm0.fsf@gravicappa.englab.brq.redhat.com
+O-Subject: Re: [RHEL-5.3 PATCH] BZ459463 kernel: binfmt_misc.c: avoid potential kernel stack overflow [rhel-5.3]
+Bugzilla: 459463
+RH-Acked-by: Larry Woodman <lwoodman@redhat.com>
+RH-Acked-by: Eugene Teo <eteo@redhat.com>
+
+Bugzilla: 459463
+https://bugzilla.redhat.com/show_bug.cgi?id=459463
+
+Description:
+============
+
+diff --git a/fs/binfmt_em86.c b/fs/binfmt_em86.c
+index 1f2d1ad..7f302b8 100644
+--- a/fs/binfmt_em86.c
++++ b/fs/binfmt_em86.c
+@@ -44,7 +44,7 @@ static int load_em86(struct linux_binprm *bprm,struct pt_regs *regs)
+ 			return -ENOEXEC;
+ 	}
+ 
+-	bprm->sh_bang++;	/* Well, the bang-shell is implicit... */
++	bprm->sh_bang = 1;	/* Well, the bang-shell is implicit... */
+ 	allow_write_access(bprm->file);
+ 	fput(bprm->file);
+ 	bprm->file = NULL;
+diff --git a/fs/binfmt_misc.c b/fs/binfmt_misc.c
+index 1378ba3..2adf2ad 100644
+--- a/fs/binfmt_misc.c
++++ b/fs/binfmt_misc.c
+@@ -42,6 +42,9 @@ enum {Enabled, Magic};
+ #define MISC_FMT_OPEN_BINARY (1<<30)
+ #define MISC_FMT_CREDENTIALS (1<<29)
+ 
++/* Marker for breaking misc - > script -> misc loop */
++#define MISC_BANG (1<<1)
++
+ typedef struct {
+ 	struct list_head list;
+ 	unsigned long flags;		/* type, status, etc. */
+@@ -116,6 +119,10 @@ static int load_misc_binary(struct linux_binprm *bprm, struct pt_regs *regs)
+ 	if (!enabled)
+ 		goto _ret;
+ 
++	retval = -ENOEXEC;
++	if (bprm->sh_bang & MISC_BANG)
++		goto _ret;
++
+ 	/* to keep locking time low, we copy the interpreter string */
+ 	read_lock(&entries_lock);
+ 	fmt = check_file(bprm);
+@@ -201,6 +208,8 @@ static int load_misc_binary(struct linux_binprm *bprm, struct pt_regs *regs)
+ 	if (retval < 0)
+ 		goto _error;
+ 
++	bprm->sh_bang |= MISC_BANG;
++
+ 	retval = search_binary_handler (bprm, regs);
+ 	if (retval < 0)
+ 		goto _error;
+diff --git a/fs/binfmt_script.c b/fs/binfmt_script.c
+index 5b6309f..e2f55c1 100644
+--- a/fs/binfmt_script.c
++++ b/fs/binfmt_script.c
+@@ -30,7 +30,7 @@ static int load_script(struct linux_binprm *bprm,struct pt_regs *regs)
+ 	 * Sorta complicated, but hopefully it will work.  -TYT
+ 	 */
+ 
+-	bprm->sh_bang++;
++	bprm->sh_bang = 1;
+ 	allow_write_access(bprm->file);
+ 	fput(bprm->file);
+ 	bprm->file = NULL;

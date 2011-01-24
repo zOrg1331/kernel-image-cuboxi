@@ -1,0 +1,60 @@
+From: Tony Camuso <tcamuso@redhat.com>
+Date: Fri, 22 Jan 2010 19:07:01 -0500
+Subject: [char] ipmi: fix ipmi_watchdog deadlock
+Message-id: <20100122190726.9737.73955.sendpatchset@dhcp-100-2-186.bos.redhat.com>
+Patchwork-id: 22771
+O-Subject: [RHEL5.5 PATCH]ipmi: BZ 552675 - ipmi_watchdog deadlock
+Bugzilla: 552675
+
+BUGZILLA
+    ========
+    https://bugzilla.redhat.com/show_bug.cgi?id=552675
+
+    ipmi_watchdog deadlock
+
+    DESCRIPTION
+    ===========
+    The test program hangs with the following message.
+       If I hang here, my ipmi_watchdog is buggy...
+
+    UPSTREAM STATUS
+    ===============
+    commit 612b5a8d3a57d07698ceec0e307a84f38b241fe2
+    Author: Corey Minyard <minyard@acm.org>
+    Date:   Thu Oct 18 03:07:10 2007 -0700
+
+    TESTING
+    =======
+    I tested this patch for functionality, no hang when running the
+    test program attached to the Bugzilla, and for regression.
+
+    STAT
+    ====
+     drivers/char/ipmi/ipmi_watchdog.c |    3 ++-
+     1 files changed, 2 insertions(+), 1 deletions(-)
+
+    Signed-off-by: Dann Frazier <dannf@hp.com>
+    Signed-off-by: Tony Camuso <tcamuso@redhat.com>
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/char/ipmi/ipmi_watchdog.c b/drivers/char/ipmi/ipmi_watchdog.c
+index 23b14a4..b7ff38f 100644
+--- a/drivers/char/ipmi/ipmi_watchdog.c
++++ b/drivers/char/ipmi/ipmi_watchdog.c
+@@ -426,13 +426,12 @@ static int ipmi_set_timeout(int do_heartbeat)
+ 
+ 	wait_for_completion(&set_timeout_wait);
+ 
++	mutex_unlock(&set_timeout_lock);
++
+ 	if ((do_heartbeat == IPMI_SET_TIMEOUT_FORCE_HB)
+ 	    || ((send_heartbeat_now)
+ 		&& (do_heartbeat == IPMI_SET_TIMEOUT_HB_IF_NECESSARY)))
+-	{
+ 		rv = ipmi_heartbeat();
+-	}
+-	mutex_unlock(&set_timeout_lock);
+ 
+ out:
+ 	return rv;

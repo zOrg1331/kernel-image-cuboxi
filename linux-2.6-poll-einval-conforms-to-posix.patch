@@ -1,0 +1,53 @@
+Date: Wed, 30 Aug 2006 23:31:58 -0400
+From: Chris Snook <csnook@redhat.com>
+Subject: [RHEL5 PATCH] BZ 204705 avoid poll() failing with EINVAL unnecessarily
+
+Hey folks --
+
+	A customer migrating from RHL 8 found that his code which polls 
+	large numbers of possibly-invalid file descriptors no longer works 
+correctly. POSIX states that poll() should fail with EINVAL if nfds > 
+ OPEN_MAX. The OPEN_MAX that POSIX refers to is equivalent to 
+current->signal->rlim[RLIMIT_NOFILE].rlim_cur in the linux kernel, but 
+the current code checks the compile-time constant that also happens to 
+be named OPEN_MAX, and also checks to make sure that nfds is not greater 
+than current->files->max_fdset.  As stupid as it is to poll against 
+duplicate or invalid file descriptors, it's permitted by POSIX, and 
+works just fine when nfds <= 1024, and changing the RLIMIT_NOFILE value 
+doesn't move that threshold.  For strict POSIX conformance, poll() 
+should fail on EINVAL if and only if nfds > 
+current->signal->rlim[RLIMIT_NOFILE].rlim_cur.
+
+	The attached patch brings poll() in line with POSIX with respect 
+	to EINVAL, removes a no-longer-needed lock, and allows code which worked 
+under 2.4.18 (before the check against max_fdset and OPEN_MAX) to work 
+again, but without the DoS potential that existed in the 2.4.18 code. 
+Tested and confirmed to fix the problem on RHEL 5 Alpha 1.
+
+	-- Chris
+
+--- linux-2.6.16.i686/fs/select.c.orig	2006-08-30 17:56:36.000000000 -0400
++++ linux-2.6.16.i686/fs/select.c	2006-08-30 17:58:10.000000000 -0400
+@@ -641,8 +641,6 @@ int do_sys_poll(struct pollfd __user *uf
+  	unsigned int i;
+ 	struct poll_list *head;
+  	struct poll_list *walk;
+-	struct fdtable *fdt;
+-	int max_fdset;
+ 	/* Allocate small arguments on the stack to save memory and be
+ 	   faster - use long to make sure the buffer is aligned properly
+ 	   on 64 bit archs to avoid unaligned access */
+@@ -650,11 +648,7 @@ int do_sys_poll(struct pollfd __user *uf
+ 	struct poll_list *stack_pp = NULL;
+ 
+ 	/* Do a sanity check on nfds ... */
+-	rcu_read_lock();
+-	fdt = files_fdtable(current->files);
+-	max_fdset = fdt->max_fdset;
+-	rcu_read_unlock();
+-	if (nfds > max_fdset && nfds > OPEN_MAX)
++	if (nfds > current->signal->rlim[RLIMIT_NOFILE].rlim_cur)
+ 		return -EINVAL;
+ 
+ 	poll_initwait(&table);
+

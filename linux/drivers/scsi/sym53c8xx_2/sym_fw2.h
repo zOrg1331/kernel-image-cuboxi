@@ -956,7 +956,7 @@ static struct SYM_FWA_SCR SYM_FWA_SCR = {
 	 *  It shall be a tagged command.
 	 *  Read SIMPLE+TAG.
 	 *  The C code will deal with errors.
-	 *  Aggressive optimization, isn't it? :)
+	 *  Agressive optimization, is'nt it? :)
 	 */
 	SCR_MOVE_ABS (2) ^ SCR_MSG_IN,
 		HADDR_1 (msgin),
@@ -968,7 +968,7 @@ static struct SYM_FWA_SCR SYM_FWA_SCR = {
 		offsetof(struct sym_lcb, head.itlq_tbl_sa),
 	/*
 	 *  The SIDL still contains the TAG value.
-	 *  Aggressive optimization, isn't it? :):)
+	 *  Agressive optimization, isn't it? :):)
 	 */
 	SCR_REG_SFBR (sidl, SCR_SHL, 0),
 		0,
@@ -1781,7 +1781,7 @@ static struct SYM_FWB_SCR SYM_FWB_SCR = {
 	 *  While testing with bogus QUANTUM drives, the C1010 
 	 *  sometimes raised a spurious phase mismatch with 
 	 *  WSR and the CHMOV(1) triggered another PM.
-	 *  Waiting explicitly for the PHASE seemed to avoid
+	 *  Waiting explicitely for the PHASE seemed to avoid 
 	 *  the nested phase mismatch. Btw, this didn't happen 
 	 *  using my IBM drives.
 	 */

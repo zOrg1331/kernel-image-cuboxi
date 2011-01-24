@@ -1,0 +1,104 @@
+From: Eric Sandeen <sandeen@redhat.com>
+Date: Mon, 16 Aug 2010 18:40:25 -0400
+Subject: [fs] ext4: consolidate in_range definitions
+Message-id: <4C698619.8090704@redhat.com>
+Patchwork-id: 27645
+O-Subject: [PATCH RHEL5.6] ext4: consolidate in_range() definitions
+Bugzilla: 624332
+CVE: CVE-2010-3015
+RH-Acked-by: Jiri Pirko <jpirko@redhat.com>
+
+This is for bug #624332 -
+kernel: integer overflow in ext4_ext_get_blocks() [rhel-5.6]
+
+Straightforward backport of the below commit, tested
+on rhel6 with the testcase attached to bug #621829
+
+An overflow when writing the last block in a 16T
+file can cause range tests to fail, leading to
+a condition triggering a BUG_ON().
+
+The in_range() usage fixes the overflow, and (inadvertently)
+fixes the BUG() that was seen.
+
+Thanks,
+-Eric
+
+From: Akinobu Mita <akinobu.mita@gmail.com>
+Date: Thu, 4 Mar 2010 04:55:01 +0000 (-0500)
+Subject: ext4: consolidate in_range() definitions
+X-Git-Tag: v2.6.34-rc1~199^2~4
+X-Git-Url: http://git.kernel.org/?p=linux%2Fkernel%2Fgit%2Ftorvalds%2Flinux-2.6.git;a=commitdiff_plain;h=731eb1a03a8445cde2cb23ecfb3580c6fa7bb690
+
+ext4: consolidate in_range() definitions
+
+There are duplicate macro definitions of in_range() in mballoc.h and
+balloc.c.  This consolidates these two definitions into ext4.h, and
+changes extents.c to use in_range() as well.
+
+Signed-off-by: Akinobu Mita <akinobu.mita@gmail.com>
+Signed-off-by: "Theodore Ts'o" <tytso@mit.edu>
+Cc: Andreas Dilger <adilger@sun.com>
+
+diff --git a/fs/ext4/balloc.c b/fs/ext4/balloc.c
+index 1146a5e..553a370 100644
+--- a/fs/ext4/balloc.c
++++ b/fs/ext4/balloc.c
+@@ -189,9 +189,6 @@ unsigned ext4_init_block_bitmap(struct super_block *sb, struct buffer_head *bh,
+  * when a file system is mounted (see ext4_fill_super).
+  */
+ 
+-
+-#define in_range(b, first, len)	((b) >= (first) && (b) <= (first) + (len) - 1)
+-
+ /**
+  * ext4_get_group_desc() -- load group descriptor from disk
+  * @sb:			super block
+diff --git a/fs/ext4/ext4.h b/fs/ext4/ext4.h
+index 55f07bb..b5bc347 100644
+--- a/fs/ext4/ext4.h
++++ b/fs/ext4/ext4.h
+@@ -1760,6 +1760,8 @@ static inline void set_bitmap_uptodate(struct buffer_head *bh)
+ 	set_bit(BH_BITMAP_UPTODATE, &(bh)->b_state);
+ }
+ 
++#define in_range(b, first, len)	((b) >= (first) && (b) <= (first) + (len) - 1)
++
+ #endif	/* __KERNEL__ */
+ 
+ #endif	/* _EXT4_H */
+diff --git a/fs/ext4/extents.c b/fs/ext4/extents.c
+index a1728b4..13622da 100644
+--- a/fs/ext4/extents.c
++++ b/fs/ext4/extents.c
+@@ -1934,7 +1934,7 @@ ext4_ext_in_cache(struct inode *inode, ext4_lblk_t block,
+ 
+ 	BUG_ON(cex->ec_type != EXT4_EXT_CACHE_GAP &&
+ 			cex->ec_type != EXT4_EXT_CACHE_EXTENT);
+-	if (block >= cex->ec_block && block < cex->ec_block + cex->ec_len) {
++	if (in_range(block, cex->ec_block, cex->ec_len)) {
+ 		ex->ee_block = cpu_to_le32(cex->ec_block);
+ 		ext4_ext_store_pblock(ex, cex->ec_start);
+ 		ex->ee_len = cpu_to_le16(cex->ec_len);
+@@ -3207,7 +3207,7 @@ int ext4_ext_get_blocks(handle_t *handle, struct inode *inode,
+ 		 */
+ 		ee_len = ext4_ext_get_actual_len(ex);
+ 		/* if found extent covers block, simply return it */
+-		if (iblock >= ee_block && iblock < ee_block + ee_len) {
++		if (in_range(iblock, ee_block, ee_len)) {
+ 			newblock = iblock - ee_block + ee_start;
+ 			/* number of remaining blocks in the extent */
+ 			allocated = ee_len - (iblock - ee_block);
+diff --git a/fs/ext4/mballoc.h b/fs/ext4/mballoc.h
+index 156564a..8d6833e 100644
+--- a/fs/ext4/mballoc.h
++++ b/fs/ext4/mballoc.h
+@@ -255,8 +255,6 @@ static inline void ext4_mb_store_history(struct ext4_allocation_context *ac)
+ }
+ #endif
+ 
+-#define in_range(b, first, len)	((b) >= (first) && (b) <= (first) + (len) - 1)
+-
+ static inline ext4_fsblk_t ext4_grp_offs_to_block(struct super_block *sb,
+ 					struct ext4_free_extent *fex)
+ {

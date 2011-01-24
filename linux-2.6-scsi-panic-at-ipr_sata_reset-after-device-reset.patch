@@ -1,0 +1,78 @@
+From: Kevin Monroe <kmonroe@redhat.com>
+Date: Mon, 12 Oct 2009 21:59:51 -0400
+Subject: [scsi] panic at .ipr_sata_reset after device reset
+Message-id: 20091013015514.21599.3997.sendpatchset@squad5-lp1.lab.bos.redhat.com
+O-Subject: [PATCH RHEL5.5 BZ528175] Fix panic at .ipr_sata_reset+0x3c/0x1d8 after device reset
+Bugzilla: 528175
+RH-Acked-by: Stefan Assmann <sassmann@redhat.com>
+RH-Acked-by: Stanislaw Gruszka <sgruszka@redhat.com>
+RH-Acked-by: David Howells <dhowells@redhat.com>
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+RH-Acked-by: David Milburn <dmilburn@redhat.com>
+
+RHBZ#:
+======
+https://bugzilla.redhat.com/show_bug.cgi?id=528175
+
+Description:
+============
+System panic in .ipr_sata_reset+0x3c/0x1d8. In the customer environment, it
+has been speculated (but not validated) that a DVD-ROM failure is triggering
+this reset and panic. Use the new ata_link structure in the IPR driver SATA
+reset procedure to fix this.
+
+RHEL Version Found:
+===================
+RHEL 5.4
+
+kABI Status:
+============
+No symbols were harmed.
+
+Brew:
+=====
+Built on all platforms.
+https://brewweb.devel.redhat.com/taskinfo?taskID=2025618
+
+Upstream Status:
+================
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=cc0680a580b5be81a1ca321b58f8e9b80b5c1052
+
+Test Status:
+============
+No panics after patch is applied.
+
+===============================================================
+Kevin Monroe 978-392-3183 ext 23183
+IBM on-site partner
+
+Proposed Patch:
+===============
+
+diff --git a/drivers/scsi/ipr.c b/drivers/scsi/ipr.c
+index 63049ce..470e290 100644
+--- a/drivers/scsi/ipr.c
++++ b/drivers/scsi/ipr.c
+@@ -3848,18 +3848,18 @@ static int ipr_device_reset(struct ipr_ioa_cfg *ioa_cfg,
+ 
+ /**
+  * ipr_sata_reset - Reset the SATA port
+- * @ap:		SATA port to reset
++ * @link:		SATA link to reset
+  * @classes:	class of the attached device
+  *
+- * This function issues a SATA phy reset to the affected ATA port.
++ * This function issues a SATA phy reset to the affected ATA link.
+  *
+  * Return value:
+  *	0 on success / non-zero on failure
+  **/
+-static int ipr_sata_reset(struct ata_port *ap, unsigned int *classes,
++static int ipr_sata_reset(struct ata_link *link, unsigned int *classes,
+ 			  unsigned long deadline)
+ {
+-	struct ipr_sata_port *sata_port = ap->private_data;
++	struct ipr_sata_port *sata_port = link->ap->private_data;
+ 	struct ipr_ioa_cfg *ioa_cfg = sata_port->ioa_cfg;
+ 	struct ipr_resource_entry *res;
+ 	unsigned long lock_flags = 0;

@@ -1,0 +1,3233 @@
+Subject: Re: [2.6.17-git22] lock debugging output
+From:	Arjan van de Ven <arjan@infradead.org>
+To:	Alessandro Suardi <alessandro.suardi@gmail.com>
+Cc:	akpm@osdl.org, mingo@elte.hu,
+	Linux Kernel <linux-kernel@vger.kernel.org>,
+	netdev@vger.kernel.org
+In-Reply-To: <5a4c581d0607041113o2993cbf5m7011b2a06e96d974@mail.gmail.com>
+References: <5a4c581d0607041113o2993cbf5m7011b2a06e96d974@mail.gmail.com>
+Content-Type: text/plain
+Date:	Tue, 04 Jul 2006 20:32:46 +0200
+
+From: Arjan van de Ven <arjan@linux.intel.com>
+
+On Tue, 2006-07-04 at 20:13 +0200, Alessandro Suardi wrote:
+> Hoping gmail doesn't mess it too badly...
+> 
+> eth0: tg3 (BCM5751 Gbit Ethernet)
+> eth1: ipw2200 (Intel PRO/Wireless 2200BG)
+> 
+> Sequence:
+>  1. boot with eth0 disconnected (eth1 doesn't come up on boot)
+>  2. ifup eth1, bring wpa-supplicant up
+>  3. run 'dig' ---> <lock debug info gets printed on console>
+
+
+this appears to be a real deadlock:
+
+the SO_BINDTODEVICE ioctl calls sk_dst_reset(), which looks like this:
+static inline void
+sk_dst_reset(struct sock *sk)
+{
+        write_lock(&sk->sk_dst_lock);
+        __sk_dst_reset(sk);
+        write_unlock(&sk->sk_dst_lock);
+}
+
+now... ipv6 does this in softirq context:
+  [<c028cf72>] sk_dst_check+0x1b/0xe6
+  [<f8ce1305>] ip6_dst_lookup+0x31/0x16d [ipv6]
+  [<f8cf3338>] icmpv6_send+0x332/0x549 [ipv6]
+  [<f8cf09a1>] udpv6_rcv+0x4ab/0x4d6 [ipv6]
+  [<f8ce2900>] ip6_input+0x19c/0x228 [ipv6]
+  [<f8ce2d61>] ipv6_rcv+0x188/0x1b7 [ipv6]
+  [<c02925b7>] netif_receive_skb+0x18d/0x1d8
+  [<c0293d6a>] process_backlog+0x80/0xf9
+  [<c0293f43>] net_rx_action+0x80/0x174
+  [<c01162fd>] __do_softirq+0x46/0x9c
+  [<c01040e6>] do_softirq+0x4d/0xac
+
+where sk_dst_check() takes the same lock for read.
+
+that looks like a real deadlock to me... 
+the most obvious low impact solution is to make sk_dst_reset use an
+irqsave variant; patch for that is attached below. I'll leave it to the
+networking people to say if that's the real right approach
+
+Signed-off-by: Arjan van de Ven <arjan@linux.intel.com>
+
+---
+ include/net/sock.h |    5 +++--
+ 1 file changed, 3 insertions(+), 2 deletions(-)
+
+Index: linux-2.6.17-mm6/include/net/sock.h
+===================================================================
+--- linux-2.6.17-mm6.orig/include/net/sock.h
++++ linux-2.6.17-mm6/include/net/sock.h
+@@ -1025,9 +1025,10 @@ __sk_dst_reset(struct sock *sk)
+ static inline void
+ sk_dst_reset(struct sock *sk)
+ {
+-	write_lock(&sk->sk_dst_lock);
++	unsigned long flags;
++	write_lock_irqsave(&sk->sk_dst_lock, flags);
+ 	__sk_dst_reset(sk);
+-	write_unlock(&sk->sk_dst_lock);
++	write_unlock_irqrestore(&sk->sk_dst_lock, flags);
+ }
+ 
+ extern struct dst_entry *__sk_dst_check(struct sock *sk, u32 cookie);
+
+
+-
+To unsubscribe from this list: send the line "unsubscribe linux-kernel" in
+the body of a message to majordomo@vger.kernel.org
+More majordomo info at  http://vger.kernel.org/majordomo-info.html
+Please read the FAQ at  http://www.tux.org/lkml/
+
+Subject: Re: lockdep input layer warnings.
+From: Arjan van de Ven <arjan@infradead.org>
+To: Dmitry Torokhov <dmitry.torokhov@gmail.com>
+Cc: Dave Jones <davej@redhat.com>, mingo@redhat.com,
+        Linux Kernel <linux-kernel@vger.kernel.org>
+In-Reply-To: <d120d5000607061329t4868d265h6f8285c798a0e3b7@mail.gmail.com>
+References: <20060706173411.GA2538@redhat.com>
+	 <d120d5000607061137r605a08f9ie6cd45a389285c4a@mail.gmail.com>
+	 <1152212575.3084.88.camel@laptopd505.fenrus.org>
+	 <d120d5000607061329t4868d265h6f8285c798a0e3b7@mail.gmail.com>
+Content-Type: text/plain
+Date: Mon, 10 Jul 2006 17:12:51 +0200
+
+On Thu, 2006-07-06 at 16:29 -0400, Dmitry Torokhov wrote:
+> On 7/6/06, Arjan van de Ven <arjan@infradead.org> wrote:
+> > On Thu, 2006-07-06 at 14:37 -0400, Dmitry Torokhov wrote:
+> > > On 7/6/06, Dave Jones <davej@redhat.com> wrote:
+> > > > One of our Fedora-devel users picked up on this this morning
+> > > > in an 18rc1 based kernel.
+> > > >
+> > > >                Dave
+> > > >
+> > > >
+> > > >  Synaptics Touchpad, model: 1, fw: 5.9, id: 0x2c6ab1, caps: 0x884793/0x0
+> > > >  serio: Synaptics pass-through port at isa0060/serio1/input0
+> > > >  input: SynPS/2 Synaptics TouchPad as /class/input/input1
+> > > >  PM: Adding info for serio:serio2
+> > > >
+> > > >  =============================================
+> > > >  [ INFO: possible recursive locking detected ]
+> > > >  ---------------------------------------------
+> > >
+> > > False alarm, there was a lockdep annotating patch for it in -mm.
+> > not so sure; that patch is supposed to be in -rc1 already; investigating
+> >
+> 
+> Well, you are right, the patch is in -rc1 and I see mutex_lock_nested
+> in the backtrace but for some reason it is still not happy. Again,
+> this is with pass-through Synaptics port and we first taking mutex of
+> the child device and then (going through pass-through port) trying to
+> take mutex of the parent.
+
+Ok it seems more drastic measures are needed; and a split of the
+cmd_mutex class on a per driver basis. The easiest way to do that is to
+inline the lock initialization (patch below) but to be honest I think
+the patch is a bit ugly; I considered inlining the entire function
+instead, any opinions on that?
+
+Index: linux-2.6.18-rc1/drivers/input/serio/libps2.c
+===================================================================
+--- linux-2.6.18-rc1.orig/drivers/input/serio/libps2.c
++++ linux-2.6.18-rc1/drivers/input/serio/libps2.c
+@@ -27,7 +27,7 @@ MODULE_AUTHOR("Dmitry Torokhov <dtor@mai
+ MODULE_DESCRIPTION("PS/2 driver library");
+ MODULE_LICENSE("GPL");
+ 
+-EXPORT_SYMBOL(ps2_init);
++EXPORT_SYMBOL(__ps2_init);
+ EXPORT_SYMBOL(ps2_sendbyte);
+ EXPORT_SYMBOL(ps2_drain);
+ EXPORT_SYMBOL(ps2_command);
+@@ -177,7 +177,7 @@ int ps2_command(struct ps2dev *ps2dev, u
+ 		return -1;
+ 	}
+ 
+-	mutex_lock_nested(&ps2dev->cmd_mutex, SINGLE_DEPTH_NESTING);
++	mutex_lock(&ps2dev->cmd_mutex);
+ 
+ 	serio_pause_rx(ps2dev->serio);
+ 	ps2dev->flags = command == PS2_CMD_GETID ? PS2_FLAG_WAITID : 0;
+@@ -279,7 +279,7 @@ int ps2_schedule_command(struct ps2dev *
+  * ps2_init() initializes ps2dev structure
+  */
+ 
+-void ps2_init(struct ps2dev *ps2dev, struct serio *serio)
++void __ps2_init(struct ps2dev *ps2dev, struct serio *serio)
+ {
+ 	mutex_init(&ps2dev->cmd_mutex);
+ 	init_waitqueue_head(&ps2dev->wait);
+Index: linux-2.6.18-rc1/include/linux/libps2.h
+===================================================================
+--- linux-2.6.18-rc1.orig/include/linux/libps2.h
++++ linux-2.6.18-rc1/include/linux/libps2.h
+@@ -39,7 +39,12 @@ struct ps2dev {
+ 	unsigned char nak;
+ };
+ 
+-void ps2_init(struct ps2dev *ps2dev, struct serio *serio);
++void __ps2_init(struct ps2dev *ps2dev, struct serio *serio);
++static inline void ps2_init(struct ps2dev *ps2dev, struct serio *serio)
++{
++	__ps2_init(ps2dev, serio);
++	mutex_init(&ps2dev->cmd_mutex);
++}
+ int ps2_sendbyte(struct ps2dev *ps2dev, unsigned char byte, int timeout);
+ void ps2_drain(struct ps2dev *ps2dev, int maxbytes, int timeout);
+ int ps2_command(struct ps2dev *ps2dev, unsigned char *param, int command);
+
+
+Subject: Re: another networking lockdep bug
+From: Arjan van de Ven <arjan@infradead.org>
+To: Dave Jones <davej@redhat.com>
+Cc: mingo@elte.hu
+In-Reply-To: <20060713040715.GE4199@redhat.com>
+References: <20060713040715.GE4199@redhat.com>
+Content-Type: text/plain
+Date: Thu, 13 Jul 2006 22:29:03 +0200
+
+On Thu, 2006-07-13 at 00:07 -0400, Dave Jones wrote:
+> Not sure if this one got reported/fixed yet, as I was running
+> a kernel from sometime last week..
+> 
+> 		Dave
+> 
+
+
+can you add this patch for this and retry?
+Index: linux-2.6.18-rc1/net/socket.c
+===================================================================
+--- linux-2.6.18-rc1.orig/net/socket.c
++++ linux-2.6.18-rc1/net/socket.c
+@@ -1232,7 +1232,13 @@ int sock_create(int family, int type, in
+ 
+ int sock_create_kern(int family, int type, int protocol, struct socket **res)
+ {
+-	return __sock_create(family, type, protocol, res, 1);
++	static struct lock_class_key sk_lock_internal_key;
++	int ret;
++	ret = __sock_create(family, type, protocol, res, 1);
++	if (!ret)
++		lockdep_set_class(&(*res)->sk->sk_lock.slock,
++        		&sk_lock_internal_key);
++        return ret;
+ }
+ 
+ asmlinkage long sys_socket(int family, int type, int protocol)
+
+
+--- a/kernel/lockdep.c~lockdep-print-kernel-version
++++ a/kernel/lockdep.c
+@@ -36,6 +36,7 @@
+ #include <linux/stacktrace.h>
+ #include <linux/debug_locks.h>
+ #include <linux/irqflags.h>
++#include <linux/utsname.h>
+ 
+ #include <asm/sections.h>
+ 
+@@ -508,6 +509,13 @@ print_circular_bug_entry(struct lock_lis
+ 	return 0;
+ }
+ 
++static void print_kernel_version(void)
++{
++	printk("%s %.*s\n", system_utsname.release,
++		(int)strcspn(system_utsname.version, " "),
++		system_utsname.version);
++}
++
+ /*
+  * When a circular dependency is detected, print the
+  * header first:
+@@ -524,6 +532,7 @@ print_circular_bug_header(struct lock_li
+ 
+ 	printk("\n=======================================================\n");
+ 	printk(  "[ INFO: possible circular locking dependency detected ]\n");
++	print_kernel_version();
+ 	printk(  "-------------------------------------------------------\n");
+ 	printk("%s/%d is trying to acquire lock:\n",
+ 		curr->comm, curr->pid);
+@@ -705,6 +714,7 @@ print_bad_irq_dependency(struct task_str
+ 	printk("\n======================================================\n");
+ 	printk(  "[ INFO: %s-safe -> %s-unsafe lock order detected ]\n",
+ 		irqclass, irqclass);
++	print_kernel_version();
+ 	printk(  "------------------------------------------------------\n");
+ 	printk("%s/%d [HC%u[%lu]:SC%u[%lu]:HE%u:SE%u] is trying to acquire:\n",
+ 		curr->comm, curr->pid,
+@@ -786,6 +796,7 @@ print_deadlock_bug(struct task_struct *c
+ 
+ 	printk("\n=============================================\n");
+ 	printk(  "[ INFO: possible recursive locking detected ]\n");
++	print_kernel_version();
+ 	printk(  "---------------------------------------------\n");
+ 	printk("%s/%d is trying to acquire lock:\n",
+ 		curr->comm, curr->pid);
+@@ -1368,6 +1379,7 @@ print_irq_inversion_bug(struct task_stru
+ 
+ 	printk("\n=========================================================\n");
+ 	printk(  "[ INFO: possible irq lock inversion dependency detected ]\n");
++	print_kernel_version();
+ 	printk(  "---------------------------------------------------------\n");
+ 	printk("%s/%d just changed the state of lock:\n",
+ 		curr->comm, curr->pid);
+@@ -1462,6 +1474,7 @@ print_usage_bug(struct task_struct *curr
+ 
+ 	printk("\n=================================\n");
+ 	printk(  "[ INFO: inconsistent lock state ]\n");
++	print_kernel_version();
+ 	printk(  "---------------------------------\n");
+ 
+ 	printk("inconsistent {%s} -> {%s} usage.\n",
+From: Peter Zijlstra <a.p.zijlstra@chello.nl>
+
+while doing a kernel make modules_install install over an NFS mount.
+(
+
+=============================================
+[ INFO: possible recursive locking detected ]
+---------------------------------------------
+nfsd/9550 is trying to acquire lock:
+ (&inode->i_mutex){--..}, at: [<c034c845>] mutex_lock+0x1c/0x1f
+
+but task is already holding lock:
+ (&inode->i_mutex){--..}, at: [<c034c845>] mutex_lock+0x1c/0x1f
+
+other info that might help us debug this:
+2 locks held by nfsd/9550:
+ #0:  (hash_sem){..--}, at: [<cc895223>] exp_readlock+0xd/0xf [nfsd]
+ #1:  (&inode->i_mutex){--..}, at: [<c034c845>] mutex_lock+0x1c/0x1f
+
+stack backtrace:
+ [<c0103508>] show_trace_log_lvl+0x58/0x152
+ [<c0103b8b>] show_trace+0xd/0x10
+ [<c0103c2f>] dump_stack+0x19/0x1b
+ [<c012aa57>] __lock_acquire+0x77a/0x9a3
+ [<c012af4a>] lock_acquire+0x60/0x80
+ [<c034c6c2>] __mutex_lock_slowpath+0xa7/0x20e
+ [<c034c845>] mutex_lock+0x1c/0x1f
+ [<c0162edc>] vfs_unlink+0x34/0x8a
+ [<cc891d98>] nfsd_unlink+0x18f/0x1e2 [nfsd]
+ [<cc89884f>] nfsd3_proc_remove+0x95/0xa2 [nfsd]
+ [<cc88f0d4>] nfsd_dispatch+0xc0/0x178 [nfsd]
+ [<c033e84d>] svc_process+0x3a5/0x5ed
+ [<cc88f5ba>] nfsd+0x1a7/0x305 [nfsd]
+ [<c0101005>] kernel_thread_helper+0x5/0xb
+DWARF2 unwinder stuck at kernel_thread_helper+0x5/0xb
+Leftover inexact backtrace:
+ [<c0103b8b>] show_trace+0xd/0x10
+ [<c0103c2f>] dump_stack+0x19/0x1b
+ [<c012aa57>] __lock_acquire+0x77a/0x9a3
+ [<c012af4a>] lock_acquire+0x60/0x80
+ [<c034c6c2>] __mutex_lock_slowpath+0xa7/0x20e
+ [<c034c845>] mutex_lock+0x1c/0x1f
+ [<c0162edc>] vfs_unlink+0x34/0x8a
+ [<cc891d98>] nfsd_unlink+0x18f/0x1e2 [nfsd]
+ [<cc89884f>] nfsd3_proc_remove+0x95/0xa2 [nfsd]
+ [<cc88f0d4>] nfsd_dispatch+0xc0/0x178 [nfsd]
+ [<c033e84d>] svc_process+0x3a5/0x5ed
+ [<cc88f5ba>] nfsd+0x1a7/0x305 [nfsd]
+ [<c0101005>] kernel_thread_helper+0x5/0xb
+
+=============================================
+[ INFO: possible recursive locking detected ]
+---------------------------------------------
+nfsd/9580 is trying to acquire lock:
+ (&inode->i_mutex){--..}, at: [<c034cc1d>] mutex_lock+0x1c/0x1f
+
+but task is already holding lock:
+ (&inode->i_mutex){--..}, at: [<c034cc1d>] mutex_lock+0x1c/0x1f
+
+other info that might help us debug this:
+2 locks held by nfsd/9580:
+ #0:  (hash_sem){..--}, at: [<cc89522b>] exp_readlock+0xd/0xf [nfsd]
+ #1:  (&inode->i_mutex){--..}, at: [<c034cc1d>] mutex_lock+0x1c/0x1f
+
+stack backtrace:
+ [<c0103508>] show_trace_log_lvl+0x58/0x152
+ [<c0103b8b>] show_trace+0xd/0x10
+ [<c0103c2f>] dump_stack+0x19/0x1b
+ [<c012aa63>] __lock_acquire+0x77a/0x9a3
+ [<c012af56>] lock_acquire+0x60/0x80
+ [<c034ca9a>] __mutex_lock_slowpath+0xa7/0x20e
+ [<c034cc1d>] mutex_lock+0x1c/0x1f
+ [<cc892ad1>] nfsd_setattr+0x2c8/0x499 [nfsd]
+ [<cc893ede>] nfsd_create_v3+0x31b/0x4ac [nfsd]
+ [<cc8984a1>] nfsd3_proc_create+0x128/0x138 [nfsd]
+ [<cc88f0d4>] nfsd_dispatch+0xc0/0x178 [nfsd]
+ [<c033ec1d>] svc_process+0x3a5/0x5ed
+ [<cc88f5ba>] nfsd+0x1a7/0x305 [nfsd]
+ [<c0101005>] kernel_thread_helper+0x5/0xb
+DWARF2 unwinder stuck at kernel_thread_helper+0x5/0xb
+Leftover inexact backtrace:
+ [<c0103b8b>] show_trace+0xd/0x10
+ [<c0103c2f>] dump_stack+0x19/0x1b
+ [<c012aa63>] __lock_acquire+0x77a/0x9a3
+ [<c012af56>] lock_acquire+0x60/0x80
+ [<c034ca9a>] __mutex_lock_slowpath+0xa7/0x20e
+ [<c034cc1d>] mutex_lock+0x1c/0x1f
+ [<cc892ad1>] nfsd_setattr+0x2c8/0x499 [nfsd]
+ [<cc893ede>] nfsd_create_v3+0x31b/0x4ac [nfsd]
+ [<cc8984a1>] nfsd3_proc_create+0x128/0x138 [nfsd]
+ [<cc88f0d4>] nfsd_dispatch+0xc0/0x178 [nfsd]
+ [<c033ec1d>] svc_process+0x3a5/0x5ed
+ [<cc88f5ba>] nfsd+0x1a7/0x305 [nfsd]
+ [<c0101005>] kernel_thread_helper+0x5/0xb
+
+Signed-off-by: Peter Zijlstra <a.p.zijlstra@chello.nl>
+Cc: Neil Brown <neilb@suse.de>
+Cc: Ingo Molnar <mingo@elte.hu>
+Cc: Arjan van de Ven <arjan@infradead.org>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ fs/nfsd/vfs.c              |    8 ++++----
+ include/linux/nfsd/nfsfh.h |   11 +++++++++--
+ 2 files changed, 13 insertions(+), 6 deletions(-)
+
+diff -puN fs/nfsd/vfs.c~nfsd-lockdep-annotation fs/nfsd/vfs.c
+--- a/fs/nfsd/vfs.c~nfsd-lockdep-annotation
++++ a/fs/nfsd/vfs.c
+@@ -1114,7 +1114,7 @@ nfsd_create(struct svc_rqst *rqstp, stru
+ 	 */
+ 	if (!resfhp->fh_dentry) {
+ 		/* called from nfsd_proc_mkdir, or possibly nfsd3_proc_create */
+-		fh_lock(fhp);
++		fh_lock_nested(fhp, I_MUTEX_PARENT);
+ 		dchild = lookup_one_len(fname, dentry, flen);
+ 		err = PTR_ERR(dchild);
+ 		if (IS_ERR(dchild))
+@@ -1240,7 +1240,7 @@ nfsd_create_v3(struct svc_rqst *rqstp, s
+ 	err = nfserr_notdir;
+ 	if(!dirp->i_op || !dirp->i_op->lookup)
+ 		goto out;
+-	fh_lock(fhp);
++	fh_lock_nested(fhp, I_MUTEX_PARENT);
+ 
+ 	/*
+ 	 * Compose the response file handle.
+@@ -1494,7 +1494,7 @@ nfsd_link(struct svc_rqst *rqstp, struct
+ 	if (isdotent(name, len))
+ 		goto out;
+ 
+-	fh_lock(ffhp);
++	fh_lock_nested(ffhp, I_MUTEX_PARENT);
+ 	ddir = ffhp->fh_dentry;
+ 	dirp = ddir->d_inode;
+ 
+@@ -1644,7 +1644,7 @@ nfsd_unlink(struct svc_rqst *rqstp, stru
+ 	if (err)
+ 		goto out;
+ 
+-	fh_lock(fhp);
++	fh_lock_nested(fhp, I_MUTEX_PARENT);
+ 	dentry = fhp->fh_dentry;
+ 	dirp = dentry->d_inode;
+ 
+diff -puN include/linux/nfsd/nfsfh.h~nfsd-lockdep-annotation include/linux/nfsd/nfsfh.h
+--- a/include/linux/nfsd/nfsfh.h~nfsd-lockdep-annotation
++++ a/include/linux/nfsd/nfsfh.h
+@@ -290,8 +290,9 @@ fill_post_wcc(struct svc_fh *fhp)
+  * vfs.c:nfsd_rename as it needs to grab 2 i_mutex's at once
+  * so, any changes here should be reflected there.
+  */
++
+ static inline void
+-fh_lock(struct svc_fh *fhp)
++fh_lock_nested(struct svc_fh *fhp, unsigned int subclass)
+ {
+ 	struct dentry	*dentry = fhp->fh_dentry;
+ 	struct inode	*inode;
+@@ -310,11 +311,17 @@ fh_lock(struct svc_fh *fhp)
+ 	}
+ 
+ 	inode = dentry->d_inode;
+-	mutex_lock(&inode->i_mutex);
++	mutex_lock_nested(&inode->i_mutex, subclass);
+ 	fill_pre_wcc(fhp);
+ 	fhp->fh_locked = 1;
+ }
+ 
++static inline void
++fh_lock(struct svc_fh *fhp)
++{
++	fh_lock_nested(fhp, I_MUTEX_NORMAL);
++}
++
+ /*
+  * Unlock a file handle/inode
+  */
+_
+From: NeilBrown <neilb@suse.de>
+
+nfsv2 needs the I_MUTEX_PARENT on the directory when creating a file too.
+
+Signed-off-by: Neil Brown <neilb@suse.de>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ fs/nfsd/nfsproc.c |    2 +-
+ 1 files changed, 1 insertion(+), 1 deletion(-)
+
+diff -puN fs/nfsd/nfsproc.c~knfsd-nfsd-lockdep-annotation-fix fs/nfsd/nfsproc.c
+--- a/fs/nfsd/nfsproc.c~knfsd-nfsd-lockdep-annotation-fix
++++ a/fs/nfsd/nfsproc.c
+@@ -225,7 +225,7 @@ nfsd_proc_create(struct svc_rqst *rqstp,
+ 	nfserr = nfserr_exist;
+ 	if (isdotent(argp->name, argp->len))
+ 		goto done;
+-	fh_lock(dirfhp);
++	fh_lock_nested(dirfhp, I_MUTEX_PARENT);
+ 	dchild = lookup_one_len(argp->name, dirfhp->fh_dentry, argp->len);
+ 	if (IS_ERR(dchild)) {
+ 		nfserr = nfserrno(PTR_ERR(dchild));
+_
+
+Subject: + forcedeth-hardirq-lockdep-warning.patch added to -mm tree
+To: mm-commits@vger.kernel.org
+Cc: a.p.zijlstra@chello.nl, aabdulla@nvidia.com, arjan@linux.intel.com,
+        davej@redhat.com, jeff@garzik.org, mingo@elte.hu
+From: akpm@osdl.org
+Date: Tue, 19 Sep 2006 11:15:32 -0700
+
+The patch titled
+
+     forcedeth: hardirq lockdep warning
+
+has been added to the -mm tree.  Its filename is
+
+     forcedeth-hardirq-lockdep-warning.patch
+
+See http://www.zip.com.au/~akpm/linux/patches/stuff/added-to-mm.txt to find
+out what to do about this
+
+------------------------------------------------------
+Subject: forcedeth: hardirq lockdep warning
+From: Peter Zijlstra <a.p.zijlstra@chello.nl>
+
+BUG: warning at kernel/lockdep.c:1816/trace_hardirqs_on() (Not tainted)
+
+Call Trace:
+ show_trace
+ dump_stack
+ trace_hardirqs_on
+ :forcedeth:nv_nic_irq_other
+ handle_IRQ_event
+ __do_IRQ
+ do_IRQ
+ ret_from_intr
+DWARF2 barf
+ default_idle
+ cpu_idle
+ rest_init
+ start_kernel
+ _sinittext
+
+These 3 functions nv_nic_irq_tx(), nv_nic_irq_rx() and nv_nic_irq_other()
+are reachable from IRQ context and process context. Make use of the
+irq-save/restore spinlock variant.
+
+Signed-off-by: Peter Zijlstra <a.p.zijlstra@chello.nl>
+Cc: Jeff Garzik <jeff@garzik.org>
+Cc: Ingo Molnar <mingo@elte.hu>
+Cc: Arjan van de Ven <arjan@linux.intel.com>
+Cc: Dave Jones <davej@redhat.com>
+Cc: Ayaz Abdulla <aabdulla@nvidia.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ drivers/net/forcedeth.c |   31 +++++++++++++++++--------------
+ 1 files changed, 17 insertions(+), 14 deletions(-)
+
+diff -puN drivers/net/forcedeth.c~forcedeth-hardirq-lockdep-warning drivers/net/forcedeth.c
+--- a/drivers/net/forcedeth.c~forcedeth-hardirq-lockdep-warning
++++ a/drivers/net/forcedeth.c
+@@ -2497,6 +2497,7 @@ static irqreturn_t nv_nic_irq_tx(int foo
+ 	u8 __iomem *base = get_hwbase(dev);
+ 	u32 events;
+ 	int i;
++	unsigned long flags;
+ 
+ 	dprintk(KERN_DEBUG "%s: nv_nic_irq_tx\n", dev->name);
+ 
+@@ -2508,16 +2509,16 @@ static irqreturn_t nv_nic_irq_tx(int foo
+ 		if (!(events & np->irqmask))
+ 			break;
+ 
+-		spin_lock_irq(&np->lock);
++		spin_lock_irqsave(&np->lock, flags);
+ 		nv_tx_done(dev);
+-		spin_unlock_irq(&np->lock);
++		spin_unlock_irqrestore(&np->lock, flags);
+ 
+ 		if (events & (NVREG_IRQ_TX_ERR)) {
+ 			dprintk(KERN_DEBUG "%s: received irq with events 0x%x. Probably TX fail.\n",
+ 						dev->name, events);
+ 		}
+ 		if (i > max_interrupt_work) {
+-			spin_lock_irq(&np->lock);
++			spin_lock_irqsave(&np->lock, flags);
+ 			/* disable interrupts on the nic */
+ 			writel(NVREG_IRQ_TX_ALL, base + NvRegIrqMask);
+ 			pci_push(base);
+@@ -2527,7 +2528,7 @@ static irqreturn_t nv_nic_irq_tx(int foo
+ 				mod_timer(&np->nic_poll, jiffies + POLL_WAIT);
+ 			}
+ 			printk(KERN_DEBUG "%s: too many iterations (%d) in nv_nic_irq_tx.\n", dev->name, i);
+-			spin_unlock_irq(&np->lock);
++			spin_unlock_irqrestore(&np->lock, flags);
+ 			break;
+ 		}
+ 
+@@ -2601,6 +2602,7 @@ static irqreturn_t nv_nic_irq_rx(int foo
+ 	u8 __iomem *base = get_hwbase(dev);
+ 	u32 events;
+ 	int i;
++	unsigned long flags;
+ 
+ 	dprintk(KERN_DEBUG "%s: nv_nic_irq_rx\n", dev->name);
+ 
+@@ -2614,14 +2616,14 @@ static irqreturn_t nv_nic_irq_rx(int foo
+ 
+ 		nv_rx_process(dev, dev->weight);
+ 		if (nv_alloc_rx(dev)) {
+-			spin_lock_irq(&np->lock);
++			spin_lock_irqsave(&np->lock, flags);
+ 			if (!np->in_shutdown)
+ 				mod_timer(&np->oom_kick, jiffies + OOM_REFILL);
+-			spin_unlock_irq(&np->lock);
++			spin_unlock_irqrestore(&np->lock, flags);
+ 		}
+ 
+ 		if (i > max_interrupt_work) {
+-			spin_lock_irq(&np->lock);
++			spin_lock_irqsave(&np->lock, flags);
+ 			/* disable interrupts on the nic */
+ 			writel(NVREG_IRQ_RX_ALL, base + NvRegIrqMask);
+ 			pci_push(base);
+@@ -2631,7 +2633,7 @@ static irqreturn_t nv_nic_irq_rx(int foo
+ 				mod_timer(&np->nic_poll, jiffies + POLL_WAIT);
+ 			}
+ 			printk(KERN_DEBUG "%s: too many iterations (%d) in nv_nic_irq_rx.\n", dev->name, i);
+-			spin_unlock_irq(&np->lock);
++			spin_unlock_irqrestore(&np->lock, flags);
+ 			break;
+ 		}
+ 	}
+@@ -2648,6 +2650,7 @@ static irqreturn_t nv_nic_irq_other(int 
+ 	u8 __iomem *base = get_hwbase(dev);
+ 	u32 events;
+ 	int i;
++	unsigned long flags;
+ 
+ 	dprintk(KERN_DEBUG "%s: nv_nic_irq_other\n", dev->name);
+ 
+@@ -2660,14 +2663,14 @@ static irqreturn_t nv_nic_irq_other(int 
+ 			break;
+ 
+ 		if (events & NVREG_IRQ_LINK) {
+-			spin_lock_irq(&np->lock);
++			spin_lock_irqsave(&np->lock, flags);
+ 			nv_link_irq(dev);
+-			spin_unlock_irq(&np->lock);
++			spin_unlock_irqrestore(&np->lock, flags);
+ 		}
+ 		if (np->need_linktimer && time_after(jiffies, np->link_timeout)) {
+-			spin_lock_irq(&np->lock);
++			spin_lock_irqsave(&np->lock, flags);
+ 			nv_linkchange(dev);
+-			spin_unlock_irq(&np->lock);
++			spin_unlock_irqrestore(&np->lock, flags);
+ 			np->link_timeout = jiffies + LINK_TIMEOUT;
+ 		}
+ 		if (events & (NVREG_IRQ_UNKNOWN)) {
+@@ -2675,7 +2678,7 @@ static irqreturn_t nv_nic_irq_other(int 
+ 						dev->name, events);
+ 		}
+ 		if (i > max_interrupt_work) {
+-			spin_lock_irq(&np->lock);
++			spin_lock_irqsave(&np->lock, flags);
+ 			/* disable interrupts on the nic */
+ 			writel(NVREG_IRQ_OTHER, base + NvRegIrqMask);
+ 			pci_push(base);
+@@ -2685,7 +2688,7 @@ static irqreturn_t nv_nic_irq_other(int 
+ 				mod_timer(&np->nic_poll, jiffies + POLL_WAIT);
+ 			}
+ 			printk(KERN_DEBUG "%s: too many iterations (%d) in nv_nic_irq_other.\n", dev->name, i);
+-			spin_unlock_irq(&np->lock);
++			spin_unlock_irqrestore(&np->lock, flags);
+ 			break;
+ 		}
+ 
+_
+
+Patches currently in -mm which might be from a.p.zijlstra@chello.nl are
+
+forcedeth-hardirq-lockdep-warning.patch
+mm-tracking-shared-dirty-pages.patch
+mm-tracking-shared-dirty-pages-nommu-fix-2.patch
+mm-balance-dirty-pages.patch
+mm-optimize-the-new-mprotect-code-a-bit.patch
+mm-small-cleanup-of-install_page.patch
+mm-fixup-do_wp_page.patch
+mm-msync-cleanup.patch
+mm-tracking-shared-dirty-pages-checks.patch
+mm-tracking-shared-dirty-pages-wimp.patch
+mm-swap-write-failure-fixup.patch
+mm-swap-write-failure-fixup-update.patch
+mm-swap-write-failure-fixup-fix.patch
+block_devc-mutex_lock_nested-fix.patch
+remove-the-old-bd_mutex-lockdep-annotation.patch
+new-bd_mutex-lockdep-annotation.patch
+nfsd-lockdep-annotation.patch
+
+Date: Wed, 13 Sep 2006 10:56:32 +0200
+From: Peter Zijlstra <pzijlstr@redhat.com>
+Subject: [RHEL5 PATCH] Slab fix alien cache lockdep warnings
+
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=203098
+
+This patch was not queued for .18 afaik,
+
+---
+From: Ravikiran G Thirumalai <kiran@scalex86.org>
+
+Place the alien array cache locks of on slab malloc slab caches on a
+seperate lockdep class.  This avoids false positives from lockdep
+
+Signed-off-by: Ravikiran Thirumalai <kiran@scalex86.org>
+Signed-off-by: Shai Fultheim <shai@scalex86.org>
+Cc: Thomas Gleixner <tglx@linutronix.de>
+Acked-by: Arjan van de Ven <arjan@linux.intel.com>
+Cc: Ingo Molnar <mingo@elte.hu>
+Cc: Pekka Enberg <penberg@cs.helsinki.fi>
+Cc: Christoph Lameter <clameter@engr.sgi.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+Signed-off-by: Peter Zijlstra <a.p.zijlstra@chello.nl>
+---
+
+ mm/slab.c |   55 ++++++++++++++++++++++++++++++++++++++++++-------------
+ 1 file changed, 42 insertions(+), 13 deletions(-)
+
+Index: linux-2.6/mm/slab.c
+===================================================================
+--- linux-2.6.orig/mm/slab.c
++++ linux-2.6/mm/slab.c
+@@ -674,6 +674,8 @@ static struct kmem_cache cache_cache = {
+ #endif
+ };
+ 
++#define BAD_ALIEN_MAGIC 0x01020304ul
++
+ #ifdef CONFIG_LOCKDEP
+ 
+ /*
+@@ -682,29 +684,53 @@ static struct kmem_cache cache_cache = {
+  * The locking for this is tricky in that it nests within the locks
+  * of all other slabs in a few places; to deal with this special
+  * locking we put on-slab caches into a separate lock-class.
++ *
++ * We set lock class for alien array caches which are up during init.
++ * The lock annotation will be lost if all cpus of a node goes down and
++ * then comes back up during hotplug
+  */
+-static struct lock_class_key on_slab_key;
++static struct lock_class_key on_slab_l3_key;
++static struct lock_class_key on_slab_alc_key;
++
++static inline void init_lock_keys(void)
+ 
+-static inline void init_lock_keys(struct cache_sizes *s)
+ {
+ 	int q;
++	struct cache_sizes *s = malloc_sizes;
+ 
+-	for (q = 0; q < MAX_NUMNODES; q++) {
+-		if (!s->cs_cachep->nodelists[q] || OFF_SLAB(s->cs_cachep))
+-			continue;
+-		lockdep_set_class(&s->cs_cachep->nodelists[q]->list_lock,
+-				  &on_slab_key);
++	while (s->cs_size != ULONG_MAX) {
++		for_each_node(q) {
++			struct array_cache **alc;
++			int r;
++			struct kmem_list3 *l3 = s->cs_cachep->nodelists[q];
++			if (!l3 || OFF_SLAB(s->cs_cachep))
++				continue;
++			lockdep_set_class(&l3->list_lock, &on_slab_l3_key);
++			alc = l3->alien;
++			/*
++			 * FIXME: This check for BAD_ALIEN_MAGIC
++			 * should go away when common slab code is taught to
++			 * work even without alien caches.
++			 * Currently, non NUMA code returns BAD_ALIEN_MAGIC
++			 * for alloc_alien_cache,
++			 */
++			if (!alc || (unsigned long)alc == BAD_ALIEN_MAGIC)
++				continue;
++			for_each_node(r) {
++				if (alc[r])
++					lockdep_set_class(&alc[r]->lock,
++					     &on_slab_alc_key);
++			}
++		}
++		s++;
+ 	}
+ }
+-
+ #else
+-static inline void init_lock_keys(struct cache_sizes *s)
++static inline void init_lock_keys(void)
+ {
+ }
+ #endif
+ 
+-
+-
+ /* Guard access to the cache-chain. */
+ static DEFINE_MUTEX(cache_chain_mutex);
+ static struct list_head cache_chain;
+@@ -1092,7 +1118,7 @@ static inline int cache_free_alien(struc
+ 
+ static inline struct array_cache **alloc_alien_cache(int node, int limit)
+ {
+-	return (struct array_cache **) 0x01020304ul;
++	return (struct array_cache **)BAD_ALIEN_MAGIC;
+ }
+ 
+ static inline void free_alien_cache(struct array_cache **ac_ptr)
+@@ -1422,7 +1448,6 @@ void __init kmem_cache_init(void)
+ 					ARCH_KMALLOC_FLAGS|SLAB_PANIC,
+ 					NULL, NULL);
+ 		}
+-		init_lock_keys(sizes);
+ 
+ 		sizes->cs_dmacachep = kmem_cache_create(names->name_dma,
+ 					sizes->cs_size,
+@@ -1495,6 +1520,10 @@ void __init kmem_cache_init(void)
+ 		mutex_unlock(&cache_chain_mutex);
+ 	}
+ 
++	/* Annotate slab for lockdep -- annotate the malloc caches */
++	init_lock_keys();
++
++
+ 	/* Done! */
+ 	g_cpucache_up = FULL;
+ 
+
+From: Stefan Richter <stefanr@s5r6.in-berlin.de>
+
+nodemgr_update_pdrv grabbed an rw semaphore (as reader) which was already
+taken by its caller's caller, nodemgr_probe_ne (as reader too).  Reported by
+Miles Lane, call path pointed out by Arjan van de Ven.
+
+FIXME:
+Shouldn't we rather use class->sem there, not class->subsys.rwsem?
+
+Signed-off-by: Stefan Richter <stefanr@s5r6.in-berlin.de>
+Cc: Greg KH <greg@kroah.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ drivers/ieee1394/nodemgr.c |    9 +++++----
+ 1 files changed, 5 insertions(+), 4 deletions(-)
+
+diff -puN drivers/ieee1394/nodemgr.c~ieee1394-nodemgr-fix-rwsem-recursion drivers/ieee1394/nodemgr.c
+--- a/drivers/ieee1394/nodemgr.c~ieee1394-nodemgr-fix-rwsem-recursion
++++ a/drivers/ieee1394/nodemgr.c
+@@ -1316,6 +1316,7 @@ static void nodemgr_node_scan(struct hos
+ }
+ 
+ 
++/* Caller needs to hold nodemgr_ud_class.subsys.rwsem as reader. */
+ static void nodemgr_suspend_ne(struct node_entry *ne)
+ {
+ 	struct class_device *cdev;
+@@ -1368,15 +1369,14 @@ static void nodemgr_resume_ne(struct nod
+ }
+ 
+ 
++/* Caller needs to hold nodemgr_ud_class.subsys.rwsem as reader. */
+ static void nodemgr_update_pdrv(struct node_entry *ne)
+ {
+ 	struct unit_directory *ud;
+ 	struct hpsb_protocol_driver *pdrv;
+-	struct class *class = &nodemgr_ud_class;
+ 	struct class_device *cdev;
+ 
+-	down_read(&class->subsys.rwsem);
+-	list_for_each_entry(cdev, &class->children, node) {
++	list_for_each_entry(cdev, &nodemgr_ud_class.children, node) {
+ 		ud = container_of(cdev, struct unit_directory, class_dev);
+ 		if (ud->ne != ne || !ud->device.driver)
+ 			continue;
+@@ -1389,7 +1389,6 @@ static void nodemgr_update_pdrv(struct n
+ 			up_write(&ud->device.bus->subsys.rwsem);
+ 		}
+ 	}
+-	up_read(&class->subsys.rwsem);
+ }
+ 
+ 
+@@ -1420,6 +1419,8 @@ static void nodemgr_irm_write_bc(struct 
+ }
+ 
+ 
++/* Caller needs to hold nodemgr_ud_class.subsys.rwsem as reader because the
++ * calls to nodemgr_update_pdrv() and nodemgr_suspend_ne() here require it. */
+ static void nodemgr_probe_ne(struct host_info *hi, struct node_entry *ne, int generation)
+ {
+ 	struct device *dev;
+_
+
+From: Peter Zijlstra <pzijlstr@redhat.com>
+Subject: [RHEL5 PATCH 1/6] remove the old bd_mutex lockdep annotation
+To: rhkernel-list@redhat.com
+Date: Wed, 27 Sep 2006 15:33:42 +0200
+
+Remove the old complex and crufty bd_mutex annotation.
+
+Signed-off-by: Peter Zijlstra <a.p.zijlstra@chello.nl>
+Cc: Neil Brown <neilb@cse.unsw.edu.au>
+Cc: Ingo Molnar <mingo@elte.hu>
+Acked-by: Arjan van de Ven <arjan@linux.intel.com>
+Cc: Jason Baron <jbaron@redhat.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+ block/ioctl.c      |    4 -
+ drivers/md/md.c    |    6 -
+ fs/block_dev.c     |  180 ++++++++++++++++-------------------------------------
+ include/linux/fs.h |   17 -----
+ 4 files changed, 60 insertions(+), 147 deletions(-)
+
+Index: linux-2.6.18.noarch/drivers/md/md.c
+===================================================================
+--- linux-2.6.18.noarch.orig/drivers/md/md.c
++++ linux-2.6.18.noarch/drivers/md/md.c
+@@ -1408,7 +1408,7 @@ static int lock_rdev(mdk_rdev_t *rdev, d
+ 	struct block_device *bdev;
+ 	char b[BDEVNAME_SIZE];
+ 
+-	bdev = open_partition_by_devnum(dev, FMODE_READ|FMODE_WRITE);
++	bdev = open_by_devnum(dev, FMODE_READ|FMODE_WRITE);
+ 	if (IS_ERR(bdev)) {
+ 		printk(KERN_ERR "md: could not open %s.\n",
+ 			__bdevname(dev, b));
+@@ -1418,7 +1418,7 @@ static int lock_rdev(mdk_rdev_t *rdev, d
+ 	if (err) {
+ 		printk(KERN_ERR "md: could not bd_claim %s.\n",
+ 			bdevname(bdev, b));
+-		blkdev_put_partition(bdev);
++		blkdev_put(bdev);
+ 		return err;
+ 	}
+ 	rdev->bdev = bdev;
+@@ -1432,7 +1432,7 @@ static void unlock_rdev(mdk_rdev_t *rdev
+ 	if (!bdev)
+ 		MD_BUG();
+ 	bd_release(bdev);
+-	blkdev_put_partition(bdev);
++	blkdev_put(bdev);
+ }
+ 
+ void md_autodetect_dev(dev_t dev);
+Index: linux-2.6.18.noarch/fs/block_dev.c
+===================================================================
+--- linux-2.6.18.noarch.orig/fs/block_dev.c
++++ linux-2.6.18.noarch/fs/block_dev.c
+@@ -739,7 +739,7 @@ static int bd_claim_by_kobject(struct bl
+ 	if (!bo)
+ 		return -ENOMEM;
+ 
+-	mutex_lock_nested(&bdev->bd_mutex, BD_MUTEX_PARTITION);
++	mutex_lock(&bdev->bd_mutex);
+ 	res = bd_claim(bdev, holder);
+ 	if (res || !add_bd_holder(bdev, bo))
+ 		free_bd_holder(bo);
+@@ -764,7 +764,7 @@ static void bd_release_from_kobject(stru
+ 	if (!kobj)
+ 		return;
+ 
+-	mutex_lock_nested(&bdev->bd_mutex, BD_MUTEX_PARTITION);
++	mutex_lock(&bdev->bd_mutex);
+ 	bd_release(bdev);
+ 	if ((bo = del_bd_holder(bdev, kobj)))
+ 		free_bd_holder(bo);
+@@ -822,22 +822,6 @@ struct block_device *open_by_devnum(dev_
+ 
+ EXPORT_SYMBOL(open_by_devnum);
+ 
+-static int
+-blkdev_get_partition(struct block_device *bdev, mode_t mode, unsigned flags);
+-
+-struct block_device *open_partition_by_devnum(dev_t dev, unsigned mode)
+-{
+-	struct block_device *bdev = bdget(dev);
+-	int err = -ENOMEM;
+-	int flags = mode & FMODE_WRITE ? O_RDWR : O_RDONLY;
+-	if (bdev)
+-		err = blkdev_get_partition(bdev, mode, flags);
+-	return err ? ERR_PTR(err) : bdev;
+-}
+-
+-EXPORT_SYMBOL(open_partition_by_devnum);
+-
+-
+ /*
+  * This routine checks whether a removable media has been changed,
+  * and invalidates all buffer-cache-entries in that case. This
+@@ -884,66 +868,7 @@ void bd_set_size(struct block_device *bd
+ }
+ EXPORT_SYMBOL(bd_set_size);
+ 
+-static int __blkdev_put(struct block_device *bdev, unsigned int subclass)
+-{
+-	int ret = 0;
+-	struct inode *bd_inode = bdev->bd_inode;
+-	struct gendisk *disk = bdev->bd_disk;
+-
+-	mutex_lock_nested(&bdev->bd_mutex, subclass);
+-	lock_kernel();
+-	if (!--bdev->bd_openers) {
+-		sync_blockdev(bdev);
+-		kill_bdev(bdev);
+-	}
+-	if (bdev->bd_contains == bdev) {
+-		if (disk->fops->release)
+-			ret = disk->fops->release(bd_inode, NULL);
+-	} else {
+-		mutex_lock_nested(&bdev->bd_contains->bd_mutex,
+-				  subclass + 1);
+-		bdev->bd_contains->bd_part_count--;
+-		mutex_unlock(&bdev->bd_contains->bd_mutex);
+-	}
+-	if (!bdev->bd_openers) {
+-		struct module *owner = disk->fops->owner;
+-
+-		put_disk(disk);
+-		module_put(owner);
+-
+-		if (bdev->bd_contains != bdev) {
+-			kobject_put(&bdev->bd_part->kobj);
+-			bdev->bd_part = NULL;
+-		}
+-		bdev->bd_disk = NULL;
+-		bdev->bd_inode->i_data.backing_dev_info = &default_backing_dev_info;
+-		if (bdev != bdev->bd_contains)
+-			__blkdev_put(bdev->bd_contains, subclass + 1);
+-		bdev->bd_contains = NULL;
+-	}
+-	unlock_kernel();
+-	mutex_unlock(&bdev->bd_mutex);
+-	bdput(bdev);
+-	return ret;
+-}
+-
+-int blkdev_put(struct block_device *bdev)
+-{
+-	return __blkdev_put(bdev, BD_MUTEX_NORMAL);
+-}
+-EXPORT_SYMBOL(blkdev_put);
+-
+-int blkdev_put_partition(struct block_device *bdev)
+-{
+-	return __blkdev_put(bdev, BD_MUTEX_PARTITION);
+-}
+-EXPORT_SYMBOL(blkdev_put_partition);
+-
+-static int
+-blkdev_get_whole(struct block_device *bdev, mode_t mode, unsigned flags);
+-
+-static int
+-do_open(struct block_device *bdev, struct file *file, unsigned int subclass)
++static int do_open(struct block_device *bdev, struct file *file)
+ {
+ 	struct module *owner = NULL;
+ 	struct gendisk *disk;
+@@ -960,8 +885,7 @@ do_open(struct block_device *bdev, struc
+ 	}
+ 	owner = disk->fops->owner;
+ 
+-	mutex_lock_nested(&bdev->bd_mutex, subclass);
+-
++	mutex_lock(&bdev->bd_mutex);
+ 	if (!bdev->bd_openers) {
+ 		bdev->bd_disk = disk;
+ 		bdev->bd_contains = bdev;
+@@ -988,11 +912,11 @@ do_open(struct block_device *bdev, struc
+ 			ret = -ENOMEM;
+ 			if (!whole)
+ 				goto out_first;
+-			ret = blkdev_get_whole(whole, file->f_mode, file->f_flags);
++			ret = blkdev_get(whole, file->f_mode, file->f_flags);
+ 			if (ret)
+ 				goto out_first;
+ 			bdev->bd_contains = whole;
+-			mutex_lock_nested(&whole->bd_mutex, BD_MUTEX_WHOLE);
++			mutex_lock(&whole->bd_mutex);
+ 			whole->bd_part_count++;
+ 			p = disk->part[part - 1];
+ 			bdev->bd_inode->i_data.backing_dev_info =
+@@ -1020,8 +944,7 @@ do_open(struct block_device *bdev, struc
+ 			if (bdev->bd_invalidated)
+ 				rescan_partitions(bdev->bd_disk, bdev);
+ 		} else {
+-			mutex_lock_nested(&bdev->bd_contains->bd_mutex,
+-					  BD_MUTEX_PARTITION);
++			mutex_lock(&bdev->bd_contains->bd_mutex);
+ 			bdev->bd_contains->bd_part_count++;
+ 			mutex_unlock(&bdev->bd_contains->bd_mutex);
+ 		}
+@@ -1035,7 +958,7 @@ out_first:
+ 	bdev->bd_disk = NULL;
+ 	bdev->bd_inode->i_data.backing_dev_info = &default_backing_dev_info;
+ 	if (bdev != bdev->bd_contains)
+-		__blkdev_put(bdev->bd_contains, BD_MUTEX_WHOLE);
++		blkdev_put(bdev->bd_contains);
+ 	bdev->bd_contains = NULL;
+ 	put_disk(disk);
+ 	module_put(owner);
+@@ -1062,49 +985,11 @@ int blkdev_get(struct block_device *bdev
+ 	fake_file.f_dentry = &fake_dentry;
+ 	fake_dentry.d_inode = bdev->bd_inode;
+ 
+-	return do_open(bdev, &fake_file, BD_MUTEX_NORMAL);
++	return do_open(bdev, &fake_file);
+ }
+ 
+ EXPORT_SYMBOL(blkdev_get);
+ 
+-static int
+-blkdev_get_whole(struct block_device *bdev, mode_t mode, unsigned flags)
+-{
+-	/*
+-	 * This crockload is due to bad choice of ->open() type.
+-	 * It will go away.
+-	 * For now, block device ->open() routine must _not_
+-	 * examine anything in 'inode' argument except ->i_rdev.
+-	 */
+-	struct file fake_file = {};
+-	struct dentry fake_dentry = {};
+-	fake_file.f_mode = mode;
+-	fake_file.f_flags = flags;
+-	fake_file.f_dentry = &fake_dentry;
+-	fake_dentry.d_inode = bdev->bd_inode;
+-
+-	return do_open(bdev, &fake_file, BD_MUTEX_WHOLE);
+-}
+-
+-static int
+-blkdev_get_partition(struct block_device *bdev, mode_t mode, unsigned flags)
+-{
+-	/*
+-	 * This crockload is due to bad choice of ->open() type.
+-	 * It will go away.
+-	 * For now, block device ->open() routine must _not_
+-	 * examine anything in 'inode' argument except ->i_rdev.
+-	 */
+-	struct file fake_file = {};
+-	struct dentry fake_dentry = {};
+-	fake_file.f_mode = mode;
+-	fake_file.f_flags = flags;
+-	fake_file.f_dentry = &fake_dentry;
+-	fake_dentry.d_inode = bdev->bd_inode;
+-
+-	return do_open(bdev, &fake_file, BD_MUTEX_PARTITION);
+-}
+-
+ static int blkdev_open(struct inode * inode, struct file * filp)
+ {
+ 	struct block_device *bdev;
+@@ -1120,7 +1005,7 @@ static int blkdev_open(struct inode * in
+ 
+ 	bdev = bd_acquire(inode);
+ 
+-	res = do_open(bdev, filp, BD_MUTEX_NORMAL);
++	res = do_open(bdev, filp);
+ 	if (res)
+ 		return res;
+ 
+@@ -1134,6 +1019,51 @@ static int blkdev_open(struct inode * in
+ 	return res;
+ }
+ 
++int blkdev_put(struct block_device *bdev)
++{
++	int ret = 0;
++	struct inode *bd_inode = bdev->bd_inode;
++	struct gendisk *disk = bdev->bd_disk;
++
++	mutex_lock(&bdev->bd_mutex);
++	lock_kernel();
++	if (!--bdev->bd_openers) {
++		sync_blockdev(bdev);
++		kill_bdev(bdev);
++	}
++	if (bdev->bd_contains == bdev) {
++		if (disk->fops->release)
++			ret = disk->fops->release(bd_inode, NULL);
++	} else {
++		mutex_lock(&bdev->bd_contains->bd_mutex);
++		bdev->bd_contains->bd_part_count--;
++		mutex_unlock(&bdev->bd_contains->bd_mutex);
++	}
++	if (!bdev->bd_openers) {
++		struct module *owner = disk->fops->owner;
++
++		put_disk(disk);
++		module_put(owner);
++
++		if (bdev->bd_contains != bdev) {
++			kobject_put(&bdev->bd_part->kobj);
++			bdev->bd_part = NULL;
++		}
++		bdev->bd_disk = NULL;
++		bdev->bd_inode->i_data.backing_dev_info = &default_backing_dev_info;
++		if (bdev != bdev->bd_contains) {
++			blkdev_put(bdev->bd_contains);
++		}
++		bdev->bd_contains = NULL;
++	}
++	unlock_kernel();
++	mutex_unlock(&bdev->bd_mutex);
++	bdput(bdev);
++	return ret;
++}
++
++EXPORT_SYMBOL(blkdev_put);
++
+ static int blkdev_close(struct inode * inode, struct file * filp)
+ {
+ 	struct block_device *bdev = I_BDEV(filp->f_mapping->host);
+Index: linux-2.6.18.noarch/include/linux/fs.h
+===================================================================
+--- linux-2.6.18.noarch.orig/include/linux/fs.h
++++ linux-2.6.18.noarch/include/linux/fs.h
+@@ -440,21 +440,6 @@ struct block_device {
+ };
+ 
+ /*
+- * bdev->bd_mutex nesting subclasses for the lock validator:
+- *
+- * 0: normal
+- * 1: 'whole'
+- * 2: 'partition'
+- */
+-enum bdev_bd_mutex_lock_class
+-{
+-	BD_MUTEX_NORMAL,
+-	BD_MUTEX_WHOLE,
+-	BD_MUTEX_PARTITION
+-};
+-
+-
+-/*
+  * Radix-tree tags, for tagging dirty and writeback pages within the pagecache
+  * radix trees
+  */
+@@ -1447,7 +1432,6 @@ extern void bd_set_size(struct block_dev
+ extern void bd_forget(struct inode *inode);
+ extern void bdput(struct block_device *);
+ extern struct block_device *open_by_devnum(dev_t, unsigned);
+-extern struct block_device *open_partition_by_devnum(dev_t, unsigned);
+ extern const struct file_operations def_blk_fops;
+ extern const struct address_space_operations def_blk_aops;
+ extern const struct file_operations def_chr_fops;
+@@ -1458,7 +1442,6 @@ extern int blkdev_ioctl(struct inode *, 
+ extern long compat_blkdev_ioctl(struct file *, unsigned, unsigned long);
+ extern int blkdev_get(struct block_device *, mode_t, unsigned);
+ extern int blkdev_put(struct block_device *);
+-extern int blkdev_put_partition(struct block_device *);
+ extern int bd_claim(struct block_device *, void *);
+ extern void bd_release(struct block_device *);
+ #ifdef CONFIG_SYSFS
+Index: linux-2.6.18.noarch/block/ioctl.c
+===================================================================
+--- linux-2.6.18.noarch.orig/block/ioctl.c
++++ linux-2.6.18.noarch/block/ioctl.c
+@@ -72,7 +72,7 @@ static int blkpg_ioctl(struct block_devi
+ 			bdevp = bdget_disk(disk, part);
+ 			if (!bdevp)
+ 				return -ENOMEM;
+-			mutex_lock_nested(&bdevp->bd_mutex, BD_MUTEX_PARTITION);
++			mutex_lock(&bdevp->bd_mutex);
+ 			if (bdevp->bd_openers) {
+ 				mutex_unlock(&bdevp->bd_mutex);
+ 				bdput(bdevp);
+@@ -82,7 +82,7 @@ static int blkpg_ioctl(struct block_devi
+ 			fsync_bdev(bdevp);
+ 			invalidate_bdev(bdevp, 0);
+ 
+-			mutex_lock_nested(&bdev->bd_mutex, BD_MUTEX_WHOLE);
++			mutex_lock(&bdev->bd_mutex);
+ 			delete_partition(disk, part);
+ 			mutex_unlock(&bdev->bd_mutex);
+ 			mutex_unlock(&bdevp->bd_mutex);
+
+--
+
+From: Peter Zijlstra <pzijlstr@redhat.com>
+Subject: [RHEL5 PATCH 3/6] usb-serial: irq lock inversion (PPP vs. usb-serial)
+To: rhkernel-list@redhat.com
+Date: Wed, 27 Sep 2006 15:33:44 +0200
+
+=========================================================
+[ INFO: possible irq lock inversion dependency detected ]
+---------------------------------------------------------
+ksoftirqd/0/3 just changed the state of lock:
+ (&ap->xmit_lock){-+..}, at: [<f9337224>] ppp_async_push+0x2f/0x3b3 [ppp_async]
+but this lock took another, soft-irq-unsafe lock in the past:
+ (&port->lock){--..}
+
+and interrupts could create inverse lock ordering between them.
+
+
+other info that might help us debug this:
+no locks held by ksoftirqd/0/3.
+
+the first lock's dependencies:
+-> (&ap->xmit_lock){-+..} ops: 0 {
+   initial-use  at:
+                        [<c043bf43>] lock_acquire+0x4b/0x6c
+                        [<c06086a8>] _spin_lock_bh+0x1e/0x2d
+                        [<f9337224>] ppp_async_push+0x2f/0x3b3 [ppp_async]
+                        [<f93375b8>] ppp_async_send+0x10/0x3d [ppp_async]
+                        [<f932f071>] ppp_channel_push+0x3a/0x94 [ppp_generic]
+                        [<f9330395>] ppp_write+0xd5/0xe1 [ppp_generic]
+                        [<c0471f23>] vfs_write+0xab/0x157
+                        [<c0472568>] sys_write+0x3b/0x60
+                        [<c0403faf>] syscall_call+0x7/0xb
+   in-softirq-W at:
+                        [<c043bf43>] lock_acquire+0x4b/0x6c
+                        [<c06086a8>] _spin_lock_bh+0x1e/0x2d
+                        [<f9337224>] ppp_async_push+0x2f/0x3b3 [ppp_async]
+                        [<f9337aea>] ppp_async_process+0x48/0x5b [ppp_async]
+                        [<c04294b4>] tasklet_action+0x65/0xca
+                        [<c04293d5>] __do_softirq+0x78/0xf2
+                        [<c040662f>] do_softirq+0x5a/0xbe
+   hardirq-on-W at:
+                        [<c043bf43>] lock_acquire+0x4b/0x6c
+                        [<c06086a8>] _spin_lock_bh+0x1e/0x2d
+                        [<f9337224>] ppp_async_push+0x2f/0x3b3 [ppp_async]
+                        [<f93375b8>] ppp_async_send+0x10/0x3d [ppp_async]
+                        [<f932f071>] ppp_channel_push+0x3a/0x94 [ppp_generic]
+                        [<f9330395>] ppp_write+0xd5/0xe1 [ppp_generic]
+                        [<c0471f23>] vfs_write+0xab/0x157
+                        [<c0472568>] sys_write+0x3b/0x60
+                        [<c0403faf>] syscall_call+0x7/0xb
+ }
+ ... key      at: [<f933b208>] __key.19284+0x0/0xffffce72 [ppp_async]
+ -> (&port->lock){--..} ops: 0 {
+    initial-use  at:
+                          [<c043bf43>] lock_acquire+0x4b/0x6c
+                          [<c060867b>] _spin_lock+0x19/0x28
+                          [<f9324478>] usb_serial_generic_write+0x79/0x23d [usbserial]
+                          [<f9322531>] serial_write+0x8a/0x99 [usbserial]
+                          [<c052dbed>] write_chan+0x22e/0x2a8
+                          [<c052b530>] tty_write+0x148/0x1ce
+                          [<c0471f23>] vfs_write+0xab/0x157
+                          [<c0472568>] sys_write+0x3b/0x60
+                          [<c0403faf>] syscall_call+0x7/0xb
+    softirq-on-W at:
+                          [<c043bf43>] lock_acquire+0x4b/0x6c
+                          [<c060867b>] _spin_lock+0x19/0x28
+                          [<f9324478>] usb_serial_generic_write+0x79/0x23d [usbserial]
+                          [<f9322531>] serial_write+0x8a/0x99 [usbserial]
+                          [<c052dbed>] write_chan+0x22e/0x2a8
+                          [<c052b530>] tty_write+0x148/0x1ce
+                          [<c0471f23>] vfs_write+0xab/0x157
+                          [<c0472568>] sys_write+0x3b/0x60
+                          [<c0403faf>] syscall_call+0x7/0xb
+    hardirq-on-W at:
+                          [<c043bf43>] lock_acquire+0x4b/0x6c
+                          [<c060867b>] _spin_lock+0x19/0x28
+                          [<f9324478>] usb_serial_generic_write+0x79/0x23d [usbserial]
+                          [<f9322531>] serial_write+0x8a/0x99 [usbserial]
+                          [<c052dbed>] write_chan+0x22e/0x2a8
+                          [<c052b530>] tty_write+0x148/0x1ce
+                          [<c0471f23>] vfs_write+0xab/0x157
+                          [<c0472568>] sys_write+0x3b/0x60
+                          [<c0403faf>] syscall_call+0x7/0xb
+  }
+  ... key      at: [<f932b08c>] __key.15523+0x0/0xffff9965 [usbserial]
+ ... acquired at:
+   [<c043bf43>] lock_acquire+0x4b/0x6c
+   [<c060867b>] _spin_lock+0x19/0x28
+   [<f9324478>] usb_serial_generic_write+0x79/0x23d [usbserial]
+   [<f9322531>] serial_write+0x8a/0x99 [usbserial]
+   [<f933729c>] ppp_async_push+0xa7/0x3b3 [ppp_async]
+   [<f93375da>] ppp_async_send+0x32/0x3d [ppp_async]
+   [<f932f071>] ppp_channel_push+0x3a/0x94 [ppp_generic]
+   [<f9330395>] ppp_write+0xd5/0xe1 [ppp_generic]
+   [<c0471f23>] vfs_write+0xab/0x157
+   [<c0472568>] sys_write+0x3b/0x60
+   [<c0403faf>] syscall_call+0x7/0xb
+
+Signed-off-by: Peter Zijlstra <a.p.zijlstra@chello.nl>
+Cc: Greg KH <greg@kroah.com>
+Cc: Paul Mackerras <paulus@samba.org>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+ drivers/usb/serial/cyberjack.c   |    6 +++---
+ drivers/usb/serial/generic.c     |    6 +++---
+ drivers/usb/serial/ipw.c         |    6 +++---
+ drivers/usb/serial/ir-usb.c      |    6 +++---
+ drivers/usb/serial/keyspan_pda.c |    6 +++---
+ drivers/usb/serial/omninet.c     |    6 +++---
+ drivers/usb/serial/safe_serial.c |    6 +++---
+ 7 files changed, 21 insertions(+), 21 deletions(-)
+
+Index: linux-2.6.18.noarch/drivers/usb/serial/cyberjack.c
+===================================================================
+--- linux-2.6.18.noarch.orig/drivers/usb/serial/cyberjack.c
++++ linux-2.6.18.noarch/drivers/usb/serial/cyberjack.c
+@@ -214,14 +214,14 @@ static int cyberjack_write (struct usb_s
+ 		return (0);
+ 	}
+ 
+-	spin_lock(&port->lock);
++	spin_lock_bh(&port->lock);
+ 	if (port->write_urb_busy) {
+-		spin_unlock(&port->lock);
++		spin_unlock_bh(&port->lock);
+ 		dbg("%s - already writing", __FUNCTION__);
+ 		return 0;
+ 	}
+ 	port->write_urb_busy = 1;
+-	spin_unlock(&port->lock);
++	spin_unlock_bh(&port->lock);
+ 
+ 	spin_lock_irqsave(&priv->lock, flags);
+ 
+Index: linux-2.6.18.noarch/drivers/usb/serial/generic.c
+===================================================================
+--- linux-2.6.18.noarch.orig/drivers/usb/serial/generic.c
++++ linux-2.6.18.noarch/drivers/usb/serial/generic.c
+@@ -175,14 +175,14 @@ int usb_serial_generic_write(struct usb_
+ 
+ 	/* only do something if we have a bulk out endpoint */
+ 	if (serial->num_bulk_out) {
+-		spin_lock(&port->lock);
++		spin_lock_bh(&port->lock);
+ 		if (port->write_urb_busy) {
+-			spin_unlock(&port->lock);
++			spin_unlock_bh(&port->lock);
+ 			dbg("%s - already writing", __FUNCTION__);
+ 			return 0;
+ 		}
+ 		port->write_urb_busy = 1;
+-		spin_unlock(&port->lock);
++		spin_unlock_bh(&port->lock);
+ 
+ 		count = (count > port->bulk_out_size) ? port->bulk_out_size : count;
+ 
+Index: linux-2.6.18.noarch/drivers/usb/serial/ipw.c
+===================================================================
+--- linux-2.6.18.noarch.orig/drivers/usb/serial/ipw.c
++++ linux-2.6.18.noarch/drivers/usb/serial/ipw.c
+@@ -394,14 +394,14 @@ static int ipw_write(struct usb_serial_p
+ 		return 0;
+ 	}
+ 
+-	spin_lock(&port->lock);
++	spin_lock_bh(&port->lock);
+ 	if (port->write_urb_busy) {
+-		spin_unlock(&port->lock);
++		spin_unlock_bh(&port->lock);
+ 		dbg("%s - already writing", __FUNCTION__);
+ 		return 0;
+ 	}
+ 	port->write_urb_busy = 1;
+-	spin_unlock(&port->lock);
++	spin_unlock_bh(&port->lock);
+ 
+ 	count = min(count, port->bulk_out_size);
+ 	memcpy(port->bulk_out_buffer, buf, count);
+Index: linux-2.6.18.noarch/drivers/usb/serial/ir-usb.c
+===================================================================
+--- linux-2.6.18.noarch.orig/drivers/usb/serial/ir-usb.c
++++ linux-2.6.18.noarch/drivers/usb/serial/ir-usb.c
+@@ -342,14 +342,14 @@ static int ir_write (struct usb_serial_p
+ 	if (count == 0)
+ 		return 0;
+ 
+-	spin_lock(&port->lock);
++	spin_lock_bh(&port->lock);
+ 	if (port->write_urb_busy) {
+-		spin_unlock(&port->lock);
++		spin_unlock_bh(&port->lock);
+ 		dbg("%s - already writing", __FUNCTION__);
+ 		return 0;
+ 	}
+ 	port->write_urb_busy = 1;
+-	spin_unlock(&port->lock);
++	spin_unlock_bh(&port->lock);
+ 
+ 	transfer_buffer = port->write_urb->transfer_buffer;
+ 	transfer_size = min(count, port->bulk_out_size - 1);
+Index: linux-2.6.18.noarch/drivers/usb/serial/keyspan_pda.c
+===================================================================
+--- linux-2.6.18.noarch.orig/drivers/usb/serial/keyspan_pda.c
++++ linux-2.6.18.noarch/drivers/usb/serial/keyspan_pda.c
+@@ -518,13 +518,13 @@ static int keyspan_pda_write(struct usb_
+ 	   the TX urb is in-flight (wait until it completes)
+ 	   the device is full (wait until it says there is room)
+ 	*/
+-	spin_lock(&port->lock);
++	spin_lock_bh(&port->lock);
+ 	if (port->write_urb_busy || priv->tx_throttled) {
+-		spin_unlock(&port->lock);
++		spin_unlock_bh(&port->lock);
+ 		return 0;
+ 	}
+ 	port->write_urb_busy = 1;
+-	spin_unlock(&port->lock);
++	spin_unlock_bh(&port->lock);
+ 
+ 	/* At this point the URB is in our control, nobody else can submit it
+ 	   again (the only sudden transition was the one from EINPROGRESS to
+Index: linux-2.6.18.noarch/drivers/usb/serial/omninet.c
+===================================================================
+--- linux-2.6.18.noarch.orig/drivers/usb/serial/omninet.c
++++ linux-2.6.18.noarch/drivers/usb/serial/omninet.c
+@@ -256,14 +256,14 @@ static int omninet_write (struct usb_ser
+ 		return (0);
+ 	}
+ 
+-	spin_lock(&wport->lock);
++	spin_lock_bh(&wport->lock);
+ 	if (wport->write_urb_busy) {
+-		spin_unlock(&wport->lock);
++		spin_unlock_bh(&wport->lock);
+ 		dbg("%s - already writing", __FUNCTION__);
+ 		return 0;
+ 	}
+ 	wport->write_urb_busy = 1;
+-	spin_unlock(&wport->lock);
++	spin_unlock_bh(&wport->lock);
+ 
+ 	count = (count > OMNINET_BULKOUTSIZE) ? OMNINET_BULKOUTSIZE : count;
+ 
+Index: linux-2.6.18.noarch/drivers/usb/serial/safe_serial.c
+===================================================================
+--- linux-2.6.18.noarch.orig/drivers/usb/serial/safe_serial.c
++++ linux-2.6.18.noarch/drivers/usb/serial/safe_serial.c
+@@ -298,14 +298,14 @@ static int safe_write (struct usb_serial
+ 		dbg ("%s - write request of 0 bytes", __FUNCTION__);
+ 		return (0);
+ 	}
+-	spin_lock(&port->lock);
++	spin_lock_bh(&port->lock);
+ 	if (port->write_urb_busy) {
+-		spin_unlock(&port->lock);
++		spin_unlock_bh(&port->lock);
+ 		dbg("%s - already writing", __FUNCTION__);
+ 		return 0;
+ 	}
+ 	port->write_urb_busy = 1;
+-	spin_unlock(&port->lock);
++	spin_unlock_bh(&port->lock);
+ 
+ 	packet_length = port->bulk_out_size;	// get max packetsize
+ 
+
+--
+
+From: Peter Zijlstra <pzijlstr@redhat.com>
+Subject: [RHEL5 PATCH 4/6] lockdep: lockdep_set_class_and_subclass
+To: rhkernel-list@redhat.com
+Date: Wed, 27 Sep 2006 15:33:45 +0200
+
+Add lockdep_set_class_and_subclass() to the lockdep annotations.
+
+This annotation makes it possible to assign a subclass on lock init. This
+annotation is meant to reduce the _nested() annotations by assigning a
+default subclass.
+
+One could do without this annotation and rely on lockdep_set_class()
+exclusively, but that would require a manual stack of struct lock_class_key
+objects.
+
+Signed-off-by: Peter Zijlstra <a.p.zijlstra@chello.nl>
+Acked-by: Ingo Molnar <mingo@elte.hu>
+---
+ include/linux/lockdep.h |   12 ++++++++----
+ kernel/lockdep.c        |   10 ++++++----
+ kernel/mutex-debug.c    |    2 +-
+ lib/rwsem-spinlock.c    |    2 +-
+ lib/rwsem.c             |    2 +-
+ lib/spinlock_debug.c    |    4 ++--
+ net/core/sock.c         |    2 +-
+ 7 files changed, 20 insertions(+), 14 deletions(-)
+
+Index: linux-2.6.18.noarch/include/linux/lockdep.h
+===================================================================
+--- linux-2.6.18.noarch.orig/include/linux/lockdep.h
++++ linux-2.6.18.noarch/include/linux/lockdep.h
+@@ -202,7 +202,7 @@ extern int lockdep_internal(void);
+  */
+ 
+ extern void lockdep_init_map(struct lockdep_map *lock, const char *name,
+-			     struct lock_class_key *key);
++			     struct lock_class_key *key, int subclass);
+ 
+ /*
+  * Reinitialize a lock key - for cases where there is special locking or
+@@ -211,9 +211,11 @@ extern void lockdep_init_map(struct lock
+  * or they are too narrow (they suffer from a false class-split):
+  */
+ #define lockdep_set_class(lock, key) \
+-		lockdep_init_map(&(lock)->dep_map, #key, key)
++		lockdep_init_map(&(lock)->dep_map, #key, key, 0)
+ #define lockdep_set_class_and_name(lock, key, name) \
+-		lockdep_init_map(&(lock)->dep_map, name, key)
++		lockdep_init_map(&(lock)->dep_map, name, key, 0)
++#define lockdep_set_class_and_subclass(lock, key, sub) \
++		lockdep_init_map(&(lock)->dep_map, #key, key, sub)
+ 
+ /*
+  * Acquire a lock.
+@@ -257,10 +259,12 @@ static inline int lockdep_internal(void)
+ # define lock_release(l, n, i)			do { } while (0)
+ # define lockdep_init()				do { } while (0)
+ # define lockdep_info()				do { } while (0)
+-# define lockdep_init_map(lock, name, key)	do { (void)(key); } while (0)
++# define lockdep_init_map(lock, name, key, sub)	do { (void)(key); } while (0)
+ # define lockdep_set_class(lock, key)		do { (void)(key); } while (0)
+ # define lockdep_set_class_and_name(lock, key, name) \
+ 		do { (void)(key); } while (0)
++#define lockdep_set_class_and_subclass(lock, key, sub) \
++		do { (void)(key); } while (0)
+ # define INIT_LOCKDEP
+ # define lockdep_reset()		do { debug_locks = 1; } while (0)
+ # define lockdep_free_key_range(start, size)	do { } while (0)
+Index: linux-2.6.18.noarch/kernel/lockdep.c
+===================================================================
+--- linux-2.6.18.noarch.orig/kernel/lockdep.c
++++ linux-2.6.18.noarch/kernel/lockdep.c
+@@ -1170,7 +1170,7 @@ look_up_lock_class(struct lockdep_map *l
+  * itself, so actual lookup of the hash should be once per lock object.
+  */
+ static inline struct lock_class *
+-register_lock_class(struct lockdep_map *lock, unsigned int subclass)
++register_lock_class(struct lockdep_map *lock, unsigned int subclass, int force)
+ {
+ 	struct lockdep_subclass_key *key;
+ 	struct list_head *hash_head;
+@@ -1242,7 +1242,7 @@ register_lock_class(struct lockdep_map *
+ out_unlock_set:
+ 	__raw_spin_unlock(&hash_lock);
+ 
+-	if (!subclass)
++	if (!subclass || force)
+ 		lock->class_cache = class;
+ 
+ 	DEBUG_LOCKS_WARN_ON(class->subclass != subclass);
+@@ -1930,7 +1930,7 @@ void trace_softirqs_off(unsigned long ip
+  * Initialize a lock instance's lock-class mapping info:
+  */
+ void lockdep_init_map(struct lockdep_map *lock, const char *name,
+-		      struct lock_class_key *key)
++		      struct lock_class_key *key, int subclass)
+ {
+ 	if (unlikely(!debug_locks))
+ 		return;
+@@ -1950,6 +1950,8 @@ void lockdep_init_map(struct lockdep_map
+ 	lock->name = name;
+ 	lock->key = key;
+ 	lock->class_cache = NULL;
++	if (subclass)
++		register_lock_class(lock, subclass, 1);
+ }
+ 
+ EXPORT_SYMBOL_GPL(lockdep_init_map);
+@@ -1988,7 +1990,7 @@ static int __lock_acquire(struct lockdep
+ 	 * Not cached yet or subclass?
+ 	 */
+ 	if (unlikely(!class)) {
+-		class = register_lock_class(lock, subclass);
++		class = register_lock_class(lock, subclass, 0);
+ 		if (!class)
+ 			return 0;
+ 	}
+Index: linux-2.6.18.noarch/kernel/mutex-debug.c
+===================================================================
+--- linux-2.6.18.noarch.orig/kernel/mutex-debug.c
++++ linux-2.6.18.noarch/kernel/mutex-debug.c
+@@ -91,7 +91,7 @@ void debug_mutex_init(struct mutex *lock
+ 	 * Make sure we are not reinitializing a held lock:
+ 	 */
+ 	debug_check_no_locks_freed((void *)lock, sizeof(*lock));
+-	lockdep_init_map(&lock->dep_map, name, key);
++	lockdep_init_map(&lock->dep_map, name, key, 0);
+ #endif
+ 	lock->owner = NULL;
+ 	lock->magic = lock;
+Index: linux-2.6.18.noarch/lib/rwsem-spinlock.c
+===================================================================
+--- linux-2.6.18.noarch.orig/lib/rwsem-spinlock.c
++++ linux-2.6.18.noarch/lib/rwsem-spinlock.c
+@@ -28,7 +28,7 @@ void __init_rwsem(struct rw_semaphore *s
+ 	 * Make sure we are not reinitializing a held semaphore:
+ 	 */
+ 	debug_check_no_locks_freed((void *)sem, sizeof(*sem));
+-	lockdep_init_map(&sem->dep_map, name, key);
++	lockdep_init_map(&sem->dep_map, name, key, 0);
+ #endif
+ 	sem->activity = 0;
+ 	spin_lock_init(&sem->wait_lock);
+Index: linux-2.6.18.noarch/lib/rwsem.c
+===================================================================
+--- linux-2.6.18.noarch.orig/lib/rwsem.c
++++ linux-2.6.18.noarch/lib/rwsem.c
+@@ -19,7 +19,7 @@ void __init_rwsem(struct rw_semaphore *s
+ 	 * Make sure we are not reinitializing a held semaphore:
+ 	 */
+ 	debug_check_no_locks_freed((void *)sem, sizeof(*sem));
+-	lockdep_init_map(&sem->dep_map, name, key);
++	lockdep_init_map(&sem->dep_map, name, key, 0);
+ #endif
+ 	sem->count = RWSEM_UNLOCKED_VALUE;
+ 	spin_lock_init(&sem->wait_lock);
+Index: linux-2.6.18.noarch/lib/spinlock_debug.c
+===================================================================
+--- linux-2.6.18.noarch.orig/lib/spinlock_debug.c
++++ linux-2.6.18.noarch/lib/spinlock_debug.c
+@@ -20,7 +20,7 @@ void __spin_lock_init(spinlock_t *lock, 
+ 	 * Make sure we are not reinitializing a held lock:
+ 	 */
+ 	debug_check_no_locks_freed((void *)lock, sizeof(*lock));
+-	lockdep_init_map(&lock->dep_map, name, key);
++	lockdep_init_map(&lock->dep_map, name, key, 0);
+ #endif
+ 	lock->raw_lock = (raw_spinlock_t)__RAW_SPIN_LOCK_UNLOCKED;
+ 	lock->magic = SPINLOCK_MAGIC;
+@@ -38,7 +38,7 @@ void __rwlock_init(rwlock_t *lock, const
+ 	 * Make sure we are not reinitializing a held lock:
+ 	 */
+ 	debug_check_no_locks_freed((void *)lock, sizeof(*lock));
+-	lockdep_init_map(&lock->dep_map, name, key);
++	lockdep_init_map(&lock->dep_map, name, key, 0);
+ #endif
+ 	lock->raw_lock = (raw_rwlock_t) __RAW_RW_LOCK_UNLOCKED;
+ 	lock->magic = RWLOCK_MAGIC;
+Index: linux-2.6.18.noarch/net/core/sock.c
+===================================================================
+--- linux-2.6.18.noarch.orig/net/core/sock.c
++++ linux-2.6.18.noarch/net/core/sock.c
+@@ -827,7 +827,7 @@ static void inline sock_lock_init(struct
+ 				   af_family_slock_key_strings[sk->sk_family]);
+ 	lockdep_init_map(&sk->sk_lock.dep_map,
+ 			 af_family_key_strings[sk->sk_family],
+-			 af_family_keys + sk->sk_family);
++			 af_family_keys + sk->sk_family, 0);
+ }
+ 
+ /**
+
+--
+
+From: Peter Zijlstra <pzijlstr@redhat.com>
+Subject: [RHEL5 PATCH 5/6] serio: lockdep annotation for ps2dev->cmd_mutex and serio->lock
+To: rhkernel-list@redhat.com
+Date: Wed, 27 Sep 2006 15:33:46 +0200
+
+Based ideas from Jiri Kosina, this patch tracks the nesting depth
+and uses the new lockdep_set_class_and_subclass() annotation to store
+this information in the lock objects.
+
+Signed-off-by: Peter Zijlstra <a.p.zijlstra@chello.nl>
+Acked-by: Ingo Molnar <mingo@elte.hu>
+---
+ drivers/input/serio/libps2.c |    4 ++++
+ drivers/input/serio/serio.c  |    9 ++++++++-
+ include/linux/serio.h        |    1 +
+ 3 files changed, 13 insertions(+), 1 deletion(-)
+
+Index: linux-2.6.18.noarch/drivers/input/serio/libps2.c
+===================================================================
+--- linux-2.6.18.noarch.orig/drivers/input/serio/libps2.c
++++ linux-2.6.18.noarch/drivers/input/serio/libps2.c
+@@ -280,6 +280,8 @@ int ps2_schedule_command(struct ps2dev *
+ 	return 0;
+ }
+ 
++static struct lock_class_key ps2_mutex_key;
++
+ /*
+  * ps2_init() initializes ps2dev structure
+  */
+@@ -287,6 +289,8 @@ int ps2_schedule_command(struct ps2dev *
+ void __ps2_init(struct ps2dev *ps2dev, struct serio *serio)
+ {
+ 	mutex_init(&ps2dev->cmd_mutex);
++	lockdep_set_class_and_subclass(&ps2dev->cmd_mutex, &ps2_mutex_key,
++				       serio->depth);
+ 	init_waitqueue_head(&ps2dev->wait);
+ 	ps2dev->serio = serio;
+ }
+Index: linux-2.6.18.noarch/drivers/input/serio/serio.c
+===================================================================
+--- linux-2.6.18.noarch.orig/drivers/input/serio/serio.c
++++ linux-2.6.18.noarch/drivers/input/serio/serio.c
+@@ -521,6 +521,8 @@ static void serio_release_port(struct de
+ 	module_put(THIS_MODULE);
+ }
+ 
++static struct lock_class_key serio_lock_key;
++
+ /*
+  * Prepare serio port for registration.
+  */
+@@ -538,8 +540,13 @@ static void serio_init_port(struct serio
+ 		 "serio%ld", (long)atomic_inc_return(&serio_no) - 1);
+ 	serio->dev.bus = &serio_bus;
+ 	serio->dev.release = serio_release_port;
+-	if (serio->parent)
++	if (serio->parent) {
+ 		serio->dev.parent = &serio->parent->dev;
++		serio->depth = serio->parent->depth + 1;
++	} else
++		serio->depth = 0;
++	lockdep_set_class_and_subclass(&serio->lock, &serio_lock_key,
++				       serio->depth);
+ }
+ 
+ /*
+Index: linux-2.6.18.noarch/include/linux/serio.h
+===================================================================
+--- linux-2.6.18.noarch.orig/include/linux/serio.h
++++ linux-2.6.18.noarch/include/linux/serio.h
+@@ -41,6 +41,7 @@ struct serio {
+ 	void (*stop)(struct serio *);
+ 
+ 	struct serio *parent, *child;
++	unsigned int depth;		/* level of nesting in serio hierarchy */
+ 
+ 	struct serio_driver *drv;	/* accessed from interrupt, must be protected by serio->lock and serio->sem */
+ 	struct mutex drv_mutex;		/* protects serio->drv so attributes can pin driver */
+
+--
+
+From: Peter Zijlstra <pzijlstr@redhat.com>
+Subject: [RHEL5 PATCH 6/6] sysrq: disable lockdep on reboot
+To: rhkernel-list@redhat.com
+Date: Wed, 27 Sep 2006 15:33:47 +0200
+
+SysRq : Emergency Sync
+Emergency Sync complete
+SysRq : Emergency Remount R/O
+Emergency Remount complete
+SysRq : Resetting
+BUG: warning at kernel/lockdep.c:1816/trace_hardirqs_on() (Not tainted)
+
+Call Trace:
+ [<ffffffff8026d56d>] show_trace+0xae/0x319
+ [<ffffffff8026d7ed>] dump_stack+0x15/0x17
+ [<ffffffff802a68d1>] trace_hardirqs_on+0xbc/0x13d
+ [<ffffffff803a8eec>] sysrq_handle_reboot+0x9/0x11
+ [<ffffffff803a8f8d>] __handle_sysrq+0x99/0x130
+ [<ffffffff803a903b>] handle_sysrq+0x17/0x19
+ [<ffffffff803a36ee>] kbd_event+0x32e/0x57d
+ [<ffffffff80401e35>] input_event+0x42d/0x45b
+ [<ffffffff804063eb>] atkbd_interrupt+0x44d/0x53d
+ [<ffffffff803fe5c5>] serio_interrupt+0x49/0x86
+ [<ffffffff803ff2a4>] i8042_interrupt+0x202/0x21a
+ [<ffffffff80210cf0>] handle_IRQ_event+0x2c/0x64
+ [<ffffffff802bfd8b>] __do_IRQ+0xaf/0x114
+ [<ffffffff8026ea24>] do_IRQ+0xf8/0x107
+ [<ffffffff8025f886>] ret_from_intr+0x0/0xf
+DWARF2 unwinder stuck at ret_from_intr+0x0/0xf
+Leftover inexact backtrace:
+ <IRQ> <EOI> [<ffffffff80258e36>] mwait_idle+0x3f/0x54
+ [<ffffffff8024a33a>] cpu_idle+0xa2/0xc5
+ [<ffffffff8026c34e>] rest_init+0x2b/0x2d
+ [<ffffffff809708bc>] start_kernel+0x24a/0x24c
+ [<ffffffff8097028b>] _sinittext+0x28b/0x292
+
+Since we're shutting down anyway, don't bother being smart,
+just turn the thing off.
+
+Signed-off-by: Peter Zijlstra <a.p.zijlstra@chello.nl>
+Acked-by: Ingo Molnar <mingo@elte.hu>
+Cc: Arjan van de Ven <arjan@linux.intel.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+
+ drivers/char/sysrq.c |    1 +
+ 1 file changed, 1 insertion(+)
+
+Index: linux-2.6.18.noarch/drivers/char/sysrq.c
+===================================================================
+--- linux-2.6.18.noarch.orig/drivers/char/sysrq.c
++++ linux-2.6.18.noarch/drivers/char/sysrq.c
+@@ -115,6 +115,7 @@ static struct sysrq_key_op sysrq_crashdu
+ static void sysrq_handle_reboot(int key, struct pt_regs *pt_regs,
+ 				struct tty_struct *tty)
+ {
++	lockdep_off();
+ 	local_irq_enable();
+ 	emergency_restart();
+ }
+
+--
+
+Subject: [RHEL5 PATCH] lockdep: annotate bonding driver
+From: Peter Zijlstra <pzijlstr@redhat.com>
+To: rhkernel-list@redhat.com
+Cc: Dave Jones <davej@redhat.com>, Don Zickus <dzickus@redhat.com>,
+        "John W. Linville" <linville@redhat.com>
+Date: Thu, 28 Sep 2006 20:19:03 +0200
+
+BZ204795
+
+=============================================
+[ INFO: possible recursive locking detected ]
+2.6.17-1.2600.fc6 #1
+---------------------------------------------
+ifconfig/2411 is trying to acquire lock:
+ (&dev->_xmit_lock){-...}, at: [<ffffffff80429b9f>] dev_mc_add+0x45/0x15f
+
+but task is already holding lock:
+ (&dev->_xmit_lock){-...}, at: [<ffffffff80429b9f>] dev_mc_add+0x45/0x15f
+
+other info that might help us debug this:
+3 locks held by ifconfig/2411:
+ #0:  (rtnl_mutex){--..}, at: [<ffffffff802664af>] mutex_lock+0x2a/0x2e
+ #1:  (&dev->_xmit_lock){-...}, at: [<ffffffff80429b9f>] dev_mc_add+0x45/0x15f
+ #2:  (&bond->lock){-.-+}, at: [<ffffffff8831b7f7>] bond_set_multicast_list+0x2c/0x26a [bonding]
+
+stack backtrace:
+
+Call Trace:
+ [<ffffffff8026e97d>] show_trace+0xae/0x319
+ [<ffffffff8026ebfd>] dump_stack+0x15/0x17
+ [<ffffffff802a839b>] __lock_acquire+0x135/0xa64
+ [<ffffffff802a926d>] lock_acquire+0x4b/0x69
+ [<ffffffff80267981>] _spin_lock_bh+0x2a/0x36
+ [<ffffffff80429b9f>] dev_mc_add+0x45/0x15f
+ [<ffffffff8831b903>] :bonding:bond_set_multicast_list+0x138/0x26a
+ [<ffffffff80429901>] __dev_mc_upload+0x22/0x24
+ [<ffffffff80429c74>] dev_mc_add+0x11a/0x15f
+ [<ffffffff8045d154>] igmp_group_added+0x55/0x10f
+ [<ffffffff8045d4ab>] ip_mc_inc_group+0x1d6/0x21a
+ [<ffffffff8045d535>] ip_mc_up+0x46/0x61
+ [<ffffffff804594b8>] inetdev_init+0x11c/0x136
+ [<ffffffff8045a0b7>] devinet_ioctl+0x3eb/0x5e9
+ [<ffffffff8045a56c>] inet_ioctl+0x71/0x8f
+ [<ffffffff8041ed74>] sock_ioctl+0x1e8/0x20a
+ [<ffffffff80243ae0>] do_ioctl+0x2a/0x77
+ [<ffffffff802325cc>] vfs_ioctl+0x25a/0x277
+ [<ffffffff8024ea4b>] sys_ioctl+0x5f/0x82
+ [<ffffffff8026060e>] system_call+0x7e/0x83
+
+The bonding driver nests other drivers, give the bonding driver its own
+lock class.
+
+Signed-off-by: Peter Zijlstra <a.p.zijlstra@chello.nl>
+Acked-by: Ingo Molnar <mingo@elte.hu>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+diff --git a/drivers/net/bonding/bond_main.c b/drivers/net/bonding/bond_main.c
+index 0fb5f65..ebbf002 100644
+--- a/drivers/net/bonding/bond_main.c
++++ b/drivers/net/bonding/bond_main.c
+@@ -4692,6 +4692,8 @@ static int bond_check_params(struct bond
+ 	return 0;
+ }
+ 
++static struct lock_class_key bonding_netdev_xmit_lock_key;
++
+ /* Create a new bond based on the specified name and bonding parameters.
+  * Caller must NOT hold rtnl_lock; we need to release it here before we
+  * set up our sysfs entries.
+@@ -4727,6 +4729,9 @@ int bond_create(char *name, struct bond_
+ 	if (res < 0) {
+ 		goto out_bond;
+ 	}
++
++	lockdep_set_class(&bond_dev->_xmit_lock, &bonding_netdev_xmit_lock_key);
++
+ 	if (newbond)
+ 		*newbond = bond_dev->priv;
+ 
+
+
+Subject: [RHEL5 PATCH] lockdep: more delcare_completion_onstack annotations
+From: Peter Zijlstra <pzijlstr@redhat.com>
+To: rhkernel-list@redhat.com
+Cc: Dave Jones <davej@redhat.com>, Don Zickus <dzickus@redhat.com>
+Content-Type: text/plain
+Date: Thu, 28 Sep 2006 20:22:35 +0200
+
+BZ208304
+
+All on stack DECLARE_COMPLETIONs should be replaced by:
+  DECLARE_COMPLETION_ONSTACK
+
+Signed-off-by: Peter Zijlstra <a.p.zijlstra@chello.nl>
+Acked-by: Ingo Molnar <mingo@elte.hu>
+Acked-by: Benjamin Herrenschmidt <benh@kernel.crashing.org>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+ arch/arm/kernel/ecard.c                      |    2 +-
+ arch/i386/kernel/smpboot.c                   |    2 +-
+ arch/powerpc/platforms/powermac/cpufreq_64.c |    2 +-
+ arch/powerpc/platforms/powermac/nvram.c      |    4 ++--
+ block/as-iosched.c                           |    2 +-
+ block/cfq-iosched.c                          |    2 +-
+ drivers/block/DAC960.c                       |    2 +-
+ drivers/block/cciss.c                        |    6 +++---
+ drivers/block/cciss_scsi.c                   |    2 +-
+ drivers/block/paride/pd.c                    |    2 +-
+ drivers/block/pktcdvd.c                      |    2 +-
+ drivers/ide/ide-tape.c                       |    2 +-
+ drivers/macintosh/smu.c                      |    4 ++--
+ drivers/macintosh/windfarm_smu_controls.c    |    2 +-
+ drivers/macintosh/windfarm_smu_sensors.c     |    2 +-
+ drivers/s390/scsi/zfcp_scsi.c                |    2 +-
+ drivers/scsi/53c700.c                        |    2 +-
+ drivers/scsi/aic7xxx/aic79xx_osm.c           |    4 ++--
+ drivers/scsi/aic7xxx/aic7xxx_osm.c           |    2 +-
+ drivers/scsi/gdth.c                          |    4 ++--
+ drivers/scsi/qla1280.c                       |    4 ++--
+ drivers/usb/gadget/inode.c                   |    2 +-
+ drivers/usb/gadget/omap_udc.c                |    2 +-
+ net/ipv4/ipvs/ip_vs_sync.c                   |    2 +-
+ 24 files changed, 31 insertions(+), 31 deletions(-)
+
+Index: linux-2.6/arch/arm/kernel/ecard.c
+===================================================================
+--- linux-2.6.orig/arch/arm/kernel/ecard.c
++++ linux-2.6/arch/arm/kernel/ecard.c
+@@ -295,7 +295,7 @@ ecard_task(void * unused)
+  */
+ static void ecard_call(struct ecard_request *req)
+ {
+-	DECLARE_COMPLETION(completion);
++	DECLARE_COMPLETION_ONSTACK(completion);
+ 
+ 	req->complete = &completion;
+ 
+Index: linux-2.6/arch/i386/kernel/smpboot.c
+===================================================================
+--- linux-2.6.orig/arch/i386/kernel/smpboot.c
++++ linux-2.6/arch/i386/kernel/smpboot.c
+@@ -1058,7 +1058,7 @@ static void __cpuinit do_warm_boot_cpu(v
+ 
+ static int __cpuinit __smp_prepare_cpu(int cpu)
+ {
+-	DECLARE_COMPLETION(done);
++	DECLARE_COMPLETION_ONSTACK(done);
+ 	struct warm_boot_cpu_info info;
+ 	struct work_struct task;
+ 	int	apicid, ret;
+Index: linux-2.6/arch/powerpc/platforms/powermac/cpufreq_64.c
+===================================================================
+--- linux-2.6.orig/arch/powerpc/platforms/powermac/cpufreq_64.c
++++ linux-2.6/arch/powerpc/platforms/powermac/cpufreq_64.c
+@@ -104,7 +104,7 @@ static void g5_smu_switch_volt(int speed
+ {
+ 	struct smu_simple_cmd	cmd;
+ 
+-	DECLARE_COMPLETION(comp);
++	DECLARE_COMPLETION_ONSTACK(comp);
+ 	smu_queue_simple(&cmd, SMU_CMD_POWER_COMMAND, 8, smu_done_complete,
+ 			 &comp, 'V', 'S', 'L', 'E', 'W',
+ 			 0xff, g5_fvt_cur+1, speed_mode);
+Index: linux-2.6/arch/powerpc/platforms/powermac/nvram.c
+===================================================================
+--- linux-2.6.orig/arch/powerpc/platforms/powermac/nvram.c
++++ linux-2.6/arch/powerpc/platforms/powermac/nvram.c
+@@ -195,7 +195,7 @@ static void pmu_nvram_complete(struct ad
+ static unsigned char pmu_nvram_read_byte(int addr)
+ {
+ 	struct adb_request req;
+-	DECLARE_COMPLETION(req_complete); 
++	DECLARE_COMPLETION_ONSTACK(req_complete);
+ 	
+ 	req.arg = system_state == SYSTEM_RUNNING ? &req_complete : NULL;
+ 	if (pmu_request(&req, pmu_nvram_complete, 3, PMU_READ_NVRAM,
+@@ -211,7 +211,7 @@ static unsigned char pmu_nvram_read_byte
+ static void pmu_nvram_write_byte(int addr, unsigned char val)
+ {
+ 	struct adb_request req;
+-	DECLARE_COMPLETION(req_complete); 
++	DECLARE_COMPLETION_ONSTACK(req_complete);
+ 	
+ 	req.arg = system_state == SYSTEM_RUNNING ? &req_complete : NULL;
+ 	if (pmu_request(&req, pmu_nvram_complete, 4, PMU_WRITE_NVRAM,
+Index: linux-2.6/block/as-iosched.c
+===================================================================
+--- linux-2.6.orig/block/as-iosched.c
++++ linux-2.6/block/as-iosched.c
+@@ -1828,7 +1828,7 @@ static int __init as_init(void)
+ 
+ static void __exit as_exit(void)
+ {
+-	DECLARE_COMPLETION(all_gone);
++	DECLARE_COMPLETION_ONSTACK(all_gone);
+ 	elv_unregister(&iosched_as);
+ 	ioc_gone = &all_gone;
+ 	/* ioc_gone's update must be visible before reading ioc_count */
+Index: linux-2.6/block/cfq-iosched.c
+===================================================================
+--- linux-2.6.orig/block/cfq-iosched.c
++++ linux-2.6/block/cfq-iosched.c
+@@ -2463,7 +2463,7 @@ static int __init cfq_init(void)
+ 
+ static void __exit cfq_exit(void)
+ {
+-	DECLARE_COMPLETION(all_gone);
++	DECLARE_COMPLETION_ONSTACK(all_gone);
+ 	elv_unregister(&iosched_cfq);
+ 	ioc_gone = &all_gone;
+ 	/* ioc_gone's update must be visible before reading ioc_count */
+Index: linux-2.6/drivers/block/DAC960.c
+===================================================================
+--- linux-2.6.orig/drivers/block/DAC960.c
++++ linux-2.6/drivers/block/DAC960.c
+@@ -770,7 +770,7 @@ static void DAC960_P_QueueCommand(DAC960
+ static void DAC960_ExecuteCommand(DAC960_Command_T *Command)
+ {
+   DAC960_Controller_T *Controller = Command->Controller;
+-  DECLARE_COMPLETION(Completion);
++  DECLARE_COMPLETION_ONSTACK(Completion);
+   unsigned long flags;
+   Command->Completion = &Completion;
+ 
+Index: linux-2.6/drivers/block/cciss.c
+===================================================================
+--- linux-2.6.orig/drivers/block/cciss.c
++++ linux-2.6/drivers/block/cciss.c
+@@ -879,7 +879,7 @@ static int cciss_ioctl(struct inode *ino
+ 			char *buff = NULL;
+ 			u64bit temp64;
+ 			unsigned long flags;
+-			DECLARE_COMPLETION(wait);
++			DECLARE_COMPLETION_ONSTACK(wait);
+ 
+ 			if (!arg)
+ 				return -EINVAL;
+@@ -997,7 +997,7 @@ static int cciss_ioctl(struct inode *ino
+ 			BYTE sg_used = 0;
+ 			int status = 0;
+ 			int i;
+-			DECLARE_COMPLETION(wait);
++			DECLARE_COMPLETION_ONSTACK(wait);
+ 			__u32 left;
+ 			__u32 sz;
+ 			BYTE __user *data_ptr;
+@@ -1792,7 +1792,7 @@ static int sendcmd_withirq(__u8 cmd,
+ 	u64bit buff_dma_handle;
+ 	unsigned long flags;
+ 	int return_status;
+-	DECLARE_COMPLETION(wait);
++	DECLARE_COMPLETION_ONSTACK(wait);
+ 
+ 	if ((c = cmd_alloc(h, 0)) == NULL)
+ 		return -ENOMEM;
+Index: linux-2.6/drivers/block/cciss_scsi.c
+===================================================================
+--- linux-2.6.orig/drivers/block/cciss_scsi.c
++++ linux-2.6/drivers/block/cciss_scsi.c
+@@ -766,7 +766,7 @@ cciss_scsi_do_simple_cmd(ctlr_info_t *c,
+ 			int direction)
+ {
+ 	unsigned long flags;
+-	DECLARE_COMPLETION(wait);
++	DECLARE_COMPLETION_ONSTACK(wait);
+ 
+ 	cp->cmd_type = CMD_IOCTL_PEND;		// treat this like an ioctl 
+ 	cp->scsi_cmd = NULL;
+Index: linux-2.6/drivers/block/paride/pd.c
+===================================================================
+--- linux-2.6.orig/drivers/block/paride/pd.c
++++ linux-2.6/drivers/block/paride/pd.c
+@@ -713,7 +713,7 @@ static void do_pd_request(request_queue_
+ static int pd_special_command(struct pd_unit *disk,
+ 		      enum action (*func)(struct pd_unit *disk))
+ {
+-	DECLARE_COMPLETION(wait);
++	DECLARE_COMPLETION_ONSTACK(wait);
+ 	struct request rq;
+ 	int err = 0;
+ 
+Index: linux-2.6/drivers/block/pktcdvd.c
+===================================================================
+--- linux-2.6.orig/drivers/block/pktcdvd.c
++++ linux-2.6/drivers/block/pktcdvd.c
+@@ -348,7 +348,7 @@ static int pkt_generic_packet(struct pkt
+ 	char sense[SCSI_SENSE_BUFFERSIZE];
+ 	request_queue_t *q;
+ 	struct request *rq;
+-	DECLARE_COMPLETION(wait);
++	DECLARE_COMPLETION_ONSTACK(wait);
+ 	int err = 0;
+ 
+ 	q = bdev_get_queue(pd->bdev);
+Index: linux-2.6/drivers/ide/ide-tape.c
+===================================================================
+--- linux-2.6.orig/drivers/ide/ide-tape.c
++++ linux-2.6/drivers/ide/ide-tape.c
+@@ -2764,7 +2764,7 @@ static void idetape_add_stage_tail (ide_
+  */
+ static void idetape_wait_for_request (ide_drive_t *drive, struct request *rq)
+ {
+-	DECLARE_COMPLETION(wait);
++	DECLARE_COMPLETION_ONSTACK(wait);
+ 	idetape_tape_t *tape = drive->driver_data;
+ 
+ #if IDETAPE_DEBUG_BUGS
+Index: linux-2.6/drivers/macintosh/smu.c
+===================================================================
+--- linux-2.6.orig/drivers/macintosh/smu.c
++++ linux-2.6/drivers/macintosh/smu.c
+@@ -870,7 +870,7 @@ int smu_queue_i2c(struct smu_i2c_cmd *cm
+ 
+ static int smu_read_datablock(u8 *dest, unsigned int addr, unsigned int len)
+ {
+-	DECLARE_COMPLETION(comp);
++	DECLARE_COMPLETION_ONSTACK(comp);
+ 	unsigned int chunk;
+ 	struct smu_cmd cmd;
+ 	int rc;
+@@ -917,7 +917,7 @@ static int smu_read_datablock(u8 *dest, 
+ 
+ static struct smu_sdbp_header *smu_create_sdb_partition(int id)
+ {
+-	DECLARE_COMPLETION(comp);
++	DECLARE_COMPLETION_ONSTACK(comp);
+ 	struct smu_simple_cmd cmd;
+ 	unsigned int addr, len, tlen;
+ 	struct smu_sdbp_header *hdr;
+Index: linux-2.6/drivers/macintosh/windfarm_smu_controls.c
+===================================================================
+--- linux-2.6.orig/drivers/macintosh/windfarm_smu_controls.c
++++ linux-2.6/drivers/macintosh/windfarm_smu_controls.c
+@@ -56,7 +56,7 @@ static int smu_set_fan(int pwm, u8 id, u
+ {
+ 	struct smu_cmd cmd;
+ 	u8 buffer[16];
+-	DECLARE_COMPLETION(comp);
++	DECLARE_COMPLETION_ONSTACK(comp);
+ 	int rc;
+ 
+ 	/* Fill SMU command structure */
+Index: linux-2.6/drivers/macintosh/windfarm_smu_sensors.c
+===================================================================
+--- linux-2.6.orig/drivers/macintosh/windfarm_smu_sensors.c
++++ linux-2.6/drivers/macintosh/windfarm_smu_sensors.c
+@@ -67,7 +67,7 @@ static void smu_ads_release(struct wf_se
+ static int smu_read_adc(u8 id, s32 *value)
+ {
+ 	struct smu_simple_cmd	cmd;
+-	DECLARE_COMPLETION(comp);
++	DECLARE_COMPLETION_ONSTACK(comp);
+ 	int rc;
+ 
+ 	rc = smu_queue_simple(&cmd, SMU_CMD_READ_ADC, 1,
+Index: linux-2.6/drivers/s390/scsi/zfcp_scsi.c
+===================================================================
+--- linux-2.6.orig/drivers/s390/scsi/zfcp_scsi.c
++++ linux-2.6/drivers/s390/scsi/zfcp_scsi.c
+@@ -301,7 +301,7 @@ zfcp_scsi_command_sync(struct zfcp_unit 
+ 		       int use_timer)
+ {
+ 	int ret;
+-	DECLARE_COMPLETION(wait);
++	DECLARE_COMPLETION_ONSTACK(wait);
+ 
+ 	scpnt->SCp.ptr = (void *) &wait;  /* silent re-use */
+ 	scpnt->scsi_done = zfcp_scsi_command_sync_handler;
+Index: linux-2.6/drivers/scsi/53c700.c
+===================================================================
+--- linux-2.6.orig/drivers/scsi/53c700.c
++++ linux-2.6/drivers/scsi/53c700.c
+@@ -1939,7 +1939,7 @@ NCR_700_abort(struct scsi_cmnd * SCp)
+ STATIC int
+ NCR_700_bus_reset(struct scsi_cmnd * SCp)
+ {
+-	DECLARE_COMPLETION(complete);
++	DECLARE_COMPLETION_ONSTACK(complete);
+ 	struct NCR_700_Host_Parameters *hostdata = 
+ 		(struct NCR_700_Host_Parameters *)SCp->device->host->hostdata[0];
+ 
+Index: linux-2.6/drivers/scsi/aic7xxx/aic79xx_osm.c
+===================================================================
+--- linux-2.6.orig/drivers/scsi/aic7xxx/aic79xx_osm.c
++++ linux-2.6/drivers/scsi/aic7xxx/aic79xx_osm.c
+@@ -646,7 +646,7 @@ ahd_linux_dev_reset(struct scsi_cmnd *cm
+ 	struct	ahd_initiator_tinfo *tinfo;
+ 	struct	ahd_tmode_tstate *tstate;
+ 	unsigned long flags;
+-	DECLARE_COMPLETION(done);
++	DECLARE_COMPLETION_ONSTACK(done);
+ 
+ 	reset_scb = NULL;
+ 	paused = FALSE;
+@@ -2251,7 +2251,7 @@ done:
+ 	if (paused)
+ 		ahd_unpause(ahd);
+ 	if (wait) {
+-		DECLARE_COMPLETION(done);
++		DECLARE_COMPLETION_ONSTACK(done);
+ 
+ 		ahd->platform_data->eh_done = &done;
+ 		ahd_unlock(ahd, &flags);
+Index: linux-2.6/drivers/scsi/aic7xxx/aic7xxx_osm.c
+===================================================================
+--- linux-2.6.orig/drivers/scsi/aic7xxx/aic7xxx_osm.c
++++ linux-2.6/drivers/scsi/aic7xxx/aic7xxx_osm.c
+@@ -2335,7 +2335,7 @@ done:
+ 	if (paused)
+ 		ahc_unpause(ahc);
+ 	if (wait) {
+-		DECLARE_COMPLETION(done);
++		DECLARE_COMPLETION_ONSTACK(done);
+ 
+ 		ahc->platform_data->eh_done = &done;
+ 		ahc_unlock(ahc, &flags);
+Index: linux-2.6/drivers/scsi/gdth.c
+===================================================================
+--- linux-2.6.orig/drivers/scsi/gdth.c
++++ linux-2.6/drivers/scsi/gdth.c
+@@ -724,7 +724,7 @@ int __gdth_execute(struct scsi_device *s
+                    int timeout, u32 *info)
+ {
+     Scsi_Cmnd *scp;
+-    DECLARE_COMPLETION(wait);
++    DECLARE_COMPLETION_ONSTACK(wait);
+     int rval;
+ 
+     scp = kmalloc(sizeof(*scp), GFP_KERNEL);
+@@ -764,7 +764,7 @@ int __gdth_execute(struct scsi_device *s
+ {
+     Scsi_Cmnd *scp = scsi_allocate_device(sdev, 1, FALSE);
+     unsigned bufflen = gdtcmd ? sizeof(gdth_cmd_str) : 0;
+-    DECLARE_COMPLETION(wait);
++    DECLARE_COMPLETION_ONSTACK(wait);
+     int rval;
+ 
+     if (!scp)
+Index: linux-2.6/drivers/scsi/qla1280.c
+===================================================================
+--- linux-2.6.orig/drivers/scsi/qla1280.c
++++ linux-2.6/drivers/scsi/qla1280.c
+@@ -813,7 +813,7 @@ qla1280_error_action(struct scsi_cmnd *c
+ 	uint16_t data;
+ 	unsigned char *handle;
+ 	int result, i;
+-	DECLARE_COMPLETION(wait);
++	DECLARE_COMPLETION_ONSTACK(wait);
+ 	struct timer_list timer;
+ 
+ 	ha = (struct scsi_qla_host *)(CMD_HOST(cmd)->hostdata);
+@@ -2406,7 +2406,7 @@ qla1280_mailbox_command(struct scsi_qla_
+ 	uint16_t *optr, *iptr;
+ 	uint16_t __iomem *mptr;
+ 	uint16_t data;
+-	DECLARE_COMPLETION(wait);
++	DECLARE_COMPLETION_ONSTACK(wait);
+ 	struct timer_list timer;
+ 
+ 	ENTER("qla1280_mailbox_command");
+Index: linux-2.6/drivers/usb/gadget/inode.c
+===================================================================
+--- linux-2.6.orig/drivers/usb/gadget/inode.c
++++ linux-2.6/drivers/usb/gadget/inode.c
+@@ -342,7 +342,7 @@ fail:
+ static ssize_t
+ ep_io (struct ep_data *epdata, void *buf, unsigned len)
+ {
+-	DECLARE_COMPLETION (done);
++	DECLARE_COMPLETION_ONSTACK (done);
+ 	int value;
+ 
+ 	spin_lock_irq (&epdata->dev->lock);
+Index: linux-2.6/drivers/usb/gadget/omap_udc.c
+===================================================================
+--- linux-2.6.orig/drivers/usb/gadget/omap_udc.c
++++ linux-2.6/drivers/usb/gadget/omap_udc.c
+@@ -2869,7 +2869,7 @@ cleanup0:
+ 
+ static int __exit omap_udc_remove(struct platform_device *pdev)
+ {
+-	DECLARE_COMPLETION(done);
++	DECLARE_COMPLETION_ONSTACK(done);
+ 
+ 	if (!udc)
+ 		return -ENODEV;
+Index: linux-2.6/net/ipv4/ipvs/ip_vs_sync.c
+===================================================================
+--- linux-2.6.orig/net/ipv4/ipvs/ip_vs_sync.c
++++ linux-2.6/net/ipv4/ipvs/ip_vs_sync.c
+@@ -836,7 +836,7 @@ static int fork_sync_thread(void *startu
+ 
+ int start_sync_thread(int state, char *mcast_ifn, __u8 syncid)
+ {
+-	DECLARE_COMPLETION(startup);
++	DECLARE_COMPLETION_ONSTACK(startup);
+ 	pid_t pid;
+ 
+ 	if ((state == IP_VS_STATE_MASTER && sync_master_pid) ||
+
+
+Subject: [RHEL5 PATCH 7/6] revert earlier ps2 patch
+From: Peter Zijlstra <pzijlstr@redhat.com>
+To: rhkernel-list@redhat.com
+Cc: Don Zickus <dzickus@redhat.com>, davej@redhat.com
+Content-Type: text/plain
+Date: Thu, 28 Sep 2006 15:10:52 +0200
+
+
+Revert an earlier ps2dev->cmd_mutex fixup.
+The extra mutex_init() destroys the just set lock class.
+
+Signed-off-by: Peter Zijlstra <a.p.zijlstra@chello.nl>
+---
+ drivers/input/serio/libps2.c |    4 ++--
+ include/linux/libps2.h       |    7 +------
+ 2 files changed, 3 insertions(+), 8 deletions(-)
+
+Index: linux-2.6.18.noarch/drivers/input/serio/libps2.c
+===================================================================
+--- linux-2.6.18.noarch.orig/drivers/input/serio/libps2.c
++++ linux-2.6.18.noarch/drivers/input/serio/libps2.c
+@@ -27,7 +27,7 @@ MODULE_AUTHOR("Dmitry Torokhov <dtor@mai
+ MODULE_DESCRIPTION("PS/2 driver library");
+ MODULE_LICENSE("GPL");
+ 
+-EXPORT_SYMBOL(__ps2_init);
++EXPORT_SYMBOL(ps2_init);
+ EXPORT_SYMBOL(ps2_sendbyte);
+ EXPORT_SYMBOL(ps2_drain);
+ EXPORT_SYMBOL(ps2_command);
+@@ -286,7 +286,7 @@ static struct lock_class_key ps2_mutex_k
+  * ps2_init() initializes ps2dev structure
+  */
+ 
+-void __ps2_init(struct ps2dev *ps2dev, struct serio *serio)
++void ps2_init(struct ps2dev *ps2dev, struct serio *serio)
+ {
+ 	mutex_init(&ps2dev->cmd_mutex);
+ 	lockdep_set_class_and_subclass(&ps2dev->cmd_mutex, &ps2_mutex_key,
+Index: linux-2.6.18.noarch/include/linux/libps2.h
+===================================================================
+--- linux-2.6.18.noarch.orig/include/linux/libps2.h
++++ linux-2.6.18.noarch/include/linux/libps2.h
+@@ -39,12 +39,7 @@ struct ps2dev {
+ 	unsigned char nak;
+ };
+ 
+-void __ps2_init(struct ps2dev *ps2dev, struct serio *serio);
+-static inline void ps2_init(struct ps2dev *ps2dev, struct serio *serio)
+-{
+-	__ps2_init(ps2dev, serio);
+-	mutex_init(&ps2dev->cmd_mutex);
+-}
++void ps2_init(struct ps2dev *ps2dev, struct serio *serio);
+ int ps2_sendbyte(struct ps2dev *ps2dev, unsigned char byte, int timeout);
+ void ps2_drain(struct ps2dev *ps2dev, int maxbytes, int timeout);
+ int ps2_command(struct ps2dev *ps2dev, unsigned char *param, int command);
+
+
+Subject: [RHEL5 PATCH] lockdep annotate nfs/nfsd in-kernel sockets
+From: Peter Zijlstra <pzijlstr@redhat.com>
+To: rhkernel-list@redhat.com
+Cc: Steve Dickson <SteveD@redhat.com>
+Date: Fri, 06 Oct 2006 16:09:41 +0200
+
+BZ208439
+
+SteveD helped catch and verified
+---
+
+Stick NFS sockets in their own class to avoid some lockdep warnings.
+NFS sockets are never exposed to user-space, and will hence not trigger
+certain code paths that would otherwise pose deadlock scenarios.
+
+Signed-off-by: Peter Zijlstra <a.p.zijlstra@chello.nl>
+Signed-off-by: Steven Dickson <SteveD@redhat.com>
+Acked-by: Ingo Molnar <mingo@elte.hu>
+---
+ include/net/sock.h    |   19 +++++++++++++++++++
+ kernel/lockdep.c      |    1 +
+ net/core/sock.c       |   23 +++++------------------
+ net/sunrpc/svcsock.c  |   33 +++++++++++++++++++++++++++++++++
+ net/sunrpc/xprtsock.c |   33 +++++++++++++++++++++++++++++++++
+ 5 files changed, 91 insertions(+), 18 deletions(-)
+
+Index: linux-2.6.18.noarch/include/net/sock.h
+===================================================================
+--- linux-2.6.18.noarch.orig/include/net/sock.h
++++ linux-2.6.18.noarch/include/net/sock.h
+@@ -748,6 +748,25 @@ static inline int sk_stream_wmem_schedul
+  */
+ #define sock_owned_by_user(sk)	((sk)->sk_lock.owner)
+ 
++/*
++ * Macro so as to not evaluate some arguments when
++ * lockdep is not enabled.
++ *
++ * Mark both the sk_lock and the sk_lock.slock as a
++ * per-address-family lock class.
++ */
++#define sock_lock_init_class_and_name(sk, sname, skey, name, key) 	\
++do {									\
++	sk->sk_lock.owner = NULL;					\
++	init_waitqueue_head(&sk->sk_lock.wq);				\
++	spin_lock_init(&(sk)->sk_lock.slock);				\
++	debug_check_no_locks_freed((void *)&(sk)->sk_lock,		\
++			sizeof((sk)->sk_lock));				\
++	lockdep_set_class_and_name(&(sk)->sk_lock.slock,		\
++		       	(skey), (sname));				\
++	lockdep_init_map(&(sk)->sk_lock.dep_map, (name), (key), 0);	\
++} while (0)
++
+ extern void FASTCALL(lock_sock(struct sock *sk));
+ extern void FASTCALL(release_sock(struct sock *sk));
+ 
+Index: linux-2.6.18.noarch/kernel/lockdep.c
+===================================================================
+--- linux-2.6.18.noarch.orig/kernel/lockdep.c
++++ linux-2.6.18.noarch/kernel/lockdep.c
+@@ -2638,6 +2638,7 @@ void debug_check_no_locks_freed(const vo
+ 	}
+ 	local_irq_restore(flags);
+ }
++EXPORT_SYMBOL_GPL(debug_check_no_locks_freed);
+ 
+ static void print_held_locks_bug(struct task_struct *curr)
+ {
+Index: linux-2.6.18.noarch/net/core/sock.c
+===================================================================
+--- linux-2.6.18.noarch.orig/net/core/sock.c
++++ linux-2.6.18.noarch/net/core/sock.c
+@@ -810,24 +810,11 @@ lenout:
+  */
+ static void inline sock_lock_init(struct sock *sk)
+ {
+-	spin_lock_init(&sk->sk_lock.slock);
+-	sk->sk_lock.owner = NULL;
+-	init_waitqueue_head(&sk->sk_lock.wq);
+-	/*
+-	 * Make sure we are not reinitializing a held lock:
+-	 */
+-	debug_check_no_locks_freed((void *)&sk->sk_lock, sizeof(sk->sk_lock));
+-
+-	/*
+-	 * Mark both the sk_lock and the sk_lock.slock as a
+-	 * per-address-family lock class:
+-	 */
+-	lockdep_set_class_and_name(&sk->sk_lock.slock,
+-				   af_family_slock_keys + sk->sk_family,
+-				   af_family_slock_key_strings[sk->sk_family]);
+-	lockdep_init_map(&sk->sk_lock.dep_map,
+-			 af_family_key_strings[sk->sk_family],
+-			 af_family_keys + sk->sk_family, 0);
++	sock_lock_init_class_and_name(sk,
++			af_family_slock_key_strings[sk->sk_family],
++			af_family_slock_keys + sk->sk_family,
++			af_family_key_strings[sk->sk_family],
++			af_family_keys + sk->sk_family);
+ }
+ 
+ /**
+Index: linux-2.6.18.noarch/net/sunrpc/xprtsock.c
+===================================================================
+--- linux-2.6.18.noarch.orig/net/sunrpc/xprtsock.c
++++ linux-2.6.18.noarch/net/sunrpc/xprtsock.c
+@@ -1004,6 +1004,37 @@ static int xs_bindresvport(struct rpc_xp
+ 	return err;
+ }
+ 
++#ifdef CONFIG_DEBUG_LOCK_ALLOC
++static struct lock_class_key xs_key[2];
++static struct lock_class_key xs_slock_key[2];
++
++static inline void xs_reclassify_socket(struct socket *sock)
++{
++	struct sock *sk = sock->sk;
++	BUG_ON(sk->sk_lock.owner != NULL);
++	switch (sk->sk_family) {
++		case AF_INET:
++			sock_lock_init_class_and_name(sk,
++				"slock-AF_INET-NFS", &xs_slock_key[0],
++				"sk_lock-AF_INET-NFS", &xs_key[0]);
++			break;
++
++		case AF_INET6:
++			sock_lock_init_class_and_name(sk,
++				"slock-AF_INET6-NFS", &xs_slock_key[1],
++				"sk_lock-AF_INET6-NFS", &xs_key[1]);
++			break;
++
++		default:
++			BUG();
++	}
++}
++#else
++static inline void xs_reclassify_socket(struct socket *sock)
++{
++}
++#endif
++
+ /**
+  * xs_udp_connect_worker - set up a UDP socket
+  * @args: RPC transport to connect
+@@ -1028,6 +1059,7 @@ static void xs_udp_connect_worker(void *
+ 		dprintk("RPC:      can't create UDP transport socket (%d).\n", -err);
+ 		goto out;
+ 	}
++	xs_reclassify_socket(sock);
+ 
+ 	if (xprt->resvport && xs_bindresvport(xprt, sock) < 0) {
+ 		sock_release(sock);
+@@ -1110,6 +1142,7 @@ static void xs_tcp_connect_worker(void *
+ 			dprintk("RPC:      can't create TCP transport socket (%d).\n", -err);
+ 			goto out;
+ 		}
++		xs_reclassify_socket(sock);
+ 
+ 		if (xprt->resvport && xs_bindresvport(xprt, sock) < 0) {
+ 			sock_release(sock);
+Index: linux-2.6.18.noarch/net/sunrpc/svcsock.c
+===================================================================
+--- linux-2.6.18.noarch.orig/net/sunrpc/svcsock.c
++++ linux-2.6.18.noarch/net/sunrpc/svcsock.c
+@@ -73,6 +73,37 @@ static struct svc_deferred_req *svc_defe
+ static int svc_deferred_recv(struct svc_rqst *rqstp);
+ static struct cache_deferred_req *svc_defer(struct cache_req *req);
+ 
++#ifdef CONFIG_DEBUG_LOCK_ALLOC
++static struct lock_class_key svc_key[2];
++static struct lock_class_key svc_slock_key[2];
++
++static inline void svc_reclassify_socket(struct socket *sock)
++{
++	struct sock *sk = sock->sk;
++	BUG_ON(sk->sk_lock.owner != NULL);
++	switch (sk->sk_family) {
++		case AF_INET:
++			sock_lock_init_class_and_name(sk,
++				"slock-AF_INET-NFSD", &svc_slock_key[0],
++				"sk_lock-AF_INET-NFSD", &svc_key[0]);
++			break;
++
++		case AF_INET6:
++			sock_lock_init_class_and_name(sk,
++				"slock-AF_INET6-NFSD", &svc_slock_key[1],
++				"sk_lock-AF_INET6-NFSD", &svc_key[1]);
++			break;
++
++		default:
++			BUG();
++	}
++}
++#else
++static inline void svc_reclassify_socket(struct socket *sock)
++{
++}
++#endif
++
+ /*
+  * Queue up an idle server thread.  Must have serv->sv_lock held.
+  * Note: this is really a stack rather than a queue, so that we only
+@@ -1403,6 +1434,8 @@ svc_create_socket(struct svc_serv *serv,
+ 	if ((error = sock_create_kern(PF_INET, type, protocol, &sock)) < 0)
+ 		return error;
+ 
++	svc_reclassify_socket(sock);
++
+ 	if (sin != NULL) {
+ 		if (type == SOCK_STREAM)
+ 			sock->sk->sk_reuse = 1; /* allow address reuse */
+
+
+Subject: [RHEL5 PATCH] rt-mutex: fixup rt-mutex debug code
+From: Peter Zijlstra <pzijlstr@redhat.com>
+To: rhkernel-list@redhat.com
+Cc: Don Zickus <dzickus@redhat.com>, Dave Jones <davej@redhat.com>
+Content-Type: text/plain
+Date: Thu, 12 Oct 2006 17:04:07 +0200
+
+BZ208165
+
+BUG: warning at kernel/rtmutex-debug.c:125/rt_mutex_debug_task_free() (Not tainted)
+ [<c04051e3>] show_trace_log_lvl+0x58/0x16a
+ [<c04057f0>] show_trace+0xd/0x10
+ [<c0405900>] dump_stack+0x19/0x1b
+ [<c043f03d>] rt_mutex_debug_task_free+0x35/0x6a
+ [<c04224c0>] free_task+0x15/0x24
+ [<c042378c>] copy_process+0x12bd/0x1324
+ [<c0423835>] do_fork+0x42/0x113
+ [<c04021dd>] sys_fork+0x19/0x1b
+ [<c0403fb7>] syscall_call+0x7/0xb
+
+In copy_process(), dup_task_struct() also duplicates the ->pi_lock,
+->pi_waiters and ->pi_blocked_on members. rt_mutex_debug_task_free() 
+called from free_task() validates these members. However free_task()
+can be invoked before these members are reset for the new task.
+
+Move the initialization code before the first bail that can hit free_task().
+
+Signed-off-by: Peter Zijlstra <a.p.zijlstra@chello.nl>
+---
+ kernel/fork.c |    4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+Index: linux-2.6.18.noarch/kernel/fork.c
+===================================================================
+--- linux-2.6.18.noarch.orig/kernel/fork.c
++++ linux-2.6.18.noarch/kernel/fork.c
+@@ -979,6 +979,8 @@ static struct task_struct *copy_process(
+ 	if (!p)
+ 		goto fork_out;
+ 
++	rt_mutex_init_task(p);
++
+ 	p->tux_info = NULL;
+ 
+ #ifdef CONFIG_TRACE_IRQFLAGS
+@@ -1084,8 +1086,6 @@ static struct task_struct *copy_process(
+ 	p->lockdep_recursion = 0;
+ #endif
+ 
+-	rt_mutex_init_task(p);
+-
+ #ifdef CONFIG_DEBUG_MUTEXES
+ 	p->blocked_on = NULL; /* not blocked yet */
+ #endif
+
+
+Date: Mon, 09 Oct 2006 20:14:38 +0200
+From: Peter Zijlstra <pzijlstr@redhat.com>
+Subject: [RHEL5 PATCH] lockdep: annotate i386-apm irq usage
+
+BZ209480
+
+---
+
+Lockdep doesn't like to enable interrupts when they are enabled already.
+
+BUG: warning at kernel/lockdep.c:1814/trace_hardirqs_on() (Not tainted)
+ [<c04051ed>] show_trace_log_lvl+0x58/0x16a
+ [<c04057fa>] show_trace+0xd/0x10
+ [<c0405913>] dump_stack+0x19/0x1b
+ [<c043abfb>] trace_hardirqs_on+0xa2/0x11e
+ [<c041463c>] apm_bios_call_simple+0xcd/0xfd
+ [<c0415242>] apm+0x92/0x5b1
+ [<c0402005>] kernel_thread_helper+0x5/0xb
+DWARF2 unwinder stuck at kernel_thread_helper+0x5/0xb
+Leftover inexact backtrace:
+ [<c04057fa>] show_trace+0xd/0x10
+ [<c0405913>] dump_stack+0x19/0x1b
+ [<c043abfb>] trace_hardirqs_on+0xa2/0x11e
+ [<c041463c>] apm_bios_call_simple+0xcd/0xfd
+ [<c0415242>] apm+0x92/0x5b1
+ [<c0402005>] kernel_thread_helper+0x5/0xb
+
+Signed-off-by: Peter Zijlstra <a.p.zijlstra@chello.nl>
+---
+ arch/i386/kernel/apm.c |   25 ++++++++++++++++++-------
+ 1 file changed, 18 insertions(+), 7 deletions(-)
+
+Index: linux-2.6.18.noarch/arch/i386/kernel/apm.c
+===================================================================
+--- linux-2.6.18.noarch.orig/arch/i386/kernel/apm.c
++++ linux-2.6.18.noarch/arch/i386/kernel/apm.c
+@@ -539,11 +539,22 @@ static inline void apm_restore_cpus(cpum
+  * Also, we KNOW that for the non error case of apm_bios_call, there
+  * is no useful data returned in the low order 8 bits of eax.
+  */
+-#define APM_DO_CLI	\
+-	if (apm_info.allow_ints) \
+-		local_irq_enable(); \
+-	else \
+-		local_irq_disable();
++#define APM_DO_CLI \
++	do { \
++		if (apm_info.allow_ints) { \
++			if (irqs_disabled_flags(flags)) \
++				local_irq_enable(); \
++		} else \
++			local_irq_disable(); \
++	} while (0)
++
++#define APM_DO_STI \
++	do { \
++		if (irqs_disabled_flags(flags)) \
++			local_irq_disable(); \
++		else if (irqs_disabled()) \
++			local_irq_enable(); \
++	} while (0)
+ 
+ #ifdef APM_ZERO_SEGS
+ #	define APM_DECL_SEGS \
+@@ -600,7 +611,7 @@ static u8 apm_bios_call(u32 func, u32 eb
+ 	APM_DO_SAVE_SEGS;
+ 	apm_bios_call_asm(func, ebx_in, ecx_in, eax, ebx, ecx, edx, esi);
+ 	APM_DO_RESTORE_SEGS;
+-	local_irq_restore(flags);
++	APM_DO_STI;
+ 	gdt[0x40 / 8] = save_desc_40;
+ 	put_cpu();
+ 	apm_restore_cpus(cpus);
+@@ -644,7 +655,7 @@ static u8 apm_bios_call_simple(u32 func,
+ 	APM_DO_SAVE_SEGS;
+ 	error = apm_bios_call_simple_asm(func, ebx_in, ecx_in, eax);
+ 	APM_DO_RESTORE_SEGS;
+-	local_irq_restore(flags);
++	APM_DO_STI;
+ 	gdt[0x40 / 8] = save_desc_40;
+ 	put_cpu();
+ 	apm_restore_cpus(cpus);
+
+Date: Wed, 11 Oct 2006 13:08:33 +0200
+From: Peter Zijlstra <pzijlstr@redhat.com>
+Subject: [RHEL5 PATCH] lockdep: increase max allowed recursion depth
+
+Ingo pointed me to a patch he posted to lkml in response to a
+print_infinite_recursion() warning.
+
+BZ204767
+BZ209135
+
+and probably some others
+
+---
+
+hm, does the patch below solve it? In general, lockdep warnings are 
+intended to be non-fatal, so i have put in various practical limits on 
+internal data structure failure modes. We havent had a /single/ 
+lockdep-internal crash ever since lockdep went upstream [the unwinder 
+crashes are outside of lockdep], and that's largely due to the good 
+internal checks it does.
+
+Recursion within the dependency graph is currently limited to 20, that's 
+probably not enough on your box - this patch doubles it to 40. I have 
+written the lockdep functions to have as small stackframes as possible, 
+so 40 should be OK too. (The practical recursion limit should be 
+somewhere between 100 and 200 entries. If we hit that then i'll change 
+the algorithm to be iteration-based. Graph walking logic is so easy to 
+program via recursion, so i'd like to keep recursion as long as 
+possible.)
+
+	Ingo
+
+---
+Subject: lockdep: increase max allowed recursion depth
+From: Ingo Molnar <mingo@elte.hu>
+
+With lots of CPUs there can be lots of deep dependencies. Will change 
+the algorithm to iteration-based if it gets too deep.
+
+Signed-off-by: Ingo Molnar <mingo@elte.hu>
+---
+ kernel/lockdep.c |    8 +++++---
+ 1 file changed, 5 insertions(+), 3 deletions(-)
+
+Index: linux/kernel/lockdep.c
+===================================================================
+--- linux.orig/kernel/lockdep.c
++++ linux/kernel/lockdep.c
+@@ -575,6 +575,8 @@ static noinline int print_circular_bug_t
+ 	return 0;
+ }
+ 
++#define RECURSION_LIMIT 40
++
+ static int noinline print_infinite_recursion_bug(void)
+ {
+ 	__raw_spin_unlock(&hash_lock);
+@@ -595,7 +597,7 @@ check_noncircular(struct lock_class *sou
+ 	debug_atomic_inc(&nr_cyclic_check_recursions);
+ 	if (depth > max_recursion_depth)
+ 		max_recursion_depth = depth;
+-	if (depth >= 20)
++	if (depth >= RECURSION_LIMIT)
+ 		return print_infinite_recursion_bug();
+ 	/*
+ 	 * Check this lock's dependency list:
+@@ -645,7 +647,7 @@ find_usage_forwards(struct lock_class *s
+ 
+ 	if (depth > max_recursion_depth)
+ 		max_recursion_depth = depth;
+-	if (depth >= 20)
++	if (depth >= RECURSION_LIMIT)
+ 		return print_infinite_recursion_bug();
+ 
+ 	debug_atomic_inc(&nr_find_usage_forwards_checks);
+@@ -684,7 +686,7 @@ find_usage_backwards(struct lock_class *
+ 
+ 	if (depth > max_recursion_depth)
+ 		max_recursion_depth = depth;
+-	if (depth >= 20)
++	if (depth >= RECURSION_LIMIT)
+ 		return print_infinite_recursion_bug();
+ 
+ 	debug_atomic_inc(&nr_find_usage_backwards_checks);
+
+--
+
+When we open (actually blkdev_get) a partition we need to also open (get) the
+whole device that holds the partition.  The involves some limited recursion. 
+This patch tries to simplify some aspects of this.
+
+As well as opening the whole device, we need to increment ->bd_part_count when
+a partition is opened (this is used by rescan_partitions to avoid a rescan if
+any partition is active, as that would be confusing).
+
+The main change this patch makes is to move the inc/dec of bd_part_count into
+blkdev_{get,put} for the whole rather than doing it in blkdev_{get,put} for
+the partition.
+
+More specifically, we introduce __blkdev_get and __blkdev_put which do exactly
+what blkdev_{get,put} did, only with an extra "for_part" argument
+(blkget_{get,put} then call the __ version with a '0' for the extra argument).
+
+If for_part is 1, then the blkdev is being get(put) because a partition is
+being opened(closed) for the first(last) time, and so bd_part_count should be
+updated (on success).  The particular advantage of pushing this function down
+is that the bd_mutex lock (which is needed to update bd_part_count) is already
+held at the lower level.
+
+Note that this slightly changes the semantics of bd_part_count.  Instead of
+updating it whenever a partition is opened or released, it is now only updated
+on the first open or last release.  This is an adequate semantic as it is only
+ever tested for "== 0".
+
+Having introduced these functions we remove the current bd_part_count updates
+from do_open (which is really the body of blkdev_get) and call
+__blkdev_get(...  1).  Similarly in blkget_put we remove the old bd_part_count
+updates and call __blkget_put(..., 1).  This call is moved to the end of
+__blkdev_put to avoid nested locks of bd_mutex.
+
+Finally the mutex_lock on whole->bd_mutex in do_open can be removed.  It was
+only really needed to protect bd_part_count, and that is now managed (and
+protected) within the recursive call.
+
+The observation that bd_part_count is central to the locking issues, and the
+modifications to create __blkdev_put are from Peter Zijlstra.
+
+Cc: Ingo Molnar <mingo@elte.hu>
+Acked-by: Peter Zijlstra <a.p.zijlstra@chello.nl>
+Signed-off-by: Neil Brown <neilb@suse.de>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+ fs/block_dev.c |   51 +++++++++++++++++++++++++++++----------------------
+ 1 file changed, 29 insertions(+), 22 deletions(-)
+
+diff .prev/fs/block_dev.c ./fs/block_dev.c
+Index: linux-2.6.18.noarch/fs/block_dev.c
+===================================================================
+--- linux-2.6.18.noarch.orig/fs/block_dev.c
++++ linux-2.6.18.noarch/fs/block_dev.c
+@@ -868,7 +868,10 @@ void bd_set_size(struct block_device *bd
+ }
+ EXPORT_SYMBOL(bd_set_size);
+ 
+-static int do_open(struct block_device *bdev, struct file *file)
++static int __blkdev_get(struct block_device *bdev, mode_t mode, unsigned flags,
++			int for_part);
++
++static int do_open(struct block_device *bdev, struct file *file, int for_part)
+ {
+ 	struct module *owner = NULL;
+ 	struct gendisk *disk;
+@@ -912,25 +915,21 @@ static int do_open(struct block_device *
+ 			ret = -ENOMEM;
+ 			if (!whole)
+ 				goto out_first;
+-			ret = blkdev_get(whole, file->f_mode, file->f_flags);
++			BUG_ON(for_part);
++			ret = __blkdev_get(whole, file->f_mode, file->f_flags, 1);
+ 			if (ret)
+ 				goto out_first;
+ 			bdev->bd_contains = whole;
+-			mutex_lock(&whole->bd_mutex);
+-			whole->bd_part_count++;
+ 			p = disk->part[part - 1];
+ 			bdev->bd_inode->i_data.backing_dev_info =
+ 			   whole->bd_inode->i_data.backing_dev_info;
+ 			if (!(disk->flags & GENHD_FL_UP) || !p || !p->nr_sects) {
+-				whole->bd_part_count--;
+-				mutex_unlock(&whole->bd_mutex);
+ 				ret = -ENXIO;
+ 				goto out_first;
+ 			}
+ 			kobject_get(&p->kobj);
+ 			bdev->bd_part = p;
+ 			bd_set_size(bdev, (loff_t) p->nr_sects << 9);
+-			mutex_unlock(&whole->bd_mutex);
+ 		}
+ 	} else {
+ 		put_disk(disk);
+@@ -943,13 +942,11 @@ static int do_open(struct block_device *
+ 			}
+ 			if (bdev->bd_invalidated)
+ 				rescan_partitions(bdev->bd_disk, bdev);
+-		} else {
+-			mutex_lock(&bdev->bd_contains->bd_mutex);
+-			bdev->bd_contains->bd_part_count++;
+-			mutex_unlock(&bdev->bd_contains->bd_mutex);
+ 		}
+ 	}
+ 	bdev->bd_openers++;
++	if (for_part)
++		bdev->bd_part_count++;
+ 	mutex_unlock(&bdev->bd_mutex);
+ 	unlock_kernel();
+ 	return 0;
+@@ -970,7 +967,8 @@ out:
+ 	return ret;
+ }
+ 
+-int blkdev_get(struct block_device *bdev, mode_t mode, unsigned flags)
++static int __blkdev_get(struct block_device *bdev, mode_t mode, unsigned flags,
++			int for_part)
+ {
+ 	/*
+ 	 * This crockload is due to bad choice of ->open() type.
+@@ -985,9 +983,13 @@ int blkdev_get(struct block_device *bdev
+ 	fake_file.f_dentry = &fake_dentry;
+ 	fake_dentry.d_inode = bdev->bd_inode;
+ 
+-	return do_open(bdev, &fake_file);
++	return do_open(bdev, &fake_file, for_part);
+ }
+ 
++int blkdev_get(struct block_device *bdev, mode_t mode, unsigned flags)
++{
++	return __blkdev_get(bdev, mode, flags, 0);
++}
+ EXPORT_SYMBOL(blkdev_get);
+ 
+ static int blkdev_open(struct inode * inode, struct file * filp)
+@@ -1005,7 +1007,7 @@ static int blkdev_open(struct inode * in
+ 
+ 	bdev = bd_acquire(inode);
+ 
+-	res = do_open(bdev, filp);
++	res = do_open(bdev, filp, 0);
+ 	if (res)
+ 		return res;
+ 
+@@ -1019,14 +1021,18 @@ static int blkdev_open(struct inode * in
+ 	return res;
+ }
+ 
+-int blkdev_put(struct block_device *bdev)
++static int __blkdev_put(struct block_device *bdev, int for_part)
+ {
+ 	int ret = 0;
+ 	struct inode *bd_inode = bdev->bd_inode;
+ 	struct gendisk *disk = bdev->bd_disk;
++	struct block_device *victim = NULL;
+ 
+ 	mutex_lock(&bdev->bd_mutex);
+ 	lock_kernel();
++	if (for_part)
++		bdev->bd_part_count--;
++
+ 	if (!--bdev->bd_openers) {
+ 		sync_blockdev(bdev);
+ 		kill_bdev(bdev);
+@@ -1034,10 +1040,6 @@ int blkdev_put(struct block_device *bdev
+ 	if (bdev->bd_contains == bdev) {
+ 		if (disk->fops->release)
+ 			ret = disk->fops->release(bd_inode, NULL);
+-	} else {
+-		mutex_lock(&bdev->bd_contains->bd_mutex);
+-		bdev->bd_contains->bd_part_count--;
+-		mutex_unlock(&bdev->bd_contains->bd_mutex);
+ 	}
+ 	if (!bdev->bd_openers) {
+ 		struct module *owner = disk->fops->owner;
+@@ -1051,17 +1053,22 @@ int blkdev_put(struct block_device *bdev
+ 		}
+ 		bdev->bd_disk = NULL;
+ 		bdev->bd_inode->i_data.backing_dev_info = &default_backing_dev_info;
+-		if (bdev != bdev->bd_contains) {
+-			blkdev_put(bdev->bd_contains);
+-		}
++		if (bdev != bdev->bd_contains)
++			victim = bdev->bd_contains;
+ 		bdev->bd_contains = NULL;
+ 	}
+ 	unlock_kernel();
+ 	mutex_unlock(&bdev->bd_mutex);
+ 	bdput(bdev);
++	if (victim)
++		__blkdev_put(victim, 1);
+ 	return ret;
+ }
+ 
++int blkdev_put(struct block_device *bdev)
++{
++	return __blkdev_put(bdev, 0);
++}
+ EXPORT_SYMBOL(blkdev_put);
+ 
+ static int blkdev_close(struct inode * inode, struct file * filp)
+
+--
+
+Now that the nesting in blkdev_{get,put} is simpler, adding mutex_lock_nested
+is trivial.
+
+Cc: Ingo Molnar <mingo@elte.hu>
+Acked-by: Peter Zijlstra <a.p.zijlstra@chello.nl>
+Signed-off-by: Neil Brown <neilb@suse.de>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+ fs/block_dev.c |    4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff .prev/fs/block_dev.c ./fs/block_dev.c
+Index: linux-2.6.18.noarch/fs/block_dev.c
+===================================================================
+--- linux-2.6.18.noarch.orig/fs/block_dev.c
++++ linux-2.6.18.noarch/fs/block_dev.c
+@@ -888,7 +888,7 @@ static int do_open(struct block_device *
+ 	}
+ 	owner = disk->fops->owner;
+ 
+-	mutex_lock(&bdev->bd_mutex);
++	mutex_lock_nested(&bdev->bd_mutex, for_part);
+ 	if (!bdev->bd_openers) {
+ 		bdev->bd_disk = disk;
+ 		bdev->bd_contains = bdev;
+@@ -1028,7 +1028,7 @@ static int __blkdev_put(struct block_dev
+ 	struct gendisk *disk = bdev->bd_disk;
+ 	struct block_device *victim = NULL;
+ 
+-	mutex_lock(&bdev->bd_mutex);
++	mutex_lock_nested(&bdev->bd_mutex, for_part);
+ 	lock_kernel();
+ 	if (for_part)
+ 		bdev->bd_part_count--;
+
+--
+
+md_open takes ->reconfig_mutex which causes lockdep to complain.  This
+(normally) doesn't have deadlock potential as the possible conflict is with a
+reconfig_mutex in a different device.
+
+I say "normally" because if a loop were created in the array->member hierarchy
+a deadlock could happen.  However that causes bigger problems than a deadlock
+and should be fixed independently.
+
+So we flag the lock in md_open as a nested lock.  This requires defining
+mutex_lock_interruptible_nested.
+
+Acked-by: Peter Zijlstra <a.p.zijlstra@chello.nl>
+Acked-by: Ingo Molnar <mingo@elte.hu>
+Signed-off-by: Neil Brown <neilb@suse.de>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+ drivers/md/md.c       |    2 +-
+ include/linux/mutex.h |    3 ++-
+ kernel/mutex.c        |    8 ++++++++
+ 3 files changed, 11 insertions(+), 2 deletions(-)
+
+diff .prev/drivers/md/md.c ./drivers/md/md.c
+Index: linux-2.6.18.noarch/drivers/md/md.c
+===================================================================
+--- linux-2.6.18.noarch.orig/drivers/md/md.c
++++ linux-2.6.18.noarch/drivers/md/md.c
+@@ -4460,7 +4460,7 @@ static int md_open(struct inode *inode, 
+ 	mddev_t *mddev = inode->i_bdev->bd_disk->private_data;
+ 	int err;
+ 
+-	if ((err = mddev_lock(mddev)))
++	if ((err = mutex_lock_interruptible_nested(&mddev->reconfig_mutex, 1)))
+ 		goto out;
+ 
+ 	err = 0;
+Index: linux-2.6.18.noarch/include/linux/mutex.h
+===================================================================
+--- linux-2.6.18.noarch.orig/include/linux/mutex.h
++++ linux-2.6.18.noarch/include/linux/mutex.h
+@@ -125,8 +125,10 @@ extern int fastcall mutex_lock_interrupt
+ 
+ #ifdef CONFIG_DEBUG_LOCK_ALLOC
+ extern void mutex_lock_nested(struct mutex *lock, unsigned int subclass);
++extern int mutex_lock_interruptible_nested(struct mutex *lock, unsigned int subclass);
+ #else
+ # define mutex_lock_nested(lock, subclass) mutex_lock(lock)
++# define mutex_lock_interruptible_nested(lock, subclass) mutex_lock_interruptible(lock)
+ #endif
+ 
+ /*
+Index: linux-2.6.18.noarch/kernel/mutex.c
+===================================================================
+--- linux-2.6.18.noarch.orig/kernel/mutex.c
++++ linux-2.6.18.noarch/kernel/mutex.c
+@@ -206,6 +206,15 @@ mutex_lock_nested(struct mutex *lock, un
+ }
+ 
+ EXPORT_SYMBOL_GPL(mutex_lock_nested);
++
++int __sched
++mutex_lock_interruptible_nested(struct mutex *lock, unsigned int subclass)
++{
++	might_sleep();
++	return __mutex_lock_common(lock, TASK_INTERRUPTIBLE, subclass);
++}
++
++EXPORT_SYMBOL_GPL(mutex_lock_interruptible_nested);
+ #endif
+ 
+ /*
+
+--
+
+Date: Fri, 03 Nov 2006 08:30:35 +0100
+From: Peter Zijlstra <pzijlstr@redhat.com>
+Subject: [RHEL5 PATCH] bdev: fix ->bd_part_count leak
+
+BZ212191 - kernel unable to read partition (device busy)
+---
+
+Don't leak a ->bd_part_count when the partition open fails with -ENXIO.
+
+Signed-off-by: Peter Zijlstra <a.p.zijlstra@chello.nl>
+Acked-by: Neil Brown <neilb@suse.de>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+---
+ fs/block_dev.c |    3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+Index: linux-2.6.18.noarch/fs/block_dev.c
+===================================================================
+--- linux-2.6.18.noarch.orig/fs/block_dev.c
++++ linux-2.6.18.noarch/fs/block_dev.c
+@@ -870,6 +870,7 @@ EXPORT_SYMBOL(bd_set_size);
+ 
+ static int __blkdev_get(struct block_device *bdev, mode_t mode, unsigned flags,
+ 			int for_part);
++static int __blkdev_put(struct block_device *bdev, int for_part);
+ 
+ static int do_open(struct block_device *bdev, struct file *file, int for_part)
+ {
+@@ -955,7 +956,7 @@ out_first:
+ 	bdev->bd_disk = NULL;
+ 	bdev->bd_inode->i_data.backing_dev_info = &default_backing_dev_info;
+ 	if (bdev != bdev->bd_contains)
+-		blkdev_put(bdev->bd_contains);
++		__blkdev_put(bdev->bd_contains, 1);
+ 	bdev->bd_contains = NULL;
+ 	put_disk(disk);
+ 	module_put(owner);
+

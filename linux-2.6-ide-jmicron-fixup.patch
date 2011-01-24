@@ -1,0 +1,31 @@
+
+Some BIOSen somehow end up with the jmicron port in use but the PCI device
+disabled again after the firmware enabled it.
+
+This patch isn't relevant to the upstream plans as upstream will get a 
+specific Jmicron pata driver in 2.6.19. Basically if its a Jmicron we enable
+it and probe it anyway, that will do the right thing in all the cases I've
+tested. Change is intentionally minimal.
+
+--- 1/drivers/ide/pci/generic.c~	2006-10-03 16:57:36.276961952 +0100
++++ 2/drivers/ide/pci/generic.c	2006-10-03 16:57:36.276961952 +0100
+@@ -236,11 +236,13 @@
+ 
+ 	if (dev->vendor == PCI_VENDOR_ID_JMICRON && PCI_FUNC(dev->devfn) != 1)
+ 		goto out;
+-
+-	pci_read_config_word(dev, PCI_COMMAND, &command);
+-	if (!(command & PCI_COMMAND_IO)) {
+-		printk(KERN_INFO "Skipping disabled %s IDE controller.\n", d->name);
+-		goto out;
++	
++	if (dev->vendor != PCI_VENDOR_ID_JMICRON) {
++		pci_read_config_word(dev, PCI_COMMAND, &command);
++		if (!(command & PCI_COMMAND_IO)) {
++			printk(KERN_INFO "Skipping disabled %s IDE controller.\n", d->name);
++			goto out;
++		}
+ 	}
+ 	ret = ide_setup_pci_device(dev, d);
+ out:
+

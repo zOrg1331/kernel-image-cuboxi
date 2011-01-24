@@ -34,16 +34,8 @@
 #include <asm/amigaints.h>
 #include <asm/amigahw.h>
 
-#define EI_SHIFT(x)	(ei_local->reg_offset[x])
-#define ei_inb(port)   in_8(port)
-#define ei_outb(val,port)  out_8(port,val)
-#define ei_inb_p(port)   in_8(port)
-#define ei_outb_p(val,port)  out_8(port,val)
+#include "8390.h"
 
-static const char version[] =
-    "8390.c:v1.10cvs 9/23/94 Donald Becker (becker@cesdis.gsfc.nasa.gov)\n";
-
-#include "lib8390.c"
 
 #define DRV_NAME	"zorro8390"
 
@@ -120,14 +112,12 @@ static int __devinit zorro8390_init_one(struct zorro_dev *z,
     for (i = ARRAY_SIZE(cards)-1; i >= 0; i--)
 	if (z->id == cards[i].id)
 	    break;
-    if (i < 0)
-        return -ENODEV;
-
     board = z->resource.start;
     ioaddr = board+cards[i].offset;
     dev = alloc_ei_netdev();
     if (!dev)
 	return -ENOMEM;
+    SET_MODULE_OWNER(dev);
     if (!request_mem_region(ioaddr, NE_IO_EXTENT*2, DRV_NAME)) {
 	free_netdev(dev);
 	return -EBUSY;
@@ -141,21 +131,6 @@ static int __devinit zorro8390_init_one(struct zorro_dev *z,
     zorro_set_drvdata(z, dev);
     return 0;
 }
-
-static const struct net_device_ops zorro8390_netdev_ops = {
-	.ndo_open		= zorro8390_open,
-	.ndo_stop		= zorro8390_close,
-	.ndo_start_xmit		= ei_start_xmit,
-	.ndo_tx_timeout		= ei_tx_timeout,
-	.ndo_get_stats		= ei_get_stats,
-	.ndo_set_multicast_list = ei_set_multicast_list,
-	.ndo_validate_addr	= eth_validate_addr,
-	.ndo_set_mac_address 	= eth_mac_addr,
-	.ndo_change_mtu		= eth_change_mtu,
-#ifdef CONFIG_NET_POLL_CONTROLLER
-	.ndo_poll_controller	= ei_poll,
-#endif
-};
 
 static int __devinit zorro8390_init(struct net_device *dev,
 				    unsigned long board, const char *name,
@@ -208,7 +183,7 @@ static int __devinit zorro8390_init(struct net_device *dev,
 	    {0x00,	NE_EN0_RSARHI},
 	    {E8390_RREAD+E8390_START, NE_CMD},
 	};
-	for (i = 0; i < ARRAY_SIZE(program_seq); i++) {
+	for (i = 0; i < sizeof(program_seq)/sizeof(program_seq[0]); i++) {
 	    z_writeb(program_seq[i].value, ioaddr + program_seq[i].offset);
 	}
     }
@@ -226,15 +201,15 @@ static int __devinit zorro8390_init(struct net_device *dev,
     dev->irq = IRQ_AMIGA_PORTS;
 
     /* Install the Interrupt handler */
-    i = request_irq(IRQ_AMIGA_PORTS, __ei_interrupt, IRQF_SHARED, DRV_NAME, dev);
+    i = request_irq(IRQ_AMIGA_PORTS, ei_interrupt, IRQF_SHARED, DRV_NAME, dev);
     if (i) return i;
 
-    for(i = 0; i < ETHER_ADDR_LEN; i++)
-	dev->dev_addr[i] = SA_prom[i];
-
+    for(i = 0; i < ETHER_ADDR_LEN; i++) {
 #ifdef DEBUG
-    printk("%pM", dev->dev_addr);
+	printk(" %2.2x", SA_prom[i]);
 #endif
+	dev->dev_addr[i] = SA_prom[i];
+    }
 
     ei_status.name = name;
     ei_status.tx_start_page = start_page;
@@ -248,24 +223,30 @@ static int __devinit zorro8390_init(struct net_device *dev,
     ei_status.block_output = &zorro8390_block_output;
     ei_status.get_8390_hdr = &zorro8390_get_8390_hdr;
     ei_status.reg_offset = zorro8390_offsets;
+    dev->open = &zorro8390_open;
+    dev->stop = &zorro8390_close;
+#ifdef CONFIG_NET_POLL_CONTROLLER
+    dev->poll_controller = ei_poll;
+#endif
 
-    dev->netdev_ops = &zorro8390_netdev_ops;
-    __NS8390_init(dev, 0);
+    NS8390_init(dev, 0);
     err = register_netdev(dev);
     if (err) {
 	free_irq(IRQ_AMIGA_PORTS, dev);
 	return err;
     }
 
-    printk(KERN_INFO "%s: %s at 0x%08lx, Ethernet Address %pM\n",
-	   dev->name, name, board, dev->dev_addr);
+    printk(KERN_INFO "%s: %s at 0x%08lx, Ethernet Address "
+	   "%02x:%02x:%02x:%02x:%02x:%02x\n", dev->name, name, board,
+	   dev->dev_addr[0], dev->dev_addr[1], dev->dev_addr[2],
+	   dev->dev_addr[3], dev->dev_addr[4], dev->dev_addr[5]);
 
     return 0;
 }
 
 static int zorro8390_open(struct net_device *dev)
 {
-    __ei_open(dev);
+    ei_open(dev);
     return 0;
 }
 
@@ -273,7 +254,7 @@ static int zorro8390_close(struct net_device *dev)
 {
     if (ei_debug > 1)
 	printk(KERN_DEBUG "%s: Shutting down ethercard.\n", dev->name);
-    __ei_close(dev);
+    ei_close(dev);
     return 0;
 }
 
@@ -424,7 +405,7 @@ static void zorro8390_block_output(struct net_device *dev, int count,
 		printk(KERN_ERR "%s: timeout waiting for Tx RDC.\n",
 		       dev->name);
 		zorro8390_reset_8390(dev);
-		__NS8390_init(dev,1);
+		NS8390_init(dev,1);
 		break;
 	}
 

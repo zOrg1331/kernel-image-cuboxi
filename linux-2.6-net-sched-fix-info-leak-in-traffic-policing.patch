@@ -1,0 +1,58 @@
+From: Neil Horman <nhorman@redhat.com>
+Date: Fri, 24 Sep 2010 12:49:31 -0400
+Subject: [net] sched: fix info leak in traffic policing
+Message-id: <20100924124931.GB30441@hmsreliant.think-freely.org>
+Patchwork-id: 28362
+O-Subject: [RHEL 5.6 PATCH] net: fix info leak in traffic policing
+Bugzilla: 636392
+RH-Acked-by: Amerigo Wang <amwang@redhat.com>
+RH-Acked-by: Thomas Graf <tgraf@redhat.com>
+
+Hey-
+	This is a backport of commit 0f04cfd098fb81fded74e78ea1a1b86cc6c6c31e.
+A while ago an audit of the traffic classification and policing code cleaned up
+some information leaks that resulted from the missing zeroing of data in several
+structures that were returned to user space.  This patch fixes up a location in
+the policing code that was missed. Resolves bz 636392
+
+Brew Status:
+https://brewweb.devel.redhat.com/taskinfo?taskID=2778177
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/net/sched/act_police.c b/net/sched/act_police.c
+index da905d7..876ec72 100644
+--- a/net/sched/act_police.c
++++ b/net/sched/act_police.c
+@@ -342,23 +342,20 @@ static int
+ tcf_act_police_dump(struct sk_buff *skb, struct tc_action *a, int bind, int ref)
+ {
+ 	unsigned char	 *b = skb->tail;
+-	struct tc_police opt;
+ 	struct tcf_police *p = PRIV(a);
++	struct tc_police opt = {
++		.index = p->index,
++		.action = p->action,
++		.mtu = p->mtu,
++		.burst = p->burst,
++		.refcnt = p->refcnt - ref,
++		.bindcnt = p->bindcnt - bind,
++	};
+ 
+-	opt.index = p->index;
+-	opt.action = p->action;
+-	opt.mtu = p->mtu;
+-	opt.burst = p->burst;
+-	opt.refcnt = p->refcnt - ref;
+-	opt.bindcnt = p->bindcnt - bind;
+ 	if (p->R_tab)
+ 		opt.rate = p->R_tab->rate;
+-	else
+-		memset(&opt.rate, 0, sizeof(opt.rate));
+ 	if (p->P_tab)
+ 		opt.peakrate = p->P_tab->rate;
+-	else
+-		memset(&opt.peakrate, 0, sizeof(opt.peakrate));
+ 	RTA_PUT(skb, TCA_POLICE_TBF, sizeof(opt), &opt);
+ 	if (p->result)
+ 		RTA_PUT(skb, TCA_POLICE_RESULT, sizeof(int), &p->result);

@@ -45,8 +45,8 @@
 */
 
 #define DRV_NAME	"winbond-840"
-#define DRV_VERSION	"1.01-e"
-#define DRV_RELDATE	"Sep-11-2006"
+#define DRV_VERSION	"1.01-d"
+#define DRV_RELDATE	"Nov-17-2001"
 
 
 /* Automatically extracted configuration info:
@@ -90,8 +90,10 @@ static int full_duplex[MAX_UNITS] = {-1, -1, -1, -1, -1, -1, -1, -1};
    Making the Tx ring too large decreases the effectiveness of channel
    bonding and packet priority.
    There are no ill effects from too-large receive rings. */
+#define TX_RING_SIZE	16
 #define TX_QUEUE_LEN	10		/* Limit ring entries actually used.  */
 #define TX_QUEUE_LEN_RESTART	5
+#define RX_RING_SIZE	32
 
 #define TX_BUFLIMIT	(1024-128)
 
@@ -106,6 +108,8 @@ static int full_duplex[MAX_UNITS] = {-1, -1, -1, -1, -1, -1, -1, -1};
 /* Operational parameters that usually are not changed. */
 /* Time in jiffies before concluding the transmitter is hung. */
 #define TX_TIMEOUT  (2*HZ)
+
+#define PKT_BUF_SZ		1536			/* Size of each temporary Rx buffer.*/
 
 /* Include files, designed to support most kernel versions 2.0.0 and later. */
 #include <linux/module.h>
@@ -133,16 +137,10 @@ static int full_duplex[MAX_UNITS] = {-1, -1, -1, -1, -1, -1, -1, -1};
 #include <asm/io.h>
 #include <asm/irq.h>
 
-#include "tulip.h"
-
-#undef PKT_BUF_SZ			/* tulip.h also defines this */
-#define PKT_BUF_SZ		1536	/* Size of each temporary Rx buffer.*/
-
 /* These identify the driver base version and may not be removed. */
-static const char version[] __initconst =
-	KERN_INFO DRV_NAME ".c:v" DRV_VERSION " (2.4 port) "
-	DRV_RELDATE "  Donald Becker <becker@scyld.com>\n"
-	"  http://www.scyld.com/network/drivers.html\n";
+static char version[] =
+KERN_INFO DRV_NAME ".c:v" DRV_VERSION " (2.4 port) " DRV_RELDATE "  Donald Becker <becker@scyld.com>\n"
+KERN_INFO "  http://www.scyld.com/network/drivers.html\n";
 
 MODULE_AUTHOR("Donald Becker <becker@scyld.com>");
 MODULE_DESCRIPTION("Winbond W89c840 Ethernet driver");
@@ -244,8 +242,8 @@ static const struct pci_id_info pci_id_tbl[] __devinitdata = {
 };
 
 /* This driver was written to use PCI memory space, however some x86 systems
-   work only with I/O space accesses. See CONFIG_TULIP_MMIO in .config
-*/
+   work only with I/O space accesses.  Pass -DUSE_IO_OPS to use PCI I/O space
+   accesses instead of memory space. */
 
 /* Offsets to the Command and Status Registers, "CSRs".
    While similar to the Tulip, these registers are longword aligned.
@@ -263,11 +261,21 @@ enum w840_offsets {
 	CurTxDescAddr=0x4C, CurTxBufAddr=0x50,
 };
 
+/* Bits in the interrupt status/enable registers. */
+/* The bits in the Intr Status/Enable registers, mostly interrupt sources. */
+enum intr_status_bits {
+	NormalIntr=0x10000, AbnormalIntr=0x8000,
+	IntrPCIErr=0x2000, TimerInt=0x800,
+	IntrRxDied=0x100, RxNoBuf=0x80, IntrRxDone=0x40,
+	TxFIFOUnderflow=0x20, RxErrIntr=0x10,
+	TxIdle=0x04, IntrTxStopped=0x02, IntrTxDone=0x01,
+};
+
 /* Bits in the NetworkConfig register. */
 enum rx_mode_bits {
-	AcceptErr=0x80,
-	RxAcceptBroadcast=0x20, AcceptMulticast=0x10,
-	RxAcceptAllPhys=0x08, AcceptMyPhys=0x02,
+	AcceptErr=0x80, AcceptRunt=0x40,
+	AcceptBroadcast=0x20, AcceptMulticast=0x10,
+	AcceptAllPhys=0x08, AcceptMyPhys=0x02,
 };
 
 enum mii_reg_bits {
@@ -287,6 +295,13 @@ struct w840_tx_desc {
 	s32 status;
 	s32 length;
 	u32 buffer1, buffer2;
+};
+
+/* Bits in network_desc.status */
+enum desc_status_bits {
+	DescOwn=0x80000000, DescEndRing=0x02000000, DescUseLink=0x01000000,
+	DescWholePkt=0x60000000, DescStartPkt=0x20000000, DescEndPkt=0x40000000,
+	DescIntr=0x80000000,
 };
 
 #define MII_CNT		1 /* winbond only supports one MII */
@@ -333,29 +348,18 @@ static void init_registers(struct net_device *dev);
 static void tx_timeout(struct net_device *dev);
 static int alloc_ringdesc(struct net_device *dev);
 static void free_ringdesc(struct netdev_private *np);
-static netdev_tx_t start_tx(struct sk_buff *skb, struct net_device *dev);
-static irqreturn_t intr_handler(int irq, void *dev_instance);
+static int  start_tx(struct sk_buff *skb, struct net_device *dev);
+static irqreturn_t intr_handler(int irq, void *dev_instance, struct pt_regs *regs);
 static void netdev_error(struct net_device *dev, int intr_status);
 static int  netdev_rx(struct net_device *dev);
 static u32 __set_rx_mode(struct net_device *dev);
 static void set_rx_mode(struct net_device *dev);
 static struct net_device_stats *get_stats(struct net_device *dev);
 static int netdev_ioctl(struct net_device *dev, struct ifreq *rq, int cmd);
-static const struct ethtool_ops netdev_ethtool_ops;
+static struct ethtool_ops netdev_ethtool_ops;
 static int  netdev_close(struct net_device *dev);
 
-static const struct net_device_ops netdev_ops = {
-	.ndo_open		= netdev_open,
-	.ndo_stop		= netdev_close,
-	.ndo_start_xmit		= start_tx,
-	.ndo_get_stats		= get_stats,
-	.ndo_set_multicast_list = set_rx_mode,
-	.ndo_do_ioctl		= netdev_ioctl,
-	.ndo_tx_timeout		= tx_timeout,
-	.ndo_change_mtu		= eth_change_mtu,
-	.ndo_set_mac_address	= eth_mac_addr,
-	.ndo_validate_addr	= eth_validate_addr,
-};
+
 
 static int __devinit w840_probe1 (struct pci_dev *pdev,
 				  const struct pci_device_id *ent)
@@ -367,6 +371,7 @@ static int __devinit w840_probe1 (struct pci_dev *pdev,
 	int irq;
 	int i, option = find_cnt < MAX_UNITS ? options[find_cnt] : 0;
 	void __iomem *ioaddr;
+	int bar = 1;
 
 	i = pci_enable_device(pdev);
 	if (i) return i;
@@ -375,7 +380,7 @@ static int __devinit w840_probe1 (struct pci_dev *pdev,
 
 	irq = pdev->irq;
 
-	if (pci_set_dma_mask(pdev, DMA_BIT_MASK(32))) {
+	if (pci_set_dma_mask(pdev, DMA_32BIT_MASK)) {
 		printk(KERN_WARNING "Winbond-840: Device %s disabled due to DMA limitations.\n",
 		       pci_name(pdev));
 		return -EIO;
@@ -383,17 +388,20 @@ static int __devinit w840_probe1 (struct pci_dev *pdev,
 	dev = alloc_etherdev(sizeof(*np));
 	if (!dev)
 		return -ENOMEM;
+	SET_MODULE_OWNER(dev);
 	SET_NETDEV_DEV(dev, &pdev->dev);
 
 	if (pci_request_regions(pdev, DRV_NAME))
 		goto err_out_netdev;
-
-	ioaddr = pci_iomap(pdev, TULIP_BAR, netdev_res_size);
+#ifdef USE_IO_OPS
+	bar = 0;
+#endif
+	ioaddr = pci_iomap(pdev, bar, netdev_res_size);
 	if (!ioaddr)
 		goto err_out_free_res;
 
 	for (i = 0; i < 3; i++)
-		((__le16 *)dev->dev_addr)[i] = cpu_to_le16(eeprom_read(ioaddr, i));
+		((u16 *)dev->dev_addr)[i] = le16_to_cpu(eeprom_read(ioaddr, i));
 
 	/* Reset the chip to erase previous misconfiguration.
 	   No hold time required! */
@@ -432,17 +440,25 @@ static int __devinit w840_probe1 (struct pci_dev *pdev,
 		np->mii_if.force_media = 1;
 
 	/* The chip-specific entries in the device structure. */
-	dev->netdev_ops = &netdev_ops;
+	dev->open = &netdev_open;
+	dev->hard_start_xmit = &start_tx;
+	dev->stop = &netdev_close;
+	dev->get_stats = &get_stats;
+	dev->set_multicast_list = &set_rx_mode;
+	dev->do_ioctl = &netdev_ioctl;
 	dev->ethtool_ops = &netdev_ethtool_ops;
+	dev->tx_timeout = &tx_timeout;
 	dev->watchdog_timeo = TX_TIMEOUT;
 
 	i = register_netdev(dev);
 	if (i)
 		goto err_out_cleardev;
 
-	printk(KERN_INFO "%s: %s at %p, %pM, IRQ %d.\n",
-	       dev->name, pci_id_tbl[chip_idx].name, ioaddr,
-	       dev->dev_addr, irq);
+	printk(KERN_INFO "%s: %s at %p, ",
+		   dev->name, pci_id_tbl[chip_idx].name, ioaddr);
+	for (i = 0; i < 5; i++)
+			printk("%2.2x:", dev->dev_addr[i]);
+	printk("%2.2x, IRQ %d.\n", dev->dev_addr[i], irq);
 
 	if (np->drv_flags & CanHaveMII) {
 		int phy, phy_idx = 0;
@@ -489,7 +505,7 @@ err_out_netdev:
    a delay.  Note that pre-2.0.34 kernels had a cache-alignment bug that
    made udelay() unreliable.
    The old method of using an ISA access as a delay, __SLOW_DOWN_IO__, is
-   deprecated.
+   depricated.
 */
 #define eeprom_delay(ee_addr)	ioread32(ee_addr)
 
@@ -817,11 +833,12 @@ static void init_rxtx_rings(struct net_device *dev)
 		np->rx_skbuff[i] = skb;
 		if (skb == NULL)
 			break;
+		skb->dev = dev;			/* Mark as being used by this device. */
 		np->rx_addr[i] = pci_map_single(np->pci_dev,skb->data,
 					np->rx_buf_sz,PCI_DMA_FROMDEVICE);
 
 		np->rx_ring[i].buffer1 = np->rx_addr[i];
-		np->rx_ring[i].status = DescOwned;
+		np->rx_ring[i].status = DescOwn;
 	}
 
 	np->cur_rx = 0;
@@ -906,7 +923,7 @@ static void init_registers(struct net_device *dev)
 	}
 #elif defined(__powerpc__) || defined(__i386__) || defined(__alpha__) || defined(__ia64__) || defined(__x86_64__)
 	i |= 0xE000;
-#elif defined(CONFIG_SPARC) || defined (CONFIG_PARISC)
+#elif defined(__sparc__)
 	i |= 0x4800;
 #else
 #warning Processor architecture undefined
@@ -939,7 +956,7 @@ static void tx_timeout(struct net_device *dev)
 		printk(KERN_DEBUG "  Rx ring %p: ", np->rx_ring);
 		for (i = 0; i < RX_RING_SIZE; i++)
 			printk(" %8.8x", (unsigned int)np->rx_ring[i].status);
-		printk(KERN_DEBUG"  Tx ring %p: ", np->tx_ring);
+		printk("\n"KERN_DEBUG"  Tx ring %p: ", np->tx_ring);
 		for (i = 0; i < TX_RING_SIZE; i++)
 			printk(" %8.8x", np->tx_ring[i].status);
 		printk("\n");
@@ -997,7 +1014,7 @@ static void free_ringdesc(struct netdev_private *np)
 
 }
 
-static netdev_tx_t start_tx(struct sk_buff *skb, struct net_device *dev)
+static int start_tx(struct sk_buff *skb, struct net_device *dev)
 {
 	struct netdev_private *np = netdev_priv(dev);
 	unsigned entry;
@@ -1025,12 +1042,12 @@ static netdev_tx_t start_tx(struct sk_buff *skb, struct net_device *dev)
 		np->tx_ring[entry].length |= DescEndRing;
 
 	/* Now acquire the irq spinlock.
-	 * The difficult race is the ordering between
-	 * increasing np->cur_tx and setting DescOwned:
+	 * The difficult race is the the ordering between
+	 * increasing np->cur_tx and setting DescOwn:
 	 * - if np->cur_tx is increased first the interrupt
 	 *   handler could consider the packet as transmitted
-	 *   since DescOwned is cleared.
-	 * - If DescOwned is set first the NIC could report the
+	 *   since DescOwn is cleared.
+	 * - If DescOwn is set first the NIC could report the
 	 *   packet as sent, but the interrupt handler would ignore it
 	 *   since the np->cur_tx was not yet increased.
 	 */
@@ -1038,7 +1055,7 @@ static netdev_tx_t start_tx(struct sk_buff *skb, struct net_device *dev)
 	np->cur_tx++;
 
 	wmb(); /* flush length, buffer1, buffer2 */
-	np->tx_ring[entry].status = DescOwned;
+	np->tx_ring[entry].status = DescOwn;
 	wmb(); /* flush status and kick the hardware */
 	iowrite32(0, np->base_addr + TxStartDemand);
 	np->tx_q_bytes += skb->len;
@@ -1058,7 +1075,7 @@ static netdev_tx_t start_tx(struct sk_buff *skb, struct net_device *dev)
 		printk(KERN_DEBUG "%s: Transmit frame #%d queued in slot %d.\n",
 			   dev->name, np->cur_tx, entry);
 	}
-	return NETDEV_TX_OK;
+	return 0;
 }
 
 static void netdev_tx_done(struct net_device *dev)
@@ -1113,7 +1130,7 @@ static void netdev_tx_done(struct net_device *dev)
 
 /* The interrupt handler does all of the Rx thread work and cleans up
    after the Tx thread. */
-static irqreturn_t intr_handler(int irq, void *dev_instance)
+static irqreturn_t intr_handler(int irq, void *dev_instance, struct pt_regs *rgs)
 {
 	struct net_device *dev = (struct net_device *)dev_instance;
 	struct netdev_private *np = netdev_priv(dev);
@@ -1138,12 +1155,12 @@ static irqreturn_t intr_handler(int irq, void *dev_instance)
 
 		handled = 1;
 
-		if (intr_status & (RxIntr | RxNoBuf))
+		if (intr_status & (IntrRxDone | RxNoBuf))
 			netdev_rx(dev);
 		if (intr_status & RxNoBuf)
 			iowrite32(0, ioaddr + RxStartDemand);
 
-		if (intr_status & (TxNoBuf | TxIntr) &&
+		if (intr_status & (TxIdle | IntrTxDone) &&
 			np->cur_tx != np->dirty_tx) {
 			spin_lock(&np->lock);
 			netdev_tx_done(dev);
@@ -1151,8 +1168,8 @@ static irqreturn_t intr_handler(int irq, void *dev_instance)
 		}
 
 		/* Abnormal error summary/uncommon events handlers. */
-		if (intr_status & (AbnormalIntr | TxFIFOUnderflow | SystemError |
-						   TimerInt | TxDied))
+		if (intr_status & (AbnormalIntr | TxFIFOUnderflow | IntrPCIErr |
+						   TimerInt | IntrTxStopped))
 			netdev_error(dev, intr_status);
 
 		if (--work_limit < 0) {
@@ -1232,11 +1249,12 @@ static int netdev_rx(struct net_device *dev)
 			   to a minimally-sized skbuff. */
 			if (pkt_len < rx_copybreak
 				&& (skb = dev_alloc_skb(pkt_len + 2)) != NULL) {
+				skb->dev = dev;
 				skb_reserve(skb, 2);	/* 16 byte align the IP header */
 				pci_dma_sync_single_for_cpu(np->pci_dev,np->rx_addr[entry],
 							    np->rx_skbuff[entry]->len,
 							    PCI_DMA_FROMDEVICE);
-				skb_copy_to_linear_data(skb, np->rx_skbuff[entry]->data, pkt_len);
+				eth_copy_and_sum(skb, np->rx_skbuff[entry]->data, pkt_len, 0);
 				skb_put(skb, pkt_len);
 				pci_dma_sync_single_for_device(np->pci_dev,np->rx_addr[entry],
 							       np->rx_skbuff[entry]->len,
@@ -1251,14 +1269,19 @@ static int netdev_rx(struct net_device *dev)
 #ifndef final_version				/* Remove after testing. */
 			/* You will want this info for the initial debug. */
 			if (debug > 5)
-				printk(KERN_DEBUG "  Rx data %pM %pM"
-				       " %2.2x%2.2x %d.%d.%d.%d.\n",
-				       &skb->data[0], &skb->data[6],
-				       skb->data[12], skb->data[13],
-				       skb->data[14], skb->data[15], skb->data[16], skb->data[17]);
+				printk(KERN_DEBUG "  Rx data %2.2x:%2.2x:%2.2x:%2.2x:%2.2x:"
+					   "%2.2x %2.2x:%2.2x:%2.2x:%2.2x:%2.2x:%2.2x %2.2x%2.2x "
+					   "%d.%d.%d.%d.\n",
+					   skb->data[0], skb->data[1], skb->data[2], skb->data[3],
+					   skb->data[4], skb->data[5], skb->data[6], skb->data[7],
+					   skb->data[8], skb->data[9], skb->data[10],
+					   skb->data[11], skb->data[12], skb->data[13],
+					   skb->data[14], skb->data[15], skb->data[16],
+					   skb->data[17]);
 #endif
 			skb->protocol = eth_type_trans(skb, dev);
 			netif_rx(skb);
+			dev->last_rx = jiffies;
 			np->stats.rx_packets++;
 			np->stats.rx_bytes += pkt_len;
 		}
@@ -1275,13 +1298,14 @@ static int netdev_rx(struct net_device *dev)
 			np->rx_skbuff[entry] = skb;
 			if (skb == NULL)
 				break;			/* Better luck next round. */
+			skb->dev = dev;			/* Mark as being used by this device. */
 			np->rx_addr[entry] = pci_map_single(np->pci_dev,
 							skb->data,
 							np->rx_buf_sz, PCI_DMA_FROMDEVICE);
 			np->rx_ring[entry].buffer1 = np->rx_addr[entry];
 		}
 		wmb();
-		np->rx_ring[entry].status = DescOwned;
+		np->rx_ring[entry].status = DescOwn;
 	}
 
 	return 0;
@@ -1318,7 +1342,7 @@ static void netdev_error(struct net_device *dev, int intr_status)
 			   dev->name, new);
 		update_csr6(dev, new);
 	}
-	if (intr_status & RxDied) {		/* Missed a Rx frame. */
+	if (intr_status & IntrRxDied) {		/* Missed a Rx frame. */
 		np->stats.rx_errors++;
 	}
 	if (intr_status & TimerInt) {
@@ -1354,14 +1378,16 @@ static u32 __set_rx_mode(struct net_device *dev)
 	u32 rx_mode;
 
 	if (dev->flags & IFF_PROMISC) {			/* Set promiscuous. */
+		/* Unconditionally log net taps. */
+		printk(KERN_NOTICE "%s: Promiscuous mode enabled.\n", dev->name);
 		memset(mc_filter, 0xff, sizeof(mc_filter));
-		rx_mode = RxAcceptBroadcast | AcceptMulticast | RxAcceptAllPhys
+		rx_mode = AcceptBroadcast | AcceptMulticast | AcceptAllPhys
 			| AcceptMyPhys;
 	} else if ((dev->mc_count > multicast_filter_limit)
 			   ||  (dev->flags & IFF_ALLMULTI)) {
 		/* Too many to match, or accept all multicasts. */
 		memset(mc_filter, 0xff, sizeof(mc_filter));
-		rx_mode = RxAcceptBroadcast | AcceptMulticast | AcceptMyPhys;
+		rx_mode = AcceptBroadcast | AcceptMulticast | AcceptMyPhys;
 	} else {
 		struct dev_mc_list *mclist;
 		int i;
@@ -1372,7 +1398,7 @@ static u32 __set_rx_mode(struct net_device *dev)
 			filterbit &= 0x3f;
 			mc_filter[filterbit >> 5] |= 1 << (filterbit & 31);
 		}
-		rx_mode = RxAcceptBroadcast | AcceptMulticast | AcceptMyPhys;
+		rx_mode = AcceptBroadcast | AcceptMulticast | AcceptMyPhys;
 	}
 	iowrite32(mc_filter[0], ioaddr + MulticastFilter0);
 	iowrite32(mc_filter[1], ioaddr + MulticastFilter1);
@@ -1443,7 +1469,7 @@ static void netdev_set_msglevel(struct net_device *dev, u32 value)
 	debug = value;
 }
 
-static const struct ethtool_ops netdev_ethtool_ops = {
+static struct ethtool_ops netdev_ethtool_ops = {
 	.get_drvinfo		= netdev_get_drvinfo,
 	.get_settings		= netdev_get_settings,
 	.set_settings		= netdev_set_settings,
@@ -1451,6 +1477,8 @@ static const struct ethtool_ops netdev_ethtool_ops = {
 	.get_link		= netdev_get_link,
 	.get_msglevel		= netdev_get_msglevel,
 	.set_msglevel		= netdev_set_msglevel,
+	.get_sg			= ethtool_op_get_sg,
+	.get_tx_csum		= ethtool_op_get_tx_csum,
 };
 
 static int netdev_ioctl(struct net_device *dev, struct ifreq *rq, int cmd)
@@ -1470,6 +1498,8 @@ static int netdev_ioctl(struct net_device *dev, struct ifreq *rq, int cmd)
 		return 0;
 
 	case SIOCSMIIREG:		/* Write MII PHY register. */
+		if (!capable(CAP_NET_ADMIN))
+			return -EPERM;
 		spin_lock_irq(&np->lock);
 		mdio_write(dev, data->phy_id & 0x1f, data->reg_num & 0x1f, data->val_in);
 		spin_unlock_irq(&np->lock);
@@ -1518,7 +1548,7 @@ static int netdev_close(struct net_device *dev)
 			printk(KERN_DEBUG " #%d desc. %4.4x %4.4x %8.8x.\n",
 				   i, np->tx_ring[i].length,
 				   np->tx_ring[i].status, np->tx_ring[i].buffer1);
-		printk(KERN_DEBUG "  Rx ring %8.8x:\n",
+		printk("\n"KERN_DEBUG "  Rx ring %8.8x:\n",
 			   (int)np->rx_ring);
 		for (i = 0; i < RX_RING_SIZE; i++) {
 			printk(KERN_DEBUG " #%d desc. %4.4x %4.4x %8.8x\n",
@@ -1559,7 +1589,7 @@ static void __devexit w840_remove1 (struct pci_dev *pdev)
  * 	rtnl_lock, & netif_device_detach after the rtnl_unlock.
  * - get_stats:
  * 	spin_lock_irq(np->lock), doesn't touch hw if not present
- * - start_xmit:
+ * - hard_start_xmit:
  * 	synchronize_irq + netif_tx_disable;
  * - tx_timeout:
  * 	netif_device_detach + netif_tx_disable;
@@ -1594,12 +1624,13 @@ static int w840_suspend (struct pci_dev *pdev, pm_message_t state)
 
 		synchronize_irq(dev->irq);
 		netif_tx_disable(dev);
-
+	
 		np->stats.rx_missed_errors += ioread32(ioaddr + RxMissed) & 0xffff;
 
 		/* no more hardware accesses behind this line. */
 
-		BUG_ON(np->csr6 || ioread32(ioaddr + IntrEnable));
+		BUG_ON(np->csr6);
+		if (ioread32(ioaddr + IntrEnable)) BUG();
 
 		/* pci_power_off(pdev, -1); */
 
@@ -1615,18 +1646,14 @@ static int w840_resume (struct pci_dev *pdev)
 {
 	struct net_device *dev = pci_get_drvdata (pdev);
 	struct netdev_private *np = netdev_priv(dev);
-	int retval = 0;
 
 	rtnl_lock();
 	if (netif_device_present(dev))
 		goto out; /* device not suspended */
 	if (netif_running(dev)) {
-		if ((retval = pci_enable_device(pdev))) {
-			printk (KERN_ERR
-				"%s: pci_enable_device failed in resume\n",
-				dev->name);
-			goto out;
-		}
+		pci_enable_device(pdev);
+	/*	pci_power_on(pdev); */
+
 		spin_lock_irq(&np->lock);
 		iowrite32(1, np->base_addr+PCIBusCfg);
 		ioread32(np->base_addr+PCIBusCfg);
@@ -1644,7 +1671,7 @@ static int w840_resume (struct pci_dev *pdev)
 	}
 out:
 	rtnl_unlock();
-	return retval;
+	return 0;
 }
 #endif
 
@@ -1662,7 +1689,7 @@ static struct pci_driver w840_driver = {
 static int __init w840_init(void)
 {
 	printk(version);
-	return pci_register_driver(&w840_driver);
+	return pci_module_init(&w840_driver);
 }
 
 static void __exit w840_exit(void)

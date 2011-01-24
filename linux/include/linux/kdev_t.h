@@ -87,6 +87,7 @@ static inline unsigned sysv_minor(u32 dev)
 	return dev & 0x3ffff;
 }
 
+
 #else /* __KERNEL__ */
 
 /*

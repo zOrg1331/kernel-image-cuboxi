@@ -1,0 +1,65 @@
+From: Jan Glauber <jglauber@redhat.com>
+Subject: [RHEL5.1 PATCH] kprobes breaks BUG_ON on s390
+Date: Wed, 07 Mar 2007 13:57:05 +0100
+Bugzilla: 231155
+Message-Id: <1173272225.5242.31.camel@localhost.localdomain>
+Changelog: [s390] kprobes breaks BUG_ON
+
+
+BUG_ON is not working correctly on s390. Due to the kprobes
+notifier only the printk but not the following Oops output is shown
+if we hit a BUG_ON. The presence of this bug in the GA version of 
+RHEL5 makes me not feel very comfortable, we should fix this early
+in the 5.1 cycle.
+
+More details:
+The illegal operation handler calls the die notifier with DIE_BPT to
+let kprobes pick up its breakpoint. If kprobes does not find its
+breakpoint it returns NOTIFY_STOP instead of NOTIFY_DONE.
+Since we use stop_machine_run on s390 to arm/disarm the kprobes
+breakpoints the race that kprobe_handler tries to solve by checking
+for the kprobes breakpoints does not exist. Removing the check makes
+BUG_ON working again.
+
+
+Jan
+
+jglauber@redhat.com
+jang@de.ibm.com
+
+---
+
+Index: linux-rhel5/arch/s390/kernel/kprobes.c
+===================================================================
+--- linux-rhel5.orig/arch/s390/kernel/kprobes.c	2007-03-05 18:23:29.000000000 +0100
++++ linux-rhel5/arch/s390/kernel/kprobes.c	2007-03-06 14:29:12.000000000 +0100
+@@ -343,21 +343,14 @@ static int __kprobes kprobe_handler(stru
+ 	}
+ 
+ 	p = get_kprobe(addr);
+-	if (!p) {
+-		if (*addr != BREAKPOINT_INSTRUCTION) {
+-			/*
+-			 * The breakpoint instruction was removed right
+-			 * after we hit it.  Another cpu has removed
+-			 * either a probepoint or a debugger breakpoint
+-			 * at this address.  In either case, no further
+-			 * handling of this interrupt is appropriate.
+-			 *
+-			 */
+-			ret = 1;
+-		}
+-		/* Not one of ours: let kernel handle it */
++	if (!p)
++		/*
++		 * No kprobe at this address. The fault has not been
++		 * caused by a kprobe breakpoint. The race of breakpoint
++		 * vs. kprobe remove does not exist because on s390 we
++		 * use stop_machine_run to arm/disarm the breakpoints.
++		 */
+ 		goto no_kprobe;
+-	}
+ 
+ 	kcb->kprobe_status = KPROBE_HIT_ACTIVE;
+ 	set_current_kprobe(p, regs, kcb);
+

@@ -1,0 +1,38 @@
+From: Paolo Bonzini <pbonzini@redhat.com>
+Date: Wed, 23 Jun 2010 14:09:32 -0400
+Subject: [virt] xen netback: copy skbuffs if head crosses pages
+Message-id: <1277302172-10673-3-git-send-email-pbonzini@redhat.com>
+Patchwork-id: 26471
+O-Subject: [RHEL5.5 PATCH] xen netback: copy skbuffs whose head crosses a page
+	boundary
+Bugzilla: 578259
+RH-Acked-by: Andrew Jones <drjones@redhat.com>
+
+Bugzilla: 578259
+
+Upstream status: http://xenbits.xensource.com/xen-unstable.hg?rev/14893
+
+Brew build: https://brewweb.devel.redhat.com/taskinfo?taskID=2540880
+
+Copy skbuffs that are presented to the start_xmit() function
+with a multi-page head buffer. The new skbuff will not have a
+multi-page head buffer, which is a necessary restriction imposed
+by the internals of the netback driver.
+
+diff --git a/drivers/xen/netback/netback.c b/drivers/xen/netback/netback.c
+index 8fb8927..20d9184 100644
+--- a/drivers/xen/netback/netback.c
++++ b/drivers/xen/netback/netback.c
+@@ -249,8 +249,11 @@ int netif_be_start_xmit(struct sk_buff *skb, struct net_device *dev)
+ 	/*
+ 	 * Copy the packet here if it's destined for a flipping interface
+ 	 * but isn't flippable (e.g. extra references to data).
++	 * XXX For now we also copy skbuffs whose head crosses a page
++	 * boundary, because netbk_gop_skb can't handle them.
+ 	 */
+-	if (!netif->copying_receiver) {
++	if (!netif->copying_receiver ||
++	    ((skb_headlen(skb) + offset_in_page(skb->data)) >= PAGE_SIZE)) {
+ 		struct sk_buff *nskb = netbk_copy_skb(skb);
+ 		if ( unlikely(nskb == NULL) )
+ 			goto drop;

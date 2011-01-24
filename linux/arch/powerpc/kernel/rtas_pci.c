@@ -38,7 +38,6 @@
 #include <asm/rtas.h>
 #include <asm/mpic.h>
 #include <asm/ppc-pci.h>
-#include <asm/eeh.h>
 
 /* RTAS tokens */
 static int read_pci_config;
@@ -56,6 +55,21 @@ static inline int config_access_valid(struct pci_dn *dn, int where)
 	return 0;
 }
 
+static int of_device_available(struct device_node * dn)
+{
+        char * status;
+
+        status = get_property(dn, "status", NULL);
+
+        if (!status)
+                return 1;
+
+        if (!strcmp(status, "okay"))
+                return 1;
+
+        return 0;
+}
+
 int rtas_read_config(struct pci_dn *pdn, int where, int size, u32 *val)
 {
 	int returnval = -1;
@@ -67,7 +81,8 @@ int rtas_read_config(struct pci_dn *pdn, int where, int size, u32 *val)
 	if (!config_access_valid(pdn, where))
 		return PCIBIOS_BAD_REGISTER_NUMBER;
 
-	addr = rtas_config_addr(pdn->busno, pdn->devfn, where);
+	addr = ((where & 0xf00) << 20) | (pdn->busno << 16) |
+		(pdn->devfn << 8) | (where & 0xff);
 	buid = pdn->phb->buid;
 	if (buid) {
 		ret = rtas_call(ibm_read_pci_config, 4, 2, &returnval,
@@ -93,13 +108,16 @@ static int rtas_pci_read_config(struct pci_bus *bus,
 {
 	struct device_node *busdn, *dn;
 
-	busdn = pci_bus_to_OF_node(bus);
+	if (bus->self)
+		busdn = pci_device_to_OF_node(bus->self);
+	else
+		busdn = bus->sysdata;	/* must be a phb */
 
 	/* Search only direct children of the bus */
 	for (dn = busdn->child; dn; dn = dn->sibling) {
 		struct pci_dn *pdn = PCI_DN(dn);
 		if (pdn && pdn->devfn == devfn
-		    && of_device_is_available(dn))
+		    && of_device_available(dn))
 			return rtas_read_config(pdn, where, size, val);
 	}
 
@@ -116,7 +134,8 @@ int rtas_write_config(struct pci_dn *pdn, int where, int size, u32 val)
 	if (!config_access_valid(pdn, where))
 		return PCIBIOS_BAD_REGISTER_NUMBER;
 
-	addr = rtas_config_addr(pdn->busno, pdn->devfn, where);
+	addr = ((where & 0xf00) << 20) | (pdn->busno << 16) |
+		(pdn->devfn << 8) | (where & 0xff);
 	buid = pdn->phb->buid;
 	if (buid) {
 		ret = rtas_call(ibm_write_pci_config, 5, 1, NULL, addr,
@@ -137,26 +156,29 @@ static int rtas_pci_write_config(struct pci_bus *bus,
 {
 	struct device_node *busdn, *dn;
 
-	busdn = pci_bus_to_OF_node(bus);
+	if (bus->self)
+		busdn = pci_device_to_OF_node(bus->self);
+	else
+		busdn = bus->sysdata;	/* must be a phb */
 
 	/* Search only direct children of the bus */
 	for (dn = busdn->child; dn; dn = dn->sibling) {
 		struct pci_dn *pdn = PCI_DN(dn);
 		if (pdn && pdn->devfn == devfn
-		    && of_device_is_available(dn))
+		    && of_device_available(dn))
 			return rtas_write_config(pdn, where, size, val);
 	}
 	return PCIBIOS_DEVICE_NOT_FOUND;
 }
 
-static struct pci_ops rtas_pci_ops = {
-	.read = rtas_pci_read_config,
-	.write = rtas_pci_write_config,
+struct pci_ops rtas_pci_ops = {
+	rtas_pci_read_config,
+	rtas_pci_write_config
 };
 
-static int is_python(struct device_node *dev)
+int is_python(struct device_node *dev)
 {
-	const char *model = of_get_property(dev, "model", NULL);
+	char *model = (char *)get_property(dev, "model", NULL);
 
 	if (model && strstr(model, "Python"))
 		return 1;
@@ -211,22 +233,41 @@ void __init init_pci_config_tokens (void)
 
 unsigned long __devinit get_phb_buid (struct device_node *phb)
 {
-	struct resource r;
+	int addr_cells;
+	unsigned int *buid_vals;
+	unsigned int len;
+	unsigned long buid;
 
-	if (ibm_read_pci_config == -1)
+	if (ibm_read_pci_config == -1) return 0;
+
+	/* PHB's will always be children of the root node,
+	 * or so it is promised by the current firmware. */
+	if (phb->parent == NULL)
 		return 0;
-	if (of_address_to_resource(phb, 0, &r))
+	if (phb->parent->parent)
 		return 0;
-	return r.start;
+
+	buid_vals = (unsigned int *) get_property(phb, "reg", &len);
+	if (buid_vals == NULL)
+		return 0;
+
+	addr_cells = prom_n_addr_cells(phb);
+	if (addr_cells == 1) {
+		buid = (unsigned long) buid_vals[0];
+	} else {
+		buid = (((unsigned long)buid_vals[0]) << 32UL) |
+			(((unsigned long)buid_vals[1]) & 0xffffffff);
+	}
+	return buid;
 }
 
 static int phb_set_bus_ranges(struct device_node *dev,
 			      struct pci_controller *phb)
 {
-	const int *bus_range;
+	int *bus_range;
 	unsigned int len;
 
-	bus_range = of_get_property(dev, "bus-range", &len);
+	bus_range = (int *) get_property(dev, "bus-range", &len);
 	if (bus_range == NULL || len < 2 * sizeof(int)) {
 		return 1;
  	}
@@ -237,10 +278,8 @@ static int phb_set_bus_ranges(struct device_node *dev,
 	return 0;
 }
 
-int __devinit rtas_setup_phb(struct pci_controller *phb)
+int __devinit setup_phb(struct device_node *dev, struct pci_controller *phb)
 {
-	struct device_node *dev = phb->dn;
-
 	if (is_python(dev))
 		python_countermeasures(dev);
 
@@ -253,13 +292,18 @@ int __devinit rtas_setup_phb(struct pci_controller *phb)
 	return 0;
 }
 
-void __init find_and_init_phbs(void)
+unsigned long __init find_and_init_phbs(void)
 {
 	struct device_node *node;
 	struct pci_controller *phb;
+	unsigned int index;
 	struct device_node *root = of_find_node_by_path("/");
 
-	for_each_child_of_node(root, node) {
+	index = 0;
+	for (node = of_get_next_child(root, NULL);
+	     node != NULL;
+	     node = of_get_next_child(root, node)) {
+
 		if (node->type == NULL || (strcmp(node->type, "pci") != 0 &&
 					   strcmp(node->type, "pciex") != 0))
 			continue;
@@ -267,9 +311,10 @@ void __init find_and_init_phbs(void)
 		phb = pcibios_alloc_controller(node);
 		if (!phb)
 			continue;
-		rtas_setup_phb(phb);
+		setup_phb(node, phb);
 		pci_process_bridge_OF_ranges(phb, node, 0);
-		isa_bridge_find_early(phb);
+		pci_setup_phb_io(phb, index == 0);
+		index++;
 	}
 
 	of_node_put(root);
@@ -280,18 +325,67 @@ void __init find_and_init_phbs(void)
 	 * in chosen.
 	 */
 	if (of_chosen) {
-		const int *prop;
+		int *prop;
 
-		prop = of_get_property(of_chosen,
-				"linux,pci-probe-only", NULL);
+		prop = (int *)get_property(of_chosen, "linux,pci-probe-only",
+					   NULL);
 		if (prop)
 			pci_probe_only = *prop;
 
-#ifdef CONFIG_PPC32 /* Will be made generic soon */
-		prop = of_get_property(of_chosen,
-				"linux,pci-assign-all-buses", NULL);
-		if (prop && *prop)
-			ppc_pci_flags |= PPC_PCI_REASSIGN_ALL_BUS;
-#endif /* CONFIG_PPC32 */
+		prop = (int *)get_property(of_chosen,
+					   "linux,pci-assign-all-buses", NULL);
+		if (prop)
+			pci_assign_all_buses = *prop;
 	}
+
+	return 0;
 }
+
+/* RPA-specific bits for removing PHBs */
+int pcibios_remove_root_bus(struct pci_controller *phb)
+{
+	struct pci_bus *b = phb->bus;
+	struct resource *res;
+	int rc, i;
+
+	res = b->resource[0];
+	if (!res->flags) {
+		printk(KERN_ERR "%s: no IO resource for PHB %s\n", __FUNCTION__,
+				b->name);
+		return 1;
+	}
+
+	rc = unmap_bus_range(b);
+	if (rc) {
+		printk(KERN_ERR "%s: failed to unmap IO on bus %s\n",
+			__FUNCTION__, b->name);
+		return 1;
+	}
+
+	if (release_resource(res)) {
+		printk(KERN_ERR "%s: failed to release IO on bus %s\n",
+				__FUNCTION__, b->name);
+		return 1;
+	}
+
+	for (i = 1; i < 3; ++i) {
+		res = b->resource[i];
+		if (!res->flags && i == 0) {
+			printk(KERN_ERR "%s: no MEM resource for PHB %s\n",
+				__FUNCTION__, b->name);
+			return 1;
+		}
+		if (res->flags && release_resource(res)) {
+			printk(KERN_ERR
+			       "%s: failed to release IO %d on bus %s\n",
+				__FUNCTION__, i, b->name);
+			return 1;
+		}
+	}
+
+	list_del(&phb->list_node);
+	pcibios_free_controller(phb);
+
+	return 0;
+}
+EXPORT_SYMBOL(pcibios_remove_root_bus);

@@ -26,20 +26,22 @@
 #include <linux/module.h>
 #include <linux/moduleparam.h>
 #include <linux/pci.h>
-#include <linux/pci_hotplug.h>
 #include <linux/slab.h>
 #include <linux/smp.h>
+#include <linux/smp_lock.h>
 #include <linux/init.h>
-#include <linux/vmalloc.h>
 #include <asm/eeh.h>       /* for eeh_add_device() */
 #include <asm/rtas.h>		/* rtas_call */
 #include <asm/pci-bridge.h>	/* for pci_controller */
 #include "../pci.h"		/* for pci_add_new_bus */
 				/* and pci_do_scan_bus */
 #include "rpaphp.h"
+#include "pci_hotplug.h"
 
-int rpaphp_debug;
+int debug;
+static struct semaphore rpaphp_sem;
 LIST_HEAD(rpaphp_slot_head);
+int num_slots;
 
 #define DRIVER_VERSION	"0.1"
 #define DRIVER_AUTHOR	"Linda Xie <lxie@us.ibm.com>"
@@ -51,90 +53,95 @@ MODULE_AUTHOR(DRIVER_AUTHOR);
 MODULE_DESCRIPTION(DRIVER_DESC);
 MODULE_LICENSE("GPL");
 
-module_param_named(debug, rpaphp_debug, bool, 0644);
+module_param(debug, bool, 0644);
+
+static int rpaphp_get_attention_status(struct slot *slot)
+{
+	return slot->hotplug_slot->info->attention_status;
+}
 
 /**
  * set_attention_status - set attention LED
- * @hotplug_slot: target &hotplug_slot
- * @value: LED control value
- *
  * echo 0 > attention -- set LED OFF
  * echo 1 > attention -- set LED ON
  * echo 2 > attention -- set LED ID(identify, light is blinking)
+ *
  */
 static int set_attention_status(struct hotplug_slot *hotplug_slot, u8 value)
 {
-	int rc;
+	int retval = 0;
 	struct slot *slot = (struct slot *)hotplug_slot->private;
 
+	down(&rpaphp_sem);
 	switch (value) {
 	case 0:
-	case 1:
-	case 2:
+		retval = rpaphp_set_attention_status(slot, LED_OFF);
+		hotplug_slot->info->attention_status = 0;
 		break;
+	case 1:
 	default:
-		value = 1;
+		retval = rpaphp_set_attention_status(slot, LED_ON);
+		hotplug_slot->info->attention_status = 1;
+		break;
+	case 2:
+		retval = rpaphp_set_attention_status(slot, LED_ID);
+		hotplug_slot->info->attention_status = 2;
 		break;
 	}
-
-	rc = rtas_set_indicator(DR_INDICATOR, slot->index, value);
-	if (!rc)
-		hotplug_slot->info->attention_status = value;
-
-	return rc;
+	up(&rpaphp_sem);
+	return retval;
 }
 
 /**
  * get_power_status - get power status of a slot
  * @hotplug_slot: slot to get status
  * @value: pointer to store status
+ *
+ *
  */
 static int get_power_status(struct hotplug_slot *hotplug_slot, u8 * value)
 {
-	int retval, level;
+	int retval;
 	struct slot *slot = (struct slot *)hotplug_slot->private;
 
-	retval = rtas_get_power_level (slot->power_domain, &level);
-	if (!retval)
-		*value = level;
+	down(&rpaphp_sem);
+	retval = rpaphp_get_power_status(slot, value);
+	up(&rpaphp_sem);
 	return retval;
 }
 
 /**
  * get_attention_status - get attention LED status
- * @hotplug_slot: slot to get status
- * @value: pointer to store status
+ *
+ *
  */
 static int get_attention_status(struct hotplug_slot *hotplug_slot, u8 * value)
 {
+	int retval = 0;
 	struct slot *slot = (struct slot *)hotplug_slot->private;
-	*value = slot->hotplug_slot->info->attention_status;
-	return 0;
+
+	down(&rpaphp_sem);
+	*value = rpaphp_get_attention_status(slot);
+	up(&rpaphp_sem);
+	return retval;
 }
 
 static int get_adapter_status(struct hotplug_slot *hotplug_slot, u8 * value)
 {
 	struct slot *slot = (struct slot *)hotplug_slot->private;
-	int rc, state;
+	int retval = 0;
 
-	rc = rpaphp_get_sensor_state(slot, &state);
-
-	*value = NOT_VALID;
-	if (rc)
-		return rc;
-
-	if (state == EMPTY)
-		*value = EMPTY;
-	else if (state == PRESENT)
-		*value = slot->state;
-
-	return 0;
+	down(&rpaphp_sem);
+	retval = rpaphp_get_pci_adapter_status(slot, 0, value);
+	up(&rpaphp_sem);
+	return retval;
 }
 
 static int get_max_bus_speed(struct hotplug_slot *hotplug_slot, enum pci_bus_speed *value)
 {
 	struct slot *slot = (struct slot *)hotplug_slot->private;
 
+	down(&rpaphp_sem);
 	switch (slot->type) {
 	case 1:
 	case 2:
@@ -165,19 +172,20 @@ static int get_max_bus_speed(struct hotplug_slot *hotplug_slot, enum pci_bus_spe
 		break;
 
 	}
+	up(&rpaphp_sem);
 	return 0;
 }
 
-static int get_children_props(struct device_node *dn, const int **drc_indexes,
-		const int **drc_names, const int **drc_types,
-		const int **drc_power_domains)
+static int get_children_props(struct device_node *dn, int **drc_indexes,
+		int **drc_names, int **drc_types, int **drc_power_domains)
 {
-	const int *indexes, *names, *types, *domains;
+	int *indexes, *names;
+	int *types, *domains;
 
-	indexes = of_get_property(dn, "ibm,drc-indexes", NULL);
-	names = of_get_property(dn, "ibm,drc-names", NULL);
-	types = of_get_property(dn, "ibm,drc-types", NULL);
-	domains = of_get_property(dn, "ibm,drc-power-domains", NULL);
+	indexes = (int *) get_property(dn, "ibm,drc-indexes", NULL);
+	names = (int *) get_property(dn, "ibm,drc-names", NULL);
+	types = (int *) get_property(dn, "ibm,drc-types", NULL);
+	domains = (int *) get_property(dn, "ibm,drc-power-domains", NULL);
 
 	if (!indexes || !names || !types || !domains) {
 		/* Slot does not have dynamically-removable children */
@@ -204,13 +212,13 @@ static int get_children_props(struct device_node *dn, const int **drc_indexes,
 int rpaphp_get_drc_props(struct device_node *dn, int *drc_index,
 		char **drc_name, char **drc_type, int *drc_power_domain)
 {
-	const int *indexes, *names;
-	const int *types, *domains;
-	const unsigned int *my_index;
+	int *indexes, *names;
+	int *types, *domains;
+	unsigned int *my_index;
 	char *name_tmp, *type_tmp;
 	int i, rc;
 
-	my_index = of_get_property(dn, "ibm,my-drc-index", NULL);
+	my_index = (int *) get_property(dn, "ibm,my-drc-index", NULL);
 	if (!my_index) {
 		/* Node isn't DLPAR/hotplug capable */
 		return -EINVAL;
@@ -257,96 +265,68 @@ static int is_php_type(char *drc_type)
 	return 1;
 }
 
-/**
- * is_php_dn() - return 1 if this is a hotpluggable pci slot, else 0
- * @dn: target &device_node
- * @indexes: passed to get_children_props()
- * @names: passed to get_children_props()
- * @types: returned from get_children_props()
- * @power_domains:
- *
- * This routine will return true only if the device node is
- * a hotpluggable slot. This routine will return false
- * for built-in pci slots (even when the built-in slots are
- * dlparable.)
- */
-static int is_php_dn(struct device_node *dn, const int **indexes,
-		const int **names, const int **types, const int **power_domains)
+static int is_php_dn(struct device_node *dn, int **indexes, int **names,
+		int **types, int **power_domains)
 {
-	const int *drc_types;
+	int *drc_types;
 	int rc;
 
 	rc = get_children_props(dn, indexes, names, &drc_types, power_domains);
-	if (rc < 0)
-		return 0;
+	if (rc >= 0) {
+		if (is_php_type((char *) &drc_types[1])) {
+			*types = drc_types;
+			return 1;
+		}
+	}
 
-	if (!is_php_type((char *) &drc_types[1]))
-		return 0;
-
-	*types = drc_types;
-	return 1;
+	return 0;
 }
 
 /**
- * rpaphp_add_slot -- declare a hotplug slot to the hotplug subsystem.
- * @dn: device node of slot
+ * rpaphp_add_slot -- add hotplug or dlpar slot
  *
- * This subroutine will register a hotplugable slot with the
- * PCI hotplug infrastructure. This routine is typicaly called
- * during boot time, if the hotplug slots are present at boot time,
- * or is called later, by the dlpar add code, if the slot is
- * being dynamically added during runtime.
- *
- * If the device node points at an embedded (built-in) slot, this
- * routine will just return without doing anything, since embedded
- * slots cannot be hotplugged.
- *
- * To remove a slot, it suffices to call rpaphp_deregister_slot().
+ *	rpaphp not only registers PCI hotplug slots(HOTPLUG), 
+ *	but also logical DR slots(EMBEDDED).
+ *	HOTPLUG slot: An adapter can be physically added/removed. 
+ *	EMBEDDED slot: An adapter can be logically removed/added
+ *		  from/to a partition with the slot.
  */
 int rpaphp_add_slot(struct device_node *dn)
 {
 	struct slot *slot;
 	int retval = 0;
 	int i;
-	const int *indexes, *names, *types, *power_domains;
+	int *indexes, *names, *types, *power_domains;
 	char *name, *type;
 
-	if (!dn->name || strcmp(dn->name, "pci"))
-		return 0;
-
-	/* If this is not a hotplug slot, return without doing anything. */
-	if (!is_php_dn(dn, &indexes, &names, &types, &power_domains))
-		return 0;
-
-	dbg("Entry %s: dn->full_name=%s\n", __func__, dn->full_name);
+	dbg("Entry %s: dn->full_name=%s\n", __FUNCTION__, dn->full_name);
 
 	/* register PCI devices */
-	name = (char *) &names[1];
-	type = (char *) &types[1];
-	for (i = 0; i < indexes[0]; i++) {
+	if (dn->name != 0 && strcmp(dn->name, "pci") == 0) {
+		if (!is_php_dn(dn, &indexes, &names, &types, &power_domains))
+			goto exit;
 
-		slot = alloc_slot_struct(dn, indexes[i + 1], name, power_domains[i + 1]);
-		if (!slot)
-			return -ENOMEM;
+		name = (char *) &names[1];
+		type = (char *) &types[1];
+		for (i = 0; i < indexes[0]; i++,
+	     		name += (strlen(name) + 1), type += (strlen(type) + 1)) 		{
 
-		slot->type = simple_strtoul(type, NULL, 10);
+			if (!(slot = alloc_slot_struct(dn, indexes[i + 1], name,
+				       power_domains[i + 1]))) {
+				retval = -ENOMEM;
+				goto exit;
+			}
+			slot->type = simple_strtoul(type, NULL, 10);
 				
-		dbg("Found drc-index:0x%x drc-name:%s drc-type:%s\n",
-				indexes[i + 1], name, type);
+			dbg("Found drc-index:0x%x drc-name:%s drc-type:%s\n",
+					indexes[i + 1], name, type);
 
-		retval = rpaphp_enable_slot(slot);
-		if (!retval)
-			retval = rpaphp_register_slot(slot);
-
-		if (retval)
-			dealloc_slot_struct(slot);
-
-		name += strlen(name) + 1;
-		type += strlen(type) + 1;
+			retval = rpaphp_register_pci_slot(slot);
+		}
 	}
-	dbg("%s - Exit: rc[%d]\n", __func__, retval);
-
-	/* XXX FIXME: reports a failure only if last entry in loop failed */
+exit:
+	dbg("%s - Exit: num_slots=%d rc[%d]\n",
+	    __FUNCTION__, num_slots, retval);
 	return retval;
 }
 
@@ -374,8 +354,9 @@ static int __init rpaphp_init(void)
 	struct device_node *dn = NULL;
 
 	info(DRIVER_DESC " version: " DRIVER_VERSION "\n");
+	init_MUTEX(&rpaphp_sem);
 
-	while ((dn = of_find_node_by_name(dn, "pci")))
+	while ((dn = of_find_node_by_type(dn, "pci")))
 		rpaphp_add_slot(dn);
 
 	return 0;
@@ -386,9 +367,8 @@ static void __exit rpaphp_exit(void)
 	cleanup_slots();
 }
 
-static int enable_slot(struct hotplug_slot *hotplug_slot)
+static int __enable_slot(struct slot *slot)
 {
-	struct slot *slot = (struct slot *)hotplug_slot->private;
 	int state;
 	int retval;
 
@@ -405,27 +385,55 @@ static int enable_slot(struct hotplug_slot *hotplug_slot)
 	} else if (state == EMPTY) {
 		slot->state = EMPTY;
 	} else {
-		err("%s: slot[%s] is in invalid state\n", __func__, slot->name);
+		err("%s: slot[%s] is in invalid state\n", __FUNCTION__, slot->name);
 		slot->state = NOT_VALID;
 		return -EINVAL;
 	}
 	return 0;
 }
 
-static int disable_slot(struct hotplug_slot *hotplug_slot)
+static int enable_slot(struct hotplug_slot *hotplug_slot)
 {
+	int retval;
 	struct slot *slot = (struct slot *)hotplug_slot->private;
+
+	down(&rpaphp_sem);
+	retval = __enable_slot(slot);
+	up(&rpaphp_sem);
+
+	return retval;
+}
+
+static int __disable_slot(struct slot *slot)
+{
+	struct pci_dev *dev, *tmp;
+
 	if (slot->state == NOT_CONFIGURED)
 		return -EINVAL;
 
-	pcibios_remove_pci_devices(slot->bus);
-	vm_unmap_aliases();
+	list_for_each_entry_safe(dev, tmp, &slot->bus->devices, bus_list) {
+		eeh_remove_bus_device(dev);
+		pci_remove_bus_device(dev);
+	}
 
 	slot->state = NOT_CONFIGURED;
 	return 0;
 }
 
+static int disable_slot(struct hotplug_slot *hotplug_slot)
+{
+	struct slot *slot = (struct slot *)hotplug_slot->private;
+	int retval;
+
+	down(&rpaphp_sem);
+	retval = __disable_slot (slot);
+	up(&rpaphp_sem);
+
+	return retval;
+}
+
 struct hotplug_slot_ops rpaphp_hotplug_slot_ops = {
+	.owner = THIS_MODULE,
 	.enable_slot = enable_slot,
 	.disable_slot = disable_slot,
 	.set_attention_status = set_attention_status,

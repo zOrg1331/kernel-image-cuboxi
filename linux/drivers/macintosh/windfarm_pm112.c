@@ -650,26 +650,24 @@ static struct notifier_block pm112_events = {
 	.notifier_call = pm112_wf_notify,
 };
 
-static int wf_pm112_probe(struct platform_device *dev)
+static int wf_pm112_probe(struct device *dev)
 {
 	wf_register_client(&pm112_events);
 	return 0;
 }
 
-static int __devexit wf_pm112_remove(struct platform_device *dev)
+static int wf_pm112_remove(struct device *dev)
 {
 	wf_unregister_client(&pm112_events);
 	/* should release all sensors and controls */
 	return 0;
 }
 
-static struct platform_driver wf_pm112_driver = {
+static struct device_driver wf_pm112_driver = {
+	.name = "windfarm",
+	.bus = &platform_bus_type,
 	.probe = wf_pm112_probe,
-	.remove = __devexit_p(wf_pm112_remove),
-	.driver = {
-		.name = "windfarm",
-		.owner	= THIS_MODULE,
-	},
+	.remove = wf_pm112_remove,
 };
 
 static int __init wf_pm112_init(void)
@@ -685,24 +683,13 @@ static int __init wf_pm112_init(void)
 		++nr_cores;
 
 	printk(KERN_INFO "windfarm: initializing for dual-core desktop G5\n");
-
-#ifdef MODULE
-	request_module("windfarm_smu_controls");
-	request_module("windfarm_smu_sensors");
-	request_module("windfarm_smu_sat");
-	request_module("windfarm_lm75_sensor");
-	request_module("windfarm_max6690_sensor");
-	request_module("windfarm_cpufreq_clamp");
-
-#endif /* MODULE */
-
-	platform_driver_register(&wf_pm112_driver);
+	driver_register(&wf_pm112_driver);
 	return 0;
 }
 
 static void __exit wf_pm112_exit(void)
 {
-	platform_driver_unregister(&wf_pm112_driver);
+	driver_unregister(&wf_pm112_driver);
 }
 
 module_init(wf_pm112_init);
@@ -711,4 +698,3 @@ module_exit(wf_pm112_exit);
 MODULE_AUTHOR("Paul Mackerras <paulus@samba.org>");
 MODULE_DESCRIPTION("Thermal control for PowerMac11,2");
 MODULE_LICENSE("GPL");
-MODULE_ALIAS("platform:windfarm");

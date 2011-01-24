@@ -1,0 +1,36 @@
+From: Jeff Layton <jlayton@redhat.com>
+Subject: [RHEL5 PATCH] prevent oops in compat_sys_mount with NULL data pointer (
+BZ 239767)
+Date: Sat, 12 May 2007 10:28:41 -0400
+Bugzilla: 239767
+Message-Id: <20070512102841.743ef456.jlayton@redhat.com>
+Changelog: [fs] prevent oops in compat_sys_mount
+
+An unprivileged user can trivially panic a RHEL5 x86_64 machine by
+running a 32-bit program that calls mount with a NULL "data" pointer.
+For instance:
+
+mount("/foo/bar","/mnt/foo","smbfs", 0, NULL);
+
+The problem is that compat_sys_mount doesn't check whether this pointer
+is NULL before trying to dereference it when the filesystem type is one
+of smbfs, ncpfs, or nfs4. The following patch went upstream in December
+and corrects this.
+
+This probably qualifies as a security issue, so please ACK.
+
+-- Jeff Layton <jlayton@redhat.com>
+
+diff --git a/fs/compat.c b/fs/compat.c
+index 55cf405..7973687 100644
+--- a/fs/compat.c
++++ b/fs/compat.c
+@@ -873,7 +873,7 @@ asmlinkage long compat_sys_mount(char __user * dev_name, char __user * dir_name,
+ 
+ 	retval = -EINVAL;
+ 
+-	if (type_page) {
++	if (type_page && data_page) {
+ 		if (!strcmp((char *)type_page, SMBFS_NAME)) {
+ 			do_smb_super_data_conv((void *)data_page);
+ 		} else if (!strcmp((char *)type_page, NCPFS_NAME)) {

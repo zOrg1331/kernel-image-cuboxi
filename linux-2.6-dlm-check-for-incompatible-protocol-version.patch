@@ -1,0 +1,51 @@
+From: David Teigland <teigland@redhat.com>
+Subject: [RHEL5 PATCH] dlm: check for incompatible protocol version
+Date: Thu, 30 Nov 2006 16:09:53 -0600
+Bugzilla: 215596
+Message-Id: <20061130220953.GC31429@redhat.com>
+Changelog: dlm: check for incompatible protocol version
+
+
+bz 215596
+patch 3 of 3
+
+Check if we receive a message from another lockspace member running a
+version of the dlm with an incompatible inter-node message protocol.
+
+The previous patch in this series (2 of 3 for bz 215596) changes the
+protocol version so we want to have this checking in place.
+
+
+Index: latest/fs/dlm/rcom.c
+===================================================================
+--- latest.orig/fs/dlm/rcom.c
++++ latest/fs/dlm/rcom.c
+@@ -78,8 +78,17 @@ static void make_config(struct dlm_ls *l
+ 	rf->rf_lsflags = ls->ls_exflags;
+ }
+ 
+-static int check_config(struct dlm_ls *ls, struct rcom_config *rf, int nodeid)
++static int check_config(struct dlm_ls *ls, struct dlm_rcom *rc, int nodeid)
+ {
++	struct rcom_config *rf = (struct rcom_config *) rc->rc_buf;
++
++	if ((rc->rc_header.h_version & 0xFFFF0000) != DLM_HEADER_MAJOR) {
++		log_error(ls, "version mismatch: %x nodeid %d: %x",
++			  DLM_HEADER_MAJOR | DLM_HEADER_MINOR, nodeid,
++			  rc->rc_header.h_version);
++		return -EINVAL;
++	}
++
+ 	if (rf->rf_lvblen != ls->ls_lvblen ||
+ 	    rf->rf_lsflags != ls->ls_exflags) {
+ 		log_error(ls, "config mismatch: %d,%x nodeid %d: %d,%x",
+@@ -124,8 +133,7 @@ int dlm_rcom_status(struct dlm_ls *ls, i
+ 		log_debug(ls, "remote node %d not ready", nodeid);
+ 		rc->rc_result = 0;
+ 	} else
+-		error = check_config(ls, (struct rcom_config *) rc->rc_buf,
+-				     nodeid);
++		error = check_config(ls, rc, nodeid);
+ 	/* the caller looks at rc_result for the remote recovery status */
+  out:
+ 	return error;

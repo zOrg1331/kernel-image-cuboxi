@@ -1,0 +1,26 @@
+From: Chris Lalancette <clalance@redhat.com>
+Date: Thu, 17 Jul 2008 17:29:16 +0200
+Subject: [xen] don't collide symbols with blktap
+Message-id: 487F654C.9030703@redhat.com
+O-Subject: [RHEL5.3 PATCH 6/7]: Don't collide symbols with blktap v2
+Bugzilla: 250104
+RH-Acked-by: Stephen Tweedie <sct@redhat.com>
+RH-Acked-by: Bill Burns <bburns@redhat.com>
+RH-Acked-by: Don Dutile <ddutile@redhat.com>
+
+Because of the last patch, blkback and blktap now collide symbols; make the
+blkback one a static to resolve the collision.  From xen-3.1-testing.hg c/s 15390.
+
+diff --git a/drivers/xen/blkback/xenbus.c b/drivers/xen/blkback/xenbus.c
+index ddb77de..a298afc 100644
+--- a/drivers/xen/blkback/xenbus.c
++++ b/drivers/xen/blkback/xenbus.c
+@@ -110,7 +110,7 @@ static void update_blkif_status(blkif_t *blkif)
+ 									\
+ 		return sprintf(buf, format, ##args);			\
+ 	}								\
+-	DEVICE_ATTR(name, S_IRUGO, show_##name, NULL)
++	static DEVICE_ATTR(name, S_IRUGO, show_##name, NULL)
+ 
+ VBD_SHOW(oo_req,  "%d\n", be->blkif->st_oo_req);
+ VBD_SHOW(rd_req,  "%d\n", be->blkif->st_rd_req);

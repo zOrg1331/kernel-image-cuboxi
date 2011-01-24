@@ -1,0 +1,42 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Date: Wed, 20 Jan 2010 15:31:36 -0500
+Subject: [acpi] fix NULL pointer panic in acpi_run_os
+Message-id: <20100120152331.8192.35093.sendpatchset@prarit.bos.redhat.com>
+Patchwork-id: 22678
+O-Subject: [RHEL5]: ACPI: Fix NULL pointer panic in acpi_run_osc()
+Bugzilla: 547733
+RH-Acked-by: Don Dutile <ddutile@redhat.com>
+RH-Acked-by: Andrew Jones <drjones@redhat.com>
+RH-Acked-by: Dean Nelson <dnelson@redhat.com>
+
+Backport of f8123381bae8d581d81f24b55719db3d9a6a262c
+
+Test for a NULL length _OSC object.
+
+On the 206m series IBM machines, 5 _OSC objects are declared but there are
+only 4.  This leads to a panic when looking at the last object.
+
+We do not have the IBM HW to reproduce this issue, so this was only compile
+tested.  In the BZ, IBM says that this patch does resolve the NULL pointer
+panic.
+
+Successfully compiled by me.
+
+Resolves BZ 547733.
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/pci/pci-acpi.c b/drivers/pci/pci-acpi.c
+index 0186070..334e7c8 100644
+--- a/drivers/pci/pci-acpi.c
++++ b/drivers/pci/pci-acpi.c
+@@ -83,6 +83,9 @@ static acpi_status acpi_run_osc(acpi_handle handle,
+ 	if (ACPI_FAILURE(status))
+ 		return status;
+ 
++	if (!output.length)
++		return AE_NULL_OBJECT;
++
+ 	out_obj = output.pointer;
+ 	if (out_obj->type != ACPI_TYPE_BUFFER) {
+ 		printk(KERN_DEBUG "Evaluate _OSC returns wrong type\n");

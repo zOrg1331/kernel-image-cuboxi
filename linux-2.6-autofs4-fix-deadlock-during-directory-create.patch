@@ -1,0 +1,95 @@
+From: Ian Kent <ikent@redhat.com>
+Subject: [RHEL 5.1 PATCH] autofs4 - fix deadlock during directory create
+Date: Fri, 14 Sep 2007 03:40:51 +0800
+Bugzilla: 253231
+Message-Id: <1189712451.3068.6.camel@raven.themaw.net>
+Changelog: [autofs4] fix deadlock during directory create
+
+
+Hi all,
+
+A potential deadlock within the autofs4 kernel module exists as
+described in bug #253231.
+
+The patch presented here depends on patches and updates previously
+posted for bug #174821 and the bug here is marked as dependent on this
+bug.
+
+The problem arises due to inconsistent locking in the VFS between calls
+to lookup and revalidate and deadlock can occur in the autofs4 kernel
+module.
+
+The inconsistency is that the directory inode mutex is held for both
+lookup and revalidate calls when called via lookup_hash whereas it is
+held only for lookup during a path walk. Consequently, if the mutex
+is held during a call to revalidate autofs4 can't release the mutex
+to callback the daemon as it can't know whether it owns the mutex.
+
+This situation happens when a process tries to create a directory
+within an automount and a second process also tries to create the
+same directory between the lookup and the mkdir. Since the first
+process has dropped the mutex for the daemon callback, the second
+process takes it during revalidate leading to deadlock between the
+autofs daemon and the second process when the daemon tries to create
+the mount point directory.
+
+--
+--- linux-2.6.18.noarch/fs/autofs4/root.c.lookup-delay-hash-update	2007-08-27 19:31:13.000000000 +0800
++++ linux-2.6.18.noarch/fs/autofs4/root.c	2007-08-27 19:53:47.000000000 +0800
+@@ -588,19 +588,20 @@ static struct dentry *autofs4_lookup(str
+ 	unhashed = autofs4_lookup_unhashed(sbi, dentry->d_parent, &dentry->d_name);
+ 	if (!unhashed) {
+ 		/*
+-		 * Mark the dentry incomplete, but add it. This is needed so
+-		 * that the VFS layer knows about the dentry, and we can count
+-		 * on catching any lookups through the revalidate.
+-		 *
+-		 * Let all the hard work be done by the revalidate function that
+-		 * needs to be able to do this anyway..
+-		 *
+-		 * We need to do this before we release the directory semaphore.
++		 * Mark the dentry incomplete but don't hash it. We do this 
++		 * to serialize our inode creation operations (symlink and
++		 * mkdir) which prevents deadlock during the callback to
++		 * the daemon. Subsequent user space lookups for the same
++		 * dentry are placed on the wait queue while the daemon
++		 * itself is allowed passage unresticted so the create
++		 * operation itself can then hash the dentry. Finally,
++		 * we check for the hashed dentry and return the newly
++		 * hashed dentry.
+ 		 */
+ 		dentry->d_op = &autofs4_root_dentry_operations;
+ 
+ 		dentry->d_fsdata = NULL;
+-		d_add(dentry, NULL);
++		d_instantiate(dentry, NULL);
+ 	} else {
+ 		struct autofs_info *ino = autofs4_dentry_ino(unhashed);
+ 		DPRINTK("rehash %p with %p", dentry, unhashed);
+@@ -616,7 +617,6 @@ static struct dentry *autofs4_lookup(str
+ 			autofs4_wait(sbi, unhashed, NFY_NONE);
+ 			DPRINTK("request completed");
+ 		}
+-		d_rehash(unhashed);
+ 		dentry = unhashed;
+ 	}
+ 
+@@ -717,7 +717,7 @@ static int autofs4_dir_symlink(struct in
+ 	strcpy(cp, symname);
+ 
+ 	inode = autofs4_get_inode(dir->i_sb, ino);
+-	d_instantiate(dentry, inode);
++	d_add(dentry, inode);
+ 
+ 	if (dir == dir->i_sb->s_root->d_inode)
+ 		dentry->d_op = &autofs4_root_dentry_operations;
+@@ -845,7 +845,7 @@ static int autofs4_dir_mkdir(struct inod
+ 		return -ENOSPC;
+ 
+ 	inode = autofs4_get_inode(dir->i_sb, ino);
+-	d_instantiate(dentry, inode);
++	d_add(dentry, inode);
+ 
+ 	if (dir == dir->i_sb->s_root->d_inode)
+ 		dentry->d_op = &autofs4_root_dentry_operations;
+

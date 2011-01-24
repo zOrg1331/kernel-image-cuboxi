@@ -7,7 +7,6 @@
  */
 
 #include <linux/spinlock.h>
-#include <linux/nmi.h>
 #include <linux/interrupt.h>
 #include <linux/debug_locks.h>
 #include <linux/delay.h>
@@ -21,7 +20,7 @@ void __spin_lock_init(spinlock_t *lock, const char *name,
 	 * Make sure we are not reinitializing a held lock:
 	 */
 	debug_check_no_locks_freed((void *)lock, sizeof(*lock));
-	lockdep_init_map(&lock->dep_map, name, key, 0);
+	lockdep_init_map(&lock->dep_map, name, key);
 #endif
 	lock->raw_lock = (raw_spinlock_t)__RAW_SPIN_LOCK_UNLOCKED;
 	lock->magic = SPINLOCK_MAGIC;
@@ -39,7 +38,7 @@ void __rwlock_init(rwlock_t *lock, const char *name,
 	 * Make sure we are not reinitializing a held lock:
 	 */
 	debug_check_no_locks_freed((void *)lock, sizeof(*lock));
-	lockdep_init_map(&lock->dep_map, name, key, 0);
+	lockdep_init_map(&lock->dep_map, name, key);
 #endif
 	lock->raw_lock = (raw_rwlock_t) __RAW_RW_LOCK_UNLOCKED;
 	lock->magic = RWLOCK_MAGIC;
@@ -58,14 +57,14 @@ static void spin_bug(spinlock_t *lock, const char *msg)
 
 	if (lock->owner && lock->owner != SPINLOCK_OWNER_INIT)
 		owner = lock->owner;
-	printk(KERN_EMERG "BUG: spinlock %s on CPU#%d, %s/%d (%s)\n",
+	printk(KERN_EMERG "BUG: spinlock %s on CPU#%d, %s/%d\n",
 		msg, raw_smp_processor_id(),
-		current->comm, task_pid_nr(current), print_tainted());
+		current->comm, current->pid);
 	printk(KERN_EMERG " lock: %p, .magic: %08x, .owner: %s/%d, "
 			".owner_cpu: %d\n",
 		lock, lock->magic,
 		owner ? owner->comm : "<none>",
-		owner ? task_pid_nr(owner) : -1,
+		owner ? owner->pid : -1,
 		lock->owner_cpu);
 	dump_stack();
 }
@@ -100,12 +99,11 @@ static inline void debug_spin_unlock(spinlock_t *lock)
 
 static void __spin_lock_debug(spinlock_t *lock)
 {
-	u64 i;
-	u64 loops = loops_per_jiffy * HZ;
 	int print_once = 1;
+	u64 i;
 
 	for (;;) {
-		for (i = 0; i < loops; i++) {
+		for (i = 0; i < loops_per_jiffy * HZ; i++) {
 			if (__raw_spin_trylock(&lock->raw_lock))
 				return;
 			__delay(1);
@@ -114,13 +112,10 @@ static void __spin_lock_debug(spinlock_t *lock)
 		if (print_once) {
 			print_once = 0;
 			printk(KERN_EMERG "BUG: spinlock lockup on CPU#%d, "
-					"%s/%d, %p (%s)\n",
+					"%s/%d, %p\n",
 				raw_smp_processor_id(), current->comm,
-				task_pid_nr(current), lock, print_tainted());
+				current->pid, lock);
 			dump_stack();
-#ifdef CONFIG_SMP
-			trigger_all_cpu_backtrace();
-#endif
 		}
 	}
 }
@@ -159,9 +154,9 @@ static void rwlock_bug(rwlock_t *lock, const char *msg)
 	if (!debug_locks_off())
 		return;
 
-	printk(KERN_EMERG "BUG: rwlock %s on CPU#%d, %s/%d, %p (%s)\n",
+	printk(KERN_EMERG "BUG: rwlock %s on CPU#%d, %s/%d, %p\n",
 		msg, raw_smp_processor_id(), current->comm,
-		task_pid_nr(current), lock, print_tainted());
+		current->pid, lock);
 	dump_stack();
 }
 
@@ -170,12 +165,11 @@ static void rwlock_bug(rwlock_t *lock, const char *msg)
 #if 0		/* __write_lock_debug() can lock up - maybe this can too? */
 static void __read_lock_debug(rwlock_t *lock)
 {
-	u64 i;
-	u64 loops = loops_per_jiffy * HZ;
 	int print_once = 1;
+	u64 i;
 
 	for (;;) {
-		for (i = 0; i < loops; i++) {
+		for (i = 0; i < loops_per_jiffy * HZ; i++) {
 			if (__raw_read_trylock(&lock->raw_lock))
 				return;
 			__delay(1);
@@ -184,9 +178,9 @@ static void __read_lock_debug(rwlock_t *lock)
 		if (print_once) {
 			print_once = 0;
 			printk(KERN_EMERG "BUG: read-lock lockup on CPU#%d, "
-					"%s/%d, %p (%s)\n",
+					"%s/%d, %p\n",
 				raw_smp_processor_id(), current->comm,
-				current->pid, lock, print_tainted());
+				current->pid, lock);
 			dump_stack();
 		}
 	}
@@ -245,12 +239,11 @@ static inline void debug_write_unlock(rwlock_t *lock)
 #if 0		/* This can cause lockups */
 static void __write_lock_debug(rwlock_t *lock)
 {
-	u64 i;
-	u64 loops = loops_per_jiffy * HZ;
 	int print_once = 1;
+	u64 i;
 
 	for (;;) {
-		for (i = 0; i < loops; i++) {
+		for (i = 0; i < loops_per_jiffy * HZ; i++) {
 			if (__raw_write_trylock(&lock->raw_lock))
 				return;
 			__delay(1);
@@ -259,9 +252,9 @@ static void __write_lock_debug(rwlock_t *lock)
 		if (print_once) {
 			print_once = 0;
 			printk(KERN_EMERG "BUG: write-lock lockup on CPU#%d, "
-					"%s/%d, %p (%s)\n",
+					"%s/%d, %p\n",
 				raw_smp_processor_id(), current->comm,
-				current->pid, lock, print_tainted());
+				current->pid, lock);
 			dump_stack();
 		}
 	}

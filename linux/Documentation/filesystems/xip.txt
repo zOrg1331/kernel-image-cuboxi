@@ -19,7 +19,7 @@ completely. With execute-in-place, read&write type operations are performed
 directly from/to the memory backed storage device. For file mappings, the
 storage device itself is mapped directly into userspace.
 
-This implementation was initially written for shared memory segments between
+This implementation was initialy written for shared memory segments between
 different virtual machines on s390 hardware to allow multiple machines to
 share the same binaries and libraries.
 
@@ -39,11 +39,10 @@ The block device operation is optional, these block devices support it as of
 today:
 - dcssblk: s390 dcss block device driver
 
-An address space operation named get_xip_mem is used to retrieve references
-to a page frame number and a kernel address. To obtain these values a reference
-to an address_space is provided. This function assigns values to the kmem and
-pfn parameters. The third argument indicates whether the function should allocate
-blocks if needed.
+An address space operation named get_xip_page is used to retrieve reference
+to a struct page. To address the target page, a reference to an address_space,
+and a sector number is provided. A 3rd argument indicates whether the
+function should allocate blocks if needed.
 
 This address space operation is mutually exclusive with readpage&writepage that
 do page cache read/write operations.

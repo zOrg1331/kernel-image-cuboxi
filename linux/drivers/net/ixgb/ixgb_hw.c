@@ -1,27 +1,27 @@
 /*******************************************************************************
 
-  Intel PRO/10GbE Linux driver
-  Copyright(c) 1999 - 2008 Intel Corporation.
-
-  This program is free software; you can redistribute it and/or modify it
-  under the terms and conditions of the GNU General Public License,
-  version 2, as published by the Free Software Foundation.
-
-  This program is distributed in the hope it will be useful, but WITHOUT
-  ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
-  FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+  
+  Copyright(c) 1999 - 2006 Intel Corporation. All rights reserved.
+  
+  This program is free software; you can redistribute it and/or modify it 
+  under the terms of the GNU General Public License as published by the Free 
+  Software Foundation; either version 2 of the License, or (at your option) 
+  any later version.
+  
+  This program is distributed in the hope that it will be useful, but WITHOUT 
+  ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or 
+  FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for 
   more details.
-
+  
   You should have received a copy of the GNU General Public License along with
-  this program; if not, write to the Free Software Foundation, Inc.,
-  51 Franklin St - Fifth Floor, Boston, MA 02110-1301 USA.
-
-  The full GNU General Public License is included in this distribution in
-  the file called "COPYING".
-
+  this program; if not, write to the Free Software Foundation, Inc., 59 
+  Temple Place - Suite 330, Boston, MA  02111-1307, USA.
+  
+  The full GNU General Public License is included in this distribution in the
+  file called LICENSE.
+  
   Contact Information:
   Linux NICS <linux.nics@intel.com>
-  e1000-devel Mailing List <e1000-devel@lists.sourceforge.net>
   Intel Corporation, 5200 N.E. Elam Young Parkway, Hillsboro, OR 97124-6497
 
 *******************************************************************************/
@@ -35,17 +35,15 @@
 
 /*  Local function prototypes */
 
-static u32 ixgb_hash_mc_addr(struct ixgb_hw *hw, u8 * mc_addr);
+static uint32_t ixgb_hash_mc_addr(struct ixgb_hw *hw, uint8_t * mc_addr);
 
-static void ixgb_mta_set(struct ixgb_hw *hw, u32 hash_value);
+static void ixgb_mta_set(struct ixgb_hw *hw, uint32_t hash_value);
 
 static void ixgb_get_bus_info(struct ixgb_hw *hw);
 
-static bool ixgb_link_reset(struct ixgb_hw *hw);
+static boolean_t ixgb_link_reset(struct ixgb_hw *hw);
 
 static void ixgb_optics_reset(struct ixgb_hw *hw);
-
-static void ixgb_optics_reset_bcm(struct ixgb_hw *hw);
 
 static ixgb_phy_type ixgb_identify_phy(struct ixgb_hw *hw);
 
@@ -55,18 +53,18 @@ static void ixgb_clear_vfta(struct ixgb_hw *hw);
 
 static void ixgb_init_rx_addrs(struct ixgb_hw *hw);
 
-static u16 ixgb_read_phy_reg(struct ixgb_hw *hw,
-				  u32 reg_address,
-				  u32 phy_address,
-				  u32 device_type);
+static uint16_t ixgb_read_phy_reg(struct ixgb_hw *hw,
+				  uint32_t reg_address,
+				  uint32_t phy_address,
+				  uint32_t device_type);
 
-static bool ixgb_setup_fc(struct ixgb_hw *hw);
+static boolean_t ixgb_setup_fc(struct ixgb_hw *hw);
 
-static bool mac_addr_valid(u8 *mac_addr);
+static boolean_t mac_addr_valid(uint8_t *mac_addr);
 
-static u32 ixgb_mac_reset(struct ixgb_hw *hw)
+static uint32_t ixgb_mac_reset(struct ixgb_hw *hw)
 {
-	u32 ctrl_reg;
+	uint32_t ctrl_reg;
 
 	ctrl_reg =  IXGB_CTRL0_RST |
 				IXGB_CTRL0_SDP3_DIR |   /* All pins are Output=1 */
@@ -85,26 +83,16 @@ static u32 ixgb_mac_reset(struct ixgb_hw *hw)
 #endif
 
 	/* Delay a few ms just to allow the reset to complete */
-	msleep(IXGB_DELAY_AFTER_RESET);
+	msec_delay(IXGB_DELAY_AFTER_RESET);
 	ctrl_reg = IXGB_READ_REG(hw, CTRL0);
 #ifdef DBG
 	/* Make sure the self-clearing global reset bit did self clear */
 	ASSERT(!(ctrl_reg & IXGB_CTRL0_RST));
 #endif
 
-	if (hw->subsystem_vendor_id == SUN_SUBVENDOR_ID) {
-		ctrl_reg =  /* Enable interrupt from XFP and SerDes */
-			   IXGB_CTRL1_GPI0_EN |
-			   IXGB_CTRL1_SDP6_DIR |
-			   IXGB_CTRL1_SDP7_DIR |
-			   IXGB_CTRL1_SDP6 |
-			   IXGB_CTRL1_SDP7;
-		IXGB_WRITE_REG(hw, CTRL1, ctrl_reg);
-		ixgb_optics_reset_bcm(hw);
-	}
-
-	if (hw->phy_type == ixgb_phy_type_txn17401)
+	if (hw->phy_type == ixgb_phy_type_txn17401) {
 		ixgb_optics_reset(hw);
+	}
 
 	return ctrl_reg;
 }
@@ -114,26 +102,26 @@ static u32 ixgb_mac_reset(struct ixgb_hw *hw)
  *
  * hw - Struct containing variables accessed by shared code
  *****************************************************************************/
-bool
+boolean_t
 ixgb_adapter_stop(struct ixgb_hw *hw)
 {
-	u32 ctrl_reg;
-	u32 icr_reg;
+	uint32_t ctrl_reg;
+	uint32_t icr_reg;
 
 	DEBUGFUNC("ixgb_adapter_stop");
 
 	/* If we are stopped or resetting exit gracefully and wait to be
 	 * started again before accessing the hardware.
 	 */
-	if (hw->adapter_stopped) {
+	if(hw->adapter_stopped) {
 		DEBUGOUT("Exiting because the adapter is already stopped!!!\n");
-		return false;
+		return FALSE;
 	}
 
 	/* Set the Adapter Stopped flag so other driver functions stop
 	 * touching the Hardware.
 	 */
-	hw->adapter_stopped = true;
+	hw->adapter_stopped = TRUE;
 
 	/* Clear interrupt mask to stop board from generating interrupts */
 	DEBUGOUT("Masking off all interrupts\n");
@@ -145,7 +133,7 @@ ixgb_adapter_stop(struct ixgb_hw *hw)
 	 */
 	IXGB_WRITE_REG(hw, RCTL, IXGB_READ_REG(hw, RCTL) & ~IXGB_RCTL_RXEN);
 	IXGB_WRITE_REG(hw, TCTL, IXGB_READ_REG(hw, TCTL) & ~IXGB_TCTL_TXEN);
-	msleep(IXGB_DELAY_BEFORE_RESET);
+	msec_delay(IXGB_DELAY_BEFORE_RESET);
 
 	/* Issue a global reset to the MAC.  This will reset the chip's
 	 * transmit, receive, DMA, and link units.  It will not effect
@@ -179,8 +167,8 @@ ixgb_adapter_stop(struct ixgb_hw *hw)
 static ixgb_xpak_vendor
 ixgb_identify_xpak_vendor(struct ixgb_hw *hw)
 {
-	u32 i;
-	u16 vendor_name[5];
+	uint32_t i;
+	uint16_t vendor_name[5];
 	ixgb_xpak_vendor xpak_vendor;
 
 	DEBUGFUNC("ixgb_identify_xpak_vendor");
@@ -192,7 +180,7 @@ ixgb_identify_xpak_vendor(struct ixgb_hw *hw)
 		vendor_name[i] = ixgb_read_phy_reg(hw,
 						   MDIO_PMA_PMD_XPAK_VENDOR_NAME
 						   + i, IXGB_PHY_ADDRESS,
-						   MDIO_MMD_PMAPMD);
+						   MDIO_PMA_PMD_DID);
 	}
 
 	/* Determine the actual vendor */
@@ -248,26 +236,11 @@ ixgb_identify_phy(struct ixgb_hw *hw)
 		DEBUGOUT("Identified G6104 optics\n");
 		phy_type = ixgb_phy_type_g6104;
 		break;
-	case IXGB_DEVICE_ID_82597EX_CX4:
-		DEBUGOUT("Identified CX4\n");
-		xpak_vendor = ixgb_identify_xpak_vendor(hw);
-		if (xpak_vendor == ixgb_xpak_vendor_intel) {
-			DEBUGOUT("Identified TXN17201 optics\n");
-			phy_type = ixgb_phy_type_txn17201;
-		} else {
-			DEBUGOUT("Identified G6005 optics\n");
-			phy_type = ixgb_phy_type_g6005;
-		}
-		break;
 	default:
 		DEBUGOUT("Unknown physical layer module\n");
 		phy_type = ixgb_phy_type_unknown;
 		break;
 	}
-
-	/* update phy type for sun specific board */
-	if (hw->subsystem_vendor_id == SUN_SUBVENDOR_ID)
-		phy_type = ixgb_phy_type_bcm;
 
 	return (phy_type);
 }
@@ -286,15 +259,15 @@ ixgb_identify_phy(struct ixgb_hw *hw)
  * Leaves the transmit and receive units disabled and uninitialized.
  *
  * Returns:
- *      true if successful,
- *      false if unrecoverable problems were encountered.
+ *      TRUE if successful,
+ *      FALSE if unrecoverable problems were encountered.
  *****************************************************************************/
-bool
+boolean_t
 ixgb_init_hw(struct ixgb_hw *hw)
 {
-	u32 i;
-	u32 ctrl_reg;
-	bool status;
+	uint32_t i;
+	uint32_t ctrl_reg;
+	boolean_t status;
 
 	DEBUGFUNC("ixgb_init_hw");
 
@@ -316,10 +289,11 @@ ixgb_init_hw(struct ixgb_hw *hw)
 #endif
 
 	/* Delay a few ms just to allow the reset to complete */
-	msleep(IXGB_DELAY_AFTER_EE_RESET);
+	msec_delay(IXGB_DELAY_AFTER_EE_RESET);
 
-	if (!ixgb_get_eeprom_data(hw))
-		return false;
+	if (ixgb_get_eeprom_data(hw) == FALSE) {
+		return(FALSE);
+	}
 
 	/* Use the device id to determine the type of phy/transceiver. */
 	hw->device_id = ixgb_get_ee_device_id(hw);
@@ -336,18 +310,18 @@ ixgb_init_hw(struct ixgb_hw *hw)
 	 */
 	if (!mac_addr_valid(hw->curr_mac_addr)) {
 		DEBUGOUT("MAC address invalid after ixgb_init_rx_addrs\n");
-		return(false);
+		return(FALSE);
 	}
 
 	/* tell the routines in this file they can access hardware again */
-	hw->adapter_stopped = false;
+	hw->adapter_stopped = FALSE;
 
 	/* Fill in the bus_info structure */
 	ixgb_get_bus_info(hw);
 
 	/* Zero out the Multicast HASH table */
 	DEBUGOUT("Zeroing the MTA\n");
-	for (i = 0; i < IXGB_MC_TBL_SIZE; i++)
+	for(i = 0; i < IXGB_MC_TBL_SIZE; i++)
 		IXGB_WRITE_REG_ARRAY(hw, MTA, i, 0);
 
 	/* Zero out the VLAN Filter Table Array */
@@ -371,13 +345,13 @@ ixgb_init_hw(struct ixgb_hw *hw)
  * hw - Struct containing variables accessed by shared code
  *
  * Places the MAC address in receive address register 0 and clears the rest
- * of the receive address registers. Clears the multicast table. Assumes
+ * of the receive addresss registers. Clears the multicast table. Assumes
  * the receiver is in reset when the routine is called.
  *****************************************************************************/
 static void
 ixgb_init_rx_addrs(struct ixgb_hw *hw)
 {
-	u32 i;
+	uint32_t i;
 
 	DEBUGFUNC("ixgb_init_rx_addrs");
 
@@ -413,10 +387,9 @@ ixgb_init_rx_addrs(struct ixgb_hw *hw)
 
 	/* Zero out the other 15 receive addresses. */
 	DEBUGOUT("Clearing RAR[1-15]\n");
-	for (i = 1; i < IXGB_RAR_ENTRIES; i++) {
-		/* Write high reg first to disable the AV bit first */
-		IXGB_WRITE_REG_ARRAY(hw, RA, ((i << 1) + 1), 0);
+	for(i = 1; i < IXGB_RAR_ENTRIES; i++) {
 		IXGB_WRITE_REG_ARRAY(hw, RA, (i << 1), 0);
+		IXGB_WRITE_REG_ARRAY(hw, RA, ((i << 1) + 1), 0);
 	}
 
 	return;
@@ -437,13 +410,13 @@ ixgb_init_rx_addrs(struct ixgb_hw *hw)
  *****************************************************************************/
 void
 ixgb_mc_addr_list_update(struct ixgb_hw *hw,
-			  u8 *mc_addr_list,
-			  u32 mc_addr_count,
-			  u32 pad)
+			  uint8_t *mc_addr_list,
+			  uint32_t mc_addr_count,
+			  uint32_t pad)
 {
-	u32 hash_value;
-	u32 i;
-	u32 rar_used_count = 1;		/* RAR[0] is used for our MAC address */
+	uint32_t hash_value;
+	uint32_t i;
+	uint32_t rar_used_count = 1;		/* RAR[0] is used for our MAC address */
 
 	DEBUGFUNC("ixgb_mc_addr_list_update");
 
@@ -452,18 +425,19 @@ ixgb_mc_addr_list_update(struct ixgb_hw *hw,
 
 	/* Clear RAR[1-15] */
 	DEBUGOUT(" Clearing RAR[1-15]\n");
-	for (i = rar_used_count; i < IXGB_RAR_ENTRIES; i++) {
+	for(i = rar_used_count; i < IXGB_RAR_ENTRIES; i++) {
 		IXGB_WRITE_REG_ARRAY(hw, RA, (i << 1), 0);
 		IXGB_WRITE_REG_ARRAY(hw, RA, ((i << 1) + 1), 0);
 	}
 
 	/* Clear the MTA */
 	DEBUGOUT(" Clearing MTA\n");
-	for (i = 0; i < IXGB_MC_TBL_SIZE; i++)
+	for(i = 0; i < IXGB_MC_TBL_SIZE; i++) {
 		IXGB_WRITE_REG_ARRAY(hw, MTA, i, 0);
+	}
 
 	/* Add the new addresses */
-	for (i = 0; i < mc_addr_count; i++) {
+	for(i = 0; i < mc_addr_count; i++) {
 		DEBUGOUT(" Adding the multicast addresses:\n");
 		DEBUGOUT7(" MC Addr #%d =%.2X %.2X %.2X %.2X %.2X %.2X\n", i,
 			  mc_addr_list[i * (IXGB_ETH_LENGTH_OF_ADDRESS + pad)],
@@ -481,7 +455,7 @@ ixgb_mc_addr_list_update(struct ixgb_hw *hw,
 		/* Place this multicast address in the RAR if there is room, *
 		 * else put it in the MTA
 		 */
-		if (rar_used_count < IXGB_RAR_ENTRIES) {
+		if(rar_used_count < IXGB_RAR_ENTRIES) {
 			ixgb_rar_set(hw,
 				     mc_addr_list +
 				     (i * (IXGB_ETH_LENGTH_OF_ADDRESS + pad)),
@@ -514,11 +488,11 @@ ixgb_mc_addr_list_update(struct ixgb_hw *hw,
  * Returns:
  *      The hash value
  *****************************************************************************/
-static u32
+static uint32_t
 ixgb_hash_mc_addr(struct ixgb_hw *hw,
-		   u8 *mc_addr)
+		   uint8_t *mc_addr)
 {
-	u32 hash_value = 0;
+	uint32_t hash_value = 0;
 
 	DEBUGFUNC("ixgb_hash_mc_addr");
 
@@ -532,18 +506,18 @@ ixgb_hash_mc_addr(struct ixgb_hw *hw,
 	case 0:
 		/* [47:36] i.e. 0x563 for above example address */
 		hash_value =
-		    ((mc_addr[4] >> 4) | (((u16) mc_addr[5]) << 4));
+		    ((mc_addr[4] >> 4) | (((uint16_t) mc_addr[5]) << 4));
 		break;
 	case 1:		/* [46:35] i.e. 0xAC6 for above example address */
 		hash_value =
-		    ((mc_addr[4] >> 3) | (((u16) mc_addr[5]) << 5));
+		    ((mc_addr[4] >> 3) | (((uint16_t) mc_addr[5]) << 5));
 		break;
 	case 2:		/* [45:34] i.e. 0x5D8 for above example address */
 		hash_value =
-		    ((mc_addr[4] >> 2) | (((u16) mc_addr[5]) << 6));
+		    ((mc_addr[4] >> 2) | (((uint16_t) mc_addr[5]) << 6));
 		break;
 	case 3:		/* [43:32] i.e. 0x634 for above example address */
-		hash_value = ((mc_addr[4]) | (((u16) mc_addr[5]) << 8));
+		hash_value = ((mc_addr[4]) | (((uint16_t) mc_addr[5]) << 8));
 		break;
 	default:
 		/* Invalid mc_filter_type, what should we do? */
@@ -564,10 +538,10 @@ ixgb_hash_mc_addr(struct ixgb_hw *hw,
  *****************************************************************************/
 static void
 ixgb_mta_set(struct ixgb_hw *hw,
-		  u32 hash_value)
+		  uint32_t hash_value)
 {
-	u32 hash_bit, hash_reg;
-	u32 mta_reg;
+	uint32_t hash_bit, hash_reg;
+	uint32_t mta_reg;
 
 	/* The MTA is a register array of 128 32-bit registers.
 	 * It is treated like an array of 4096 bits.  We want to set
@@ -598,23 +572,23 @@ ixgb_mta_set(struct ixgb_hw *hw,
  *****************************************************************************/
 void
 ixgb_rar_set(struct ixgb_hw *hw,
-		  u8 *addr,
-		  u32 index)
+		  uint8_t *addr,
+		  uint32_t index)
 {
-	u32 rar_low, rar_high;
+	uint32_t rar_low, rar_high;
 
 	DEBUGFUNC("ixgb_rar_set");
 
 	/* HW expects these in little endian so we reverse the byte order
 	 * from network order (big endian) to little endian
 	 */
-	rar_low = ((u32) addr[0] |
-		   ((u32)addr[1] << 8) |
-		   ((u32)addr[2] << 16) |
-		   ((u32)addr[3] << 24));
+	rar_low = ((uint32_t) addr[0] |
+		   ((uint32_t)addr[1] << 8) |
+		   ((uint32_t)addr[2] << 16) |
+		   ((uint32_t)addr[3] << 24));
 
-	rar_high = ((u32) addr[4] |
-			((u32)addr[5] << 8) |
+	rar_high = ((uint32_t) addr[4] |
+			((uint32_t)addr[5] << 8) |
 			IXGB_RAH_AV);
 
 	IXGB_WRITE_REG_ARRAY(hw, RA, (index << 1), rar_low);
@@ -631,8 +605,8 @@ ixgb_rar_set(struct ixgb_hw *hw,
  *****************************************************************************/
 void
 ixgb_write_vfta(struct ixgb_hw *hw,
-		 u32 offset,
-		 u32 value)
+		 uint32_t offset,
+		 uint32_t value)
 {
 	IXGB_WRITE_REG_ARRAY(hw, VFTA, offset, value);
 	return;
@@ -646,9 +620,9 @@ ixgb_write_vfta(struct ixgb_hw *hw,
 static void
 ixgb_clear_vfta(struct ixgb_hw *hw)
 {
-	u32 offset;
+	uint32_t offset;
 
-	for (offset = 0; offset < IXGB_VLAN_FILTER_TBL_SIZE; offset++)
+	for(offset = 0; offset < IXGB_VLAN_FILTER_TBL_SIZE; offset++)
 		IXGB_WRITE_REG_ARRAY(hw, VFTA, offset, 0);
 	return;
 }
@@ -659,12 +633,12 @@ ixgb_clear_vfta(struct ixgb_hw *hw)
  * hw - Struct containing variables accessed by shared code
  *****************************************************************************/
 
-static bool
+static boolean_t
 ixgb_setup_fc(struct ixgb_hw *hw)
 {
-	u32 ctrl_reg;
-	u32 pap_reg = 0;   /* by default, assume no pause time */
-	bool status = true;
+	uint32_t ctrl_reg;
+	uint32_t pap_reg = 0;   /* by default, assume no pause time */
+	boolean_t status = TRUE;
 
 	DEBUGFUNC("ixgb_setup_fc");
 
@@ -718,8 +692,9 @@ ixgb_setup_fc(struct ixgb_hw *hw)
 	/* Write the new settings */
 	IXGB_WRITE_REG(hw, CTRL0, ctrl_reg);
 
-	if (pap_reg != 0)
+	if (pap_reg != 0) {
 		IXGB_WRITE_REG(hw, PAP, pap_reg);
+	}
 
 	/* Set the flow control receive threshold registers.  Normally,
 	 * these registers will be set to a default threshold that may be
@@ -727,14 +702,14 @@ ixgb_setup_fc(struct ixgb_hw *hw)
 	 * ability to transmit pause frames in not enabled, then these
 	 * registers will be set to 0.
 	 */
-	if (!(hw->fc.type & ixgb_fc_tx_pause)) {
+	if(!(hw->fc.type & ixgb_fc_tx_pause)) {
 		IXGB_WRITE_REG(hw, FCRTL, 0);
 		IXGB_WRITE_REG(hw, FCRTH, 0);
 	} else {
 	   /* We need to set up the Receive Threshold high and low water
 	    * marks as well as (optionally) enabling the transmission of XON
 	    * frames. */
-		if (hw->fc.send_xon) {
+		if(hw->fc.send_xon) {
 			IXGB_WRITE_REG(hw, FCRTL,
 				(hw->fc.low_water | IXGB_FCRTL_XONE));
 		} else {
@@ -760,15 +735,15 @@ ixgb_setup_fc(struct ixgb_hw *hw)
  * This requires that first an address cycle command is sent, followed by a
  * read command.
  *****************************************************************************/
-static u16
+static uint16_t
 ixgb_read_phy_reg(struct ixgb_hw *hw,
-		u32 reg_address,
-		u32 phy_address,
-		u32 device_type)
+		uint32_t reg_address,
+		uint32_t phy_address,
+		uint32_t device_type)
 {
-	u32 i;
-	u32 data;
-	u32 command = 0;
+	uint32_t i;
+	uint32_t data;
+	uint32_t command = 0;
 
 	ASSERT(reg_address <= IXGB_MAX_PHY_REG_ADDRESS);
 	ASSERT(phy_address <= IXGB_MAX_PHY_ADDRESS);
@@ -789,7 +764,7 @@ ixgb_read_phy_reg(struct ixgb_hw *hw,
     ** from the CPU Write to the Ready bit assertion.
     **************************************************************/
 
-	for (i = 0; i < 10; i++)
+	for(i = 0; i < 10; i++)
 	{
 		udelay(10);
 
@@ -816,7 +791,7 @@ ixgb_read_phy_reg(struct ixgb_hw *hw,
     ** from the CPU Write to the Ready bit assertion.
     **************************************************************/
 
-	for (i = 0; i < 10; i++)
+	for(i = 0; i < 10; i++)
 	{
 		udelay(10);
 
@@ -833,7 +808,7 @@ ixgb_read_phy_reg(struct ixgb_hw *hw,
 	 */
 	data = IXGB_READ_REG(hw, MSRWD);
 	data >>= IXGB_MSRWD_READ_DATA_SHIFT;
-	return((u16) data);
+	return((uint16_t) data);
 }
 
 /******************************************************************************
@@ -855,20 +830,20 @@ ixgb_read_phy_reg(struct ixgb_hw *hw,
  *****************************************************************************/
 static void
 ixgb_write_phy_reg(struct ixgb_hw *hw,
-			u32 reg_address,
-			u32 phy_address,
-			u32 device_type,
-			u16 data)
+			uint32_t reg_address,
+			uint32_t phy_address,
+			uint32_t device_type,
+			uint16_t data)
 {
-	u32 i;
-	u32 command = 0;
+	uint32_t i;
+	uint32_t command = 0;
 
 	ASSERT(reg_address <= IXGB_MAX_PHY_REG_ADDRESS);
 	ASSERT(phy_address <= IXGB_MAX_PHY_ADDRESS);
 	ASSERT(device_type <= IXGB_MAX_PHY_DEV_TYPE);
 
 	/* Put the data in the MDIO Read/Write Data register */
-	IXGB_WRITE_REG(hw, MSRWD, (u32)data);
+	IXGB_WRITE_REG(hw, MSRWD, (uint32_t)data);
 
 	/* Setup and write the address cycle command */
 	command = ((reg_address << IXGB_MSCA_NP_ADDR_SHIFT)  |
@@ -885,7 +860,7 @@ ixgb_write_phy_reg(struct ixgb_hw *hw,
 	** from the CPU Write to the Ready bit assertion.
 	**************************************************************/
 
-	for (i = 0; i < 10; i++)
+	for(i = 0; i < 10; i++)
 	{
 		udelay(10);
 
@@ -912,7 +887,7 @@ ixgb_write_phy_reg(struct ixgb_hw *hw,
 	** from the CPU Write to the Ready bit assertion.
 	**************************************************************/
 
-	for (i = 0; i < 10; i++)
+	for(i = 0; i < 10; i++)
 	{
 		udelay(10);
 
@@ -937,8 +912,8 @@ ixgb_write_phy_reg(struct ixgb_hw *hw,
 void
 ixgb_check_for_link(struct ixgb_hw *hw)
 {
-	u32 status_reg;
-	u32 xpcss_reg;
+	uint32_t status_reg;
+	uint32_t xpcss_reg;
 
 	DEBUGFUNC("ixgb_check_for_link");
 
@@ -947,7 +922,7 @@ ixgb_check_for_link(struct ixgb_hw *hw)
 
 	if ((xpcss_reg & IXGB_XPCSS_ALIGN_STATUS) &&
 	    (status_reg & IXGB_STATUS_LU)) {
-		hw->link_up = true;
+		hw->link_up = TRUE;
 	} else if (!(xpcss_reg & IXGB_XPCSS_ALIGN_STATUS) &&
 		   (status_reg & IXGB_STATUS_LU)) {
 		DEBUGOUT("XPCSS Not Aligned while Status:LU is set.\n");
@@ -963,7 +938,7 @@ ixgb_check_for_link(struct ixgb_hw *hw)
 }
 
 /******************************************************************************
- * Check for a bad link condition that may have occurred.
+ * Check for a bad link condition that may have occured.
  * The indication is that the RFC / LFC registers may be incrementing
  * continually.  A full adapter reset is required to recover.
  *
@@ -971,10 +946,10 @@ ixgb_check_for_link(struct ixgb_hw *hw)
  *
  * Called by any function that needs to check the link status of the adapter.
  *****************************************************************************/
-bool ixgb_check_for_bad_link(struct ixgb_hw *hw)
+boolean_t ixgb_check_for_bad_link(struct ixgb_hw *hw)
 {
-	u32 newLFC, newRFC;
-	bool bad_link_returncode = false;
+	uint32_t newLFC, newRFC;
+	boolean_t bad_link_returncode = FALSE;
 
 	if (hw->phy_type == ixgb_phy_type_txn17401) {
 		newLFC = IXGB_READ_REG(hw, LFC);
@@ -983,7 +958,7 @@ bool ixgb_check_for_bad_link(struct ixgb_hw *hw)
 		    || (hw->lastRFC + 250 < newRFC)) {
 			DEBUGOUT
 			    ("BAD LINK! too many LFC/RFC since last check\n");
-			bad_link_returncode = true;
+			bad_link_returncode = TRUE;
 		}
 		hw->lastLFC = newLFC;
 		hw->lastRFC = newRFC;
@@ -1000,12 +975,12 @@ bool ixgb_check_for_bad_link(struct ixgb_hw *hw)
 static void
 ixgb_clear_hw_cntrs(struct ixgb_hw *hw)
 {
-	volatile u32 temp_reg;
+	volatile uint32_t temp_reg;
 
 	DEBUGFUNC("ixgb_clear_hw_cntrs");
 
 	/* if we are stopped or resetting exit gracefully */
-	if (hw->adapter_stopped) {
+	if(hw->adapter_stopped) {
 		DEBUGOUT("Exiting because the adapter is stopped!!!\n");
 		return;
 	}
@@ -1081,7 +1056,7 @@ ixgb_clear_hw_cntrs(struct ixgb_hw *hw)
 void
 ixgb_led_on(struct ixgb_hw *hw)
 {
-	u32 ctrl0_reg = IXGB_READ_REG(hw, CTRL0);
+	uint32_t ctrl0_reg = IXGB_READ_REG(hw, CTRL0);
 
 	/* To turn on the LED, clear software-definable pin 0 (SDP0). */
 	ctrl0_reg &= ~IXGB_CTRL0_SDP0;
@@ -1097,7 +1072,7 @@ ixgb_led_on(struct ixgb_hw *hw)
 void
 ixgb_led_off(struct ixgb_hw *hw)
 {
-	u32 ctrl0_reg = IXGB_READ_REG(hw, CTRL0);
+	uint32_t ctrl0_reg = IXGB_READ_REG(hw, CTRL0);
 
 	/* To turn off the LED, set software-definable pin 0 (SDP0). */
 	ctrl0_reg |= IXGB_CTRL0_SDP0;
@@ -1113,7 +1088,7 @@ ixgb_led_off(struct ixgb_hw *hw)
 static void
 ixgb_get_bus_info(struct ixgb_hw *hw)
 {
-	u32 status_reg;
+	uint32_t status_reg;
 
 	status_reg = IXGB_READ_REG(hw, STATUS);
 
@@ -1152,21 +1127,21 @@ ixgb_get_bus_info(struct ixgb_hw *hw)
  * mac_addr - pointer to MAC address.
  *
  *****************************************************************************/
-static bool
-mac_addr_valid(u8 *mac_addr)
+static boolean_t
+mac_addr_valid(uint8_t *mac_addr)
 {
-	bool is_valid = true;
+	boolean_t is_valid = TRUE;
 	DEBUGFUNC("mac_addr_valid");
 
 	/* Make sure it is not a multicast address */
 	if (IS_MULTICAST(mac_addr)) {
 		DEBUGOUT("MAC address is multicast\n");
-		is_valid = false;
+		is_valid = FALSE;
 	}
 	/* Not a broadcast address */
 	else if (IS_BROADCAST(mac_addr)) {
 		DEBUGOUT("MAC address is broadcast\n");
-		is_valid = false;
+		is_valid = FALSE;
 	}
 	/* Reject the zero address */
 	else if (mac_addr[0] == 0 &&
@@ -1176,7 +1151,7 @@ mac_addr_valid(u8 *mac_addr)
 			 mac_addr[4] == 0 &&
 			 mac_addr[5] == 0) {
 		DEBUGOUT("MAC address is all zeros\n");
-		is_valid = false;
+		is_valid = FALSE;
 	}
 	return (is_valid);
 }
@@ -1187,12 +1162,12 @@ mac_addr_valid(u8 *mac_addr)
  *
  * hw - Struct containing variables accessed by shared code
  *****************************************************************************/
-static bool
+boolean_t
 ixgb_link_reset(struct ixgb_hw *hw)
 {
-	bool link_status = false;
-	u8 wait_retries = MAX_RESET_ITERATIONS;
-	u8 lrst_retries = MAX_RESET_ITERATIONS;
+	boolean_t link_status = FALSE;
+	uint8_t wait_retries = MAX_RESET_ITERATIONS;
+	uint8_t lrst_retries = MAX_RESET_ITERATIONS;
 
 	do {
 		/* Reset the link */
@@ -1205,7 +1180,7 @@ ixgb_link_reset(struct ixgb_hw *hw)
 			link_status =
 			    ((IXGB_READ_REG(hw, STATUS) & IXGB_STATUS_LU)
 			     && (IXGB_READ_REG(hw, XPCSS) &
-				 IXGB_XPCSS_ALIGN_STATUS)) ? true : false;
+				 IXGB_XPCSS_ALIGN_STATUS)) ? TRUE : FALSE;
 		} while (!link_status && --wait_retries);
 
 	} while (!link_status && --lrst_retries);
@@ -1218,85 +1193,23 @@ ixgb_link_reset(struct ixgb_hw *hw)
  *
  * hw - Struct containing variables accessed by shared code
  *****************************************************************************/
-static void
+void
 ixgb_optics_reset(struct ixgb_hw *hw)
 {
 	if (hw->phy_type == ixgb_phy_type_txn17401) {
-		u16 mdio_reg;
+		uint16_t mdio_reg;
 
 		ixgb_write_phy_reg(hw,
-				   MDIO_CTRL1,
-				   IXGB_PHY_ADDRESS,
-				   MDIO_MMD_PMAPMD,
-				   MDIO_CTRL1_RESET);
+					MDIO_PMA_PMD_CR1,
+					IXGB_PHY_ADDRESS,
+					MDIO_PMA_PMD_DID,
+					MDIO_PMA_PMD_CR1_RESET);
 
-		mdio_reg = ixgb_read_phy_reg(hw,
-					     MDIO_CTRL1,
-					     IXGB_PHY_ADDRESS,
-					     MDIO_MMD_PMAPMD);
+		mdio_reg = ixgb_read_phy_reg( hw,
+						MDIO_PMA_PMD_CR1,
+						IXGB_PHY_ADDRESS,
+						MDIO_PMA_PMD_DID);
 	}
-
-	return;
-}
-
-/******************************************************************************
- * Resets the 10GbE optics module for Sun variant NIC.
- *
- * hw - Struct containing variables accessed by shared code
- *****************************************************************************/
-
-#define   IXGB_BCM8704_USER_PMD_TX_CTRL_REG         0xC803
-#define   IXGB_BCM8704_USER_PMD_TX_CTRL_REG_VAL     0x0164
-#define   IXGB_BCM8704_USER_CTRL_REG                0xC800
-#define   IXGB_BCM8704_USER_CTRL_REG_VAL            0x7FBF
-#define   IXGB_BCM8704_USER_DEV3_ADDR               0x0003
-#define   IXGB_SUN_PHY_ADDRESS                      0x0000
-#define   IXGB_SUN_PHY_RESET_DELAY                     305
-
-static void
-ixgb_optics_reset_bcm(struct ixgb_hw *hw)
-{
-	u32 ctrl = IXGB_READ_REG(hw, CTRL0);
-	ctrl &= ~IXGB_CTRL0_SDP2;
-	ctrl |= IXGB_CTRL0_SDP3;
-	IXGB_WRITE_REG(hw, CTRL0, ctrl);
-
-	/* SerDes needs extra delay */
-	msleep(IXGB_SUN_PHY_RESET_DELAY);
-
-	/* Broadcom 7408L configuration */
-	/* Reference clock config */
-	ixgb_write_phy_reg(hw,
-			   IXGB_BCM8704_USER_PMD_TX_CTRL_REG,
-			   IXGB_SUN_PHY_ADDRESS,
-			   IXGB_BCM8704_USER_DEV3_ADDR,
-			   IXGB_BCM8704_USER_PMD_TX_CTRL_REG_VAL);
-	/*  we must read the registers twice */
-	ixgb_read_phy_reg(hw,
-			  IXGB_BCM8704_USER_PMD_TX_CTRL_REG,
-			  IXGB_SUN_PHY_ADDRESS,
-			  IXGB_BCM8704_USER_DEV3_ADDR);
-	ixgb_read_phy_reg(hw,
-			  IXGB_BCM8704_USER_PMD_TX_CTRL_REG,
-			  IXGB_SUN_PHY_ADDRESS,
-			  IXGB_BCM8704_USER_DEV3_ADDR);
-
-	ixgb_write_phy_reg(hw,
-			   IXGB_BCM8704_USER_CTRL_REG,
-			   IXGB_SUN_PHY_ADDRESS,
-			   IXGB_BCM8704_USER_DEV3_ADDR,
-			   IXGB_BCM8704_USER_CTRL_REG_VAL);
-	ixgb_read_phy_reg(hw,
-			  IXGB_BCM8704_USER_CTRL_REG,
-			  IXGB_SUN_PHY_ADDRESS,
-			  IXGB_BCM8704_USER_DEV3_ADDR);
-	ixgb_read_phy_reg(hw,
-			  IXGB_BCM8704_USER_CTRL_REG,
-			  IXGB_SUN_PHY_ADDRESS,
-			  IXGB_BCM8704_USER_DEV3_ADDR);
-
-	/* SerDes needs extra delay */
-	msleep(IXGB_SUN_PHY_RESET_DELAY);
 
 	return;
 }

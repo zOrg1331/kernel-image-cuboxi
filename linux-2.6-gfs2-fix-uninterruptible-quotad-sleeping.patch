@@ -1,0 +1,30 @@
+From: Steven Whitehouse <swhiteho@redhat.com>
+Date: Wed, 1 Apr 2009 10:34:15 +0100
+Subject: [gfs2] fix uninterruptible quotad sleeping
+Message-id: 1238578455.3355.4.camel@localhost.localdomain
+O-Subject: [RHEL 5.4] GFS2: Fix uninterruptible quotad sleeping
+Bugzilla: 492943
+RH-Acked-by: Josef Bacik <josef@redhat.com>
+
+Hi,
+
+This is the fix for bz #492943 taken from upstream. It makes the sleeping
+interruptible so that an idle quotad doesn't add to the load average.
+Since this is a kernel thread, signals are blocked by default so there
+should be no surprise wake ups.
+
+Steve.
+
+diff --git a/fs/gfs2/quota.c b/fs/gfs2/quota.c
+index feec55c..821eb09 100644
+--- a/fs/gfs2/quota.c
++++ b/fs/gfs2/quota.c
+@@ -1354,7 +1354,7 @@ int gfs2_quotad(void *data)
+ 			refrigerator();
+ 		t = min(quotad_timeo, statfs_timeo);
+ 
+-		prepare_to_wait(&sdp->sd_quota_wait, &wait, TASK_UNINTERRUPTIBLE);
++		prepare_to_wait(&sdp->sd_quota_wait, &wait, TASK_INTERRUPTIBLE);
+ 		spin_lock(&sdp->sd_trunc_lock);
+ 		empty = list_empty(&sdp->sd_trunc_list);
+ 		spin_unlock(&sdp->sd_trunc_lock);

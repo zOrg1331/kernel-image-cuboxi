@@ -1,0 +1,130 @@
+From: Hans-Joachim Picht <hpicht@redhat.com>
+Date: Tue, 1 Sep 2009 13:40:30 +0200
+Subject: [s390] ipl: vmhalt, vmpanic, vmpoff, vmreboot don't work
+Message-id: 20090901114030.GB3820@blc4eb509856389.ibm.com
+O-Subject: Re: [RHEL5 U5 PATCH 1/1] s390 - ipl: vmhalt, vmpanic, vmpoff, vmreboot don't work
+Bugzilla: 518229
+RH-Acked-by: Dean Nelson <dnelson@redhat.com>
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+
+Description
+============
+The kernel parameter vmhalt, vmpanic, vmpoff, vmreboot don't work and
+any specified shutdown action is ignored.
+The workaround is to set the shutdown action through the new sysfs
+interface.
+
+The problem is that __setup() is called twice, both in
+"arch/s390/kernel/setup.c" and "arch/s390/kernel/ipl.c".
+The new __setup() calls in "ipl.c" have been introduced with the sysfs
+shutdown actions (see commit link below); but the old __setup() calls
+have not been removed during function backport.
+
+The solution is to remove the obsolete __setup() calls in setup.c.
+
+Bugzilla
+=========
+
+BZ 518229
+https://bugzilla.redhat.com/show_bug.cgi?id=518229
+
+Upstream status of the patch:
+=============================
+
+The patch is upstream as of kernel version 2.6.25
+
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=99ca4e582d4a4088969681efff97be44d98421a1
+
+Test status:
+============
+
+The patch has been tested and fixes the problem.
+The fix has been verified by the IBM test department.
+
+Please ACK.
+
+With best regards,
+
+        --Hans
+
+diff --git a/arch/s390/kernel/setup.c b/arch/s390/kernel/setup.c
+index f74b846..a0067e4 100644
+--- a/arch/s390/kernel/setup.c
++++ b/arch/s390/kernel/setup.c
+@@ -114,75 +114,6 @@ void __devinit cpu_init (void)
+ }
+ 
+ /*
+- * VM halt and poweroff setup routines
+- */
+-char vmhalt_cmd[128] = "";
+-char vmpoff_cmd[128] = "";
+-char vmpanic_cmd[128] = "";
+-
+-static inline void strncpy_skip_quote(char *dst, char *src, int n)
+-{
+-        int sx, dx;
+-
+-        dx = 0;
+-        for (sx = 0; src[sx] != 0; sx++) {
+-                if (src[sx] == '"') continue;
+-                dst[dx++] = src[sx];
+-                if (dx >= n) break;
+-        }
+-}
+-
+-static int __init vmhalt_setup(char *str)
+-{
+-        strncpy_skip_quote(vmhalt_cmd, str, 127);
+-        vmhalt_cmd[127] = 0;
+-        return 1;
+-}
+-
+-__setup("vmhalt=", vmhalt_setup);
+-
+-static int __init vmpoff_setup(char *str)
+-{
+-        strncpy_skip_quote(vmpoff_cmd, str, 127);
+-        vmpoff_cmd[127] = 0;
+-        return 1;
+-}
+-
+-__setup("vmpoff=", vmpoff_setup);
+-
+-static int vmpanic_notify(struct notifier_block *self, unsigned long event,
+-			  void *data)
+-{
+-	if (MACHINE_IS_VM && strlen(vmpanic_cmd) > 0)
+-		cpcmd(vmpanic_cmd, NULL, 0, NULL);
+-
+-	return NOTIFY_OK;
+-}
+-
+-#define PANIC_PRI_VMPANIC	0
+-
+-static struct notifier_block vmpanic_nb = {
+-	.notifier_call = vmpanic_notify,
+-	.priority = PANIC_PRI_VMPANIC
+-};
+-
+-static int __init vmpanic_setup(char *str)
+-{
+-	static int register_done __initdata = 0;
+-
+-	strncpy_skip_quote(vmpanic_cmd, str, 127);
+-	vmpanic_cmd[127] = 0;
+-	if (!register_done) {
+-		register_done = 1;
+-		atomic_notifier_chain_register(&panic_notifier_list,
+-					       &vmpanic_nb);
+-	}
+-	return 1;
+-}
+-
+-__setup("vmpanic=", vmpanic_setup);
+-
+-/*
+  * condev= and conmode= setup parameter.
+  */
+ 

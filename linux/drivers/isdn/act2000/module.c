@@ -23,6 +23,7 @@ static unsigned short act2000_isa_ports[] =
         0x0200, 0x0240, 0x0280, 0x02c0, 0x0300, 0x0340, 0x0380,
         0xcfe0, 0xcfa0, 0xcf60, 0xcf20, 0xcee0, 0xcea0, 0xce60,
 };
+#define ISA_NRPORTS (sizeof(act2000_isa_ports)/sizeof(unsigned short))
 
 static act2000_card *cards = (act2000_card *) NULL;
 
@@ -191,11 +192,8 @@ act2000_set_msn(act2000_card *card, char *eazmsn)
 }
 
 static void
-act2000_transmit(struct work_struct *work)
+act2000_transmit(struct act2000_card *card)
 {
-	struct act2000_card *card =
-		container_of(work, struct act2000_card, snd_tq);
-
 	switch (card->bus) {
 		case ACT2000_BUS_ISA:
 			act2000_isa_send(card);
@@ -209,11 +207,8 @@ act2000_transmit(struct work_struct *work)
 }
 
 static void
-act2000_receive(struct work_struct *work)
+act2000_receive(struct act2000_card *card)
 {
-	struct act2000_card *card =
-		container_of(work, struct act2000_card, poll_tq);
-
 	switch (card->bus) {
 		case ACT2000_BUS_ISA:
 			act2000_isa_receive(card);
@@ -232,7 +227,7 @@ act2000_poll(unsigned long data)
 	act2000_card * card = (act2000_card *)data;
 	unsigned long flags;
 
-	act2000_receive(&card->poll_tq);
+	act2000_receive(card);
 	spin_lock_irqsave(&card->lock, flags);
 	mod_timer(&card->ptimer, jiffies+3);
 	spin_unlock_irqrestore(&card->lock, flags);
@@ -309,7 +304,7 @@ act2000_command(act2000_card * card, isdn_ctrl * c)
 			}
 			break;
 		case ISDN_CMD_DIAL:
-			if (!(card->flags & ACT2000_FLAGS_RUNNING))
+			if (!card->flags & ACT2000_FLAGS_RUNNING)
 				return -ENODEV;
 			if (!(chan = find_channel(card, c->arg & 0x0f)))
 				break;
@@ -338,7 +333,7 @@ act2000_command(act2000_card * card, isdn_ctrl * c)
 			}
 			return ret;
 		case ISDN_CMD_ACCEPTD:
-			if (!(card->flags & ACT2000_FLAGS_RUNNING))
+			if (!card->flags & ACT2000_FLAGS_RUNNING)
 				return -ENODEV;
 			if (!(chan = find_channel(card, c->arg & 0x0f)))
 				break;
@@ -346,11 +341,11 @@ act2000_command(act2000_card * card, isdn_ctrl * c)
 				actcapi_select_b2_protocol_req(card, chan);
 			return 0;
 		case ISDN_CMD_ACCEPTB:
-			if (!(card->flags & ACT2000_FLAGS_RUNNING))
+			if (!card->flags & ACT2000_FLAGS_RUNNING)
 				return -ENODEV;
 			return 0;
 		case ISDN_CMD_HANGUP:
-			if (!(card->flags & ACT2000_FLAGS_RUNNING))
+			if (!card->flags & ACT2000_FLAGS_RUNNING)
 				return -ENODEV;
 			if (!(chan = find_channel(card, c->arg & 0x0f)))
 				break;
@@ -365,7 +360,7 @@ act2000_command(act2000_card * card, isdn_ctrl * c)
 			}
 			return 0;
 		case ISDN_CMD_SETEAZ:
-			if (!(card->flags & ACT2000_FLAGS_RUNNING))
+			if (!card->flags & ACT2000_FLAGS_RUNNING)
 				return -ENODEV;
 			if (!(chan = find_channel(card, c->arg & 0x0f)))
 				break;
@@ -385,7 +380,7 @@ act2000_command(act2000_card * card, isdn_ctrl * c)
 			actcapi_listen_req(card);
 			return 0;
 		case ISDN_CMD_CLREAZ:
-			if (!(card->flags & ACT2000_FLAGS_RUNNING))
+			if (!card->flags & ACT2000_FLAGS_RUNNING)
 				return -ENODEV;
 			if (!(chan = find_channel(card, c->arg & 0x0f)))
 				break;
@@ -393,14 +388,14 @@ act2000_command(act2000_card * card, isdn_ctrl * c)
 			actcapi_listen_req(card);
 			return 0;
 		case ISDN_CMD_SETL2:
-			if (!(card->flags & ACT2000_FLAGS_RUNNING))
+			if (!card->flags & ACT2000_FLAGS_RUNNING)
 				return -ENODEV;
 			if (!(chan = find_channel(card, c->arg & 0x0f)))
 				break;
 			chan->l2prot = (c->arg >> 8);
 			return 0;
 		case ISDN_CMD_SETL3:
-			if (!(card->flags & ACT2000_FLAGS_RUNNING))
+			if (!card->flags & ACT2000_FLAGS_RUNNING)
 				return -ENODEV;
 			if ((c->arg >> 8) != ISDN_PROTO_L3_TRANS) {
 				printk(KERN_WARNING "L3 protocol unknown\n");
@@ -441,7 +436,7 @@ act2000_sendbuf(act2000_card *card, int channel, int ack, struct sk_buff *skb)
 			return 0;
 		}
 		skb_reserve(xmit_skb, 19);
-		skb_copy_from_linear_data(skb, skb_put(xmit_skb, len), len);
+		memcpy(skb_put(xmit_skb, len), skb->data, len);
 	} else {
 		xmit_skb = skb_clone(skb, GFP_ATOMIC);
 		if (!xmit_skb) {
@@ -523,7 +518,7 @@ if_writecmd(const u_char __user *buf, int len, int id, int channel)
         act2000_card *card = act2000_findcard(id);
 
         if (card) {
-                if (!(card->flags & ACT2000_FLAGS_RUNNING))
+                if (!card->flags & ACT2000_FLAGS_RUNNING)
                         return -ENODEV;
                 return (len);
         }
@@ -538,7 +533,7 @@ if_readstatus(u_char __user * buf, int len, int id, int channel)
         act2000_card *card = act2000_findcard(id);
 	
         if (card) {
-                if (!(card->flags & ACT2000_FLAGS_RUNNING))
+                if (!card->flags & ACT2000_FLAGS_RUNNING)
                         return -ENODEV;
                 return (act2000_readstatus(buf, len, card));
         }
@@ -553,7 +548,7 @@ if_sendbuf(int id, int channel, int ack, struct sk_buff *skb)
         act2000_card *card = act2000_findcard(id);
 	
         if (card) {
-                if (!(card->flags & ACT2000_FLAGS_RUNNING))
+                if (!card->flags & ACT2000_FLAGS_RUNNING)
                         return -ENODEV;
 		return (act2000_sendbuf(card, channel, ack, skb));
         }
@@ -572,19 +567,20 @@ act2000_alloccard(int bus, int port, int irq, char *id)
 {
 	int i;
         act2000_card *card;
-        if (!(card = kzalloc(sizeof(act2000_card), GFP_KERNEL))) {
+        if (!(card = (act2000_card *) kmalloc(sizeof(act2000_card), GFP_KERNEL))) {
                 printk(KERN_WARNING
 		       "act2000: (%s) Could not allocate card-struct.\n", id);
                 return;
         }
+        memset((char *) card, 0, sizeof(act2000_card));
         spin_lock_init(&card->lock);
         spin_lock_init(&card->mnlock);
 	skb_queue_head_init(&card->sndq);
 	skb_queue_head_init(&card->rcvq);
 	skb_queue_head_init(&card->ackq);
-	INIT_WORK(&card->snd_tq, act2000_transmit);
-	INIT_WORK(&card->rcv_tq, actcapi_dispatch);
-	INIT_WORK(&card->poll_tq, act2000_receive);
+	INIT_WORK(&card->snd_tq, (void *) (void *) act2000_transmit, card);
+	INIT_WORK(&card->rcv_tq, (void *) (void *) actcapi_dispatch, card);
+	INIT_WORK(&card->poll_tq, (void *) (void *) act2000_receive, card);
 	init_timer(&card->ptimer);
 	card->interface.owner = THIS_MODULE;
         card->interface.channels = ACT2000_BCH;
@@ -685,21 +681,21 @@ act2000_addcard(int bus, int port, int irq, char *id)
 		 * This may result in more than one card detected.
 		 */
 		switch (bus) {
-		case ACT2000_BUS_ISA:
-			for (i = 0; i < ARRAY_SIZE(act2000_isa_ports); i++)
-				if (act2000_isa_detect(act2000_isa_ports[i])) {
-					printk(KERN_INFO "act2000: Detected "
-						"ISA card at port 0x%x\n",
-						act2000_isa_ports[i]);
-					act2000_alloccard(bus,
-						act2000_isa_ports[i], irq, id);
-				}
-			break;
-		case ACT2000_BUS_MCA:
-		case ACT2000_BUS_PCMCIA:
-		default:
-			printk(KERN_WARNING
-				"act2000: addcard: Invalid BUS type %d\n", bus);
+			case ACT2000_BUS_ISA:
+				for (i = 0; i < ISA_NRPORTS; i++)
+					if (act2000_isa_detect(act2000_isa_ports[i])) {
+						printk(KERN_INFO
+						       "act2000: Detected ISA card at port 0x%x\n",
+						       act2000_isa_ports[i]);
+						act2000_alloccard(bus, act2000_isa_ports[i], irq, id);
+					}
+				break;
+			case ACT2000_BUS_MCA:
+			case ACT2000_BUS_PCMCIA:
+			default:
+				printk(KERN_WARNING
+				       "act2000: addcard: Invalid BUS type %d\n",
+				       bus);
 		}
 	}
 	if (!cards)

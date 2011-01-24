@@ -157,35 +157,33 @@ titan_cpu_set_irq_affinity(unsigned int irq, cpumask_t affinity)
 
 }
 
-static int
-titan_set_irq_affinity(unsigned int irq, const struct cpumask *affinity)
+static void
+titan_set_irq_affinity(unsigned int irq, cpumask_t affinity)
 { 
 	spin_lock(&titan_irq_lock);
-	titan_cpu_set_irq_affinity(irq - 16, *affinity);
+	titan_cpu_set_irq_affinity(irq - 16, affinity);
 	titan_update_irq_hw(titan_cached_irq_mask);
 	spin_unlock(&titan_irq_lock);
-
-	return 0;
 }
 
 static void
-titan_device_interrupt(unsigned long vector)
+titan_device_interrupt(unsigned long vector, struct pt_regs * regs)
 {
 	printk("titan_device_interrupt: NOT IMPLEMENTED YET!! \n");
 }
 
 static void 
-titan_srm_device_interrupt(unsigned long vector)
+titan_srm_device_interrupt(unsigned long vector, struct pt_regs * regs)
 {
 	int irq;
 
 	irq = (vector - 0x800) >> 4;
-	handle_irq(irq);
+	handle_irq(irq, regs);
 }
 
 
 static void __init
-init_titan_irqs(struct irq_chip * ops, int imin, int imax)
+init_titan_irqs(struct hw_interrupt_type * ops, int imin, int imax)
 {
 	long i;
 	for (i = imin; i <= imax; ++i) {
@@ -194,8 +192,8 @@ init_titan_irqs(struct irq_chip * ops, int imin, int imax)
 	}
 }
 
-static struct irq_chip titan_irq_type = {
-       .name	       = "TITAN",
+static struct hw_interrupt_type titan_irq_type = {
+       .typename       = "TITAN",
        .startup        = titan_startup_irq,
        .shutdown       = titan_disable_irq,
        .enable         = titan_enable_irq,
@@ -206,7 +204,7 @@ static struct irq_chip titan_irq_type = {
 };
 
 static irqreturn_t
-titan_intr_nop(int irq, void *dev_id)
+titan_intr_nop(int irq, void *dev_id, struct pt_regs *regs)                    
 {
       /*
        * This is a NOP interrupt handler for the purposes of
@@ -245,7 +243,7 @@ titan_legacy_init_irq(void)
 }
 
 void
-titan_dispatch_irqs(u64 mask)
+titan_dispatch_irqs(u64 mask, struct pt_regs *regs)
 {
 	unsigned long vector;
 
@@ -259,12 +257,13 @@ titan_dispatch_irqs(u64 mask)
 	 */
 	while (mask) {
 		/* convert to SRM vector... priority is <63> -> <0> */
-		vector = 63 - __kernel_ctlz(mask);
+		__asm__("ctlz %1, %0" : "=r"(vector) : "r"(mask));
+		vector = 63 - vector;
 		mask &= ~(1UL << vector);	/* clear it out 	 */
 		vector = 0x900 + (vector << 4);	/* convert to SRM vector */
 		
 		/* dispatch it */
-		alpha_mv.device_interrupt(vector);
+		alpha_mv.device_interrupt(vector, regs);
 	}
 }
   
@@ -273,19 +272,6 @@ titan_dispatch_irqs(u64 mask)
  * Titan Family
  */
 static void __init
-titan_request_irq(unsigned int irq, irq_handler_t handler,
-		  unsigned long irqflags, const char *devname,
-		  void *dev_id)
-{
-	int err;
-	err = request_irq(irq, handler, irqflags, devname, dev_id);
-	if (err) {
-		printk("titan_request_irq for IRQ %d returned %d; ignoring\n",
-		       irq, err);
-	}
-}
-
-static void __init
 titan_late_init(void)
 {
 	/*
@@ -293,15 +279,15 @@ titan_late_init(void)
 	 * all reported to the kernel as machine checks, so the handler
 	 * is a nop so it can be called to count the individual events.
 	 */
-	titan_request_irq(63+16, titan_intr_nop, IRQF_DISABLED,
+	request_irq(63+16, titan_intr_nop, IRQF_DISABLED,
 		    "CChip Error", NULL);
-	titan_request_irq(62+16, titan_intr_nop, IRQF_DISABLED,
+	request_irq(62+16, titan_intr_nop, IRQF_DISABLED,
 		    "PChip 0 H_Error", NULL);
-	titan_request_irq(61+16, titan_intr_nop, IRQF_DISABLED,
+	request_irq(61+16, titan_intr_nop, IRQF_DISABLED,
 		    "PChip 1 H_Error", NULL);
-	titan_request_irq(60+16, titan_intr_nop, IRQF_DISABLED,
+	request_irq(60+16, titan_intr_nop, IRQF_DISABLED,
 		    "PChip 0 C_Error", NULL);
-	titan_request_irq(59+16, titan_intr_nop, IRQF_DISABLED,
+	request_irq(59+16, titan_intr_nop, IRQF_DISABLED,
 		    "PChip 1 C_Error", NULL);
 
 	/* 
@@ -346,7 +332,9 @@ titan_init_pci(void)
 	pci_probe_only = 1;
 	common_init_pci();
 	SMC669_Init(0);
+#ifdef CONFIG_VGA_HOSE
 	locate_and_init_vga(NULL);
+#endif
 }
 
 
@@ -360,9 +348,9 @@ privateer_init_pci(void)
 	 * Hook a couple of extra err interrupts that the
 	 * common titan code won't.
 	 */
-	titan_request_irq(53+16, titan_intr_nop, IRQF_DISABLED,
+	request_irq(53+16, titan_intr_nop, IRQF_DISABLED,
 		    "NMI", NULL);
-	titan_request_irq(50+16, titan_intr_nop, IRQF_DISABLED,
+	request_irq(50+16, titan_intr_nop, IRQF_DISABLED,
 		    "Temperature Warning", NULL);
 
 	/*

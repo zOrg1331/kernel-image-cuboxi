@@ -1,0 +1,28 @@
+
+--- linux-2.6.16/lib/spinlock_debug.c~	2006-03-20 16:31:13.000000000 -0500
++++ linux-2.6.16/lib/spinlock_debug.c	2006-03-20 16:31:24.000000000 -0500
+@@ -88,7 +88,6 @@ static void __spin_lock_debug(spinlock_t
+ 		for (i = 0; i < loops_per_jiffy * HZ; i++) {
+ 			if (__raw_spin_trylock(&lock->raw_lock))
+ 				return;
+-			__delay(1);
+ 		}
+ 		/* lockup suspected: */
+ 		if (print_once) {
+@@ -160,7 +160,6 @@ static void __read_lock_debug(rwlock_t *
+ 		for (i = 0; i < loops_per_jiffy * HZ; i++) {
+ 			if (__raw_read_trylock(&lock->raw_lock))
+ 				return;
+-			__delay(1);
+ 		}
+ 		/* lockup suspected: */
+ 		if (print_once) {
+@@ -233,7 +233,6 @@ static void __write_lock_debug(rwlock_t 
+ 		for (i = 0; i < loops_per_jiffy * HZ; i++) {
+ 			if (__raw_write_trylock(&lock->raw_lock))
+ 				return;
+-			__delay(1);
+ 		}
+ 		/* lockup suspected: */
+ 		if (print_once) {
+

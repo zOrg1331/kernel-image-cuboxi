@@ -10,7 +10,7 @@
 #include <linux/netfilter_ipv4/ip_tables.h>
 #include <linux/netfilter_ipv6/ip6_tables.h>
 
-MODULE_DESCRIPTION("Xtables: TCP, UDP and UDP-Lite match");
+MODULE_DESCRIPTION("x_tables match for TCP and UDP, supports IPv4 and IPv6");
 MODULE_LICENSE("GPL");
 MODULE_ALIAS("xt_tcp");
 MODULE_ALIAS("xt_udp");
@@ -27,23 +27,25 @@ MODULE_ALIAS("ip6t_tcp");
 
 
 /* Returns 1 if the port is matched by the range, 0 otherwise */
-static inline bool
-port_match(u_int16_t min, u_int16_t max, u_int16_t port, bool invert)
+static inline int
+port_match(u_int16_t min, u_int16_t max, u_int16_t port, int invert)
 {
-	return (port >= min && port <= max) ^ invert;
+	int ret;
+
+	ret = (port >= min && port <= max) ^ invert;
+	return ret;
 }
 
-static bool
+static int
 tcp_find_option(u_int8_t option,
 		const struct sk_buff *skb,
 		unsigned int protoff,
 		unsigned int optlen,
-		bool invert,
-		bool *hotdrop)
+		int invert,
+		int *hotdrop)
 {
 	/* tcp.doff is only 4 bits, ie. max 15 * 4 bytes */
-	const u_int8_t *op;
-	u_int8_t _opt[60 - sizeof(struct tcphdr)];
+	u_int8_t _opt[60 - sizeof(struct tcphdr)], *op;
 	unsigned int i;
 
 	duprintf("tcp_match: finding option\n");
@@ -55,8 +57,8 @@ tcp_find_option(u_int8_t option,
 	op = skb_header_pointer(skb, protoff + sizeof(struct tcphdr),
 				optlen, _opt);
 	if (op == NULL) {
-		*hotdrop = true;
-		return false;
+		*hotdrop = 1;
+		return 0;
 	}
 
 	for (i = 0; i < optlen; ) {
@@ -68,89 +70,110 @@ tcp_find_option(u_int8_t option,
 	return invert;
 }
 
-static bool tcp_mt(const struct sk_buff *skb, const struct xt_match_param *par)
+static int
+tcp_match(const struct sk_buff *skb,
+	  const struct net_device *in,
+	  const struct net_device *out,
+	  const struct xt_match *match,
+	  const void *matchinfo,
+	  int offset,
+	  unsigned int protoff,
+	  int *hotdrop)
 {
-	const struct tcphdr *th;
-	struct tcphdr _tcph;
-	const struct xt_tcp *tcpinfo = par->matchinfo;
+	struct tcphdr _tcph, *th;
+	const struct xt_tcp *tcpinfo = matchinfo;
 
-	if (par->fragoff != 0) {
+	if (offset) {
 		/* To quote Alan:
 
 		   Don't allow a fragment of TCP 8 bytes in. Nobody normal
 		   causes this. Its a cracker trying to break in by doing a
 		   flag overwrite to pass the direction checks.
 		*/
-		if (par->fragoff == 1) {
+		if (offset == 1) {
 			duprintf("Dropping evil TCP offset=1 frag.\n");
-			*par->hotdrop = true;
+			*hotdrop = 1;
 		}
 		/* Must not be a fragment. */
-		return false;
+		return 0;
 	}
 
-#define FWINVTCP(bool, invflg) ((bool) ^ !!(tcpinfo->invflags & (invflg)))
+#define FWINVTCP(bool,invflg) ((bool) ^ !!(tcpinfo->invflags & invflg))
 
-	th = skb_header_pointer(skb, par->thoff, sizeof(_tcph), &_tcph);
+	th = skb_header_pointer(skb, protoff, sizeof(_tcph), &_tcph);
 	if (th == NULL) {
 		/* We've been asked to examine this packet, and we
 		   can't.  Hence, no choice but to drop. */
 		duprintf("Dropping evil TCP offset=0 tinygram.\n");
-		*par->hotdrop = true;
-		return false;
+		*hotdrop = 1;
+		return 0;
 	}
 
 	if (!port_match(tcpinfo->spts[0], tcpinfo->spts[1],
 			ntohs(th->source),
 			!!(tcpinfo->invflags & XT_TCP_INV_SRCPT)))
-		return false;
+		return 0;
 	if (!port_match(tcpinfo->dpts[0], tcpinfo->dpts[1],
 			ntohs(th->dest),
 			!!(tcpinfo->invflags & XT_TCP_INV_DSTPT)))
-		return false;
+		return 0;
 	if (!FWINVTCP((((unsigned char *)th)[13] & tcpinfo->flg_mask)
 		      == tcpinfo->flg_cmp,
 		      XT_TCP_INV_FLAGS))
-		return false;
+		return 0;
 	if (tcpinfo->option) {
 		if (th->doff * 4 < sizeof(_tcph)) {
-			*par->hotdrop = true;
-			return false;
+			*hotdrop = 1;
+			return 0;
 		}
-		if (!tcp_find_option(tcpinfo->option, skb, par->thoff,
+		if (!tcp_find_option(tcpinfo->option, skb, protoff,
 				     th->doff*4 - sizeof(_tcph),
 				     tcpinfo->invflags & XT_TCP_INV_OPTION,
-				     par->hotdrop))
-			return false;
+				     hotdrop))
+			return 0;
 	}
-	return true;
+	return 1;
 }
 
-static bool tcp_mt_check(const struct xt_mtchk_param *par)
+/* Called when user tries to insert an entry of this type. */
+static int
+tcp_checkentry(const char *tablename,
+	       const void *info,
+	       const struct xt_match *match,
+	       void *matchinfo,
+	       unsigned int matchsize,
+	       unsigned int hook_mask)
 {
-	const struct xt_tcp *tcpinfo = par->matchinfo;
+	const struct xt_tcp *tcpinfo = matchinfo;
 
 	/* Must specify no unknown invflags */
 	return !(tcpinfo->invflags & ~XT_TCP_INV_MASK);
 }
 
-static bool udp_mt(const struct sk_buff *skb, const struct xt_match_param *par)
+static int
+udp_match(const struct sk_buff *skb,
+	  const struct net_device *in,
+	  const struct net_device *out,
+	  const struct xt_match *match,
+	  const void *matchinfo,
+	  int offset,
+	  unsigned int protoff,
+	  int *hotdrop)
 {
-	const struct udphdr *uh;
-	struct udphdr _udph;
-	const struct xt_udp *udpinfo = par->matchinfo;
+	struct udphdr _udph, *uh;
+	const struct xt_udp *udpinfo = matchinfo;
 
 	/* Must not be a fragment. */
-	if (par->fragoff != 0)
-		return false;
+	if (offset)
+		return 0;
 
-	uh = skb_header_pointer(skb, par->thoff, sizeof(_udph), &_udph);
+	uh = skb_header_pointer(skb, protoff, sizeof(_udph), &_udph);
 	if (uh == NULL) {
 		/* We've been asked to examine this packet, and we
 		   can't.  Hence, no choice but to drop. */
 		duprintf("Dropping evil UDP tinygram.\n");
-		*par->hotdrop = true;
-		return false;
+		*hotdrop = 1;
+		return 0;
 	}
 
 	return port_match(udpinfo->spts[0], udpinfo->spts[1],
@@ -161,80 +184,97 @@ static bool udp_mt(const struct sk_buff *skb, const struct xt_match_param *par)
 			      !!(udpinfo->invflags & XT_UDP_INV_DSTPT));
 }
 
-static bool udp_mt_check(const struct xt_mtchk_param *par)
+/* Called when user tries to insert an entry of this type. */
+static int
+udp_checkentry(const char *tablename,
+	       const void *info,
+	       const struct xt_match *match,
+	       void *matchinfo,
+	       unsigned int matchsize,
+	       unsigned int hook_mask)
 {
-	const struct xt_udp *udpinfo = par->matchinfo;
+	const struct xt_tcp *udpinfo = matchinfo;
 
 	/* Must specify no unknown invflags */
 	return !(udpinfo->invflags & ~XT_UDP_INV_MASK);
 }
 
-static struct xt_match tcpudp_mt_reg[] __read_mostly = {
-	{
-		.name		= "tcp",
-		.family		= NFPROTO_IPV4,
-		.checkentry	= tcp_mt_check,
-		.match		= tcp_mt,
-		.matchsize	= sizeof(struct xt_tcp),
-		.proto		= IPPROTO_TCP,
-		.me		= THIS_MODULE,
-	},
-	{
-		.name		= "tcp",
-		.family		= NFPROTO_IPV6,
-		.checkentry	= tcp_mt_check,
-		.match		= tcp_mt,
-		.matchsize	= sizeof(struct xt_tcp),
-		.proto		= IPPROTO_TCP,
-		.me		= THIS_MODULE,
-	},
-	{
-		.name		= "udp",
-		.family		= NFPROTO_IPV4,
-		.checkentry	= udp_mt_check,
-		.match		= udp_mt,
-		.matchsize	= sizeof(struct xt_udp),
-		.proto		= IPPROTO_UDP,
-		.me		= THIS_MODULE,
-	},
-	{
-		.name		= "udp",
-		.family		= NFPROTO_IPV6,
-		.checkentry	= udp_mt_check,
-		.match		= udp_mt,
-		.matchsize	= sizeof(struct xt_udp),
-		.proto		= IPPROTO_UDP,
-		.me		= THIS_MODULE,
-	},
-	{
-		.name		= "udplite",
-		.family		= NFPROTO_IPV4,
-		.checkentry	= udp_mt_check,
-		.match		= udp_mt,
-		.matchsize	= sizeof(struct xt_udp),
-		.proto		= IPPROTO_UDPLITE,
-		.me		= THIS_MODULE,
-	},
-	{
-		.name		= "udplite",
-		.family		= NFPROTO_IPV6,
-		.checkentry	= udp_mt_check,
-		.match		= udp_mt,
-		.matchsize	= sizeof(struct xt_udp),
-		.proto		= IPPROTO_UDPLITE,
-		.me		= THIS_MODULE,
-	},
+static struct xt_match tcp_matchstruct = {
+	.name		= "tcp",
+	.match		= tcp_match,
+	.matchsize	= sizeof(struct xt_tcp),
+	.proto		= IPPROTO_TCP,
+	.family		= AF_INET,
+	.checkentry	= tcp_checkentry,
+	.me		= THIS_MODULE,
 };
 
-static int __init tcpudp_mt_init(void)
+static struct xt_match tcp6_matchstruct = {
+	.name		= "tcp",
+	.match		= tcp_match,
+	.matchsize	= sizeof(struct xt_tcp),
+	.proto		= IPPROTO_TCP,
+	.family		= AF_INET6,
+	.checkentry	= tcp_checkentry,
+	.me		= THIS_MODULE,
+};
+
+static struct xt_match udp_matchstruct = {
+	.name		= "udp",
+	.match		= udp_match,
+	.matchsize	= sizeof(struct xt_udp),
+	.proto		= IPPROTO_UDP,
+	.family		= AF_INET,
+	.checkentry	= udp_checkentry,
+	.me		= THIS_MODULE,
+};
+static struct xt_match udp6_matchstruct = {
+	.name		= "udp",
+	.match		= udp_match,
+	.matchsize	= sizeof(struct xt_udp),
+	.proto		= IPPROTO_UDP,
+	.family		= AF_INET6,
+	.checkentry	= udp_checkentry,
+	.me		= THIS_MODULE,
+};
+
+static int __init xt_tcpudp_init(void)
 {
-	return xt_register_matches(tcpudp_mt_reg, ARRAY_SIZE(tcpudp_mt_reg));
+	int ret;
+	ret = xt_register_match(&tcp_matchstruct);
+	if (ret)
+		return ret;
+
+	ret = xt_register_match(&tcp6_matchstruct);
+	if (ret)
+		goto out_unreg_tcp;
+
+	ret = xt_register_match(&udp_matchstruct);
+	if (ret)
+		goto out_unreg_tcp6;
+	
+	ret = xt_register_match(&udp6_matchstruct);
+	if (ret)
+		goto out_unreg_udp;
+
+	return ret;
+
+out_unreg_udp:
+	xt_unregister_match(&udp_matchstruct);
+out_unreg_tcp6:
+	xt_unregister_match(&tcp6_matchstruct);
+out_unreg_tcp:
+	xt_unregister_match(&tcp_matchstruct);
+	return ret;
 }
 
-static void __exit tcpudp_mt_exit(void)
+static void __exit xt_tcpudp_fini(void)
 {
-	xt_unregister_matches(tcpudp_mt_reg, ARRAY_SIZE(tcpudp_mt_reg));
+	xt_unregister_match(&udp6_matchstruct);
+	xt_unregister_match(&udp_matchstruct);
+	xt_unregister_match(&tcp6_matchstruct);
+	xt_unregister_match(&tcp_matchstruct);
 }
 
-module_init(tcpudp_mt_init);
-module_exit(tcpudp_mt_exit);
+module_init(xt_tcpudp_init);
+module_exit(xt_tcpudp_fini);

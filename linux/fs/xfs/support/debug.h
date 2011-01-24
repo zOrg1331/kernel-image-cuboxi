@@ -27,28 +27,24 @@
 #define CE_ALERT        1               /* alert        */
 #define CE_PANIC        0               /* panic        */
 
+extern void icmn_err(int, char *, va_list)
+	__attribute__ ((format (printf, 2, 0)));
 extern void cmn_err(int, char *, ...)
 	__attribute__ ((format (printf, 2, 3)));
 extern void assfail(char *expr, char *f, int l);
 
 #define ASSERT_ALWAYS(expr)	\
-	(unlikely(expr) ? (void)0 : assfail(#expr, __FILE__, __LINE__))
+	(unlikely((expr) != 0) ? (void)0 : assfail(#expr, __FILE__, __LINE__))
 
 #ifndef DEBUG
-#define ASSERT(expr)	((void)0)
-
-#ifndef STATIC
-# define STATIC static noinline
+# define ASSERT(expr)	((void)0)
+#else
+# define ASSERT(expr)	ASSERT_ALWAYS(expr)
+extern unsigned long random(void);
 #endif
 
-#else /* DEBUG */
-
-#define ASSERT(expr)	\
-	(unlikely(expr) ? (void)0 : assfail(#expr, __FILE__, __LINE__))
-
 #ifndef STATIC
-# define STATIC noinline
+# define STATIC static
 #endif
 
-#endif /* DEBUG */
 #endif  /* __XFS_SUPPORT_DEBUG_H__ */

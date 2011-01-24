@@ -1,0 +1,110 @@
+From: Jeff Layton <jlayton@redhat.com>
+Date: Thu, 2 Apr 2009 07:31:32 -0400
+Subject: [fs] writeback: fix persistent inode->dirtied_when val
+Message-id: 1238671892-18244-1-git-send-email-jlayton@redhat.com
+O-Subject: [RHEL5.4 PATCH] BZ#489359: writeback: work around problems with persistent inode->dirtied_when values (try #3)
+Bugzilla: 489359
+RH-Acked-by: Josef Bacik <josef@redhat.com>
+RH-Acked-by: Eric Sandeen <sandeen@redhat.com>
+RH-Acked-by: Ian Kent <ikent@redhat.com>
+RH-Acked-by: Josef Bacik <josef@redhat.com>
+RH-Acked-by: Eric Sandeen <sandeen@redhat.com>
+
+This is the second version of this patch. The main difference from
+the previous one is the addition of a helper function that eliminates
+the extra checks on 64-bit architectures. This one is a backport of
+the patch that has gone into -mm. I believe it'll make 2.6.30 or
+2.6.31.
+
+The dirtied_when value on an inode is supposed to represent the first
+time that an inode has one of its pages dirtied. This value is in units
+of jiffies. It's checked in a couple of places in sync_sb_inodes using
+the time_after() macro.
+
+The problem is that these checks assume that dirtied_when is updated
+periodically. But if an inode is continuously being used for I/O it can
+be persistently marked as dirty and will continue to age. Once the time
+difference between dirtied_when and the jiffies value it is being
+compared to is greater than (or equal to) half the maximum of the
+jiffies type, the logic of the time_*() macros inverts and the opposite
+of what is needed is returned. On 32-bit architectures that's just under
+25 days. In the continuous I/O situation above, the dirtied_when starts
+aging some time after system boot.
+
+As the least-recently dirtied inode, it'll end up being the first one
+that pdflush will try to write out. sync_sb_inodes does this check:
+
+	/* Was this inode dirtied after sync_sb_inodes was called? */
+ 	if (time_after(inode->dirtied_when, start))
+ 		break;
+
+...but now dirtied_when appears to be in the future. sync_sb_inodes
+bails out without attempting to write any dirty inodes. When this
+occurs, pdflush will stop writing out inodes for this superblock and
+nothing will unwedge it until jiffies moves out of the problematic
+window.
+
+The reproducer we have for this has a program repeatedly dirty an inode
+on NFS. This is also an upstream problem, but there are some NFS/RPC
+changes that turn this problem into a race condition rather than a
+consistent issue. On upstream kernels __mark_inode_dirty will often
+win a race against __sync_single_inode and the dirtied_when value gets
+updated.
+
+This patch works around this problem by changing the time_after checks
+against dirtied_when to also check whether the time is before or the
+same as "now". This should shrink the problematic window to such a small
+period as not to matter.
+
+The patch was verified using a fault-injection patch that adds an
+artificial offset of inodes on NFS when a debug switch is set.
+
+Signed-off-by: Jeff Layton <jlayton@redhat.com>
+
+diff --git a/fs/fs-writeback.c b/fs/fs-writeback.c
+index 892643d..0b5ebcd 100644
+--- a/fs/fs-writeback.c
++++ b/fs/fs-writeback.c
+@@ -236,6 +236,21 @@ __sync_single_inode(struct inode *inode, struct writeback_control *wbc)
+ 	return ret;
+ }
+ 
++static bool inode_dirtied_after(struct inode *inode, unsigned long t)
++{
++	bool ret = time_after(inode->dirtied_when, t);
++#ifndef CONFIG_64BIT
++	/*
++	 * For inodes being constantly redirtied, dirtied_when can get stuck.
++	 * It _appears_ to be in the future, but is actually in distant past.
++	 * This test is necessary to prevent such wrapped-around relative times
++	 * from permanently stopping the whole pdflush writeback.
++	 */
++	ret = ret && time_before_eq(inode->dirtied_when, jiffies);
++#endif
++	return ret;
++}
++
+ /*
+  * Write out an inode's dirty pages.  Called under inode_lock.  Either the
+  * caller has ref on the inode (either via __iget or via syscall against an fd)
+@@ -350,13 +365,16 @@ sync_sb_inodes(struct super_block *sb, struct writeback_control *wbc)
+ 			continue;		/* blockdev has wrong queue */
+ 		}
+ 
+-		/* Was this inode dirtied after sync_sb_inodes was called? */
+-		if (time_after(inode->dirtied_when, start))
++		/*
++		 * Was this inode dirtied after sync_sb_inodes was called?
++		 * This keeps sync from extra jobs and livelock.
++		 */
++		if (inode_dirtied_after(inode, start))
+ 			break;
+ 
+ 		/* Was this inode dirtied too recently? */
+-		if (wbc->older_than_this && time_after(inode->dirtied_when,
+-						*wbc->older_than_this))
++		if (wbc->older_than_this &&
++		    inode_dirtied_after(inode, *wbc->older_than_this))
+ 			break;
+ 
+ 		/* Is another pdflush already flushing this queue? */

@@ -1,0 +1,203 @@
+From: Tetsu Yamamoto <tyamamot@redhat.com>
+Date: Fri, 21 Dec 2007 14:11:46 -0500
+Subject: [xen] ia64: cannot create guest having 100GB memory
+Message-id: 476C0FF2.2050707@redhat.com
+O-Subject: [RHEL5.2 PATCH 1/2] Cannot create guest having 100GB memory on Xen-ia64
+Bugzilla: 251353
+
+This is a linux kernel part of patches to fix BZ#251353.
+https://bugzilla.redhat.com/show_bug.cgi?id=251353
+
+This is backported from the upstream to remove a limitation of xencomm
+memory reservation on creating a domain
+- [IA64] Work around for xencomm memory reservation op.
+http://xenbits.xensource.com/ext/ia64/linux-2.6.18-xen.hg?rev/ec6f71d1b335
+
+This fix needs HV and user land patches.  I'll post them by other mails.
+
+I've tested this pactch and HV part patch with kernel-xen-2.6.18-58.el5,
+and xen-3.0.3-41 with user land patch.
+I've confirmed that a PV/HVM domain with 256GB(262144MB) memory can be
+created and destroyed with no problem.
+
+Please review and ack.
+
+Regards,
+
+Tetsu Yamamoto
+
+Acked-by: Jarod Wilson <jwilson@redhat.com>
+Acked-by: Bill Burns <bburns@redhat.com>
+
+diff --git a/arch/ia64/xen/xcom_privcmd.c b/arch/ia64/xen/xcom_privcmd.c
+index 95c3ed7..c80ea23 100644
+--- a/arch/ia64/xen/xcom_privcmd.c
++++ b/arch/ia64/xen/xcom_privcmd.c
+@@ -40,6 +40,104 @@
+ #define ROUND_DIV(v,s) (((v) + (s) - 1) / (s))
+ 
+ static int
++xencomm_privcmd_memory_reservation_op(privcmd_hypercall_t *hypercall)
++{
++	const unsigned long cmd = hypercall->arg[0];
++	int ret = 0;
++	xen_memory_reservation_t kern_op;
++	xen_memory_reservation_t __user *user_op;
++	struct xencomm_handle *desc = NULL;
++	struct xencomm_handle *desc_op;
++
++	user_op = (xen_memory_reservation_t __user *)hypercall->arg[1];
++	if (copy_from_user(&kern_op, user_op,
++			   sizeof(xen_memory_reservation_t)))
++		return -EFAULT;
++	desc_op = xencomm_create_inline(&kern_op);
++
++	if (!xen_guest_handle(kern_op.extent_start)) {
++		ret = xencomm_arch_hypercall_memory_op(cmd, desc_op);
++		if (ret < 0)
++			return ret;
++	} else {
++		xen_ulong_t nr_done = 0;
++		xen_ulong_t nr_extents = kern_op.nr_extents;
++		void *addr = xen_guest_handle(kern_op.extent_start);
++			
++		/*
++		 * Work around.
++		 *   Xencomm has single page size limit caused
++		 *   by xencomm_alloc()/xencomm_free() so that
++		 *   we have to repeat the hypercall.
++		 *   This limitation can be removed.
++		 */
++#define MEMORYOP_XENCOMM_LIMIT						\
++		(((((PAGE_SIZE - sizeof(struct xencomm_desc)) /		\
++		    sizeof(uint64_t)) - 2) * PAGE_SIZE) /		\
++		 sizeof(*xen_guest_handle(kern_op.extent_start)))
++
++		/*
++		 * Work around.
++		 *   Even if the above limitation is removed,
++		 *   the hypercall with large number of extents 
++		 *   may cause the soft lockup warning.
++		 *   In order to avoid the warning, we limit
++		 *   the number of extents and repeat the hypercall.
++		 *   The following value is determined by experimentation.
++		 *   If the following limit causes soft lockup warning,
++		 *   we should decrease this value.
++		 *
++		 *   Another way would be that start with small value and
++		 *   increase adoptively measuring hypercall time.
++		 *   It might be over-kill.
++		 */
++#define MEMORYOP_MAX_EXTENTS	(MEMORYOP_XENCOMM_LIMIT / 4)
++
++		while (nr_extents > 0) {
++			xen_ulong_t nr_tmp = nr_extents;
++			if (nr_tmp > MEMORYOP_MAX_EXTENTS)
++				nr_tmp = MEMORYOP_MAX_EXTENTS;
++
++			kern_op.nr_extents = nr_tmp;
++			ret = xencomm_create
++				(addr + nr_done * sizeof(*xen_guest_handle(kern_op.extent_start)),
++				 nr_tmp * sizeof(*xen_guest_handle(kern_op.extent_start)),
++				 &desc, GFP_KERNEL);
++
++			if (addr != NULL && nr_tmp > 0 && desc == NULL)
++				return nr_done > 0 ? nr_done : -ENOMEM;
++
++			set_xen_guest_handle(kern_op.extent_start,
++					     (void *)desc);
++
++			ret = xencomm_arch_hypercall_memory_op(cmd, desc_op);
++			xencomm_free(desc);
++			if (ret < 0)
++				return nr_done > 0 ? nr_done : ret;
++
++			nr_done += ret;
++			nr_extents -= ret;
++			if (ret < nr_tmp)
++				break;
++
++			/*
++			 * prevent softlock up message.
++			 * give cpu to soft lockup kernel thread.
++			 */
++			if (nr_extents > 0)
++				schedule();
++		}
++		ret = nr_done;
++		set_xen_guest_handle(kern_op.extent_start, addr);
++	}
++
++	if (copy_to_user(user_op, &kern_op, sizeof(xen_memory_reservation_t)))
++		return -EFAULT;
++
++	return ret;
++}
++
++static int
+ xencomm_privcmd_dom0_op(privcmd_hypercall_t *hypercall)
+ {
+ 	dom0_op_t kern_op;
+@@ -350,48 +448,7 @@ xencomm_privcmd_memory_op(privcmd_hypercall_t *hypercall)
+ 	case XENMEM_increase_reservation:
+ 	case XENMEM_decrease_reservation:
+ 	case XENMEM_populate_physmap:
+-	{
+-		xen_memory_reservation_t kern_op;
+-		xen_memory_reservation_t __user *user_op;
+-		struct xencomm_handle *desc = NULL;
+-		struct xencomm_handle *desc_op;
+-
+-		user_op = (xen_memory_reservation_t __user *)hypercall->arg[1];
+-		if (copy_from_user(&kern_op, user_op,
+-		                   sizeof(xen_memory_reservation_t)))
+-			return -EFAULT;
+-		desc_op = xencomm_create_inline(&kern_op);
+-
+-		if (xen_guest_handle(kern_op.extent_start)) {
+-			void * addr;
+-
+-			addr = xen_guest_handle(kern_op.extent_start);
+-			ret = xencomm_create
+-				(addr,
+-				 kern_op.nr_extents *
+-				 sizeof(*xen_guest_handle
+-					(kern_op.extent_start)),
+-				 &desc, GFP_KERNEL);
+-			if (ret)
+-				return ret;
+-			set_xen_guest_handle(kern_op.extent_start,
+-			                     (void *)desc);
+-		}
+-
+-		ret = xencomm_arch_hypercall_memory_op(cmd, desc_op);
+-
+-		if (desc)
+-			xencomm_free(desc);
+-
+-		if (ret != 0)
+-			return ret;
+-
+-		if (copy_to_user(user_op, &kern_op,
+-		                 sizeof(xen_memory_reservation_t)))
+-			return -EFAULT;
+-
+-		return ret;
+-	}
++		return xencomm_privcmd_memory_reservation_op(hypercall);
+ 	case XENMEM_translate_gpfn_list:
+ 	{
+ 		xen_translate_gpfn_list_t kern_op;
+diff --git a/arch/ia64/xen/xencomm.c b/arch/ia64/xen/xencomm.c
+index 3767e89..9b98d8a 100644
+--- a/arch/ia64/xen/xencomm.c
++++ b/arch/ia64/xen/xencomm.c
+@@ -159,7 +159,7 @@ xencomm_alloc(gfp_t gfp_mask)
+ 
+ 	desc = (struct xencomm_desc *)__get_free_page(gfp_mask);
+ 	if (desc == NULL)
+-		panic("%s: page allocation failed\n", __func__);
++		return NULL;
+ 
+ 	desc->nr_addrs = (PAGE_SIZE - sizeof(struct xencomm_desc)) /
+ 	                 sizeof(*desc->address);

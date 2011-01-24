@@ -1,0 +1,37 @@
+From: Heinz Mauelshagen <heinzm@redhat.com>
+Date: Tue, 12 May 2009 23:06:29 +0200
+Subject: [md] dm: raid45 target oops on mapping table reload
+Message-id: 1242162389.28404.63.camel@o
+O-Subject: [RHEL 5.4 PATCH] dm: raid45 target oops on mapping table reload
+Bugzilla: 500387
+RH-Acked-by: Jonathan Brassow <jbrassow@redhat.com>
+
+RHEL5.4 device mapper: raid45 target regression on mapping table reload
+
+Reloading a mapping table causes a new SLAB cache to be created with the
+same name causing a kernel oops.
+
+diff --git a/drivers/md/dm-raid45.c b/drivers/md/dm-raid45.c
+index 89374f9..48dae62 100644
+--- a/drivers/md/dm-raid45.c
++++ b/drivers/md/dm-raid45.c
+@@ -166,6 +166,9 @@ static inline int name ## what(struct var *v) \
+  * or, in the degraded/resynchronization case, missing chunks need
+  * to be reconstructed using the other chunks of the stripe.
+  *---------------------------------------------------------------*/
++/* Unique kmem cache name suffix # counter. */
++static atomic_t _stripe_sc_nr = ATOMIC_INIT(-1); /* kmem cache # counter. */
++
+ /* A chunk within a stripe (holds bios hanging off). */
+ /* IO status flags for chunks of a stripe. */
+ enum chunk_flags {
+@@ -1556,7 +1559,8 @@ static int sc_init(struct raid_set *rs, unsigned stripes)
+ 	 */
+ 	md = dm_table_get_md(rs->ti->table);
+ 	disk = dm_disk(md);
+-	sprintf(sc->kc.name, "%s-%d", TARGET, disk->first_minor);
++	snprintf(sc->kc.name, sizeof(sc->kc.name), "%s-%d.%d", TARGET,
++		 disk->first_minor, atomic_inc_return(&_stripe_sc_nr));
+ 	dm_put(md);
+ 	sc->kc.cache = kmem_cache_create(sc->kc.name, stripe_size(rs),
+ 					 0, 0, NULL, NULL);

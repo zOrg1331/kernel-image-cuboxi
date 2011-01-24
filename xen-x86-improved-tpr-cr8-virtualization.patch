@@ -1,0 +1,170 @@
+From: Bhavana Nagendra <bnagendr@redhat.com>
+Date: Wed, 12 Dec 2007 12:38:50 -0500
+Subject: [xen] x86: improved TPR/CR8 virtualization
+Message-id: 47601CAA.5020109@redhat.com
+O-Subject: Re: [RHEL5.2 PATCH] Improved TPR/CR8 virtualization in Xen
+Bugzilla: 251985
+
+Resolves BZ 251985
+
+This patch reduces the number of CR8 intercept to a fraction of the
+number of CR8 intercepts without.  First, CR8 read intercepts are
+completely disabled since the SVM vTPR is kept kept in sync with the
+HVM vLAPIC TPR.  Second, CR8 write intercepts are enabled and disabled
+based upon certain conditions.  Most of the time, CR8 write intercepts
+are disabled.  They are enabled only when there is a pending interrupt
+that can't be delivered because of either the current ISR or TPR (aka
+PPR) because this is the only time the TPR matters.
+
+With this patch, the number of CR8 intercepts dropped from around
+10,000,000 to around 6,000 during boot of Windows 2003 Server 64-bit
+(this is a rough estimate).
+
+Upstream changeset: 15844
+
+There is another TPR related changeset that Keir is backporting to 3.1.3
+and if that materializes we can include it in RHEL5.2.  At this point c/s
+15984 is too invasive.
+
+Please review and provide ACKs.
+
+Indeed; attached fixed patch.   The flag 'intr_window_enabled' is passed
+to the update_cr8_interrupt() call so that it can bail out if higher
+priority events (interrupt
+shadow or EFLAGS.IF) is blocking the pending interrupt.
+
+The only departure from the indicated upstream change set in my original
+submission
+is this flag (to avoid dragging in upstream code that's not necessary
+for the BZ).   This
+version will be submitted to the 3.1.3 stream.
+
+Please review again, thanks.
+
+Bhavana
+
+Acked-by: "Stephen C. Tweedie" <sct@redhat.com>
+Acked-by: Bill Burns <bburns@redhat.com>
+Acked-by: Bill Burns <bburns@redhat.com>
+Acked-by: "Stephen C. Tweedie" <sct@redhat.com>
+
+diff --git a/arch/x86/hvm/svm/intr.c b/arch/x86/hvm/svm/intr.c
+index 0730586..e9325e8 100644
+--- a/arch/x86/hvm/svm/intr.c
++++ b/arch/x86/hvm/svm/intr.c
+@@ -31,6 +31,7 @@
+ #include <asm/hvm/hvm.h>
+ #include <asm/hvm/io.h>
+ #include <asm/hvm/support.h>
++#include <asm/hvm/vlapic.h>
+ #include <asm/hvm/svm/svm.h>
+ #include <asm/hvm/svm/intr.h>
+ #include <xen/event.h>
+@@ -59,13 +60,40 @@ static inline int svm_inject_extint(struct vcpu *v, int trap)
+ 
+     return 0;
+ }
+-    
++
++static void update_cr8_intercept(
++    struct vcpu *v, int intr_window_enabled)
++{
++    struct vmcb_struct *vmcb = v->arch.hvm_svm.vmcb;
++    struct vlapic *vlapic = vcpu_vlapic(v);
++    int max_irr;
++
++    vmcb->cr_intercepts &= ~CR_INTERCEPT_CR8_WRITE;
++ 
++    /* 
++     * If ExtInts are masked then that dominates the TPR --- the 'interrupt
++     * window' has already been enabled in this case.
++     */
++    if ( intr_window_enabled )
++        return;
++
++    /* Is there an interrupt pending at the LAPIC? Nothing to do if not. */
++    if ( !vlapic_enabled(vlapic) || 
++         ((max_irr = vlapic_find_highest_irr(vlapic)) == -1) )
++        return;
++
++    /* Highest-priority pending interrupt is masked by the TPR? */
++    if ( (vmcb->vintr.fields.tpr & 0xf) >= (max_irr >> 4) )
++        vmcb->cr_intercepts |= CR_INTERCEPT_CR8_WRITE;
++}
++
+ asmlinkage void svm_intr_assist(void) 
+ {
+     struct vcpu *v = current;
+     struct vmcb_struct *vmcb = v->arch.hvm_svm.vmcb;
+     int intr_type = APIC_DM_EXTINT;
+     int intr_vector = -1;
++    int intr_window_enabled = 0;
+ 
+     /*
+      * Previous Interrupt delivery caused this intercept?
+@@ -83,7 +111,7 @@ asmlinkage void svm_intr_assist(void)
+         vmcb->exitintinfo.bytes = 0;
+         HVMTRACE_1D(REINJ_VIRQ, v, intr_vector);
+         svm_inject_extint(v, intr_vector);
+-        return;
++        goto out;
+     }
+ 
+     /*
+@@ -92,13 +120,13 @@ asmlinkage void svm_intr_assist(void)
+      * external physical interrupt was pending when we executed VMRUN.
+      */
+     if ( vmcb->vintr.fields.irq )
+-        return;
++        goto out;
+ 
+     /* Crank the handle on interrupt state and check for new interrrupts. */
+     pt_update_irq(v);
+     hvm_set_callback_irq_level();
+     if ( !cpu_has_pending_irq(v) )
+-        return;
++        goto out;
+ 
+     /*
+      * If the guest can't take an interrupt right now, create a 'fake'
+@@ -122,7 +150,8 @@ asmlinkage void svm_intr_assist(void)
+         vmcb->general1_intercepts |= GENERAL1_INTERCEPT_VINTR;
+         HVMTRACE_2D(INJ_VIRQ, v, 0x0, /*fake=*/ 1);
+         svm_inject_extint(v, 0x0); /* actual vector doesn't matter */
+-        return;
++        intr_window_enabled  = 1;
++        goto out;
+     }
+ 
+     /* Okay, we can deliver the interrupt: grab it and update PIC state. */
+@@ -133,6 +162,9 @@ asmlinkage void svm_intr_assist(void)
+     svm_inject_extint(v, intr_vector);
+ 
+     pt_intr_post(v, intr_vector, intr_type);
++
++ out:
++    update_cr8_intercept(v, intr_window_enabled);
+ }
+ 
+ /*
+diff --git a/arch/x86/hvm/svm/vmcb.c b/arch/x86/hvm/svm/vmcb.c
+index 96c448e..227f66d 100644
+--- a/arch/x86/hvm/svm/vmcb.c
++++ b/arch/x86/hvm/svm/vmcb.c
+@@ -129,8 +129,14 @@ static int construct_vmcb(struct vcpu *v)
+     /* Intercept all debug-register writes. */
+     vmcb->dr_intercepts = ~0u;
+ 
+-    /* Intercept all control-register accesses, except to CR2. */
+-    vmcb->cr_intercepts = ~(CR_INTERCEPT_CR2_READ | CR_INTERCEPT_CR2_WRITE);
++    /*
++     * Intercept all control-register accesses except for CR2 reads/writes
++     * and CR8 reads (and actually CR8 writes, but that's a special case
++     * that's handled in svm/intr.c). 
++     */
++    vmcb->cr_intercepts = ~(CR_INTERCEPT_CR2_READ |
++                            CR_INTERCEPT_CR2_WRITE |
++                            CR_INTERCEPT_CR8_READ);
+ 
+     /* I/O and MSR permission bitmaps. */
+     arch_svm->msrpm = alloc_xenheap_pages(get_order_from_bytes(MSRPM_SIZE));

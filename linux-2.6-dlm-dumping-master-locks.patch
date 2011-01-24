@@ -1,0 +1,265 @@
+From: David Teigland <teigland@redhat.com>
+Subject: [RHEL5.1 PATCH] dlm: dumping master locks
+Date: Thu, 31 May 2007 09:36:36 -0500
+Bugzilla: 241821
+Message-Id: <20070531143636.GH2642@redhat.com>
+Changelog: [dlm] dumping master locks
+
+
+bz 241821
+
+Add a new debugfs file that dumps a compact list of mastered locks.
+This will be used by a userland daemon to collect state for deadlock
+detection.
+
+Also, for the existing function that prints all lock state, lock the rsb
+before going through the lock lists since they can be changing in the
+course of normal dlm activity.
+
+upstream: gfs2-2.6-nmw.git and -mm
+
+Index: linux-rhel51-quilt/fs/dlm/debug_fs.c
+===================================================================
+--- linux-rhel51-quilt.orig/fs/dlm/debug_fs.c	2007-06-08 09:01:03.000000000 -0500
++++ linux-rhel51-quilt/fs/dlm/debug_fs.c	2007-06-08 10:19:22.000000000 -0500
+@@ -17,6 +17,7 @@
+ #include <linux/debugfs.h>
+ 
+ #include "dlm_internal.h"
++#include "lock.h"
+ 
+ #define DLM_DEBUG_BUF_LEN 4096
+ static char debug_buf[DLM_DEBUG_BUF_LEN];
+@@ -26,6 +27,8 @@
+ 
+ struct rsb_iter {
+ 	int entry;
++	int master;
++	int header;
+ 	struct dlm_ls *ls;
+ 	struct list_head *next;
+ 	struct dlm_rsb *rsb;
+@@ -85,6 +88,8 @@
+ 	struct dlm_lkb *lkb;
+ 	int i, lvblen = res->res_ls->ls_lvblen, recover_list, root_list;
+ 
++	lock_rsb(res);
++
+ 	seq_printf(s, "\nResource %p Name (len=%d) \"", res, res->res_length);
+ 	for (i = 0; i < res->res_length; i++) {
+ 		if (isprint(res->res_name[i]))
+@@ -151,6 +156,59 @@
+ 		seq_printf(s, "\n");
+ 	}
+  out:
++	unlock_rsb(res);
++	return 0;
++}
++
++static void print_master_lock(struct seq_file *s, struct dlm_lkb *lkb,
++			      struct dlm_rsb *r)
++{
++	struct dlm_user_args *ua;
++	unsigned int waiting = 0;
++	uint64_t xid = 0;
++
++	if (lkb->lkb_flags & DLM_IFL_USER) {
++		ua = (struct dlm_user_args *) lkb->lkb_astparam;
++		if (ua)
++			xid = ua->xid;
++	}
++
++	if (lkb->lkb_timestamp)
++		waiting = jiffies_to_msecs(jiffies - lkb->lkb_timestamp);
++
++	/* id nodeid remid pid xid flags sts grmode rqmode time_ms len name */
++
++	seq_printf(s, "%x %d %x %u %llu %x %d %d %d %u %d \"%s\"\n",
++		   lkb->lkb_id,
++		   lkb->lkb_nodeid,
++		   lkb->lkb_remid,
++		   lkb->lkb_ownpid,
++		   (unsigned long long)xid,
++		   lkb->lkb_exflags,
++		   lkb->lkb_status,
++		   lkb->lkb_grmode,
++		   lkb->lkb_rqmode,
++		   waiting,
++		   r->res_length,
++		   r->res_name);
++}
++
++static int print_master_resource(struct dlm_rsb *r, struct seq_file *s)
++{
++	struct dlm_lkb *lkb;
++
++	lock_rsb(r);
++
++	list_for_each_entry(lkb, &r->res_grantqueue, lkb_statequeue)
++		print_master_lock(s, lkb, r);
++
++	list_for_each_entry(lkb, &r->res_convertqueue, lkb_statequeue)
++		print_master_lock(s, lkb, r);
++
++	list_for_each_entry(lkb, &r->res_waitqueue, lkb_statequeue)
++		print_master_lock(s, lkb, r);
++
++	unlock_rsb(r);
+ 	return 0;
+ }
+ 
+@@ -202,7 +260,7 @@
+ {
+ 	struct rsb_iter *ri;
+ 
+-	ri = kmalloc(sizeof *ri, GFP_KERNEL);
++	ri = kzalloc(sizeof *ri, GFP_KERNEL);
+ 	if (!ri)
+ 		return NULL;
+ 
+@@ -260,7 +318,17 @@
+ {
+ 	struct rsb_iter *ri = iter_ptr;
+ 
+-	print_resource(ri->rsb, file);
++	if (ri->master) {
++		if (ri->header) {
++			seq_printf(file, "id nodeid remid pid xid flags sts "
++					 "grmode rqmode time_ms len name\n");
++			ri->header = 0;
++		}
++		if (is_master(ri->rsb))
++			print_master_resource(ri->rsb, file);
++	} else {
++		print_resource(ri->rsb, file);
++	}
+ 
+ 	return 0;
+ }
+@@ -296,6 +364,83 @@
+ };
+ 
+ /*
++ * Dump master lock state
++ */
++
++static struct rsb_iter *master_iter_init(struct dlm_ls *ls, loff_t *pos)
++{
++	struct rsb_iter *ri;
++
++	ri = kzalloc(sizeof *ri, GFP_KERNEL);
++	if (!ri)
++		return NULL;
++
++	ri->ls = ls;
++	ri->entry = 0;
++	ri->next = NULL;
++	ri->master = 1;
++
++	if (*pos == 0)
++		ri->header = 1;
++
++	if (rsb_iter_next(ri)) {
++		rsb_iter_free(ri);
++		return NULL;
++	}
++
++	return ri;
++}
++
++static void *master_seq_start(struct seq_file *file, loff_t *pos)
++{
++	struct rsb_iter *ri;
++	loff_t n = *pos;
++
++	ri = master_iter_init(file->private, pos);
++	if (!ri)
++		return NULL;
++
++	while (n--) {
++		if (rsb_iter_next(ri)) {
++			rsb_iter_free(ri);
++			return NULL;
++		}
++	}
++
++	return ri;
++}
++
++static struct seq_operations master_seq_ops = {
++	.start = master_seq_start,
++	.next  = rsb_seq_next,
++	.stop  = rsb_seq_stop,
++	.show  = rsb_seq_show,
++};
++
++static int master_open(struct inode *inode, struct file *file)
++{
++	struct seq_file *seq;
++	int ret;
++
++	ret = seq_open(file, &master_seq_ops);
++	if (ret)
++		return ret;
++
++	seq = file->private_data;
++	seq->private = inode->i_private;
++
++	return 0;
++}
++
++static const struct file_operations master_fops = {
++	.owner   = THIS_MODULE,
++	.open    = master_open,
++	.read    = seq_read,
++	.llseek  = seq_lseek,
++	.release = seq_release
++};
++
++/*
+  * dump lkb's on the ls_waiters list
+  */
+ 
+@@ -362,6 +507,20 @@
+ 		return -ENOMEM;
+ 	}
+ 
++	memset(name, 0, sizeof(name));
++	snprintf(name, DLM_LOCKSPACE_LEN+8, "%s_master", ls->ls_name);
++
++	ls->ls_debug_master_dentry = debugfs_create_file(name,
++							 S_IFREG | S_IRUGO,
++							 dlm_root,
++							 ls,
++							 &master_fops);
++	if (!ls->ls_debug_master_dentry) {
++		debugfs_remove(ls->ls_debug_waiters_dentry);
++		debugfs_remove(ls->ls_debug_rsb_dentry);
++		return -ENOMEM;
++	}
++
+ 	return 0;
+ }
+ 
+@@ -371,6 +530,8 @@
+ 		debugfs_remove(ls->ls_debug_rsb_dentry);
+ 	if (ls->ls_debug_waiters_dentry)
+ 		debugfs_remove(ls->ls_debug_waiters_dentry);
++	if (ls->ls_debug_master_dentry)
++		debugfs_remove(ls->ls_debug_master_dentry);
+ }
+ 
+ int dlm_register_debugfs(void)
+Index: linux-rhel51-quilt/fs/dlm/dlm_internal.h
+===================================================================
+--- linux-rhel51-quilt.orig/fs/dlm/dlm_internal.h	2007-06-08 10:18:13.000000000 -0500
++++ linux-rhel51-quilt/fs/dlm/dlm_internal.h	2007-06-08 10:19:22.000000000 -0500
+@@ -470,6 +470,7 @@
+ 
+ 	struct dentry		*ls_debug_rsb_dentry; /* debugfs */
+ 	struct dentry		*ls_debug_waiters_dentry; /* debugfs */
++	struct dentry		*ls_debug_master_dentry; /* debugfs */
+ 
+ 	wait_queue_head_t	ls_uevent_wait;	/* user part of join/leave */
+ 	int			ls_uevent_result;
+

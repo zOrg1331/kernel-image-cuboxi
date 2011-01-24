@@ -1,0 +1,104 @@
+From: Herbert Xu <herbert.xu@redhat.com>
+Date: Fri, 7 Aug 2009 20:11:46 +1000
+Subject: [xen] netback: call netdev_features_changed
+Message-id: 20090807101146.GA6847@gondor.apana.org.au
+O-Subject: [RHEL5.5 PATCH] netback: Call netdev_features_changed
+Bugzilla: 493092
+RH-Acked-by: Jiri Pirko <jpirko@redhat.com>
+RH-Acked-by: David Miller <davem@redhat.com>
+RH-Acked-by: Thomas Graf <tgraf@redhat.com>
+
+Hi:
+
+RHEL5 Bugzilla #493092
+
+netback: Call netdev_features_changed
+
+By default, the Xen backend network device gets added to the
+virtual bridge before it has completed the features negotiation
+with the guest.  As such it will have all offloads set to off.
+This causes the offloads on the bridge to be disabled as well.
+
+When the guest completes negotiation, the backend device gets
+the offload features but does not propagate them to the bridge.
+
+This is usually not a problem because the host usually does not
+transmit through the bridge device directly so its feature bits
+are irrelevant.
+
+However, if the topology is such that the bridge is used directly,
+e.g., when netloop is not in use, then we'll lose all offload
+capabilities to the guest.
+
+This patch fixes that problem.
+
+Signed-off-by: Herbert Xu <herbert@gondor.apana.org.au>
+
+diff --git a/drivers/xen/netback/interface.c b/drivers/xen/netback/interface.c
+index 092d29c..ccef3e4 100644
+--- a/drivers/xen/netback/interface.c
++++ b/drivers/xen/netback/interface.c
+@@ -307,11 +307,9 @@ int netif_map(netif_t *netif, unsigned long tx_ring_ref,
+ 
+ 	netif_get(netif);
+ 
+-	rtnl_lock();
+ 	netif_carrier_on(netif->dev);
+ 	if (netif_running(netif->dev))
+ 		__netif_up(netif);
+-	rtnl_unlock();
+ 
+ 	return 0;
+ err_hypervisor:
+diff --git a/drivers/xen/netback/xenbus.c b/drivers/xen/netback/xenbus.c
+index d15ce95..0e47109 100644
+--- a/drivers/xen/netback/xenbus.c
++++ b/drivers/xen/netback/xenbus.c
+@@ -19,6 +19,8 @@
+ 
+ #include <stdarg.h>
+ #include <linux/module.h>
++#include <linux/netdevice.h>
++#include <linux/rtnetlink.h>
+ #include <xen/xenbus.h>
+ #include "common.h"
+ 
+@@ -311,10 +313,12 @@ static void connect(struct backend_info *be)
+ 	int err;
+ 	struct xenbus_device *dev = be->dev;
+ 
++	rtnl_lock();
++
+ 	err = xen_net_read_mac(dev, be->netif->fe_dev_addr);
+ 	if (err) {
+ 		xenbus_dev_fatal(dev, err, "parsing %s/mac", dev->nodename);
+-		return;
++		goto out;
+ 	}
+ 
+ 	xen_net_read_rate(dev, &be->netif->credit_bytes,
+@@ -323,11 +327,14 @@ static void connect(struct backend_info *be)
+ 
+ 	err = connect_rings(be);
+ 	if (err)
+-		return;
++		goto out;
+ 
+ 	/* May not get a kick from the frontend, so start the tx_queue now. */
+ 	if (!netbk_can_queue(be->netif->dev))
+ 		netif_wake_queue(be->netif->dev);
++
++out:
++	rtnl_unlock();
+ }
+ 
+ 
+@@ -399,6 +406,8 @@ static int connect_rings(struct backend_info *be)
+ 		be->netif->dev->features &= ~NETIF_F_IP_CSUM;
+ 	}
+ 
++	netdev_features_change(be->netif->dev);
++
+ 	/* Map the shared frame, irq etc. */
+ 	err = netif_map(be->netif, tx_ring_ref, rx_ring_ref, evtchn);
+ 	if (err) {

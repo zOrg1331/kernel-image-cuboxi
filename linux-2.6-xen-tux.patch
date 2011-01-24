@@ -1,0 +1,26 @@
+# HG changeset patch
+# User quintela@elfo.mitica
+# Node ID 7f7c006d23578ae6d391810086b0099c1730edb9
+# Parent  9be92de1dd0d02611bbd35d8649fd048e1d43cc7
+tux xen bits
+
+diff -r 9be92de1dd0d -r 7f7c006d2357 arch/x86_64/ia32/ia32entry-xen.S
+--- a/arch/x86_64/ia32/ia32entry-xen.S	Wed Jul 26 23:46:46 2006 +0200
++++ b/arch/x86_64/ia32/ia32entry-xen.S	Wed Jul 26 23:53:03 2006 +0200
+@@ -474,7 +474,15 @@ ia32_sys_call_table:
+ 	.quad quiet_ni_syscall			/* old lock syscall holder */
+ 	.quad compat_sys_ioctl
+ 	.quad compat_sys_fcntl64		/* 55 */
+-	.quad quiet_ni_syscall			/* old mpx syscall holder */
++#ifdef CONFIG_TUX
++	.quad __sys_tux
++#else
++# ifdef CONFIG_TUX_MODULE
++	.quad sys_tux
++# else
++	.quad quiet_ni_syscall
++# endif
++#endif
+ 	.quad sys_setpgid
+ 	.quad quiet_ni_syscall			/* old ulimit syscall holder */
+ 	.quad sys32_olduname

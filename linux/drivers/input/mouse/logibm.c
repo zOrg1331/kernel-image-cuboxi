@@ -1,4 +1,6 @@
 /*
+ * $Id: logibm.c,v 1.11 2001/09/25 10:12:07 vojtech Exp $
+ *
  *  Copyright (c) 1999-2001 Vojtech Pavlik
  *
  *  Based on the work of:
@@ -34,6 +36,7 @@
  */
 
 #include <linux/module.h>
+#include <linux/moduleparam.h>
 #include <linux/delay.h>
 #include <linux/ioport.h>
 #include <linux/init.h>
@@ -72,9 +75,11 @@ static int logibm_irq = LOGIBM_IRQ;
 module_param_named(irq, logibm_irq, uint, 0);
 MODULE_PARM_DESC(irq, "IRQ number (5=default)");
 
+__obsolete_setup("logibm_irq=");
+
 static struct input_dev *logibm_dev;
 
-static irqreturn_t logibm_interrupt(int irq, void *dev_id)
+static irqreturn_t logibm_interrupt(int irq, void *dev_id, struct pt_regs *regs)
 {
 	char dx, dy;
 	unsigned char buttons;
@@ -90,6 +95,7 @@ static irqreturn_t logibm_interrupt(int irq, void *dev_id)
 	dy |= (buttons & 0xf) << 4;
 	buttons = ~buttons >> 5;
 
+	input_regs(logibm_dev, regs);
 	input_report_rel(logibm_dev, REL_X, dx);
 	input_report_rel(logibm_dev, REL_Y, dy);
 	input_report_key(logibm_dev, BTN_RIGHT,  buttons & 1);
@@ -119,8 +125,6 @@ static void logibm_close(struct input_dev *dev)
 
 static int __init logibm_init(void)
 {
-	int err;
-
 	if (!request_region(LOGIBM_BASE, LOGIBM_EXTENT, "logibm")) {
 		printk(KERN_ERR "logibm.c: Can't allocate ports at %#x\n", LOGIBM_BASE);
 		return -EBUSY;
@@ -131,19 +135,18 @@ static int __init logibm_init(void)
 	udelay(100);
 
 	if (inb(LOGIBM_SIGNATURE_PORT) != LOGIBM_SIGNATURE_BYTE) {
-		printk(KERN_INFO "logibm.c: Didn't find Logitech busmouse at %#x\n", LOGIBM_BASE);
-		err = -ENODEV;
-		goto err_release_region;
+		release_region(LOGIBM_BASE, LOGIBM_EXTENT);
+		printk(KERN_ERR "logibm.c: Didn't find Logitech busmouse at %#x\n", LOGIBM_BASE);
+		return -ENODEV;
 	}
 
 	outb(LOGIBM_DEFAULT_MODE, LOGIBM_CONFIG_PORT);
 	outb(LOGIBM_DISABLE_IRQ, LOGIBM_CONTROL_PORT);
 
-	logibm_dev = input_allocate_device();
-	if (!logibm_dev) {
+	if (!(logibm_dev = input_allocate_device())) {
 		printk(KERN_ERR "logibm.c: Not enough memory for input device\n");
-		err = -ENOMEM;
-		goto err_release_region;
+		release_region(LOGIBM_BASE, LOGIBM_EXTENT);
+		return -ENOMEM;
 	}
 
 	logibm_dev->name = "Logitech bus mouse";
@@ -153,26 +156,16 @@ static int __init logibm_init(void)
 	logibm_dev->id.product = 0x0001;
 	logibm_dev->id.version = 0x0100;
 
-	logibm_dev->evbit[0] = BIT_MASK(EV_KEY) | BIT_MASK(EV_REL);
-	logibm_dev->keybit[BIT_WORD(BTN_LEFT)] = BIT_MASK(BTN_LEFT) |
-		BIT_MASK(BTN_MIDDLE) | BIT_MASK(BTN_RIGHT);
-	logibm_dev->relbit[0] = BIT_MASK(REL_X) | BIT_MASK(REL_Y);
+	logibm_dev->evbit[0] = BIT(EV_KEY) | BIT(EV_REL);
+	logibm_dev->keybit[LONG(BTN_LEFT)] = BIT(BTN_LEFT) | BIT(BTN_MIDDLE) | BIT(BTN_RIGHT);
+	logibm_dev->relbit[0] = BIT(REL_X) | BIT(REL_Y);
 
 	logibm_dev->open  = logibm_open;
 	logibm_dev->close = logibm_close;
 
-	err = input_register_device(logibm_dev);
-	if (err)
-		goto err_free_dev;
+	input_register_device(logibm_dev);
 
 	return 0;
-
- err_free_dev:
-	input_free_device(logibm_dev);
- err_release_region:
-	release_region(LOGIBM_BASE, LOGIBM_EXTENT);
-
-	return err;
 }
 
 static void __exit logibm_exit(void)

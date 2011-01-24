@@ -98,9 +98,8 @@ sn_platform_plat_specific_err_print(const u8 * sect_header, u8 ** oemdata,
 	while (*sn_oemdata_size > sn_oemdata_bufsize) {
 		u8 *newbuf = vmalloc(*sn_oemdata_size);
 		if (!newbuf) {
-			mutex_unlock(&sn_oemdata_mutex);
 			printk(KERN_ERR "%s: unable to extend sn_oemdata\n",
-			       __func__);
+			       __FUNCTION__);
 			return 1;
 		}
 		vfree(*sn_oemdata);

@@ -22,7 +22,7 @@
 
 struct sir_fsm {
 	struct semaphore	sem;
-	struct delayed_work	work;
+	struct work_struct      work;
 	unsigned		state, substate;
 	int			param;
 	int			result;
@@ -160,6 +160,7 @@ static inline int sirdev_schedule_mode(struct sir_dev *dev, int mode)
 
 struct sir_dev {
 	struct net_device *netdev;
+	struct net_device_stats stats;
 
 	struct irlap_cb    *irlap;
 

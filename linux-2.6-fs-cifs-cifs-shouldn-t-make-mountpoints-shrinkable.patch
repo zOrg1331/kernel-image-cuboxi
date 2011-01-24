@@ -1,0 +1,41 @@
+From: Jeff Layton <jlayton@redhat.com>
+Date: Mon, 15 Feb 2010 16:08:15 -0500
+Subject: [fs] cifs: CIFS shouldn't make mountpoints shrinkable
+Message-id: <1266250096-21498-4-git-send-email-jlayton@redhat.com>
+Patchwork-id: 23275
+O-Subject: [RHEL5.5 PATCH 3/4] BZ#562947: cifs: CIFS shouldn't make mountpoints
+	shrinkable
+Bugzilla: 562947
+RH-Acked-by: Steve Dickson <SteveD@redhat.com>
+
+From: Al Viro <viro@zeniv.linux.org.uk>
+
+(backported from 7e1295d9f8300e8c8d1af01765f475621c19ee1d)
+
+Instead of setting MNT_SHRINKABLE on the child mount, it instead sets
+it on the parent mount and then the child inherits it. This is wrong,
+fix it.
+
+Signed-off-by: Al Viro <viro@zeniv.linux.org.uk>
+
+diff --git a/fs/cifs/cifs_dfs_ref.c b/fs/cifs/cifs_dfs_ref.c
+index b097678..ec8cd52 100644
+--- a/fs/cifs/cifs_dfs_ref.c
++++ b/fs/cifs/cifs_dfs_ref.c
+@@ -277,7 +277,7 @@ static int add_mount_helper(struct vfsmount *newmnt, struct nameidata *nd,
+ 	int err;
+ 
+ 	mntget(newmnt);
+-	err = do_add_mount(newmnt, nd, nd->mnt->mnt_flags, mntlist);
++	err = do_add_mount(newmnt, nd, nd->mnt->mnt_flags | MNT_SHRINKABLE, mntlist);
+ 	switch (err) {
+ 	case 0:
+ 		dput(nd->dentry);
+@@ -380,7 +380,6 @@ cifs_dfs_follow_mountpoint(struct dentry *dentry, struct nameidata *nd)
+ 	if (IS_ERR(mnt))
+ 		goto out_err;
+ 
+-	nd->mnt->mnt_flags |= MNT_SHRINKABLE;
+ 	rc = add_mount_helper(mnt, nd, &cifs_dfs_automount_list);
+ 
+ out:

@@ -1,0 +1,40 @@
+From: Russell Cattelan <cattelan@redhat.com>
+Subject: Re: [RHEL 5 PATCH] GFS2: BZ 217008  fsfuzzer fix.
+Date: Mon, 08 Jan 2007 17:47:51 -0600
+Bugzilla: 217008
+Message-Id: <1168300071.5209.9.camel@xenon.msp.redhat.com>
+Changelog: GFS2: return error for NULL inode
+
+Change gfs2_lookup_simple to return an error in the case
+of a NULL inode. 
+The callers of gfs2_lookup_simple do not check for NULL 
+in the no entry case and such would end up dereferencing a NULL ptr.
+
+This fixes:
+http://projects.info-pull.com/mokb/MOKB-15-11-2006.html
+
+Signed-off-by: Russell Cattelan <cattelan@redhat.com>
+Index: latest/fs/gfs2/inode.c
+===================================================================
+--- latest.orig/fs/gfs2/inode.c
++++ latest/fs/gfs2/inode.c
+@@ -390,8 +390,18 @@ out:
+ struct inode *gfs2_lookup_simple(struct inode *dip, const char *name)
+ {
+ 	struct qstr qstr;
++	struct inode *inode;
+ 	gfs2_str2qstr(&qstr, name);
+-	return gfs2_lookupi(dip, &qstr, 1, NULL);
++	inode = gfs2_lookupi(dip, &qstr, 1, NULL);
++	/* gfs2_lookupi has inconsistent callers: vfs
++	 * related routines expect NULL for no entry found,
++	 * gfs2_lookup_simple callers expect ENOENT
++	 * and do not check for NULL.
++	 */
++	if (inode == NULL)
++		return ERR_PTR(-ENOENT);
++	else
++		return inode;
+ }
+ 
+ /**

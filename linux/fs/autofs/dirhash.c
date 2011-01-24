@@ -39,12 +39,10 @@ struct autofs_dir_ent *autofs_expire(struct super_block *sb,
 {
 	struct autofs_dirhash *dh = &sbi->dirhash;
 	struct autofs_dir_ent *ent;
+	struct dentry *dentry;
 	unsigned long timeout = sbi->exp_timeout;
 
 	while (1) {
-		struct path path;
-		int umount_ok;
-
 		if ( list_empty(&dh->expiry_head) || sbi->catatonic )
 			return NULL;	/* No entries */
 		/* We keep the list sorted by last_usage and want old stuff */
@@ -59,17 +57,17 @@ struct autofs_dir_ent *autofs_expire(struct super_block *sb,
 			return ent; /* Symlinks are always expirable */
 
 		/* Get the dentry for the autofs subdirectory */
-		path.dentry = ent->dentry;
+		dentry = ent->dentry;
 
-		if (!path.dentry) {
+		if ( !dentry ) {
 			/* Should only happen in catatonic mode */
 			printk("autofs: dentry == NULL but inode range is directory, entry %s\n", ent->name);
 			autofs_delete_usage(ent);
 			continue;
 		}
 
-		if (!path.dentry->d_inode) {
-			dput(path.dentry);
+		if ( !dentry->d_inode ) {
+			dput(dentry);
 			printk("autofs: negative dentry on expiry queue: %s\n",
 			       ent->name);
 			autofs_delete_usage(ent);
@@ -78,28 +76,29 @@ struct autofs_dir_ent *autofs_expire(struct super_block *sb,
 
 		/* Make sure entry is mounted and unused; note that dentry will
 		   point to the mounted-on-top root. */
-		if (!S_ISDIR(path.dentry->d_inode->i_mode) ||
-		    !d_mountpoint(path.dentry)) {
+		if (!S_ISDIR(dentry->d_inode->i_mode)||!d_mountpoint(dentry)) {
 			DPRINTK(("autofs: not expirable (not a mounted directory): %s\n", ent->name));
 			continue;
 		}
-		path.mnt = mnt;
-		path_get(&path);
-		if (!follow_down(&path)) {
-			path_put(&path);
+		mntget(mnt);
+		dget(dentry);
+		if (!follow_down(&mnt, &dentry)) {
+			dput(dentry);
+			mntput(mnt);
 			DPRINTK(("autofs: not expirable (not a mounted directory): %s\n", ent->name));
 			continue;
 		}
-		while (d_mountpoint(path.dentry) && follow_down(&path))
+		while (d_mountpoint(dentry) && follow_down(&mnt, &dentry))
 			;
-		umount_ok = may_umount(path.mnt);
-		path_put(&path);
+		dput(dentry);
 
-		if (umount_ok) {
+		if ( may_umount(mnt) ) {
+			mntput(mnt);
 			DPRINTK(("autofs: signaling expire on %s\n", ent->name));
 			return ent; /* Expirable! */
 		}
 		DPRINTK(("autofs: didn't expire due to may_umount: %s\n", ent->name));
+		mntput(mnt);
 	}
 	return NULL;		/* No expirable entries */
 }
@@ -247,4 +246,5 @@ void autofs_hash_nuke(struct autofs_sb_info *sbi)
 			kfree(ent);
 		}
 	}
+	shrink_dcache_sb(sbi->sb);
 }

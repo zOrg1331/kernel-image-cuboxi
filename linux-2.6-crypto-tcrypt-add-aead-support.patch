@@ -1,0 +1,385 @@
+From: Herbert Xu <herbert@gondor.apana.org.au>
+Date: Sun, 6 Jan 2008 16:09:31 +1100
+Subject: [crypto] tcrypt: add aead support
+Message-id: E1JBNlL-0001Be-00@gondolin.me.apana.org.au
+O-Subject: [PATCH 16/32] [CRYPTO] tcrypt: Add aead support
+Bugzilla: 253051
+
+[CRYPTO] tcrypt: Add aead support
+
+Add AEAD support to tcrypt, needed by GCM.
+
+Signed-off-by: Mikko Herranen <mh1@iki.fi>
+Reviewed-by: Mika Kukkonen <mika.kukkonen@nsn.com>
+Signed-off-by: Herbert Xu <herbert@gondor.apana.org.au>
+
+Acked-by: "David S. Miller" <davem@redhat.com>
+
+diff --git a/crypto/Kconfig b/crypto/Kconfig
+index 46d241b..f3182a7 100644
+--- a/crypto/Kconfig
++++ b/crypto/Kconfig
+@@ -423,6 +423,7 @@ config CRYPTO_TEST
+ 	tristate "Testing module"
+ 	depends on CRYPTO && m
+ 	select CRYPTO_ALGAPI
++	select CRYPTO_AEAD
+ 	help
+ 	  Quick & dirty crypto test module.
+ 
+diff --git a/crypto/tcrypt.c b/crypto/tcrypt.c
+index 5050cb8..4ba4134 100644
+--- a/crypto/tcrypt.c
++++ b/crypto/tcrypt.c
+@@ -6,12 +6,14 @@
+  *
+  * Copyright (c) 2002 James Morris <jmorris@intercode.com.au>
+  * Copyright (c) 2002 Jean-Francois Dive <jef@linuxbe.org>
++ * Copyright (c) 2007 Nokia Siemens Networks
+  *
+  * This program is free software; you can redistribute it and/or modify it
+  * under the terms of the GNU General Public License as published by the Free
+  * Software Foundation; either version 2 of the License, or (at your option)
+  * any later version.
+  *
++ * 2007-11-13 Added AEAD support
+  * 2004-08-09 Added cipher speed tests (Reyk Floeter <reyk@vantronix.net>)
+  * 2003-09-14 Rewritten by Kartikey Mahendra Bhatt
+  *
+@@ -70,6 +72,7 @@ static unsigned int sec;
+ 
+ static int mode;
+ static char *xbuf;
++static char *axbuf;
+ static char *tvmem;
+ 
+ static char *check[] = {
+@@ -297,6 +300,237 @@ out:
+ 	crypto_free_hash(tfm);
+ }
+ 
++static void test_aead(char *algo, int enc, struct aead_testvec *template,
++		      unsigned int tcount)
++{
++	unsigned int ret, i, j, k, temp;
++	unsigned int tsize;
++	char *q;
++	struct crypto_aead *tfm;
++	char *key;
++	struct aead_testvec *aead_tv;
++	struct aead_request *req;
++	struct scatterlist sg[8];
++	struct scatterlist asg[8];
++	const char *e;
++	struct tcrypt_result result;
++	unsigned int authsize;
++
++	if (enc == ENCRYPT)
++		e = "encryption";
++	else
++		e = "decryption";
++
++	printk(KERN_INFO "\ntesting %s %s\n", algo, e);
++
++	tsize = sizeof(struct aead_testvec);
++	tsize *= tcount;
++
++	if (tsize > TVMEMSIZE) {
++		printk(KERN_INFO "template (%u) too big for tvmem (%u)\n",
++		       tsize, TVMEMSIZE);
++		return;
++	}
++
++	memcpy(tvmem, template, tsize);
++	aead_tv = (void *)tvmem;
++
++	init_completion(&result.completion);
++
++	tfm = crypto_alloc_aead(algo, 0, 0);
++
++	if (IS_ERR(tfm)) {
++		printk(KERN_INFO "failed to load transform for %s: %ld\n",
++		       algo, PTR_ERR(tfm));
++		return;
++	}
++
++	req = aead_request_alloc(tfm, GFP_KERNEL);
++	if (!req) {
++		printk(KERN_INFO "failed to allocate request for %s\n", algo);
++		goto out;
++	}
++
++	aead_request_set_callback(req, CRYPTO_TFM_REQ_MAY_BACKLOG,
++				  tcrypt_complete, &result);
++
++	for (i = 0, j = 0; i < tcount; i++) {
++		if (!aead_tv[i].np) {
++			printk(KERN_INFO "test %u (%d bit key):\n",
++			       ++j, aead_tv[i].klen * 8);
++
++			crypto_aead_clear_flags(tfm, ~0);
++			if (aead_tv[i].wk)
++				crypto_aead_set_flags(
++					tfm, CRYPTO_TFM_REQ_WEAK_KEY);
++			key = aead_tv[i].key;
++
++			ret = crypto_aead_setkey(tfm, key,
++						 aead_tv[i].klen);
++			if (ret) {
++				printk(KERN_INFO "setkey() failed flags=%x\n",
++				       crypto_aead_get_flags(tfm));
++
++				if (!aead_tv[i].fail)
++					goto out;
++			}
++
++			authsize = abs(aead_tv[i].rlen - aead_tv[i].ilen);
++			ret = crypto_aead_setauthsize(tfm, authsize);
++			if (ret) {
++				printk(KERN_INFO
++				       "failed to set authsize = %u\n",
++				       authsize);
++				goto out;
++			}
++
++			sg_init_one(&sg[0], aead_tv[i].input,
++				    aead_tv[i].ilen + (enc ? authsize : 0));
++
++			sg_init_one(&asg[0], aead_tv[i].assoc,
++				    aead_tv[i].alen);
++
++			aead_request_set_crypt(req, sg, sg,
++					       aead_tv[i].ilen,
++					       aead_tv[i].iv);
++
++			aead_request_set_assoc(req, asg, aead_tv[i].alen);
++
++			ret = enc ?
++				crypto_aead_encrypt(req) :
++				crypto_aead_decrypt(req);
++
++			switch (ret) {
++			case 0:
++				break;
++			case -EINPROGRESS:
++			case -EBUSY:
++				ret = wait_for_completion_interruptible(
++					&result.completion);
++				if (!ret && !(ret = result.err)) {
++					INIT_COMPLETION(result.completion);
++					break;
++				}
++				/* fall through */
++			default:
++				printk(KERN_INFO "%s () failed err=%d\n",
++				       e, -ret);
++				goto out;
++			}
++
++			q = kmap(sg_page(&sg[0])) + sg[0].offset;
++			hexdump(q, aead_tv[i].rlen);
++
++			printk(KERN_INFO "enc/dec: %s\n",
++			       memcmp(q, aead_tv[i].result,
++				      aead_tv[i].rlen) ? "fail" : "pass");
++		}
++	}
++
++	printk(KERN_INFO "\ntesting %s %s across pages (chunking)\n", algo, e);
++	memset(xbuf, 0, XBUFSIZE);
++
++	for (i = 0, j = 0; i < tcount; i++) {
++		if (aead_tv[i].np) {
++			printk(KERN_INFO "test %u (%d bit key):\n",
++			       ++j, aead_tv[i].klen * 8);
++
++			crypto_aead_clear_flags(tfm, ~0);
++			if (aead_tv[i].wk)
++				crypto_aead_set_flags(
++					tfm, CRYPTO_TFM_REQ_WEAK_KEY);
++			key = aead_tv[i].key;
++
++			ret = crypto_aead_setkey(tfm, key, aead_tv[i].klen);
++			if (ret) {
++				printk(KERN_INFO "setkey() failed flags=%x\n",
++				       crypto_aead_get_flags(tfm));
++
++				if (!aead_tv[i].fail)
++					goto out;
++			}
++
++			sg_init_table(sg, aead_tv[i].np);
++			for (k = 0, temp = 0; k < aead_tv[i].np; k++) {
++				memcpy(&xbuf[IDX[k]],
++				       aead_tv[i].input + temp,
++				       aead_tv[i].tap[k]);
++				temp += aead_tv[i].tap[k];
++				sg_set_buf(&sg[k], &xbuf[IDX[k]],
++					   aead_tv[i].tap[k]);
++			}
++
++			authsize = abs(aead_tv[i].rlen - aead_tv[i].ilen);
++			ret = crypto_aead_setauthsize(tfm, authsize);
++			if (ret) {
++				printk(KERN_INFO
++				       "failed to set authsize = %u\n",
++				       authsize);
++				goto out;
++			}
++
++			if (enc)
++				sg[k - 1].length += authsize;
++
++			sg_init_table(asg, aead_tv[i].anp);
++			for (k = 0, temp = 0; k < aead_tv[i].anp; k++) {
++				memcpy(&axbuf[IDX[k]],
++				       aead_tv[i].assoc + temp,
++				       aead_tv[i].atap[k]);
++				temp += aead_tv[i].atap[k];
++				sg_set_buf(&asg[k], &axbuf[IDX[k]],
++					   aead_tv[i].atap[k]);
++			}
++
++			aead_request_set_crypt(req, sg, sg,
++					       aead_tv[i].ilen,
++					       aead_tv[i].iv);
++
++			aead_request_set_assoc(req, asg, aead_tv[i].alen);
++
++			ret = enc ?
++				crypto_aead_encrypt(req) :
++				crypto_aead_decrypt(req);
++
++			switch (ret) {
++			case 0:
++				break;
++			case -EINPROGRESS:
++			case -EBUSY:
++				ret = wait_for_completion_interruptible(
++					&result.completion);
++				if (!ret && !(ret = result.err)) {
++					INIT_COMPLETION(result.completion);
++					break;
++				}
++				/* fall through */
++			default:
++				printk(KERN_INFO "%s () failed err=%d\n",
++				       e, -ret);
++				goto out;
++			}
++
++			for (k = 0, temp = 0; k < aead_tv[i].np; k++) {
++				printk(KERN_INFO "page %u\n", k);
++				q = kmap(sg_page(&sg[k])) + sg[k].offset;
++				hexdump(q, aead_tv[i].tap[k]);
++				printk(KERN_INFO "%s\n",
++				       memcmp(q, aead_tv[i].result + temp,
++					      aead_tv[i].tap[k] -
++					      (k < aead_tv[i].np - 1 || enc ?
++					       0 : authsize)) ?
++				       "fail" : "pass");
++
++				temp += aead_tv[i].tap[k];
++			}
++		}
++	}
++
++out:
++	crypto_free_aead(tfm);
++	aead_request_free(req);
++}
++
+ static void test_cipher(char *algo, int enc,
+ 			struct cipher_testvec *template, unsigned int tcount)
+ {
+@@ -1433,20 +1667,21 @@ static void do_test(void)
+ 
+ static int __init init(void)
+ {
++	int err = -ENOMEM;
++
+ 	tvmem = kmalloc(TVMEMSIZE, GFP_KERNEL);
+ 	if (tvmem == NULL)
+-		return -ENOMEM;
++		return err;
+ 
+ 	xbuf = kmalloc(XBUFSIZE, GFP_KERNEL);
+-	if (xbuf == NULL) {
+-		kfree(tvmem);
+-		return -ENOMEM;
+-	}
++	if (xbuf == NULL)
++		goto err_free_tv;
+ 
+-	do_test();
++	axbuf = kmalloc(XBUFSIZE, GFP_KERNEL);
++	if (axbuf == NULL)
++		goto err_free_xbuf;
+ 
+-	kfree(xbuf);
+-	kfree(tvmem);
++	do_test();
+ 
+ 	/* We intentionaly return -EAGAIN to prevent keeping
+ 	 * the module. It does all its work from init()
+@@ -1454,7 +1689,15 @@ static int __init init(void)
+ 	 * => we don't need it in the memory, do we?
+ 	 *                                        -- mludvig
+ 	 */
+-	return -EAGAIN;
++	err = -EAGAIN;
++
++	kfree(axbuf);
++ err_free_xbuf:
++	kfree(xbuf);
++ err_free_tv:
++	kfree(tvmem);
++
++	return err;
+ }
+ 
+ /*
+diff --git a/crypto/tcrypt.h b/crypto/tcrypt.h
+index 716bb3f..f7eb71e 100644
+--- a/crypto/tcrypt.h
++++ b/crypto/tcrypt.h
+@@ -6,12 +6,14 @@
+  *
+  * Copyright (c) 2002 James Morris <jmorris@intercode.com.au>
+  * Copyright (c) 2002 Jean-Francois Dive <jef@linuxbe.org>
++ * Copyright (c) 2007 Nokia Siemens Networks
+  *
+  * This program is free software; you can redistribute it and/or modify it
+  * under the terms of the GNU General Public License as published by the Free
+  * Software Foundation; either version 2 of the License, or (at your option)
+  * any later version.
+  *
++ * 2007-11-13 Added AEAD support
+  * 2004-08-09 Cipher speed tests by Reyk Floeter <reyk@vantronix.net>
+  * 2003-09-14 Changes by Kartikey Mahendra Bhatt
+  *
+@@ -50,6 +52,24 @@ struct cipher_testvec {
+ 	unsigned short rlen;
+ };
+ 
++struct aead_testvec {
++	char key[MAX_KEYLEN] __attribute__ ((__aligned__(4)));
++	char iv[MAX_IVLEN];
++	char input[512];
++	char assoc[512];
++	char result[512];
++	unsigned char tap[MAX_TAP];
++	unsigned char atap[MAX_TAP];
++	int np;
++	int anp;
++	unsigned char fail;
++	unsigned char wk; /* weak key flag */
++	unsigned char klen;
++	unsigned short ilen;
++	unsigned short alen;
++	unsigned short rlen;
++};
++
+ struct cipher_speed {
+ 	unsigned char klen;
+ 	unsigned int blen;

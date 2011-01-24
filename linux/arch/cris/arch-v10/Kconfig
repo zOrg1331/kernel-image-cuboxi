@@ -1,7 +1,3 @@
-if ETRAX_ARCH_V10
-
-menu "CRIS v10 options"
-
 # ETRAX 100LX v1 has a MMU "feature" requiring a low mapping
 config CRIS_LOW_MAP
 	bool
@@ -186,7 +182,7 @@ config ETRAX_LED7G
 	  set this to same as CONFIG_ETRAX_LED1G (normally 2).
 
 config ETRAX_LED8Y
-	int "Eighth yellow LED bit"
+	int "Eigth yellow LED bit"
 	depends on ETRAX_CSP0_LEDS
 	default "2"
 	help
@@ -230,6 +226,69 @@ config ETRAX_LED12R
 	  For products with only one or two controllable LEDs,
 	  set this to same as CONFIG_ETRAX_LED1G (normally 2).
 
+choice
+	prompt "Product debug-port"
+	depends on ETRAX_ARCH_V10
+	default ETRAX_DEBUG_PORT0
+
+config ETRAX_DEBUG_PORT0
+	bool "Serial-0"
+	help
+	  Choose a serial port for the ETRAX debug console.  Default to
+	  port 0.
+
+config ETRAX_DEBUG_PORT1
+	bool "Serial-1"
+	help
+	  Use serial port 1 for the console.
+
+config ETRAX_DEBUG_PORT2
+	bool "Serial-2"
+	help
+	  Use serial port 2 for the console.
+
+config ETRAX_DEBUG_PORT3
+	bool "Serial-3"
+	help
+	  Use serial port 3 for the console.
+
+config ETRAX_DEBUG_PORT_NULL
+	bool "disabled"
+	help
+	  Disable serial-port debugging.
+
+endchoice
+
+choice
+	prompt "Kernel GDB port"
+	depends on ETRAX_KGDB
+	default ETRAX_KGDB_PORT0
+	help
+	  Choose a serial port for kernel debugging.  NOTE: This port should
+	  not be enabled under Drivers for built-in interfaces (as it has its
+	  own initialization code) and should not be the same as the debug port.
+
+config ETRAX_KGDB_PORT0
+	bool "Serial-0"
+	help
+	  Use serial port 0 for kernel debugging.
+
+config ETRAX_KGDB_PORT1
+	bool "Serial-1"
+	help
+	  Use serial port 1 for kernel debugging.
+
+config ETRAX_KGDB_PORT2
+	bool "Serial-2"
+	help
+	  Use serial port 2 for kernel debugging.
+
+config ETRAX_KGDB_PORT3
+	bool "Serial-3"
+	help
+	  Use serial port 3 for kernel debugging.
+
+endchoice
 
 choice
 	prompt "Product rescue-port"
@@ -264,7 +323,7 @@ config ETRAX_DEF_R_WAITSTATES
 	depends on ETRAX_ARCH_V10
 	default "95a6"
 	help
-	  Waitstates for SRAM, Flash and peripherals (not DRAM).  95f8 is a
+	  Waitstates for SRAM, Flash and peripherials (not DRAM).  95f8 is a
 	  good choice for most Axis products...
 
 config ETRAX_DEF_R_BUS_CONFIG
@@ -392,7 +451,3 @@ config ETRAX_POWERBUTTON_BIT
 	default "25"
 	help
 	  Configure where power button is connected.
-
-endmenu
-
-endif

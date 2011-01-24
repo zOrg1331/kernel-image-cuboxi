@@ -1,5 +1,6 @@
+menu "Connector - unified userspace <-> kernelspace linker"
 
-menuconfig CONNECTOR
+config CONNECTOR
 	tristate "Connector - unified userspace <-> kernelspace linker"
 	depends on NET
 	---help---
@@ -7,9 +8,7 @@ menuconfig CONNECTOR
 	  of the netlink socket protocol.
 
 	  Connector support can also be built as a module.  If so, the module
-	  will be called cn.
-
-if CONNECTOR
+	  will be called cn.ko.
 
 config PROC_EVENTS
 	boolean "Report process events to userspace"
@@ -19,4 +18,4 @@ config PROC_EVENTS
 	  Provide a connector that reports process events to userspace. Send
 	  events such as fork, exec, id change (uid, gid, suid, etc), and exit.
 
-endif # CONNECTOR
+endmenu

@@ -1,4 +1,4 @@
-/*
+/* 
    CMTP implementation for Linux Bluetooth stack (BlueZ).
    Copyright (C) 2002-2003 Marcel Holtmann <marcel@holtmann.org>
 
@@ -10,13 +10,13 @@
    OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
    FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT OF THIRD PARTY RIGHTS.
    IN NO EVENT SHALL THE COPYRIGHT HOLDER(S) AND AUTHOR(S) BE LIABLE FOR ANY
-   CLAIM, OR ANY SPECIAL INDIRECT OR CONSEQUENTIAL DAMAGES, OR ANY DAMAGES
-   WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
-   ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+   CLAIM, OR ANY SPECIAL INDIRECT OR CONSEQUENTIAL DAMAGES, OR ANY DAMAGES 
+   WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN 
+   ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF 
    OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
-   ALL LIABILITY, INCLUDING LIABILITY FOR INFRINGEMENT OF ANY PATENTS,
-   COPYRIGHTS, TRADEMARKS OR OTHER RIGHTS, RELATING TO USE OF THIS
+   ALL LIABILITY, INCLUDING LIABILITY FOR INFRINGEMENT OF ANY PATENTS, 
+   COPYRIGHTS, TRADEMARKS OR OTHER RIGHTS, RELATING TO USE OF THIS 
    SOFTWARE IS DISCLAIMED.
 */
 
@@ -26,6 +26,7 @@
 #include <linux/capability.h>
 #include <linux/errno.h>
 #include <linux/kernel.h>
+#include <linux/sched.h>
 #include <linux/slab.h>
 #include <linux/poll.h>
 #include <linux/fcntl.h>
@@ -33,7 +34,6 @@
 #include <linux/socket.h>
 #include <linux/ioctl.h>
 #include <linux/file.h>
-#include <linux/compat.h>
 #include <net/sock.h>
 
 #include <linux/isdn/capilli.h>
@@ -42,6 +42,11 @@
 #include <asm/uaccess.h>
 
 #include "cmtp.h"
+
+#ifndef CONFIG_BT_CMTP_DEBUG
+#undef  BT_DBG
+#define BT_DBG(D...)
+#endif
 
 static int cmtp_sock_release(struct socket *sock)
 {
@@ -83,7 +88,7 @@ static int cmtp_sock_ioctl(struct socket *sock, unsigned int cmd, unsigned long 
 			return err;
 
 		if (nsock->sk->sk_state != BT_CONNECTED) {
-			sockfd_put(nsock);
+			fput(nsock->file);
 			return -EBADFD;
 		}
 
@@ -92,7 +97,7 @@ static int cmtp_sock_ioctl(struct socket *sock, unsigned int cmd, unsigned long 
 			if (copy_to_user(argp, &ca, sizeof(ca)))
 				err = -EFAULT;
 		} else
-			sockfd_put(nsock);
+			fput(nsock->file);
 
 		return err;
 
@@ -132,43 +137,11 @@ static int cmtp_sock_ioctl(struct socket *sock, unsigned int cmd, unsigned long 
 	return -EINVAL;
 }
 
-#ifdef CONFIG_COMPAT
-static int cmtp_sock_compat_ioctl(struct socket *sock, unsigned int cmd, unsigned long arg)
-{
-	if (cmd == CMTPGETCONNLIST) {
-		struct cmtp_connlist_req cl;
-		uint32_t uci;
-		int err;
-
-		if (get_user(cl.cnum, (uint32_t __user *) arg) ||
-				get_user(uci, (u32 __user *) (arg + 4)))
-			return -EFAULT;
-
-		cl.ci = compat_ptr(uci);
-
-		if (cl.cnum <= 0)
-			return -EINVAL;
-
-		err = cmtp_get_connlist(&cl);
-
-		if (!err && put_user(cl.cnum, (uint32_t __user *) arg))
-			err = -EFAULT;
-
-		return err;
-	}
-
-	return cmtp_sock_ioctl(sock, cmd, arg);
-}
-#endif
-
 static const struct proto_ops cmtp_sock_ops = {
 	.family		= PF_BLUETOOTH,
 	.owner		= THIS_MODULE,
 	.release	= cmtp_sock_release,
 	.ioctl		= cmtp_sock_ioctl,
-#ifdef CONFIG_COMPAT
-	.compat_ioctl	= cmtp_sock_compat_ioctl,
-#endif
 	.bind		= sock_no_bind,
 	.getname	= sock_no_getname,
 	.sendmsg	= sock_no_sendmsg,
@@ -190,8 +163,7 @@ static struct proto cmtp_proto = {
 	.obj_size	= sizeof(struct bt_sock)
 };
 
-static int cmtp_sock_create(struct net *net, struct socket *sock, int protocol,
-			    int kern)
+static int cmtp_sock_create(struct socket *sock, int protocol)
 {
 	struct sock *sk;
 
@@ -200,7 +172,7 @@ static int cmtp_sock_create(struct net *net, struct socket *sock, int protocol,
 	if (sock->type != SOCK_RAW)
 		return -ESOCKTNOSUPPORT;
 
-	sk = sk_alloc(net, PF_BLUETOOTH, GFP_ATOMIC, &cmtp_proto);
+	sk = sk_alloc(PF_BLUETOOTH, GFP_KERNEL, &cmtp_proto, 1);
 	if (!sk)
 		return -ENOMEM;
 

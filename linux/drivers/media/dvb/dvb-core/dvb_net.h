@@ -36,7 +36,6 @@ struct dvb_net {
 	struct dvb_device *dvbdev;
 	struct net_device *device[DVB_NET_DEVICES_MAX];
 	int state[DVB_NET_DEVICES_MAX];
-	unsigned int exit:1;
 	struct dmx_demux *demux;
 };
 

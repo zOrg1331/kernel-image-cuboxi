@@ -1,0 +1,25 @@
+--- ./arch/i386/pci/common.c.orig	2007-05-07 13:32:46.000000000 -0400
++++ ./arch/i386/pci/common.c	2007-05-07 13:35:02.000000000 -0400
+@@ -287,6 +287,22 @@
+ 			DMI_MATCH(DMI_PRODUCT_NAME, "ProLiant BL685c G1"),
+ 		},
+ 	},
++	{
++		.callback = set_bf_sort,
++		.ident = "HP ProLiant DL385 G2",
++		.matches = {
++			DMI_MATCH(DMI_SYS_VENDOR, "HP"),
++			DMI_MATCH(DMI_PRODUCT_NAME, "ProLiant DL385 G2"),
++		},
++	},
++	{
++		.callback = set_bf_sort,
++		.ident = "HP ProLiant DL585 G2",
++		.matches = {
++			DMI_MATCH(DMI_SYS_VENDOR, "HP"),
++			DMI_MATCH(DMI_PRODUCT_NAME, "ProLiant DL585 G2"),
++		},
++	},
+ 	{}
+ };
+ 

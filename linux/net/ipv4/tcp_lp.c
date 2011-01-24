@@ -31,8 +31,11 @@
  *   Hung Hing Lun, Mike <hlhung3i@gmail.com>
  * SourceForge project page:
  *   http://tcp-lp-mod.sourceforge.net/
+ *
+ * Version: $Id: tcp_lp.c,v 1.24 2006/09/05 20:22:53 hswong3i Exp $
  */
 
+#include <linux/config.h>
 #include <linux/module.h>
 #include <net/tcp.h>
 
@@ -115,12 +118,13 @@ static void tcp_lp_init(struct sock *sk)
  * Will only call newReno CA when away from inference.
  * From TCP-LP's paper, this will be handled in additive increasement.
  */
-static void tcp_lp_cong_avoid(struct sock *sk, u32 ack, u32 in_flight)
+static void tcp_lp_cong_avoid(struct sock *sk, u32 ack, u32 rtt, u32 in_flight,
+			      int flag)
 {
 	struct lp *lp = inet_csk_ca(sk);
 
 	if (!(lp->flag & LP_WITHIN_INF))
-		tcp_reno_cong_avoid(sk, ack, in_flight);
+		tcp_reno_cong_avoid(sk, ack, rtt, in_flight, flag);
 }
 
 /**
@@ -161,7 +165,7 @@ static u32 tcp_lp_remote_hz_estimator(struct sock *sk)
 
  out:
 	/* record time for successful remote HZ calc */
-	if ((rhz >> 6) > 0)
+	if (rhz > 0)
 		lp->flag |= LP_VALID_RHZ;
 	else
 		lp->flag &= ~LP_VALID_RHZ;
@@ -217,7 +221,7 @@ static u32 tcp_lp_owd_calculator(struct sock *sk)
  *   3. calc smoothed OWD (SOWD).
  * Most ideas come from the original TCP-LP implementation.
  */
-static void tcp_lp_rtt_sample(struct sock *sk, u32 rtt)
+static void tcp_lp_rtt_sample(struct sock *sk, u32 usrtt)
 {
 	struct lp *lp = inet_csk_ca(sk);
 	s64 mowd = tcp_lp_owd_calculator(sk);
@@ -260,13 +264,10 @@ static void tcp_lp_rtt_sample(struct sock *sk, u32 rtt)
  * newReno in increase case.
  * We work it out by following the idea from TCP-LP's paper directly
  */
-static void tcp_lp_pkts_acked(struct sock *sk, u32 num_acked, s32 rtt_us)
+static void tcp_lp_pkts_acked(struct sock *sk, u32 num_acked)
 {
 	struct tcp_sock *tp = tcp_sk(sk);
 	struct lp *lp = inet_csk_ca(sk);
-
-	if (rtt_us > 0)
-		tcp_lp_rtt_sample(sk, rtt_us);
 
 	/* calc inference */
 	if (tcp_time_stamp > tp->rx_opt.rcv_tsecr)
@@ -314,11 +315,11 @@ static void tcp_lp_pkts_acked(struct sock *sk, u32 num_acked, s32 rtt_us)
 }
 
 static struct tcp_congestion_ops tcp_lp = {
-	.flags = TCP_CONG_RTT_STAMP,
 	.init = tcp_lp_init,
 	.ssthresh = tcp_reno_ssthresh,
 	.cong_avoid = tcp_lp_cong_avoid,
 	.min_cwnd = tcp_reno_min_cwnd,
+	.rtt_sample = tcp_lp_rtt_sample,
 	.pkts_acked = tcp_lp_pkts_acked,
 
 	.owner = THIS_MODULE,
@@ -327,7 +328,7 @@ static struct tcp_congestion_ops tcp_lp = {
 
 static int __init tcp_lp_register(void)
 {
-	BUILD_BUG_ON(sizeof(struct lp) > ICSK_CA_PRIV_SIZE);
+	BUG_ON(sizeof(struct lp) > ICSK_CA_PRIV_SIZE);
 	return tcp_register_congestion_control(&tcp_lp);
 }
 

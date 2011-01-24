@@ -30,6 +30,8 @@
  * ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
  * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  * SOFTWARE.
+ *
+ * $Id: mthca_provider.h 1349 2004-12-16 21:09:43Z roland $
  */
 
 #ifndef MTHCA_PROVIDER_H
@@ -65,14 +67,12 @@ struct mthca_ucontext {
 	struct ib_ucontext          ibucontext;
 	struct mthca_uar            uar;
 	struct mthca_user_db_table *db_tab;
-	int			    reg_mr_warned;
 };
 
 struct mthca_mtt;
 
 struct mthca_mr {
 	struct ib_mr      ibmr;
-	struct ib_umem   *umem;
 	struct mthca_mtt *mtt;
 };
 
@@ -89,7 +89,6 @@ struct mthca_fmr {
 		struct {
 			struct mthca_mpt_entry *mpt;
 			__be64 *mtts;
-			dma_addr_t dma_handle;
 		} arbel;
 	} mem;
 };
@@ -113,7 +112,6 @@ struct mthca_eq {
 	int                    nent;
 	struct mthca_buf_list *page_list;
 	struct mthca_mr        mr;
-	char		       irq_name[IB_DEVICE_NAME_MAX];
 };
 
 struct mthca_av;

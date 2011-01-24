@@ -2,14 +2,13 @@
 #define HOSTAP_H
 
 #include <linux/ethtool.h>
-#include <linux/kernel.h>
 
 #include "hostap_wlan.h"
 #include "hostap_ap.h"
 
 static const long freq_list[] = { 2412, 2417, 2422, 2427, 2432, 2437, 2442,
 				  2447, 2452, 2457, 2462, 2467, 2472, 2484 };
-#define FREQ_COUNT ARRAY_SIZE(freq_list)
+#define FREQ_COUNT (sizeof(freq_list) / sizeof(freq_list[0]))
 
 /* hostap.c */
 
@@ -30,12 +29,13 @@ void hostap_dump_rx_header(const char *name,
 			   const struct hfa384x_rx_frame *rx);
 void hostap_dump_tx_header(const char *name,
 			   const struct hfa384x_tx_frame *tx);
-extern const struct header_ops hostap_80211_ops;
-int hostap_80211_get_hdrlen(__le16 fc);
+int hostap_80211_header_parse(struct sk_buff *skb, unsigned char *haddr);
+int hostap_80211_prism_header_parse(struct sk_buff *skb, unsigned char *haddr);
+int hostap_80211_get_hdrlen(u16 fc);
 struct net_device_stats *hostap_get_stats(struct net_device *dev);
 void hostap_setup_dev(struct net_device *dev, local_info_t *local,
-		      int type);
-void hostap_set_multicast_list_queue(struct work_struct *work);
+		      int main_dev);
+void hostap_set_multicast_list_queue(void *data);
 int hostap_set_hostapd(local_info_t *local, int val, int rtnl_locked);
 int hostap_set_hostapd_sta(local_info_t *local, int val, int rtnl_locked);
 void hostap_cleanup(local_info_t *local);
@@ -63,12 +63,11 @@ void ap_control_flush_macs(struct mac_restrictions *mac_restrictions);
 int ap_control_kick_mac(struct ap_data *ap, struct net_device *dev, u8 *mac);
 void ap_control_kickall(struct ap_data *ap);
 void * ap_crypt_get_ptrs(struct ap_data *ap, u8 *addr, int permanent,
-			 struct lib80211_crypt_data ***crypt);
+			 struct ieee80211_crypt_data ***crypt);
 int prism2_ap_get_sta_qual(local_info_t *local, struct sockaddr addr[],
 			   struct iw_quality qual[], int buf_size,
 			   int aplist);
-int prism2_ap_translate_scan(struct net_device *dev,
-			     struct iw_request_info *info, char *buffer);
+int prism2_ap_translate_scan(struct net_device *dev, char *buffer);
 int prism2_hostapd(struct ap_data *ap, struct prism2_hostapd_param *param);
 
 
@@ -87,7 +86,7 @@ void hostap_info_process(local_info_t *local, struct sk_buff *skb);
 /* hostap_ioctl.c */
 
 extern const struct iw_handler_def hostap_iw_handler_def;
-extern const struct ethtool_ops prism2_ethtool_ops;
+extern struct ethtool_ops prism2_ethtool_ops;
 
 int hostap_ioctl(struct net_device *dev, struct ifreq *ifr, int cmd);
 

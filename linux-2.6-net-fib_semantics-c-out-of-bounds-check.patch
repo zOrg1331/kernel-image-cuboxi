@@ -1,0 +1,59 @@
+From: Thomas Graf <tgraf@redhat.com>
+Subject: [RHEL5.0 BZ236386]: fib_semantics.c out of bounds access vulnerability
+Date: Thu, 3 May 2007 14:04:48 +0200
+Bugzilla: 236386
+Message-Id: <20070503120448.GC4398@lsx.localdomain>
+Changelog: [net] fib_semantics.c out of bounds check
+
+
+Backport of the fix quoted below, the patch had to be modified
+since a portion of the affected code has been cleaned up in
+the meantime. The sanity check of rtm_type is now in inet_check_attr()
+whereas in upstream the check happens in rtm_to_fib_config()
+
+The bug allows userspace (with CAP_ADMIN) to access fib_props[]
+out of bounds.
+
+Please ACK.
+
+commit a0ee18b9b7d3847976c6fb315c06a34fb296de0e
+Author: Thomas Graf <tgraf@suug.ch>
+
+    [IPv4] fib: Fix out of bound access of fib_props[]
+    
+    Fixes a typo which caused fib_props[] to have the wrong size
+    and makes sure the value used to index the array which is
+    provided by userspace via netlink is checked to avoid out of
+    bound access.
+    
+    Signed-off-by: Thomas Graf <tgraf@suug.ch>
+    Signed-off-by: David S. Miller <davem@davemloft.net>
+
+Index: linux-2.6.18.noarch/net/ipv4/fib_frontend.c
+===================================================================
+--- linux-2.6.18.noarch.orig/net/ipv4/fib_frontend.c	2007-05-02 22:06:12.000000000 +0200
++++ linux-2.6.18.noarch/net/ipv4/fib_frontend.c	2007-05-02 22:34:55.000000000 +0200
+@@ -308,6 +308,9 @@ static int inet_check_attr(struct rtmsg 
+ {
+ 	int i;
+ 
++	if (r->rtm_type > RTN_MAX)
++		return -EINVAL;
++
+ 	for (i=1; i<=RTA_MAX; i++, rta++) {
+ 		struct rtattr *attr = *rta;
+ 		if (attr) {
+Index: linux-2.6.18.noarch/net/ipv4/fib_semantics.c
+===================================================================
+--- linux-2.6.18.noarch.orig/net/ipv4/fib_semantics.c	2007-05-02 22:06:12.000000000 +0200
++++ linux-2.6.18.noarch/net/ipv4/fib_semantics.c	2007-05-02 22:30:05.000000000 +0200
+@@ -88,7 +88,7 @@ static const struct 
+ {
+ 	int	error;
+ 	u8	scope;
+-} fib_props[RTA_MAX + 1] = {
++} fib_props[RTN_MAX + 1] = {
+         {
+ 		.error	= 0,
+ 		.scope	= RT_SCOPE_NOWHERE,
+

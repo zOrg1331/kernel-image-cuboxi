@@ -1,0 +1,57 @@
+From: Rob Evers <revers@redhat.com>
+Date: Mon, 20 Jul 2009 14:01:40 -0400
+Subject: [scsi] cciss: fix sysfs broken symlink regression
+Message-id: 20090720175656.14311.3405.sendpatchset@localhost.localdomain
+O-Subject: [RHEL5.4 PATCH] cciss: fix sysfs broken symlink regression
+Bugzilla: 510178
+
+https://bugzilla.redhat.com/show_bug.cgi?id=489982
+
+Description:
+
+    This patch is being posted for review only at this point.  A decision
+    to accept this patch (dev-ack) is still pending, dependent on testing
+    to be done.  The patch is being considered for the current rhel5.4 build,
+    snap-4.
+
+    From the commit in 'Upstream Status' below:
+
+        cciss: fix sysfs broken symlink regression
+
+        Regression introduced by commit 6ae5ce8e8d4de666f31286808d2285aa6a50fa40
+        ("cciss: remove redundant code").
+
+        This patch fixes a broken symlink in sysfs that was introduced by the
+        above commit.  We broke it in 2.6.27-rc on or about 20080804.  Some
+        installers are broken if this symlink does not exist and they may not
+        detect the logical drives configured on the controller.  It does not
+        require being backported into 2.6.26.x or earlier kernels.
+
+Upstream Status:
+
+    Committed upstream in http://git.kernel.org/?p=linux/kernel/git/torvalds/
+      linux-2.6.git;a=commit;h=404443081ce5e6f68b5f7eda16c959835ff200c0
+
+Brew Build#
+
+    1897904
+
+Testing:
+
+    Applied patch and /sys/block/cciss!cXdY/device/* files were present.  Without
+    patch, the files were not present.
+
+    Further testing to determine impact to required hal functionality is underway.
+
+diff --git a/drivers/block/cciss.c b/drivers/block/cciss.c
+index 6d2bd61..82d1c3a 100644
+--- a/drivers/block/cciss.c
++++ b/drivers/block/cciss.c
+@@ -1410,6 +1410,7 @@ static void cciss_add_disk(ctlr_info_t *h, struct gendisk *disk,
+ 	disk->first_minor = drv_index << NWD_SHIFT;
+ 	disk->fops = &cciss_fops;
+ 	disk->private_data = &h->drv[drv_index];
++	disk->driverfs_dev = &h->pdev->dev;
+ 
+ 	/* Set up queue information */
+ 	blk_queue_bounce_limit(disk->queue, h->pdev->dma_mask);

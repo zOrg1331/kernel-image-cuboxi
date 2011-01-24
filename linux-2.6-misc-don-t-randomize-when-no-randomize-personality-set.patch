@@ -1,0 +1,107 @@
+From: Bryn M. Reeves <bmr@redhat.com>
+Date: Thu, 24 Jul 2008 17:54:17 +0100
+Subject: [misc] don't randomize when no randomize personality set
+Message-id: 4888B3B9.4020407@redhat.com
+O-Subject: [RHEL 5.3 PATCH] Don't randomize stack when no randomization personality set (bz 444611)
+Bugzilla: 444611
+RH-Acked-by: Chuck Ebbert <cebbert@redhat.com>
+
+-----BEGIN PGP SIGNED MESSAGE-----
+Hash: SHA1
+
+The kernel doesn't fully honor the ADDR_NO_RANDOMIZE flag for processes
+that set it, e.g. via setarch -R.
+
+Although the general randomization from
+fs/binfmt_elf.c:randomize_stack_top() is disabled, randomization is also
+applied to the stack alignment in arch_align_stack(), e.g.:
+
+unsigned long arch_align_stack(unsigned long sp)
+{
+        if (randomize_va_space)
+                sp -= get_random_int() % 8192;
+        return sp & ~0xf;
+}
+
+This must also be conditional on PF_RANDOMIZE/ADDR_NO_RANDOMIZE or it
+will lead to stack randomization over an 8k range (less than normal but
+still a problem for debugging some apps).
+
+Fixed upstream in commit c16b63e09d9d03158e0a92e961234e94c4862620:
+Author: Andi Kleen <ak@suse.de>
+Date:   Tue Sep 26 10:52:28 2006 +0200
+
+    [PATCH] i386/x86-64: Don't randomize stack top when no randomization
+    personality is set
+
+    Based on patch from Frank van Maarseveen <frankvm@frankvm.com>, but
+    extended.
+
+    Signed-off-by: Andi Kleen <ak@suse.de>
+
+Attached patch is a simple backport of this change. Tested here and at
+LLNL. There's a simple reproducer in the bugzilla that can be used to
+verify the fix.
+
+Fixes bug 444611.
+
+Regards,
+Bryn.
+
+-----BEGIN PGP SIGNATURE-----
+Version: GnuPG v1.4.7 (GNU/Linux)
+Comment: Using GnuPG with Fedora - http://enigmail.mozdev.org
+
+iD8DBQFIiLO56YSQoMYUY94RAoUSAJ9iP/GgTNjibHpPfSsblWUcxTi5twCg4Bue
+kGHFGqBjThQPSc3hrfB1r74=
+=EJBJ
+-----END PGP SIGNATURE-----
+
+diff --git a/arch/i386/kernel/process.c b/arch/i386/kernel/process.c
+index 253ed50..1140a10 100644
+--- a/arch/i386/kernel/process.c
++++ b/arch/i386/kernel/process.c
+@@ -37,6 +37,7 @@
+ #include <linux/kallsyms.h>
+ #include <linux/ptrace.h>
+ #include <linux/random.h>
++#include <linux/personality.h>
+ 
+ #include <asm/uaccess.h>
+ #include <asm/pgtable.h>
+@@ -899,7 +900,7 @@ asmlinkage int sys_get_thread_area(struct user_desc __user *u_info)
+ 
+ unsigned long arch_align_stack(unsigned long sp)
+ {
+-	if (randomize_va_space)
++	if (!(current->personality & ADDR_NO_RANDOMIZE) && randomize_va_space)
+ 		sp -= get_random_int() % 8192;
+ 	return sp & ~0xf;
+ }
+diff --git a/arch/x86_64/kernel/process.c b/arch/x86_64/kernel/process.c
+index 9c60cb2..ea464ec 100644
+--- a/arch/x86_64/kernel/process.c
++++ b/arch/x86_64/kernel/process.c
+@@ -825,7 +825,7 @@ int dump_task_regs(struct task_struct *tsk, elf_gregset_t *regs)
+ 
+ unsigned long arch_align_stack(unsigned long sp)
+ {
+-	if (randomize_va_space)
++	if (!(current->personality & ADDR_NO_RANDOMIZE) && randomize_va_space)
+ 		sp -= get_random_int() % 8192;
+ 	return sp & ~0xf;
+ }
+diff --git a/fs/binfmt_elf.c b/fs/binfmt_elf.c
+index 77bddd1..ca70b73 100644
+--- a/fs/binfmt_elf.c
++++ b/fs/binfmt_elf.c
+@@ -563,7 +563,8 @@ static unsigned long randomize_stack_top(unsigned long stack_top)
+ {
+ 	unsigned int random_variable = 0;
+ 
+-	if (current->flags & PF_RANDOMIZE) {
++	if ((current->flags & PF_RANDOMIZE) &&
++		!(current->personality & ADDR_NO_RANDOMIZE)) {
+ 		random_variable = get_random_int() & STACK_RND_MASK;
+ 		random_variable <<= PAGE_SHIFT;
+ 	}

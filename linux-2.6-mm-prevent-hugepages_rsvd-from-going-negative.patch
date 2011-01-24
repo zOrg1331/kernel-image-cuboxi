@@ -1,0 +1,38 @@
+From: Larry Woodman <lwoodman@redhat.com>
+Subject: [RHEL5 patch] prevent /proc/meminfo's HugePages_Rsvd from going negative.
+Date: Mon, 04 Dec 2006 13:23:59 -0500
+Bugzilla: 217910
+Message-Id: <457467BF.8090609@redhat.com>
+Changelog: prevent /proc/meminfo's HugePages_Rsvd from going negative.
+
+
+Backported upstream patch to prevent HugePages_Rsvd from going negative:
+
+If you truncate an mmap'ed hugetlbfs file, then fault on the truncated
+area, /proc/meminfo's HugePages_Rsvd goes hugely "negative".
+
+Signed-off-by: Hugh Dickins <hugh@veritas.com>
+Cc: Adam Litke <agl@us.ibm.com>
+Cc: David Gibson <david@gibson.dropbear.id.au>
+Cc: "Chen, Kenneth W" <kenneth.w.chen@intel.com>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+Signed-off-by: Linus Torvalds <torvalds@osdl.org>
+
+Fixes BZ 217910.
+
+
+
+
+--- linux-2.6.18.noarch/mm/hugetlb.c.orig
++++ linux-2.6.18.noarch/mm/hugetlb.c
+@@ -454,6 +454,9 @@ int hugetlb_no_page(struct mm_struct *mm
+ retry:
+ 	page = find_lock_page(mapping, idx);
+ 	if (!page) {
++		size = i_size_read(mapping->host) >> HPAGE_SHIFT;
++		if (idx >= size)
++			goto out;
+ 		if (hugetlb_get_quota(mapping))
+ 			goto out;
+ 		page = alloc_huge_page(vma, address);
+

@@ -1,0 +1,51 @@
+From: Jiri Olsa <jolsa@redhat.com>
+Date: Fri, 24 Apr 2009 15:23:40 +0200
+Subject: [mm] vmalloc: don't pass __GFP_ZERO to slab
+Message-id: 20090424132340.GA22564@jolsa.englab.brq.redhat.com
+O-Subject: [RHEL5.4 PATCH] vmalloc(): don't pass __GFP_ZERO to slab
+Bugzilla: 491685
+RH-Acked-by: Dave Anderson <anderson@redhat.com>
+RH-Acked-by: Larry Woodman <lwoodman@redhat.com>
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+Bugzilla: 491685
+https://bugzilla.redhat.com/show_bug.cgi?id=491685
+
+Description:
+============
+If vmalloc_user() is called and a kmem cache must grow before allocating
+vmalloc internal structures, the kernel panics (because of BUG_ON() at
+mm/slab.c:2650) because __GFP_ZERO is passed from vmalloc_user() down to
+cache_grow().
+
+Upstream status:
+================
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=286e1ea3ac1ca4f503ebbb3020bdb0cbe6adffac
+Author: Andrew Morton <akpm@osdl.org>
+
+Test status of the patch:
+=========================
+tested with attached reproducer
+
+Brew build
+==========
+https://brewweb.devel.redhat.com/taskinfo?taskID=1776279
+
+diff --git a/mm/vmalloc.c b/mm/vmalloc.c
+index 266162d..d431b0e 100644
+--- a/mm/vmalloc.c
++++ b/mm/vmalloc.c
+@@ -430,8 +430,11 @@ void *__vmalloc_area_node(struct vm_struct *area, gfp_t gfp_mask,
+ 	if (array_size > PAGE_SIZE) {
+ 		pages = __vmalloc_node(array_size, gfp_mask, PAGE_KERNEL, node);
+ 		area->flags |= VM_VPAGES;
+-	} else
+-		pages = kmalloc_node(array_size, (gfp_mask & ~__GFP_HIGHMEM), node);
++	} else {
++		pages = kmalloc_node(array_size,
++				(gfp_mask & ~(__GFP_HIGHMEM | __GFP_ZERO)),
++				node);
++	}
+ 	area->pages = pages;
+ 	if (!area->pages) {
+ 		remove_vm_area(area->addr);

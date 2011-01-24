@@ -1,0 +1,42 @@
+From: Eric Sandeen <sandeen@redhat.com>
+Date: Fri, 1 Oct 2010 20:08:14 -0400
+Subject: [fs] jbd2: properly align sized slab caches
+Message-id: <4CA63FAE.7030604@redhat.com>
+Patchwork-id: 28563
+O-Subject: [PATCH RHEL5.6] jbd2: properly align sized slab caches
+Bugzilla: 638961
+RH-Acked-by: Josef Bacik <josef@redhat.com>
+RH-Acked-by: Larry Woodman <lwoodman@redhat.com>
+
+This is for bug
+638961 - kernel BUG in jbd2_alloc at fs/jbd2/journal.c:2075!
+
+a bit of a brown paper bag, the alignment got lost in the backport
+and a misaligned slab cache is now caught with a BUG_ON() in jbd2,
+more apparent on ppc64.
+
+This fixes it for me, and matches what's upstream from:
+
+commit d2eecb03936878ec574ade5532fa83df7d75dde7
+Author: Theodore Ts'o <tytso@mit.edu>
+Date:   Mon Dec 7 10:36:20 2009 -0500
+
+    ext4: Use slab allocator for sub-page sized allocations
+
+Thanks,
+-Eric
+
+
+diff --git a/fs/jbd2/journal.c b/fs/jbd2/journal.c
+index aa78637..de6e2d2 100644
+--- a/fs/jbd2/journal.c
++++ b/fs/jbd2/journal.c
+@@ -2031,7 +2031,7 @@ static int jbd2_journal_create_slab(size_t size)
+ 
+ 	slab_size = 1 << (i+10);
+ 	jbd2_slab[i] = kmem_cache_create(jbd2_slab_names[i], slab_size,
+-					 0, 0, NULL, NULL);
++					 slab_size, 0, NULL, NULL);
+ 	up(&jbd2_slab_create_sem);
+ 	if (!jbd2_slab[i]) {
+ 		printk(KERN_EMERG "JBD2: no memory for jbd2_slab cache\n");

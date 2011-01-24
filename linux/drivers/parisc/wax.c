@@ -68,7 +68,8 @@ wax_init_irq(struct gsc_asic *wax)
 //	gsc_writel(0xFFFFFFFF, base+0x2000); /* RS232-B on Wax */
 }
 
-static int __init wax_init_chip(struct parisc_device *dev)
+int __init
+wax_init_chip(struct parisc_device *dev)
 {
 	struct gsc_asic *wax;
 	struct parisc_device *parent;
@@ -92,7 +93,7 @@ static int __init wax_init_chip(struct parisc_device *dev)
 	dev->irq = gsc_claim_irq(&gsc_irq, WAX_GSC_IRQ);
 	if (dev->irq < 0) {
 		printk(KERN_ERR "%s(): cannot get GSC irq\n",
-				__func__);
+				__FUNCTION__);
 		kfree(wax);
 		return -EBUSY;
 	}

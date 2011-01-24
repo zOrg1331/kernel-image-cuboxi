@@ -1,0 +1,31 @@
+From: Michal Schmidt <mschmidt@redhat.com>
+Date: Fri, 3 Sep 2010 16:44:28 -0400
+Subject: [net] bnx2x: update driver version to 1.52.53-3
+Message-id: <20100903164428.25415.12770.stgit@brian.englab.brq.redhat.com>
+Patchwork-id: 28112
+O-Subject: [RHEL5.6 BZ572012 PATCH 39/46] bnx2x: update driver version to
+	1.52.53-3
+Bugzilla: 572012
+RH-Acked-by: David S. Miller <davem@redhat.com>
+RH-Acked-by: Stanislaw Gruszka <sgruszka@redhat.com>
+
+From: Dmitry Kravkov <dmitry@broadcom.com>
+
+Signed-off-by: Dmitry Kravkov <dmitry@broadcom.com>
+Signed-off-by: Eilon Greenstein <eilong@broadcom.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+(cherry picked from commit 9e672fd449b6877711fb2f032491bef054636b9b)
+
+diff --git a/drivers/net/bnx2x/bnx2x.h b/drivers/net/bnx2x/bnx2x.h
+index 7619014..14502ac 100644
+--- a/drivers/net/bnx2x/bnx2x.h
++++ b/drivers/net/bnx2x/bnx2x.h
+@@ -20,7 +20,7 @@
+  * (you will need to reboot afterwards) */
+ /* #define BNX2X_STOP_ON_ERROR */
+ 
+-#define DRV_MODULE_VERSION      "1.52.53-1"
++#define DRV_MODULE_VERSION      "1.52.53-3"
+ #define DRV_MODULE_RELDATE      "2010/18/04"
+ #define BNX2X_BC_VER            0x040200
+ 

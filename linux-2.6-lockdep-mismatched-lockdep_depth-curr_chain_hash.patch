@@ -1,0 +1,36 @@
+From: Peter Zijlstra <a.p.zijlstra@chello.nl>
+Date: Tue, 18 Dec 2007 12:22:13 +0100
+Subject: [lockdep] mismatched lockdep_depth/curr_chain_hash
+Message-id: 20071218112316.357856238@chello.nl
+O-Subject: [RHEL5.2 PATCH 12/14] lockdep: fix mismatched lockdep_depth/curr_chain_hash
+Bugzilla: 193729
+
+It is possible for the current->curr_chain_key to become inconsistent with the
+current index if the chain fails to validate.  The end result is that future
+lock_acquire() operations may inadvertently fail to find a hit in the cache
+resulting in a new node being added to the graph for every acquire.
+
+Signed-off-by: Gregory Haskins <ghaskins@novell.com>
+Signed-off-by: Peter Zijlstra <a.p.zijlstra@chello.nl>
+Signed-off-by: Ingo Molnar <mingo@elte.hu>
+
+diff --git a/kernel/lockdep.c b/kernel/lockdep.c
+index 1fb2d90..984e1e3 100644
+--- a/kernel/lockdep.c
++++ b/kernel/lockdep.c
+@@ -2274,7 +2274,6 @@ out_calc_hash:
+ 	}
+ #endif
+ 	chain_key = iterate_chain_key(chain_key, id);
+-	curr->curr_chain_key = chain_key;
+ 
+ #ifdef CONFIG_PROVE_LOCKING
+ 	/*
+@@ -2322,6 +2321,7 @@ out_calc_hash:
+ 	}
+ #endif
+ 
++	curr->curr_chain_key = chain_key;
+ 	curr->lockdep_depth++;
+ 	check_chain_key(curr);
+ 	if (unlikely(curr->lockdep_depth >= MAX_LOCK_DEPTH)) {

@@ -1,0 +1,67 @@
+From: Brad Peters <bpeters@redhat.com>
+Date: Tue, 25 Mar 2008 10:53:36 -0400
+Subject: [net] eHEA: checksum error fix
+Message-id: 47E911F0.6020606@redhat.com
+O-Subject: [RHEL 5.2 Patch 1/1] eHEA Device Driver Update - Checksum error fix !
+Bugzilla: 438212
+
+RHBZ#:
+------
+https://bugzilla.redhat.com/show_bug.cgi?id=438212
+
+Description:
+------------
+The device driver for IBM Host Ethernet Adapter does not support setting the checksum offloading to off.
+
+HEAs IPv6 acceleration capabilities are signalled wrong to the kernel by the HEA driver. This is fixed by a one line change indicating less driver capabilities.
+
+RHEL Version Found:
+------------------
+RHEL 5.0
+
+kABI Status:
+------------
+No symbols were harmed.
+
+Upstream Status:
+----------------
+It's been posted for inclusion upstream:
+http://ozlabs.org/pipermail/linuxppc-dev/2008-March/053166.html
+
+---------------------------------------------------------------
+
+Brad Peters 1-978-392-1000 x 23183
+IBM on-site partner.
+
+Proposed Patch:
+---------------
+This patch is based on 2.6.18-84.ppc64
+
+Acked-by: Andy Gospodarek <gospo@redhat.com>
+
+diff --git a/drivers/net/ehea/ehea.h b/drivers/net/ehea/ehea.h
+index adb9a25..985d6e8 100644
+--- a/drivers/net/ehea/ehea.h
++++ b/drivers/net/ehea/ehea.h
+@@ -41,7 +41,7 @@
+ #include "inet_lro.h"
+ 
+ #define DRV_NAME	"ehea"
+-#define DRV_VERSION	"EHEA_0076-01"
++#define DRV_VERSION	"EHEA_0076-03"
+ 
+ /* eHEA capability flags */
+ #define DLPAR_PORT_ADD_REM 1
+diff --git a/drivers/net/ehea/ehea_main.c b/drivers/net/ehea/ehea_main.c
+index d2a8481..59cd37c 100644
+--- a/drivers/net/ehea/ehea_main.c
++++ b/drivers/net/ehea/ehea_main.c
+@@ -2960,7 +2960,7 @@ struct ehea_port *ehea_setup_single_port(struct ehea_adapter *adapter,
+ 	dev->vlan_rx_add_vid = ehea_vlan_rx_add_vid;
+ 	dev->vlan_rx_kill_vid = ehea_vlan_rx_kill_vid;
+ 	dev->features = NETIF_F_SG | NETIF_F_FRAGLIST | NETIF_F_TSO
+-		      | NETIF_F_HIGHDMA | NETIF_F_HW_CSUM | NETIF_F_HW_VLAN_TX
++		      | NETIF_F_HIGHDMA | NETIF_F_IP_CSUM | NETIF_F_HW_VLAN_TX
+ 		      | NETIF_F_HW_VLAN_RX | NETIF_F_HW_VLAN_FILTER
+ 		      | NETIF_F_LLTX;
+ 	dev->tx_timeout = &ehea_tx_watchdog;

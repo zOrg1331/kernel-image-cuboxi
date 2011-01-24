@@ -1,0 +1,54 @@
+--- ./drivers/block/drbd/drbd_receiver.c.drbdcfix	2009-10-12 20:33:49.000000000 +0400
++++ ./drivers/block/drbd/drbd_receiver.c	2009-10-12 20:52:45.000000000 +0400
+@@ -35,7 +35,6 @@
+ #include <linux/file.h>
+ #include <linux/in.h>
+ #include <linux/mm.h>
+-#include <linux/memcontrol.h>
+ #include <linux/mm_inline.h>
+ #include <linux/slab.h>
+ #include <linux/smp_lock.h>
+--- ./drivers/block/drbd/drbd_worker.c.drbdcfix	2009-10-12 20:33:49.000000000 +0400
++++ ./drivers/block/drbd/drbd_worker.c	2009-10-12 20:52:25.000000000 +0400
+@@ -31,7 +31,6 @@
+ #include <linux/smp_lock.h>
+ #include <linux/wait.h>
+ #include <linux/mm.h>
+-#include <linux/memcontrol.h>
+ #include <linux/mm_inline.h>
+ #include <linux/slab.h>
+ #include <linux/random.h>
+--- ./drivers/block/drbd/drbd_main.c.drbdcfix	2009-10-12 20:33:49.000000000 +0400
++++ ./drivers/block/drbd/drbd_main.c	2009-10-12 20:56:45.000000000 +0400
+@@ -40,17 +40,12 @@
+ #include <linux/proc_fs.h>
+ #include <linux/init.h>
+ #include <linux/mm.h>
+-#include <linux/memcontrol.h>
+ #include <linux/mm_inline.h>
+ #include <linux/slab.h>
+ #include <linux/random.h>
+ #include <linux/reboot.h>
+ #include <linux/notifier.h>
+-#ifdef HAVE_LINUX_BYTEORDER_SWABB_H
+ #include <linux/byteorder/swabb.h>
+-#else
+-#include <linux/swab.h>
+-#endif
+ 
+ #define __KERNEL_SYSCALLS__
+ #include <linux/unistd.h>
+@@ -3383,6 +3378,13 @@ void drbd_free_bc(struct drbd_backing_de
+ 	kfree(ldev);
+ }
+ 
++static inline int kernel_sock_shutdown(struct socket *sock, int how)
++{
++        return sock->ops->shutdown(sock, how);
++}
++
++#define SHUT_RDWR	SHUTDOWN_MASK
++
+ void drbd_free_sock(struct drbd_conf *mdev)
+ {
+ 	if (mdev->data.socket) {

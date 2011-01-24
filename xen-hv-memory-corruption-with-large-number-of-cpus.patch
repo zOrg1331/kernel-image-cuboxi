@@ -1,0 +1,92 @@
+From: Chris Lalancette <clalance@redhat.com>
+Date: Mon, 9 Jun 2008 11:45:36 +0200
+Subject: [xen] HV: memory corruption with large number of cpus
+Message-id: 484CFBC0.9070404@redhat.com
+O-Subject: [RHEL5.3 PATCH]: Fix random memory corruption in the HV
+Bugzilla: 449945
+RH-Acked-by: Bill Burns <bburns@redhat.com>
+RH-Acked-by: Markus Armbruster <armbru@redhat.com>
+RH-Acked-by: Don Dutile <ddutile@redhat.com>
+
+All,
+     During 5.1 we got sporadic reports of hypervisor crashes during context
+switch with machines with lots of cores (16 or more, bz 294551).  During 5.2
+these crashes seemed to go away, but we had a sneaking suspicion that the bug
+was hiding and not actually fixed.
+     I recently went back to try and find the root cause of this bug, and found
+out that it is, indeed, just hiding in 5.2.  Basically what's happening is that
+we are writing data beyond the end of an array, which was causing the memory
+corruption.  The upstream xen-3.1-testing repository has fixed this in c/s 15601
+by just removing the array and associated code in question, since it was never
+used.  The attached patch is a backport of that code.
+     This resolves BZ 449945 for 5.3, and I also believe we should put this into
+the 5.2.z stream.
+     Tested by me on an x86_64 machine with 16 cores.  With a stock 5.2 HV, the
+bug is kind of hard to trigger, but to induce failure, I rebuilt the 5.2 HV with
+max_phys_cpus=32 (the old default).  Before the patch, I was able to get the HV
+to crash within a few minutes of a fully virtualized guest install.  After the
+patch, I was able to start hundreds of guest installs without crashing.
+
+Please ACK.
+
+Chris Lalancette
+
+diff --git a/arch/x86/smpboot.c b/arch/x86/smpboot.c
+index 2556314..667f533 100644
+--- a/arch/x86/smpboot.c
++++ b/arch/x86/smpboot.c
+@@ -543,40 +543,6 @@ extern struct {
+ 	unsigned short ss;
+ } stack_start;
+ 
+-#ifdef CONFIG_NUMA
+-
+-/* which logical CPUs are on which nodes */
+-cpumask_t node_2_cpu_mask[MAX_NUMNODES] __read_mostly =
+-				{ [0 ... MAX_NUMNODES-1] = CPU_MASK_NONE };
+-/* which node each logical CPU is on */
+-int cpu_2_node[NR_CPUS] __read_mostly = { [0 ... NR_CPUS-1] = 0 };
+-EXPORT_SYMBOL(cpu_2_node);
+-
+-/* set up a mapping between cpu and node. */
+-static inline void map_cpu_to_node(int cpu, int node)
+-{
+-	printk("Mapping cpu %d to node %d\n", cpu, node);
+-	cpu_set(cpu, node_2_cpu_mask[node]);
+-	cpu_2_node[cpu] = node;
+-}
+-
+-/* undo a mapping between cpu and node. */
+-static inline void unmap_cpu_to_node(int cpu)
+-{
+-	int node;
+-
+-	printk("Unmapping cpu %d from all nodes\n", cpu);
+-	for (node = 0; node < MAX_NUMNODES; node ++)
+-		cpu_clear(cpu, node_2_cpu_mask[node]);
+-	cpu_2_node[cpu] = 0;
+-}
+-#else /* !CONFIG_NUMA */
+-
+-#define map_cpu_to_node(cpu, node)	({})
+-#define unmap_cpu_to_node(cpu)	({})
+-
+-#endif /* CONFIG_NUMA */
+-
+ u8 cpu_2_logical_apicid[NR_CPUS] __read_mostly = { [0 ... NR_CPUS-1] = BAD_APICID };
+ 
+ static void map_cpu_to_logical_apicid(void)
+@@ -585,13 +551,11 @@ static void map_cpu_to_logical_apicid(void)
+ 	int apicid = hard_smp_processor_id();
+ 
+ 	cpu_2_logical_apicid[cpu] = apicid;
+-	map_cpu_to_node(cpu, apicid_to_node(apicid));
+ }
+ 
+ static void unmap_cpu_to_logical_apicid(int cpu)
+ {
+ 	cpu_2_logical_apicid[cpu] = BAD_APICID;
+-	unmap_cpu_to_node(cpu);
+ }
+ 
+ #if APIC_DEBUG

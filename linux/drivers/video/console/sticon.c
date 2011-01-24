@@ -314,7 +314,7 @@ static unsigned long sticon_getxy(struct vc_data *conp, unsigned long pos,
 }
 
 static u8 sticon_build_attr(struct vc_data *conp, u8 color, u8 intens,
-			    u8 blink, u8 underline, u8 reverse, u8 italic)
+			    u8 blink, u8 underline, u8 reverse)
 {
     u8 attr = ((color & 0x70) >> 1) | ((color & 7));
 
@@ -345,7 +345,7 @@ static void sticon_save_screen(struct vc_data *conp)
 {
 }
 
-static const struct consw sti_con = {
+static struct consw sti_con = {
 	.owner			= THIS_MODULE,
 	.con_startup		= sticon_startup,
 	.con_init		= sticon_init,
@@ -370,7 +370,7 @@ static const struct consw sti_con = {
 
 
 
-static int __init sticonsole_init(void)
+int __init sticonsole_init(void)
 {
     /* already initialized ? */
     if (sticon_sti)

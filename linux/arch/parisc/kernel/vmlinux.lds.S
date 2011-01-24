@@ -28,7 +28,6 @@
 #include <asm/cache.h>
 #include <asm/page.h>
 #include <asm/asm-offsets.h>
-#include <asm/thread_info.h>
 	
 /* ld script to make hppa Linux kernel */
 #ifndef CONFIG_64BIT
@@ -47,126 +46,169 @@ jiffies = jiffies_64;
 #endif
 SECTIONS
 {
-	. = KERNEL_BINARY_TEXT_START;
 
-	_text = .;		/* Text and read-only data */
-	.text ALIGN(16) : {
-		HEAD_TEXT
-		TEXT_TEXT
-		SCHED_TEXT
-		LOCK_TEXT
-		KPROBES_TEXT
-		IRQENTRY_TEXT
-		*(.text.do_softirq)
-		*(.text.sys_exit)
-		*(.text.do_sigaltstack)
-		*(.text.do_fork)
-		*(.text.*)
-		*(.fixup)
-		*(.lock.text)		/* out-of-line lock text */
-		*(.gnu.warning)
+  . = KERNEL_BINARY_TEXT_START;
+
+  _text = .;			/* Text and read-only data */
+  .text ALIGN(16) : {
+	*(.text)
+	SCHED_TEXT
+	LOCK_TEXT
+	*(.text.do_softirq)
+	*(.text.sys_exit)
+	*(.text.do_sigaltstack)
+	*(.text.do_fork)
+	*(.text.*)
+	*(.fixup)
+	*(.lock.text)		/* out-of-line lock text */
+	*(.gnu.warning)
 	} = 0
-	/* End of text section */
-	_etext = .;
 
-	RODATA
+  _etext = .;			/* End of text section */
 
-	/* writeable */
-	/* Make sure this is page aligned so
-	 * that we can properly leave these
-	 * as writable
-	 */
-	. = ALIGN(PAGE_SIZE);
-	data_start = .;
+  RODATA
 
-	/* unwind info */
-	.PARISC.unwind : {
-		__start___unwind = .;
-		*(.PARISC.unwind)
-		__stop___unwind = .;
+  /* writeable */
+  . = ALIGN(ASM_PAGE_SIZE);	/* Make sure this is page aligned so
+  				   that we can properly leave these
+				   as writable */
+  data_start = .;
+
+  . = ALIGN(16);		/* Exception table */
+  __start___ex_table = .;
+  __ex_table : { *(__ex_table) }
+  __stop___ex_table = .;
+
+  __start___unwind = .;         /* unwind info */
+  .PARISC.unwind : { *(.PARISC.unwind) }
+  __stop___unwind = .;
+
+  /* rarely changed data like cpu maps */
+  . = ALIGN(16);
+  .data.read_mostly : { *(.data.read_mostly) }
+
+  . = ALIGN(L1_CACHE_BYTES);
+  .data : {			/* Data */
+	*(.data)
+	CONSTRUCTORS
 	}
 
-	EXCEPTION_TABLE(16)
-	NOTES
+  . = ALIGN(L1_CACHE_BYTES);
+  .data.cacheline_aligned : { *(.data.cacheline_aligned) }
 
-	/* Data */
-	RW_DATA_SECTION(L1_CACHE_BYTES, PAGE_SIZE, THREAD_SIZE)
+  /* PA-RISC locks requires 16-byte alignment */
+  . = ALIGN(16);
+  .data.lock_aligned : { *(.data.lock_aligned) }
 
-	/* PA-RISC locks requires 16-byte alignment */
-	. = ALIGN(16);
-	.data.lock_aligned : {
-		*(.data.lock_aligned)
+  . = ALIGN(ASM_PAGE_SIZE);
+  /* nosave data is really only used for software suspend...it's here
+   * just in case we ever implement it */
+  __nosave_begin = .;
+  .data_nosave : { *(.data.nosave) }
+  . = ALIGN(ASM_PAGE_SIZE);
+  __nosave_end = .;
+
+  _edata = .;			/* End of data section */
+
+  __bss_start = .;		/* BSS */
+  /* page table entries need to be PAGE_SIZE aligned */
+  . = ALIGN(ASM_PAGE_SIZE);
+  .data.vmpages : {
+	*(.data.vm0.pmd)
+	*(.data.vm0.pgd)
+	*(.data.vm0.pte)
 	}
+  .bss : { *(.bss) *(COMMON) }
+  __bss_stop = .;
 
-	/* End of data section */
-	_edata = .;
 
-	/* BSS */
-	__bss_start = .;
-	/* page table entries need to be PAGE_SIZE aligned */
-	. = ALIGN(PAGE_SIZE);
-	.data.vmpages : {
-		*(.data.vm0.pmd)
-		*(.data.vm0.pgd)
-		*(.data.vm0.pte)
-	}
-	.bss : {
-		*(.bss)
-		*(COMMON)
-	}
-	__bss_stop = .;
+  /* assembler code expects init_task to be 16k aligned */
+  . = ALIGN(16384); 		/* init_task */
+  .data.init_task : { *(.data.init_task) }
+
+  /* The interrupt stack is currently partially coded, but not yet
+   * implemented */
+  . = ALIGN(16384);	
+  init_istack : { *(init_istack) }
 
 #ifdef CONFIG_64BIT
-	. = ALIGN(16);
-	/* Linkage tables */
-	.opd : {
-		*(.opd)
-	} PROVIDE (__gp = .); 
-	.plt : {
-		*(.plt)
-	} 
-	.dlt : {
-		*(.dlt)
-	}
+  . = ALIGN(16);               /* Linkage tables */
+  .opd : { *(.opd) } PROVIDE (__gp = .); 
+  .plt : { *(.plt) } 
+  .dlt : { *(.dlt) }
 #endif
 
-	/* reserve space for interrupt stack by aligning __init* to 16k */
-	. = ALIGN(16384);
-	__init_begin = .;
-	INIT_TEXT_SECTION(16384)
-	INIT_DATA_SECTION(16)
-	/* we have to discard exit text and such at runtime, not link time */
-	.exit.text :
-	{
-		EXIT_TEXT
-	}
-	.exit.data :
-	{
-		EXIT_DATA
-	}
+  /* reserve space for interrupt stack by aligning __init* to 16k */
+  . = ALIGN(16384);
+  __init_begin = .;
+  .init.text : { 
+	_sinittext = .;
+	*(.init.text)
+	_einittext = .;
+  }
+  .init.data : { *(.init.data) }
+  . = ALIGN(16);
+  __setup_start = .;
+  .init.setup : { *(.init.setup) }
+  __setup_end = .;
+  __initcall_start = .;
+  .initcall.init : {
+	*(.initcall1.init) 
+	*(.initcall2.init) 
+	*(.initcall3.init) 
+	*(.initcall4.init) 
+	*(.initcall5.init) 
+	*(.initcall6.init) 
+	*(.initcall7.init)
+  }
+  __initcall_end = .;
+  __con_initcall_start = .;
+  .con_initcall.init : { *(.con_initcall.init) }
+  __con_initcall_end = .;
+  SECURITY_INIT
+  /* alternate instruction replacement.  This is a mechanism x86 uses
+   * to detect the CPU type and replace generic instruction sequences
+   * with CPU specific ones.  We don't currently do this in PA, but
+   * it seems like a good idea... */
+  . = ALIGN(4);
+  __alt_instructions = .;
+  .altinstructions : { *(.altinstructions) } 
+  __alt_instructions_end = .; 
+ .altinstr_replacement : { *(.altinstr_replacement) } 
+  /* .exit.text is discard at runtime, not link time, to deal with references
+     from .altinstructions and .eh_frame */
+  .exit.text : { *(.exit.text) }
+  .exit.data : { *(.exit.data) }
+  . = ALIGN(ASM_PAGE_SIZE);
+  __initramfs_start = .;
+  .init.ramfs : { *(.init.ramfs) }
+  __initramfs_end = .;
+  . = ALIGN(32);
+  __per_cpu_start = .;
+  .data.percpu  : { *(.data.percpu) }
+  __per_cpu_end = .;
+  . = ALIGN(ASM_PAGE_SIZE);
+  __init_end = .;
+  /* freed after init ends here */
+	
+  _end = . ;
 
-	PERCPU(PAGE_SIZE)
-	. = ALIGN(PAGE_SIZE);
-	__init_end = .;
-	/* freed after init ends here */
-	_end = . ;
-
-	STABS_DEBUG
-	.note 0 : { *(.note) }
-
-	/* Sections to be discarded */
-	DISCARDS
-	/DISCARD/ : {
+  /* Sections to be discarded */
+  /DISCARD/ : {
+	*(.exitcall.exit)
 #ifdef CONFIG_64BIT
-		/* temporary hack until binutils is fixed to not emit these
-	 	 * for static binaries
-		 */
-		*(.interp)
-		*(.dynsym)
-		*(.dynstr)
-		*(.dynamic)
-		*(.hash)
-		*(.gnu.hash)
+	/* temporary hack until binutils is fixed to not emit these
+	 for static binaries */
+	*(.interp)
+	*(.dynsym)
+	*(.dynstr)
+	*(.dynamic)
+	*(.hash)
+	*(.gnu.hash)
 #endif
 	}
+
+  STABS_DEBUG
+  .note 0 : { *(.note) }	
+
 }

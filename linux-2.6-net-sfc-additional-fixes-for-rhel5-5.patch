@@ -1,0 +1,539 @@
+From: Michal Schmidt <mschmidt@redhat.com>
+Date: Mon, 14 Dec 2009 16:23:17 -0500
+Subject: [net] sfc: additional fixes for rhel5.5
+Message-id: <20091214172317.2443d041@leela>
+Patchwork-id: 21921
+O-Subject: [RHEL5.5 PATCH 6/5 v2] sfc: additional fixes
+Bugzilla: 448856
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+https://bugzilla.redhat.com/show_bug.cgi?id=448856
+
+Ben Hutchings from Solarflare tested the sfc driver and reviewed the
+patch. He found several issues:
+ - some of the compat functions were unnecessary
+ - last_rx was not updated in the GRO branch
+ - lm87's CONFIG and CHANNEL_MODE registers need to be set by the driver
+ - oops in the failure path of efx_init_napi
+ - ecmd->supported needs to be set
+ - .get_perm_addr was missing in ethtool_ops
+ - napi->dev must be set to the real net_device for rx to work right
+
+Ben sent me a patch fixing them. The patch also changes the handling
+of the workqueues slightly to match the way it is done in Solarflare's
+out-of-tree driver for RHEL (It had more testing.).
+
+With the patch the driver works for Ben.
+
+[v2: per Prarit's request:
+     - don't introduce another copy of INIT_WORK
+     - one whitespace fix]
+
+Signed-off-by: Don Zickus <dzickus@redhat.com>
+
+diff --git a/drivers/net/sfc/boards.c b/drivers/net/sfc/boards.c
+index cd78410..0321fac 100644
+--- a/drivers/net/sfc/boards.c
++++ b/drivers/net/sfc/boards.c
+@@ -56,6 +56,10 @@ static void board_blink(struct efx_nic *efx, bool blink)
+ /*****************************************************************************
+  * Support for LM87 sensor chip used on several boards
+  */
++#define LM87_REG_CHANNEL_MODE		0x16
++#define LM87_REG_CONFIG			0x40
++#define LM87_CONFIG_START		0x01
++#define LM87_CONFIG_RESET		0x80
+ #define LM87_REG_ALARMS1		0x41
+ #define LM87_REG_ALARMS2		0x42
+ #define LM87_IN_LIMITS(nr, _min, _max)			\
+@@ -81,6 +85,15 @@ static int efx_init_lm87(struct efx_nic *efx, struct i2c_board_info *info,
+ 	if (!client)
+ 		return -EIO;
+ 
++	rc = i2c_smbus_write_byte_data(client, LM87_REG_CHANNEL_MODE,
++				       *(u8 *)info->platform_data);
++	if (rc)
++		goto err;
++	rc = i2c_smbus_write_byte_data(client, LM87_REG_CONFIG,
++				       LM87_CONFIG_START);
++	if (rc)
++		goto err;
++
+ 	while (*reg_values) {
+ 		u8 reg = *reg_values++;
+ 		u8 value = *reg_values++;
+@@ -99,6 +112,8 @@ err:
+ 
+ static void efx_fini_lm87(struct efx_nic *efx)
+ {
++	i2c_smbus_write_byte_data(efx->board_info.hwmon_client, LM87_REG_CONFIG,
++				  LM87_CONFIG_RESET);
+ 	i2c_unregister_device(efx->board_info.hwmon_client);
+ }
+ 
+diff --git a/drivers/net/sfc/efx.c b/drivers/net/sfc/efx.c
+index 838a3c0..87d89d4 100644
+--- a/drivers/net/sfc/efx.c
++++ b/drivers/net/sfc/efx.c
+@@ -211,16 +211,18 @@ static inline void efx_channel_processed(struct efx_channel *channel)
+  * NAPI guarantees serialisation of polls of the same device, which
+  * provides the guarantee required by efx_process_channel().
+  */
+-static int efx_poll(struct napi_struct *napi, int budget)
++static int efx_poll(struct net_device *napi, int *budget_ret)
+ {
+-	struct efx_channel *channel =
+-		container_of(napi, struct efx_channel, napi_str);
++	struct efx_channel *channel = napi->priv;
++	int budget = min(napi->quota, *budget_ret);
+ 	int rx_packets;
+ 
+ 	EFX_TRACE(channel->efx, "channel %d NAPI poll executing on CPU %d\n",
+ 		  channel->channel, raw_smp_processor_id());
+ 
+ 	rx_packets = efx_process_channel(channel, budget);
++	napi->quota -= rx_packets;
++	*budget_ret -= rx_packets;
+ 
+ 	if (rx_packets < budget) {
+ 		struct efx_nic *efx = channel->efx;
+@@ -252,23 +254,17 @@ static int efx_poll(struct napi_struct *napi, int budget)
+ 			channel->irq_mod_score = 0;
+ 		}
+ 
+-		/* There is no race here; although napi_disable() will
+-		 * only wait for napi_complete(), this isn't a problem
++		/* There is no race here; although netif_rx_disable() will
++		 * only wait for netif_rx_complete(), this isn't a problem
+ 		 * since efx_channel_processed() will have no effect if
+ 		 * interrupts have already been disabled.
+ 		 */
+-		napi_complete(napi);
++		napi_gro_flush(&channel->napi_str);
++		netif_rx_complete(channel->napi_dev);
+ 		efx_channel_processed(channel);
+ 	}
+ 
+-	return rx_packets;
+-}
+-
+-static int efx_poll_rhel(struct net_device *dummy_dev, int *budget)
+-{
+-	struct efx_channel *channel = dummy_dev->priv;
+-	return rhel_napi_poll_wrapper(efx_poll, &channel->napi_str, dummy_dev,
+-				      budget);
++	return (rx_packets >= budget);
+ }
+ 
+ /* Process the eventq of the specified channel immediately on this CPU
+@@ -294,7 +290,7 @@ void efx_process_channel_now(struct efx_channel *channel)
+ 		synchronize_irq(channel->irq);
+ 
+ 	/* Wait for any NAPI processing to complete */
+-	napi_disable(&channel->napi_str);
++	netif_poll_disable(channel->napi_dev);
+ 
+ 	/* Poll the channel */
+ 	efx_process_channel(channel, efx->type->evq_size);
+@@ -303,7 +299,7 @@ void efx_process_channel_now(struct efx_channel *channel)
+ 	 * when they are reenabled */
+ 	efx_channel_processed(channel);
+ 
+-	napi_enable(&channel->napi_str);
++	netif_poll_enable(channel->napi_dev);
+ 	falcon_enable_interrupts(efx);
+ }
+ 
+@@ -466,7 +462,7 @@ static void efx_start_channel(struct efx_channel *channel)
+ 	channel->enabled = true;
+ 	smp_wmb();
+ 
+-	napi_enable(&channel->napi_str);
++	netif_poll_enable(channel->napi_dev);
+ 
+ 	/* Load up RX descriptors */
+ 	efx_for_each_channel_rx_queue(rx_queue, channel)
+@@ -487,7 +483,7 @@ static void efx_stop_channel(struct efx_channel *channel)
+ 	EFX_LOG(channel->efx, "stop chan %d\n", channel->channel);
+ 
+ 	channel->enabled = false;
+-	napi_disable(&channel->napi_str);
++	netif_poll_disable(channel->napi_dev);
+ 
+ 	/* Ensure that any worker threads have exited or will be no-ops */
+ 	efx_for_each_channel_rx_queue(rx_queue, channel) {
+@@ -1131,20 +1127,23 @@ static void efx_start_all(struct efx_nic *efx)
+  * since we're holding the rtnl_lock at this point. */
+ static void efx_flush_all(struct efx_nic *efx)
+ {
+-	struct efx_rx_queue *rx_queue;
+-
+-	/* Make sure the hardware monitor is stopped */
+-	cancel_delayed_work(&efx->monitor_work);
++	/* Ensure efx_monitor() and efx_mac_work() are complete, which
++	 * are the only two consumers of efx->workqueue. Since the hardware
++	 * monitor runs on a long period, we put in some effort to cancel
++	 * the delayed work safely rather than just flushing the queue twice
++	 * (which is guaranteed to flush all the work since efx_monitor(),
++	 * and efx_mac_work() disarm if !efx->port_enabled). */
++	if (timer_pending(&efx->monitor_work.timer))
++		cancel_delayed_work(&efx->monitor_work);
+ 	flush_workqueue(efx->workqueue);
+-
+-	/* Ensure that all RX slow refills are complete. */
+-	efx_for_each_rx_queue(rx_queue, efx)
+-		cancel_delayed_work(&rx_queue->work);
+-	flush_workqueue(refill_workqueue);
+-
+-	/* Stop scheduled port reconfigurations */
++	if (timer_pending(&efx->monitor_work.timer))
++		cancel_delayed_work(&efx->monitor_work);
+ 	flush_workqueue(efx->workqueue);
+ 
++	/* efx_rx_work will disarm if !channel->enabled, so we can just
++	 * flush the refill workqueue twice as well. */
++	flush_workqueue(refill_workqueue);
++	flush_workqueue(refill_workqueue);
+ }
+ 
+ /* Quiesce hardware and software without bringing the link down.
+@@ -1255,20 +1254,19 @@ void efx_init_irq_moderation(struct efx_nic *efx, int tx_usecs, int rx_usecs,
+  * efx_reconfigure_port via the mac_lock */
+ static void efx_monitor(struct work_struct *data)
+ {
+-	struct efx_nic *efx = container_of(data, struct efx_nic,
+-					   monitor_work.work);
++	struct efx_nic *efx = container_of(data, struct efx_nic, monitor_work);
+ 	int rc;
+ 
+ 	EFX_TRACE(efx, "hardware monitor executing on CPU %d\n",
+ 		  raw_smp_processor_id());
+ 
+-	/* If the mac_lock is already held then it is likely a port
+-	 * reconfiguration is already in place, which will likely do
+-	 * most of the work of check_hw() anyway. */
+-	if (!mutex_trylock(&efx->mac_lock))
+-		goto out_requeue;
+-	if (!efx->port_enabled)
+-		goto out_unlock;
++	/* Without cancel_delayed_work_sync(), we have to make sure that
++	 * we don't rearm when !port_enabled */
++	mutex_lock(&efx->mac_lock);
++	if (!efx->port_enabled) {
++		mutex_unlock(&efx->mac_lock);
++		return;
++	}
+ 	rc = efx->board_info.monitor(efx);
+ 	if (rc) {
+ 		EFX_ERR(efx, "Board sensor %s; shutting down PHY\n",
+@@ -1279,9 +1277,7 @@ static void efx_monitor(struct work_struct *data)
+ 	efx->phy_op->poll(efx);
+ 	efx->mac_op->poll(efx);
+ 
+-out_unlock:
+ 	mutex_unlock(&efx->mac_lock);
+-out_requeue:
+ 	queue_delayed_work(efx->workqueue, &efx->monitor_work,
+ 			   efx_monitor_interval);
+ }
+@@ -1319,16 +1315,19 @@ static int efx_ioctl(struct net_device *net_dev, struct ifreq *ifr, int cmd)
+ static int efx_init_napi(struct efx_nic *efx)
+ {
+ 	struct efx_channel *channel;
+-	int err;
+ 
+ 	efx_for_each_channel(channel, efx) {
+-		channel->napi_dev = efx->net_dev;
+-		err = rhel_netif_napi_add(channel, &channel->napi_str,
+-					  efx_poll_rhel, napi_weight);
+-		if (err) {
++		channel->napi_dev = alloc_etherdev(0);
++		if (!channel->napi_dev) {
+ 			efx_fini_napi(efx);
+-			return err;
++			return -ENOMEM;
+ 		}
++		channel->napi_dev->priv = channel;
++		atomic_set(&channel->napi_dev->refcnt, 1);
++		channel->napi_dev->weight = napi_weight;
++		channel->napi_dev->poll = efx_poll;
++
++		channel->napi_str.dev = efx->net_dev;
+ 	}
+ 	return 0;
+ }
+@@ -1338,8 +1337,10 @@ static void efx_fini_napi(struct efx_nic *efx)
+ 	struct efx_channel *channel;
+ 
+ 	efx_for_each_channel(channel, efx) {
+-		if (channel->napi_dev)
+-			netif_napi_del(&channel->napi_str);
++		if (channel->napi_dev) {
++			channel->napi_dev->priv = NULL;
++			free_netdev(channel->napi_dev);
++		}
+ 		channel->napi_dev = NULL;
+ 	}
+ }
+@@ -1946,8 +1947,10 @@ static int efx_init_struct(struct efx_nic *efx, struct efx_nic_type *type,
+ 	spin_lock_init(&efx->biu_lock);
+ 	spin_lock_init(&efx->phy_lock);
+ 	mutex_init(&efx->spi_lock);
+-	INIT_WORK(&efx->reset_work, efx_reset_work);
+-	INIT_DELAYED_WORK(&efx->monitor_work, efx_monitor);
++	INIT_WORK(&efx->reset_work, (work_func_old_t)efx_reset_work,
++		  &efx->reset_work);
++	INIT_DELAYED_WORK(&efx->monitor_work, (work_func_old_t)efx_monitor,
++			  &efx->monitor_work);
+ 	efx->pci_dev = pci_dev;
+ 	efx->state = STATE_INIT;
+ 	efx->reset_pending = RESET_TYPE_NONE;
+@@ -1963,8 +1966,10 @@ static int efx_init_struct(struct efx_nic *efx, struct efx_nic_type *type,
+ 	efx->mac_op = &efx_dummy_mac_operations;
+ 	efx->phy_op = &efx_dummy_phy_operations;
+ 	efx->mdio.dev = net_dev;
+-	INIT_WORK(&efx->phy_work, efx_phy_work);
+-	INIT_WORK(&efx->mac_work, efx_mac_work);
++	INIT_WORK(&efx->phy_work, (work_func_old_t)efx_phy_work,
++		  &efx->phy_work);
++	INIT_WORK(&efx->mac_work, (work_func_old_t)efx_mac_work,
++		  &efx->mac_work);
+ 	atomic_set(&efx->netif_stop_count, 1);
+ 
+ 	for (i = 0; i < EFX_MAX_CHANNELS; i++) {
+@@ -1988,7 +1993,9 @@ static int efx_init_struct(struct efx_nic *efx, struct efx_nic_type *type,
+ 		rx_queue->channel = &efx->channel[0]; /* for safety */
+ 		rx_queue->buffer = NULL;
+ 		spin_lock_init(&rx_queue->add_lock);
+-		INIT_DELAYED_WORK(&rx_queue->work, efx_rx_work);
++		INIT_DELAYED_WORK(&rx_queue->work,
++				  (work_func_old_t)efx_rx_work,
++				  &rx_queue->work);
+ 	}
+ 
+ 	efx->type = type;
+diff --git a/drivers/net/sfc/efx.h b/drivers/net/sfc/efx.h
+index aecaf62..f65d238 100644
+--- a/drivers/net/sfc/efx.h
++++ b/drivers/net/sfc/efx.h
+@@ -81,7 +81,8 @@ static inline void efx_schedule_channel(struct efx_channel *channel)
+ 		  channel->channel, raw_smp_processor_id());
+ 	channel->work_pending = true;
+ 
+-	napi_schedule(&channel->napi_str);
++	if (__netif_rx_schedule_prep(channel->napi_dev))
++		__netif_rx_schedule(channel->napi_dev);
+ }
+ 
+ #endif /* EFX_EFX_H */
+diff --git a/drivers/net/sfc/ethtool.c b/drivers/net/sfc/ethtool.c
+index 3102cd0..1e3c2ed 100644
+--- a/drivers/net/sfc/ethtool.c
++++ b/drivers/net/sfc/ethtool.c
+@@ -741,6 +741,18 @@ static void efx_ethtool_get_pauseparam(struct net_device *net_dev,
+ }
+ 
+ 
++static int efx_ethtool_op_get_perm_addr(struct net_device *net_dev,
++					struct ethtool_perm_addr *addr,
++					u8 *data)
++{
++	struct efx_nic *efx = netdev_priv(net_dev);
++
++	memcpy(data, efx->mac_address, ETH_ALEN);
++
++	return 0;
++}
++
++
+ struct ethtool_ops efx_ethtool_ops = {
+ 	.get_settings		= efx_ethtool_get_settings,
+ 	.set_settings		= efx_ethtool_set_settings,
+@@ -768,4 +780,5 @@ struct ethtool_ops efx_ethtool_ops = {
+ 	.get_strings		= efx_ethtool_get_strings,
+ 	.phys_id		= efx_ethtool_phys_id,
+ 	.get_ethtool_stats	= efx_ethtool_get_stats,
++	.get_perm_addr		= efx_ethtool_op_get_perm_addr,
+ };
+diff --git a/drivers/net/sfc/rx.c b/drivers/net/sfc/rx.c
+index d5a8fd7..b4bc5b4 100644
+--- a/drivers/net/sfc/rx.c
++++ b/drivers/net/sfc/rx.c
+@@ -387,7 +387,7 @@ void efx_rx_work(struct work_struct *data)
+ 	struct efx_rx_queue *rx_queue;
+ 	int rc;
+ 
+-	rx_queue = container_of(data, struct efx_rx_queue, work.work);
++	rx_queue = container_of(data, struct efx_rx_queue, work);
+ 
+ 	if (unlikely(!rx_queue->channel->enabled))
+ 		return;
+@@ -593,13 +593,11 @@ void __efx_rx_packet(struct efx_channel *channel,
+ 	/* Pass the packet up */
+ 	netif_receive_skb(skb);
+ 
+-	efx->net_dev->last_rx = jiffies;
+-
+ 	/* Update allocation strategy method */
+ 	channel->rx_alloc_level += RX_ALLOC_FACTOR_SKB;
+ 
+ done:
+-	;
++	efx->net_dev->last_rx = jiffies;
+ }
+ 
+ void efx_rx_strategy(struct efx_channel *channel)
+diff --git a/drivers/net/sfc/sfc_compat.h b/drivers/net/sfc/sfc_compat.h
+index 4ec8b9e..0b4f849 100644
+--- a/drivers/net/sfc/sfc_compat.h
++++ b/drivers/net/sfc/sfc_compat.h
+@@ -5,54 +5,9 @@
+ #include <linux/if_vlan.h>
+ #include <linux/workqueue.h>
+ 
+-static inline __be16 sfc_eth_type_trans(struct sk_buff *skb,
+-					struct net_device *dev)
+-{
+-	skb->dev = dev;
+-	return eth_type_trans(skb, dev);
+-}
+-
+-#define eth_type_trans sfc_eth_type_trans
+-
+-static inline void vlan_group_set_device(struct vlan_group *vg, int vlan_id,
+-					 struct net_device *dev)
+-{
+-	vg->vlan_devices[vlan_id] = dev;
+-}
+-
++#define delayed_work work_struct
++#define INIT_DELAYED_WORK INIT_WORK
+ typedef void (*work_func_old_t)(void *);
+-typedef void (*work_func_t)(struct work_struct *work);
+-
+-struct delayed_work {
+-	struct work_struct work;
+-};
+-
+-static inline void sfc_INIT_WORK(struct work_struct *work, work_func_t func)
+-{
+-	INIT_WORK(work, (work_func_old_t)func, work);
+-}
+-
+-static inline int sfc_queue_delayed_work(struct workqueue_struct *wq,
+-					 struct delayed_work *work,
+-					 unsigned long delay)
+-{
+-	if (!delay)
+-		return queue_work(wq, &work->work);
+-	else
+-		return queue_delayed_work(wq, &work->work, delay);
+-}
+-
+-static inline int sfc_cancel_delayed_work(struct delayed_work *work)
+-{
+-	return cancel_delayed_work(&work->work);
+-}
+-
+-#undef INIT_WORK
+-#define INIT_WORK(_work, _func) sfc_INIT_WORK(_work, _func)
+-#define INIT_DELAYED_WORK(_work,_func) INIT_WORK(&(_work)->work, _func)
+-
+-#define queue_delayed_work sfc_queue_delayed_work
+-#define cancel_delayed_work sfc_cancel_delayed_work
+ 
+ static inline int sfc_pci_dma_mapping_error(struct pci_dev *pdev,
+ 					    dma_addr_t dma_addr)
+@@ -62,66 +17,6 @@ static inline int sfc_pci_dma_mapping_error(struct pci_dev *pdev,
+ #define pci_dma_mapping_error(pdev, dma_addr) \
+ 	sfc_pci_dma_mapping_error(pdev, dma_addr)
+ 
+-
+-/*
+- * Partial new NAPI to old NAPI mapping
+- * napi->dev is the dummy net_device for the old NAPI.
+- */
+-
+-static inline void napi_enable(struct napi_struct *napi)
+-{
+-	netif_poll_enable(napi->dev);
+-}
+-
+-static inline void napi_disable(struct napi_struct *napi)
+-{
+-	netif_poll_disable(napi->dev);
+-}
+-
+-static inline void napi_schedule(struct napi_struct *napi)
+-{
+-	netif_rx_schedule(napi->dev);
+-}
+-
+-/* Unlike upstream netif_napi_add(), ours may fail with -ENOMEM */
+-static inline int rhel_netif_napi_add(void *nd_priv,
+-	struct napi_struct *napi, int (*poll)(struct net_device *, int *),
+-	int weight)
+-{
+-	struct net_device *nd;
+-
+-	nd = alloc_netdev(0, "", ether_setup);
+-	if (!nd)
+-		return -ENOMEM;
+-
+-	nd->priv = nd_priv;
+-	nd->weight = weight;
+-	nd->poll = poll;
+-	set_bit(__LINK_STATE_START, &nd->state);
+-	napi->dev = nd;
+-	return 0;
+-}
+-
+-static inline void netif_napi_del(struct napi_struct *napi)
+-{
+-	free_netdev(napi->dev);
+-	napi->dev = NULL;
+-}
+-
+-static inline int rhel_napi_poll_wrapper(int (*poll)(struct napi_struct*, int),
+-	struct napi_struct *napi, struct net_device *dummy_dev, int *budget)
+-{
+-	int to_do = min(*budget, dummy_dev->quota);
+-	int pkts_processed;
+-
+-	pkts_processed = poll(napi, to_do);
+-
+-	*budget -= pkts_processed;
+-	dummy_dev->quota -= pkts_processed;
+-
+-	return (pkts_processed >= to_do);
+-}
+-
+ static inline void skb_record_rx_queue(struct sk_buff *skb, u16 rx_queue)
+ {
+ }
+diff --git a/drivers/net/sfc/tenxpress.c b/drivers/net/sfc/tenxpress.c
+index 04dd82f..18ee94b 100644
+--- a/drivers/net/sfc/tenxpress.c
++++ b/drivers/net/sfc/tenxpress.c
+@@ -742,10 +742,10 @@ tenxpress_get_settings(struct efx_nic *efx, struct ethtool_cmd *ecmd)
+ 
+ 	mdio45_ethtool_gset_npage(&efx->mdio, ecmd, adv, lpa);
+ 
+-#if 0 /* no eth_tp_mdix in RHEL5 */
+ 	if (efx->phy_type != PHY_TYPE_SFX7101) {
+ 		ecmd->supported |= (SUPPORTED_100baseT_Full |
+ 				    SUPPORTED_1000baseT_Full);
++#if 0 /* no eth_tp_mdix in RHEL5 */
+ 		if (ecmd->speed != SPEED_10000) {
+ 			ecmd->eth_tp_mdix =
+ 				(efx_mdio_read(efx, MDIO_MMD_PMAPMD,
+@@ -753,8 +753,8 @@ tenxpress_get_settings(struct efx_nic *efx, struct ethtool_cmd *ecmd)
+ 				 (1 << PMA_PMD_XSTAT_MDIX_LBN))
+ 				? ETH_TP_MDI_X : ETH_TP_MDI;
+ 		}
+-	}
+ #endif
++	}
+ 
+ 	/* In loopback, the PHY automatically brings up the correct interface,
+ 	 * but doesn't advertise the correct speed. So override it */

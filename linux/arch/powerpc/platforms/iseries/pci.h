@@ -30,6 +30,10 @@
  * End Change Activity
  */
 
+#include <asm/pci-bridge.h>
+
+struct pci_dev;				/* For Forward Reference */
+
 /*
  * Decodes Linux DevFn to iSeries DevFn, bridge device, or function.
  * For Linux, see PCI_SLOT and PCI_FUNC in include/linux/pci.h
@@ -43,16 +47,17 @@
 #define ISERIES_GET_DEVICE_FROM_SUBBUS(subbus)		((subbus >> 5) & 0x7)
 #define ISERIES_GET_FUNCTION_FROM_SUBBUS(subbus)	((subbus >> 2) & 0x7)
 
-struct pci_dev;
+/*
+ * Generate a Direct Select Address for the Hypervisor
+ */
+static inline u64 iseries_ds_addr(struct device_node *node)
+{
+	struct pci_dn *pdn = PCI_DN(node);
 
-#ifdef CONFIG_PCI
-extern void	iSeries_pcibios_init(void);
-extern void	iSeries_pci_final_fixup(void);
-extern void 	iSeries_pcibios_fixup_resources(struct pci_dev *dev);
-#else
-static inline void	iSeries_pcibios_init(void) { }
-static inline void	iSeries_pci_final_fixup(void) { }
-static inline void 	iSeries_pcibios_fixup_resources(struct pci_dev *dev) {}
-#endif
+	return ((u64)pdn->busno << 48) + ((u64)pdn->bussubno << 40)
+			+ ((u64)0x10 << 32);
+}
+
+extern void	iSeries_Device_Information(struct pci_dev*, int);
 
 #endif /* _PLATFORMS_ISERIES_PCI_H */

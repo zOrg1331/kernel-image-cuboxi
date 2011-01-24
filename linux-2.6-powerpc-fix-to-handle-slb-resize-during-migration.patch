@@ -1,0 +1,187 @@
+From: Kevin Monroe <kmonroe@redhat.com>
+Date: Tue, 10 Nov 2009 23:04:09 -0500
+Subject: [powerpc] fix to handle SLB resize during migration
+Message-id: <4AF9F169.6060507@redhat.com>
+Patchwork-id: 21358
+O-Subject: Re: [PATCH RHEL5.5 BZ524112] Fix to handle SLB resize during migration
+Bugzilla: 524112
+RH-Acked-by: David Howells <dhowells@redhat.com>
+
+On 10/09/2009 03:02 PM, Kevin Monroe wrote:
+RHBZ#:
+======
+https://bugzilla.redhat.com/show_bug.cgi?id=524112
+
+Description:
+============
+The SLB can change sizes across a live migration, which was not
+being handled, resulting in possible machine crashes during
+migration if migrating to a machine which has a smaller max SLB
+size than the source machine. Fix this by first reducing the
+SLB size to the minimum possible value, which is 32, prior to
+migration. Then during the device tree update which occurs after
+migration, we make the call to ensure the SLB gets updated. Also
+add the slb_size to the lparcfg output so that the migration
+tools can check to make sure the kernel has this capability
+before allowing migration in scenarios where the SLB size will change.
+
+RHEL Version Found:
+===================
+RHEL 5.4
+
+kABI Status:
+============
+No symbols were harmed.
+
+Brew:
+=====
+Built on all platforms.
+https://brewweb.devel.redhat.com/taskinfo?taskID=2023948
+
+Upstream Status:
+================
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=46db2f86a3b2a94e0b33e0b4548fb7b7b6bdff66
+
+Test Status:
+============
+To recreate the problem, simply attempt to live migrate an LPAR between
+machines with different max SLB sizes several times.
+
+With this patch, I have been able to successfully migrate between
+machines with different SLB sizes.
+
+diff --git a/arch/powerpc/kernel/lparcfg.c b/arch/powerpc/kernel/lparcfg.c
+index 23f34da..e98d22c 100644
+--- a/arch/powerpc/kernel/lparcfg.c
++++ b/arch/powerpc/kernel/lparcfg.c
+@@ -35,6 +35,7 @@
+ #include <asm/iseries/it_exp_vpd_panel.h>
+ #include <asm/prom.h>
+ #include <asm/vdso_datapage.h>
++#include <asm/mmu.h>
+ 
+ #define MODULE_VERS "1.7"
+ #define MODULE_NAME "lparcfg"
+@@ -403,6 +404,8 @@ static int pseries_lparcfg_data(struct seq_file *m, void *v)
+ 
+ 	seq_printf(m, "shared_processor_mode=%d\n", lppaca[0].shared_proc);
+ 
++	seq_printf(m, "slb_size=%d\n", mmu_slb_size);
++
+ 	return 0;
+ }
+ 
+diff --git a/arch/powerpc/kernel/rtas.c b/arch/powerpc/kernel/rtas.c
+index a980907..e97f516 100644
+--- a/arch/powerpc/kernel/rtas.c
++++ b/arch/powerpc/kernel/rtas.c
+@@ -38,6 +38,7 @@
+ #include <asm/udbg.h>
+ #include <asm/syscalls.h>
+ #include <asm/atomic.h>
++#include <asm/mmu.h>
+ 
+ struct rtas_t rtas = {
+ 	.lock = SPIN_LOCK_UNLOCKED
+@@ -689,6 +690,7 @@ static void rtas_percpu_suspend_me(void *info)
+ 		goto out;
+ 
+ 	if (rc == H_CONTINUE) {
++		slb_set_size(SLB_MIN_SIZE);
+ 		printk("Linux suspends from hypervisor at %lld "
+ 		       "(cpu %u (hwid%u)).\n", sched_clock(),
+ 		       smp_processor_id(), hard_smp_processor_id());
+diff --git a/arch/powerpc/mm/slb.c b/arch/powerpc/mm/slb.c
+index 046fc7a..227b677 100644
+--- a/arch/powerpc/mm/slb.c
++++ b/arch/powerpc/mm/slb.c
+@@ -31,6 +31,8 @@
+ #define DBG(fmt...)
+ #endif
+ 
++extern unsigned int *slb_compare_rr_to_size;
++
+ extern void slb_allocate_realmode(unsigned long ea);
+ extern void slb_allocate_user(unsigned long ea);
+ 
+@@ -195,21 +197,26 @@ void switch_slb(struct task_struct *tsk, struct mm_struct *mm)
+ static inline void patch_slb_encoding(unsigned int *insn_addr,
+ 				      unsigned int immed)
+ {
+-	/* Assume the instruction had a "0" immediate value, just
+-	 * "or" in the new value
+-	 */
+-	*insn_addr |= immed;
++	*insn_addr = (*insn_addr & 0xffff0000) | immed;
+ 	flush_icache_range((unsigned long)insn_addr, 4+
+ 			   (unsigned long)insn_addr);
+ }
+ 
++void slb_set_size(u16 size)
++{
++	if (mmu_slb_size == size)
++		return;
++
++	mmu_slb_size = size;
++	patch_slb_encoding(slb_compare_rr_to_size, mmu_slb_size);
++}
++
+ void slb_initialize(void)
+ {
+ 	unsigned long linear_llp, vmalloc_llp, io_llp;
+ 	static int slb_encoding_inited;
+ 	extern unsigned int *slb_miss_kernel_load_linear;
+ 	extern unsigned int *slb_miss_kernel_load_io;
+-	extern unsigned int *slb_compare_rr_to_size;
+ #ifdef CONFIG_HUGETLB_PAGE
+ 	extern unsigned int *slb_miss_user_load_huge;
+ 	unsigned long huge_llp;
+diff --git a/arch/powerpc/platforms/pseries/reconfig.c b/arch/powerpc/platforms/pseries/reconfig.c
+index 1773103..f92b241 100644
+--- a/arch/powerpc/platforms/pseries/reconfig.c
++++ b/arch/powerpc/platforms/pseries/reconfig.c
+@@ -20,6 +20,7 @@
+ #include <asm/machdep.h>
+ #include <asm/uaccess.h>
+ #include <asm/pSeries_reconfig.h>
++#include <asm/mmu.h>
+ 
+ 
+ 
+@@ -438,9 +439,15 @@ static int do_update_property(char *buf, size_t bufsize)
+ 	if (!newprop)
+ 		return -ENOMEM;
+ 
++	if (!strcmp(name, "slb-size") || !strcmp(name, "ibm,slb-size"))
++		slb_set_size(*(unsigned int *)value);
++
+ 	oldprop = of_find_property(np, name,NULL);
+-	if (!oldprop)
++	if (!oldprop) {
++		if (strlen(name))
++			return prom_add_property(np, newprop);
+ 		return -ENODEV;
++	}
+ 
+ 	return prom_update_property(np, newprop, oldprop);
+ }
+diff --git a/include/asm-powerpc/mmu.h b/include/asm-powerpc/mmu.h
+index e9063b3..fc0bfeb 100644
+--- a/include/asm-powerpc/mmu.h
++++ b/include/asm-powerpc/mmu.h
+@@ -47,6 +47,7 @@ extern char initial_stab[];
+ 
+ #define SLB_NUM_BOLTED		3
+ #define SLB_CACHE_ENTRIES	8
++#define SLB_MIN_SIZE		32
+ 
+ /* Bits in the SLB ESID word */
+ #define SLB_ESID_V		ASM_CONST(0x0000000008000000) /* valid */
+@@ -286,6 +287,7 @@ extern void stabs_alloc(void);
+ extern void slb_initialize(void);
+ extern void slb_flush_and_rebolt(void);
+ extern void stab_initialize(unsigned long stab);
++extern void slb_set_size(u16 size);
+ 
+ extern void slb_vmalloc_update(void);
+ #endif /* __ASSEMBLY__ */

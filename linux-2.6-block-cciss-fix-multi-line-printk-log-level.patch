@@ -1,0 +1,46 @@
+From: Jerome Marchand <jmarchan@redhat.com>
+Date: Wed, 24 Mar 2010 12:12:50 -0400
+Subject: [block] cciss: fix multi-line printk log level
+Message-id: <4BAA01C2.3060002@redhat.com>
+Patchwork-id: 23742
+O-Subject: [RHEL5.6 PATCH] cciss: multi-line printk fix
+Bugzilla: 556921
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+RH-Acked-by: Dean Nelson <dnelson@redhat.com>
+
+Bugzilla:
+https://bugzilla.redhat.com/show_bug.cgi?id=556921
+
+Description:
+A multi-line message print a empty line on the wrong log level. That
+empty line confuses the customer log analysis tool.
+That patch also corrects an other muti-line printk error in the same
+driver.
+
+Upstream status:
+Upstream does not have the offending messages anymore.
+
+Test status:
+With the patch applied, no more empty line are printed at KERN_WARNING
+level.
+
+Regards,
+Jerome
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/block/cciss.c b/drivers/block/cciss.c
+index f5fca94..2543472 100644
+--- a/drivers/block/cciss.c
++++ b/drivers/block/cciss.c
+@@ -2804,7 +2804,8 @@ static int sendcmd(__u8 cmd, int ctlr, void *buff, size_t size, unsigned int use
+ 				       c->err_info->CommandStatus);
+ 				printk(KERN_WARNING "ciss ciss%d: sendcmd"
+ 				       " offensive info\n"
+-				       "  size %x\n   num %x   value %x\n",
++				       KERN_WARNING "  size %x\n"
++				       KERN_WARNING "   num %x   value %x\n",
+ 				       ctlr,
+ 				       c->err_info->MoreErrInfo.Invalid_Cmd.
+ 				       offense_size,

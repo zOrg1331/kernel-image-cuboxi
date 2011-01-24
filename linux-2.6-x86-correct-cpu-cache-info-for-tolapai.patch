@@ -1,0 +1,34 @@
+From: Geoff Gustafson <grgustaf@redhat.com>
+Date: Tue, 15 Jan 2008 16:02:29 -0500
+Subject: [x86] correct cpu cache info for Tolapai
+Message-id: 20080115210229.GA30759@samurai.boston.redhat.com
+O-Subject: [RHEL5.2 PATCH] correct cpu cache info for Tolapai (bz 426172)
+Bugzilla: 426172
+
+This is a one-liner to report the correct CPU cache information for the Intel
+Tolapai system-on-a-chip. We have a sample board here and I verified that
+/proc/cpuinfo previously reported 64KB and now properly reports 256KB.
+
+The chip is 32-bit only, so I tested on RHEL5.1 i386 + -68 kernel with and w/o
+the patch.
+
+Please ACK.
+
+- Geoff
+
+Acked-by: Brian Maly <bmaly@redhat.com>
+Acked-by: Aristeu Rozanski <arozansk@redhat.com>
+Acked-by: Jarod Wilson <jwilson@redhat.com>
+
+diff --git a/arch/i386/kernel/cpu/intel_cacheinfo.c b/arch/i386/kernel/cpu/intel_cacheinfo.c
+index 6d1134b..d0c85d6 100644
+--- a/arch/i386/kernel/cpu/intel_cacheinfo.c
++++ b/arch/i386/kernel/cpu/intel_cacheinfo.c
+@@ -49,6 +49,7 @@ static struct _cache_table cache_table[] __cpuinitdata =
+ 	{ 0x3c, LVL_2,      256 },	/* 4-way set assoc, sectored cache, 64 byte line size */
+ 	{ 0x3d, LVL_2,      384 },	/* 6-way set assoc, sectored cache, 64 byte line size */
+ 	{ 0x3e, LVL_2,      512 },	/* 4-way set assoc, sectored cache, 64 byte line size */
++	{ 0x3f, LVL_2,      256 },	/* 2-way set assoc, 64 byte line size */
+ 	{ 0x41, LVL_2,      128 },	/* 4-way set assoc, 32 byte line size */
+ 	{ 0x42, LVL_2,      256 },	/* 4-way set assoc, 32 byte line size */
+ 	{ 0x43, LVL_2,      512 },	/* 4-way set assoc, 32 byte line size */

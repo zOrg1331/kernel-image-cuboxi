@@ -1,0 +1,164 @@
+From: Neil Horman <nhorman@redhat.com>
+Date: Fri, 24 Aug 2007 11:12:10 -0400
+Subject: [fs] proc: add /proc/<pid>/limits
+Message-id: 20070824151210.GF8835@hmsendeavour.rdu.redhat.com
+O-Subject: [RHEL5.2 PATCH] proc: add /proc/<pid>/limits
+Bugzilla: 253762
+
+Hey-
+     This is the RHEL 5.2 version of the upstream /proc/pid/limits patch.
+Resolves bz 253762
+
+Regards
+Neil
+
+Acked-by: Larry Woodman <lwoodman@redhat.com>
+
+diff --git a/fs/proc/array.c b/fs/proc/array.c
+index aed7683..fbb1718 100644
+--- a/fs/proc/array.c
++++ b/fs/proc/array.c
+@@ -76,6 +76,7 @@
+ #include <linux/tracehook.h>
+ #include <linux/rcupdate.h>
+ #include <linux/delayacct.h>
++#include <linux/resource.h>
+ 
+ #include <asm/uaccess.h>
+ #include <asm/pgtable.h>
+@@ -499,3 +500,77 @@ int proc_pid_statm(struct task_struct *task, char *buffer)
+ 	return sprintf(buffer,"%d %d %d %d %d %d %d\n",
+ 		       size, resident, shared, text, lib, data, 0);
+ }
++
++
++struct limit_names {
++	char *name;
++	char *unit;
++};
++
++static const struct limit_names lnames[RLIM_NLIMITS] = {
++	[RLIMIT_CPU] = {"Max cpu time", "seconds"},
++	[RLIMIT_FSIZE] = {"Max file size", "bytes"},
++	[RLIMIT_DATA] = {"Max data size", "bytes"},
++	[RLIMIT_STACK] = {"Max stack size", "bytes"},
++	[RLIMIT_CORE] = {"Max core file size", "bytes"},
++	[RLIMIT_RSS] = {"Max resident set", "bytes"},
++	[RLIMIT_NPROC] = {"Max processes", "processes"},
++	[RLIMIT_NOFILE] = {"Max open files", "files"},
++	[RLIMIT_MEMLOCK] = {"Max locked memory", "bytes"},
++	[RLIMIT_AS] = {"Max address space", "bytes"},
++	[RLIMIT_LOCKS] = {"Max file locks", "locks"},
++	[RLIMIT_SIGPENDING] = {"Max pending signals", "signals"},
++	[RLIMIT_MSGQUEUE] = {"Max msgqueue size", "bytes"},
++	[RLIMIT_NICE] = {"Max nice priority", NULL},
++	[RLIMIT_RTPRIO] = {"Max realtime priority", NULL},
++};
++
++/* Display limits for a process */
++
++int proc_pid_limits(struct task_struct *task, char *buffer)
++{
++	unsigned int i;
++	int count = 0;
++	unsigned long flags;
++	char *bufptr = buffer;
++
++	struct rlimit rlim[RLIM_NLIMITS];
++
++	rcu_read_lock();
++	if (!lock_task_sighand(task,&flags)) {
++		rcu_read_unlock();
++		return 0;
++	}
++	memcpy(rlim, task->signal->rlim, sizeof(struct rlimit) * RLIM_NLIMITS);
++	unlock_task_sighand(task, &flags);
++	rcu_read_unlock();
++
++	/*
++	 * print the file header
++	 */
++	count += sprintf(&bufptr[count], "%-25s %-20s %-20s %-10s\n",
++			"Limit", "Soft Limit", "Hard Limit", "Units");
++
++	for (i = 0; i < RLIM_NLIMITS; i++) {
++		if (rlim[i].rlim_cur == RLIM_INFINITY)
++			count += sprintf(&bufptr[count], "%-25s %-20s ",
++					 lnames[i].name, "unlimited");
++		else
++			count += sprintf(&bufptr[count], "%-25s %-20lu ",
++					 lnames[i].name, rlim[i].rlim_cur);
++
++		if (rlim[i].rlim_max == RLIM_INFINITY)
++			count += sprintf(&bufptr[count], "%-20s ", "unlimited");
++		else
++			count += sprintf(&bufptr[count], "%-20lu ",
++					 rlim[i].rlim_max);
++
++		if (lnames[i].unit)
++			count += sprintf(&bufptr[count], "%-10s\n",
++					 lnames[i].unit);
++		else
++			count += sprintf(&bufptr[count], "\n");
++	}
++
++	return count;
++}
+diff --git a/fs/proc/base.c b/fs/proc/base.c
+index f051e75..5b8a40f 100644
+--- a/fs/proc/base.c
++++ b/fs/proc/base.c
+@@ -182,7 +182,8 @@ enum pid_directory_inos {
+ #endif
+ 	PROC_TID_OOM_SCORE,
+ 	PROC_TID_OOM_ADJUST,
+-
++	PROC_TGID_LIMITS,
++	PROC_TID_LIMITS,
+ 	/* Add new entries before this */
+ 	PROC_TID_FD_DIR = 0x8000,	/* 0x8000-0xffff */
+ };
+@@ -241,6 +242,9 @@ static struct pid_entry tgid_base_stuff[] = {
+ #ifdef CONFIG_AUDITSYSCALL
+ 	E(PROC_TGID_LOGINUID, "loginuid", S_IFREG|S_IWUSR|S_IRUGO),
+ #endif
++	E(PROC_TGID_LIMITS, "limits", S_IFREG|S_IRUSR),
++	E(PROC_TID_LIMITS, "limits", S_IFREG|S_IRUSR),
++
+ 	{0,0,NULL,0}
+ };
+ static struct pid_entry tid_base_stuff[] = {
+@@ -283,6 +287,9 @@ static struct pid_entry tid_base_stuff[] = {
+ #ifdef CONFIG_AUDITSYSCALL
+ 	E(PROC_TID_LOGINUID, "loginuid", S_IFREG|S_IWUSR|S_IRUGO),
+ #endif
++	E(PROC_TGID_LIMITS, "limits", S_IFREG|S_IRUSR),
++	E(PROC_TID_LIMITS, "limits", S_IFREG|S_IRUSR),
++
+ 	{0,0,NULL,0}
+ };
+ 
+@@ -1830,6 +1837,11 @@ static struct dentry *proc_pident_lookup(struct inode *dir,
+ 			inode->i_fop = &proc_info_file_operations;
+ 			ei->op.proc_read = proc_pid_status;
+ 			break;
++		case PROC_TID_LIMITS:
++		case PROC_TGID_LIMITS:
++			inode->i_fop = &proc_info_file_operations;
++			ei->op.proc_read = proc_pid_limits;
++			break;
+ 		case PROC_TID_STAT:
+ 			inode->i_fop = &proc_info_file_operations;
+ 			ei->op.proc_read = proc_tid_stat;
+diff --git a/fs/proc/internal.h b/fs/proc/internal.h
+index c0bf3d8..a836865 100644
+--- a/fs/proc/internal.h
++++ b/fs/proc/internal.h
+@@ -38,6 +38,7 @@ extern int proc_tid_stat(struct task_struct *,  char *);
+ extern int proc_tgid_stat(struct task_struct *, char *);
+ extern int proc_pid_status(struct task_struct *, char *);
+ extern int proc_pid_statm(struct task_struct *, char *);
++extern int proc_pid_limits(struct task_struct *, char *);
+ 
+ extern struct file_operations proc_maps_operations;
+ extern struct file_operations proc_numa_maps_operations;

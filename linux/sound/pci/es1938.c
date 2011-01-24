@@ -1,7 +1,7 @@
 /*
  *  Driver for ESS Solo-1 (ES1938, ES1946, ES1969) soundcard
  *  Copyright (c) by Jaromir Koutek <miri@punknet.cz>,
- *                   Jaroslav Kysela <perex@perex.cz>,
+ *                   Jaroslav Kysela <perex@suse.cz>,
  *                   Thomas Sailer <sailer@ife.ee.ethz.ch>,
  *                   Abramo Bagnara <abramo@alsa-project.org>,
  *                   Markus Gruber <gruber@eikon.tum.de>
@@ -47,6 +47,7 @@
 */
 
 
+#include <sound/driver.h>
 #include <linux/init.h>
 #include <linux/interrupt.h>
 #include <linux/pci.h>
@@ -61,7 +62,6 @@
 #include <sound/opl3.h>
 #include <sound/mpu401.h>
 #include <sound/initval.h>
-#include <sound/tlv.h>
 
 #include <asm/io.h>
 
@@ -226,7 +226,6 @@ struct es1938 {
 	unsigned int dma2_start;
 	unsigned int dma1_shift;
 	unsigned int dma2_shift;
-	unsigned int last_capture_dmaaddr;
 	unsigned int active;
 
 	spinlock_t reg_lock;
@@ -241,10 +240,10 @@ struct es1938 {
 #endif
 };
 
-static irqreturn_t snd_es1938_interrupt(int irq, void *dev_id);
+static irqreturn_t snd_es1938_interrupt(int irq, void *dev_id, struct pt_regs *regs);
 
 static struct pci_device_id snd_es1938_ids[] = {
-	{ PCI_VDEVICE(ESS, 0x1969), 0, },   /* Solo-1 */
+        { 0x125d, 0x1969, PCI_ANY_ID, PCI_ANY_ID, 0, 0, 0, },   /* Solo-1 */
 	{ 0, }
 };
 
@@ -529,7 +528,6 @@ static void snd_es1938_capture_setdma(struct es1938 *chip)
 	outb(1, SLDM_REG(chip, DMAMASK));
 	outb(0x14, SLDM_REG(chip, DMAMODE));
 	outl(chip->dma1_start, SLDM_REG(chip, DMAADDR));
-	chip->last_capture_dmaaddr = chip->dma1_start;
 	outw(chip->dma1_size - 1, SLDM_REG(chip, DMACOUNT));
 	/* 3. Unmask DMA */
 	outb(0, SLDM_REG(chip, DMAMASK));
@@ -771,40 +769,19 @@ static int snd_es1938_playback_prepare(struct snd_pcm_substream *substream)
 	return -EINVAL;
 }
 
-/* during the incrementing of dma counters the DMA register reads sometimes
-   returns garbage. To ensure a valid hw pointer, the following checks which
-   should be very unlikely to fail are used:
-   - is the current DMA address in the valid DMA range ?
-   - is the sum of DMA address and DMA counter pointing to the last DMA byte ?
-   One can argue this could differ by one byte depending on which register is
-   updated first, so the implementation below allows for that.
-*/
 static snd_pcm_uframes_t snd_es1938_capture_pointer(struct snd_pcm_substream *substream)
 {
 	struct es1938 *chip = snd_pcm_substream_chip(substream);
 	size_t ptr;
-#if 0
 	size_t old, new;
+#if 1
 	/* This stuff is *needed*, don't ask why - AB */
 	old = inw(SLDM_REG(chip, DMACOUNT));
 	while ((new = inw(SLDM_REG(chip, DMACOUNT))) != old)
 		old = new;
 	ptr = chip->dma1_size - 1 - new;
 #else
-	size_t count;
-	unsigned int diff;
-
-	ptr = inl(SLDM_REG(chip, DMAADDR));
-	count = inw(SLDM_REG(chip, DMACOUNT));
-	diff = chip->dma1_start + chip->dma1_size - ptr - count;
-
-	if (diff > 3 || ptr < chip->dma1_start
-	      || ptr >= chip->dma1_start+chip->dma1_size)
-	  ptr = chip->last_capture_dmaaddr;            /* bad, use last saved */
-	else
-	  chip->last_capture_dmaaddr = ptr;            /* good, remember it */
-
-	ptr -= chip->dma1_start;
+	ptr = inl(SLDM_REG(chip, DMAADDR)) - chip->dma1_start;
 #endif
 	return ptr >> chip->dma1_shift;
 }
@@ -860,8 +837,7 @@ static int snd_es1938_capture_copy(struct snd_pcm_substream *substream,
 	struct es1938 *chip = snd_pcm_substream_chip(substream);
 	pos <<= chip->dma1_shift;
 	count <<= chip->dma1_shift;
-	if (snd_BUG_ON(pos + count > chip->dma1_size))
-		return -EINVAL;
+	snd_assert(pos + count <= chip->dma1_size, return -EINVAL);
 	if (pos + count < chip->dma1_size) {
 		if (copy_to_user(dst, runtime->dma_area + pos + 1, count))
 			return -EFAULT;
@@ -1089,7 +1065,15 @@ static int snd_es1938_put_mux(struct snd_kcontrol *kcontrol,
 	return snd_es1938_mixer_bits(chip, 0x1c, 0x07, val) != val;
 }
 
-#define snd_es1938_info_spatializer_enable	snd_ctl_boolean_mono_info
+static int snd_es1938_info_spatializer_enable(struct snd_kcontrol *kcontrol,
+					      struct snd_ctl_elem_info *uinfo)
+{
+	uinfo->type = SNDRV_CTL_ELEM_TYPE_BOOLEAN;
+	uinfo->count = 1;
+	uinfo->value.integer.min = 0;
+	uinfo->value.integer.max = 1;
+	return 0;
+}
 
 static int snd_es1938_get_spatializer_enable(struct snd_kcontrol *kcontrol,
 					     struct snd_ctl_elem_value *ucontrol)
@@ -1135,7 +1119,15 @@ static int snd_es1938_get_hw_volume(struct snd_kcontrol *kcontrol,
 	return 0;
 }
 
-#define snd_es1938_info_hw_switch		snd_ctl_boolean_stereo_info
+static int snd_es1938_info_hw_switch(struct snd_kcontrol *kcontrol,
+				     struct snd_ctl_elem_info *uinfo)
+{
+	uinfo->type = SNDRV_CTL_ELEM_TYPE_BOOLEAN;
+	uinfo->count = 2;
+	uinfo->value.integer.min = 0;
+	uinfo->value.integer.max = 1;
+	return 0;
+}
 
 static int snd_es1938_get_hw_switch(struct snd_kcontrol *kcontrol,
 				    struct snd_ctl_elem_value *ucontrol)
@@ -1172,14 +1164,6 @@ static int snd_es1938_reg_read(struct es1938 *chip, unsigned char reg)
 		return snd_es1938_read(chip, reg);
 }
 
-#define ES1938_SINGLE_TLV(xname, xindex, reg, shift, mask, invert, xtlv)    \
-{ .iface = SNDRV_CTL_ELEM_IFACE_MIXER, \
-  .access = SNDRV_CTL_ELEM_ACCESS_READWRITE | SNDRV_CTL_ELEM_ACCESS_TLV_READ,\
-  .name = xname, .index = xindex, \
-  .info = snd_es1938_info_single, \
-  .get = snd_es1938_get_single, .put = snd_es1938_put_single, \
-  .private_value = reg | (shift << 8) | (mask << 16) | (invert << 24), \
-  .tlv = { .p = xtlv } }
 #define ES1938_SINGLE(xname, xindex, reg, shift, mask, invert) \
 { .iface = SNDRV_CTL_ELEM_IFACE_MIXER, .name = xname, .index = xindex, \
   .info = snd_es1938_info_single, \
@@ -1233,14 +1217,6 @@ static int snd_es1938_put_single(struct snd_kcontrol *kcontrol,
 	return snd_es1938_reg_bits(chip, reg, mask, val) != val;
 }
 
-#define ES1938_DOUBLE_TLV(xname, xindex, left_reg, right_reg, shift_left, shift_right, mask, invert, xtlv) \
-{ .iface = SNDRV_CTL_ELEM_IFACE_MIXER, \
-  .access = SNDRV_CTL_ELEM_ACCESS_READWRITE | SNDRV_CTL_ELEM_ACCESS_TLV_READ,\
-  .name = xname, .index = xindex, \
-  .info = snd_es1938_info_double, \
-  .get = snd_es1938_get_double, .put = snd_es1938_put_double, \
-  .private_value = left_reg | (right_reg << 8) | (shift_left << 16) | (shift_right << 19) | (mask << 24) | (invert << 22), \
-  .tlv = { .p = xtlv } }
 #define ES1938_DOUBLE(xname, xindex, left_reg, right_reg, shift_left, shift_right, mask, invert) \
 { .iface = SNDRV_CTL_ELEM_IFACE_MIXER, .name = xname, .index = xindex, \
   .info = snd_es1938_info_double, \
@@ -1321,41 +1297,8 @@ static int snd_es1938_put_double(struct snd_kcontrol *kcontrol,
 	return change;
 }
 
-static unsigned int db_scale_master[] = {
-	TLV_DB_RANGE_HEAD(2),
-	0, 54, TLV_DB_SCALE_ITEM(-3600, 50, 1),
-	54, 63, TLV_DB_SCALE_ITEM(-900, 100, 0),
-};
-
-static unsigned int db_scale_audio1[] = {
-	TLV_DB_RANGE_HEAD(2),
-	0, 8, TLV_DB_SCALE_ITEM(-3300, 300, 1),
-	8, 15, TLV_DB_SCALE_ITEM(-900, 150, 0),
-};
-
-static unsigned int db_scale_audio2[] = {
-	TLV_DB_RANGE_HEAD(2),
-	0, 8, TLV_DB_SCALE_ITEM(-3450, 300, 1),
-	8, 15, TLV_DB_SCALE_ITEM(-1050, 150, 0),
-};
-
-static unsigned int db_scale_mic[] = {
-	TLV_DB_RANGE_HEAD(2),
-	0, 8, TLV_DB_SCALE_ITEM(-2400, 300, 1),
-	8, 15, TLV_DB_SCALE_ITEM(0, 150, 0),
-};
-
-static unsigned int db_scale_line[] = {
-	TLV_DB_RANGE_HEAD(2),
-	0, 8, TLV_DB_SCALE_ITEM(-3150, 300, 1),
-	8, 15, TLV_DB_SCALE_ITEM(-750, 150, 0),
-};
-
-static const DECLARE_TLV_DB_SCALE(db_scale_capture, 0, 150, 0);
-
 static struct snd_kcontrol_new snd_es1938_controls[] = {
-ES1938_DOUBLE_TLV("Master Playback Volume", 0, 0x60, 0x62, 0, 0, 63, 0,
-		  db_scale_master),
+ES1938_DOUBLE("Master Playback Volume", 0, 0x60, 0x62, 0, 0, 63, 0),
 ES1938_DOUBLE("Master Playback Switch", 0, 0x60, 0x62, 6, 6, 1, 1),
 {
 	.iface = SNDRV_CTL_ELEM_IFACE_MIXER,
@@ -1366,27 +1309,19 @@ ES1938_DOUBLE("Master Playback Switch", 0, 0x60, 0x62, 6, 6, 1, 1),
 },
 {
 	.iface = SNDRV_CTL_ELEM_IFACE_MIXER,
-	.access = (SNDRV_CTL_ELEM_ACCESS_READ |
-		   SNDRV_CTL_ELEM_ACCESS_TLV_READ),
 	.name = "Hardware Master Playback Switch",
+	.access = SNDRV_CTL_ELEM_ACCESS_READ,
 	.info = snd_es1938_info_hw_switch,
 	.get = snd_es1938_get_hw_switch,
-	.tlv = { .p = db_scale_master },
 },
 ES1938_SINGLE("Hardware Volume Split", 0, 0x64, 7, 1, 0),
-ES1938_DOUBLE_TLV("Line Playback Volume", 0, 0x3e, 0x3e, 4, 0, 15, 0,
-		  db_scale_line),
+ES1938_DOUBLE("Line Playback Volume", 0, 0x3e, 0x3e, 4, 0, 15, 0),
 ES1938_DOUBLE("CD Playback Volume", 0, 0x38, 0x38, 4, 0, 15, 0),
-ES1938_DOUBLE_TLV("FM Playback Volume", 0, 0x36, 0x36, 4, 0, 15, 0,
-		  db_scale_mic),
-ES1938_DOUBLE_TLV("Mono Playback Volume", 0, 0x6d, 0x6d, 4, 0, 15, 0,
-		  db_scale_line),
-ES1938_DOUBLE_TLV("Mic Playback Volume", 0, 0x1a, 0x1a, 4, 0, 15, 0,
-		  db_scale_mic),
-ES1938_DOUBLE_TLV("Aux Playback Volume", 0, 0x3a, 0x3a, 4, 0, 15, 0,
-		  db_scale_line),
-ES1938_DOUBLE_TLV("Capture Volume", 0, 0xb4, 0xb4, 4, 0, 15, 0,
-		  db_scale_capture),
+ES1938_DOUBLE("FM Playback Volume", 0, 0x36, 0x36, 4, 0, 15, 0),
+ES1938_DOUBLE("Mono Playback Volume", 0, 0x6d, 0x6d, 4, 0, 15, 0),
+ES1938_DOUBLE("Mic Playback Volume", 0, 0x1a, 0x1a, 4, 0, 15, 0),
+ES1938_DOUBLE("Aux Playback Volume", 0, 0x3a, 0x3a, 4, 0, 15, 0),
+ES1938_DOUBLE("Capture Volume", 0, 0xb4, 0xb4, 4, 0, 15, 0),
 ES1938_SINGLE("PC Speaker Volume", 0, 0x3c, 0, 7, 0),
 ES1938_SINGLE("Record Monitor", 0, 0xa8, 3, 1, 0),
 ES1938_SINGLE("Capture Switch", 0, 0x1c, 4, 1, 1),
@@ -1397,26 +1332,16 @@ ES1938_SINGLE("Capture Switch", 0, 0x1c, 4, 1, 1),
 	.get = snd_es1938_get_mux,
 	.put = snd_es1938_put_mux,
 },
-ES1938_DOUBLE_TLV("Mono Input Playback Volume", 0, 0x6d, 0x6d, 4, 0, 15, 0,
-		  db_scale_line),
-ES1938_DOUBLE_TLV("PCM Capture Volume", 0, 0x69, 0x69, 4, 0, 15, 0,
-		  db_scale_audio2),
-ES1938_DOUBLE_TLV("Mic Capture Volume", 0, 0x68, 0x68, 4, 0, 15, 0,
-		  db_scale_mic),
-ES1938_DOUBLE_TLV("Line Capture Volume", 0, 0x6e, 0x6e, 4, 0, 15, 0,
-		  db_scale_line),
-ES1938_DOUBLE_TLV("FM Capture Volume", 0, 0x6b, 0x6b, 4, 0, 15, 0,
-		  db_scale_mic),
-ES1938_DOUBLE_TLV("Mono Capture Volume", 0, 0x6f, 0x6f, 4, 0, 15, 0,
-		  db_scale_line),
-ES1938_DOUBLE_TLV("CD Capture Volume", 0, 0x6a, 0x6a, 4, 0, 15, 0,
-		  db_scale_line),
-ES1938_DOUBLE_TLV("Aux Capture Volume", 0, 0x6c, 0x6c, 4, 0, 15, 0,
-		  db_scale_line),
-ES1938_DOUBLE_TLV("PCM Playback Volume", 0, 0x7c, 0x7c, 4, 0, 15, 0,
-		  db_scale_audio2),
-ES1938_DOUBLE_TLV("PCM Playback Volume", 1, 0x14, 0x14, 4, 0, 15, 0,
-		  db_scale_audio1),
+ES1938_DOUBLE("Mono Input Playback Volume", 0, 0x6d, 0x6d, 4, 0, 15, 0),
+ES1938_DOUBLE("PCM Capture Volume", 0, 0x69, 0x69, 4, 0, 15, 0),
+ES1938_DOUBLE("Mic Capture Volume", 0, 0x68, 0x68, 4, 0, 15, 0),
+ES1938_DOUBLE("Line Capture Volume", 0, 0x6e, 0x6e, 4, 0, 15, 0),
+ES1938_DOUBLE("FM Capture Volume", 0, 0x6b, 0x6b, 4, 0, 15, 0),
+ES1938_DOUBLE("Mono Capture Volume", 0, 0x6f, 0x6f, 4, 0, 15, 0),
+ES1938_DOUBLE("CD Capture Volume", 0, 0x6a, 0x6a, 4, 0, 15, 0),
+ES1938_DOUBLE("Aux Capture Volume", 0, 0x6c, 0x6c, 4, 0, 15, 0),
+ES1938_DOUBLE("PCM Playback Volume", 0, 0x7c, 0x7c, 4, 0, 15, 0),
+ES1938_DOUBLE("PCM Playback Volume", 1, 0x14, 0x14, 4, 0, 15, 0),
 ES1938_SINGLE("3D Control - Level", 0, 0x52, 0, 63, 0),
 {
 	.iface = SNDRV_CTL_ELEM_IFACE_MIXER,
@@ -1488,13 +1413,10 @@ static int es1938_suspend(struct pci_dev *pci, pm_message_t state)
 		*d = snd_es1938_reg_read(chip, *s);
 
 	outb(0x00, SLIO_REG(chip, IRQCONTROL)); /* disable irqs */
-	if (chip->irq >= 0) {
+	if (chip->irq >= 0)
 		free_irq(chip->irq, chip);
-		chip->irq = -1;
-	}
 	pci_disable_device(pci);
 	pci_save_state(pci);
-	pci_set_power_state(pci, pci_choose_state(pci, state));
 	return 0;
 }
 
@@ -1504,22 +1426,10 @@ static int es1938_resume(struct pci_dev *pci)
 	struct es1938 *chip = card->private_data;
 	unsigned char *s, *d;
 
-	pci_set_power_state(pci, PCI_D0);
 	pci_restore_state(pci);
-	if (pci_enable_device(pci) < 0) {
-		printk(KERN_ERR "es1938: pci_enable_device failed, "
-		       "disabling device\n");
-		snd_card_disconnect(card);
-		return -EIO;
-	}
-
-	if (request_irq(pci->irq, snd_es1938_interrupt,
-			IRQF_SHARED, "ES1938", chip)) {
-		printk(KERN_ERR "es1938: unable to grab IRQ %d, "
-		       "disabling device\n", pci->irq);
-		snd_card_disconnect(card);
-		return -EIO;
-	}
+	pci_enable_device(pci);
+	request_irq(pci->irq, snd_es1938_interrupt,
+		    IRQF_DISABLED|IRQF_SHARED, "ES1938", chip);
 	chip->irq = pci->irq;
 	snd_es1938_chip_init(chip);
 
@@ -1608,8 +1518,8 @@ static int __devinit snd_es1938_create(struct snd_card *card,
 	if ((err = pci_enable_device(pci)) < 0)
 		return err;
         /* check, if we can restrict PCI DMA transfers to 24 bits */
-	if (pci_set_dma_mask(pci, DMA_BIT_MASK(24)) < 0 ||
-	    pci_set_consistent_dma_mask(pci, DMA_BIT_MASK(24)) < 0) {
+	if (pci_set_dma_mask(pci, DMA_24BIT_MASK) < 0 ||
+	    pci_set_consistent_dma_mask(pci, DMA_24BIT_MASK) < 0) {
 		snd_printk(KERN_ERR "architecture does not support 24bit PCI busmaster DMA\n");
 		pci_disable_device(pci);
                 return -ENXIO;
@@ -1624,7 +1534,6 @@ static int __devinit snd_es1938_create(struct snd_card *card,
 	spin_lock_init(&chip->mixer_lock);
 	chip->card = card;
 	chip->pci = pci;
-	chip->irq = -1;
 	if ((err = pci_request_regions(pci, "ESS Solo-1")) < 0) {
 		kfree(chip);
 		pci_disable_device(pci);
@@ -1635,7 +1544,7 @@ static int __devinit snd_es1938_create(struct snd_card *card,
 	chip->vc_port = pci_resource_start(pci, 2);
 	chip->mpu_port = pci_resource_start(pci, 3);
 	chip->game_port = pci_resource_start(pci, 4);
-	if (request_irq(pci->irq, snd_es1938_interrupt, IRQF_SHARED,
+	if (request_irq(pci->irq, snd_es1938_interrupt, IRQF_DISABLED|IRQF_SHARED,
 			"ES1938", chip)) {
 		snd_printk(KERN_ERR "unable to grab IRQ %d\n", pci->irq);
 		snd_es1938_free(chip);
@@ -1665,7 +1574,7 @@ static int __devinit snd_es1938_create(struct snd_card *card,
 /* --------------------------------------------------------------------
  * Interrupt handler
  * -------------------------------------------------------------------- */
-static irqreturn_t snd_es1938_interrupt(int irq, void *dev_id)
+static irqreturn_t snd_es1938_interrupt(int irq, void *dev_id, struct pt_regs *regs)
 {
 	struct es1938 *chip = dev_id;
 	unsigned char status, audiostatus;
@@ -1673,22 +1582,18 @@ static irqreturn_t snd_es1938_interrupt(int irq, void *dev_id)
 
 	status = inb(SLIO_REG(chip, IRQCONTROL));
 #if 0
-	printk(KERN_DEBUG "Es1938debug - interrupt status: =0x%x\n", status);
+	printk("Es1938debug - interrupt status: =0x%x\n", status);
 #endif
 	
 	/* AUDIO 1 */
 	if (status & 0x10) {
 #if 0
-                printk(KERN_DEBUG
-		       "Es1938debug - AUDIO channel 1 interrupt\n");
-		printk(KERN_DEBUG
-		       "Es1938debug - AUDIO channel 1 DMAC DMA count: %u\n",
+                printk("Es1938debug - AUDIO channel 1 interrupt\n");
+		printk("Es1938debug - AUDIO channel 1 DMAC DMA count: %u\n",
 		       inw(SLDM_REG(chip, DMACOUNT)));
-		printk(KERN_DEBUG
-		       "Es1938debug - AUDIO channel 1 DMAC DMA base: %u\n",
+		printk("Es1938debug - AUDIO channel 1 DMAC DMA base: %u\n",
 		       inl(SLDM_REG(chip, DMAADDR)));
-		printk(KERN_DEBUG
-		       "Es1938debug - AUDIO channel 1 DMAC DMA status: 0x%x\n",
+		printk("Es1938debug - AUDIO channel 1 DMAC DMA status: 0x%x\n",
 		       inl(SLDM_REG(chip, DMASTATUS)));
 #endif
 		/* clear irq */
@@ -1703,13 +1608,10 @@ static irqreturn_t snd_es1938_interrupt(int irq, void *dev_id)
 	/* AUDIO 2 */
 	if (status & 0x20) {
 #if 0
-                printk(KERN_DEBUG
-		       "Es1938debug - AUDIO channel 2 interrupt\n");
-		printk(KERN_DEBUG
-		       "Es1938debug - AUDIO channel 2 DMAC DMA count: %u\n",
+                printk("Es1938debug - AUDIO channel 2 interrupt\n");
+		printk("Es1938debug - AUDIO channel 2 DMAC DMA count: %u\n",
 		       inw(SLIO_REG(chip, AUDIO2DMACOUNT)));
-		printk(KERN_DEBUG
-		       "Es1938debug - AUDIO channel 2 DMAC DMA base: %u\n",
+		printk("Es1938debug - AUDIO channel 2 DMAC DMA base: %u\n",
 		       inl(SLIO_REG(chip, AUDIO2DMAADDR)));
 
 #endif
@@ -1744,7 +1646,7 @@ static irqreturn_t snd_es1938_interrupt(int irq, void *dev_id)
 		// snd_es1938_mixer_bits(chip, ESSSB_IREG_MPU401CONTROL, 0x40, 0); /* ack? */
 		if (chip->rmidi) {
 			handled = 1;
-			snd_mpu401_uart_interrupt(irq, chip->rmidi->private_data);
+			snd_mpu401_uart_interrupt(irq, chip->rmidi->private_data, regs);
 		}
 	}
 	return IRQ_RETVAL(handled);
@@ -1806,9 +1708,9 @@ static int __devinit snd_es1938_probe(struct pci_dev *pci,
 		return -ENOENT;
 	}
 
-	err = snd_card_create(index[dev], id[dev], THIS_MODULE, 0, &card);
-	if (err < 0)
-		return err;
+	card = snd_card_new(index[dev], id[dev], THIS_MODULE, 0);
+	if (card == NULL)
+		return -ENOMEM;
 	for (idx = 0; idx < 5; idx++) {
 		if (pci_resource_start(pci, idx) == 0 ||
 		    !(pci_resource_flags(pci, idx) & IORESOURCE_IO)) {

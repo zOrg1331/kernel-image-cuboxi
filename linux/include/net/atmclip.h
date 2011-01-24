@@ -36,7 +36,7 @@ struct clip_vcc {
 
 
 struct atmarp_entry {
-	__be32		ip;		/* IP address */
+	u32		ip;		/* IP address */
 	struct clip_vcc	*vccs;		/* active VCCs; NULL if resolution is
 					   pending */
 	unsigned long	expires;	/* entry expiration time */
@@ -50,6 +50,7 @@ struct atmarp_entry {
 struct clip_priv {
 	int number;			/* for convenience ... */
 	spinlock_t xoff_lock;		/* ensures that pop is atomic (SMP) */
+	struct net_device_stats stats;
 	struct net_device *next;	/* next CLIP interface */
 };
 

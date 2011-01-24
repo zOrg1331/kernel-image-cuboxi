@@ -1,0 +1,54 @@
+From: Eric Paris <eparis@redhat.com>
+Subject: [RHEL5 PATCH] BZ 230255 NetLabel: Verify sensitivity level has a valid CIPSO mapping
+Date: Sun, 03 Jun 2007 18:28:19 -0400
+Bugzilla: 230255
+Message-Id: <1180909699.31147.33.camel@localhost.localdomain>
+Changelog: [net] NetLabel: Verify sensitivity level has a valid CIPSO mapping
+
+
+The current CIPSO engine has a problem where it does not verify that
+the given sensitivity level has a valid CIPSO mapping when the "std"
+CIPSO DOI type is used.  The end result is that bad packets are sent
+on the wire which should have never been sent in the first place.
+This patch corrects this problem by verifying the sensitivity level
+mapping similar to what is done with the category mapping.  This patch
+also changes the returned error code in this case to -EPERM to better
+match what the category mapping verification code returns.
+
+Signed-off-by: Paul Moore <paul.moore@hp.com>
+Acked-by: James Morris <jmorris@namei.org>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=c6387a8694506841389a6ac55175a8a984ae34e4
+
+Been tested in the LSPP kernel with success.
+
+-Eric
+
+--- linux-2.6.18-8.el5.lspp.67.orig/net/ipv4/cipso_ipv4.c
++++ linux-2.6.18-8.el5.lspp.67/net/ipv4/cipso_ipv4.c
+@@ -725,11 +725,12 @@ static int cipso_v4_map_lvl_hton(const s
+ 		*net_lvl = host_lvl;
+ 		return 0;
+ 	case CIPSO_V4_MAP_STD:
+-		if (host_lvl < doi_def->map.std->lvl.local_size) {
++		if (host_lvl < doi_def->map.std->lvl.local_size &&
++		    doi_def->map.std->lvl.local[host_lvl] < CIPSO_V4_INV_LVL) {
+ 			*net_lvl = doi_def->map.std->lvl.local[host_lvl];
+ 			return 0;
+ 		}
+-		break;
++		return -EPERM;
+ 	}
+ 
+ 	return -EINVAL;
+@@ -764,7 +765,7 @@ static int cipso_v4_map_lvl_ntoh(const s
+ 			*host_lvl = doi_def->map.std->lvl.cipso[net_lvl];
+ 			return 0;
+ 		}
+-		break;
++		return -EPERM;
+ 	}
+ 
+ 	return -EINVAL;
+

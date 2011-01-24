@@ -106,7 +106,6 @@ static void um_new_card(DESCRIPTOR * d)
 	} else {
 		DBG_ERR(("could not create user mode idi card %d",
 			 adapter_nr));
-		diva_os_free(0, card);
 	}
 }
 

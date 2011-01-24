@@ -1,0 +1,33 @@
+From: Tomas Henzl <thenzl@redhat.com>
+Date: Sun, 29 Aug 2010 15:49:18 -0400
+Subject: [block] cciss: remove sysfs entries during driver cleanup
+Message-id: <1283097002-3341-20-git-send-email-thenzl@redhat.com>
+Patchwork-id: 27871
+O-Subject: [RHEL6 PATCH 19/63] cciss: remove sysfs entries during driver cleanup.
+Bugzilla: 568830
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+
+remove sysfs entries for logical drives when a drive is deleted during driver cleanup.
+
+diff --git a/drivers/block/cciss.c b/drivers/block/cciss.c
+index e8c90d6..f0ca7c9 100644
+--- a/drivers/block/cciss.c
++++ b/drivers/block/cciss.c
+@@ -2240,6 +2240,7 @@ static int deregister_disk(ctlr_info_t *h, int drv_index,
+ 				 * indicate that this element of the drive
+ 				 * array is free.
+ 				 */
++	cciss_destroy_ld_sysfs_entry(drv);
+ 
+ 	if (clear_all) {
+ 		/* check to see if it was the last disk */
+@@ -4258,6 +4259,9 @@ static void __devexit cciss_remove_one(struct pci_dev *pdev)
+ 			if (q)
+ 				blk_cleanup_queue(q);
+ 		}
++		if (hba[i]->drv[j].raid_level != -1)
++			cciss_destroy_ld_sysfs_entry(&hba[i]->drv[j]);
++
+ 	}
+ 
+ 	cciss_unregister_scsi(i);	/* unhook from SCSI subsystem */

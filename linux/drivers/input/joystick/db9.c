@@ -1,8 +1,10 @@
 /*
+ * $Id: db9.c,v 1.13 2002/04/07 20:13:37 vojtech Exp $
+ *
  *  Copyright (c) 1999-2001 Vojtech Pavlik
  *
  *  Based on the work of:
- *	Andree Borrmann		Mats SjÃ¶vall
+ *	Andree Borrmann		Mats Sjövall
  */
 
 /*
@@ -31,6 +33,7 @@
 
 #include <linux/kernel.h>
 #include <linux/module.h>
+#include <linux/moduleparam.h>
 #include <linux/delay.h>
 #include <linux/init.h>
 #include <linux/parport.h>
@@ -43,18 +46,22 @@ MODULE_LICENSE("GPL");
 
 struct db9_config {
 	int args[2];
-	unsigned int nargs;
+	int nargs;
 };
 
 #define DB9_MAX_PORTS		3
-static struct db9_config db9_cfg[DB9_MAX_PORTS] __initdata;
+static struct db9_config db9[DB9_MAX_PORTS] __initdata;
 
-module_param_array_named(dev, db9_cfg[0].args, int, &db9_cfg[0].nargs, 0);
+module_param_array_named(dev, db9[0].args, int, &db9[0].nargs, 0);
 MODULE_PARM_DESC(dev, "Describes first attached device (<parport#>,<type>)");
-module_param_array_named(dev2, db9_cfg[1].args, int, &db9_cfg[1].nargs, 0);
+module_param_array_named(dev2, db9[1].args, int, &db9[0].nargs, 0);
 MODULE_PARM_DESC(dev2, "Describes second attached device (<parport#>,<type>)");
-module_param_array_named(dev3, db9_cfg[2].args, int, &db9_cfg[2].nargs, 0);
+module_param_array_named(dev3, db9[2].args, int, &db9[2].nargs, 0);
 MODULE_PARM_DESC(dev3, "Describes third attached device (<parport#>,<type>)");
+
+__obsolete_setup("db9=");
+__obsolete_setup("db9_2=");
+__obsolete_setup("db9_3=");
 
 #define DB9_ARG_PARPORT		0
 #define DB9_ARG_MODE		1
@@ -515,7 +522,7 @@ static void db9_timer(unsigned long private)
 
 static int db9_open(struct input_dev *dev)
 {
-	struct db9 *db9 = input_get_drvdata(dev);
+	struct db9 *db9 = dev->private;
 	struct parport *port = db9->pd->port;
 	int err;
 
@@ -539,7 +546,7 @@ static int db9_open(struct input_dev *dev)
 
 static void db9_close(struct input_dev *dev)
 {
-	struct db9 *db9 = input_get_drvdata(dev);
+	struct db9 *db9 = dev->private;
 	struct parport *port = db9->pd->port;
 
 	mutex_lock(&db9->mutex);
@@ -622,13 +629,12 @@ static struct db9 __init *db9_probe(int parport, int mode)
 		input_dev->id.vendor = 0x0002;
 		input_dev->id.product = mode;
 		input_dev->id.version = 0x0100;
-
-		input_set_drvdata(input_dev, db9);
+		input_dev->private = db9;
 
 		input_dev->open = db9_open;
 		input_dev->close = db9_close;
 
-		input_dev->evbit[0] = BIT_MASK(EV_KEY) | BIT_MASK(EV_ABS);
+		input_dev->evbit[0] = BIT(EV_KEY) | BIT(EV_ABS);
 		for (j = 0; j < db9_mode->n_buttons; j++)
 			set_bit(db9_mode->buttons[j], input_dev->keybit);
 		for (j = 0; j < db9_mode->n_axis; j++) {
@@ -677,17 +683,17 @@ static int __init db9_init(void)
 	int err = 0;
 
 	for (i = 0; i < DB9_MAX_PORTS; i++) {
-		if (db9_cfg[i].nargs == 0 || db9_cfg[i].args[DB9_ARG_PARPORT] < 0)
+		if (db9[i].nargs == 0 || db9[i].args[DB9_ARG_PARPORT] < 0)
 			continue;
 
-		if (db9_cfg[i].nargs < 2) {
+		if (db9[i].nargs < 2) {
 			printk(KERN_ERR "db9.c: Device type must be specified.\n");
 			err = -EINVAL;
 			break;
 		}
 
-		db9_base[i] = db9_probe(db9_cfg[i].args[DB9_ARG_PARPORT],
-					db9_cfg[i].args[DB9_ARG_MODE]);
+		db9_base[i] = db9_probe(db9[i].args[DB9_ARG_PARPORT],
+					db9[i].args[DB9_ARG_MODE]);
 		if (IS_ERR(db9_base[i])) {
 			err = PTR_ERR(db9_base[i]);
 			break;

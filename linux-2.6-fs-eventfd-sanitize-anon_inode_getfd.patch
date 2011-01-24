@@ -1,0 +1,57 @@
+From: Jeff Moyer <jmoyer@redhat.com>
+Date: Tue, 1 Dec 2009 21:06:38 -0500
+Subject: [fs] eventfd: sanitize anon_inode_getfd()
+Message-id: <1259701600-23508-11-git-send-email-jmoyer@redhat.com>
+Patchwork-id: 21618
+O-Subject: [RHEL5 PATCH 10/12 v2] sanitize anon_inode_getfd()
+Bugzilla: 493101
+RH-Acked-by: Josef Bacik <josef@redhat.com>
+
+Fixes bug 493101.
+
+commit 2030a42cecd4dd1985a2ab03e25f3cd6106a5ca8
+Author: Al Viro <viro@zeniv.linux.org.uk>
+Date:   Sat Feb 23 06:46:49 2008 -0500
+
+    [PATCH] sanitize anon_inode_getfd()
+
+    a) none of the callers even looks at inode or file returned by anon_inode_getfd
+    b) any caller that would try to look at those would be racy, since by the time
+    it returns we might have raced with close() from another thread and that
+    file would be pining for fjords.
+
+Signed-off-by: Jeff Moyer <jmoyer@redhat.com>
+
+diff --git a/fs/eventfd.c b/fs/eventfd.c
+index a9f130c..343942d 100644
+--- a/fs/eventfd.c
++++ b/fs/eventfd.c
+@@ -200,10 +200,8 @@ struct file *eventfd_fget(int fd)
+ 
+ asmlinkage long sys_eventfd(unsigned int count)
+ {
+-	int error, fd;
++	int fd;
+ 	struct eventfd_ctx *ctx;
+-	struct file *file;
+-	struct inode *inode;
+ 
+ 	ctx = kmalloc(sizeof(*ctx), GFP_KERNEL);
+ 	if (!ctx)
+@@ -216,12 +214,9 @@ asmlinkage long sys_eventfd(unsigned int count)
+ 	 * When we call this, the initialization must be complete, since
+ 	 * anon_inode_getfd() will install the fd.
+ 	 */
+-	error = anon_inode_getfd(&fd, &inode, &file, "[eventfd]",
+-				 &eventfd_fops, ctx);
+-	if (!error)
+-		return fd;
+-
+-	kfree(ctx);
+-	return error;
++	fd = anon_inode_getfd("[eventfd]", &eventfd_fops, ctx);
++	if (fd < 0)
++		kfree(ctx);
++	return fd;
+ }
+ 

@@ -38,7 +38,6 @@
 #include <linux/buffer_head.h>
 #include <linux/kernel.h>
 #include <linux/slab.h>
-#include <linux/smp_lock.h>
 #include <linux/stat.h>
 #include <linux/vfs.h>
 #include <linux/mount.h>
@@ -60,7 +59,8 @@ static void		vxfs_put_super(struct super_block *);
 static int		vxfs_statfs(struct dentry *, struct kstatfs *);
 static int		vxfs_remount(struct super_block *, int *, char *);
 
-static const struct super_operations vxfs_super_ops = {
+static struct super_operations vxfs_super_ops = {
+	.read_inode =		vxfs_read_inode,
 	.clear_inode =		vxfs_clear_inode,
 	.put_super =		vxfs_put_super,
 	.statfs =		vxfs_statfs,
@@ -81,16 +81,12 @@ vxfs_put_super(struct super_block *sbp)
 {
 	struct vxfs_sb_info	*infp = VXFS_SBI(sbp);
 
-	lock_kernel();
-
 	vxfs_put_fake_inode(infp->vsi_fship);
 	vxfs_put_fake_inode(infp->vsi_ilist);
 	vxfs_put_fake_inode(infp->vsi_stilist);
 
 	brelse(infp->vsi_bp);
 	kfree(infp);
-
-	unlock_kernel();
 }
 
 /**
@@ -157,7 +153,6 @@ static int vxfs_fill_super(struct super_block *sbp, void *dp, int silent)
 	struct buffer_head	*bp = NULL;
 	u_long			bsize;
 	struct inode *root;
-	int ret = -EINVAL;
 
 	sbp->s_flags |= MS_RDONLY;
 
@@ -224,11 +219,7 @@ static int vxfs_fill_super(struct super_block *sbp, void *dp, int silent)
 	}
 
 	sbp->s_op = &vxfs_super_ops;
-	root = vxfs_iget(sbp, VXFS_ROOT_INO);
-	if (IS_ERR(root)) {
-		ret = PTR_ERR(root);
-		goto out;
-	}
+	root = iget(sbp, VXFS_ROOT_INO);
 	sbp->s_root = d_alloc_root(root);
 	if (!sbp->s_root) {
 		iput(root);
@@ -245,7 +236,7 @@ out_free_ilist:
 out:
 	brelse(bp);
 	kfree(infp);
-	return ret;
+	return -EINVAL;
 }
 
 /*
@@ -269,17 +260,12 @@ static struct file_system_type vxfs_fs_type = {
 static int __init
 vxfs_init(void)
 {
-	int rv;
-
 	vxfs_inode_cachep = kmem_cache_create("vxfs_inode",
-			sizeof(struct vxfs_inode_info), 0,
-			SLAB_RECLAIM_ACCOUNT|SLAB_MEM_SPREAD, NULL);
-	if (!vxfs_inode_cachep)
-		return -ENOMEM;
-	rv = register_filesystem(&vxfs_fs_type);
-	if (rv < 0)
-		kmem_cache_destroy(vxfs_inode_cachep);
-	return rv;
+			sizeof(struct vxfs_inode_info), 0, 
+			SLAB_RECLAIM_ACCOUNT|SLAB_MEM_SPREAD, NULL, NULL);
+	if (vxfs_inode_cachep)
+		return register_filesystem(&vxfs_fs_type);
+	return -ENOMEM;
 }
 
 static void __exit

@@ -29,6 +29,7 @@
  * code in here.  If there is it should be reported as a bug.
  */
 
+#include <sound/driver.h>
 #include <linux/init.h>
 #include <linux/slab.h>
 #include <linux/string.h>
@@ -70,7 +71,7 @@ static void reset_all_channels(struct snd_midi_channel_set *chset);
  * such as GM, GS and XG.
  * There modes that this module will run in are:
  *   Generic MIDI - no interpretation at all, it will just save current values
- *                  of controllers etc.
+ *                  of controlers etc.
  *   GM - You can use all gm_ prefixed elements of chan.  Controls, RPN, NRPN,
  *        SysEx will be interpreded as defined in General Midi.
  *   GS - You can use all gs_ prefixed elements of chan. Codes for GS will be
@@ -175,7 +176,7 @@ snd_midi_process_event(struct snd_midi_op *ops,
 				   ev->data.control.value);
 		break;
 	case SNDRV_SEQ_EVENT_NONREGPARAM:
-		/* Break it back into its controller values */
+		/* Break it back into its controler values */
 		chan->param_type = SNDRV_MIDI_PARAM_TYPE_NONREGISTERED;
 		chan->control[MIDI_CTL_MSB_DATA_ENTRY]
 			= (ev->data.control.value >> 7) & 0x7f;
@@ -188,7 +189,7 @@ snd_midi_process_event(struct snd_midi_op *ops,
 		nrpn(ops, drv, chan, chanset);
 		break;
 	case SNDRV_SEQ_EVENT_REGPARAM:
-		/* Break it back into its controller values */
+		/* Break it back into its controler values */
 		chan->param_type = SNDRV_MIDI_PARAM_TYPE_REGISTERED;
 		chan->control[MIDI_CTL_MSB_DATA_ENTRY]
 			= (ev->data.control.value >> 7) & 0x7f;
@@ -228,6 +229,13 @@ snd_midi_process_event(struct snd_midi_op *ops,
 	case SNDRV_SEQ_EVENT_PORT_START:
 	case SNDRV_SEQ_EVENT_PORT_EXIT:
 	case SNDRV_SEQ_EVENT_PORT_CHANGE:
+	case SNDRV_SEQ_EVENT_SAMPLE:
+	case SNDRV_SEQ_EVENT_SAMPLE_START:
+	case SNDRV_SEQ_EVENT_SAMPLE_STOP:
+	case SNDRV_SEQ_EVENT_SAMPLE_FREQ:
+	case SNDRV_SEQ_EVENT_SAMPLE_VOLUME:
+	case SNDRV_SEQ_EVENT_SAMPLE_LOOP:
+	case SNDRV_SEQ_EVENT_SAMPLE_POSITION:
 	case SNDRV_SEQ_EVENT_ECHO:
 	not_yet:
 	default:
@@ -259,7 +267,7 @@ note_off(struct snd_midi_op *ops, void *drv, struct snd_midi_channel *chan,
 }
 
 /*
- * Do all driver independent operations for this controller and pass
+ * Do all driver independent operations for this controler and pass
  * events that need to take place immediately to the driver.
  */
 static void

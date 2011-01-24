@@ -6,13 +6,15 @@
 
 HEAD	= head.o
 OBJS	= misc.o
-FONTC	= $(srctree)/drivers/video/console/font_acorn_8x8.c
+FONTC	= drivers/video/console/font_acorn_8x8.c
+
+FONT = $(addprefix ../../../../drivers/video/console/, font_acorn_8x8.o)
 
 #
 # Architecture dependencies
 #
 ifeq ($(CONFIG_ARCH_ACORN),y)
-OBJS		+= ll_char_wr.o font.o
+OBJS		+= ll_char_wr.o $(FONT)
 endif
 
 ifeq ($(CONFIG_ARCH_SHARK),y)
@@ -21,6 +23,10 @@ endif
 
 ifeq ($(CONFIG_ARCH_L7200),y)
 OBJS		+= head-l7200.o
+endif
+
+ifeq ($(CONFIG_ARCH_CLPS7500),y)
+HEAD		= head-clps7500.o
 endif
 
 ifeq ($(CONFIG_ARCH_P720T),y)
@@ -40,12 +46,12 @@ ifeq ($(CONFIG_PXA_SHARPSL),y)
 OBJS		+= head-sharpsl.o
 endif
 
-ifeq ($(CONFIG_CPU_ENDIAN_BE32),y)
-ifeq ($(CONFIG_CPU_CP15),y)
-OBJS		+= big-endian.o
-else
-# The endian should be set by h/w design.
+ifeq ($(CONFIG_ARCH_AT91RM9200),y)
+OBJS		+= head-at91rm9200.o
 endif
+
+ifeq ($(CONFIG_CPU_BIG_ENDIAN),y)
+OBJS		+= big-endian.o
 endif
 
 #
@@ -63,24 +69,15 @@ endif
 
 SEDFLAGS	= s/TEXT_START/$(ZTEXTADDR)/;s/BSS_START/$(ZBSSADDR)/
 
-targets       := vmlinux vmlinux.lds piggy.gz piggy.o font.o font.c \
+targets       := vmlinux vmlinux.lds piggy.gz piggy.o $(FONT) \
 		 head.o misc.o $(OBJS)
-
-ifeq ($(CONFIG_FUNCTION_TRACER),y)
-ORIG_CFLAGS := $(KBUILD_CFLAGS)
-KBUILD_CFLAGS = $(subst -pg, , $(ORIG_CFLAGS))
-endif
-
-EXTRA_CFLAGS  := -fpic -fno-builtin
-EXTRA_AFLAGS  := -Wa,-march=all
+EXTRA_CFLAGS  := -fpic
+EXTRA_AFLAGS  :=
 
 # Supply ZRELADDR, INITRD_PHYS and PARAMS_PHYS to the decompressor via
 # linker symbols.  We only define initrd_phys and params_phys if the
 # machine class defined the corresponding makefile variable.
 LDFLAGS_vmlinux := --defsym zreladdr=$(ZRELADDR)
-ifeq ($(CONFIG_CPU_ENDIAN_BE8),y)
-LDFLAGS_vmlinux += --be8
-endif
 ifneq ($(INITRD_PHYS),)
 LDFLAGS_vmlinux += --defsym initrd_phys=$(INITRD_PHYS)
 endif
@@ -88,7 +85,7 @@ ifneq ($(PARAMS_PHYS),)
 LDFLAGS_vmlinux += --defsym params_phys=$(PARAMS_PHYS)
 endif
 LDFLAGS_vmlinux += -p --no-undefined -X \
-	$(shell $(CC) $(KBUILD_CFLAGS) --print-libgcc-file-name) -T
+	$(shell $(CC) $(CFLAGS) --print-libgcc-file-name) -T
 
 # Don't allow any static data in misc.o, which
 # would otherwise mess up our GOT table
@@ -104,10 +101,10 @@ $(obj)/piggy.gz: $(obj)/../Image FORCE
 
 $(obj)/piggy.o:  $(obj)/piggy.gz FORCE
 
-CFLAGS_font.o := -Dstatic=
-
-$(obj)/font.c: $(FONTC)
-	$(call cmd,shipped)
+CFLAGS_font_acorn_8x8.o := -Dstatic=
 
 $(obj)/vmlinux.lds: $(obj)/vmlinux.lds.in arch/arm/boot/Makefile .config
 	@sed "$(SEDFLAGS)" < $< > $@
+
+$(obj)/misc.o: $(obj)/misc.c include/asm/arch/uncompress.h lib/inflate.c
+

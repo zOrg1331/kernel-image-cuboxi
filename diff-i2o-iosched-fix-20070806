@@ -1,0 +1,33 @@
+diff --git a/drivers/message/i2o/i2o_block.c b/drivers/message/i2o/i2o_block.c
+index 1ddc2fb..a607b49 100644
+--- a/drivers/message/i2o/i2o_block.c
++++ b/drivers/message/i2o/i2o_block.c
+@@ -453,6 +453,7 @@ static void i2o_block_end_request(struct
+ 	struct i2o_block_device *dev = ireq->i2o_blk_dev;
+ 	request_queue_t *q = req->q;
+ 	unsigned long flags;
++	int need_wake;
+ 
+ 	if (end_that_request_chunk(req, uptodate, nr_bytes)) {
+ 		int leftover = (req->hard_nr_sectors << KERNEL_SECTOR_SHIFT);
+@@ -475,12 +476,19 @@ static void i2o_block_end_request(struct
+ 		list_del(&ireq->queue);
+ 	}
+ 
+-	blk_start_queue(q);
++	need_wake = 0;
++	if (test_bit(QUEUE_FLAG_STOPPED, &q->queue_flags))
++		blk_start_queue(q);
++	else if (dev && dev->open_queue_depth == 0)
++		need_wake = 1;
+ 
+ 	spin_unlock_irqrestore(q->queue_lock, flags);
+ 
+ 	i2o_block_sglist_free(ireq);
+ 	i2o_block_request_free(ireq);
++
++	if (need_wake)
++		blk_run_queue(q);
+ };
+ 
+ /**

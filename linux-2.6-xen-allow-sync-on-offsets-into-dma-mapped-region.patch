@@ -1,0 +1,75 @@
+From: Bill Burns <bburns@redhat.com>
+Date: Thu, 20 Dec 2007 13:29:00 -0500
+Subject: [xen] allow sync on offsets into dma-mapped region
+Message-id: 20071220182900.7320.9303.sendpatchset@localhost.localdomain
+O-Subject: [RHEL5.2 PATCH 4/6] Allow sync on arbitrary offsets into dma-mapped region
+Bugzilla: 328321
+
+# HG changeset patch
+# User kfraser@localhost.localdomain
+# Date 1184008553 -3600
+# Node ID 656eb30f7c9bbb45e3cd20da8324fb10474d90e5
+# Parent  f7eed71281eadea31909e2728d783f7c97af6ea8
+swiotlb: Allow sync on arbitrary offsets into dma-mapped region.
+Signed-off-by: Keir Fraser <keir@xensource.com>
+linux-2.6.18-xen changeset: 101:5684370b1c4d9911fd4118fdc472c3c7a9adfca3
+linux-2.6.18-xen date: Mon Jul 09 20:15:53 2007 +0100
+
+Acked-by: "David S. Miller" <davem@redhat.com>
+Acked-by: Rik van Riel <riel@redhat.com>
+
+diff --git a/arch/i386/kernel/swiotlb.c b/arch/i386/kernel/swiotlb.c
+index 497ae67..0e73bb0 100644
+--- a/arch/i386/kernel/swiotlb.c
++++ b/arch/i386/kernel/swiotlb.c
+@@ -334,12 +334,10 @@ map_single(struct device *hwdev, struct phys_addr buffer, size_t size, int dir)
+ 	 */
+ 	slot_buf = buffer;
+ 	for (i = 0; i < nslots; i++) {
++		slot_buf.page += slot_buf.offset >> PAGE_SHIFT;
++		slot_buf.offset &= PAGE_SIZE - 1;
+ 		io_tlb_orig_addr[index+i] = slot_buf;
+ 		slot_buf.offset += 1 << IO_TLB_SHIFT;
+-		if (slot_buf.offset >= PAGE_SIZE) {
+-			slot_buf.page++;
+-			slot_buf.offset -= PAGE_SIZE;
+-		}
+ 	}
+ 	if ((dir == DMA_TO_DEVICE) || (dir == DMA_BIDIRECTIONAL))
+ 		__sync_single(buffer, dma_addr, size, DMA_TO_DEVICE);
+@@ -347,6 +345,16 @@ map_single(struct device *hwdev, struct phys_addr buffer, size_t size, int dir)
+ 	return dma_addr;
+ }
+ 
++struct phys_addr dma_addr_to_phys_addr(char *dma_addr)
++{
++	int index = (dma_addr - iotlb_virt_start) >> IO_TLB_SHIFT;
++	struct phys_addr buffer = io_tlb_orig_addr[index];
++	buffer.offset += (long)dma_addr & ((1 << IO_TLB_SHIFT) - 1);
++	buffer.page += buffer.offset >> PAGE_SHIFT;
++	buffer.offset &= PAGE_SIZE - 1;
++	return buffer;
++}
++
+ /*
+  * dma_addr is the kernel virtual address of the bounce buffer to unmap.
+  */
+@@ -356,7 +364,7 @@ unmap_single(struct device *hwdev, char *dma_addr, size_t size, int dir)
+ 	unsigned long flags;
+ 	int i, count, nslots = ALIGN(size, 1 << IO_TLB_SHIFT) >> IO_TLB_SHIFT;
+ 	int index = (dma_addr - iotlb_virt_start) >> IO_TLB_SHIFT;
+-	struct phys_addr buffer = io_tlb_orig_addr[index];
++	struct phys_addr buffer = dma_addr_to_phys_addr(dma_addr);
+ 
+ 	/*
+ 	 * First, sync the memory before unmapping the entry
+@@ -396,8 +404,7 @@ unmap_single(struct device *hwdev, char *dma_addr, size_t size, int dir)
+ static void
+ sync_single(struct device *hwdev, char *dma_addr, size_t size, int dir)
+ {
+-	int index = (dma_addr - iotlb_virt_start) >> IO_TLB_SHIFT;
+-	struct phys_addr buffer = io_tlb_orig_addr[index];
++	struct phys_addr buffer = dma_addr_to_phys_addr(dma_addr);
+ 	BUG_ON((dir != DMA_FROM_DEVICE) && (dir != DMA_TO_DEVICE));
+ 	__sync_single(buffer, dma_addr, size, dir);
+ }

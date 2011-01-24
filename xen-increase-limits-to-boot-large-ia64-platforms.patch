@@ -1,0 +1,52 @@
+From: Doug Chapman <dchapman@redhat.com>
+Subject: [RHEL5.1 patch][xen] increase limits to boot on large ia64 platforms
+Date: Fri, 24 Aug 2007 14:42:17 -0400
+Bugzilla: 254062
+Message-Id: <1187980937.17138.24.camel@athlon>
+Changelog: [xen] increase limits to boot on large ia64 platforms
+
+
+Fix for BZ 254062
+
+This patch is needed to increase some limits to account for large memory
+maps on the larger HP ia64 systems for xen.  This only increases limits
+and only on ia64, it does not make any functional changes.  Any
+(unlikely) regressions would be found by simple boot testing.
+
+- Doug
+
+
+--- xen/arch/ia64/xen/dom_fw.c.dune	2007-08-24 14:32:42.000000000 -0400
++++ xen/arch/ia64/xen/dom_fw.c	2007-08-24 14:33:09.000000000 -0400
+@@ -489,7 +489,7 @@
+ 
+ #define NFUNCPTRS 16
+ #define NUM_EFI_SYS_TABLES 6
+-#define NUM_MEM_DESCS 64 //large enough
++#define NUM_MEM_DESCS 256 //large enough
+ 
+ struct fw_tables {
+ 	efi_system_table_t efi_systab;
+--- xen/include/asm-ia64/dom_fw.h.dune	2007-08-24 14:33:28.000000000 -0400
++++ xen/include/asm-ia64/dom_fw.h	2007-08-24 14:34:04.000000000 -0400
+@@ -10,7 +10,7 @@
+ /* Portion of guest physical memory space reserved for PAL/SAL/EFI/ACPI
+    data and code.  */
+ #define FW_BASE_PADDR		0x0000UL
+-#define FW_END_PADDR		0x3000UL
++#define FW_END_PADDR		0x8000UL
+ 
+ /* This is used to determined the portion of a domain's metaphysical memory
+    space reserved for the hypercall patch table. */
+@@ -30,8 +30,8 @@
+ #define FW_ACPI_END_PADDR	0x2000UL
+ 
+ /* Base and end guest physical address of EFI and SAL (non-ACPI) tables.  */
+-#define FW_TABLES_BASE_PADDR	0x2000UL
+-#define FW_TABLES_END_PADDR	0x3000UL
++#define FW_TABLES_BASE_PADDR	0x4000UL
++#define FW_TABLES_END_PADDR	0x8000UL
+ 
+ 
+ /* Hypercalls number have a low part and a high part.
+

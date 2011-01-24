@@ -1,0 +1,48 @@
+From: Milan Broz <mbroz@redhat.com>
+Subject: [RHEL 5.1 PATCH] dm: allow offline devices in table
+Date: Thu, 10 May 2007 18:10:56 +0200
+Bugzilla: 239655
+Message-Id: <46434410.4090300@redhat.com>
+Changelog: [md] dm: allow offline devices in table
+
+
+RHEL5.1 device mapper: allow offline devices in table
+Resolves: rhbz#239655
+Patch is upstream.
+
+Allow check_device_area to succeed if a device has an i_size of zero. This
+addresses an issue seen on DASD devices setting up a multipath table for
+paths in online and offline state.
+
+Kernel with fix compiled and tested (also with simple testcase in bugzilla).
+
+---
+
+ drivers/md/dm-table.c |   10 ++++++----
+ 1 file changed, 6 insertions(+), 4 deletions(-)
+
+Index: linux-2.6.18/drivers/md/dm-table.c
+===================================================================
+--- linux-2.6.18.orig/drivers/md/dm-table.c	2007-05-10 18:07:15.000000000 +0200
++++ linux-2.6.18/drivers/md/dm-table.c	2007-05-10 18:07:19.000000000 +0200
+@@ -425,13 +425,15 @@ static void close_dev(struct dm_dev *d, 
+ }
+ 
+ /*
+- * If possible (ie. blk_size[major] is set), this checks an area
+- * of a destination device is valid.
++ * If possible, this checks an area of a destination device is valid.
+  */
+ static int check_device_area(struct dm_dev *dd, sector_t start, sector_t len)
+ {
+-	sector_t dev_size;
+-	dev_size = dd->bdev->bd_inode->i_size >> SECTOR_SHIFT;
++	sector_t dev_size = dd->bdev->bd_inode->i_size >> SECTOR_SHIFT;
++
++	if (!dev_size)
++		return 1;
++
+ 	return ((start < dev_size) && (len <= (dev_size - start)));
+ }
+ 
+

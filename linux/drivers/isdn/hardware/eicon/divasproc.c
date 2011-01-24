@@ -113,7 +113,7 @@ static int divas_close(struct inode *inode, struct file *file)
 	return (0);
 }
 
-static const struct file_operations divas_fops = {
+static struct file_operations divas_fops = {
 	.owner   = THIS_MODULE,
 	.llseek  = no_llseek,
 	.read    = divas_read,
@@ -125,10 +125,14 @@ static const struct file_operations divas_fops = {
 
 int create_divas_proc(void)
 {
-	divas_proc_entry = proc_create(divas_proc_name, S_IFREG | S_IRUGO,
-					proc_net_eicon, &divas_fops);
+	divas_proc_entry = create_proc_entry(divas_proc_name,
+					     S_IFREG | S_IRUGO,
+					     proc_net_eicon);
 	if (!divas_proc_entry)
 		return (0);
+
+	divas_proc_entry->proc_fops = &divas_fops;
+	divas_proc_entry->owner = THIS_MODULE;
 
 	return (1);
 }

@@ -1,0 +1,436 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Date: Mon, 10 May 2010 18:51:33 -0400
+Subject: [net] qlge: compat header cleanup
+Message-id: <20100510184917.2781.45754.sendpatchset@prarit.bos.redhat.com>
+Patchwork-id: 24972
+O-Subject: [RHEL5 PATCH 12/27] compat.h cleanup: qlge driver changes
+Bugzilla: 546740
+RH-Acked-by: Jarod Wilson <jarod@redhat.com>
+
+>From 2c7299941538374afe427b7247a8d0dd43877b1e Mon Sep 17 00:00:00 2001
+From: Prarit Bhargava <prarit@redhat.com>
+Date: Mon, 10 May 2010 09:35:34 -0400
+Subject: [PATCH] qlge driver changes
+
+Resolves 546740.
+
+diff --git a/drivers/net/qlge/kcompat.h b/drivers/net/qlge/kcompat.h
+deleted file mode 100644
+index 77cc503..0000000
+--- a/drivers/net/qlge/kcompat.h
++++ /dev/null
+@@ -1,144 +0,0 @@
+-/*
+- * QLogic qlge NIC HBA Driver
+- * Copyright (c)  2003-2008 QLogic Corporation
+- * See LICENSE.qlge for copyright and licensing details.
+- * Author:     Linux qlge network device driver by
+- *                      Ron Mercer <ron.mercer@qlogic.com>
+- */
+-
+-#ifndef _KCOMPAT_H_
+-#define _KCOMPAT_H_
+-
+-#include <linux/version.h>
+-#include <linux/init.h>
+-#include <linux/types.h>
+-#include <linux/errno.h>
+-#include <linux/module.h>
+-#include <linux/pci.h>
+-#include <linux/netdevice.h>
+-#include <linux/etherdevice.h>
+-#include <linux/skbuff.h>
+-#include <linux/ioport.h>
+-#include <linux/slab.h>
+-#include <linux/list.h>
+-#include <linux/delay.h>
+-#include <linux/sched.h>
+-#include <linux/in.h>
+-#include <linux/ip.h>
+-#include <linux/udp.h>
+-#include <linux/mii.h>
+-#include <asm/io.h>
+-
+-/*****************************************************************************/
+-#ifndef NETIF_F_GRO
+-#define vlan_gro_receive(_napi, _vlgrp, _vlan, _skb) \
+-		vlan_hwaccel_receive_skb(_skb, _vlgrp, _vlan)
+-#define napi_gro_receive(_napi, _skb) netif_receive_skb(_skb)
+-#endif
+-
+-#if (LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 18))
+-#ifndef CHECKSUM_PARTIAL
+-#define CHECKSUM_PARTIAL CHECKSUM_HW
+-#define CHECKSUM_COMPLETE CHECKSUM_HW
+-#endif
+-
+-#ifndef IRQF_SHARED
+-#define IRQF_SHARED SA_SHIRQ
+-#endif
+-
+-#ifndef netdev_alloc_skb
+-#define netdev_alloc_skb _kc_netdev_alloc_skb
+-static inline struct sk_buff *_kc_netdev_alloc_skb(struct net_device *dev,
+-						unsigned int length)
+-{
+-	struct sk_buff *skb;
+-	skb = alloc_skb(length + 16, GFP_ATOMIC);
+-	if (likely(skb != NULL)) {
+-		skb_reserve(skb, 16);
+-		skb->dev = dev;
+-	}
+-	return skb;
+-}
+-#endif
+-
+-static inline unsigned char *skb_transport_header(const struct sk_buff *skb)
+-{
+-	return skb->h.raw;
+-}
+-static inline struct udphdr *udp_hdr(const struct sk_buff *skb)
+-{
+-	return (struct udphdr *)skb_transport_header(skb);
+-}
+-
+-#define pci_channel_offline(pdev) (pdev->error_state && \
+-	pdev->error_state != pci_channel_io_normal)
+-
+-#endif /* < 2.6.18 */
+-
+-/*****************************************************************************/
+-#if (LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 19))
+-
+-#ifndef RHEL_RELEASE_CODE
+-#define RHEL_RELEASE_CODE 0
+-#endif
+-#ifndef RHEL_RELEASE_VERSION
+-#define RHEL_RELEASE_VERSION(a, b) 0
+-#endif
+-#if !defined(__USE_COMPAT_LAYER_2_6_18_PLUS__)
+-#if (!((RHEL_RELEASE_CODE > RHEL_RELEASE_VERSION(4, 4)) && \
+-	(RHEL_RELEASE_CODE < RHEL_RELEASE_VERSION(5, 0)) || \
+-	(RHEL_RELEASE_CODE > RHEL_RELEASE_VERSION(5, 0))))
+-typedef irqreturn_t (*irq_handler_t)(int, void*, struct pt_regs *);
+-#endif
+-#endif /* !defined(__USE_COMPAT_LAYER_2_6_18_PLUS__) */
+-typedef irqreturn_t (*new_handler_t)(int, void*);
+-static inline irqreturn_t _kc_request_irq(unsigned int irq,
+-			new_handler_t handler, unsigned long flags,
+-			const char *devname, void *dev_id)
+-{
+-	irq_handler_t new_handler = (irq_handler_t) handler;
+-	return request_irq(irq, new_handler, flags, devname, dev_id);
+-}
+-#if defined(__COMPAT_LAYER_2_6_18_PLUS__)
+-#undef irq_handler_t
+-#endif
+-
+-#undef request_irq
+-#define request_irq(irq, handler, flags, devname, dev_id) \
+-		_kc_request_irq((irq), (handler), (flags), (devname), (dev_id))
+-
+-#define irq_handler_t new_handler_t
+-
+-#if !defined(__USE_COMPAT_LAYER_2_6_18_PLUS__)
+-#undef INIT_WORK
+-#define INIT_WORK(_work, _func) \
+-do { \
+-	INIT_LIST_HEAD(&(_work)->entry); \
+-	(_work)->pending = 0; \
+-	(_work)->func = (void (*)(void *))_func; \
+-	(_work)->data = _work; \
+-	init_timer(&(_work)->timer); \
+-} while (0)
+-#define INIT_DELAYED_WORK INIT_WORK
+-#endif
+-
+-#define tcp_hdr(skb) (skb->h.th)
+-#define tcp_hdrlen(skb) (skb->h.th->doff << 2)
+-#define skb_transport_offset(skb) (skb->h.raw - skb->data)
+-#define skb_transport_header(skb) (skb->h.raw)
+-#define ipv6_hdr(skb) (skb->nh.ipv6h)
+-#define ip_hdr(skb) (skb->nh.iph)
+-#define skb_network_offset(skb) (skb->nh.raw - skb->data)
+-#define skb_network_header(skb) (skb->nh.raw)
+-#define skb_network_header_len(skb) (skb->h.raw - skb->nh.raw)
+-
+-#define cancel_delayed_work_sync(x) cancel_delayed_work(x)
+-
+-#endif /* < 2.6.19 */
+-
+-/*****************************************************************************/
+-#if (LINUX_VERSION_CODE != KERNEL_VERSION(2, 6, 16))
+-typedef __u16 __bitwise __sum16;
+-#endif /* > 2.6.18 */
+-
+-#endif /* _KCOMPAT_H_ */
+diff --git a/drivers/net/qlge/qlge.h b/drivers/net/qlge/qlge.h
+index ab2a2d6..d1221b0 100644
+--- a/drivers/net/qlge/qlge.h
++++ b/drivers/net/qlge/qlge.h
+@@ -8,9 +8,27 @@
+ #ifndef _QLGE_H_
+ #define _QLGE_H_
+ 
++#include <linux/version.h>
++#include <linux/init.h>
++#include <linux/types.h>
++#include <linux/errno.h>
++#include <linux/module.h>
++#include <linux/pci.h>
++#include <linux/netdevice.h>
++#include <linux/etherdevice.h>
++#include <linux/skbuff.h>
++#include <linux/ioport.h>
++#include <linux/slab.h>
++#include <linux/list.h>
++#include <linux/delay.h>
++#include <linux/sched.h>
++#include <linux/in.h>
++#include <linux/ip.h>
++#include <linux/udp.h>
++#include <linux/mii.h>
++#include <asm/io.h>
+ #include <linux/pci.h>
+ #include <linux/netdevice.h>
+-#include "kcompat.h"
+ 
+ /*
+  * General definitions...
+@@ -1998,13 +2016,13 @@ struct ql_adapter {
+ 
+ 	struct net_device_stats stats;
+ 	struct workqueue_struct *workqueue;
+-	struct work_struct asic_reset_work;
+-	struct work_struct mpi_reset_work;
+-	struct work_struct mpi_work;
+-	struct work_struct mpi_port_cfg_work;
+-	struct work_struct mpi_idc_work;
+-	struct work_struct mpi_core_to_log;
+-	struct work_struct link_work;
++	struct delayed_work asic_reset_work;
++	struct delayed_work mpi_reset_work;
++	struct delayed_work mpi_work;
++	struct delayed_work mpi_port_cfg_work;
++	struct delayed_work mpi_idc_work;
++	struct delayed_work mpi_core_to_log;
++	struct delayed_work link_work;
+ 	struct completion ide_completion;
+ 	struct nic_operations *nic_ops;
+ 	u16 device_id;
+@@ -2077,11 +2095,11 @@ extern int ql_get_routing_reg(struct ql_adapter *qdev, u32 index, u32 *value);
+ extern int ql_write_cfg(struct ql_adapter *qdev, void *ptr, int size, u32 bit,
+ 			u16 q_id);
+ void ql_queue_fw_error(struct ql_adapter *qdev);
+-void ql_mpi_work(struct work_struct *work);
+-void ql_mpi_reset_work(struct work_struct *work);
+-void ql_mpi_idc_work(struct work_struct *work);
+-void ql_mpi_core_to_log(struct work_struct *work);
+-void ql_mpi_port_cfg_work(struct work_struct *work);
++void ql_mpi_work(void *data);
++void ql_mpi_reset_work(void *data);
++void ql_mpi_idc_work(void *data);
++void ql_mpi_core_to_log(void *data);
++void ql_mpi_port_cfg_work(void *data);
+ int ql_wait_reg_rdy(struct ql_adapter *qdev, u32 reg, u32 bit, u32 ebit);
+ void ql_queue_asic_error(struct ql_adapter *qdev);
+ u32 ql_enable_completion_interrupt(struct ql_adapter *qdev, u32 intr);
+diff --git a/drivers/net/qlge/qlge_dbg.c b/drivers/net/qlge/qlge_dbg.c
+index 7740ef2..e7ee95d 100644
+--- a/drivers/net/qlge/qlge_dbg.c
++++ b/drivers/net/qlge/qlge_dbg.c
+@@ -1407,10 +1407,11 @@ static void ql_gen_reg_dump(struct ql_adapter *qdev,
+ }
+ 
+ /* Coredump to messages log file using separate worker thread */
+-void ql_mpi_core_to_log(struct work_struct *work)
++void ql_mpi_core_to_log(void *data)
+ {
++	struct work_struct *work = data;
+ 	struct ql_adapter *qdev =
+-		container_of(work, struct ql_adapter, mpi_core_to_log);
++		container_of(work, struct ql_adapter, mpi_core_to_log.work);
+ 	u32 *tmp, count;
+ 	int i;
+ 	
+diff --git a/drivers/net/qlge/qlge_main.c b/drivers/net/qlge/qlge_main.c
+index 7a5698b..f66f617 100644
+--- a/drivers/net/qlge/qlge_main.c
++++ b/drivers/net/qlge/qlge_main.c
+@@ -40,6 +40,7 @@
+ #include <linux/mm.h>
+ #include <linux/vmalloc.h>
+ #include <net/ip6_checksum.h>
++#include <linux/workqueue.h>
+ 
+ #include "qlge.h"
+ 
+@@ -741,10 +742,11 @@ static void ql_enable_all_completion_interrupts(struct ql_adapter *qdev)
+ /* link state work function. Delaying link up by 2 second because
+  * of bonding mode (tlb/alb) modifies the mac addresses. 
+  */
+-static void ql_link_work(struct work_struct *work)
++static void ql_link_work(void *data)
+ {
++	struct work_struct *work = data;
+ 	struct ql_adapter *qdev = 
+-			container_of(work, struct ql_adapter, link_work);
++			container_of(work, struct ql_adapter, link_work.work);
+ 	
+ 	if ((ql_read32(qdev, STS) & qdev->port_init) &&
+ 			(ql_read32(qdev, STS) & qdev->port_link_up))
+@@ -988,7 +990,7 @@ static int ql_8000_port_initialize(struct ql_adapter *qdev)
+ 	if (status)
+ 		goto exit;
+ 	/* Wake up a worker to get/set the TX/RX frame sizes. */
+-	queue_delayed_work(qdev->workqueue, &qdev->mpi_port_cfg_work, 0);
++	queue_delayed_work(qdev->workqueue, &qdev->mpi_port_cfg_work.work, 0);
+ exit:
+ 	return status;
+ }
+@@ -1828,7 +1830,7 @@ void ql_queue_fw_error(struct ql_adapter *qdev)
+ 	set_bit(QL_IN_FW_RST, &qdev->flags);
+ 
+ 	ql_link_off(qdev);
+-	queue_delayed_work(qdev->workqueue, &qdev->mpi_reset_work, 0);
++	queue_delayed_work(qdev->workqueue, &qdev->mpi_reset_work.work, 0);
+ }
+ 
+ void ql_queue_asic_error(struct ql_adapter *qdev)
+@@ -1840,7 +1842,7 @@ void ql_queue_asic_error(struct ql_adapter *qdev)
+ 	 * thread
+ 	 */
+ 	clear_bit(QL_ADAPTER_UP, &qdev->flags);
+-	queue_delayed_work(qdev->workqueue, &qdev->asic_reset_work, 0);
++	queue_delayed_work(qdev->workqueue, &qdev->asic_reset_work.work, 0);
+ }
+ 
+ static void ql_process_chip_ae_intr(struct ql_adapter *qdev,
+@@ -2106,7 +2108,7 @@ static irqreturn_t qlge_msix_dflt_rx_isr(int irq, void *dev_id,
+ 		 */
+ 		QPRINTK(qdev, INTR, ERR, "Got MPI processor interrupt.\n");
+ 		queue_delayed_work(qdev->workqueue,
+-			&qdev->mpi_work, 0);
++			&qdev->mpi_work.work, 0);
+ 	}
+ 
+ 	return IRQ_HANDLED;
+@@ -2160,7 +2162,7 @@ static irqreturn_t qlge_isr(int irq, void *dev_id, struct pt_regs *ptregs)
+ 		QPRINTK(qdev, INTR, ERR, "Got MPI processor interrupt.\n");
+ 		ql_disable_completion_interrupt(qdev, intr_context->intr);
+ 		queue_delayed_work(qdev->workqueue,
+-					&qdev->mpi_work, 0);
++					&qdev->mpi_work.work, 0);
+ 		work_done++;
+ 	}
+ 
+@@ -3669,7 +3671,7 @@ static int ql_adapter_up(struct ql_adapter *qdev)
+ 	ql_enable_all_completion_interrupts(qdev);
+ 	
+ 	/* trigger link work function*/
+-	queue_delayed_work(qdev->workqueue, &qdev->link_work,
++	queue_delayed_work(qdev->workqueue, &qdev->link_work.work,
+ 					msecs_to_jiffies(2000));
+ 	ql_enable_interrupts(qdev);
+ 	return 0;
+@@ -4093,10 +4095,11 @@ static void qlge_tx_timeout(struct net_device *ndev)
+ 	ql_queue_asic_error(qdev);
+ }
+ 
+-static void ql_asic_reset_work(struct work_struct *work)
++static void ql_asic_reset_work(void *data)
+ {
++	struct work_struct *work = data;
+ 	struct ql_adapter *qdev =
+-		container_of(work, struct ql_adapter, asic_reset_work);
++		container_of(work, struct ql_adapter, asic_reset_work.work);
+ 	int status;
+ 
+ 	status = ql_adapter_down(qdev);
+diff --git a/drivers/net/qlge/qlge_mpi.c b/drivers/net/qlge/qlge_mpi.c
+index ba90141..5b34e74 100644
+--- a/drivers/net/qlge/qlge_mpi.c
++++ b/drivers/net/qlge/qlge_mpi.c
+@@ -238,7 +238,7 @@ static int ql_idc_req_aen(struct ql_adapter *qdev)
+ 		 * when we leave mpi_worker.
+ 		 */
+ 		ql_write32(qdev, INTR_MASK, (INTR_MASK_PI << 16));
+-		queue_delayed_work(qdev->workqueue, &qdev->mpi_idc_work, 0);
++		queue_delayed_work(qdev->workqueue, &qdev->mpi_idc_work.work, 0);
+ 	}
+ 	return status;
+ }
+@@ -309,7 +309,7 @@ static void ql_link_up(struct ql_adapter *qdev, struct mbox_params *mbcp)
+ 		 */
+ 		ql_write32(qdev, INTR_MASK, (INTR_MASK_PI << 16));
+ 		queue_delayed_work(qdev->workqueue,
+-				&qdev->mpi_port_cfg_work, 0);
++				&qdev->mpi_port_cfg_work.work, 0);
+ 	}
+ 
+ 	ql_link_on(qdev);
+@@ -1146,10 +1146,11 @@ static int ql_set_port_cfg(struct ql_adapter *qdev)
+  * from the firmware and, if necessary, changes them to match
+  * the MTU setting.
+  */
+-void ql_mpi_port_cfg_work(struct work_struct *work)
++void ql_mpi_port_cfg_work(void *data)
+ {
++	struct work_struct *work = data;
+ 	struct ql_adapter *qdev =
+-		container_of(work, struct ql_adapter, mpi_port_cfg_work);
++		container_of(work, struct ql_adapter, mpi_port_cfg_work.work);
+ 	int status;
+ 
+ 	status = ql_mb_get_port_cfg(qdev);
+@@ -1185,10 +1186,11 @@ err:
+  * has been made and then send a mailbox command ACKing
+  * the change request.
+  */
+-void ql_mpi_idc_work(struct work_struct *work)
++void ql_mpi_idc_work(void *data)
+ {
++	struct work_struct *work = data;
+ 	struct ql_adapter *qdev =
+-		container_of(work, struct ql_adapter, mpi_idc_work);
++		container_of(work, struct ql_adapter, mpi_idc_work.work);
+ 	int status;
+ 	struct mbox_params *mbcp = &qdev->idc_mbc;
+ 	u32 aen;
+@@ -1254,10 +1256,11 @@ void ql_mpi_idc_work(struct work_struct *work)
+ 	}
+ }
+ 
+-void ql_mpi_work(struct work_struct *work)
++void ql_mpi_work(void *data)
+ {
++	struct work_struct *work = data;
+ 	struct ql_adapter *qdev =
+-		container_of(work, struct ql_adapter, mpi_work);
++		container_of(work, struct ql_adapter, mpi_work.work);
+ 	struct mbox_params mbc;
+ 	struct mbox_params *mbcp = &mbc;
+ 	int err = 0;
+@@ -1275,10 +1278,11 @@ void ql_mpi_work(struct work_struct *work)
+ 	ql_enable_completion_interrupt(qdev, 0);
+ }
+ 
+-void ql_mpi_reset_work(struct work_struct *work)
++void ql_mpi_reset_work(void *data)
+ {
++	struct work_struct *work = data;
+ 	struct ql_adapter *qdev =
+-		container_of(work, struct ql_adapter, mpi_reset_work);
++		container_of(work, struct ql_adapter, mpi_reset_work.work);
+ 	cancel_delayed_work_sync(&qdev->mpi_work);
+ 	cancel_delayed_work_sync(&qdev->mpi_port_cfg_work);
+ 	cancel_delayed_work_sync(&qdev->mpi_core_to_log);
+@@ -1303,7 +1307,7 @@ void ql_mpi_reset_work(struct work_struct *work)
+ 		qdev->core_is_dumped = 1;
+ 		if (test_bit(QL_SPOOL_LOG, &qdev->flags))
+ 			queue_delayed_work(qdev->workqueue,
+-				&qdev->mpi_core_to_log, 5 * HZ); 
++				&qdev->mpi_core_to_log.work, 5 * HZ);
+ 	}
+ 	ql_soft_reset_mpi_risc(qdev);
+ 	clear_bit(QL_IN_FW_RST, &qdev->flags);

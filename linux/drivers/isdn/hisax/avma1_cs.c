@@ -14,6 +14,7 @@
 
 #include <linux/kernel.h>
 #include <linux/init.h>
+#include <linux/sched.h>
 #include <linux/ptrace.h>
 #include <linux/slab.h>
 #include <linux/string.h>
@@ -122,10 +123,11 @@ static int avma1cs_probe(struct pcmcia_device *p_dev)
     DEBUG(0, "avma1cs_attach()\n");
 
     /* Allocate space for private device-specific data */
-    local = kzalloc(sizeof(local_info_t), GFP_KERNEL);
+    local = kmalloc(sizeof(local_info_t), GFP_KERNEL);
     if (!local)
 	return -ENOMEM;
 
+    memset(local, 0, sizeof(local_info_t));
     p_dev->priv = local;
 
     /* The io structure describes IO port mapping */
@@ -174,29 +176,38 @@ static void avma1cs_detach(struct pcmcia_device *link)
     
 ======================================================================*/
 
-static int avma1cs_configcheck(struct pcmcia_device *p_dev,
-			       cistpl_cftable_entry_t *cf,
-			       cistpl_cftable_entry_t *dflt,
-			       unsigned int vcc,
-			       void *priv_data)
+static int get_tuple(struct pcmcia_device *handle, tuple_t *tuple,
+		     cisparse_t *parse)
 {
-	if (cf->io.nwin <= 0)
-		return -ENODEV;
-
-	p_dev->io.BasePort1 = cf->io.win[0].base;
-	p_dev->io.NumPorts1 = cf->io.win[0].len;
-	p_dev->io.NumPorts2 = 0;
-	printk(KERN_INFO "avma1_cs: testing i/o %#x-%#x\n",
-	       p_dev->io.BasePort1,
-	       p_dev->io.BasePort1+p_dev->io.NumPorts1-1);
-	return pcmcia_request_io(p_dev, &p_dev->io);
+    int i = pcmcia_get_tuple_data(handle, tuple);
+    if (i != CS_SUCCESS) return i;
+    return pcmcia_parse_tuple(handle, tuple, parse);
 }
 
+static int first_tuple(struct pcmcia_device *handle, tuple_t *tuple,
+		     cisparse_t *parse)
+{
+    int i = pcmcia_get_first_tuple(handle, tuple);
+    if (i != CS_SUCCESS) return i;
+    return get_tuple(handle, tuple, parse);
+}
+
+static int next_tuple(struct pcmcia_device *handle, tuple_t *tuple,
+		     cisparse_t *parse)
+{
+    int i = pcmcia_get_next_tuple(handle, tuple);
+    if (i != CS_SUCCESS) return i;
+    return get_tuple(handle, tuple, parse);
+}
 
 static int avma1cs_config(struct pcmcia_device *link)
 {
+    tuple_t tuple;
+    cisparse_t parse;
+    cistpl_cftable_entry_t *cf = &parse.cftable_entry;
     local_info_t *dev;
     int i;
+    u_char buf[64];
     char devname[128];
     IsdnCard_t	icard;
     int busy = 0;
@@ -205,19 +216,75 @@ static int avma1cs_config(struct pcmcia_device *link)
 
     DEBUG(0, "avma1cs_config(0x%p)\n", link);
 
-    devname[0] = 0;
-    if (link->prod_id[1])
-	    strlcpy(devname, link->prod_id[1], sizeof(devname));
-
-    if (pcmcia_loop_config(link, avma1cs_configcheck, NULL))
-	    return -ENODEV;
+    /*
+       This reads the card's CONFIG tuple to find its configuration
+       registers.
+    */
+    do {
+	tuple.DesiredTuple = CISTPL_CONFIG;
+	i = pcmcia_get_first_tuple(link, &tuple);
+	if (i != CS_SUCCESS) break;
+	tuple.TupleData = buf;
+	tuple.TupleDataMax = 64;
+	tuple.TupleOffset = 0;
+	i = pcmcia_get_tuple_data(link, &tuple);
+	if (i != CS_SUCCESS) break;
+	i = pcmcia_parse_tuple(link, &tuple, &parse);
+	if (i != CS_SUCCESS) break;
+	link->conf.ConfigBase = parse.config.base;
+    } while (0);
+    if (i != CS_SUCCESS) {
+	cs_error(link, ParseTuple, i);
+	return -ENODEV;
+    }
 
     do {
+
+	tuple.Attributes = 0;
+	tuple.TupleData = buf;
+	tuple.TupleDataMax = 254;
+	tuple.TupleOffset = 0;
+	tuple.DesiredTuple = CISTPL_VERS_1;
+
+	devname[0] = 0;
+	if( !first_tuple(link, &tuple, &parse) && parse.version_1.ns > 1 ) {
+	    strlcpy(devname,parse.version_1.str + parse.version_1.ofs[1], 
+			sizeof(devname));
+	}
+	/*
+         * find IO port
+         */
+	tuple.TupleData = (cisdata_t *)buf;
+	tuple.TupleOffset = 0; tuple.TupleDataMax = 255;
+	tuple.Attributes = 0;
+	tuple.DesiredTuple = CISTPL_CFTABLE_ENTRY;
+	i = first_tuple(link, &tuple, &parse);
+	while (i == CS_SUCCESS) {
+	    if (cf->io.nwin > 0) {
+		link->conf.ConfigIndex = cf->index;
+		link->io.BasePort1 = cf->io.win[0].base;
+		link->io.NumPorts1 = cf->io.win[0].len;
+		link->io.NumPorts2 = 0;
+		printk(KERN_INFO "avma1_cs: testing i/o %#x-%#x\n",
+			link->io.BasePort1,
+			link->io.BasePort1+link->io.NumPorts1 - 1);
+		i = pcmcia_request_io(link, &link->io);
+		if (i == CS_SUCCESS) goto found_port;
+	    }
+	    i = next_tuple(link, &tuple, &parse);
+	}
+
+found_port:
+	if (i != CS_SUCCESS) {
+	    cs_error(link, RequestIO, i);
+	    break;
+	}
+	
 	/*
 	 * allocate an interrupt line
 	 */
 	i = pcmcia_request_irq(link, &link->irq);
-	if (i != 0) {
+	if (i != CS_SUCCESS) {
 	    cs_error(link, RequestIRQ, i);
 	    /* undo */
 	    pcmcia_disable_device(link);
@@ -228,7 +295,7 @@ static int avma1cs_config(struct pcmcia_device *link)
 	 * configure the PCMCIA socket
 	 */
 	i = pcmcia_request_configuration(link, &link->conf);
-	if (i != 0) {
+	if (i != CS_SUCCESS) {
 	    cs_error(link, RequestConfiguration, i);
 	    pcmcia_disable_device(link);
 	    break;

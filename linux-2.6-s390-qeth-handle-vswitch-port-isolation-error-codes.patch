@@ -1,0 +1,94 @@
+From: Hans-Joachim Picht <hpicht@redhat.com>
+Date: Tue, 14 Jul 2009 18:55:51 +0200
+Subject: [s390] qeth: handle VSwitch Port Isolation error codes
+Message-id: 20090714165550.GA2417@blc4eb509856389.ibm.com
+O-Subject: [RHEL5 U5 PATCH 1/1] s390 - qeth: handle error codes from z/VM VSwitch Port Isolation
+Bugzilla: 503232
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+
+Description
+============
+Problem: Usually z/VM guests are allowed to change the MAC address
+of a VSWITCH device. This is no longer true, if z/VM Virtual Switch
+Port Isolation is active (see z/VM Apars VM64281 and VM64463). The
+corresponding error code should be translated into a meaningful
+message.
+Solution: The qeth driver issues the message:
+"MAC address <x> is not authorized" if z/VM Virtual Switch Port
+Isolation forbids setting of a locally defined virtual MAC address.
+
+Bugzilla
+=========
+
+BZ 503232
+https://bugzilla.redhat.com/show_bug.cgi?id=503232
+
+Upstream status of the patch:
+=============================
+
+The patch is upstream as of kernel version 2.6.31
+
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=0666eb06ab12b1f876719ff5b7d39cf3c609dec3
+
+Test status:
+============
+
+The patch has been tested and fixes the problem.
+The fix has been verified by the IBM test department.
+
+Please ACK.
+
+With best regards,
+
+	Hans
+
+diff --git a/drivers/s390/net/qeth_main.c b/drivers/s390/net/qeth_main.c
+index d11ea35..584af9b 100644
+--- a/drivers/s390/net/qeth_main.c
++++ b/drivers/s390/net/qeth_main.c
+@@ -6080,6 +6080,30 @@ qeth_layer2_send_setmac_cb(struct qeth_card *card,
+ 			   "device %s: x%x\n", CARD_BUS_ID(card),
+ 			   cmd->hdr.return_code);
+ 		card->info.mac_bits &= ~QETH_LAYER2_MAC_REGISTERED;
++		switch (cmd->hdr.return_code) {
++		case IPA_RC_L2_DUP_MAC:
++		case IPA_RC_L2_DUP_LAYER3_MAC:
++			PRINT_WARN("%s: MAC address "
++				"%2.2x:%2.2x:%2.2x:%2.2x:%2.2x:%2.2x "
++				"already exists\n",
++				CARD_BUS_ID(card),
++				card->dev->dev_addr[0], card->dev->dev_addr[1],
++				card->dev->dev_addr[2], card->dev->dev_addr[3],
++				card->dev->dev_addr[4], card->dev->dev_addr[5]);
++			break;
++		case IPA_RC_L2_MAC_NOT_AUTH_BY_HYP:
++		case IPA_RC_L2_MAC_NOT_AUTH_BY_ADP:
++			PRINT_WARN("%s: MAC address "
++				"%2.2x:%2.2x:%2.2x:%2.2x:%2.2x:%2.2x "
++				"is not authorized\n",
++				CARD_BUS_ID(card),
++				card->dev->dev_addr[0], card->dev->dev_addr[1],
++				card->dev->dev_addr[2], card->dev->dev_addr[3],
++				card->dev->dev_addr[4], card->dev->dev_addr[5]);
++			break;
++		default:
++			break;
++		}
+ 		cmd->hdr.return_code = -EIO;
+ 	} else {
+ 		card->info.mac_bits |= QETH_LAYER2_MAC_REGISTERED;
+diff --git a/drivers/s390/net/qeth_mpc.h b/drivers/s390/net/qeth_mpc.h
+index 8b2d955..7a7690b 100644
+--- a/drivers/s390/net/qeth_mpc.h
++++ b/drivers/s390/net/qeth_mpc.h
+@@ -154,6 +154,10 @@ enum qeth_ipa_return_codes {
+ 	IPA_RC_NOTSUPP             = 0x0001,
+ 	IPA_RC_NO_ACCESS           = 0x0002,
+ 	IPA_RC_FAILED              = 0x0003,
++	IPA_RC_L2_DUP_MAC          = 0x2005,
++	IPA_RC_L2_DUP_LAYER3_MAC   = 0x200a,
++	IPA_RC_L2_MAC_NOT_AUTH_BY_HYP	= 0x200c,
++	IPA_RC_L2_MAC_NOT_AUTH_BY_ADP	= 0x200d,
+ 	IPA_RC_DATA_MISMATCH       = 0xe001,
+ 	IPA_RC_INVALID_LAN_TYPE    = 0xe003,
+ 	IPA_RC_INVALID_LAN_NO      = 0xe004,

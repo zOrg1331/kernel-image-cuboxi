@@ -1,0 +1,427 @@
+From: Hans-Joachim Picht <hpicht@redhat.com>
+Date: Wed, 9 Jan 2008 17:23:50 +0100
+Subject: [s390] OSA 2 Ports per CHPID support
+Message-id: 20080109162350.GC27770@redhat.com
+O-Subject: [RHEL5 U2 PATCH 3/4 ] OSA 2 Ports per CHPID support
+Bugzilla: 318981
+
+Description
+============
+
+Support two ports within one CHPID on OSA adapter.
+
+Bugzilla
+=========
+
+BZ 318981
+https://bugzilla.redhat.com/show_bug.cgi?id=318981
+
+Upstream status of the patch:
+=============================
+
+The code will be submitted upstream soon.
+
+Test status:
+============
+Kernel with patch was built and successfully tested
+
+Please ACK.
+
+With best regards,
+
+Hans
+
+diff --git a/drivers/s390/cio/qdio.c b/drivers/s390/cio/qdio.c
+index fbb2b54..af13e3e 100644
+--- a/drivers/s390/cio/qdio.c
++++ b/drivers/s390/cio/qdio.c
+@@ -2224,9 +2224,78 @@ qdio_synchronize(struct ccw_device *cdev, unsigned int flags,
+ 	return cc;
+ }
+ 
+-static inline void
+-qdio_check_subchannel_qebsm(struct qdio_irq *irq_ptr, unsigned char qdioac,
+-			    unsigned long token)
++static int
++qdio_get_ssqd_information(struct subchannel_id *schid,
++			  struct qdio_chsc_ssqd **ssqd_area)
++{
++	int result;
++
++	QDIO_DBF_TEXT0(0, setup, "getssqd");
++	*ssqd_area = mempool_alloc(qdio_mempool_scssc, GFP_ATOMIC);
++	if (!ssqd_area) {
++		QDIO_PRINT_WARN("Could not get memory for chsc on sch x%x.\n",
++				schid->sch_no);
++		return -ENOMEM;
++	}
++
++	(*ssqd_area)->request = (struct chsc_header) {
++		.length = 0x0010,
++		.code   = 0x0024,
++	};
++	(*ssqd_area)->first_sch = schid->sch_no;
++	(*ssqd_area)->last_sch = schid->sch_no;
++	(*ssqd_area)->ssid = schid->ssid;
++	result = chsc(*ssqd_area);
++
++	if (result) {
++		QDIO_PRINT_WARN("CHSC returned cc %i on sch 0.%x.%x.\n",
++				result, schid->ssid, schid->sch_no);
++		goto out;
++	}
++
++	if ((*ssqd_area)->response.code != QDIO_CHSC_RESPONSE_CODE_OK) {
++		QDIO_PRINT_WARN("CHSC response is 0x%x on sch 0.%x.%x.\n",
++				(*ssqd_area)->response.code,
++				schid->ssid, schid->sch_no);
++		goto out;
++	}
++	if (!((*ssqd_area)->flags & CHSC_FLAG_QDIO_CAPABILITY) ||
++	    !((*ssqd_area)->flags & CHSC_FLAG_VALIDITY) ||
++	    ((*ssqd_area)->sch != schid->sch_no)) {
++		QDIO_PRINT_WARN("huh? problems checking out sch 0.%x.%x... " \
++				"using all SIGAs.\n",
++				schid->ssid, schid->sch_no);
++		goto out;
++	}
++	return 0;
++out:
++	return -EINVAL;
++}
++
++int
++qdio_get_ssqd_pct(struct ccw_device *cdev)
++{
++	struct qdio_chsc_ssqd *ssqd_area;
++	struct subchannel_id schid;
++	char dbf_text[15];
++	int rc;
++	int pct = 0;
++
++	QDIO_DBF_TEXT0(0, setup, "getpct");
++	schid = ccw_device_get_subchannel_id(cdev);
++	rc = qdio_get_ssqd_information(&schid, &ssqd_area);
++	if (!rc)
++		pct = (int)ssqd_area->pct;
++	if (rc != -ENOMEM)
++		mempool_free(ssqd_area, qdio_mempool_scssc);
++	sprintf(dbf_text, "pct: %d", pct);
++	QDIO_DBF_TEXT2(0, setup, dbf_text);
++	return pct;
++}
++EXPORT_SYMBOL(qdio_get_ssqd_pct);
++
++static void
++qdio_check_subchannel_qebsm(struct qdio_irq *irq_ptr, unsigned long token)
+ {
+ 	struct qdio_q *q;
+ 	int i;
+@@ -2234,7 +2303,7 @@ qdio_check_subchannel_qebsm(struct qdio_irq *irq_ptr, unsigned char qdioac,
+ 	char dbf_text[15];
+ 
+ 	/*check if QEBSM is disabled */
+-	if (!(irq_ptr->is_qebsm) || !(qdioac & 0x01)) {
++	if (!(irq_ptr->is_qebsm) || !(irq_ptr->qdioac & 0x01)) {
+ 		irq_ptr->is_qebsm  = 0;
+ 		irq_ptr->sch_token = 0;
+ 		irq_ptr->qib.rflags &= ~QIB_RFLAGS_ENABLE_QEBSM;
+@@ -2263,102 +2332,27 @@ qdio_check_subchannel_qebsm(struct qdio_irq *irq_ptr, unsigned char qdioac,
+ }
+ 
+ static void
+-qdio_get_ssqd_information(struct qdio_irq *irq_ptr)
++qdio_get_ssqd_siga(struct qdio_irq *irq_ptr)
+ {
+-	int result;
+-	unsigned char qdioac;
+-	struct {
+-		struct chsc_header request;
+-		u16 reserved1:10;
+-		u16 ssid:2;
+-		u16 fmt:4;
+-		u16 first_sch;
+-		u16 reserved2;
+-		u16 last_sch;
+-		u32 reserved3;
+-		struct chsc_header response;
+-		u32 reserved4;
+-		u8  flags;
+-		u8  reserved5;
+-		u16 sch;
+-		u8  qfmt;
+-		u8  parm;
+-		u8  qdioac1;
+-		u8  sch_class;
+-		u8  reserved7;
+-		u8  icnt;
+-		u8  reserved8;
+-		u8  ocnt;
+-		u8 reserved9;
+-		u8 mbccnt;
+-		u16 qdioac2;
+-		u64 sch_token;
+-	} *ssqd_area;
++	int rc;
++	struct qdio_chsc_ssqd *ssqd_area;
+ 
+ 	QDIO_DBF_TEXT0(0,setup,"getssqd");
+-	qdioac = 0;
+-	ssqd_area = mempool_alloc(qdio_mempool_scssc, GFP_ATOMIC);
+-	if (!ssqd_area) {
+-	        QDIO_PRINT_WARN("Could not get memory for chsc. Using all " \
+-				"SIGAs for sch x%x.\n", irq_ptr->schid.sch_no);
+-		irq_ptr->qdioac = CHSC_FLAG_SIGA_INPUT_NECESSARY ||
+-				  CHSC_FLAG_SIGA_OUTPUT_NECESSARY ||
++	irq_ptr->qdioac = 0;
++	rc = qdio_get_ssqd_information(&irq_ptr->schid, &ssqd_area);
++	if (rc) {
++		QDIO_PRINT_WARN("using all SIGAs for sch x%x.n",
++			irq_ptr->schid.sch_no);
++		irq_ptr->qdioac = CHSC_FLAG_SIGA_INPUT_NECESSARY |
++				  CHSC_FLAG_SIGA_OUTPUT_NECESSARY |
+ 				  CHSC_FLAG_SIGA_SYNC_NECESSARY; /* all flags set */
+ 		irq_ptr->is_qebsm = 0;
+-		irq_ptr->sch_token = 0;
+-		irq_ptr->qib.rflags &= ~QIB_RFLAGS_ENABLE_QEBSM;
+-		return;
+-	}
+-
+-	ssqd_area->request = (struct chsc_header) {
+-		.length = 0x0010,
+-		.code   = 0x0024,
+-	};
+-	ssqd_area->first_sch = irq_ptr->schid.sch_no;
+-	ssqd_area->last_sch = irq_ptr->schid.sch_no;
+-	ssqd_area->ssid = irq_ptr->schid.ssid;
+-	result = chsc(ssqd_area);
+-
+-	if (result) {
+-		QDIO_PRINT_WARN("CHSC returned cc %i. Using all " \
+-				"SIGAs for sch 0.%x.%x.\n", result,
+-				irq_ptr->schid.ssid, irq_ptr->schid.sch_no);
+-		qdioac = CHSC_FLAG_SIGA_INPUT_NECESSARY ||
+-			CHSC_FLAG_SIGA_OUTPUT_NECESSARY ||
+-			CHSC_FLAG_SIGA_SYNC_NECESSARY; /* all flags set */
+-		irq_ptr->is_qebsm  = 0;
+-		goto out;
+-	}
++	} else
++		irq_ptr->qdioac = ssqd_area->qdioac1;
+ 
+-	if (ssqd_area->response.code != QDIO_CHSC_RESPONSE_CODE_OK) {
+-		QDIO_PRINT_WARN("response upon checking SIGA needs " \
+-				"is 0x%x. Using all SIGAs for sch 0.%x.%x.\n",
+-				ssqd_area->response.code,
+-				irq_ptr->schid.ssid, irq_ptr->schid.sch_no);
+-		qdioac = CHSC_FLAG_SIGA_INPUT_NECESSARY ||
+-			CHSC_FLAG_SIGA_OUTPUT_NECESSARY ||
+-			CHSC_FLAG_SIGA_SYNC_NECESSARY; /* all flags set */
+-		irq_ptr->is_qebsm  = 0;
+-		goto out;
+-	}
+-	if (!(ssqd_area->flags & CHSC_FLAG_QDIO_CAPABILITY) ||
+-	    !(ssqd_area->flags & CHSC_FLAG_VALIDITY) ||
+-	    (ssqd_area->sch != irq_ptr->schid.sch_no)) {
+-		QDIO_PRINT_WARN("huh? problems checking out sch 0.%x.%x... " \
+-				"using all SIGAs.\n",
+-				irq_ptr->schid.ssid, irq_ptr->schid.sch_no);
+-		qdioac = CHSC_FLAG_SIGA_INPUT_NECESSARY |
+-			CHSC_FLAG_SIGA_OUTPUT_NECESSARY |
+-			CHSC_FLAG_SIGA_SYNC_NECESSARY; /* worst case */
+-		irq_ptr->is_qebsm  = 0;
+-		goto out;
+-	}
+-	qdioac = ssqd_area->qdioac1;
+-out:
+-	qdio_check_subchannel_qebsm(irq_ptr, qdioac,
+-				    ssqd_area->sch_token);
+-	mempool_free(ssqd_area, qdio_mempool_scssc);
+-	irq_ptr->qdioac = qdioac;
++	qdio_check_subchannel_qebsm(irq_ptr, ssqd_area->sch_token);
++	if (rc != -ENOMEM)
++		mempool_free(ssqd_area, qdio_mempool_scssc);
+ }
+ 
+ static unsigned int
+@@ -3235,7 +3229,7 @@ qdio_establish(struct qdio_initialize *init_data)
+ 		return -EIO;
+ 	}
+ 
+-	qdio_get_ssqd_information(irq_ptr);
++	qdio_get_ssqd_siga(irq_ptr);
+ 	/* if this gets set once, we're running under VM and can omit SVSes */
+ 	if (irq_ptr->qdioac&CHSC_FLAG_SIGA_SYNC_NECESSARY)
+ 		omit_svs=1;
+diff --git a/drivers/s390/cio/qdio.h b/drivers/s390/cio/qdio.h
+index 847ddf7..9ed673c 100644
+--- a/drivers/s390/cio/qdio.h
++++ b/drivers/s390/cio/qdio.h
+@@ -4,6 +4,7 @@
+ #include <asm/page.h>
+ 
+ #include "schid.h"
++#include "chsc.h"
+ 
+ #ifdef CONFIG_QDIO_DEBUG
+ #define QDIO_VERBOSE_LEVEL 9
+@@ -500,6 +501,34 @@ do_clear_global_summary(void)
+ #define CHSC_FLAG_SIGA_SYNC_DONE_ON_THININTS 0x08
+ #define CHSC_FLAG_SIGA_SYNC_DONE_ON_OUTB_PCIS 0x04
+ 
++struct qdio_chsc_ssqd {
++	struct chsc_header request;
++	u16 reserved1:10;
++	u16 ssid:2;
++	u16 fmt:4;
++	u16 first_sch;
++	u16 reserved2;
++	u16 last_sch;
++	u32 reserved3;
++	struct chsc_header response;
++	u32 reserved4;
++	u8  flags;
++	u8  reserved5;
++	u16 sch;
++	u8  qfmt;
++	u8  parm;
++	u8  qdioac1;
++	u8  sch_class;
++	u8  pct;
++	u8  icnt;
++	u8  reserved7;
++	u8  ocnt;
++	u8  reserved8;
++	u8  mbccnt;
++	u16 qdioac2;
++	u64 sch_token;
++};
++
+ struct qdio_perf_stats {
+ #ifdef CONFIG_64BIT
+ 	atomic64_t tl_runs;
+diff --git a/drivers/s390/net/qeth.h b/drivers/s390/net/qeth.h
+index 315b6b3..d4a9ab9 100644
+--- a/drivers/s390/net/qeth.h
++++ b/drivers/s390/net/qeth.h
+@@ -295,7 +295,7 @@ qeth_is_ipa_enabled(struct qeth_ipa_info *ipa, enum qeth_ipa_funcs func)
+ #define IF_NAME_LEN	 	16
+ #define QETH_TX_TIMEOUT		100 * HZ
+ #define QETH_HEADER_SIZE	32
+-#define MAX_PORTNO 		15
++#define QETH_MAX_PORTNO		15
+ #define QETH_FAKE_LL_LEN_ETH	ETH_HLEN
+ #define QETH_FAKE_LL_LEN_TR	(sizeof(struct trh_hdr)-TR_MAXRIFLEN+sizeof(struct trllc))
+ #define QETH_FAKE_LL_V6_ADDR_POS 24
+diff --git a/drivers/s390/net/qeth_main.c b/drivers/s390/net/qeth_main.c
+index e83941b..34da723 100644
+--- a/drivers/s390/net/qeth_main.c
++++ b/drivers/s390/net/qeth_main.c
+@@ -1394,6 +1394,7 @@ qeth_idx_activate_channel(struct qeth_channel *channel,
+ 	struct qeth_cmd_buffer *iob;
+ 	unsigned long flags;
+ 	__u16 temp;
++	__u8 tmp;
+ 	int rc;
+ 
+ 	card = CARD_FROM_CDEV(channel->ccwdev);
+@@ -1415,6 +1416,8 @@ qeth_idx_activate_channel(struct qeth_channel *channel,
+ 		memcpy(QETH_TRANSPORT_HEADER_SEQ_NO(iob->data),
+ 		       &card->seqno.trans_hdr, QETH_SEQ_NO_LENGTH);
+ 	}
++	tmp = ((__u8)card->info.portno) | 0x80;
++	memcpy(QETH_IDX_ACT_PNO(iob->data), &tmp, 1);
+ 	memcpy(QETH_IDX_ACT_ISSUER_RM_TOKEN(iob->data),
+ 	       &card->token.issuer_rm_w,QETH_MPC_TOKEN_LENGTH);
+ 	memcpy(QETH_IDX_ACT_FUNC_LEVEL(iob->data),
+@@ -2081,8 +2084,9 @@ qeth_ulp_enable(struct qeth_card *card)
+ 	iob = qeth_wait_for_buffer(&card->write);
+ 	memcpy(iob->data, ULP_ENABLE, ULP_ENABLE_SIZE);
+ 
+-	*(QETH_ULP_ENABLE_LINKNUM(iob->data)) =
+-		(__u8) card->info.portno;
++	if (card->info.link_type == QETH_LINK_TYPE_ATM_NATIVE)
++		*(QETH_ULP_ENABLE_LINKNUM(iob->data)) =
++			(__u8) card->info.portno;
+ 	if (card->options.layer2)
+ 		if (card->info.type == QETH_CARD_TYPE_OSN)
+ 			prot_type = QETH_PROT_OSN2;
+@@ -6152,7 +6156,8 @@ qeth_fill_ipacmd_header(struct qeth_card *card, struct qeth_ipa_cmd *cmd,
+ 	cmd->hdr.initiator = IPA_CMD_INITIATOR_HOST;
+ 	cmd->hdr.seqno = card->seqno.ipa;
+ 	cmd->hdr.adapter_type = qeth_get_ipa_adp_type(card->info.link_type);
+-	cmd->hdr.rel_adapter_no = (__u8) card->info.portno;
++	if (card->info.link_type == QETH_LINK_TYPE_ATM_NATIVE)
++		cmd->hdr.rel_adapter_no = (__u8) card->info.portno;
+ 	if (card->options.layer2)
+ 		cmd->hdr.prim_version_no = 2;
+ 	else
+@@ -6597,6 +6602,7 @@ static int
+ qeth_hardsetup_card(struct qeth_card *card)
+ {
+ 	int retries = 3;
++	int mpno;
+ 	int rc;
+ 
+ 	QETH_DBF_TEXT(setup, 2, "hrdsetup");
+@@ -6623,10 +6629,22 @@ retry:
+ 		else
+ 			goto retry;
+ 	}
+-	if ((rc = qeth_get_unitaddr(card))){
++	rc = qeth_get_unitaddr(card);
++	if (rc) {
+ 		QETH_DBF_TEXT_(setup, 2, "2err%d", rc);
+ 		return rc;
+ 	}
++	mpno = qdio_get_ssqd_pct(CARD_DDEV(card));
++	if (mpno)
++		mpno = min(mpno - 1, QETH_MAX_PORTNO);
++	else
++		mpno = QETH_MAX_PORTNO;
++	if (card->info.portno > mpno) {
++		PRINT_ERR("Device %s does not offer port number %d \n.",
++		CARD_BUS_ID(card), card->info.portno);
++		rc = -ENODEV;
++		goto out;
++	}
+ 	qeth_make_parameters_consistent(card);
+ 	qeth_init_tokens(card);
+ 	qeth_init_func_level(card);
+diff --git a/drivers/s390/net/qeth_mpc.h b/drivers/s390/net/qeth_mpc.h
+index 39c392f..8b2d955 100644
+--- a/drivers/s390/net/qeth_mpc.h
++++ b/drivers/s390/net/qeth_mpc.h
+@@ -521,6 +521,7 @@ extern unsigned char IDX_ACTIVATE_READ[];
+ extern unsigned char IDX_ACTIVATE_WRITE[];
+ 
+ #define IDX_ACTIVATE_SIZE 	0x22
++#define QETH_IDX_ACT_PNO(buffer) (buffer+0x0b)
+ #define QETH_IDX_ACT_ISSUER_RM_TOKEN(buffer) (buffer+0x0c)
+ #define QETH_IDX_NO_PORTNAME_REQUIRED(buffer) ((buffer)[0x0b]&0x80)
+ #define QETH_IDX_ACT_FUNC_LEVEL(buffer) (buffer+0x10)
+diff --git a/drivers/s390/net/qeth_sys.c b/drivers/s390/net/qeth_sys.c
+index 273faad..4a2c5d9 100644
+--- a/drivers/s390/net/qeth_sys.c
++++ b/drivers/s390/net/qeth_sys.c
+@@ -115,7 +115,7 @@ qeth_dev_portno_store(struct device *dev, struct device_attribute *attr, const c
+ 		return -EPERM;
+ 
+ 	portno = simple_strtoul(buf, &tmp, 16);
+-	if (portno > MAX_PORTNO){
++	if (portno > QETH_MAX_PORTNO){
+ 		PRINT_WARN("portno 0x%X is out of range\n", portno);
+ 		return -EINVAL;
+ 	}
+diff --git a/include/asm-s390/qdio.h b/include/asm-s390/qdio.h
+index 78f41f3..659a998 100644
+--- a/include/asm-s390/qdio.h
++++ b/include/asm-s390/qdio.h
+@@ -127,6 +127,7 @@ extern int do_QDIO(struct ccw_device*, unsigned int flags,
+ 		   unsigned int qidx,unsigned int count,
+ 		   struct qdio_buffer *buffers);
+ 
++extern int qdio_get_ssqd_pct(struct ccw_device*);
+ extern int qdio_synchronize(struct ccw_device*, unsigned int flags,
+ 			    unsigned int queue_number);
+ 

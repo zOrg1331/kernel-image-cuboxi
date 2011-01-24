@@ -1,0 +1,61 @@
+From: Lachlan McIlroy <lmcilroy@redhat.com>
+Date: Tue, 16 Nov 2010 00:04:20 -0500
+Subject: [fs] procfs: acquire inode mutex around llseek operation
+Message-id: <2069873129.2383071289865860604.JavaMail.root@zmail05.collab.prod.int.phx2.redhat.com>
+Patchwork-id: 29450
+O-Subject: [RHEL5.6 PATCH V2] procfs: acquire inode mutex around llseek operation
+Bugzilla: 644726
+RH-Acked-by: Christoph Hellwig <chellwig@redhat.com>
+RH-Acked-by: Amerigo Wang <amwang@redhat.com>
+RH-Acked-by: Ivan Vecera <ivecera@redhat.com>
+
+This fixes bug https://bugzilla.redhat.com/show_bug.cgi?id=644726
+
+This patch adds an llseek operation for the /proc directory to prevent
+a race condition between the llseek and readdir operations.  Currently
+vfs_readdir() acquires the inode mutex so it's held when proc_pid_readdir()
+is called but since the llseek operation does not acquire it it is able to
+modify f_pos while proc_pid_readdir() expects it not to change.  If the
+f_pos is reset while another process is executing in proc_pid_readdir()
+the system will panic.
+
+The V1 patch acquired the inode mutex in default_llseek() and since that
+function is exported it could cause problems to any third party filesystems.
+This patch restricts the change to just procfs.
+
+The fix has been verified using the test case from the bz.
+
+Lachlan
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/fs/proc/root.c b/fs/proc/root.c
+index 9322577..75e7708 100644
+--- a/fs/proc/root.c
++++ b/fs/proc/root.c
+@@ -118,6 +118,17 @@ static int proc_root_readdir(struct file * filp,
+ 	return ret;
+ }
+ 
++static loff_t proc_root_llseek(struct file *file, loff_t offset, int origin)
++{
++	loff_t ret;
++
++	mutex_lock(&file->f_dentry->d_inode->i_mutex);
++	ret = default_llseek(file, offset, origin);
++	mutex_unlock(&file->f_dentry->d_inode->i_mutex);
++
++	return ret;
++}
++
+ /*
+  * The root /proc directory is special, as it has the
+  * <pid> directories. Thus we don't use the generic
+@@ -126,6 +137,7 @@ static int proc_root_readdir(struct file * filp,
+ static struct file_operations proc_root_operations = {
+ 	.read		 = generic_read_dir,
+ 	.readdir	 = proc_root_readdir,
++	.llseek		 = proc_root_llseek,
+ };
+ 
+ /*

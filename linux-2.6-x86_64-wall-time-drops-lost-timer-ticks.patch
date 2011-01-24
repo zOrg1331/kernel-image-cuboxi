@@ -1,0 +1,123 @@
+From: Konrad Rzeszutek <konradr@redhat.com>
+Subject: [RHEL5 PATCH] #RHBZ 232666 x86_64: wall time is not compensated for lost timer ticks
+Date: Tue, 29 May 2007 12:36:13 -0400
+Bugzilla: 232666
+Message-Id: <20070529163613.GA1127@localhost.localdomain>
+Changelog: [x86_64] wall time is not compensated for lost timer ticks
+
+
+RHBZ#:
+------
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=232666
+
+Description:
+------------
+Problem:
+For every timer interrupt the function update_wall_time() is called which
+updates the system's notion of time. Occasionally time interrupts (timer ticks)
+get lost, e.g. because an interrupt handlers takes a long time or a lengthy SMI
+occurs. The code in update_wall_time should compensate for those lost ticks and
+add extra time to the wall time. However, for the x86_64 architecture it fails
+to do so. 
+
+Solution:
+This patch removes an  optimization for non-CONFIG_GENERIC_TIME that broke 
+lost tick compensation for x86_64. The code that is utilized when using 
+CONFIG_GENERIC_TIME should not be enabled for x86_64 in 2.6.20 (and earlier), 
+because the supporting code is simply not there. The code upstream (2.6.21) 
+avoids the need for lost tick compensation as timekeeping is calculated from the 
+continuous clock sources instead of being tick based.
+
+In RHEL5 update_wall_time() is called at every timer tick. This patch would
+force a clocksource_read() to get the current offset.
+
+There are three cases:
+case 1) CONFIG_GENERIC_TIME is set: In this case the patch makes no difference
+because the clocksource_read() is forced anyway. This applies to i386.
+
+If CONFIG_GENERIC_TIME is not set then clock is clocksource_jiffies.
+clocksource_jiffies.cycle_interval is 1.
+
+case 2) ppc64, ia64, s390: CONFIG_GENERIC_TIME is not set and jiffies are 
+incremented by exactly 1 each clock tick. Since cycle_interval is 1 and the difference 
+of jiffies between calls to update_wall_time is 1 the code does the same thing 
+with the patch. The only difference is that we lose a small optimization. 
+This applies to architectures other than x86_64.
+
+case 3) x86_64: CONFIG_GENERIC_TIME is not set and jiffies may be incremented by
+more than one. This is the only case where we potentially need to execute the
+loop multiple times. The patch enables that by forcing a read of the difference
+in jiffies (which can be >1) instead of using cycle_interval (which is always 1).
+
+RHEL Version Found:
+------------------
+RHEL5 
+
+Upstream Status:
+----------------
+Upstream the code that actually utilizes CONFIG_GENERIC_TIME framework
+is implemented so this patch is not necessary in upstream kernel. I've asked 
+the author of the 2.6.21 GTOD conversion code (John Stultz) about back-porting it
+to 2.6.18 and his opinion is that it "is really too much change for me to 
+feel comfortable back porting it".
+
+Test Status:
+------------
+Tested successfully on the following machines (test involved running the timeskew
+tests with a stock and a patched kernel - and I found no regressions with the patch):
+
+IBM e326m
+IBM x326
+Dell PowerEdge 800
+Dell PowerEdge 6800
+Intel X7DB8
+HP OptiPlex GX240
+Athlon
+IBM BladeCenter HS20 -[79813FZ]-
+HP ProLiant DL380 G5
+IBM System x3550 -[7978D5Z]-
+IBM eServer BladeCenter HS21 -[8853ROZ]-
+Dell PowerEdge SC430
+Dell Precision WorkStation 380
+Dell PowerEdge 830
+HP ProLiant DL360 G4p
+Dell PowerEdge 650
+Dell PowerEdge 2850
+NEC Express5800/120Eg [N8100-973]
+SuperMicro X7DB8
+Sun Microsystems, Inc. Sun Fire V40z
+SGI Altix
+IBM PowerPC (JS20)
+IBM x3950 
+
+I did not run the tests on all machine in the RHTS due to some being reserved,
+other being killed by the watchdog (even when installing a stock RHEL5 distro!),
+and some due to duplicity. If there are specific machines that you would like 
+me to run the tests against, please respond.
+
+
+Proposed Patch:
+---------------
+This patch is based on 2.6.18-18:
+
+diff -uNr linux-2.6.18.i386.orig/kernel/timer.c linux-2.6.18.i386.time/kernel/timer.c
+--- linux-2.6.18.i386.orig/kernel/timer.c	2007-05-08 14:06:09.000000000 -0400
++++ linux-2.6.18.i386.time/kernel/timer.c	2007-05-09 13:32:03.000000000 -0400
+@@ -1119,11 +1119,8 @@
+ 	if (unlikely(timekeeping_suspended))
+ 		return;
+ 
+-#ifdef CONFIG_GENERIC_TIME
+ 	offset = (clocksource_read(clock) - clock->cycle_last) & clock->mask;
+-#else
+-	offset = clock->cycle_interval;
+-#endif
++
+ 	clock->xtime_nsec += (s64)xtime.tv_nsec << clock->shift;
+ 
+ 	/* normally this loop will run just once, however in the
+
+-- 
+Konrad Rzeszutek 1-(978)-392-3903 or 1-(617)-693-1718
+IBM on-site partner.  
+

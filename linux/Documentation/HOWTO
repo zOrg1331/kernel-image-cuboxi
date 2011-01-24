@@ -30,7 +30,6 @@ are not a good substitute for a solid C education and/or years of
 experience, the following books are good for, if anything, reference:
  - "The C Programming Language" by Kernighan and Ritchie [Prentice Hall]
  - "Practical C Programming" by Steve Oualline [O'Reilly]
- - "C:  A Reference Manual" by Harbison and Steele [Prentice Hall]
 
 The kernel is written using GNU C and the GNU toolchain.  While it
 adheres to the ISO C89 standard, it uses a number of extensions that are
@@ -77,8 +76,7 @@ documentation files are also added which explain how to use the feature.
 When a kernel change causes the interface that the kernel exposes to
 userspace to change, it is recommended that you send the information or
 a patch to the manual pages explaining the change to the manual pages
-maintainer at mtk.manpages@gmail.com, and CC the list
-linux-api@vger.kernel.org.
+maintainer at mtk-manpages@gmx.net.
 
 Here is a list of files that are in the kernel source tree that are
 required reading:
@@ -112,7 +110,7 @@ required reading:
 
     Other excellent descriptions of how to create patches properly are:
 	"The Perfect Patch"
-		http://userweb.kernel.org/~akpm/stuff/tpp.txt
+		http://www.zip.com.au/~akpm/linux/patches/stuff/tpp.txt
 	"Linux kernel patch submission format"
 		http://linux.yyz.us/patch-format.html
 
@@ -209,7 +207,7 @@ tools.  One such tool that is particularly recommended is the Linux
 Cross-Reference project, which is able to present source code in a
 self-referential, indexed webpage format. An excellent up-to-date
 repository of the kernel code may be found at:
-	http://users.sosdg.org/~qiyong/lxr/
+	http://sosdg.org/~coywolf/lxr/
 
 
 The development process
@@ -250,11 +248,6 @@ process is as follows:
     release a new -rc kernel every week.
   - Process continues until the kernel is considered "ready", the
     process should last around 6 weeks.
-  - Known regressions in each release are periodically posted to the 
-    linux-kernel mailing list.  The goal is to reduce the length of 
-    that list to zero before declaring the kernel to be "ready," but, in
-    the real world, a small number of regressions often remain at 
-    release time.
 
 It is worth mentioning what Andrew Morton wrote on the linux-kernel
 mailing list about kernel releases:
@@ -264,7 +257,7 @@ mailing list about kernel releases:
 
 2.6.x.y -stable kernel tree
 ---------------------------
-Kernels with 4-part versions are -stable kernels. They contain
+Kernels with 4 digit versions are -stable kernels. They contain
 relatively small and critical fixes for security problems or significant
 regressions discovered in a given 2.6.x kernel.
 
@@ -276,10 +269,7 @@ If no 2.6.x.y kernel is available, then the highest numbered 2.6.x
 kernel is the current stable kernel.
 
 2.6.x.y are maintained by the "stable" team <stable@kernel.org>, and are
-released as needs dictate.  The normal release period is approximately 
-two weeks, but it can be longer if there are no pressing problems.  A
-security-related problem, instead, can cause a release to happen almost
-instantly.
+released almost every other week.
 
 The file Documentation/stable_kernel_rules.txt in the kernel tree
 documents what kinds of changes are acceptable for the -stable tree, and
@@ -304,9 +294,7 @@ a while Andrew or the subsystem maintainer pushes it on to Linus for
 inclusion in mainline.
 
 It is heavily encouraged that all new patches get tested in the -mm tree
-before they are sent to Linus for inclusion in the main kernel tree.  Code
-which does not make an appearance in -mm before the opening of the merge
-window will prove hard to merge into the mainline.
+before they are sent to Linus for inclusion in the main kernel tree.
 
 These kernels are not appropriate for use on systems that are supposed
 to be stable and they are more risky to run than any of the other
@@ -333,44 +321,44 @@ kernel releases as described above.
 Here is a list of some of the different kernel trees available:
   git trees:
     - Kbuild development tree, Sam Ravnborg <sam@ravnborg.org>
-	git.kernel.org:/pub/scm/linux/kernel/git/sam/kbuild.git
+	kernel.org:/pub/scm/linux/kernel/git/sam/kbuild.git
 
     - ACPI development tree, Len Brown <len.brown@intel.com>
-	git.kernel.org:/pub/scm/linux/kernel/git/lenb/linux-acpi-2.6.git
+	kernel.org:/pub/scm/linux/kernel/git/lenb/linux-acpi-2.6.git
 
-    - Block development tree, Jens Axboe <jens.axboe@oracle.com>
-	git.kernel.org:/pub/scm/linux/kernel/git/axboe/linux-2.6-block.git
+    - Block development tree, Jens Axboe <axboe@suse.de>
+	kernel.org:/pub/scm/linux/kernel/git/axboe/linux-2.6-block.git
 
     - DRM development tree, Dave Airlie <airlied@linux.ie>
-	git.kernel.org:/pub/scm/linux/kernel/git/airlied/drm-2.6.git
+	kernel.org:/pub/scm/linux/kernel/git/airlied/drm-2.6.git
 
     - ia64 development tree, Tony Luck <tony.luck@intel.com>
-	git.kernel.org:/pub/scm/linux/kernel/git/aegl/linux-2.6.git
+	kernel.org:/pub/scm/linux/kernel/git/aegl/linux-2.6.git
+
+    - ieee1394 development tree, Jody McIntyre <scjody@modernduck.com>
+	kernel.org:/pub/scm/linux/kernel/git/scjody/ieee1394.git
 
     - infiniband, Roland Dreier <rolandd@cisco.com>
-	git.kernel.org:/pub/scm/linux/kernel/git/roland/infiniband.git
+	kernel.org:/pub/scm/linux/kernel/git/roland/infiniband.git
 
     - libata, Jeff Garzik <jgarzik@pobox.com>
-	git.kernel.org:/pub/scm/linux/kernel/git/jgarzik/libata-dev.git
+	kernel.org:/pub/scm/linux/kernel/git/jgarzik/libata-dev.git
 
     - network drivers, Jeff Garzik <jgarzik@pobox.com>
-	git.kernel.org:/pub/scm/linux/kernel/git/jgarzik/netdev-2.6.git
+	kernel.org:/pub/scm/linux/kernel/git/jgarzik/netdev-2.6.git
 
     - pcmcia, Dominik Brodowski <linux@dominikbrodowski.net>
-	git.kernel.org:/pub/scm/linux/kernel/git/brodo/pcmcia-2.6.git
+	kernel.org:/pub/scm/linux/kernel/git/brodo/pcmcia-2.6.git
 
-    - SCSI, James Bottomley <James.Bottomley@hansenpartnership.com>
-	git.kernel.org:/pub/scm/linux/kernel/git/jejb/scsi-misc-2.6.git
+    - SCSI, James Bottomley <James.Bottomley@SteelEye.com>
+	kernel.org:/pub/scm/linux/kernel/git/jejb/scsi-misc-2.6.git
 
-    - x86, Ingo Molnar <mingo@elte.hu>
-	git://git.kernel.org/pub/scm/linux/kernel/git/x86/linux-2.6-x86.git
+  Other git kernel trees can be found listed at http://kernel.org/git
 
   quilt trees:
-    - USB, Driver Core, and I2C, Greg Kroah-Hartman <gregkh@suse.de>
+    - USB, PCI, Driver Core, and I2C, Greg Kroah-Hartman <gregkh@suse.de>
 	kernel.org/pub/linux/kernel/people/gregkh/gregkh-2.6/
 
-  Other kernel trees can be found listed at http://git.kernel.org/ and in
-  the MAINTAINERS file.
 
 Bug Reporting
 -------------
@@ -378,32 +366,12 @@ Bug Reporting
 bugzilla.kernel.org is where the Linux kernel developers track kernel
 bugs.  Users are encouraged to report all bugs that they find in this
 tool.  For details on how to use the kernel bugzilla, please see:
-	http://bugzilla.kernel.org/page.cgi?id=faq.html
+	http://test.kernel.org/bugzilla/faq.html
 
 The file REPORTING-BUGS in the main kernel source directory has a good
 template for how to report a possible kernel bug, and details what kind
 of information is needed by the kernel developers to help track down the
 problem.
-
-
-Managing bug reports
---------------------
-
-One of the best ways to put into practice your hacking skills is by fixing
-bugs reported by other people. Not only you will help to make the kernel
-more stable, you'll learn to fix real world problems and you will improve
-your skills, and other developers will be aware of your presence. Fixing
-bugs is one of the best ways to get merits among other developers, because
-not many people like wasting time fixing other people's bugs.
-
-To work in the already reported bug reports, go to http://bugzilla.kernel.org.
-If you want to be advised of the future bug reports, you can subscribe to the
-bugme-new mailing list (only new bug reports are mailed here) or to the
-bugme-janitor mailing list (every change in the bugzilla is mailed here)
-
-	http://lists.linux-foundation.org/mailman/listinfo/bugme-new
-	http://lists.linux-foundation.org/mailman/listinfo/bugme-janitors
-
 
 
 Mailing lists
@@ -620,7 +588,7 @@ all time.  It should describe the patch completely, containing:
 For more details on what this should all look like, please see the
 ChangeLog section of the document:
   "The Perfect Patch"
-      http://userweb.kernel.org/~akpm/stuff/tpp.txt
+      http://www.zip.com.au/~akpm/linux/patches/stuff/tpp.txt
 
 
 

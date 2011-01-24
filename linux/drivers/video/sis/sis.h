@@ -24,8 +24,14 @@
 #ifndef _SIS_H_
 #define _SIS_H_
 
+#include <linux/version.h>
+
 #include "osdef.h"
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,5,0)
 #include <video/sisfb.h>
+#else
+#include <linux/sisfb.h>
+#endif
 
 #include "vgatypes.h"
 #include "vstruct.h"
@@ -34,16 +40,47 @@
 #define VER_MINOR		8
 #define VER_LEVEL		9
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,5,0)
 #include <linux/spinlock.h>
-
+#define SIS_PCI_GET_CLASS(a, b) pci_get_class(a, b)
+#define SIS_PCI_GET_DEVICE(a,b,c) pci_get_device(a,b,c)
+#define SIS_PCI_GET_SLOT(a,b) pci_get_slot(a,b)
+#define SIS_PCI_PUT_DEVICE(a) pci_dev_put(a)
 #ifdef CONFIG_COMPAT
+#if LINUX_VERSION_CODE <= KERNEL_VERSION(2,6,10)
+#include <linux/ioctl32.h>
+#define SIS_OLD_CONFIG_COMPAT
+#else
+#include <linux/smp_lock.h>
 #define SIS_NEW_CONFIG_COMPAT
+#endif
 #endif	/* CONFIG_COMPAT */
+#else  /* 2.4 */
+#define SIS_PCI_GET_CLASS(a, b) pci_find_class(a, b)
+#define SIS_PCI_GET_DEVICE(a,b,c) pci_find_device(a,b,c)
+#define SIS_PCI_GET_SLOT(a,b) pci_find_slot(a,b)
+#define SIS_PCI_PUT_DEVICE(a)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,4,19)
+#ifdef __x86_64__	/* Shouldn't we check for CONFIG_IA32_EMULATION here? */
+#include <asm/ioctl32.h>
+#define SIS_OLD_CONFIG_COMPAT
+#endif
+#endif
+#endif /* 2.4 */
+#if LINUX_VERSION_CODE > KERNEL_VERSION(2,6,8)
+#define SIS_IOTYPE1 void __iomem
+#define SIS_IOTYPE2 __iomem
+#define SISINITSTATIC static
+#else
+#define SIS_IOTYPE1 unsigned char
+#define SIS_IOTYPE2
+#define SISINITSTATIC
+#endif
 
 #undef SISFBDEBUG
 
 #ifdef SISFBDEBUG
-#define DPRINTK(fmt, args...) printk(KERN_DEBUG "%s: " fmt, __func__ , ## args)
+#define DPRINTK(fmt, args...) printk(KERN_DEBUG "%s: " fmt, __FUNCTION__ , ## args)
 #define TWDEBUG(x) printk(KERN_INFO x "\n");
 #else
 #define DPRINTK(fmt, args...)
@@ -461,8 +498,26 @@ struct sis_video_info {
 
 	struct fb_var_screeninfo default_var;
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,5,0)
 	struct fb_fix_screeninfo sisfb_fix;
-	u32		pseudo_palette[16];
+	u32		pseudo_palette[17];
+#endif
+
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,5,0)
+	struct display		 sis_disp;
+	struct display_switch 	 sisfb_sw;
+	struct {
+		u16 red, green, blue, pad;
+	}		sis_palette[256];
+	union {
+#ifdef FBCON_HAS_CFB16
+		u16 cfb16[16];
+#endif
+#ifdef FBCON_HAS_CFB32
+		u32 cfb32[16];
+#endif
+	}		sis_fbcon_cmap;
+#endif
 
 	struct sisfb_monitor {
 		u16 hmin;
@@ -471,7 +526,7 @@ struct sis_video_info {
 		u16 vmax;
 		u32 dclockmax;
 		u8  feature;
-		bool datavalid;
+		BOOLEAN datavalid;
 	}		sisfb_thismonitor;
 
 	unsigned short	chip_id;	/* PCI ID of chip */
@@ -483,6 +538,10 @@ struct sis_video_info {
 
 	int		mni;	/* Mode number index */
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,5,0)
+	int		currcon;
+#endif
+
 	unsigned long	video_size;
 	unsigned long	video_base;
 	unsigned long	mmio_size;
@@ -493,8 +552,8 @@ struct sis_video_info {
 
 	unsigned long	UMAsize, LFBsize;
 
-	void __iomem	*video_vbase;
-	void __iomem	*mmio_vbase;
+	SIS_IOTYPE1	*video_vbase;
+	SIS_IOTYPE1	*mmio_vbase;
 
 	unsigned char	*bios_abase;
 
@@ -519,10 +578,13 @@ struct sis_video_info {
 	int		sisfb_tvplug;
 	int		sisfb_tvstd;
 	int		sisfb_nocrt2rate;
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,5,0)
+	int		sisfb_inverse;
+#endif
 
 	u32		heapstart;		/* offset  */
-	void __iomem	*sisfb_heap_start;	/* address */
-	void __iomem	*sisfb_heap_end;	/* address */
+	SIS_IOTYPE1	*sisfb_heap_start;	/* address */
+	SIS_IOTYPE1	*sisfb_heap_end;	/* address */
 	u32		sisfb_heap_size;
 	int		havenoheap;
 
@@ -584,12 +646,17 @@ struct sis_video_info {
 	int		modechanged;
 	unsigned char	modeprechange;
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,5,0)
 	u8		sisfb_lastrates[128];
+#endif
 
 	int		newrom;
 	int		haveXGIROM;
 	int		registered;
 	int		warncount;
+#ifdef SIS_OLD_CONFIG_COMPAT
+	int		ioctl32registered;
+#endif
 
 	int		sisvga_engine;
 	int		hwcursor_size;
@@ -600,7 +667,7 @@ struct sis_video_info {
 	u8		detectedpdca;
 	u8		detectedlcda;
 
-	void __iomem	*hwcursor_vbase;
+	SIS_IOTYPE1	*hwcursor_vbase;
 
 	int		chronteltype;
 	int		tvxpos, tvypos;

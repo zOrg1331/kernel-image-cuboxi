@@ -5,13 +5,11 @@
 # architecture-specific flags and dependencies.
 #
 
-KBUILD_DEFCONFIG := m32700ut.smp_defconfig
-
 LDFLAGS		:=
 OBJCOPYFLAGS	:= -O binary -R .note -R .comment -S
-LDFLAGS_vmlinux	:=
+LDFLAGS_vmlinux	:= -e startup_32
 
-KBUILD_CFLAGS += -pipe -fno-schedule-insns
+CFLAGS += -pipe -fno-schedule-insns
 CFLAGS_KERNEL += -mmodel=medium
 CFLAGS_MODULE += -mmodel=large
 
@@ -26,20 +24,19 @@ endif
 cflags-$(CONFIG_ISA_M32R)	+= -DNO_FPU
 aflags-$(CONFIG_ISA_M32R)	+= -DNO_FPU -O2 -Wa,-no-bitinst
 
-KBUILD_CFLAGS += $(cflags-y)
-KBUILD_AFLAGS += $(aflags-y)
+CFLAGS += $(cflags-y)
+AFLAGS += $(aflags-y)
 
 CHECKFLAGS	+= -D__m32r__ -D__BIG_ENDIAN__=1
 
 head-y	:= arch/m32r/kernel/head.o arch/m32r/kernel/init_task.o
 
-LIBGCC	:= $(shell $(CC) $(KBUILD_CFLAGS) -print-libgcc-file-name)
+LIBGCC	:= $(shell $(CC) $(CFLAGS) -print-libgcc-file-name)
 
 libs-y	+= arch/m32r/lib/ $(LIBGCC)
 core-y	+= arch/m32r/kernel/	\
 	   arch/m32r/mm/	\
-	   arch/m32r/boot/	\
-	   arch/m32r/platforms/
+	   arch/m32r/boot/
 
 drivers-$(CONFIG_OPROFILE)	+= arch/m32r/oprofile/
 

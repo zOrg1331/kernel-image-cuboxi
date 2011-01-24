@@ -25,7 +25,7 @@ of the following three ways.
 i. For devices which have queue depth greater than 1 (TCQ devices) and
 support ordered tags, block layer can just issue the barrier as an
 ordered request and the lower level driver, controller and drive
-itself are responsible for making sure that the ordering constraint is
+itself are responsible for making sure that the ordering contraint is
 met.  Most modern SCSI controllers/drives should support this.
 
 NOTE: SCSI ordered tag isn't currently used due to limitation in the
@@ -42,7 +42,7 @@ iii. Devices which have queue depth of 1.  This is a degenerate case
 of ii.  Just keeping issue order suffices.  Ancient SCSI
 controllers/drives and IDE drives are in this category.
 
-2. Forced flushing to physical medium
+2. Forced flushing to physcial medium
 
 Again, if you're not gonna do synchronization with disk drives (dang,
 it sounds even more appealing now!), the reason you use I/O barriers
@@ -56,7 +56,7 @@ There are four cases,
 i. No write-back cache.  Keeping requests ordered is enough.
 
 ii. Write-back cache but no flush operation.  There's no way to
-guarantee physical-medium commit order.  This kind of devices can't to
+gurantee physical-medium commit order.  This kind of devices can't to
 I/O barriers.
 
 iii. Write-back cache and flush operation but no FUA (forced unit
@@ -79,26 +79,36 @@ and how to prepare flush requests.  Note that the term 'ordered' is
 used to indicate the whole sequence of performing barrier requests
 including draining and flushing.
 
-typedef void (prepare_flush_fn)(struct request_queue *q, struct request *rq);
+typedef void (prepare_flush_fn)(request_queue_t *q, struct request *rq);
 
-int blk_queue_ordered(struct request_queue *q, unsigned ordered,
-		      prepare_flush_fn *prepare_flush_fn);
+int blk_queue_ordered(request_queue_t *q, unsigned ordered,
+		      prepare_flush_fn *prepare_flush_fn,
+		      unsigned gfp_mask);
+
+int blk_queue_ordered_locked(request_queue_t *q, unsigned ordered,
+			     prepare_flush_fn *prepare_flush_fn,
+			     unsigned gfp_mask);
+
+The only difference between the two functions is whether or not the
+caller is holding q->queue_lock on entry.  The latter expects the
+caller is holding the lock.
 
 @q			: the queue in question
 @ordered		: the ordered mode the driver/device supports
 @prepare_flush_fn	: this function should prepare @rq such that it
 			  flushes cache to physical medium when executed
+@gfp_mask		: gfp_mask used when allocating data structures
+			  for ordered processing
 
 For example, SCSI disk driver's prepare_flush_fn looks like the
 following.
 
-static void sd_prepare_flush(struct request_queue *q, struct request *rq)
+static void sd_prepare_flush(request_queue_t *q, struct request *rq)
 {
 	memset(rq->cmd, 0, sizeof(rq->cmd));
-	rq->cmd_type = REQ_TYPE_BLOCK_PC;
+	rq->flags |= REQ_BLOCK_PC;
 	rq->timeout = SD_TIMEOUT;
 	rq->cmd[0] = SYNCHRONIZE_CACHE;
-	rq->cmd_len = 10;
 }
 
 The following seven ordered modes are supported.  The following table

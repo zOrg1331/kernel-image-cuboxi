@@ -1,0 +1,27 @@
+From: Jeff Layton <jlayton@redhat.com>
+Date: Tue, 11 Dec 2007 10:05:53 -0500
+Subject: [fs] cifs: fix memory leak in statfs to old servers
+Message-id: 1197385560-21991-9-git-send-email-jlayton@redhat.com
+O-Subject: [RHEL5.2 PATCH 08/15] BZ#417961: [CIFS] Fix memory leak in statfs to very old servers
+Bugzilla: 417961
+
+We were allocating request buffers twice in the statfs
+path when mounted to very old (Windows 9x) servers.
+
+Signed-off-by: Steve French <sfrench@us.ibm.com>
+
+diff --git a/fs/cifs/cifssmb.c b/fs/cifs/cifssmb.c
+index d6e503d..ecd8cd0 100644
+--- a/fs/cifs/cifssmb.c
++++ b/fs/cifs/cifssmb.c
+@@ -4072,10 +4072,6 @@ oldQFSInfoRetry:
+ 		(void **) &pSMBr);
+ 	if (rc)
+ 		return rc;
+-	rc = smb_init(SMB_COM_TRANSACTION2, 15, tcon, (void **) &pSMB,
+-		      (void **) &pSMBr);
+-	if (rc)
+-		return rc;
+ 
+ 	params = 2;     /* level */
+ 	pSMB->TotalDataCount = 0;

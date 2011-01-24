@@ -13,8 +13,9 @@
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/kernel.h>
-#include <linux/poll.h>
+#include <linux/sched.h>
 #include <linux/smp_lock.h>
+#include <linux/poll.h>
 #include <asm/uaccess.h>
 
 #include "platform.h"
@@ -128,19 +129,14 @@ static unsigned int maint_poll(struct file *file, poll_table * wait)
 
 static int maint_open(struct inode *ino, struct file *filep)
 {
-	int ret;
-
-	lock_kernel();
 	/* only one open is allowed, so we test
 	   it atomically */
 	if (test_and_set_bit(0, &opened))
-		ret = -EBUSY;
-	else {
-		filep->private_data = NULL;
-		ret = nonseekable_open(ino, filep);
-	}
-	unlock_kernel();
-	return ret;
+		return (-EBUSY);
+
+	filep->private_data = NULL;
+
+	return nonseekable_open(ino, filep);
 }
 
 static int maint_close(struct inode *ino, struct file *filep)
@@ -168,7 +164,7 @@ static ssize_t divas_maint_read(struct file *file, char __user *buf,
 	return (maint_read_write(buf, (int) count));
 }
 
-static const struct file_operations divas_maint_fops = {
+static struct file_operations divas_maint_fops = {
 	.owner   = THIS_MODULE,
 	.llseek  = no_llseek,
 	.read    = divas_maint_read,

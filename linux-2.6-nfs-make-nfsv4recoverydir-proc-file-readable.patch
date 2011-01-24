@@ -1,0 +1,87 @@
+From: Evan McNabb <emcnabb@redhat.com>
+Date: Fri, 15 May 2009 13:19:52 -0400
+Subject: [nfs] make nfsv4recoverydir proc file readable
+Message-id: 4A0DA438.8040809@redhat.com
+O-Subject: [RHEL5.4 patch] BZ 499840: nfs: make nfsv4recoverydir proc file readable
+Bugzilla: 499840
+RH-Acked-by: Jeff Layton <jlayton@redhat.com>
+
+BZ 499840
+
+The file /proc/fs/nfsd/nfsv4recoverydir is not readable on RHEL5.
+Instead of returning the value of recoverydir it returns -EINVAL:
+
+# cat /proc/fs/nfsd/nfsv4recoverydir
+cat: /proc/fs/nfsd/nfsv4recoverydir: Invalid argument
+
+The attached patch is a backport of the required portions of the
+upstream commit:
+
+commit 3dd98a3bccb1bdd30b8a4a755e7bead1b64160ec
+Author: Jeff Layton <jlayton@redhat.com>
+Date:   Tue Jun 10 08:40:36 2008 -0400
+    knfsd: clean up nfsd filesystem interfaces
+
+I've tested on several systems and it seems to work as expected.
+
+-Evan
+
+diff --git a/fs/nfsd/nfs4state.c b/fs/nfsd/nfs4state.c
+index a6489a4..b5c6449 100644
+--- a/fs/nfsd/nfs4state.c
++++ b/fs/nfsd/nfs4state.c
+@@ -3311,6 +3311,12 @@ nfs4_reset_recoverydir(char *recdir)
+ 	return status;
+ }
+ 
++char *
++nfs4_recoverydir(void)
++{
++	return user_recovery_dirname;
++}
++
+ /*
+  * Called when leasetime is changed.
+  *
+diff --git a/fs/nfsd/nfsctl.c b/fs/nfsd/nfsctl.c
+index c343957..e76b8e7 100644
+--- a/fs/nfsd/nfsctl.c
++++ b/fs/nfsd/nfsctl.c
+@@ -511,22 +511,29 @@ static ssize_t write_leasetime(struct file *file, char *buf, size_t size)
+ 	return strlen(buf);
+ }
+ 
++extern char *nfs4_recoverydir(void);
++
+ static ssize_t write_recoverydir(struct file *file, char *buf, size_t size)
+ {
+ 	char *mesg = buf;
+ 	char *recdir;
+ 	int len, status;
+ 
+-	if (size > PATH_MAX || buf[size-1] != '\n')
+-		return -EINVAL;
+-	buf[size-1] = 0;
++	if (size > 0) {
++		if (nfsd_serv)
++			return -EBUSY;
++		if (size > PATH_MAX || buf[size-1] != '\n')
++			return -EINVAL;
++		buf[size-1] = 0;
+ 
+-	recdir = mesg;
+-	len = qword_get(&mesg, recdir, size);
+-	if (len <= 0)
+-		return -EINVAL;
++		recdir = mesg;
++		len = qword_get(&mesg, recdir, size);
++		if (len <= 0)
++			return -EINVAL;
+ 
+-	status = nfs4_reset_recoverydir(recdir);
++		status = nfs4_reset_recoverydir(recdir);
++	}
++	sprintf(buf, "%s\n", nfs4_recoverydir());
+ 	return strlen(buf);
+ }
+ #endif

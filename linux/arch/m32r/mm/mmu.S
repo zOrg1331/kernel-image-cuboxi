@@ -4,6 +4,9 @@
  *  Copyright (C) 2001 by Hiroyuki Kondo
  */
 
+/* $Id: mmu.S,v 1.15 2004/03/16 02:56:27 takata Exp $ */
+
+#include <linux/config.h>	/* CONFIG_MMU */
 #include <linux/linkage.h>
 #include <asm/assembler.h>
 #include <asm/smp.h>
@@ -150,12 +153,8 @@ ENTRY(tme_handler)
 
 	; pmd = pmd_offset(pgd, address);
 	ld	r3, @r3			; r3: pmd data
-	beqz	r3, 3f			; pmd_none(*pmd) ?
-
-	and3	r2, r3, #0xfff
-	add3	r2, r2, #-355		; _KERNPG_TABLE(=0x163)
-	bnez	r2, 3f			; pmd_bad(*pmd) ?
 	ldi	r2, #-4096
+	beqz	r3, 3f			; pmd_none(*pmd) ?
 
 	; pte = pte_offset(pmd, address);
 	and	r2, r3			; r2: pte base addr
@@ -167,8 +166,7 @@ ENTRY(tme_handler)
 
 	; pte_data = (unsigned long)pte_val(*pte);
 	ld	r2, @r3			; r2: pte data
-	and3	r3, r2, #2		; _PAGE_PRESENT(=2) check
-	beqz	r3, 3f
+	or3	r2, r2, #2		; _PAGE_PRESENT(=2)
 
 	.fillinsn
 5:
@@ -267,10 +265,13 @@ ENTRY(tme_handler)
 	ld	r1, @r3			; r1: pmd
 	beqz	r1, 3f			; pmd_none(*pmd) ?
 ;
-	and3	r1, r1, #0x3ff
-	ldi	r4, #0x163		; _KERNPG_TABLE(=0x163)
-	bne	r1, r4, 3f		; pmd_bad(*pmd) ?
-
+	and3	r1, r1, #0xeff
+	ldi	r4, #611		; _KERNPG_TABLE(=611)
+	beq	r1, r4, 4f		; !pmd_bad(*pmd) ?
+	.fillinsn
+3:
+	ldi	r1, #0			; r1: pte_data = 0
+	bra	5f
 	.fillinsn
 4:
 	; pte = pte_offset(pmd, address);
@@ -284,10 +285,8 @@ ENTRY(tme_handler)
 	add	r4, r3			; r4: pte
 	; pte_data = (unsigned long)pte_val(*pte);
 	ld	r1, @r4			; r1: pte_data
-	and3	r3, r1, #2		; _PAGE_PRESENT(=2) check
-	beqz	r3, 3f
-
 	.fillinsn
+
 ;; set tlb
 ; r0: address, r1: pte_data, r2: entry
 ; r3,r4: (free)
@@ -299,7 +298,8 @@ ENTRY(tme_handler)
 	and3	r4, r4, #(MMU_CONTEXT_ASID_MASK)
 	or	r3, r4
 	st	r3, @r2
-	st	r1, @(4,r2)		; set_tlb_data(entry, pte_data);
+	or3	r4, r1, #2		; _PAGE_PRESENT(=2)
+	st	r4, @(4,r2)		; set_tlb_data(entry, pte_data);
 
 	ld	r4, @sp+
 	ld	r3, @sp+
@@ -308,11 +308,6 @@ ENTRY(tme_handler)
 	ld	r0, @sp+
 	ld	sp, @sp+
 	rte
-
-	.fillinsn
-3:
-	ldi	r1, #2			; r1: pte_data = 0 | _PAGE_PRESENT(=2)
-	bra	5b
 
 #else
 #error unknown isa configuration
@@ -351,4 +346,5 @@ ENTRY(m32r_otlb_entrys)
 
 #endif  /* CONFIG_MMU */
 
-	.end
+.end
+

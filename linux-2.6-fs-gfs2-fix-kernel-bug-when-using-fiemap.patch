@@ -1,0 +1,30 @@
+From: Abhijith Das <adas@redhat.com>
+Date: Wed, 3 Mar 2010 16:01:29 -0500
+Subject: [fs] gfs2: fix kernel BUG when using fiemap
+Message-id: <1567374282.2705611267632089299.JavaMail.root@zmail05.collab.prod.int.phx2.redhat.com>
+Patchwork-id: 23474
+O-Subject: [RHEL5.5 PATCH][GFS2] - GFS2 - fiemap - Kernel BUG at
+	fs/gfs2/bmap.c:433
+Bugzilla: 569610
+RH-Acked-by: Steven Whitehouse <swhiteho@redhat.com>
+RH-Acked-by: Josef Bacik <josef@redhat.com>
+RH-Acked-by: Robert S Peterson <rpeterso@redhat.com>
+
+This patch aligns gfs2_block_map() requests to the nearest fs block boundary. Usually gfs2_block_map() gets called with multiples of block size, but that's not the case through the fiemap interface. This causes gfs2 to trip an assert and interferes with the normal functioning of the gfs2_quota tool.
+
+Signed-off-by: Abhi Das <adas@redhat.com>
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/fs/gfs2/bmap.c b/fs/gfs2/bmap.c
+index 58a21a2..2b411ab 100644
+--- a/fs/gfs2/bmap.c
++++ b/fs/gfs2/bmap.c
+@@ -424,7 +424,7 @@ int gfs2_block_map(struct inode *inode, sector_t lblock,
+ 	int new = 0;
+ 	u64 dblock = 0;
+ 	int boundary;
+-	unsigned int maxlen = bh_map->b_size >> inode->i_blkbits;
++	unsigned int maxlen = (bh_map->b_size + bsize - 1) >> inode->i_blkbits;
+ 	struct metapath mp;
+ 	u64 size;
+ 	struct buffer_head *dibh = NULL;

@@ -1,0 +1,97 @@
+From: Mauro Carvalho Chehab <mchehab@redhat.com>
+Date: Mon, 5 Oct 2009 17:52:34 -0400
+Subject: [misc] don't call printk while crashing
+Message-id: <20091005145234.5de5a65e@pedra.chehab.org>
+Patchwork-id: 21046
+O-Subject: [PATCH RHEL5.5] BZ#497195 Don't call printk while crashing
+Bugzilla: 497195
+RH-Acked-by: Eduardo Habkost <ehabkost@redhat.com>
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+
+Upstream code for mdelay() is:
+
+#define mdelay(n) (								\
+        (__builtin_constant_p(n) && (n)<=MAX_UDELAY_MS) ? udelay((n)*1000) :	\
+        ({unsigned long __ms=(n); while (__ms--) udelay(1000);}))
+
+However, RHEL5 changeset 3a4d4483d4cb7d0514c8d0d061de87da97c03425 (From Aug,
+2005!) changed it to:
+
+#define mdelay(n) (                          \
+{                                            \
+ static int warned=0;                        \
+ unsigned long __ms=(n);                     \
+ WARN_ON(in_irq() && !(warned++));	     \
+ while (__ms--) udelay(1000);                \
+})
+
+With the RHEL variant, WARN_ON() is called if a code with mdelay() is used, while at
+IRQ time. This caused a regression, as reported on some bugzillas like #458368 and #497195.
+
+While this is generally ok, when kernel crash is called, we need to wait up to 1 second
+in order to be sure that all CPU's but one were disabled. However, due to WARN_ON, it
+will print a message like:
+
+	BUG: warning at arch/i386/kernel/crash.c:148/nmi_shootdown_cpus() (Not tainted)
+
+The previous approach were to patch printk to reduce the risk of having it called during
+CPU shutdown princess, but this didn't solve the issue completely.
+
+On some cases, calling a printk during the crash is still causing failures.
+
+So, let's use a different approach: just replace all occurences of mdelay(1) to
+udelay(1000) to avoid the WARN_ON() call during nmi_shootdown_cpus().
+
+>From comment https://bugzilla.redhat.com/show_bug.cgi?id=497195#c6, this approach seems
+to solve the issue.
+
+Signed-off-by: Mauro Carvalho Chehab <mchehab@redhat.com>
+
+diff --git a/arch/i386/kernel/crash.c b/arch/i386/kernel/crash.c
+index a203412..c7cc162 100644
+--- a/arch/i386/kernel/crash.c
++++ b/arch/i386/kernel/crash.c
+@@ -144,7 +144,7 @@ static void nmi_shootdown_cpus(void)
+ 
+ 	msecs = 1000; /* Wait at most a second for the other cpus to stop */
+ 	while ((atomic_read(&waiting_for_crash_ipi) > 0) && msecs) {
+-		mdelay(1);
++		udelay(1000);
+ 		msecs--;
+ 	}
+ 
+diff --git a/arch/powerpc/kernel/crash.c b/arch/powerpc/kernel/crash.c
+index f35cb59..99fbabe 100644
+--- a/arch/powerpc/kernel/crash.c
++++ b/arch/powerpc/kernel/crash.c
+@@ -189,7 +189,7 @@ static void crash_kexec_prepare_cpus(int cpu)
+ 	msecs = 10000;
+ 	while ((cpus_weight(cpus_in_crash) < ncpus) && (--msecs > 0)) {
+ 		cpu_relax();
+-		mdelay(1);
++		udelay(1000);
+ 	}
+ 
+ 	/* Would it be better to replace the trap vector here? */
+@@ -241,7 +241,7 @@ void crash_kexec_secondary(struct pt_regs *regs)
+ 			local_irq_restore(flags);
+ 			return;
+ 		}
+-		mdelay(1);
++		udelay(1000);
+ 		cpu_relax();
+ 	}
+ 	if (cpu == crashing_cpu) {
+diff --git a/arch/x86_64/kernel/crash.c b/arch/x86_64/kernel/crash.c
+index baebf74..de84891 100644
+--- a/arch/x86_64/kernel/crash.c
++++ b/arch/x86_64/kernel/crash.c
+@@ -160,7 +160,7 @@ static void nmi_shootdown_cpus(void)
+ 
+ 	msecs = 1000; /* Wait at most a second for the other cpus to stop */
+ 	while ((atomic_read(&waiting_for_crash_ipi) > 0) && msecs) {
+-		mdelay(1);
++		udelay(1000);
+ 		msecs--;
+ 	}
+ 	/* Leave the nmi callback set */

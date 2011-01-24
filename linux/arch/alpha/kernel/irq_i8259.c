@@ -83,8 +83,8 @@ i8259a_end_irq(unsigned int irq)
 		i8259a_enable_irq(irq);
 }
 
-struct irq_chip i8259a_irq_type = {
-	.name		= "XT-PIC",
+struct hw_interrupt_type i8259a_irq_type = {
+	.typename	= "XT-PIC",
 	.startup	= i8259a_startup_irq,
 	.shutdown	= i8259a_disable_irq,
 	.enable		= i8259a_enable_irq,
@@ -137,7 +137,7 @@ init_i8259a_irqs(void)
 
 #if defined(IACK_SC)
 void
-isa_device_interrupt(unsigned long vector)
+isa_device_interrupt(unsigned long vector, struct pt_regs *regs)
 {
 	/*
 	 * Generate a PCI interrupt acknowledge cycle.  The PIC will
@@ -147,13 +147,13 @@ isa_device_interrupt(unsigned long vector)
 	 */
 	int j = *(vuip) IACK_SC;
 	j &= 0xff;
-	handle_irq(j);
+	handle_irq(j, regs);
 }
 #endif
 
 #if defined(CONFIG_ALPHA_GENERIC) || !defined(IACK_SC)
 void
-isa_no_iack_sc_device_interrupt(unsigned long vector)
+isa_no_iack_sc_device_interrupt(unsigned long vector, struct pt_regs *regs)
 {
 	unsigned long pic;
 
@@ -176,7 +176,7 @@ isa_no_iack_sc_device_interrupt(unsigned long vector)
 	while (pic) {
 		int j = ffz(~pic);
 		pic &= pic - 1;
-		handle_irq(j);
+		handle_irq(j, regs);
 	}
 }
 #endif

@@ -46,6 +46,10 @@ static DEFINE_RWLOCK(hl_irqs_lock);
 
 static DEFINE_RWLOCK(addr_space_lock);
 
+/* addr_space list will have zero and max already included as bounds */
+static struct hpsb_address_ops dummy_ops = { NULL, NULL, NULL, NULL };
+static struct hpsb_address_serve dummy_zero_addr, dummy_max_addr;
+
 
 static struct hl_host_info *hl_get_hostinfo(struct hpsb_highlevel *hl,
 					    struct hpsb_host *host)
@@ -66,12 +70,8 @@ static struct hl_host_info *hl_get_hostinfo(struct hpsb_highlevel *hl,
 	return NULL;
 }
 
-/**
- * hpsb_get_hostinfo - retrieve a hostinfo pointer bound to this driver/host
- *
- * Returns a per @host and @hl driver data structure that was previously stored
- * by hpsb_create_hostinfo.
- */
+/* Returns a per host/driver data structure that was previously stored by
+ * hpsb_create_hostinfo. */
 void *hpsb_get_hostinfo(struct hpsb_highlevel *hl, struct hpsb_host *host)
 {
 	struct hl_host_info *hi = hl_get_hostinfo(hl, host);
@@ -79,13 +79,7 @@ void *hpsb_get_hostinfo(struct hpsb_highlevel *hl, struct hpsb_host *host)
 	return hi ? hi->data : NULL;
 }
 
-/**
- * hpsb_create_hostinfo - allocate a hostinfo pointer bound to this driver/host
- *
- * Allocate a hostinfo pointer backed by memory with @data_size and bind it to
- * to this @hl driver and @host.  If @data_size is zero, then the return here is
- * only valid for error checking.
- */
+/* If size is zero, then the return here is only valid for error checking */
 void *hpsb_create_hostinfo(struct hpsb_highlevel *hl, struct hpsb_host *host,
 			   size_t data_size)
 {
@@ -119,11 +113,6 @@ void *hpsb_create_hostinfo(struct hpsb_highlevel *hl, struct hpsb_host *host,
 	return data;
 }
 
-/**
- * hpsb_set_hostinfo - set the hostinfo pointer to something useful
- *
- * Usually follows a call to hpsb_create_hostinfo, where the size is 0.
- */
 int hpsb_set_hostinfo(struct hpsb_highlevel *hl, struct hpsb_host *host,
 		      void *data)
 {
@@ -143,11 +132,6 @@ int hpsb_set_hostinfo(struct hpsb_highlevel *hl, struct hpsb_host *host,
 	return -EINVAL;
 }
 
-/**
- * hpsb_destroy_hostinfo - free and remove a hostinfo pointer
- *
- * Free and remove the hostinfo pointer bound to this @hl driver and @host.
- */
 void hpsb_destroy_hostinfo(struct hpsb_highlevel *hl, struct hpsb_host *host)
 {
 	struct hl_host_info *hi;
@@ -163,12 +147,6 @@ void hpsb_destroy_hostinfo(struct hpsb_highlevel *hl, struct hpsb_host *host)
 	return;
 }
 
-/**
- * hpsb_set_hostinfo_key - set an alternate lookup key for an hostinfo
- *
- * Sets an alternate lookup key for the hostinfo bound to this @hl driver and
- * @host.
- */
 void hpsb_set_hostinfo_key(struct hpsb_highlevel *hl, struct hpsb_host *host,
 			   unsigned long key)
 {
@@ -180,9 +158,6 @@ void hpsb_set_hostinfo_key(struct hpsb_highlevel *hl, struct hpsb_host *host,
 	return;
 }
 
-/**
- * hpsb_get_hostinfo_bykey - retrieve a hostinfo pointer by its alternate key
- */
 void *hpsb_get_hostinfo_bykey(struct hpsb_highlevel *hl, unsigned long key)
 {
 	struct hl_host_info *hi;
@@ -214,18 +189,14 @@ static int highlevel_for_each_host_reg(struct hpsb_host *host, void *__data)
 	return 0;
 }
 
-/**
- * hpsb_register_highlevel - register highlevel driver
- *
- * The name pointer in @hl has to stay valid at all times because the string is
- * not copied.
- */
 void hpsb_register_highlevel(struct hpsb_highlevel *hl)
 {
 	unsigned long flags;
 
-	hpsb_init_highlevel(hl);
 	INIT_LIST_HEAD(&hl->addr_list);
+	INIT_LIST_HEAD(&hl->host_info_list);
+
+	rwlock_init(&hl->host_info_lock);
 
 	down_write(&hl_drivers_sem);
 	list_add_tail(&hl->hl_list, &hl_drivers);
@@ -287,9 +258,6 @@ static int highlevel_for_each_host_unreg(struct hpsb_host *host, void *__data)
 	return 0;
 }
 
-/**
- * hpsb_unregister_highlevel - unregister highlevel driver
- */
 void hpsb_unregister_highlevel(struct hpsb_highlevel *hl)
 {
 	unsigned long flags;
@@ -305,22 +273,9 @@ void hpsb_unregister_highlevel(struct hpsb_highlevel *hl)
 	nodemgr_for_each_host(hl, highlevel_for_each_host_unreg);
 }
 
-/**
- * hpsb_allocate_and_register_addrspace - alloc' and reg' a host address space
- *
- * @start and @end are 48 bit pointers and have to be quadlet aligned.
- * @end points to the first address behind the handled addresses.  This
- * function can be called multiple times for a single hpsb_highlevel @hl to
- * implement sparse register sets.  The requested region must not overlap any
- * previously allocated region, otherwise registering will fail.
- *
- * It returns true for successful allocation.  Address spaces can be
- * unregistered with hpsb_unregister_addrspace.  All remaining address spaces
- * are automatically deallocated together with the hpsb_highlevel @hl.
- */
 u64 hpsb_allocate_and_register_addrspace(struct hpsb_highlevel *hl,
 					 struct hpsb_host *host,
-					 const struct hpsb_address_ops *ops,
+					 struct hpsb_address_ops *ops,
 					 u64 size, u64 alignment,
 					 u64 start, u64 end)
 {
@@ -333,7 +288,7 @@ u64 hpsb_allocate_and_register_addrspace(struct hpsb_highlevel *hl,
 	if ((alignment & 3) || (alignment > 0x800000000000ULL) ||
 	    (hweight64(alignment) != 1)) {
 		HPSB_ERR("%s called with invalid alignment: 0x%048llx",
-			 __func__, (unsigned long long)alignment);
+			 __FUNCTION__, (unsigned long long)alignment);
 		return retval;
 	}
 
@@ -348,7 +303,7 @@ u64 hpsb_allocate_and_register_addrspace(struct hpsb_highlevel *hl,
 	if (((start|end) & ~align_mask) || (start >= end) ||
 	    (end > CSR1212_ALL_SPACE_END)) {
 		HPSB_ERR("%s called with invalid addresses "
-			 "(start = %012Lx  end = %012Lx)", __func__,
+			 "(start = %012Lx  end = %012Lx)", __FUNCTION__,
 			 (unsigned long long)start,(unsigned long long)end);
 		return retval;
 	}
@@ -393,22 +348,8 @@ u64 hpsb_allocate_and_register_addrspace(struct hpsb_highlevel *hl,
 	return retval;
 }
 
-/**
- * hpsb_register_addrspace - register a host address space
- *
- * @start and @end are 48 bit pointers and have to be quadlet aligned.
- * @end points to the first address behind the handled addresses.  This
- * function can be called multiple times for a single hpsb_highlevel @hl to
- * implement sparse register sets.  The requested region must not overlap any
- * previously allocated region, otherwise registering will fail.
- *
- * It returns true for successful allocation.  Address spaces can be
- * unregistered with hpsb_unregister_addrspace.  All remaining address spaces
- * are automatically deallocated together with the hpsb_highlevel @hl.
- */
 int hpsb_register_addrspace(struct hpsb_highlevel *hl, struct hpsb_host *host,
-			    const struct hpsb_address_ops *ops,
-			    u64 start, u64 end)
+			    struct hpsb_address_ops *ops, u64 start, u64 end)
 {
 	struct hpsb_address_serve *as;
 	struct list_head *lh;
@@ -417,11 +358,11 @@ int hpsb_register_addrspace(struct hpsb_highlevel *hl, struct hpsb_host *host,
 
 	if (((start|end) & 3) || (start >= end) ||
 	    (end > CSR1212_ALL_SPACE_END)) {
-		HPSB_ERR("%s called with invalid addresses", __func__);
+		HPSB_ERR("%s called with invalid addresses", __FUNCTION__);
 		return 0;
 	}
 
-	as = kmalloc(sizeof(*as), GFP_KERNEL);
+	as = kmalloc(sizeof(*as), GFP_ATOMIC);
 	if (!as)
 		return 0;
 
@@ -478,23 +419,43 @@ int hpsb_unregister_addrspace(struct hpsb_highlevel *hl, struct hpsb_host *host,
 	return retval;
 }
 
-static const struct hpsb_address_ops dummy_ops;
+int hpsb_listen_channel(struct hpsb_highlevel *hl, struct hpsb_host *host,
+			unsigned int channel)
+{
+	if (channel > 63) {
+		HPSB_ERR("%s called with invalid channel", __FUNCTION__);
+		return -EINVAL;
+	}
+	if (host->iso_listen_count[channel]++ == 0)
+		return host->driver->devctl(host, ISO_LISTEN_CHANNEL, channel);
+	return 0;
+}
 
-/* dummy address spaces as lower and upper bounds of the host's a.s. list */
+void hpsb_unlisten_channel(struct hpsb_highlevel *hl, struct hpsb_host *host,
+			   unsigned int channel)
+{
+	if (channel > 63) {
+		HPSB_ERR("%s called with invalid channel", __FUNCTION__);
+		return;
+	}
+	if (--host->iso_listen_count[channel] == 0)
+		host->driver->devctl(host, ISO_UNLISTEN_CHANNEL, channel);
+}
+
 static void init_hpsb_highlevel(struct hpsb_host *host)
 {
-	INIT_LIST_HEAD(&host->dummy_zero_addr.host_list);
-	INIT_LIST_HEAD(&host->dummy_zero_addr.hl_list);
-	INIT_LIST_HEAD(&host->dummy_max_addr.host_list);
-	INIT_LIST_HEAD(&host->dummy_max_addr.hl_list);
+	INIT_LIST_HEAD(&dummy_zero_addr.host_list);
+	INIT_LIST_HEAD(&dummy_zero_addr.hl_list);
+	INIT_LIST_HEAD(&dummy_max_addr.host_list);
+	INIT_LIST_HEAD(&dummy_max_addr.hl_list);
 
-	host->dummy_zero_addr.op = host->dummy_max_addr.op = &dummy_ops;
+	dummy_zero_addr.op = dummy_max_addr.op = &dummy_ops;
 
-	host->dummy_zero_addr.start = host->dummy_zero_addr.end = 0;
-	host->dummy_max_addr.start = host->dummy_max_addr.end = ((u64) 1) << 48;
+	dummy_zero_addr.start = dummy_zero_addr.end = 0;
+	dummy_max_addr.start = dummy_max_addr.end = ((u64) 1) << 48;
 
-	list_add_tail(&host->dummy_zero_addr.host_list, &host->addr_space);
-	list_add_tail(&host->dummy_max_addr.host_list, &host->addr_space);
+	list_add_tail(&dummy_zero_addr.host_list, &host->addr_space);
+	list_add_tail(&dummy_max_addr.host_list, &host->addr_space);
 }
 
 void highlevel_add_host(struct hpsb_host *host)
@@ -537,6 +498,20 @@ void highlevel_host_reset(struct hpsb_host *host)
 	read_unlock_irqrestore(&hl_irqs_lock, flags);
 }
 
+void highlevel_iso_receive(struct hpsb_host *host, void *data, size_t length)
+{
+	unsigned long flags;
+	struct hpsb_highlevel *hl;
+	int channel = (((quadlet_t *)data)[0] >> 8) & 0x3f;
+
+	read_lock_irqsave(&hl_irqs_lock, flags);
+	list_for_each_entry(hl, &hl_irqs, irq_list) {
+		if (hl->iso_receive)
+			hl->iso_receive(host, channel, data, length);
+	}
+	read_unlock_irqrestore(&hl_irqs_lock, flags);
+}
+
 void highlevel_fcp_request(struct hpsb_host *host, int nodeid, int direction,
 			   void *data, size_t length)
 {
@@ -553,17 +528,6 @@ void highlevel_fcp_request(struct hpsb_host *host, int nodeid, int direction,
 	read_unlock_irqrestore(&hl_irqs_lock, flags);
 }
 
-/*
- * highlevel_read, highlevel_write, highlevel_lock, highlevel_lock64:
- *
- * These functions are called to handle transactions. They are called when a
- * packet arrives.  The flags argument contains the second word of the first
- * header quadlet of the incoming packet (containing transaction label, retry
- * code, transaction code and priority).  These functions either return a
- * response code or a negative number.  In the first case a response will be
- * generated.  In the latter case, no response will be sent and the driver which
- * handled the request will send the response itself.
- */
 int highlevel_read(struct hpsb_host *host, int nodeid, void *data, u64 addr,
 		   unsigned int length, u16 flags)
 {

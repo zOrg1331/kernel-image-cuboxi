@@ -20,8 +20,6 @@
 #include <linux/console.h>
 #include <linux/module.h>
 
-#define FB_SYSFS_FLAG_ATTR 1
-
 /**
  * framebuffer_alloc - creates a new frame buffer info structure
  *
@@ -59,7 +57,7 @@ struct fb_info *framebuffer_alloc(size_t size, struct device *dev)
 	info->device = dev;
 
 #ifdef CONFIG_FB_BACKLIGHT
-	mutex_init(&info->bl_curve_mutex);
+	mutex_init(&info->bl_mutex);
 #endif
 
 	return info;
@@ -73,7 +71,7 @@ EXPORT_SYMBOL(framebuffer_alloc);
  *
  * @info: frame buffer info structure
  *
- * Drop the reference count of the device embedded in the
+ * Drop the reference count of the class_device embedded in the
  * framebuffer info structure.
  *
  */
@@ -120,10 +118,10 @@ static int mode_string(char *buf, unsigned int offset,
 	                m, mode->xres, mode->yres, v, mode->refresh);
 }
 
-static ssize_t store_mode(struct device *device, struct device_attribute *attr,
-			  const char *buf, size_t count)
+static ssize_t store_mode(struct class_device *class_device, const char * buf,
+			  size_t count)
 {
-	struct fb_info *fb_info = dev_get_drvdata(device);
+	struct fb_info *fb_info = class_get_devdata(class_device);
 	char mstr[100];
 	struct fb_var_screeninfo var;
 	struct fb_modelist *modelist;
@@ -151,10 +149,9 @@ static ssize_t store_mode(struct device *device, struct device_attribute *attr,
 	return -EINVAL;
 }
 
-static ssize_t show_mode(struct device *device, struct device_attribute *attr,
-			 char *buf)
+static ssize_t show_mode(struct class_device *class_device, char *buf)
 {
-	struct fb_info *fb_info = dev_get_drvdata(device);
+	struct fb_info *fb_info = class_get_devdata(class_device);
 
 	if (!fb_info->mode)
 		return 0;
@@ -162,11 +159,10 @@ static ssize_t show_mode(struct device *device, struct device_attribute *attr,
 	return mode_string(buf, 0, fb_info->mode);
 }
 
-static ssize_t store_modes(struct device *device,
-			   struct device_attribute *attr,
-			   const char *buf, size_t count)
+static ssize_t store_modes(struct class_device *class_device, const char * buf,
+			   size_t count)
 {
-	struct fb_info *fb_info = dev_get_drvdata(device);
+	struct fb_info *fb_info = class_get_devdata(class_device);
 	LIST_HEAD(old_list);
 	int i = count / sizeof(struct fb_videomode);
 
@@ -175,7 +171,7 @@ static ssize_t store_modes(struct device *device,
 
 	acquire_console_sem();
 	list_splice(&fb_info->modelist, &old_list);
-	fb_videomode_to_modelist((const struct fb_videomode *)buf, i,
+	fb_videomode_to_modelist((struct fb_videomode *)buf, i,
 				 &fb_info->modelist);
 	if (fb_new_modelist(fb_info)) {
 		fb_destroy_modelist(&fb_info->modelist);
@@ -188,10 +184,9 @@ static ssize_t store_modes(struct device *device,
 	return 0;
 }
 
-static ssize_t show_modes(struct device *device, struct device_attribute *attr,
-			  char *buf)
+static ssize_t show_modes(struct class_device *class_device, char *buf)
 {
-	struct fb_info *fb_info = dev_get_drvdata(device);
+	struct fb_info *fb_info = class_get_devdata(class_device);
 	unsigned int i;
 	struct list_head *pos;
 	struct fb_modelist *modelist;
@@ -206,10 +201,10 @@ static ssize_t show_modes(struct device *device, struct device_attribute *attr,
 	return i;
 }
 
-static ssize_t store_bpp(struct device *device, struct device_attribute *attr,
-			 const char *buf, size_t count)
+static ssize_t store_bpp(struct class_device *class_device, const char * buf,
+			 size_t count)
 {
-	struct fb_info *fb_info = dev_get_drvdata(device);
+	struct fb_info *fb_info = class_get_devdata(class_device);
 	struct fb_var_screeninfo var;
 	char ** last = NULL;
 	int err;
@@ -221,18 +216,16 @@ static ssize_t store_bpp(struct device *device, struct device_attribute *attr,
 	return count;
 }
 
-static ssize_t show_bpp(struct device *device, struct device_attribute *attr,
-			char *buf)
+static ssize_t show_bpp(struct class_device *class_device, char *buf)
 {
-	struct fb_info *fb_info = dev_get_drvdata(device);
+	struct fb_info *fb_info = class_get_devdata(class_device);
 	return snprintf(buf, PAGE_SIZE, "%d\n", fb_info->var.bits_per_pixel);
 }
 
-static ssize_t store_rotate(struct device *device,
-			    struct device_attribute *attr,
-			    const char *buf, size_t count)
+static ssize_t store_rotate(struct class_device *class_device, const char *buf,
+			    size_t count)
 {
-	struct fb_info *fb_info = dev_get_drvdata(device);
+	struct fb_info *fb_info = class_get_devdata(class_device);
 	struct fb_var_screeninfo var;
 	char **last = NULL;
 	int err;
@@ -247,19 +240,17 @@ static ssize_t store_rotate(struct device *device,
 }
 
 
-static ssize_t show_rotate(struct device *device,
-			   struct device_attribute *attr, char *buf)
+static ssize_t show_rotate(struct class_device *class_device, char *buf)
 {
-	struct fb_info *fb_info = dev_get_drvdata(device);
+	struct fb_info *fb_info = class_get_devdata(class_device);
 
 	return snprintf(buf, PAGE_SIZE, "%d\n", fb_info->var.rotate);
 }
 
-static ssize_t store_virtual(struct device *device,
-			     struct device_attribute *attr,
-			     const char *buf, size_t count)
+static ssize_t store_virtual(struct class_device *class_device,
+			     const char * buf, size_t count)
 {
-	struct fb_info *fb_info = dev_get_drvdata(device);
+	struct fb_info *fb_info = class_get_devdata(class_device);
 	struct fb_var_screeninfo var;
 	char *last = NULL;
 	int err;
@@ -276,26 +267,23 @@ static ssize_t store_virtual(struct device *device,
 	return count;
 }
 
-static ssize_t show_virtual(struct device *device,
-			    struct device_attribute *attr, char *buf)
+static ssize_t show_virtual(struct class_device *class_device, char *buf)
 {
-	struct fb_info *fb_info = dev_get_drvdata(device);
+	struct fb_info *fb_info = class_get_devdata(class_device);
 	return snprintf(buf, PAGE_SIZE, "%d,%d\n", fb_info->var.xres_virtual,
 			fb_info->var.yres_virtual);
 }
 
-static ssize_t show_stride(struct device *device,
-			   struct device_attribute *attr, char *buf)
+static ssize_t show_stride(struct class_device *class_device, char *buf)
 {
-	struct fb_info *fb_info = dev_get_drvdata(device);
+	struct fb_info *fb_info = class_get_devdata(class_device);
 	return snprintf(buf, PAGE_SIZE, "%d\n", fb_info->fix.line_length);
 }
 
-static ssize_t store_blank(struct device *device,
-			   struct device_attribute *attr,
-			   const char *buf, size_t count)
+static ssize_t store_blank(struct class_device *class_device, const char * buf,
+			   size_t count)
 {
-	struct fb_info *fb_info = dev_get_drvdata(device);
+	struct fb_info *fb_info = class_get_devdata(class_device);
 	char *last = NULL;
 	int err;
 
@@ -309,48 +297,42 @@ static ssize_t store_blank(struct device *device,
 	return count;
 }
 
-static ssize_t show_blank(struct device *device,
-			  struct device_attribute *attr, char *buf)
+static ssize_t show_blank(struct class_device *class_device, char *buf)
 {
-//	struct fb_info *fb_info = dev_get_drvdata(device);
+//	struct fb_info *fb_info = class_get_devdata(class_device);
 	return 0;
 }
 
-static ssize_t store_console(struct device *device,
-			     struct device_attribute *attr,
-			     const char *buf, size_t count)
+static ssize_t store_console(struct class_device *class_device,
+			     const char * buf, size_t count)
 {
-//	struct fb_info *fb_info = dev_get_drvdata(device);
+//	struct fb_info *fb_info = class_get_devdata(class_device);
 	return 0;
 }
 
-static ssize_t show_console(struct device *device,
-			    struct device_attribute *attr, char *buf)
+static ssize_t show_console(struct class_device *class_device, char *buf)
 {
-//	struct fb_info *fb_info = dev_get_drvdata(device);
+//	struct fb_info *fb_info = class_get_devdata(class_device);
 	return 0;
 }
 
-static ssize_t store_cursor(struct device *device,
-			    struct device_attribute *attr,
-			    const char *buf, size_t count)
+static ssize_t store_cursor(struct class_device *class_device,
+			    const char * buf, size_t count)
 {
-//	struct fb_info *fb_info = dev_get_drvdata(device);
+//	struct fb_info *fb_info = class_get_devdata(class_device);
 	return 0;
 }
 
-static ssize_t show_cursor(struct device *device,
-			   struct device_attribute *attr, char *buf)
+static ssize_t show_cursor(struct class_device *class_device, char *buf)
 {
-//	struct fb_info *fb_info = dev_get_drvdata(device);
+//	struct fb_info *fb_info = class_get_devdata(class_device);
 	return 0;
 }
 
-static ssize_t store_pan(struct device *device,
-			 struct device_attribute *attr,
-			 const char *buf, size_t count)
+static ssize_t store_pan(struct class_device *class_device, const char * buf,
+			 size_t count)
 {
-	struct fb_info *fb_info = dev_get_drvdata(device);
+	struct fb_info *fb_info = class_get_devdata(class_device);
 	struct fb_var_screeninfo var;
 	char *last = NULL;
 	int err;
@@ -371,27 +353,24 @@ static ssize_t store_pan(struct device *device,
 	return count;
 }
 
-static ssize_t show_pan(struct device *device,
-			struct device_attribute *attr, char *buf)
+static ssize_t show_pan(struct class_device *class_device, char *buf)
 {
-	struct fb_info *fb_info = dev_get_drvdata(device);
+	struct fb_info *fb_info = class_get_devdata(class_device);
 	return snprintf(buf, PAGE_SIZE, "%d,%d\n", fb_info->var.xoffset,
-			fb_info->var.yoffset);
+			fb_info->var.xoffset);
 }
 
-static ssize_t show_name(struct device *device,
-			 struct device_attribute *attr, char *buf)
+static ssize_t show_name(struct class_device *class_device, char *buf)
 {
-	struct fb_info *fb_info = dev_get_drvdata(device);
+	struct fb_info *fb_info = class_get_devdata(class_device);
 
 	return snprintf(buf, PAGE_SIZE, "%s\n", fb_info->fix.id);
 }
 
-static ssize_t store_fbstate(struct device *device,
-			     struct device_attribute *attr,
-			     const char *buf, size_t count)
+static ssize_t store_fbstate(struct class_device *class_device,
+			const char *buf, size_t count)
 {
-	struct fb_info *fb_info = dev_get_drvdata(device);
+	struct fb_info *fb_info = class_get_devdata(class_device);
 	u32 state;
 	char *last = NULL;
 
@@ -404,27 +383,19 @@ static ssize_t store_fbstate(struct device *device,
 	return count;
 }
 
-static ssize_t show_fbstate(struct device *device,
-			    struct device_attribute *attr, char *buf)
+static ssize_t show_fbstate(struct class_device *class_device, char *buf)
 {
-	struct fb_info *fb_info = dev_get_drvdata(device);
+	struct fb_info *fb_info = class_get_devdata(class_device);
 	return snprintf(buf, PAGE_SIZE, "%d\n", fb_info->state);
 }
 
 #ifdef CONFIG_FB_BACKLIGHT
-static ssize_t store_bl_curve(struct device *device,
-			      struct device_attribute *attr,
-			      const char *buf, size_t count)
+static ssize_t store_bl_curve(struct class_device *class_device,
+		const char *buf, size_t count)
 {
-	struct fb_info *fb_info = dev_get_drvdata(device);
+	struct fb_info *fb_info = class_get_devdata(class_device);
 	u8 tmp_curve[FB_BACKLIGHT_LEVELS];
 	unsigned int i;
-
-	/* Some drivers don't use framebuffer_alloc(), but those also
-	 * don't have backlights.
-	 */
-	if (!fb_info || !fb_info->bl_dev)
-		return -ENODEV;
 
 	if (count != (FB_BACKLIGHT_LEVELS / 8 * 24))
 		return -EINVAL;
@@ -445,28 +416,21 @@ static ssize_t store_bl_curve(struct device *device,
 	/* If there has been an error in the input data, we won't
 	 * reach this loop.
 	 */
-	mutex_lock(&fb_info->bl_curve_mutex);
+	mutex_lock(&fb_info->bl_mutex);
 	for (i = 0; i < FB_BACKLIGHT_LEVELS; ++i)
 		fb_info->bl_curve[i] = tmp_curve[i];
-	mutex_unlock(&fb_info->bl_curve_mutex);
+	mutex_unlock(&fb_info->bl_mutex);
 
 	return count;
 }
 
-static ssize_t show_bl_curve(struct device *device,
-			     struct device_attribute *attr, char *buf)
+static ssize_t show_bl_curve(struct class_device *class_device, char *buf)
 {
-	struct fb_info *fb_info = dev_get_drvdata(device);
+	struct fb_info *fb_info = class_get_devdata(class_device);
 	ssize_t len = 0;
 	unsigned int i;
 
-	/* Some drivers don't use framebuffer_alloc(), but those also
-	 * don't have backlights.
-	 */
-	if (!fb_info || !fb_info->bl_dev)
-		return -ENODEV;
-
-	mutex_lock(&fb_info->bl_curve_mutex);
+	mutex_lock(&fb_info->bl_mutex);
 	for (i = 0; i < FB_BACKLIGHT_LEVELS; i += 8)
 		len += snprintf(&buf[len], PAGE_SIZE,
 				"%02x %02x %02x %02x %02x %02x %02x %02x\n",
@@ -478,7 +442,7 @@ static ssize_t show_bl_curve(struct device *device,
 				fb_info->bl_curve[i + 5],
 				fb_info->bl_curve[i + 6],
 				fb_info->bl_curve[i + 7]);
-	mutex_unlock(&fb_info->bl_curve_mutex);
+	mutex_unlock(&fb_info->bl_mutex);
 
 	return len;
 }
@@ -487,7 +451,7 @@ static ssize_t show_bl_curve(struct device *device,
 /* When cmap is added back in it should be a binary attribute
  * not a text one. Consideration should also be given to converting
  * fbdev to use configfs instead of sysfs */
-static struct device_attribute device_attrs[] = {
+static struct class_device_attribute class_device_attrs[] = {
 	__ATTR(bits_per_pixel, S_IRUGO|S_IWUSR, show_bpp, store_bpp),
 	__ATTR(blank, S_IRUGO|S_IWUSR, show_blank, store_blank),
 	__ATTR(console, S_IRUGO|S_IWUSR, show_console, store_console),
@@ -505,40 +469,24 @@ static struct device_attribute device_attrs[] = {
 #endif
 };
 
-int fb_init_device(struct fb_info *fb_info)
+int fb_init_class_device(struct fb_info *fb_info)
 {
-	int i, error = 0;
+	unsigned int i;
+	class_set_devdata(fb_info->class_device, fb_info);
 
-	dev_set_drvdata(fb_info->dev, fb_info);
-
-	fb_info->class_flag |= FB_SYSFS_FLAG_ATTR;
-
-	for (i = 0; i < ARRAY_SIZE(device_attrs); i++) {
-		error = device_create_file(fb_info->dev, &device_attrs[i]);
-
-		if (error)
-			break;
-	}
-
-	if (error) {
-		while (--i >= 0)
-			device_remove_file(fb_info->dev, &device_attrs[i]);
-		fb_info->class_flag &= ~FB_SYSFS_FLAG_ATTR;
-	}
-
+	for (i = 0; i < ARRAY_SIZE(class_device_attrs); i++)
+		class_device_create_file(fb_info->class_device,
+					 &class_device_attrs[i]);
 	return 0;
 }
 
-void fb_cleanup_device(struct fb_info *fb_info)
+void fb_cleanup_class_device(struct fb_info *fb_info)
 {
 	unsigned int i;
 
-	if (fb_info->class_flag & FB_SYSFS_FLAG_ATTR) {
-		for (i = 0; i < ARRAY_SIZE(device_attrs); i++)
-			device_remove_file(fb_info->dev, &device_attrs[i]);
-
-		fb_info->class_flag &= ~FB_SYSFS_FLAG_ATTR;
-	}
+	for (i = 0; i < ARRAY_SIZE(class_device_attrs); i++)
+		class_device_remove_file(fb_info->class_device,
+					 &class_device_attrs[i]);
 }
 
 #ifdef CONFIG_FB_BACKLIGHT
@@ -552,8 +500,6 @@ void fb_bl_default_curve(struct fb_info *fb_info, u8 off, u8 min, u8 max)
 {
 	unsigned int i, flat, count, range = (max - min);
 
-	mutex_lock(&fb_info->bl_curve_mutex);
-
 	fb_info->bl_curve[0] = off;
 
 	for (flat = 1; flat < (FB_BACKLIGHT_LEVELS / 16); ++flat)
@@ -562,8 +508,6 @@ void fb_bl_default_curve(struct fb_info *fb_info, u8 off, u8 min, u8 max)
 	count = FB_BACKLIGHT_LEVELS * 15 / 16;
 	for (i = 0; i < count; ++i)
 		fb_info->bl_curve[flat + i] = min + (range * (i + 1) / count);
-
-	mutex_unlock(&fb_info->bl_curve_mutex);
 }
 EXPORT_SYMBOL_GPL(fb_bl_default_curve);
 #endif

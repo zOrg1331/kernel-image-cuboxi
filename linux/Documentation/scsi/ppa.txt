@@ -3,7 +3,7 @@
 General Iomega ZIP drive page for Linux:
 http://www.torque.net/~campbell/
 
-Driver archive for old drivers:
+Driver achive for old drivers:
 http://www.torque.net/~campbell/ppa/
 
 Linux Parport page (parallel port)

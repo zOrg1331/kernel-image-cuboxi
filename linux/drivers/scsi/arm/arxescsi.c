@@ -1,5 +1,5 @@
 /*
- * linux/drivers/scsi/arm/arxescsi.c
+ * linux/arch/arm/drivers/scsi/arxescsi.c
  *
  * Copyright (C) 1997-2000 Russell King, Stefan Hanske
  *
@@ -23,6 +23,7 @@
 #include <linux/kernel.h>
 #include <linux/string.h>
 #include <linux/ioport.h>
+#include <linux/sched.h>
 #include <linux/proc_fs.h>
 #include <linux/unistd.h>
 #include <linux/stat.h>
@@ -281,6 +282,7 @@ arxescsi_probe(struct expansion_card *ec, const struct ecard_id *id)
 {
 	struct Scsi_Host *host;
 	struct arxescsi_info *info;
+	unsigned long resbase, reslen;
 	void __iomem *base;
 	int ret;
 
@@ -288,7 +290,9 @@ arxescsi_probe(struct expansion_card *ec, const struct ecard_id *id)
 	if (ret)
 		goto out;
 
-	base = ecardm_iomap(ec, ECARD_RES_MEMC, 0, 0);
+	resbase = ecard_resource_start(ec, ECARD_RES_MEMC);
+	reslen = ecard_resource_len(ec, ECARD_RES_MEMC);
+	base = ioremap(resbase, reslen);
 	if (!base) {
 		ret = -ENOMEM;
 		goto out_region;
@@ -297,7 +301,7 @@ arxescsi_probe(struct expansion_card *ec, const struct ecard_id *id)
 	host = scsi_host_alloc(&arxescsi_template, sizeof(struct arxescsi_info));
 	if (!host) {
 		ret = -ENOMEM;
-		goto out_region;
+		goto out_unmap;
 	}
 
 	info = (struct arxescsi_info *)host->hostdata;
@@ -334,6 +338,8 @@ arxescsi_probe(struct expansion_card *ec, const struct ecard_id *id)
 	fas216_release(host);
  out_unregister:
 	scsi_host_put(host);
+ out_unmap:
+	iounmap(base);
  out_region:
 	ecard_release_resources(ec);
  out:
@@ -343,9 +349,12 @@ arxescsi_probe(struct expansion_card *ec, const struct ecard_id *id)
 static void __devexit arxescsi_remove(struct expansion_card *ec)
 {
 	struct Scsi_Host *host = ecard_get_drvdata(ec);
+	struct arxescsi_info *info = (struct arxescsi_info *)host->hostdata;
 
 	ecard_set_drvdata(ec, NULL);
 	fas216_remove(host);
+
+	iounmap(info->base);
 
 	fas216_release(host);
 	scsi_host_put(host);

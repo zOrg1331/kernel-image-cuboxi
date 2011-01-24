@@ -1,0 +1,88 @@
+From: Anton Arapov <aarapov@redhat.com>
+Date: Mon, 25 Feb 2008 15:33:58 +0100
+Subject: [video] neofb: avoid overwriting fb_info fields
+Message-id: 20080225143358.GA2808@bandura.englab.brq.redhat.com
+O-Subject: [RHEL5.2 PATCH] BZ#430254: neofb: avoid overwriting fb_info fields
+Bugzilla: 430254
+
+BZ#430254:
+https://bugzilla.redhat.com/show_bug.cgi?id=430254
+
+Details:
+    Multiple buffer overrun errors involving "info->fix.id"
+    This fix will result in truncated device identification strings
+
+Upstream status:
+  commit# 0e9045494aa50f34b774a7449dde4128240a7b00
+
+Test status:
+  patch has been tested for compilation.
+
+Notice:
+  this is quite trivial patch, please ACK.
+
+==
+
+diff --git a/drivers/video/neofb.c b/drivers/video/neofb.c
+index 59a6f5f..225db8e 100644
+--- a/drivers/video/neofb.c
++++ b/drivers/video/neofb.c
+@@ -2058,40 +2058,49 @@ static struct fb_info *__devinit neo_alloc_fb_info(struct pci_dev *dev, const st
+ 
+ 	switch (info->fix.accel) {
+ 	case FB_ACCEL_NEOMAGIC_NM2070:
+-		sprintf(info->fix.id, "MagicGraph 128");
++		snprintf(info->fix.id, sizeof(info->fix.id),
++				"MagicGraph 128");
+ 		break;
+ 	case FB_ACCEL_NEOMAGIC_NM2090:
+-		sprintf(info->fix.id, "MagicGraph 128V");
++		snprintf(info->fix.id, sizeof(info->fix.id),
++				"MagicGraph 128V");
+ 		break;
+ 	case FB_ACCEL_NEOMAGIC_NM2093:
+-		sprintf(info->fix.id, "MagicGraph 128ZV");
++		snprintf(info->fix.id, sizeof(info->fix.id),
++				"MagicGraph 128ZV");
+ 		break;
+ 	case FB_ACCEL_NEOMAGIC_NM2097:
+-		sprintf(info->fix.id, "MagicGraph 128ZV+");
++		snprintf(info->fix.id, sizeof(info->fix.id),
++				"MagicGraph 128ZV+");
+ 		break;
+ 	case FB_ACCEL_NEOMAGIC_NM2160:
+-		sprintf(info->fix.id, "MagicGraph 128XD");
++		snprintf(info->fix.id, sizeof(info->fix.id),
++				"MagicGraph 128XD");
+ 		break;
+ 	case FB_ACCEL_NEOMAGIC_NM2200:
+-		sprintf(info->fix.id, "MagicGraph 256AV");
++		snprintf(info->fix.id, sizeof(info->fix.id),
++				"MagicGraph 256AV");
+ 		info->flags |= FBINFO_HWACCEL_IMAGEBLIT |
+ 		               FBINFO_HWACCEL_COPYAREA |
+                 	       FBINFO_HWACCEL_FILLRECT;
+ 		break;
+ 	case FB_ACCEL_NEOMAGIC_NM2230:
+-		sprintf(info->fix.id, "MagicGraph 256AV+");
++		snprintf(info->fix.id, sizeof(info->fix.id),
++				"MagicGraph 256AV+");
+ 		info->flags |= FBINFO_HWACCEL_IMAGEBLIT |
+ 		               FBINFO_HWACCEL_COPYAREA |
+                 	       FBINFO_HWACCEL_FILLRECT;
+ 		break;
+ 	case FB_ACCEL_NEOMAGIC_NM2360:
+-		sprintf(info->fix.id, "MagicGraph 256ZX");
++		snprintf(info->fix.id, sizeof(info->fix.id),
++				"MagicGraph 256ZX");
+ 		info->flags |= FBINFO_HWACCEL_IMAGEBLIT |
+ 		               FBINFO_HWACCEL_COPYAREA |
+                 	       FBINFO_HWACCEL_FILLRECT;
+ 		break;
+ 	case FB_ACCEL_NEOMAGIC_NM2380:
+-		sprintf(info->fix.id, "MagicGraph 256XL+");
++		snprintf(info->fix.id, sizeof(info->fix.id),
++				"MagicGraph 256XL+");
+ 		info->flags |= FBINFO_HWACCEL_IMAGEBLIT |
+ 		               FBINFO_HWACCEL_COPYAREA |
+                 	       FBINFO_HWACCEL_FILLRECT;

@@ -1,0 +1,70 @@
+From: AMEET M. PARANJAPE <aparanja@redhat.com>
+Date: Tue, 31 Mar 2009 11:05:25 -0400
+Subject: [ppc] return req#msi(-x) if request is larger
+Message-id: 20090331150312.14954.99764.sendpatchset@squad5-lp1.lab.bos.redhat.com
+O-Subject: [PATCH RHEL5.4 BZ492580 6/8]
+Bugzilla: 492580
+RH-Acked-by: David Howells <dhowells@redhat.com>
+
+RHBZ#:
+======
+https://bugzilla.redhat.com/show_bug.cgi?id=492580
+
+Description:
+===========
+If a driver asks for more MSIs than the devices "req#msi(-x)" property,
+we currently return -ENOSPC. This doesn't give the driver any chance to
+make a new request with a number that might work.
+
+So if "req#msi(-x)" is less than the request, return its value. To be
+100% safe, make sure we return an error if req_msi == 0.
+
+RHEL Version Found:
+================
+RHEL 5.3
+
+kABI Status:
+============
+No symbols were harmed.
+
+Brew:
+=====
+Built on all platforms.
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1744271
+
+Upstream Status:
+================
+http://git.kernel.org/?p=linux/kernel/git/benh/powerpc.git;a=commit;h=d523cc379da57f1c39f5db9c47bdaa94f74727ff
+
+Test Status:
+============
+There is a testcase provided in the Bugzilla.  A 'cat /proc/interrupts' should
+show the device drivers has two interrupt entries for each port.  Run I/O
+tests.  Then 'lspci -vv' should display the correct pci capabilities for the
+installed adapter and show the adapter is using MSI-X interrupts opposed to MSO
+or LSI interrupts.
+
+===============================================================
+Ameet Paranjape 978-392-3903 ext 23903
+IBM on-site partner
+
+Proposed Patch:
+===============
+
+diff --git a/arch/powerpc/kernel/msi-rtas.c b/arch/powerpc/kernel/msi-rtas.c
+index e5ba47e..05e7b02 100644
+--- a/arch/powerpc/kernel/msi-rtas.c
++++ b/arch/powerpc/kernel/msi-rtas.c
+@@ -152,7 +152,11 @@ static int check_req(struct pci_dev *pdev, int nvec, char *prop_name)
+ 
+ 	if (*req_msi < nvec) {
+ 		pr_debug("rtas_msi: %s requests < %d MSIs\n", prop_name, nvec);
+-		return -ENOSPC;
++
++		if (*req_msi == 0) /* Be paranoid */
++			return -ENOSPC;
++
++		return *req_msi;
+ 	}
+ 
+ 	return 0;

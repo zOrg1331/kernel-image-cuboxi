@@ -1,0 +1,43 @@
+From: Don Dutile <ddutile@redhat.com>
+Date: Mon, 28 Jul 2008 14:17:31 -0400
+Subject: [xen] ia64 PV: shared used header file changes
+Message-id: 488E0D3B.1000508@redhat.com
+O-Subject: Re: [RHEL5.3 PATCH 1/4] Xen h-file change to enable shared use with PV-on-HVM drivers in bare metal ia64 kernel
+Bugzilla: 442991
+RH-Acked-by: Bill Burns <bburns@redhat.com>
+RH-Acked-by: Markus Armbruster <armbru@redhat.com>
+
+Don Dutile wrote:
+>  BZ 442991 -- Include xenpv-driver in bare metal kernel rpm.
+>
+> The following patch modifies the h-file used
+> by the -xen kernel and drivers/xen pv drivers
+> so they can be used by the pv-on-hvm drivers.
+>
+> Note: The original conditional on MODULE is due to
+>       the fact that pv-on-hvm support in xen-upstream
+>       makes the pv-on-hvm xenbus support a module,
+>       instead of built-in to the kernel.
+>
+>
+> See 0/4 for test details.
+>
+> Please review & ACK.
+>
+> - Don
+>
+
+diff --git a/include/asm-ia64/hypercall.h b/include/asm-ia64/hypercall.h
+index 2c4ef37..121beb6 100644
+--- a/include/asm-ia64/hypercall.h
++++ b/include/asm-ia64/hypercall.h
+@@ -377,7 +377,8 @@ HYPERVISOR_add_io_space(unsigned long phys_base,
+ #define HYPERVISOR_update_va_mapping(va, new_val, flags) (0)
+ 
+ /* Use xencomm to do hypercalls.  */
+-#ifdef MODULE
++/* #ifdef MODULE */
++#if defined(MODULE) || defined(CONFIG_XEN_PV_ON_HVM)
+ #define HYPERVISOR_sched_op xencomm_mini_hypercall_sched_op
+ #define HYPERVISOR_event_channel_op xencomm_mini_hypercall_event_channel_op
+ #define HYPERVISOR_callback_op xencomm_mini_hypercall_callback_op

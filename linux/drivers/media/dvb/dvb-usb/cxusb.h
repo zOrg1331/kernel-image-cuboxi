@@ -4,9 +4,12 @@
 #define DVB_USB_LOG_PREFIX "cxusb"
 #include "dvb-usb.h"
 
-/* usb commands - some of it are guesses, don't have a reference yet */
-#define CMD_BLUEBIRD_GPIO_RW 0x05
+extern int dvb_usb_cxusb_debug;
+#define deb_info(args...)   dprintk(dvb_usb_cxusb_debug,0x01,args)
+#define deb_i2c(args...)    if (d->udev->descriptor.idVendor == USB_VID_MEDION) \
+				dprintk(dvb_usb_cxusb_debug,0x01,args)
 
+/* usb commands - some of it are guesses, don't have a reference yet */
 #define CMD_I2C_WRITE     0x08
 #define CMD_I2C_READ      0x09
 
@@ -19,9 +22,6 @@
 
 #define CMD_STREAMING_ON  0x36
 #define CMD_STREAMING_OFF 0x37
-
-#define CMD_AVER_STREAM_ON  0x18
-#define CMD_AVER_STREAM_OFF 0x19
 
 #define CMD_GET_IR_CODE   0x47
 

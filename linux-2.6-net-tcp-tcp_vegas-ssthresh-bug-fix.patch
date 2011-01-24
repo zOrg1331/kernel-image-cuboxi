@@ -1,0 +1,43 @@
+From: Thomas Graf <tgraf@redhat.com>
+Date: Fri, 23 Jul 2010 15:37:40 -0400
+Subject: [net] tcp: tcp_vegas ssthresh bug fix
+Message-id: <20100723153740.GP14925@lsx.localdomain>
+Patchwork-id: 27074
+O-Subject: [RHEL5.6 PATCH 14/14] tcp: tcp_vegas ssthresh bug fix
+Bugzilla: 612709
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+RH-Acked-by: David S. Miller <davem@redhat.com>
+
+commit a6af2d6ba5797c556fba0cd3a19e5f3bc9a99b76
+Author: Doug Leith <doug.leith@nuim.ie>
+Date:   Thu Dec 4 17:17:18 2008 -0800
+
+    tcp: tcp_vegas ssthresh bug fix
+
+    This patch fixes a bug in tcp_vegas.c.  At the moment this code leaves
+    ssthresh untouched.  However, this means that the vegas congestion
+    control algorithm is effectively unable to reduce cwnd below the
+    ssthresh value (if the vegas update lowers the cwnd below ssthresh,
+    then slow start is activated to raise it back up).  One example where
+    this matters is when during slow start cwnd overshoots the link
+    capacity and a flow then exits slow start with ssthresh set to a value
+    above where congestion avoidance would like to adjust it.
+
+    Signed-off-by: Doug Leith <doug.leith@nuim.ie>
+    Signed-off-by: David S. Miller <davem@davemloft.net>
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/net/ipv4/tcp_vegas.c b/net/ipv4/tcp_vegas.c
+index d497f83..8a57a56 100644
+--- a/net/ipv4/tcp_vegas.c
++++ b/net/ipv4/tcp_vegas.c
+@@ -264,6 +264,8 @@ static void tcp_vegas_cong_avoid(struct sock *sk, u32 ack,
+ 				tp->snd_cwnd = 2;
+ 			else if (tp->snd_cwnd > tp->snd_cwnd_clamp)
+ 				tp->snd_cwnd = tp->snd_cwnd_clamp;
++
++			tp->snd_ssthresh = tcp_current_ssthresh(sk);
+ 		}
+ 
+ 		/* Wipe the slate clean for the next RTT. */

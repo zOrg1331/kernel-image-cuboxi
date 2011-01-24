@@ -1,0 +1,135 @@
+From: Wendy Cheng <wcheng@redhat.com>
+Subject: [RHEL5 PATCH] GFS2 change nlink panic
+Date: Wed, 20 Dec 2006 03:05:59 -0500
+Bugzilla: 215088
+Message-Id: <4588EEE7.8060102@redhat.com>
+Changelog: GFS2 change nlink panic
+
+
+GFS2 rename will panic if resource group locks are taken by the block 
+allocation logic (adding filename to the directory) and the replaced 
+(and/or deleted) file is the last reference of the file. It will BUG() 
+in gfs2_change_nlink() where the delete logic tries to free on-disk 
+inode back to resource group (recursive locking is not allowed)  This 
+patch fixes the panic seen by the bugzilla while installing RHEL on gfs2 
+partitions. It is verified by a stand-alone test program.
+
+Two un-finished issues:
+1. We still can't run thru anaconda installation (with RHEL on GFS2 
+partitions) - other issues have been worked on.
+2. There are few other gfs2_change_nlink() hidden layers under other 
+calls (gfs2_rmdiri() for example) in rename code path that may cause 
+similar panic. Haven't had chances to examine the scope yet - if we 
+eventually find too many of these, we may need to re-think whether we 
+should free on-disk inode back to RG as part of the file deletion logic.
+
+In any case, this is more of a (normal) gfs2 rename issue, not so much 
+of an installation issue.
+
+-- Wendy
+
+--- linux-2.6.18/fs/gfs2/inode.h	2006-11-27 15:34:45.000000000 -0500
++++ linux/fs/gfs2/inode.h	2006-12-15 02:45:16.000000000 -0500
+@@ -34,6 +34,7 @@ int gfs2_inode_refresh(struct gfs2_inode
+ 
+ int gfs2_dinode_dealloc(struct gfs2_inode *inode);
+ int gfs2_change_nlink(struct gfs2_inode *ip, int diff);
++int gfs2_change_nlink_i(struct gfs2_inode *ip, int diff);
+ struct inode *gfs2_lookupi(struct inode *dir, const struct qstr *name,
+ 			   int is_root, struct nameidata *nd);
+ struct inode *gfs2_createi(struct gfs2_holder *ghs, const struct qstr *name,
+--- linux-2.6.18/fs/gfs2/inode.c	2006-11-27 15:34:45.000000000 -0500
++++ linux/fs/gfs2/inode.c	2006-12-15 02:59:54.000000000 -0500
+@@ -300,16 +300,14 @@ out:
+ }
+ 
+ /**
+- * gfs2_change_nlink - Change nlink count on inode
++ * gfs2_change_nlink_i - Change nlink count on inode
+  * @ip: The GFS2 inode
+  * @diff: The change in the nlink count required
+  *
+  * Returns: errno
+  */
+-
+-int gfs2_change_nlink(struct gfs2_inode *ip, int diff)
++int gfs2_change_nlink_i(struct gfs2_inode *ip, int diff)
+ {
+-	struct gfs2_sbd *sdp = ip->i_inode.i_sb->s_fs_info;
+ 	struct buffer_head *dibh;
+ 	u32 nlink;
+ 	int error;
+@@ -338,6 +336,20 @@ int gfs2_change_nlink(struct gfs2_inode 
+ 	brelse(dibh);
+ 	mark_inode_dirty(&ip->i_inode);
+ 
++	return error;
++}
++
++int gfs2_change_nlink(struct gfs2_inode *ip, int diff)
++{
++	struct gfs2_sbd *sdp = ip->i_inode.i_sb->s_fs_info;
++	int error;
++
++	/* update the nlink */
++	error = gfs2_change_nlink_i(ip, diff);
++	if (error)
++		return error;
++
++	/* return meta data block back to rg */
+ 	if (ip->i_di.di_nlink == 0) {
+ 		struct gfs2_rgrpd *rgd;
+ 		struct gfs2_holder ri_gh, rg_gh;
+--- linux-2.6.18/fs/gfs2/ops_inode.c	2006-11-27 15:34:45.000000000 -0500
++++ linux/fs/gfs2/ops_inode.c	2006-12-15 13:29:13.000000000 -0500
+@@ -583,6 +583,7 @@ static int gfs2_rename(struct inode *odi
+ 	int alloc_required;
+ 	unsigned int x;
+ 	int error;
++	struct gfs2_rgrpd *rgd;
+ 
+ 	if (ndentry->d_inode) {
+ 		nip = GFS2_I(ndentry->d_inode);
+@@ -716,12 +717,12 @@ static int gfs2_rename(struct inode *odi
+ 		error = gfs2_trans_begin(sdp, sdp->sd_max_dirres +
+ 					 al->al_rgd->rd_ri.ri_length +
+ 					 4 * RES_DINODE + 4 * RES_LEAF +
+-					 RES_STATFS + RES_QUOTA, 0);
++					 RES_STATFS + RES_QUOTA + 1, 0);
+ 		if (error)
+ 			goto out_ipreserv;
+ 	} else {
+ 		error = gfs2_trans_begin(sdp, 4 * RES_DINODE +
+-					 5 * RES_LEAF, 0);
++					 5 * RES_LEAF + 1, 0);
+ 		if (error)
+ 			goto out_gunlock;
+ 	}
+@@ -735,7 +736,25 @@ static int gfs2_rename(struct inode *odi
+ 			error = gfs2_dir_del(ndip, &ndentry->d_name);
+ 			if (error)
+ 				goto out_end_trans;
+-			error = gfs2_change_nlink(nip, -1);
++			error = gfs2_change_nlink_i(nip, -1);
++			if ((!error) && (nip->i_di.di_nlink == 0)) {
++				error = -EIO;
++				rgd = gfs2_blk2rgrpd(sdp, nip->i_num.no_addr);
++				if (rgd) {
++					struct gfs2_holder nlink_rg_gh;
++					if (rgd != nip->i_alloc.al_rgd) 
++						error = gfs2_glock_nq_init(
++						rgd->rd_gl, LM_ST_EXCLUSIVE, 
++						0, &nlink_rg_gh);
++					else 
++						error = 0;
++                			if (!error) {
++						gfs2_unlink_di(&nip->i_inode);
++						if (rgd != nip->i_alloc.al_rgd) 
++							gfs2_glock_dq_uninit(&nlink_rg_gh);
++					}
++				}
++			}
+ 		}
+ 		if (error)
+ 			goto out_end_trans;
+

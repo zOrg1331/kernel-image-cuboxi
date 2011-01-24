@@ -1,0 +1,293 @@
+From: Brad Peters <bpeters@redhat.com>
+Date: Wed, 5 Mar 2008 17:26:36 -0500
+Subject: [ppc64] broken MSI on cell blades when IOMMU is on
+Message-id: 20080305222636.GF8084@bpeters-ibm
+O-Subject: Re: [RHEL5 U2 PATCH 1/1] - MSI is broken on cell blades when IOMMU is on
+Bugzilla: 430949
+
+RHBZ#:
+------
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=430949
+
+Author: Michael Ellerman <michael@ellerman.id.au>
+Ported to 2.6.18-80 by: Brad Peters <bpeters@redhat.com>
+
+Description:
+------------
+Overview:
+Search for and publish cell OpenFirmware platform devices earlier.
+Currently cell publishes OF devices at device_initcall() time, which
+means the earliest a driver can bind to a device is also device_initcall()
+time. We have a driver we want to register before other devices, so
+publish the devices at subsys_initcall() time.
+
+This should not cause any behaviour change for existing drivers, as they
+are still bound at device_initcall() time.
+
+- Although of_platform_device's can have a shutdown routine, at the moment
+the bus code doesn't actually call it. So add the required glue to
+hook the shutdown routine.
+
+- Now that we create of_platform devices earlier on cell, we can make the
+axon_msi driver an of_platform driver. This makes the code cleaner in
+several ways, and most importantly means we have a struct device.
+
+- There's a brown-paper-bag bug in axon_msi, we pass the address of our
+FIFO directly to the hardware, without DMA mapping it. This leads to
+DMA exceptions if you enable MSI & the IOMMU.
+
+The fix is to correctly DMA map the fifo, dma_alloc_coherent() does
+what we want - and we need to track the virt & phys addresses.
+
+RHEL Version Found:
+------------------
+5.0
+
+kABI Status:
+------------
+No symbols harmed.
+
+Kernel:
+-----
+http://people.redhat.com/bpeters/kernels/kernel-2.6.18-80.el5.80.el5.430949.ppc64.rpm
+
+Upstream Status:
+----------------
+now accepted upstream in kernel:
+2.6.25-rc1 ... see
+http://kernel.org/pub/linux/kernel/v2.6/testing/ChangeLog-2.6.25-rc1
+
+Test Status:
+------------
+Verified boot success.
+
+Best regards,
+
+Brad Peters
+
+[1]:
+http://post-office.corp.redhat.com/archives/rhkernel-list/2008-February/msg00299.html
+
+Acked-by: David Howells <dhowells@redhat.com>
+
+diff --git a/arch/powerpc/kernel/of_platform.c b/arch/powerpc/kernel/of_platform.c
+index 9671c58..13b1adc 100644
+--- a/arch/powerpc/kernel/of_platform.c
++++ b/arch/powerpc/kernel/of_platform.c
+@@ -131,6 +131,15 @@ static int of_platform_device_resume(struct device * dev)
+ 	return error;
+ }
+ 
++static void of_platform_device_shutdown(struct device *dev)
++{
++	struct of_device *of_dev = to_of_device(dev);
++	struct of_platform_driver *drv = to_of_platform_driver(dev->driver);
++
++	if (dev->driver && drv->shutdown)
++		drv->shutdown(of_dev);
++}
++
+ struct bus_type of_platform_bus_type = {
+        .name	= "of_platform",
+        .match	= of_platform_bus_match,
+@@ -138,6 +147,7 @@ struct bus_type of_platform_bus_type = {
+        .remove	= of_platform_device_remove,
+        .suspend	= of_platform_device_suspend,
+        .resume	= of_platform_device_resume,
++       .shutdown = of_platform_device_shutdown,
+ };
+ EXPORT_SYMBOL(of_platform_bus_type);
+ 
+diff --git a/arch/powerpc/platforms/cell/axon_msi.c b/arch/powerpc/platforms/cell/axon_msi.c
+index 180c8ef..0fd3e53 100644
+--- a/arch/powerpc/platforms/cell/axon_msi.c
++++ b/arch/powerpc/platforms/cell/axon_msi.c
+@@ -12,8 +12,8 @@
+ #include <linux/irq.h>
+ #include <linux/kernel.h>
+ #include <linux/pci.h>
+-#include <linux/reboot.h>
+ 
++#include <asm/of_device.h>
+ #include <asm/dcr.h>
+ #include <asm/machdep.h>
+ #include <asm/msi.h>
+@@ -66,15 +66,13 @@
+ struct axon_msic {
+ 	struct device_node *dn;
+ 	struct irq_host *irq_host;
+-	__le32 *fifo;
++	__le32 *fifo_virt;
++	dma_addr_t fifo_phys;
+ 	dcr_host_t dcr_host;
+-	struct list_head list;
+ 	u32 read_offset;
+ 	u32 dcr_base;
+ };
+ 
+-static LIST_HEAD(axon_msic_list);
+-
+ static void msic_dcr_write(struct axon_msic *msic, unsigned int dcr_n, u32 val)
+ {
+ 	pr_debug("axon_msi: dcr_write(0x%x, 0x%x)\n", val, dcr_n);
+@@ -102,7 +100,7 @@ static void axon_msi_cascade(unsigned int irq, struct irq_desc *desc,
+ 
+ 	while (msic->read_offset != write_offset) {
+ 		idx  = msic->read_offset / sizeof(__le32);
+-		msi  = le32_to_cpu(msic->fifo[idx]);
++		msi  = le32_to_cpu(msic->fifo_virt[idx]);
+ 		msi &= 0xFFFF;
+ 
+ 		pr_debug("axon_msi: woff %x roff %x msi %x\n",
+@@ -309,29 +307,24 @@ static struct irq_host_ops msic_host_ops = {
+ 	.map	= msic_host_map,
+ };
+ 
+-static int axon_msi_notify_reboot(struct notifier_block *nb,
+-				  unsigned long code, void *data)
++static int axon_msi_shutdown(struct of_device *device)
+ {
+-	struct axon_msic *msic;
++	struct axon_msic *msic = device->dev.platform_data;
+ 	u32 tmp;
+ 
+-	list_for_each_entry(msic, &axon_msic_list, list) {
+-		pr_debug("axon_msi: disabling %s\n", msic->dn->full_name);
+-		tmp  = msic_dcr_read(msic, MSIC_CTRL_REG);
+-		tmp &= ~MSIC_CTRL_ENABLE & ~MSIC_CTRL_IRQ_ENABLE;
+-		msic_dcr_write(msic, MSIC_CTRL_REG, tmp);
+-	}
++	pr_debug("axon_msi: disabling %s\n", msic->dn->full_name);
++	tmp  = msic_dcr_read(msic, MSIC_CTRL_REG);
++	tmp &= ~MSIC_CTRL_ENABLE & ~MSIC_CTRL_IRQ_ENABLE;
++	msic_dcr_write(msic, MSIC_CTRL_REG, tmp);
+ 
+ 	return 0;
+ }
+ 
+-static struct notifier_block axon_msi_reboot_notifier = {
+-	.notifier_call = axon_msi_notify_reboot
+-};
+-
+-static int axon_msi_setup_one(struct device_node *dn)
++static int axon_msi_probe(struct of_device *device,
++			const struct of_device_id *device_id)
+ {
+ 	struct page *page;
++	struct device_node *dn = device->node;
+ 	struct axon_msic *msic;
+ 	unsigned int virq;
+ 	int dcr_len;
+@@ -362,16 +355,14 @@ static int axon_msi_setup_one(struct device_node *dn)
+ 		goto out_free_msic;
+ 	}
+ 
+-	page = alloc_pages_node(of_node_to_nid(dn), GFP_KERNEL,
+-				get_order(MSIC_FIFO_SIZE_BYTES));
+-	if (!page) {
++	msic->fifo_virt = dma_alloc_coherent(&device->dev, MSIC_FIFO_SIZE_BYTES,
++						&msic->fifo_phys, GFP_KERNEL);
++	if (!msic->fifo_virt) {
+ 		printk(KERN_ERR "axon_msi: couldn't allocate fifo for %s\n",
+ 		       dn->full_name);
+ 		goto out_free_msic;
+ 	}
+ 
+-	msic->fifo = page_address(page);
+-
+ 	msic->irq_host = irq_alloc_host(IRQ_HOST_MAP_NOMAP, NR_IRQS,
+ 					&msic_host_ops, 0);
+ 	if (!msic->irq_host) {
+@@ -396,14 +387,18 @@ static int axon_msi_setup_one(struct device_node *dn)
+ 	pr_debug("axon_msi: irq 0x%x setup for axon_msi\n", virq);
+ 
+ 	/* Enable the MSIC hardware */
+-	msic_dcr_write(msic, MSIC_BASE_ADDR_HI_REG, (u64)msic->fifo >> 32);
++	msic_dcr_write(msic, MSIC_BASE_ADDR_HI_REG, msic->fifo_phys >> 32);
+ 	msic_dcr_write(msic, MSIC_BASE_ADDR_LO_REG,
+-				  (u64)msic->fifo & 0xFFFFFFFF);
++					msic->fifo_phys & 0xFFFFFFFF);
+ 	msic_dcr_write(msic, MSIC_CTRL_REG,
+ 			MSIC_CTRL_IRQ_ENABLE | MSIC_CTRL_ENABLE |
+ 			MSIC_CTRL_FIFO_SIZE);
+ 
+-	list_add(&msic->list, &axon_msic_list);
++	device->dev.platform_data = msic;
++
++	ppc_msi_md.setup_msi_irqs = axon_msi_setup_msi_irqs;
++	ppc_msi_md.teardown_msi_irqs = axon_msi_teardown_msi_irqs;
++	ppc_msi_md.msi_check_device = axon_msi_check_device;
+ 
+ 	printk(KERN_DEBUG "axon_msi: setup MSIC on %s\n", dn->full_name);
+ 
+@@ -412,7 +407,8 @@ static int axon_msi_setup_one(struct device_node *dn)
+ out_free_host:
+ 	kfree(msic->irq_host);
+ out_free_fifo:
+-	__free_pages(virt_to_page(msic->fifo), get_order(MSIC_FIFO_SIZE_BYTES));
++	dma_free_coherent(&device->dev, MSIC_FIFO_SIZE_BYTES, msic->fifo_virt,
++			msic->fifo_phys);
+ out_free_msic:
+ 	kfree(msic);
+ out:
+@@ -420,28 +416,26 @@ out:
+ 	return -1;
+ }
+ 
+-static int axon_msi_init(void)
+-{
+-	struct device_node *dn;
+-	int found = 0;
+-
+-	pr_debug("axon_msi: initialising ...\n");
+ 
+-	for_each_compatible_node(dn, NULL, "ibm,axon-msic") {
+-		if (axon_msi_setup_one(dn) == 0)
+-			found++;
+-	}
+-
+-	if (found) {
+-		ppc_msi_md.setup_msi_irqs = axon_msi_setup_msi_irqs;
+-		ppc_msi_md.teardown_msi_irqs = axon_msi_teardown_msi_irqs;
+-		ppc_msi_md.msi_check_device = axon_msi_check_device;
+-
+-		register_reboot_notifier(&axon_msi_reboot_notifier);
++static struct of_device_id axon_msi_device_id[] = {
++	{
++		.compatible     = "ibm,axon-msic"
++	},
++	{}
++};
+ 
+-		pr_debug("axon_msi: registered callbacks!\n");
+-	}
++static struct of_platform_driver axon_msi_driver = {
++	.match_table    = axon_msi_device_id,
++	.probe          = axon_msi_probe,
++	.shutdown       = axon_msi_shutdown,
++	.driver         = {
++		.name = "axon-msi"
++	},
++};
+ 
+-	return 0;
++static int __init axon_msi_init(void)
++{
++	return of_register_platform_driver(&axon_msi_driver);
+ }
+-arch_initcall(axon_msi_init);
++
++subsys_initcall(axon_msi_init);
+diff --git a/arch/powerpc/platforms/cell/setup.c b/arch/powerpc/platforms/cell/setup.c
+index d9182b0..2693d17 100644
+--- a/arch/powerpc/platforms/cell/setup.c
++++ b/arch/powerpc/platforms/cell/setup.c
+@@ -95,7 +95,7 @@ static int __init cell_publish_devices(void)
+ 		of_platform_bus_probe(NULL, NULL, NULL);
+ 	return 0;
+ }
+-device_initcall(cell_publish_devices);
++subsys_initcall(cell_publish_devices);
+ 
+ static void cell_mpic_cascade(unsigned int irq, struct irq_desc *desc,
+ 			      struct pt_regs *regs)

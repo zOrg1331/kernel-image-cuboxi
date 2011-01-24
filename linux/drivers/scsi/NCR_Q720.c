@@ -54,7 +54,7 @@ static struct scsi_host_template NCR_Q720_tpnt = {
 };
 
 static irqreturn_t
-NCR_Q720_intr(int irq, void *data)
+NCR_Q720_intr(int irq, void *data, struct pt_regs * regs)
 {
 	struct NCR_Q720_private *p = (struct NCR_Q720_private *)data;
 	__u8 sir = (readb(p->mem_base + 0x0d) & 0xf0) >> 4;
@@ -68,7 +68,7 @@ NCR_Q720_intr(int irq, void *data)
 
 	while((siop = ffz(sir)) < p->siops) {
 		sir |= 1<<siop;
-		ncr53c8xx_intr(irq, p->hosts[siop]);
+		ncr53c8xx_intr(irq, p->hosts[siop], regs);
 	}
 	return IRQ_HANDLED;
 }
@@ -148,10 +148,11 @@ NCR_Q720_probe(struct device *dev)
 	__u32 base_addr, mem_size;
 	void __iomem *mem_base;
 
-	p = kzalloc(sizeof(*p), GFP_KERNEL);
+	p = kmalloc(sizeof(*p), GFP_KERNEL);
 	if (!p)
 		return -ENOMEM;
 
+	memset(p, 0, sizeof(*p));
 	pos2 = mca_device_read_pos(mca_dev, 2);
 	/* enable device */
 	pos2 |=  NCR_Q720_POS2_BOARD_ENABLE | NCR_Q720_POS2_INTERRUPT_ENABLE;

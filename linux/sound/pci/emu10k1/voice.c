@@ -1,5 +1,5 @@
 /*
- *  Copyright (c) by Jaroslav Kysela <perex@perex.cz>
+ *  Copyright (c) by Jaroslav Kysela <perex@suse.cz>
  *                   Creative Labs, Inc.
  *                   Lee Revell <rlrevell@joe-job.com>
  *  Routines for control of EMU10K1 chips - voice manager
@@ -28,6 +28,7 @@
  *
  */
 
+#include <sound/driver.h>
 #include <linux/time.h>
 #include <sound/core.h>
 #include <sound/emu10k1.h>
@@ -53,10 +54,7 @@ static int voice_alloc(struct snd_emu10k1 *emu, int type, int number,
 	*rvoice = NULL;
 	first_voice = last_voice = 0;
 	for (i = emu->next_free_voice, j = 0; j < NUM_G ; i += number, j += number) {
-		/*
-		printk(KERN_DEBUG "i %d j %d next free %d!\n",
-		       i, j, emu->next_free_voice);
-		*/
+		// printk("i %d j %d next free %d!\n", i, j, emu->next_free_voice);
 		i %= NUM_G;
 
 		/* stereo voices must be even/odd */
@@ -74,7 +72,7 @@ static int voice_alloc(struct snd_emu10k1 *emu, int type, int number,
 			}
 		}
 		if (!skip) {
-			/* printk(KERN_DEBUG "allocated voice %d\n", i); */
+			// printk("allocated voice %d\n", i);
 			first_voice = i;
 			last_voice = (i + number) % NUM_G;
 			emu->next_free_voice = last_voice;
@@ -85,12 +83,9 @@ static int voice_alloc(struct snd_emu10k1 *emu, int type, int number,
 	if (first_voice == last_voice)
 		return -ENOMEM;
 	
-	for (i = 0; i < number; i++) {
+	for (i=0; i < number; i++) {
 		voice = &emu->voices[(first_voice + i) % NUM_G];
-		/*
-		printk(kERN_DEBUG "voice alloc - %i, %i of %i\n",
-		       voice->number, idx-first_voice+1, number);
-		*/
+		// printk("voice alloc - %i, %i of %i\n", voice->number, idx-first_voice+1, number);
 		voice->use = 1;
 		switch (type) {
 		case EMU10K1_PCM:
@@ -117,10 +112,8 @@ int snd_emu10k1_voice_alloc(struct snd_emu10k1 *emu, int type, int number,
 	unsigned long flags;
 	int result;
 
-	if (snd_BUG_ON(!rvoice))
-		return -EINVAL;
-	if (snd_BUG_ON(!number))
-		return -EINVAL;
+	snd_assert(rvoice != NULL, return -EINVAL);
+	snd_assert(number, return -EINVAL);
 
 	spin_lock_irqsave(&emu->voice_lock, flags);
 	for (;;) {
@@ -153,8 +146,7 @@ int snd_emu10k1_voice_free(struct snd_emu10k1 *emu,
 {
 	unsigned long flags;
 
-	if (snd_BUG_ON(!pvoice))
-		return -EINVAL;
+	snd_assert(pvoice != NULL, return -EINVAL);
 	spin_lock_irqsave(&emu->voice_lock, flags);
 	pvoice->interrupt = NULL;
 	pvoice->use = pvoice->pcm = pvoice->synth = pvoice->midi = pvoice->efx = 0;

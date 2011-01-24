@@ -40,9 +40,8 @@ int llc_mac_hdr_init(struct sk_buff *skb,
 	case ARPHRD_IEEE802_TR: {
 		struct net_device *dev = skb->dev;
 		struct trh_hdr *trh;
-
-		skb_push(skb, sizeof(*trh));
-		skb_reset_mac_header(skb);
+		
+		skb->mac.raw = skb_push(skb, sizeof(*trh));
 		trh = tr_hdr(skb);
 		trh->ac = AC;
 		trh->fc = LLC_FRAME;
@@ -53,7 +52,7 @@ int llc_mac_hdr_init(struct sk_buff *skb,
 		if (da) {
 			memcpy(trh->daddr, da, dev->addr_len);
 			tr_source_route(skb, trh, dev);
-			skb_reset_mac_header(skb);
+			skb->mac.raw = skb->data;
 		}
 		break;
 	}
@@ -63,8 +62,7 @@ int llc_mac_hdr_init(struct sk_buff *skb,
 		unsigned short len = skb->len;
 		struct ethhdr *eth;
 
-		skb_push(skb, sizeof(*eth));
-		skb_reset_mac_header(skb);
+		skb->mac.raw = skb_push(skb, sizeof(*eth));
 		eth = eth_hdr(skb);
 		eth->h_proto = htons(len);
 		memcpy(eth->h_dest, da, ETH_ALEN);

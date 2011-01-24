@@ -1,0 +1,301 @@
+From: John Feeney <jfeeney@redhat.com>
+Date: Mon, 17 Dec 2007 15:53:42 -0500
+Subject: [acpi] docking/undocking: add sysfs support
+Message-id: 4766E1D6.8020504@redhat.com
+O-Subject: RHEL-5.2 PATCH 2/5] Docking/undocking support
+Bugzilla: 252214
+
+bz252214 FEAT: RHEL 5.2 hot dock / undock support for mobile
+w/docking station
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=252214
+
+Problem:
+The sysfs functionality is not present.
+
+Solution:
+The sysfs functionality was added by a string (7) of patches
+as follows:
+a. ACPI: dock: Make the dock station driver a platform device
+driver.
+    Make the dock station driver a platform device driver so that
+    we can create sysfs entries under /sys/device/platform.
+
+b. ACPI: dock: fix build warning
+    drivers/acpi/dock.c:689: warning: too many arguments for format
+
+c. ACPI: dock: Add a docked sysfs file to the dock driver.
+   Add 2 sysfs files for user interface.
+     1) docked - 1/0 (read only) - indicates whether the software
+believes the
+         laptop is docked in a docking station.
+     2) undock - (write only) - writing to this file causes the software to
+         initiate an undock request to the firmware.
+
+d. ACPI: dock: add access to ACPI docking station UID
+       It is useful to know whether your laptop is docked or not,
+       but it is even more useful to know which docking station it's
+       docked to. Attached patch adds "uid" file to sysfs.
+
+e. ACPI: dock: use NULL for pointer
+       Use NULL instead of 0 for pointers:
+           drivers/acpi/dock.c:677:75: warning: Using plain integer as
+NULL pointer
+
+f. ACPI: dock: cleanup the uid patch
+      Make uid sysfs file error path free memory, and cleanup sysfs file
+      when removing driver.  Also fix CodingStyle violations.
+
+g. ACPI: dock: fix opps after dock driver fails to initialize
+     The driver tests the dock_station pointer for nonnull
+      to check whether it has initialized properly. But in
+      some cases dock_station will be non-null after being
+      freed when driver init fails. Fix by zeroing the
+      pointer after freeing.
+
+Upstream Status:
+All patches were taken from upstream. The commits will be
+provided.
+   a. commit: 671adbec210efc15cef81b4616adae8bcd667296
+   b. commit: e67beb37df7a9da9d5d1e59c5358654d007a97c5
+   c. commit: c80fdbe81a617c82e2f95233f8ddcf046ffe21b3
+   d. commit: ac122bb64b0d51f0512185d3522a75f3f3a80bc9
+   e. commit: 62a6d7fd9bc1d85f9aae734c46234e88fa839db0
+   f. commit: 38ff4ffc039ba5a5878f2dcbb03d87c3a1f02f1b
+   g. commit: 22fe4c2114e29477ca6738729c074ee8f60d3b73
+
+Testing:
+The sysfs patches in this series were successfully tested by me on
+a T60p.
+
+As always, acks would be appreciated.
+
+diff --git a/drivers/acpi/dock.c b/drivers/acpi/dock.c
+index c7df2a1..2630f06 100644
+--- a/drivers/acpi/dock.c
++++ b/drivers/acpi/dock.c
+@@ -27,6 +27,8 @@
+ #include <linux/init.h>
+ #include <linux/types.h>
+ #include <linux/notifier.h>
++#include <linux/platform_device.h>
++#include <linux/stddef.h>
+ #include <acpi/acpi_bus.h>
+ #include <acpi/acpi_drivers.h>
+ 
+@@ -38,6 +40,8 @@ MODULE_DESCRIPTION(ACPI_DOCK_DRIVER_NAME);
+ MODULE_LICENSE("GPL");
+ 
+ static struct atomic_notifier_head dock_notifier_list;
++static struct platform_device dock_device;
++static char dock_device_name[] = "dock";
+ 
+ struct dock_station {
+ 	acpi_handle handle;
+@@ -511,6 +515,37 @@ void unregister_hotplug_dock_device(acpi_handle handle)
+ EXPORT_SYMBOL_GPL(unregister_hotplug_dock_device);
+ 
+ /**
++ * handle_eject_request - handle an undock request checking for error conditions
++ *
++ * Check to make sure the dock device is still present, then undock and
++ * hotremove all the devices that may need removing.
++ */
++static int handle_eject_request(struct dock_station *ds, u32 event)
++{
++	if (!dock_present(ds))
++		return -ENODEV;
++
++	if (dock_in_progress(ds))
++		return -EBUSY;
++
++	/*
++	 * here we need to generate the undock
++	 * event prior to actually doing the undock
++	 * so that the device struct still exists.
++	 */
++	dock_event(ds, event, UNDOCK_EVENT);
++	hotplug_dock_devices(ds, ACPI_NOTIFY_EJECT_REQUEST);
++	undock(ds);
++	eject_dock(ds);
++	if (dock_present(ds)) {
++		printk(KERN_ERR PREFIX "Unable to undock!\n");
++		return -EBUSY;
++	}
++
++	return 0;
++}
++
++/**
+  * dock_notify - act upon an acpi dock notification
+  * @handle: the dock station handle
+  * @event: the acpi event
+@@ -518,9 +553,7 @@ EXPORT_SYMBOL_GPL(unregister_hotplug_dock_device);
+  *
+  * If we are notified to dock, then check to see if the dock is
+  * present and then dock.  Notify all drivers of the dock event,
+- * and then hotplug and devices that may need hotplugging.  For undock
+- * check to make sure the dock device is still present, then undock
+- * and hotremove all the devices that may need removing.
++ * and then hotplug and devices that may need hotplugging.
+  */
+ static void dock_notify(acpi_handle handle, u32 event, void *data)
+ {
+@@ -552,19 +585,7 @@ static void dock_notify(acpi_handle handle, u32 event, void *data)
+ 	 * to the driver who wish to hotplug.
+          */
+ 	case ACPI_NOTIFY_EJECT_REQUEST:
+-		if (!dock_in_progress(ds) && dock_present(ds)) {
+-			/*
+-			 * here we need to generate the undock
+-			 * event prior to actually doing the undock
+-			 * so that the device struct still exists.
+-			 */
+-			dock_event(ds, event, UNDOCK_EVENT);
+-			hotplug_dock_devices(ds, ACPI_NOTIFY_EJECT_REQUEST);
+-			undock(ds);
+-			eject_dock(ds);
+-			if (dock_present(ds))
+-				printk(KERN_ERR PREFIX "Unable to undock!\n");
+-		}
++		handle_eject_request(ds, event);
+ 		break;
+ 	default:
+ 		printk(KERN_ERR PREFIX "Unknown dock event %d\n", event);
+@@ -603,6 +624,49 @@ find_dock_devices(acpi_handle handle, u32 lvl, void *context, void **rv)
+ 	return AE_OK;
+ }
+ 
++/*
++ * show_docked - read method for "docked" file in sysfs
++ */
++static ssize_t show_docked(struct device *dev,
++			struct device_attribute *attr, char *buf)
++{
++	return snprintf(buf, PAGE_SIZE, "%d\n", dock_present(dock_station));
++
++}
++DEVICE_ATTR(docked, S_IRUGO, show_docked, NULL);
++
++/*
++ * write_undock - write method for "undock" file in sysfs
++ */
++static ssize_t write_undock(struct device *dev, struct device_attribute *attr,
++			const char *buf, size_t count)
++{
++	int ret;
++
++	if (!count)
++		return -EINVAL;
++
++	ret = handle_eject_request(dock_station, ACPI_NOTIFY_EJECT_REQUEST);
++	return ret ? ret: count;
++}
++DEVICE_ATTR(undock, S_IWUSR, NULL, write_undock);
++
++/*
++ * show_dock_uid - read method for "uid" file in sysfs
++ */
++static ssize_t show_dock_uid(struct device *dev,
++		struct device_attribute *attr, char *buf)
++{
++	unsigned long lbuf;
++	acpi_status status = acpi_evaluate_integer(dock_station->handle, 
++				"_UID", NULL, &lbuf);
++	if(ACPI_FAILURE(status)) 
++		return 0;
++
++	return snprintf(buf, PAGE_SIZE, "%lx\n", lbuf);
++}
++DEVICE_ATTR(uid, S_IRUGO, show_dock_uid, NULL);
++
+ /**
+  * dock_add - add a new dock station
+  * @handle: the dock station handle
+@@ -628,6 +692,44 @@ static int dock_add(acpi_handle handle)
+ 	mutex_init(&dock_station->hp_lock);
+ 	ATOMIC_INIT_NOTIFIER_HEAD(&dock_notifier_list);
+ 
++	/* initialize platform device stuff */
++	dock_device.name = dock_device_name;
++	ret = platform_device_register(&dock_device);
++	if (ret) {
++		printk(KERN_ERR PREFIX "Error %d registering dock device\n", ret);
++		kfree(dock_station);
++		dock_station = NULL;
++		return ret;
++	}
++	ret = device_create_file(&dock_device.dev, &dev_attr_docked);
++	if (ret) {
++		printk("Error %d adding sysfs file\n", ret);
++		platform_device_unregister(&dock_device);
++		kfree(dock_station);
++		dock_station = NULL;
++		return ret;
++	}
++	ret = device_create_file(&dock_device.dev, &dev_attr_undock);
++	if (ret) {
++		printk("Error %d adding sysfs file\n", ret);
++		device_remove_file(&dock_device.dev, &dev_attr_docked);
++		platform_device_unregister(&dock_device);
++		kfree(dock_station);
++		dock_station = NULL;
++		return ret;
++	}
++
++	ret = device_create_file(&dock_device.dev, &dev_attr_uid);
++	if (ret) {
++		printk("Error %d adding sysfs file\n", ret);
++		device_remove_file(&dock_device.dev, &dev_attr_docked);
++		device_remove_file(&dock_device.dev, &dev_attr_undock);
++		platform_device_unregister(&dock_device);
++		kfree(dock_station);
++		dock_station = NULL;
++		return ret;
++	}
++
+ 	/* Find dependent devices */
+ 	acpi_walk_namespace(ACPI_TYPE_DEVICE, ACPI_ROOT_OBJECT,
+ 			    ACPI_UINT32_MAX, find_dock_devices, dock_station,
+@@ -637,7 +739,9 @@ static int dock_add(acpi_handle handle)
+ 	dd = alloc_dock_dependent_device(handle);
+ 	if (!dd) {
+ 		kfree(dock_station);
+-		return -ENOMEM;
++		dock_station = NULL;
++		ret = -ENOMEM;
++		goto dock_add_err_unregister;
+ 	}
+ 	add_dock_dependent_device(dock_station, dd);
+ 
+@@ -657,8 +761,14 @@ static int dock_add(acpi_handle handle)
+ 	return 0;
+ 
+ dock_add_err:
+-	kfree(dock_station);
+ 	kfree(dd);
++dock_add_err_unregister:
++	device_remove_file(&dock_device.dev, &dev_attr_docked);
++	device_remove_file(&dock_device.dev, &dev_attr_undock);
++	device_remove_file(&dock_device.dev, &dev_attr_uid);
++	platform_device_unregister(&dock_device);
++	kfree(dock_station);
++	dock_station = NULL;
+ 	return ret;
+ }
+ 
+@@ -685,8 +795,15 @@ static int dock_remove(void)
+ 	if (ACPI_FAILURE(status))
+ 		printk(KERN_ERR "Error removing notify handler\n");
+ 
++	/* cleanup sysfs */
++	device_remove_file(&dock_device.dev, &dev_attr_docked);
++	device_remove_file(&dock_device.dev, &dev_attr_undock);
++	device_remove_file(&dock_device.dev, &dev_attr_uid);
++	platform_device_unregister(&dock_device);
++
+ 	/* free dock station memory */
+ 	kfree(dock_station);
++	dock_station = NULL;
+ 	return 0;
+ }
+ 

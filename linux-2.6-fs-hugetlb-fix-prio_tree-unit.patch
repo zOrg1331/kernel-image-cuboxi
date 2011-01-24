@@ -1,0 +1,125 @@
+From: Konrad Rzeszutek <konradr@redhat.com>
+Subject: [RHEL5 U2 PATCH] CVE-2007-4133 LTC36210-hugetlb: fix prio_tree unit
+Date: Mon, 20 Aug 2007 11:07:20 -0400
+Bugzilla: 253930
+Message-Id: <20070820150720.GA28339@mars.boston.redhat.com>
+Changelog: [fs] hugetlb: fix prio_tree unit
+
+
+RHBZ#:
+------
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=247806
+
+Description:
+------------
+Product: Rhel5.1
+commit 856fc29505556cf263f3dcda2533cf3766c14ab6
+Author: Hugh Dickins <hugh@veritas.com>
+
+    [PATCH] hugetlb: fix prio_tree unit
+
+    hugetlb_vmtruncate_list was misconverted to prio_tree: its prio_tree is in
+    units of PAGE_SIZE (PAGE_CACHE_SIZE) like any other, not HPAGE_SIZE (whereas
+    its radix_tree is kept in units of HPAGE_SIZE, otherwise slots would be
+    absurdly sparse).
+
+    At first I thought the error benign, just calling __unmap_hugepage_range on
+    more vmas than necessary; but on 32-bit machines, when the prio_tree is
+    searched correctly, it happens to ensure the v_offset calculation won't
+    overflow.  As it stood, when truncating at or beyond 4GB, it was liable to
+    discard pages COWed from lower offsets; or even to clear pmd entries of
+    preceding vmas, triggering exit_mmap's BUG_ON(nr_ptes).
+
+    Signed-off-by: Hugh Dickins <hugh@veritas.com>
+    Cc: Adam Litke <agl@us.ibm.com>
+    Cc: David Gibson <david@gibson.dropbear.id.au>
+    Cc: "Chen, Kenneth W" <kenneth.w.chen@intel.com>
+    Signed-off-by: Andrew Morton <akpm@osdl.org>
+    Signed-off-by: Linus Torvalds <torvalds@osdl.org>
+
+RHEL Version Found:
+------------------
+RHEL5.0
+
+kABI Status:
+------------
+No kABI symbols affected.
+
+Brew:
+-----
+Built on all platforms. Task #926193.
+
+Upstream Status:
+----------------
+git 856fc29505556cf263f3dcda2533cf3766c14ab6
+
+Test Status:
+------------
+Tested succesfully on i386 (ie, stock kernel = panics, patched kernel = works).
+Also tested for regressions on  platforms which are not affected by this bug
+(it is a 32-bit only bug) and found no regressions.
+
+Proposed Patch:
+---------------
+This patch is based on 2.6.18-40.
+
+diff -uNrp linux-2.6.18.i686.orig/fs/hugetlbfs/inode.c linux-2.6.18.i686/fs/hugetlbfs/inode.c
+--- linux-2.6.18.i686.orig/fs/hugetlbfs/inode.c	2007-08-17 10:47:48.000000000 -0400
++++ linux-2.6.18.i686/fs/hugetlbfs/inode.c	2007-08-17 10:49:16.000000000 -0400
+@@ -271,26 +271,24 @@ static void hugetlbfs_drop_inode(struct 
+ 		hugetlbfs_forget_inode(inode);
+ }
+ 
+-/*
+- * h_pgoff is in HPAGE_SIZE units.
+- * vma->vm_pgoff is in PAGE_SIZE units.
+- */
+ static inline void
+-hugetlb_vmtruncate_list(struct prio_tree_root *root, unsigned long h_pgoff)
++hugetlb_vmtruncate_list(struct prio_tree_root *root, pgoff_t pgoff)
+ {
+ 	struct vm_area_struct *vma;
+ 	struct prio_tree_iter iter;
+ 
+-	vma_prio_tree_foreach(vma, &iter, root, h_pgoff, ULONG_MAX) {
+-		unsigned long h_vm_pgoff;
++	vma_prio_tree_foreach(vma, &iter, root, pgoff, ULONG_MAX) {
+ 		unsigned long v_offset;
+ 
+-		h_vm_pgoff = vma->vm_pgoff >> (HPAGE_SHIFT - PAGE_SHIFT);
+-		v_offset = (h_pgoff - h_vm_pgoff) << HPAGE_SHIFT;
+ 		/*
+-		 * Is this VMA fully outside the truncation point?
++		 * Can the expression below overflow on 32-bit arches?
++		 * No, because the prio_tree returns us only those vmas
++		 * which overlap the truncated area starting at pgoff,
++		 * and no vma on a 32-bit arch can span beyond the 4GB.
+ 		 */
+-		if (h_vm_pgoff >= h_pgoff)
++		if (vma->vm_pgoff < pgoff)
++			v_offset = (pgoff - vma->vm_pgoff) << PAGE_SHIFT;
++		else
+ 			v_offset = 0;
+ 
+ 		__unmap_hugepage_range(vma,
+@@ -303,14 +301,14 @@ hugetlb_vmtruncate_list(struct prio_tree
+  */
+ static int hugetlb_vmtruncate(struct inode *inode, loff_t offset)
+ {
+-	unsigned long pgoff;
++	pgoff_t pgoff;
+ 	struct address_space *mapping = inode->i_mapping;
+ 
+ 	if (offset > inode->i_size)
+ 		return -EINVAL;
+ 
+ 	BUG_ON(offset & ~HPAGE_MASK);
+-	pgoff = offset >> HPAGE_SHIFT;
++	pgoff = offset >> PAGE_SHIFT;
+ 
+ 	inode->i_size = offset;
+ 	spin_lock(&mapping->i_mmap_lock);
+-- 
+Konrad Rzeszutek 1-(978)-392-3903 or 1-(617)-693-1718
+IBM on-site partner.  
+

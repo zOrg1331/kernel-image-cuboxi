@@ -1,0 +1,138 @@
+From: John Linville <linville@redhat.com>
+Date: Mon, 7 Dec 2009 18:56:03 -0500
+Subject: [net] wireless: kill some warning spam
+Message-id: <20091207185603.GB7022@redhat.com>
+Patchwork-id: 21722
+O-Subject: [RHEL5.5 PATCH] wireless: kill some warning SPAM
+Bugzilla: 545121
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+I left some warning SPAM in net/wireless and net/mac80211, and that
+led to missing a legitimate warning.  Let's squash those warnings to
+discourage complacency on my part. :-)
+
+BZ54121
+
+ include/net/mac80211.h |    2 ++
+ net/mac80211/cfg.c     |    4 ++++
+ net/mac80211/key.c     |    4 ++++
+ net/mac80211/tx.c      |    2 ++
+ net/wireless/scan.c    |    2 ++
+ 5 files changed, 14 insertions(+)
+
+Signed-off-by: Don Zickus <dzickus@redhat.com>
+
+diff --git a/include/net/mac80211.h b/include/net/mac80211.h
+index ce2ffe4..e06df8c 100644
+--- a/include/net/mac80211.h
++++ b/include/net/mac80211.h
+@@ -722,7 +722,9 @@ enum ieee80211_key_alg {
+ 	ALG_WEP,
+ 	ALG_TKIP,
+ 	ALG_CCMP,
++#if 0 /* Not in RHEL5... */
+ 	ALG_AES_CMAC,
++#endif
+ };
+ 
+ /**
+diff --git a/net/mac80211/cfg.c b/net/mac80211/cfg.c
+index 3ea9006..5fdff6e 100644
+--- a/net/mac80211/cfg.c
++++ b/net/mac80211/cfg.c
+@@ -121,9 +121,11 @@ static int ieee80211_add_key(struct wiphy *wiphy, struct net_device *dev,
+ 	case WLAN_CIPHER_SUITE_CCMP:
+ 		alg = ALG_CCMP;
+ 		break;
++#if 0 /* Not in RHEL5... */
+ 	case WLAN_CIPHER_SUITE_AES_CMAC:
+ 		alg = ALG_AES_CMAC;
+ 		break;
++#endif
+ 	default:
+ 		return -EINVAL;
+ 	}
+@@ -265,6 +267,7 @@ static int ieee80211_get_key(struct wiphy *wiphy, struct net_device *dev,
+ 		else
+ 			params.cipher = WLAN_CIPHER_SUITE_WEP104;
+ 		break;
++#if 0 /* Not in RHEL5... */
+ 	case ALG_AES_CMAC:
+ 		params.cipher = WLAN_CIPHER_SUITE_AES_CMAC;
+ 		seq[0] = key->u.aes_cmac.tx_pn[5];
+@@ -276,6 +279,7 @@ static int ieee80211_get_key(struct wiphy *wiphy, struct net_device *dev,
+ 		params.seq = seq;
+ 		params.seq_len = 6;
+ 		break;
++#endif
+ 	}
+ 
+ 	params.key = key->conf.key;
+diff --git a/net/mac80211/key.c b/net/mac80211/key.c
+index 5b4d4c1..e6b9f79 100644
+--- a/net/mac80211/key.c
++++ b/net/mac80211/key.c
+@@ -122,6 +122,7 @@ static struct ieee80211_sta *get_sta_for_key(struct ieee80211_key *key)
+ 	return NULL;
+ }
+ 
++#if 0 /* Not in RHEL5... */
+ static void ieee80211_key_enable_hw_accel(struct ieee80211_key *key)
+ {
+ 	struct ieee80211_sub_if_data *sdata;
+@@ -156,6 +157,7 @@ static void ieee80211_key_enable_hw_accel(struct ieee80211_key *key)
+ 		       wiphy_name(key->local->hw.wiphy),
+ 		       key->conf.keyidx, sta ? sta->addr : bcast_addr, ret);
+ }
++#endif
+ 
+ static void ieee80211_key_disable_hw_accel(struct ieee80211_key *key)
+ {
+@@ -344,6 +346,7 @@ struct ieee80211_key *ieee80211_key_alloc(enum ieee80211_key_alg alg,
+ 						seq[CCMP_PN_LEN - j - 1];
+ 		}
+ 		break;
++#if 0 /* Not in RHEL5... */
+ 	case ALG_AES_CMAC:
+ 		key->conf.iv_len = 0;
+ 		key->conf.icv_len = sizeof(struct ieee80211_mmie);
+@@ -351,6 +354,7 @@ struct ieee80211_key *ieee80211_key_alloc(enum ieee80211_key_alg alg,
+ 			for (j = 0; j < 6; j++)
+ 				key->u.aes_cmac.rx_pn[j] = seq[6 - j - 1];
+ 		break;
++#endif
+ 	}
+ 	memcpy(key->conf.key, key_data, key_len);
+ 	INIT_LIST_HEAD(&key->list);
+diff --git a/net/mac80211/tx.c b/net/mac80211/tx.c
+index 69bfdd4..0fbbb15 100644
+--- a/net/mac80211/tx.c
++++ b/net/mac80211/tx.c
+@@ -478,10 +478,12 @@ ieee80211_tx_h_select_key(struct ieee80211_tx_data *tx)
+ 					       tx->skb))
+ 				tx->key = NULL;
+ 			break;
++#if 0 /* Not in RHEL5... */
+ 		case ALG_AES_CMAC:
+ 			if (!ieee80211_is_mgmt(hdr->frame_control))
+ 				tx->key = NULL;
+ 			break;
++#endif
+ 		}
+ 	}
+ 
+diff --git a/net/wireless/scan.c b/net/wireless/scan.c
+index 34d995d..dc6a7df 100644
+--- a/net/wireless/scan.c
++++ b/net/wireless/scan.c
+@@ -418,7 +418,9 @@ cfg80211_bss_update(struct cfg80211_registered_device *dev,
+ 
+ 		/* overwrite IEs */
+ 		if (overwrite) {
++#if 0 /* Not in RHEL5... */
+ 			size_t used = dev->wiphy.bss_priv_size + sizeof(*res);
++#endif
+ 			size_t ielen = res->pub.len_information_elements;
+ 
+ #if 0 /* Not in RHEL5... */

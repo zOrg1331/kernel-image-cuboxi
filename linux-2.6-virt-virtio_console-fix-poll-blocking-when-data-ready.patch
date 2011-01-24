@@ -1,0 +1,45 @@
+From: Amit Shah <amit.shah@redhat.com>
+Date: Wed, 22 Sep 2010 05:55:34 -0400
+Subject: [virt] virtio_console: fix poll blocking when data ready
+Message-id: <8bf38560a0269afd6eadef20d9b60750e4f5f014.1285073493.git.amit.shah@redhat.com>
+Patchwork-id: 28335
+O-Subject: [RHEL5.7 / 5.6.z PATCH 3/4] virtio: console: Fix poll blocking even
+	though there is data to read
+Bugzilla: 636020
+RH-Acked-by: Jes Sorensen <Jes.Sorensen@redhat.com>
+
+From: Hans de Goede <hdegoede@redhat.com>
+
+I found this while working on a Linux agent for spice, the symptom I was
+seeing was select blocking on the spice vdagent virtio serial port even
+though there were messages queued up there.
+
+virtio_console's port_fops_poll checks port->inbuf != NULL to determine
+if read won't block. However if an application reads enough bytes from
+inbuf through port_fops_read, to empty the current port->inbuf,
+port->inbuf will be NULL even though there may be buffers left in the
+virtqueue.
+
+This causes poll() to block even though there is data to be read,
+this patch fixes this by using will_read_block(port) instead of the
+port->inbuf != NULL check.
+
+Bugzilla: 636020
+Upstream: Posted, sent for 2.6.36 and stable.
+
+Signed-off-By: Hans de Goede <hdegoede@redhat.com>
+Signed-off-by: Amit Shah <amit.shah@redhat.com>
+
+diff --git a/drivers/char/virtio_console.c b/drivers/char/virtio_console.c
+index b4a21a1..a39d1c3 100644
+--- a/drivers/char/virtio_console.c
++++ b/drivers/char/virtio_console.c
+@@ -714,7 +714,7 @@ static unsigned int port_fops_poll(struct file *filp, poll_table *wait)
+ 		return POLLHUP;
+ 	}
+ 	ret = 0;
+-	if (port->inbuf)
++	if (!will_read_block(port))
+ 		ret |= POLLIN | POLLRDNORM;
+ 	if (!will_write_block(port))
+ 		ret |= POLLOUT;

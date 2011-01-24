@@ -1,0 +1,53 @@
+Date: Tue, 7 Nov 2006 15:10:05 -0500 (Eastern Standard Time)
+From: "Janice M. Girouard" <jgirouar@redhat.com>
+Subject: [RHEL 5.0 PPC PATCH] RHBZ# 213020 LTC28646-Custom Diagnostics kernel
+ module fails to load on RHEL5 beta 1
+
+
+RHBZ#:
+------
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=213020
+
+Description:
+------------
+The IBM Hardware validation team has a test suite of diagnostic tools 
+which are critical for testing new hardware. This suite includes a 
+kernel module developed by the team that is working on RHEL 4 but is 
+unable to load in RHEL 5 due to two functions that still exist in RHEL 5 
+kernel but are no longer exported.  The enclosed patch exports the two 
+required symbols.
+
+RHEL Version Found:
+-------------------
+RHEL 5.0 Alpha
+
+Upstream Status:
+----------------
+IBM is working to gain community acceptance at this time.  The exports 
+appear to be removed as a larger general cleanup effort.
+
+Test Status:
+------------
+This patch is tested and is currently in-use in rebuilt kernels in IBM test 
+labs.
+
+Proposed Patch:
+----------------
+< If patch is small paste here else attach and make a reference to 
+attachment here >
+--- a/drivers/base/bus.c.orig	2006-10-27 10:18:45.000000000 -0500
++++ b/drivers/base/bus.c	2006-10-27 10:20:27.000000000 -0500
+@@ -747,6 +747,9 @@
+ EXPORT_SYMBOL_GPL(bus_find_device);
+ EXPORT_SYMBOL_GPL(bus_for_each_drv);
+
++EXPORT_SYMBOL_GPL(bus_add_device);
++EXPORT_SYMBOL_GPL(bus_attach_device);
++EXPORT_SYMBOL_GPL(bus_remove_device);
+ EXPORT_SYMBOL_GPL(bus_register);
+ EXPORT_SYMBOL_GPL(bus_unregister);
+ EXPORT_SYMBOL_GPL(bus_rescan_devices);
+
+__
+Presented for your review and ACK for RHEL 5.0
+

@@ -40,7 +40,6 @@ extern void smp_invalidate_interrupt(void);
 extern void smp_call_function_interrupt(void);
 extern void smp_ipi_timer_interrupt(void);
 extern void smp_flush_cache_all_interrupt(void);
-extern void smp_call_function_single_interrupt(void);
 
 /*
  * for Boot AP function
@@ -61,7 +60,7 @@ extern unsigned long	eit_vector[];
 	((unsigned long)func - (unsigned long)eit_vector - entry*4)/4 \
 	+ 0xff000000UL
 
-static void set_eit_vector_entries(void)
+void	set_eit_vector_entries(void)
 {
 	extern void default_eit_handler(void);
 	extern void system_call(void);
@@ -104,8 +103,8 @@ static void set_eit_vector_entries(void)
 	eit_vector[186] = (unsigned long)smp_call_function_interrupt;
 	eit_vector[187] = (unsigned long)smp_ipi_timer_interrupt;
 	eit_vector[188] = (unsigned long)smp_flush_cache_all_interrupt;
-	eit_vector[189] = 0;	/* CPU_BOOT_IPI */
-	eit_vector[190] = (unsigned long)smp_call_function_single_interrupt;
+	eit_vector[189] = 0;
+	eit_vector[190] = 0;
 	eit_vector[191] = 0;
 #endif
 	_flush_cache_copyback_all();
@@ -121,9 +120,9 @@ void __init trap_init(void)
 	cpu_init();
 }
 
-static int kstack_depth_to_print = 24;
+int kstack_depth_to_print = 24;
 
-static void show_trace(struct task_struct *task, unsigned long *stack)
+void show_trace(struct task_struct *task, unsigned long *stack)
 {
 	unsigned long addr;
 
@@ -197,7 +196,7 @@ static void show_registers(struct pt_regs *regs)
 		printk("SPI: %08lx\n", sp);
 	}
 	printk("Process %s (pid: %d, process nr: %d, stackpage=%08lx)",
-		current->comm, task_pid_nr(current), 0xffff & i, 4096+(unsigned long)current);
+		current->comm, current->pid, 0xffff & i, 4096+(unsigned long)current);
 
 	/*
 	 * When in-kernel, we also print out the stack and code at the
@@ -224,7 +223,7 @@ bad:
 	printk("\n");
 }
 
-static DEFINE_SPINLOCK(die_lock);
+DEFINE_SPINLOCK(die_lock);
 
 void die(const char * str, struct pt_regs * regs, long err)
 {
@@ -269,7 +268,7 @@ static __inline__ void do_trap(int trapnr, int signr, const char * str,
 #define DO_ERROR(trapnr, signr, str, name) \
 asmlinkage void do_##name(struct pt_regs * regs, long error_code) \
 { \
-	do_trap(trapnr, signr, NULL, regs, error_code, NULL); \
+	do_trap(trapnr, signr, 0, regs, error_code, NULL); \
 }
 
 #define DO_ERROR_INFO(trapnr, signr, str, name, sicode, siaddr) \

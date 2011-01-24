@@ -1,0 +1,50 @@
+From: Dean Nelson <dnelson@redhat.com>
+Date: Thu, 15 Oct 2009 15:41:10 -0400
+Subject: [net] e100: return PCI_ERS_RESULT_DISCONNECT on failure
+Message-id: 20091015194109.6585.60808.send-patch@aqua
+O-Subject: [RHEL5.5 PATCH] e100: return PCI_ERS_RESULT_DISCONNECT on permanent failure
+Bugzilla: 514250
+RH-Acked-by: Andy Gospodarek <gospo@redhat.com>
+RH-Acked-by: Jiri Olsa <jolsa@redhat.com>
+RH-Acked-by: Jiri Pirko <jpirko@redhat.com>
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+Subject: [RHEL5.5 PATCH] e100: return PCI_ERS_RESULT_DISCONNECT on permanent failure
+
+PCI drivers that implement the struct pci_error_handlers' error_detected
+callback should return PCI_ERS_RESULT_DISCONNECT if the state passed in is
+pci_channel_io_perm_failure. This patch fixes the issue for e100.
+
+This patch is a backport of an upstream commit:
+http://git.kernel.org/linus/ef681ce1e8b3e63317cd724c200b2fd39286c005
+
+We have no way to test/verify this patch. Relying on code-review.
+See RHBZ for details.
+
+Resolves RHBZ 514250.
+
+diff --git a/drivers/net/e100.c b/drivers/net/e100.c
+index 51ecbe5..f6ae157 100644
+--- a/drivers/net/e100.c
++++ b/drivers/net/e100.c
+@@ -2846,13 +2846,15 @@ static void e100_shutdown(struct pci_dev *pdev)
+ static pci_ers_result_t e100_io_error_detected(struct pci_dev *pdev, pci_channel_state_t state)
+ {
+ 	struct net_device *netdev = pci_get_drvdata(pdev);
++	struct nic *nic = netdev_priv(netdev);
+ 
+-	/* Similar to calling e100_down(), but avoids adpater I/O. */
+-	netdev->stop(netdev);
+-
+-	/* Detach; put netif into state similar to hotplug unplug. */
+-	netif_poll_enable(netdev);
+ 	netif_device_detach(netdev);
++
++	if (state == pci_channel_io_perm_failure)
++		return PCI_ERS_RESULT_DISCONNECT;
++
++	if (netif_running(netdev))
++		e100_down(nic);
+ 	pci_disable_device(pdev);
+ 
+ 	/* Request a slot reset. */

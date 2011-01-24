@@ -1,0 +1,69 @@
+From: Tomas Henzl <thenzl@redhat.com>
+Date: Sun, 29 Aug 2010 15:49:22 -0400
+Subject: [block] cciss: fix and rearrange logical drive sysfs code
+Message-id: <1283097002-3341-24-git-send-email-thenzl@redhat.com>
+Patchwork-id: 27879
+O-Subject: [RHEL6 PATCH 23/63] cciss: Rearrange logical drive sysfs code to make
+	the "changing a disk" path work.
+Bugzilla: 568830
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+
+Rearrange logical drive sysfs code to make the "changing a disk" path work.
+(e.g.: changing the size of a logical drive and re-registering with the OS.)
+
+diff --git a/drivers/block/cciss.c b/drivers/block/cciss.c
+index b2cd894..7fa3176 100644
+--- a/drivers/block/cciss.c
++++ b/drivers/block/cciss.c
+@@ -1985,9 +1985,10 @@ static int cciss_add_gendisk(ctlr_info_t *h, unsigned char lunid[], int controll
+ 	memcpy(h->drv[drv_index].LunID, lunid,
+ 		sizeof(h->drv[drv_index].LunID));
+ 
+-	if (cciss_create_ld_sysfs_entry(h, drv_index))
+-		goto err_free_disk;
+-
++	if (h->drv[drv_index].dev == NULL) {
++		if (cciss_create_ld_sysfs_entry(h, drv_index))
++			goto err_free_disk;
++	}
+ 	/* Don't need to mark this busy because nobody
+ 	 * else knows about this disk yet to contend
+ 	 * for access to it.
+@@ -2221,8 +2222,10 @@ static int deregister_disk(ctlr_info_t *h, int drv_index,
+ 	if (h->gendisk[0] != disk) {
+ 		if (disk) {
+ 			request_queue_t *q = disk->queue;
+-			if (disk->flags & GENHD_FL_UP)
++			if (disk->flags & GENHD_FL_UP) {
++				cciss_destroy_ld_sysfs_entry(h, drv_index);
+ 				del_gendisk(disk);
++			}
+ 			if (q) {
+ 				blk_cleanup_queue(q);
+ 				/* Set drv->queue to NULL so that we do not try
+@@ -2267,7 +2270,6 @@ static int deregister_disk(ctlr_info_t *h, int drv_index,
+ 				 * indicate that this element of the drive
+ 				 * array is free.
+ 				 */
+-	cciss_destroy_ld_sysfs_entry(h, drv_index);
+ 
+ 	if (clear_all) {
+ 		/* check to see if it was the last disk */
+@@ -4270,14 +4272,13 @@ static void __devexit cciss_remove_one(struct pci_dev *pdev)
+ 		if (disk) {
+ 			request_queue_t *q = disk->queue;
+ 
+-			if (disk->flags & GENHD_FL_UP)
++			if (disk->flags & GENHD_FL_UP) {
++				cciss_destroy_ld_sysfs_entry(hba[i], j);
+ 				del_gendisk(disk);
++			}
+ 			if (q)
+ 				blk_cleanup_queue(q);
+ 		}
+-		if (hba[i]->drv[j].raid_level != -1)
+-			cciss_destroy_ld_sysfs_entry(hba[i], j);
+-
+ 	}
+ 
+ 	cciss_unregister_scsi(i);	/* unhook from SCSI subsystem */

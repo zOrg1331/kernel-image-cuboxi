@@ -1,0 +1,65 @@
+From: Steven Whitehouse <swhiteho@redhat.com>
+Subject: [RHEL 5.1] [GFS2] bz #231910, GFS2 withdraws if you are trying to 	remove a file while doing a du
+Date: Thu, 10 May 2007 11:47:34 +0100
+Bugzilla: 231910
+Message-Id: <1178794054.7476.43.camel@quoit>
+Changelog: [GFS2] flush the glock completely in inode_go_sync
+
+
+Hi,
+
+This fix from Ben fixes bz #231910. Its been tested and is in the
+upstream GFS2 -nmw git tree. Its a fairly simple fix with a long
+explanation :-)
+
+Steve.
+
+
+
+------------------------------------------------------------------------
+
+X-Git-Url: http://git.kernel.org/?p=linux%2Fkernel%2Fgit%2Fsteve%2Fgfs2-2.6-nmw.git;a=commitdiff_plain;h=14dc6b21317dcfd315f28035a7edb0a749db0e80
+
+[GFS2] flush the glock completely in inode_go_sync
+
+Fix for bz #231910
+When filemap_fdatawrite() is called on the inode mapping in data=ordered mode,
+it will add the glock to the log. In inode_go_sync(), if you do the
+gfs2_log_flush() before this, after the filemap_fdatawrite() call, the glock
+and its associated data buffers will be on the log again. This means you can
+demote a lock from exclusive, without having it flushed from the log. The
+attached patch simply moves the gfs2_log_flush up to after the
+filemap_fdatawrite() call.
+
+Originally, I tried moving the gfs2_log_flush to after gfs2_meta_sync(), but
+that caused me to trip the following assert.
+
+GFS2: fsid=cypher-36:test.0: fatal: assertion "!buffer_busy(bh)" failed
+GFS2: fsid=cypher-36:test.0:   function = gfs2_ail_empty_gl, file = fs/gfs2/glops.c, line = 61
+
+It appears that gfs2_log_flush() puts some of the glocks buffers in the busy
+state and the filemap_fdatawrite() call is necessary to flush them. This makes
+me worry slightly that a related problem could happen because of moving the
+gfs2_log_flush() after the initial filemap_fdatawrite(), but I assume that
+gfs2_ail_empty_gl() would catch that case as well.
+
+Signed-off-by: Benjamin E. Marzinski <bmarzins@redhat.com>
+Signed-off-by: Steven Whitehouse <swhiteho@redhat.com>
+---
+
+diff --git a/fs/gfs2/glops.c b/fs/gfs2/glops.c
+index 39c8ae2..23b0f3c 100644
+--- a/fs/gfs2/glops.c
++++ b/fs/gfs2/glops.c
+@@ -156,9 +156,9 @@ static void inode_go_sync(struct gfs2_glock *gl)
+ 		ip = NULL;
+ 
+ 	if (test_bit(GLF_DIRTY, &gl->gl_flags)) {
+-		gfs2_log_flush(gl->gl_sbd, gl);
+ 		if (ip)
+ 			filemap_fdatawrite(ip->i_inode.i_mapping);
++		gfs2_log_flush(gl->gl_sbd, gl);
+ 		gfs2_meta_sync(gl);
+ 		if (ip) {
+ 			struct address_space *mapping = ip->i_inode.i_mapping;
+

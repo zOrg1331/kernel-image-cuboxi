@@ -20,11 +20,12 @@
 #include <linux/device.h>
 #include <linux/err.h>
 #include <linux/delay.h>
-#include <linux/io.h>
 
-#include <mach/hardware.h>
+#include <asm/semaphore.h>
+#include <asm/hardware.h>
+#include <asm/io.h>
 
-#include <mach/clock.h>
+#include <asm/arch/clock.h>
 #include "clock.h"
 
 /*forward declaration*/
@@ -734,16 +735,6 @@ static struct clk uart6_ck = {
 	.enable_reg = UARTCLKCTRL_REG,
 };
 
-static struct clk wdt_ck = {
-	.name = "wdt_ck",
-	.parent = &per_ck,
-	.flags = NEEDS_INITIALIZATION,
-	.round_rate = &on_off_round_rate,
-	.set_rate = &on_off_set_rate,
-	.enable_shift = 0,
-	.enable_reg = TIMCLKCTRL_REG,
-};
-
 /* These clocks are visible outside this module
  * and can be initialized
  */
@@ -774,7 +765,6 @@ static struct clk *onchip_clks[] = {
 	&uart4_ck,
 	&uart5_ck,
 	&uart6_ck,
-	&wdt_ck,
 };
 
 static int local_clk_enable(struct clk *clk)
@@ -975,7 +965,7 @@ static int __init clk_init(void)
 				(*clkp)->set_parent((*clkp), (*clkp)->parent);
 		}
 		pr_debug("%s: clock %s, rate %ld\n",
-			__func__, (*clkp)->name, (*clkp)->rate);
+			__FUNCTION__, (*clkp)->name, (*clkp)->rate);
 	}
 
 	local_clk_use(&ck_pll4);

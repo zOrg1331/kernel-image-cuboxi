@@ -11,6 +11,7 @@
 
 #include <linux/module.h>
 #include <linux/kernel.h>
+#include <linux/sched.h>
 #include <linux/platform_device.h>
 #include <linux/errno.h>
 #include <linux/init.h>
@@ -18,24 +19,23 @@
 
 #include <pcmcia/ss.h>
 
-#include <mach/hardware.h>
+#include <asm/hardware.h>
 #include <asm/io.h>
 #include <asm/sizes.h>
-#include <asm/gpio.h>
 
-#include <mach/board.h>
-#include <mach/at91rm9200_mc.h>
+#include <asm/arch/at91rm9200.h>
+#include <asm/arch/board.h>
+#include <asm/arch/gpio.h>
 
 
 /*
  * A0..A10 work in each range; A23 indicates I/O space;  A25 is CFRNW;
  * some other bit in {A24,A22..A11} is nREG to flag memory access
  * (vs attributes).  So more than 2KB/region would just be waste.
- * Note: These are offsets from the physical base address.
  */
-#define	CF_ATTR_PHYS	(0)
-#define	CF_IO_PHYS	(1 << 23)
-#define	CF_MEM_PHYS	(0x017ff800)
+#define	CF_ATTR_PHYS	(AT91_CF_BASE)
+#define	CF_IO_PHYS	(AT91_CF_BASE  + (1 << 23))
+#define	CF_MEM_PHYS	(AT91_CF_BASE  + 0x017ff800)
 
 /*--------------------------------------------------------------------------*/
 
@@ -48,15 +48,13 @@ struct at91_cf_socket {
 
 	struct platform_device	*pdev;
 	struct at91_cf_data	*board;
-
-	unsigned long		phys_baseaddr;
 };
 
 #define	SZ_2K			(2 * SZ_1K)
 
 static inline int at91_cf_present(struct at91_cf_socket *cf)
 {
-	return !gpio_get_value(cf->board->det_pin);
+	return !at91_get_gpio_value(cf->board->det_pin);
 }
 
 /*--------------------------------------------------------------------------*/
@@ -66,9 +64,9 @@ static int at91_cf_ss_init(struct pcmcia_socket *s)
 	return 0;
 }
 
-static irqreturn_t at91_cf_irq(int irq, void *_cf)
+static irqreturn_t at91_cf_irq(int irq, void *_cf, struct pt_regs *r)
 {
-	struct at91_cf_socket *cf = _cf;
+	struct at91_cf_socket	*cf = (struct at91_cf_socket *) _cf;
 
 	if (irq == cf->board->det_pin) {
 		unsigned present = at91_cf_present(cf);
@@ -100,9 +98,9 @@ static int at91_cf_get_status(struct pcmcia_socket *s, u_int *sp)
 		int vcc	= cf->board->vcc_pin;
 
 		*sp = SS_DETECT | SS_3VCARD;
-		if (!rdy || gpio_get_value(rdy))
+		if (!rdy || at91_get_gpio_value(rdy))
 			*sp |= SS_READY;
-		if (!vcc || gpio_get_value(vcc))
+		if (!vcc || at91_get_gpio_value(vcc))
 			*sp |= SS_POWERON;
 	} else
 		*sp = 0;
@@ -121,10 +119,10 @@ at91_cf_set_socket(struct pcmcia_socket *sock, struct socket_state_t *s)
 	if (cf->board->vcc_pin) {
 		switch (s->Vcc) {
 			case 0:
-				gpio_set_value(cf->board->vcc_pin, 0);
+				at91_set_gpio_value(cf->board->vcc_pin, 0);
 				break;
 			case 33:
-				gpio_set_value(cf->board->vcc_pin, 1);
+				at91_set_gpio_value(cf->board->vcc_pin, 1);
 				break;
 			default:
 				return -EINVAL;
@@ -132,7 +130,7 @@ at91_cf_set_socket(struct pcmcia_socket *sock, struct socket_state_t *s)
 	}
 
 	/* toggle reset if needed */
-	gpio_set_value(cf->board->rst_pin, s->flags & SS_RESET);
+	at91_set_gpio_value(cf->board->rst_pin, s->flags & SS_RESET);
 
 	pr_debug("%s: Vcc %d, io_irq %d, flags %04x csc %04x\n",
 		driver_name, s->Vcc, s->io_irq, s->flags, s->csc_mask);
@@ -156,8 +154,9 @@ static int at91_cf_set_io_map(struct pcmcia_socket *s, struct pccard_io_map *io)
 
 	/*
 	 * Use 16 bit accesses unless/until we need 8-bit i/o space.
+	 * Always set CSR4 ... PCMCIA won't always unmap things.
 	 */
-	csr = at91_sys_read(AT91_SMC_CSR(cf->board->chipselect)) & ~AT91_SMC_DBW;
+	csr = at91_sys_read(AT91_SMC_CSR(4)) & ~AT91_SMC_DBW;
 
 	/*
 	 * NOTE: this CF controller ignores IOIS16, so we can't really do
@@ -169,14 +168,14 @@ static int at91_cf_set_io_map(struct pcmcia_socket *s, struct pccard_io_map *io)
 	 * some cards only like that way to get at the odd byte, despite
 	 * CF 3.0 spec table 35 also giving the D8-D15 option.
 	 */
-	if (!(io->flags & (MAP_16BIT | MAP_AUTOSZ))) {
+	if (!(io->flags & (MAP_16BIT|MAP_AUTOSZ))) {
 		csr |= AT91_SMC_DBW_8;
 		pr_debug("%s: 8bit i/o bus\n", driver_name);
 	} else {
 		csr |= AT91_SMC_DBW_16;
 		pr_debug("%s: 16bit i/o bus\n", driver_name);
 	}
-	at91_sys_write(AT91_SMC_CSR(cf->board->chipselect), csr);
+	at91_sys_write(AT91_SMC_CSR(4), csr);
 
 	io->start = cf->socket.io_offset;
 	io->stop = io->start + SZ_2K - 1;
@@ -195,11 +194,11 @@ at91_cf_set_mem_map(struct pcmcia_socket *s, struct pccard_mem_map *map)
 
 	cf = container_of(s, struct at91_cf_socket, socket);
 
-	map->flags &= (MAP_ACTIVE | MAP_ATTRIB | MAP_16BIT);
+	map->flags &= MAP_ACTIVE|MAP_ATTRIB|MAP_16BIT;
 	if (map->flags & MAP_ATTRIB)
-		map->static_start = cf->phys_baseaddr + CF_ATTR_PHYS;
+		map->static_start = CF_ATTR_PHYS;
 	else
-		map->static_start = cf->phys_baseaddr + CF_MEM_PHYS;
+		map->static_start = CF_MEM_PHYS;
 
 	return 0;
 }
@@ -220,6 +219,7 @@ static int __init at91_cf_probe(struct platform_device *pdev)
 	struct at91_cf_socket	*cf;
 	struct at91_cf_data	*board = pdev->dev.platform_data;
 	struct resource		*io;
+	unsigned int		csa;
 	int			status;
 
 	if (!board || !board->det_pin || !board->rst_pin)
@@ -229,33 +229,48 @@ static int __init at91_cf_probe(struct platform_device *pdev)
 	if (!io)
 		return -ENODEV;
 
-	cf = kzalloc(sizeof *cf, GFP_KERNEL);
+	cf = kcalloc(1, sizeof *cf, GFP_KERNEL);
 	if (!cf)
 		return -ENOMEM;
 
 	cf->board = board;
 	cf->pdev = pdev;
-	cf->phys_baseaddr = io->start;
 	platform_set_drvdata(pdev, cf);
 
+	/* CF takes over CS4, CS5, CS6 */
+	csa = at91_sys_read(AT91_EBI_CSA);
+	at91_sys_write(AT91_EBI_CSA, csa | AT91_EBI_CS4A_SMC_COMPACTFLASH);
+
+	/* force poweron defaults for these pins ... */
+	(void) at91_set_A_periph(AT91_PIN_PC9, 0);	/* A25/CFRNW */
+	(void) at91_set_A_periph(AT91_PIN_PC10, 0);	/* NCS4/CFCS */
+	(void) at91_set_A_periph(AT91_PIN_PC11, 0);	/* NCS5/CFCE1 */
+	(void) at91_set_A_periph(AT91_PIN_PC12, 0);	/* NCS6/CFCE2 */
+
+	/* nWAIT is _not_ a default setting */
+	(void) at91_set_A_periph(AT91_PIN_PC6, 1);	/*  nWAIT */
+
+	/*
+	 * Static memory controller timing adjustments.
+	 * REVISIT:  these timings are in terms of MCK cycles, so
+	 * when MCK changes (cpufreq etc) so must these values...
+	 */
+	at91_sys_write(AT91_SMC_CSR(4),
+				  AT91_SMC_ACSS_STD
+				| AT91_SMC_DBW_16
+				| AT91_SMC_BAT
+				| AT91_SMC_WSEN
+				| AT91_SMC_NWS_(32)	/* wait states */
+				| AT91_SMC_RWSETUP_(6)	/* setup time */
+				| AT91_SMC_RWHOLD_(4)	/* hold time */
+	);
+
 	/* must be a GPIO; ergo must trigger on both edges */
-	status = gpio_request(board->det_pin, "cf_det");
+	status = request_irq(board->det_pin, at91_cf_irq,
+			IRQF_SAMPLE_RANDOM, driver_name, cf);
 	if (status < 0)
 		goto fail0;
-	status = request_irq(board->det_pin, at91_cf_irq, 0, driver_name, cf);
-	if (status < 0)
-		goto fail00;
 	device_init_wakeup(&pdev->dev, 1);
-
-	status = gpio_request(board->rst_pin, "cf_rst");
-	if (status < 0)
-		goto fail0a;
-
-	if (board->vcc_pin) {
-		status = gpio_request(board->vcc_pin, "cf_vcc");
-		if (status < 0)
-			goto fail0b;
-	}
 
 	/*
 	 * The card driver will request this irq later as needed.
@@ -264,37 +279,29 @@ static int __init at91_cf_probe(struct platform_device *pdev)
 	 * (Note:  DK board doesn't wire the IRQ pin...)
 	 */
 	if (board->irq_pin) {
-		status = gpio_request(board->irq_pin, "cf_irq");
-		if (status < 0)
-			goto fail0c;
 		status = request_irq(board->irq_pin, at91_cf_irq,
 				IRQF_SHARED, driver_name, cf);
 		if (status < 0)
-			goto fail0d;
+			goto fail0a;
 		cf->socket.pci_irq = board->irq_pin;
 	} else
-		cf->socket.pci_irq = nr_irqs + 1;
+		cf->socket.pci_irq = NR_IRQS + 1;
 
 	/* pcmcia layer only remaps "real" memory not iospace */
-	cf->socket.io_offset = (unsigned long)
-			ioremap(cf->phys_baseaddr + CF_IO_PHYS, SZ_2K);
-	if (!cf->socket.io_offset) {
-		status = -ENXIO;
+	cf->socket.io_offset = (unsigned long) ioremap(CF_IO_PHYS, SZ_2K);
+	if (!cf->socket.io_offset)
 		goto fail1;
-	}
 
-	/* reserve chip-select regions */
+	/* reserve CS4, CS5, and CS6 regions; but use just CS4 */
 	if (!request_mem_region(io->start, io->end + 1 - io->start,
-				driver_name)) {
-		status = -ENXIO;
+				driver_name))
 		goto fail1;
-	}
 
 	pr_info("%s: irqs det #%d, io #%d\n", driver_name,
 		board->det_pin, board->irq_pin);
 
 	cf->socket.owner = THIS_MODULE;
-	cf->socket.dev.parent = &pdev->dev;
+	cf->socket.dev.dev = &pdev->dev;
 	cf->socket.ops = &at91_cf_ops;
 	cf->socket.resource_ops = &pccard_static_ops;
 	cf->socket.features = SS_CAP_PCCARD | SS_CAP_STATIC_MAP
@@ -309,26 +316,16 @@ static int __init at91_cf_probe(struct platform_device *pdev)
 	return 0;
 
 fail2:
+	iounmap((void __iomem *) cf->socket.io_offset);
 	release_mem_region(io->start, io->end + 1 - io->start);
 fail1:
-	if (cf->socket.io_offset)
-		iounmap((void __iomem *) cf->socket.io_offset);
-	if (board->irq_pin) {
+	if (board->irq_pin)
 		free_irq(board->irq_pin, cf);
-fail0d:
-		gpio_free(board->irq_pin);
-	}
-fail0c:
-	if (board->vcc_pin)
-		gpio_free(board->vcc_pin);
-fail0b:
-	gpio_free(board->rst_pin);
 fail0a:
-	device_init_wakeup(&pdev->dev, 0);
 	free_irq(board->det_pin, cf);
-fail00:
-	gpio_free(board->det_pin);
+	device_init_wakeup(&pdev->dev, 0);
 fail0:
+	at91_sys_write(AT91_EBI_CSA, csa);
 	kfree(cf);
 	return status;
 }
@@ -338,20 +335,19 @@ static int __exit at91_cf_remove(struct platform_device *pdev)
 	struct at91_cf_socket	*cf = platform_get_drvdata(pdev);
 	struct at91_cf_data	*board = cf->board;
 	struct resource		*io = cf->socket.io[0].res;
+	unsigned int		csa;
 
 	pcmcia_unregister_socket(&cf->socket);
-	release_mem_region(io->start, io->end + 1 - io->start);
-	iounmap((void __iomem *) cf->socket.io_offset);
-	if (board->irq_pin) {
+	if (board->irq_pin)
 		free_irq(board->irq_pin, cf);
-		gpio_free(board->irq_pin);
-	}
-	if (board->vcc_pin)
-		gpio_free(board->vcc_pin);
-	gpio_free(board->rst_pin);
-	device_init_wakeup(&pdev->dev, 0);
 	free_irq(board->det_pin, cf);
-	gpio_free(board->det_pin);
+	device_init_wakeup(&pdev->dev, 0);
+	iounmap((void __iomem *) cf->socket.io_offset);
+	release_mem_region(io->start, io->end + 1 - io->start);
+
+	csa = at91_sys_read(AT91_EBI_CSA);
+	at91_sys_write(AT91_EBI_CSA, csa & ~AT91_EBI_CS4A);
+
 	kfree(cf);
 	return 0;
 }
@@ -363,12 +359,15 @@ static int at91_cf_suspend(struct platform_device *pdev, pm_message_t mesg)
 	struct at91_cf_socket	*cf = platform_get_drvdata(pdev);
 	struct at91_cf_data	*board = cf->board;
 
-	pcmcia_socket_dev_suspend(&pdev->dev);
-	if (device_may_wakeup(&pdev->dev)) {
+	pcmcia_socket_dev_suspend(&pdev->dev, mesg);
+	if (device_may_wakeup(&pdev->dev))
 		enable_irq_wake(board->det_pin);
-		if (board->irq_pin)
-			enable_irq_wake(board->irq_pin);
+	else {
+		disable_irq_wake(board->det_pin);
+		disable_irq(board->det_pin);
 	}
+	if (board->irq_pin)
+		disable_irq(board->irq_pin);
 	return 0;
 }
 
@@ -377,12 +376,10 @@ static int at91_cf_resume(struct platform_device *pdev)
 	struct at91_cf_socket	*cf = platform_get_drvdata(pdev);
 	struct at91_cf_data	*board = cf->board;
 
-	if (device_may_wakeup(&pdev->dev)) {
-		disable_irq_wake(board->det_pin);
-		if (board->irq_pin)
-			disable_irq_wake(board->irq_pin);
-	}
-
+	if (board->irq_pin)
+		enable_irq(board->irq_pin);
+	if (!device_may_wakeup(&pdev->dev))
+		enable_irq(board->det_pin);
 	pcmcia_socket_dev_resume(&pdev->dev);
 	return 0;
 }
@@ -397,6 +394,7 @@ static struct platform_driver at91_cf_driver = {
 		.name		= (char *) driver_name,
 		.owner		= THIS_MODULE,
 	},
+	.probe		= at91_cf_probe,
 	.remove		= __exit_p(at91_cf_remove),
 	.suspend	= at91_cf_suspend,
 	.resume		= at91_cf_resume,
@@ -406,7 +404,7 @@ static struct platform_driver at91_cf_driver = {
 
 static int __init at91_cf_init(void)
 {
-	return platform_driver_probe(&at91_cf_driver, at91_cf_probe);
+	return platform_driver_register(&at91_cf_driver);
 }
 module_init(at91_cf_init);
 
@@ -419,4 +417,3 @@ module_exit(at91_cf_exit);
 MODULE_DESCRIPTION("AT91 Compact Flash Driver");
 MODULE_AUTHOR("David Brownell");
 MODULE_LICENSE("GPL");
-MODULE_ALIAS("platform:at91_cf");

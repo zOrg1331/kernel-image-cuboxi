@@ -1,0 +1,60 @@
+From: Jeff Moyer <jmoyer@redhat.com>
+Date: Wed, 7 Jul 2010 13:48:30 -0400
+Subject: [block] cfq-iosched: fix bad locking in changed_ioprio
+Message-id: <1278510510-27466-3-git-send-email-jmoyer@redhat.com>
+Patchwork-id: 26741
+O-Subject: [RHEL5 PATCH 2/2][v2] CFQ: bad locking in changed_ioprio()
+Bugzilla: 582435
+RH-Acked-by: Vivek Goyal <vgoyal@redhat.com>
+
+Hi,
+
+The previous fix included an improper assumption about irq state in the
+changed_ioprio function.  This upstream patch fixes it.
+
+  commit c1b707d253fe918b92882cff1dbd926b47e14fd2
+  Author: Jens Axboe <jens.axboe@oracle.com>
+  Date:   Mon Oct 30 19:54:23 2006 +0100
+
+    [PATCH] CFQ: bad locking in changed_ioprio()
+
+    When the ioprio code recently got juggled a bit, a bug was introduced.
+    changed_ioprio() is no longer called with interrupts disabled, so using
+    plain spin_lock() on the queue_lock is a bug.
+
+    Signed-off-by: Jens Axboe <jens.axboe@oracle.com>
+    Signed-off-by: Linus Torvalds <torvalds@osdl.org>
+
+This is related to bug 582435.  Comments, as always, are welcome.
+
+Cheers,
+Jeff
+Signed-off-by: Jeff Moyer <jmoyer@redhat.com>
+
+diff --git a/block/cfq-iosched.c b/block/cfq-iosched.c
+index 7f609df..822e8cf 100644
+--- a/block/cfq-iosched.c
++++ b/block/cfq-iosched.c
+@@ -1660,11 +1660,12 @@ static inline void changed_ioprio(struct cfq_io_context *cic)
+ {
+ 	struct cfq_data *cfqd = cic->key;
+ 	struct cfq_queue *cfqq;
++	unsigned long flags;
+ 
+ 	if (unlikely(!cfqd))
+ 		return;
+ 
+-	spin_lock(cfqd->queue->queue_lock);
++	spin_lock_irqsave(cfqd->queue->queue_lock, flags);
+ 
+ 	cfqq = cic->cfqq[ASYNC];
+ 	if (cfqq) {
+@@ -1681,7 +1682,7 @@ static inline void changed_ioprio(struct cfq_io_context *cic)
+ 	if (cfqq)
+ 		cfq_mark_cfqq_prio_changed(cfqq);
+ 
+-	spin_unlock(cfqd->queue->queue_lock);
++	spin_unlock_irqrestore(cfqd->queue->queue_lock, flags);
+ }
+ 
+ static void cfq_ioc_set_ioprio(struct io_context *ioc)

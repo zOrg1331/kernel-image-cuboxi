@@ -1,0 +1,57 @@
+From: Jeff Moyer <jmoyer@redhat.com>
+Date: Tue, 1 Dec 2009 21:06:32 -0500
+Subject: [ia64] wire up {signal, timer, event}fd syscalls
+Message-id: <1259701600-23508-5-git-send-email-jmoyer@redhat.com>
+Patchwork-id: 21614
+O-Subject: [RHEL5 PATCH 04/12 v2] [IA64] wire up {signal, timer,
+	event}fd syscalls
+Bugzilla: 493101
+RH-Acked-by: Josef Bacik <josef@redhat.com>
+
+Fixes bug 493101
+
+commit ae67e498a54259364f7211e10d9834575b340b21
+Author: Tony Luck <tony.luck@intel.com>
+Date:   Mon May 14 15:55:11 2007 -0700
+
+    [IA64] wire up {signal,timer,event}fd syscalls
+
+Signed-off-by: Jeff Moyer <jmoyer@redhat.com>
+
+diff --git a/arch/ia64/kernel/entry.S b/arch/ia64/kernel/entry.S
+index ad517e4..c78f129 100644
+--- a/arch/ia64/kernel/entry.S
++++ b/arch/ia64/kernel/entry.S
+@@ -1600,5 +1600,10 @@ sys_call_table:
+ 	data8 sys_vmsplice
+ 	data8 sys_fallocate
+ 	data8 sys_getcpu
++	data8 sys_ni_syscall			// 1305
++	data8 sys_ni_syscall
++	data8 sys_ni_syscall
++	data8 sys_ni_syscall
++	data8 sys_eventfd
+ 
+ 	.org sys_call_table + 8*NR_syscalls	// guard against failures to increase NR_syscalls
+diff --git a/include/asm-ia64/unistd.h b/include/asm-ia64/unistd.h
+index 0697cbb..fa28b02 100644
+--- a/include/asm-ia64/unistd.h
++++ b/include/asm-ia64/unistd.h
+@@ -294,11 +294,16 @@
+ #define __NR_vmsplice			1302
+ #define __NR_fallocate			1303
+ #define __NR_getcpu			1304
++/* #define __NR_epoll_pwait		1305 */
++/* #define __NR_utimensat			1306 */
++/* #define __NR_signalfd			1307 */
++/* #define __NR_timerfd			1308 */
++#define __NR_eventfd			1309
+ 
+ #ifdef __KERNEL__
+ 
+ 
+-#define NR_syscalls			281 /* length of syscall table */
++#define NR_syscalls			286 /* length of syscall table */
+ 
+ #define __ARCH_WANT_SYS_RT_SIGACTION
+ #define __ARCH_WANT_SYS_RT_SIGSUSPEND

@@ -1,11 +1,12 @@
 #include <linux/kernel.h>
 #include <linux/pci.h>
+#include <linux/ptrace.h>
 #include <linux/interrupt.h>
 #include <linux/mm.h>
 #include <linux/init.h>
 #include <linux/ioport.h>
-#include <linux/io.h>
 
+#include <asm/io.h>
 #include <asm/system.h>
 
 #include <asm/mach/pci.h>

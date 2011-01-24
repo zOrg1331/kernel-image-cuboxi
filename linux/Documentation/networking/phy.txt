@@ -1,7 +1,7 @@
 
 -------
 PHY Abstraction Layer
-(Updated 2008-04-08)
+(Updated 2005-07-21)
 
 Purpose
 
@@ -96,13 +96,12 @@ Letting the PHY Abstraction Layer do Everything
    static void adjust_link(struct net_device *dev);
  
  Next, you need to know the device name of the PHY connected to this device. 
- The name will look something like, "0:00", where the first number is the
- bus id, and the second is the PHY's address on that bus.  Typically,
- the bus is responsible for making its ID unique.
+ The name will look something like, "phy0:0", where the first number is the
+ bus id, and the second is the PHY's address on that bus.
  
  Now, to connect, just call this function:
  
-   phydev = phy_connect(dev, phy_name, &adjust_link, flags, interface);
+   phydev = phy_connect(dev, phy_name, &adjust_link, flags);
 
  phydev is a pointer to the phy_device structure which represents the PHY.  If
  phy_connect is successful, it will return the pointer.  dev, here, is the
@@ -115,10 +114,6 @@ Letting the PHY Abstraction Layer do Everything
  flags is a u32 which can optionally contain phy-specific flags.
  This is useful if the system has put hardware restrictions on
  the PHY/controller, of which the PHY needs to be aware.
-
- interface is a u32 which specifies the connection type used
- between the controller and the PHY.  Examples are GMII, MII,
- RGMII, and SGMII.  For a full list, see include/linux/phy.h
 
  Now just make sure that phydev->supported and phydev->advertising have any
  values pruned from them which don't make sense for your controller (a 10/100
@@ -196,7 +191,7 @@ Doing it all yourself
    start, or disables then frees them for stop.
 
  struct phy_device * phy_attach(struct net_device *dev, const char *phy_id,
-		 u32 flags, phy_interface_t interface);
+		 u32 flags);
 
    Attaches a network device to a particular PHY, binding the PHY to a generic
    driver if none was found during bus initialization.  Passes in
@@ -291,39 +286,3 @@ Writing a PHY driver
  Feel free to look at the Marvell, Cicada, and Davicom drivers in
  drivers/net/phy/ for examples (the lxt and qsemi drivers have
  not been tested as of this writing)
-
-Board Fixups
-
- Sometimes the specific interaction between the platform and the PHY requires
- special handling.  For instance, to change where the PHY's clock input is,
- or to add a delay to account for latency issues in the data path.  In order
- to support such contingencies, the PHY Layer allows platform code to register
- fixups to be run when the PHY is brought up (or subsequently reset).
-
- When the PHY Layer brings up a PHY it checks to see if there are any fixups
- registered for it, matching based on UID (contained in the PHY device's phy_id
- field) and the bus identifier (contained in phydev->dev.bus_id).  Both must
- match, however two constants, PHY_ANY_ID and PHY_ANY_UID, are provided as
- wildcards for the bus ID and UID, respectively.
-
- When a match is found, the PHY layer will invoke the run function associated
- with the fixup.  This function is passed a pointer to the phy_device of
- interest.  It should therefore only operate on that PHY.
-
- The platform code can either register the fixup using phy_register_fixup():
-
-	int phy_register_fixup(const char *phy_id,
-		u32 phy_uid, u32 phy_uid_mask,
-		int (*run)(struct phy_device *));
-
- Or using one of the two stubs, phy_register_fixup_for_uid() and
- phy_register_fixup_for_id():
-
- int phy_register_fixup_for_uid(u32 phy_uid, u32 phy_uid_mask,
-		int (*run)(struct phy_device *));
- int phy_register_fixup_for_id(const char *phy_id,
-		int (*run)(struct phy_device *));
-
- The stubs set one of the two matching criteria, and set the other one to
- match anything.
-

@@ -1,0 +1,404 @@
+From: Luming Yu <luyu@redhat.com>
+Date: Sat, 13 Sep 2008 00:47:24 +0800
+Subject: [ia64] multiple outstanding ptc.g instruction support
+Message-id: 48CA9D1C.2040906@redhat.com
+O-Subject: Re: [RHEL 5.3 PATCH 1/2] bz 451593: Multiple outstanding ptc.g instruction support
+Bugzilla: 451593
+
+bz 451593
+
+Description of problem:
+
+According to SDM2.2, Itanium supports multiple outstanding ptc.g
+instructions.
+But current kernel function ia64_global_tlb_purge() uses a spinlock to
+serialize
+ptc.g instructions issued by multiple processors. This serialization might
+have
+scalability issue on a big SMP machine where many processors could purge
+TLB
+   in parallel.
+
+   The patch fixes this problem by issuing multiple ptc.g instructions in
+ia64_global_tlb_purge(). It also adds support for the "PALO" table to get
+a platform view of the max number of outstanding ptc.g instructions (which
+   may be different from the processor view found from PAL_VM_SUMMARY).
+
+PALO specification can be found at:
+http://www.dig64.org/home/DIG64_PALO_R1_0.pdf
+
+   spinaphore implementation by Matthew Wilcox.
+
+Upstream status:
+   2046b94e7c4fce92eb8165c2c36c6478f4927178
+
+Testing status:
+Boot fine on tiger4 and Cold fusion, and nothing unusual found.
+I don't have box with PALO table to support this feature to test this
+feature right now.
+
+Management status:
+None flag set
+
+Please review,  test and ACK.
+
+Update the patch series against -105 kernel. And add one more patch to
+set max_purges=1 by default regardless what PAL returns to make sure no
+regressions.
+Please revew and ACKs.
+NOTE: to apply, please keep it in this order:
+1. [RHEL 5.3 PATCH 1/2] bz 451593: Multiple    outstanding    ptc.g
+instruction support
+2. [RHEL 5.3 PATCH 2/2]  bz 451593: Kernel parameter for max number
+of concurrent global TLB purges
+3. [RHEL 5.3 PATCH 1/1] bz 451593: set max_purges=1 by default
+regardless what PAL returns
+
+Thanks,
+Luming
+
+diff --git a/arch/ia64/kernel/efi.c b/arch/ia64/kernel/efi.c
+index 7b4a528..35b3d22 100644
+--- a/arch/ia64/kernel/efi.c
++++ b/arch/ia64/kernel/efi.c
+@@ -34,6 +34,7 @@
+ #include <asm/pgtable.h>
+ #include <asm/processor.h>
+ #include <asm/mca.h>
++#include <asm/tlbflush.h>
+ 
+ #define EFI_DEBUG	0
+ 
+@@ -385,6 +386,41 @@ efi_get_pal_addr (void)
+ 	return NULL;
+ }
+ 
++
++static u8 __init palo_checksum(u8 *buffer, u32 length)
++{
++	u8 sum = 0;
++	u8 *end = buffer + length;
++
++	while (buffer < end)
++		sum = (u8) (sum + *(buffer++));
++
++	return sum;
++}
++
++/*
++ * Parse and handle PALO table which is published at:
++ * http://www.dig64.org/home/DIG64_PALO_R1_0.pdf
++ */
++static void __init handle_palo(unsigned long palo_phys)
++{
++	struct palo_table *palo = __va(palo_phys);
++	u8  checksum;
++
++	if (strncmp(palo->signature, PALO_SIG, sizeof(PALO_SIG) - 1)) {
++		printk(KERN_INFO "PALO signature incorrect.\n");
++		return;
++	}
++
++	checksum = palo_checksum((u8 *)palo, palo->length);
++	if (checksum) {
++		printk(KERN_INFO "PALO checksum incorrect.\n");
++		return;
++	}
++
++	setup_ptcg_sem(palo->max_tlb_purges, 1);
++}
++
+ void
+ efi_map_pal_code (void)
+ {
+@@ -415,6 +451,7 @@ efi_init (void)
+ 	char *cp, vendor[100] = "unknown";
+ 	extern char saved_command_line[];
+ 	int i;
++	unsigned long palo_phys;
+ 
+ 	/* it's too early to be able to use the standard kernel command line support... */
+ 	for (cp = saved_command_line; *cp; ) {
+@@ -473,6 +510,8 @@ efi_init (void)
+ 	efi.hcdp       = EFI_INVALID_TABLE_ADDR;
+ 	efi.uga        = EFI_INVALID_TABLE_ADDR;
+ 
++	palo_phys      = EFI_INVALID_TABLE_ADDR;
++
+ 	for (i = 0; i < (int) efi.systab->nr_tables; i++) {
+ 		if (efi_guidcmp(config_tables[i].guid, MPS_TABLE_GUID) == 0) {
+ 			efi.mps = config_tables[i].table;
+@@ -492,10 +531,17 @@ efi_init (void)
+ 		} else if (efi_guidcmp(config_tables[i].guid, HCDP_TABLE_GUID) == 0) {
+ 			efi.hcdp = config_tables[i].table;
+ 			printk(" HCDP=0x%lx", config_tables[i].table);
++		} else if (efi_guidcmp(config_tables[i].guid,
++			 PROCESSOR_ABSTRACTION_LAYER_OVERWRITE_GUID) == 0) {
++			palo_phys = config_tables[i].table;
++			printk(" PALO=0x%lx", config_tables[i].table);
+ 		}
+ 	}
+ 	printk("\n");
+ 
++	if (palo_phys != EFI_INVALID_TABLE_ADDR)
++		handle_palo(palo_phys);
++
+ 	runtime = __va(efi.systab->runtime);
+ 	efi.get_time = phys_get_time;
+ 	efi.set_time = phys_set_time;
+diff --git a/arch/ia64/kernel/setup.c b/arch/ia64/kernel/setup.c
+index 3b5949c..5e8704a 100644
+--- a/arch/ia64/kernel/setup.c
++++ b/arch/ia64/kernel/setup.c
+@@ -60,6 +60,7 @@
+ #include <asm/setup.h>
+ #include <asm/smp.h>
+ #include <asm/system.h>
++#include <asm/tlbflush.h>
+ #include <asm/unistd.h>
+ #include <asm/system.h>
+ #ifdef CONFIG_XEN
+@@ -1066,9 +1067,10 @@ cpu_init (void)
+ #endif
+ 
+ 	/* set ia64_ctx.max_rid to the maximum RID that is supported by all CPUs: */
+-	if (ia64_pal_vm_summary(NULL, &vmi) == 0)
++	if (ia64_pal_vm_summary(NULL, &vmi) == 0) {
+ 		max_ctx = (1U << (vmi.pal_vm_info_2_s.rid_size - 3)) - 1;
+-	else {
++		setup_ptcg_sem(vmi.pal_vm_info_2_s.max_purges, 0);
++	} else {
+ 		printk(KERN_WARNING "cpu_init: PAL VM summary failed, assuming 18 RID bits\n");
+ 		max_ctx = (1U << 15) - 1;	/* use architected minimum */
+ 	}
+diff --git a/arch/ia64/mm/tlb.c b/arch/ia64/mm/tlb.c
+index e35521b..c3b3994 100644
+--- a/arch/ia64/mm/tlb.c
++++ b/arch/ia64/mm/tlb.c
+@@ -10,6 +10,9 @@
+  *              IPI based ptc implementation and A-step IPI implementation.
+  * Rohit Seth <rohit.seth@intel.com>
+  * Ken Chen <kenneth.w.chen@intel.com>
++ * Copyright (C) 2007 Intel Corp
++ *	Fenghua Yu <fenghua.yu@intel.com>
++ *	Add multiple ptc.g/ptc.ga instruction support in global tlb purge.
+  * Christophe de Dinechin <ddd@hp.com>: Avoid ptc.e on memory allocation
+  */
+ #include <linux/module.h>
+@@ -26,6 +29,7 @@
+ #include <asm/pal.h>
+ #include <asm/tlbflush.h>
+ #include <asm/dma.h>
++#include <asm/sal.h>
+ 
+ static struct {
+ 	unsigned long mask;	/* mask of supported purge page-sizes */
+@@ -84,14 +88,105 @@ wrap_mmu_context (struct mm_struct *mm)
+ 	local_flush_tlb_all();
+ }
+ 
++/*
++ * Implement "spinaphores" ... like counting semaphores, but they
++ * spin instead of sleeping.  If there are ever any other users for
++ * this primitive it can be moved up to a spinaphore.h header.
++ */
++struct spinaphore {
++ 	atomic_t	cur;
++};
++ 
++static inline void spinaphore_init(struct spinaphore *ss, int val)
++{
++	atomic_set(&ss->cur, val);
++}
++ 
++static inline void down_spin(struct spinaphore *ss)
++{
++	while (unlikely(!atomic_add_unless(&ss->cur, -1, 0)))
++		while (atomic_read(&ss->cur) == 0)
++			cpu_relax();
++}
++
++static inline void up_spin(struct spinaphore *ss)
++{
++	atomic_add(1, &ss->cur);
++}
++
++static struct spinaphore ptcg_sem;
++static u16 nptcg = 1;
++static int need_ptcg_sem = 1;
++static int toolatetochangeptcgsem = 0;
++
++/*
++ * Maximum number of simultaneous ptc.g purges in the system can
++ * be defined by PAL_VM_SUMMARY (in which case we should take
++ * the smallest value for any cpu in the system) or by the PAL
++ * override table (in which case we should ignore the value from
++ * PAL_VM_SUMMARY).
++ *
++ * Complicating the logic here is the fact that num_possible_cpus()
++ * isn't fully setup until we start bringing cpus online.
++ */
++void
++setup_ptcg_sem(int max_purges, int from_palo)
++{
++	static int have_palo;
++	static int firstcpu = 1;
++ 
++	if (toolatetochangeptcgsem) {
++		BUG_ON(max_purges < nptcg);
++		return;
++	}
++
++	if (from_palo) {
++		have_palo = 1;
++
++		/* In PALO max_purges == 0 really means it! */
++		if (max_purges == 0)
++			panic("Whoa! Platform does not support global TLB purges.\n");
++		nptcg = max_purges;
++		if (nptcg == PALO_MAX_TLB_PURGES) {
++			need_ptcg_sem = 0;
++			return;
++		}
++		goto resetsema;
++	}
++	if (have_palo) {
++		if (nptcg != PALO_MAX_TLB_PURGES)
++			need_ptcg_sem = (num_possible_cpus() > nptcg);
++		return;
++	}
++
++	/* In PAL_VM_SUMMARY max_purges == 0 actually means 1 */
++	if (max_purges == 0) max_purges = 1;
++
++	if (firstcpu) {
++		nptcg = max_purges;
++		firstcpu = 0;
++	}
++	if (max_purges < nptcg)
++		nptcg = max_purges;
++	if (nptcg == PAL_MAX_PURGES) {
++		need_ptcg_sem = 0;
++		return;
++	} else
++		need_ptcg_sem = (num_possible_cpus() > nptcg);
++
++resetsema:
++	spinaphore_init(&ptcg_sem, max_purges);
++}
++
+ void
+ ia64_global_tlb_purge (struct mm_struct *mm, unsigned long start,
+ 		       unsigned long end, unsigned long nbits)
+ {
+-	static DEFINE_SPINLOCK(ptcg_lock);
+ 
+ 	struct mm_struct *active_mm = current->active_mm;
+ 
++ 
++ 	toolatetochangeptcgsem = 1;
+ 	if (mm != active_mm) {
+ 		/* Restore region IDs for mm */
+ 		if (mm && active_mm) {
+@@ -102,19 +197,20 @@ ia64_global_tlb_purge (struct mm_struct *mm, unsigned long start,
+ 		}
+ 	}
+ 
+-	/* HW requires global serialization of ptc.ga.  */
+-	spin_lock(&ptcg_lock);
+-	{
+-		do {
+-			/*
+-			 * Flush ALAT entries also.
+-			 */
+-			ia64_ptcga(start, (nbits<<2));
+-			ia64_srlz_i();
+-			start += (1UL << nbits);
+-		} while (start < end);
+-	}
+-	spin_unlock(&ptcg_lock);
++	if (need_ptcg_sem)
++		down_spin(&ptcg_sem);
++
++	do {
++		/*
++		 * Flush ALAT entries also.
++		 */
++		ia64_ptcga(start, (nbits << 2));
++		ia64_srlz_i();
++		start += (1UL << nbits);
++	} while (start < end);
++
++	if (need_ptcg_sem)
++		up_spin(&ptcg_sem);
+ 
+         if (mm != active_mm) {
+                 activate_context(active_mm);
+diff --git a/include/asm-ia64/pal.h b/include/asm-ia64/pal.h
+index 1dd0ea1..5c68c7f 100644
+--- a/include/asm-ia64/pal.h
++++ b/include/asm-ia64/pal.h
+@@ -1568,13 +1568,15 @@ typedef union pal_vm_info_1_u {
+ 	} pal_vm_info_1_s;
+ } pal_vm_info_1_u_t;
+ 
++#define PAL_MAX_PURGES          0xFFFF          /* all ones is means unlimited */
++
+ typedef union pal_vm_info_2_u {
+ 	u64			pvi2_val;
+ 	struct {
+ 		u64		impl_va_msb	: 8,
+ 				rid_size	: 8,
+ 				max_purges	: 16,
+-				reserved	: 48;
++				reserved	: 32;
+ 	} pal_vm_info_2_s;
+ } pal_vm_info_2_u_t;
+ 
+diff --git a/include/asm-ia64/sal.h b/include/asm-ia64/sal.h
+index 5ced6ea..50eb9d3 100644
+--- a/include/asm-ia64/sal.h
++++ b/include/asm-ia64/sal.h
+@@ -299,6 +299,9 @@ enum {
+     EFI_GUID(0xe429faf8, 0x3cb7, 0x11d4, 0xbc, 0xa7, 0x0, 0x80, 0xc7, 0x3c, 0x88, 0x81)
+ #define SAL_PLAT_BUS_ERR_SECT_GUID  \
+     EFI_GUID(0xe429faf9, 0x3cb7, 0x11d4, 0xbc, 0xa7, 0x0, 0x80, 0xc7, 0x3c, 0x88, 0x81)
++#define PROCESSOR_ABSTRACTION_LAYER_OVERWRITE_GUID \
++    EFI_GUID(0x6cb0a200, 0x893a, 0x11da, 0x96, 0xd2, 0x0, 0x10, 0x83, 0xff, \
++		0xca, 0x4d)
+ 
+ #define MAX_CACHE_ERRORS	6
+ #define MAX_TLB_ERRORS		6
+@@ -903,6 +906,20 @@ extern void ia64_jump_to_sal(struct sal_to_os_boot *);
+ 
+ extern void ia64_sal_handler_init(void *entry_point, void *gpval);
+ 
++#define PALO_MAX_TLB_PURGES	0xFFFF
++#define PALO_SIG	"PALO"
++
++struct palo_table {
++	u8  signature[4];	/* Should be "PALO" */
++	u32 length;
++	u8  minor_revision;
++	u8  major_revision;
++	u8  checksum;
++	u8  reserved1[5];
++	u16 max_tlb_purges;
++	u8  reserved2[6];
++};
++
+ #endif /* __ASSEMBLY__ */
+ 
+ #endif /* _ASM_IA64_SAL_H */
+diff --git a/include/asm-ia64/tlbflush.h b/include/asm-ia64/tlbflush.h
+index 9bbc1e1..b337f70 100644
+--- a/include/asm-ia64/tlbflush.h
++++ b/include/asm-ia64/tlbflush.h
+@@ -17,6 +17,7 @@
+  * Now for some TLB flushing routines.  This is the kind of stuff that
+  * can be very expensive, so try to avoid them whenever possible.
+  */
++extern void setup_ptcg_sem(int max_purges, int from_palo);
+ 
+ /*
+  * Flush everything (kernel mapping may also have changed due to

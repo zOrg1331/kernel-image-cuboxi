@@ -8,6 +8,7 @@
 
 #include "befs.h"
 #include "inode.h"
+#include "endian.h"
 
 /*
 	Validates the correctness of the befs inode

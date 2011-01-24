@@ -1,0 +1,42 @@
+From: Chad Dupuis <cdupuis@redhat.com>
+Date: Thu, 9 Dec 2010 20:54:19 -0500
+Subject: [scsi] qla4xxx: update to 5.02.04.01.05.06-d0
+Message-id: <20101209205418.10052.37326.sendpatchset@localhost.localdomain>
+Patchwork-id: 30060
+O-Subject: [RHEL 5.6 PATCH 3/3] qla4xxx: Update version number to
+	5.02.04.01.05.06-d0.
+Bugzilla: 661768
+
+Bugzilla
+--------
+
+Bug 661768 (https://bugzilla.redhat.com/show_bug.cgi?id=661768)
+
+Upstream Status
+---------------
+
+RHEL 5 specific.
+
+Description
+-----------
+
+>From 0ac02f3e0bf47d492b2badca6bc13f461aea7f4f Mon Sep 17 00:00:00 2001
+From: Prasanna Mumbai <prasanna.mumbai@qlogic.com>
+Date: Wed, 8 Dec 2010 11:02:11 -0800
+Subject: [PATCH 3/3] V5.02.04.01.05.06-d0
+
+Signed-off-by: Prasanna Mumbai <prasanna.mumbai@qlogic.com>
+
+diff --git a/drivers/scsi/qla4xxx/ql4_version.h b/drivers/scsi/qla4xxx/ql4_version.h
+index 7993abd..989f0b6 100644
+--- a/drivers/scsi/qla4xxx/ql4_version.h
++++ b/drivers/scsi/qla4xxx/ql4_version.h
+@@ -5,7 +5,7 @@
+  * See LICENSE.qla4xxx for copyright and licensing details.
+  */
+ 
+-#define QLA4XXX_DRIVER_VERSION	"5.02.04.00.05.06-d0"
++#define QLA4XXX_DRIVER_VERSION	"5.02.04.01.05.06-d0"
+ 
+ /*
+  * Driver Versioning Scheme:

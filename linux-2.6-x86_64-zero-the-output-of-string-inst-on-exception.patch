@@ -1,0 +1,78 @@
+From: Jiri Pirko <jpirko@redhat.com>
+Date: Wed, 25 Jun 2008 10:05:17 +0200
+Subject: [x86_64] zero the output of string inst on exception
+Message-id: 4861FC3D.9080308@redhat.com
+O-Subject: Re: [kernel team] [RHEL5.3 patch] BZ451276 CVE-2008-2729 kernel: [x86_64] The string instruction version didn't zero the output on exception. [rhel-5.3]
+Bugzilla: 451276
+RH-Acked-by: Anton Arapov <aarapov@redhat.com>
+RH-Acked-by: Alan Cox <alan@redhat.com>
+
+BZ451276
+https://bugzilla.redhat.com/show_bug.cgi?id=451276
+
+Description
+- Don't zero for __copy_from_user_inatomic following i386.
+This will prevent spurious zeros for parallel file system writers when
+one does a exception
+- The string instruction version didn't zero the output on
+exception. Oops.
+
+This issue discovered by Cai Qian in RH in process of RHSA-2008:0508
+kernel QA testing.
+
+Upstream status:
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=3022d734a54cbd2b65eea9a0245648211
+01b4a9a;hp=f0f4c3432e5e1087b3a8c0e6bd4113d3c37497ff
+
+Brew build:
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1358170
+
+Test status:
+booted and tested with Vitaly's reproducer attached to bz451271 on x86_64:
+
+testing 'string', buggy: no
+
+diff --git a/arch/x86_64/lib/copy_user.S b/arch/x86_64/lib/copy_user.S
+index 8c1d271..15815d0 100644
+--- a/arch/x86_64/lib/copy_user.S
++++ b/arch/x86_64/lib/copy_user.S
+@@ -325,22 +325,32 @@ ENDPROC(copy_user_generic)
+    */
+ copy_user_generic_c:
+ 	CFI_STARTPROC
++	xorq %rax,%rax
+ 	movl %edx,%ecx
+ 	shrl $3,%ecx
+-	andl $7,%edx	
+-1:	rep 
++	andl $7,%edx
++.Lc1:	rep 
+ 	movsq 
+ 	movl %edx,%ecx
+-2:	rep
++.Lc2:	rep
+ 	movsb
+-4:	movl %ecx,%eax
+ 	ret
+-3:	lea (%rdx,%rcx,8),%rax
++
++.Lc1e:	movq %rcx,%rsi
++.Lc3:	rep
++	stosq
++.Lc2e:	movl %edx,%ecx
++.Lc4:	rep
++	stosb
++.Lc3e:	leaq (%rdx,%rsi,8),%rax
+ 	ret
+ 	CFI_ENDPROC
+ END(copy_user_generic_c)
+ 
+ 	.section __ex_table,"a"
+-	.quad 1b,3b
+-	.quad 2b,4b
++	.align 8
++	.quad .Lc1,.Lc1e
++	.quad .Lc2,.Lc2e
++	.quad .Lc3,.Lc3e
++	.quad .Lc4,.Lc3e
+ 	.previous

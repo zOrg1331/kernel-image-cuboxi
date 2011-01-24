@@ -1,0 +1,39 @@
+From: Neil Horman <nhorman@redhat.com>
+Date: Thu, 17 Jun 2010 18:24:46 -0400
+Subject: [net] sctp: fix length checks
+Message-id: <20100617182446.GD20273@shamino.rdu.redhat.com>
+Patchwork-id: 26291
+O-Subject: [RHEL5.6 PATCH] sctp: fix length checks in sctp (bz 605305)
+Bugzilla: 605305
+RH-Acked-by: Jiri Pirko <jpirko@redhat.com>
+RH-Acked-by: Dean Nelson <dnelson@redhat.com>
+
+Hey all-
+	I fixed 584658 a while back, but in so doing introduced a length check
+issue that was fixed upstream by commit
+2e3219b5c8a2e44e0b83ae6e04f52f20a82ac0f2.  This is a backport of that.
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/net/sctp/sm_make_chunk.c b/net/sctp/sm_make_chunk.c
+index 7b00643..f4c5110 100644
+--- a/net/sctp/sm_make_chunk.c
++++ b/net/sctp/sm_make_chunk.c
+@@ -144,7 +144,7 @@ int sctp_init_cause_fixed(struct sctp_chunk *chunk, __be16 cause_code,
+ 	len = sizeof(sctp_errhdr_t) + paylen;
+ 	err.length  = htons(len);
+ 
+-	if (skb_tailroom(chunk->skb) >  len)
++	if (skb_tailroom(chunk->skb) < len)
+ 		return -ENOSPC;
+ 	chunk->subh.err_hdr = sctp_addto_chunk_fixed(chunk,
+ 						     sizeof(sctp_errhdr_t),
+@@ -1196,7 +1196,7 @@ void *sctp_addto_chunk(struct sctp_chunk *chunk, int len, const void *data)
+ void *sctp_addto_chunk_fixed(struct sctp_chunk *chunk,
+ 			     int len, const void *data)
+ {
+-	if (skb_tailroom(chunk->skb) > len)
++	if (skb_tailroom(chunk->skb) >= len)
+ 		return sctp_addto_chunk(chunk, len, data);
+ 	else
+ 		return NULL;

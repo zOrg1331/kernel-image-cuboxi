@@ -1,0 +1,96 @@
+From: Doug Chapman <dchapman@redhat.com>
+Date: Thu, 6 Dec 2007 16:14:34 -0500
+Subject: [cpufreq] ondemand governor restructure the work cb
+Message-id: 1196975674.1083.5.camel@athlon
+O-Subject: [RHEL 5.2 PATCH 2/5] hang at 'Disabling ondemand cpu frequency scaling'
+Bugzilla: 253416
+
+Patch 2/5 for BZ 253416
+
+Somewhat loose backport from upstream.  There were other changes
+in the upstream commit that were not applicable to this issue
+or even to the description given for the commit.  I just ported
+the bit about removing smp_processor_id.
+
+commit 529af7a14f04f92213bac371931a2b2b060c63fa
+Author: Venkatesh Pallipadi <venkatesh.pallipadi@intel.com>
+Date:   Mon Feb 5 16:12:44 2007 -0800
+
+    [CPUFREQ] ondemand governor restructure the work callback
+
+    Restructure the delayed_work callback in ondemand.
+
+    This eliminates the need for smp_processor_id in the callback function and
+    also helps in proper locking and avoiding flush_workqueue when stopping the
+    governor (done in subsequent patch).
+
+diff --git a/drivers/cpufreq/cpufreq_ondemand.c b/drivers/cpufreq/cpufreq_ondemand.c
+index 52cf1f0..7ce7ca9 100644
+--- a/drivers/cpufreq/cpufreq_ondemand.c
++++ b/drivers/cpufreq/cpufreq_ondemand.c
+@@ -47,15 +47,17 @@ static unsigned int def_sampling_rate;
+ #define DEF_SAMPLING_RATE_LATENCY_MULTIPLIER	(1000)
+ #define TRANSITION_LATENCY_LIMIT		(10 * 1000)
+ 
+-static void do_dbs_timer(void *data);
+-
+ struct cpu_dbs_info_s {
+ 	cputime64_t prev_cpu_idle;
+ 	cputime64_t prev_cpu_wall;
+ 	struct cpufreq_policy *cur_policy;
+  	struct work_struct work;
++	int cpu;
+ 	unsigned int enable;
+ };
++
++static void do_dbs_timer(struct cpu_dbs_info_s *dbs_info);
++
+ static DEFINE_PER_CPU(struct cpu_dbs_info_s, cpu_dbs_info);
+ 
+ static unsigned int dbs_enable;	/* number of CPUs using this policy */
+@@ -301,10 +303,9 @@ static void dbs_check_cpu(struct cpu_dbs_info_s *this_dbs_info)
+ 	}
+ }
+ 
+-static void do_dbs_timer(void *data)
++static void do_dbs_timer(struct cpu_dbs_info_s *dbs_info)
+ {
+-	unsigned int cpu = smp_processor_id();
+-	struct cpu_dbs_info_s *dbs_info = &per_cpu(cpu_dbs_info, cpu);
++	unsigned int cpu = dbs_info->cpu;
+ 
+ 	if (!dbs_info->enable)
+ 		return;
+@@ -316,12 +317,10 @@ static void do_dbs_timer(void *data)
+ 			usecs_to_jiffies(dbs_tuners_ins.sampling_rate));
+ }
+ 
+-static inline void dbs_timer_init(unsigned int cpu)
++static inline void dbs_timer_init(struct cpu_dbs_info_s *dbs_info)
+ {
+-	struct cpu_dbs_info_s *dbs_info = &per_cpu(cpu_dbs_info, cpu);
+-
+-	INIT_WORK(&dbs_info->work, do_dbs_timer, 0);
+-	queue_delayed_work_on(cpu, kondemand_wq, &dbs_info->work,
++	INIT_WORK(&dbs_info->work, do_dbs_timer, dbs_info);
++	queue_delayed_work_on(dbs_info->cpu, kondemand_wq, &dbs_info->work,
+ 			usecs_to_jiffies(dbs_tuners_ins.sampling_rate));
+ 	return;
+ }
+@@ -375,6 +374,7 @@ static int cpufreq_governor_dbs(struct cpufreq_policy *policy,
+ 			j_dbs_info->prev_cpu_idle = get_cpu_idle_time(j);
+ 			j_dbs_info->prev_cpu_wall = get_jiffies_64();
+ 		}
++		this_dbs_info->cpu = cpu;
+ 		this_dbs_info->enable = 1;
+ 		sysfs_create_group(&policy->kobj, &dbs_attr_group);
+ 		/*
+@@ -396,7 +396,7 @@ static int cpufreq_governor_dbs(struct cpufreq_policy *policy,
+ 
+ 			dbs_tuners_ins.sampling_rate = def_sampling_rate;
+ 		}
+-		dbs_timer_init(policy->cpu);
++		dbs_timer_init(this_dbs_info);
+ 
+ 		mutex_unlock(&dbs_mutex);
+ 		break;

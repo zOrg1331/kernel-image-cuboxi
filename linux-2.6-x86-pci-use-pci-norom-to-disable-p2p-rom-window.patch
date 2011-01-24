@@ -1,0 +1,226 @@
+From: Konrad Rzeszutek <konradr@redhat.com>
+Date: Thu, 20 Dec 2007 20:05:16 -0500
+Subject: [x86] pci: use pci=norom to disable p2p rom window
+Message-id: 20071221010516.GB20629@mars.boston.redhat.com
+O-Subject: Re: [RHEL5 PATCH] RHBZ# 426033: Restore PCI expansion ROM P2P prefetch window creation and remove default PCI expansion ROM memory allocation
+Bugzilla: 426033
+
+RHBZ#:
+------
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=426033
+
+Description:
+------------
+This is a combination of three patches:
+
+1). Restore PCI expansion ROM P2P prefetch window creation.
+
+This patch reverts previous "Avoid creating P2P prefetch
+window for expansion ROMs" change due to regressions that
+were spotted on some systems. If you have seen the:
+PCI: Failed to allocate mem resource #6:80000@d0200000 for 0000:02:03.0
+errors this fixes it.
+
+2). Unnecessary modification of PCI bridge control ISA flag.
+
+This brings the pci_scan_bridge function to upstream wherein
+the PCI_BRIDGE_CTL_NO_ISA is not used. Pete Zaitcev found this
+during the review but it was too late to re-spin the feature patch.
+
+3). Backport of Remove default PCI expansion ROM memory allocation
+
+Contention for scarce PCI memory resources has been growing
+due to an increasing number of PCI slots in large multi-node
+systems.  The kernel currently attempts by default to
+allocate memory for all PCI expansion ROMs so there has
+also been an increasing number of PCI memory allocation
+failures seen on these systems.  This occurs because the
+BIOS either (1) provides insufficient PCI memory resource
+for all the expansion ROMs or (2) provides adequate PCI
+memory resource for expansion ROMs but provides the
+space in kernel unexpected BIOS assigned P2P non-prefetch
+windows.
+
+The resulting PCI memory allocation failures may be benign
+when related to memory requests for expansion ROMs themselves
+but in some cases they can occur when attempting to allocate
+space for more critical BARs.  This can happen when a successful
+expansion ROM allocation request consumes memory resource
+that was intended for a non-ROM BAR.  We have seen this
+happen during PCI hotplug of an adapter that contains a
+P2P bridge where successful memory allocation for an
+expansion ROM BAR on device behind the bridge consumed
+memory that was intended for a non-ROM BAR on the P2P bridge.
+In all cases the allocation failure messages can be very
+confusing for users.
+
+This patch addresses the issue by changing the kernel default
+behavior so that expansion ROM memory allocations are no
+longer attempted by default when the BIOS has not assigned
+a specific address range to the expansion ROM BAR.  This was
+done by changing the 'pci=rom' boot option behavior for BIOS
+unassigned expansion ROMs to actually match it's current
+kernel-parameters.txt description which already implies "off"
+by default.  Behavior for BIOS assigned expansion ROMs
+implemented in pcibios_assign_resources() [arch/x86/pci/i386.c]
+is unchanged.
+
+RHEL Version Found:
+------------------
+2.6.18-60.el5
+
+kABI Status:
+------------
+No symbols were harmed.
+
+Upstream Status:
+----------------
+In  2.6.24-rc5 and in Greg KH tree.
+
+Test Status:
+------------
+Tested on IBM x3850 in Westford, x3950 in IBM, and on NEC Express5800
+(nec-em8, nec-em11, nec-em14, nec-em17, and nec-em18) models. The
+hotplug feature works on the IBM machines and the "PCI: Failed to allocat.."
+message disappears on the NEC machines.
+
+>>>
+In view of your NACK, I've worked with Gary on providing a patch
+that would keep the RHEL5 default behavior enabled and if a user passed in
+pci=norom it would be in-line with what mainline does.
+
+Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+
+diff --git a/Documentation/kernel-parameters.txt b/Documentation/kernel-parameters.txt
+index 7f51429..d622569 100644
+--- a/Documentation/kernel-parameters.txt
++++ b/Documentation/kernel-parameters.txt
+@@ -1233,6 +1233,9 @@ running once the system is up.
+ 				Use with caution as certain devices share
+ 				address decoders between ROMs and other
+ 				resources.
++		norom		[IA-32] Do not assign address space to
++				expansion ROMs that do not already have
++				BIOS assigned address ranges.
+ 		irqmask=0xMMMM	[IA-32] Set a bit mask of IRQs allowed to be
+ 				assigned automatically to PCI devices. You can
+ 				make the kernel exclude IRQs of your ISA cards
+diff --git a/arch/i386/pci/common.c b/arch/i386/pci/common.c
+index bf9dffb..411047f 100644
+--- a/arch/i386/pci/common.c
++++ b/arch/i386/pci/common.c
+@@ -111,6 +111,21 @@ static void __devinit pcibios_fixup_ghosts(struct pci_bus *b)
+ 	}
+ }
+ 
++static void __devinit pcibios_fixup_device_resources(struct pci_dev *dev)
++{
++	struct resource *rom_r = &dev->resource[PCI_ROM_RESOURCE];
++
++	if (pci_probe & PCI_NOASSIGN_ROMS) {
++		if (rom_r->parent)
++			return;
++		if (rom_r->start) {
++			/* we deal with BIOS assigned ROM later */
++			return;
++		}
++		rom_r->start = rom_r->end = rom_r->flags = 0;
++	}
++}
++
+ /*
+  *  Called after each bus is probed, but before its children
+  *  are examined.
+@@ -118,8 +133,12 @@ static void __devinit pcibios_fixup_ghosts(struct pci_bus *b)
+ 
+ void __devinit  pcibios_fixup_bus(struct pci_bus *b)
+ {
++	struct pci_dev *dev;
++
+ 	pcibios_fixup_ghosts(b);
+ 	pci_read_bridge_bases(b);
++	list_for_each_entry(dev, &b->devices, bus_list)
++		pcibios_fixup_device_resources(dev);
+ }
+ 
+ /*
+@@ -461,6 +480,9 @@ char * __devinit  pcibios_setup(char *str)
+ 	else if (!strcmp(str, "rom")) {
+ 		pci_probe |= PCI_ASSIGN_ROMS;
+ 		return NULL;
++	} else if (!strcmp(str, "norom")) {
++		pci_probe |= PCI_NOASSIGN_ROMS;
++		return NULL;
+ 	} else if (!strcmp(str, "assign-busses")) {
+ 		pci_probe |= PCI_ASSIGN_ALL_BUSSES;
+ 		return NULL;
+diff --git a/arch/i386/pci/i386.c b/arch/i386/pci/i386.c
+index b4d0a0e..6a0261e 100644
+--- a/arch/i386/pci/i386.c
++++ b/arch/i386/pci/i386.c
+@@ -37,7 +37,7 @@ static int
+ skip_isa_ioresource_align(struct pci_dev *dev) {
+ 
+ 	if ((pci_probe & PCI_CAN_SKIP_ISA_ALIGN) &&
+-	    (dev->bus->bridge_ctl & PCI_BRIDGE_CTL_NO_ISA))
++	    !(dev->bus->bridge_ctl & PCI_BRIDGE_CTL_ISA))
+ 		return 1;
+ 	return 0;
+ }
+diff --git a/arch/i386/pci/pci.h b/arch/i386/pci/pci.h
+index fd1a9a3..301a7a5 100644
+--- a/arch/i386/pci/pci.h
++++ b/arch/i386/pci/pci.h
+@@ -28,6 +28,7 @@
+ #define PCI_CAN_SKIP_ISA_ALIGN	0x8000
+ #define PCI_USE__CRS		0x10000
+ #define PCI_USING_MMCONF	0x20000
++#define PCI_NOASSIGN_ROMS	0x40000
+ 
+ /*
+  * The first 16 buses are checked for MMCONF compliance. A bitmap is
+diff --git a/drivers/pci/probe.c b/drivers/pci/probe.c
+index 4830cb1..d409aca 100644
+--- a/drivers/pci/probe.c
++++ b/drivers/pci/probe.c
+@@ -235,7 +235,8 @@ static void pci_read_bases(struct pci_dev *dev, unsigned int howmany, int rom)
+ 			sz = pci_size(l, sz, (u32)PCI_ROM_ADDRESS_MASK);
+ 			if (sz) {
+ 				res->flags = (l & IORESOURCE_ROM_ENABLE) |
+-				  IORESOURCE_MEM | IORESOURCE_READONLY;
++				  IORESOURCE_MEM | IORESOURCE_PREFETCH |
++				  IORESOURCE_READONLY | IORESOURCE_CACHEABLE;
+ 				res->start = l & PCI_ROM_ADDRESS_MASK;
+ 				res->end = res->start + (unsigned long) sz;
+ 			}
+@@ -490,7 +491,7 @@ int __devinit pci_scan_bridge(struct pci_bus *bus, struct pci_dev * dev, int max
+ 			goto out;
+ 		child->primary = buses & 0xFF;
+ 		child->subordinate = (buses >> 16) & 0xFF;
+-		child->bridge_ctl = bctl ^ PCI_BRIDGE_CTL_NO_ISA;
++		child->bridge_ctl = bctl;
+ 
+ 		cmax = pci_scan_child_bus(child);
+ 		if (cmax > max)
+@@ -543,7 +544,7 @@ int __devinit pci_scan_bridge(struct pci_bus *bus, struct pci_dev * dev, int max
+ 		pci_write_config_dword(dev, PCI_PRIMARY_BUS, buses);
+ 
+ 		if (!is_cardbus) {
+-			child->bridge_ctl = bctl ^ PCI_BRIDGE_CTL_NO_ISA;
++			child->bridge_ctl = bctl;
+ 			/*
+ 			 * Adjust subordinate busnr in parent buses.
+ 			 * We do this before scanning for children because
+diff --git a/include/linux/pci_regs.h b/include/linux/pci_regs.h
+index 495d368..944075c 100644
+--- a/include/linux/pci_regs.h
++++ b/include/linux/pci_regs.h
+@@ -147,7 +147,7 @@
+ #define PCI_BRIDGE_CONTROL	0x3e
+ #define  PCI_BRIDGE_CTL_PARITY	0x01	/* Enable parity detection on secondary interface */
+ #define  PCI_BRIDGE_CTL_SERR	0x02	/* The same for SERR forwarding */
+-#define  PCI_BRIDGE_CTL_NO_ISA	0x04	/* Disable bridging of ISA ports */
++#define  PCI_BRIDGE_CTL_ISA	0x04	/* Enable ISA mode */
+ #define  PCI_BRIDGE_CTL_VGA	0x08	/* Forward VGA addresses */
+ #define  PCI_BRIDGE_CTL_MASTER_ABORT	0x20  /* Report master aborts */
+ #define  PCI_BRIDGE_CTL_BUS_RESET	0x40	/* Secondary bus reset */

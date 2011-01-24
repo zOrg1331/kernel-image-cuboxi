@@ -1,0 +1,57 @@
+From: Hans-Joachim Picht <hpicht@redhat.com>
+Date: Fri, 16 Nov 2007 13:55:28 +0100
+Subject: [s390] zfcp: remove SCSI devices then adapter
+Message-id: 20071116125528.GL6053@redhat.com
+O-Subject: [RHEL5 U2 PATCH 4/14] s390 - zfcp: Remove SCSI devices when removing complete adapter
+Bugzilla: 382841
+
+Description
+============
+The sequence chipid off, wait for a zfcp adapter leads to a hang in the
+cio kernel thread. After this scenario, cio is unusable.
+
+The above sequence calls the ccw device remove callback
+which indicates that the CCW device for the FCP adapter
+disappeared. The callback in zfcp then tries to remove
+all data structures. Since the zfcp units are still
+registered with the SCSI stack, the removal waits
+for the SCSI devices to be removed, which does not
+happen.
+
+When removing all zfcp data structures, first remove
+the unit registrations with the SCSI stack to fix this problem
+
+Bugzilla
+=========
+
+BZ 382841
+https://bugzilla.redhat.com/show_bug.cgi?id=382841
+
+Upstream status of the patch:
+=============================
+Patch fixed upstream as git commit cb7ec97c94520c78a52eff201cade337319d07e8
+
+Test status:
+============
+Kernel with patch was built and successfully tested
+
+Please ACK.
+
+With best regards,
+
+Hans
+
+diff --git a/drivers/s390/scsi/zfcp_ccw.c b/drivers/s390/scsi/zfcp_ccw.c
+index e905669..5e2bf90 100644
+--- a/drivers/s390/scsi/zfcp_ccw.c
++++ b/drivers/s390/scsi/zfcp_ccw.c
+@@ -122,6 +122,9 @@ zfcp_ccw_remove(struct ccw_device *ccw_device)
+ 
+ 	list_for_each_entry_safe(port, p, &adapter->port_remove_lh, list) {
+ 		list_for_each_entry_safe(unit, u, &port->unit_remove_lh, list) {
++			if (atomic_test_mask(ZFCP_STATUS_UNIT_REGISTERED,
++				&unit->status))
++				scsi_remove_device(unit->device);
+ 			zfcp_unit_dequeue(unit);
+ 		}
+ 		zfcp_port_dequeue(port);

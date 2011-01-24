@@ -1,0 +1,71 @@
+From: Anton Arapov <aarapov@redhat.com>
+Date: Thu, 30 Aug 2007 13:32:23 +0200
+Subject: [net] fail multicast with connection oriented socket
+Message-id: h8abs92r7c.fsf@pepelac.englab.brq.redhat.com
+O-Subject: [RHEL5.2 PATCH] BZ259261: oopses when multicasting with connection oriented socket
+Bugzilla: 259261
+
+BZ#259261
+  https://bugzilla.redhat.com/show_bug.cgi?id=259261
+
+Description
+  Fix IP[V6]_ADD_MEMBERSHIP and IP[V6]_DROP_MEMBERSHIP to handle only connectionless and return -EPROTO for connection oriented sockets.
+
+  Quote from the netdev-list(David Miller):
+    Multicast subscriptions cannot even be used with TCP and DCCP, which
+    are the only two users of these connection oriented socket functions.
+
+Upstream status
+  commit#a96fb49be3dd2031f722bf32af6ed7db965b60f7
+  http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=a96fb49be3dd2031f722bf32af6ed7db965b60f7
+
+Test status
+  patch has been tested for compilation and boot.
+  issue has been reproduced, and the patch fixes it.
+
+Notice
+  RHBZ#250842 - RHEL4 clone of this bug.
+
+==
+
+Acked-by: Thomas Graf <tgraf@redhat.com>
+Acked-by: Neil Horman <nhorman@redhat.com>
+Acked-by: "David S. Miller" <davem@redhat.com>
+---
+ net/ipv4/ip_sockglue.c   |    4 ++++
+ net/ipv6/ipv6_sockglue.c |    4 ++++
+ 2 files changed, 8 insertions(+), 0 deletions(-)
+
+diff --git a/net/ipv4/ip_sockglue.c b/net/ipv4/ip_sockglue.c
+index 2d05c41..cba4c6e 100644
+--- a/net/ipv4/ip_sockglue.c
++++ b/net/ipv4/ip_sockglue.c
+@@ -619,6 +619,10 @@ static int do_ip_setsockopt(struct sock *sk, int level,
+ 		case IP_DROP_MEMBERSHIP: 
+ 		{
+ 			struct ip_mreqn mreq;
++			
++			err = -EPROTO;
++			if (inet_sk(sk)->is_icsk)
++				break;
+ 
+ 			if (optlen < sizeof(struct ip_mreq))
+ 				goto e_inval;
+diff --git a/net/ipv6/ipv6_sockglue.c b/net/ipv6/ipv6_sockglue.c
+index b3533ad..13580ff 100644
+--- a/net/ipv6/ipv6_sockglue.c
++++ b/net/ipv6/ipv6_sockglue.c
+@@ -545,6 +545,10 @@ done:
+ 	case IPV6_DROP_MEMBERSHIP:
+ 	{
+ 		struct ipv6_mreq mreq;
++		
++		retv = -EPROTO;
++		if (inet_sk(sk)->is_icsk)
++			break;
+ 
+ 		retv = -EFAULT;
+ 		if (copy_from_user(&mreq, optval, sizeof(struct ipv6_mreq)))
+-- 
+1.5.3.5.645.gbb47
+

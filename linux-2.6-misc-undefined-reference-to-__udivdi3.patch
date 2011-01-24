@@ -1,0 +1,55 @@
+From: Amerigo Wang <amwang@redhat.com>
+Date: Thu, 7 May 2009 21:18:37 -0400
+Subject: [misc] undefined reference to `__udivdi3'
+Message-id: 20090508011934.22045.5523.sendpatchset@localhost.localdomain
+O-Subject: [RHEL5 PATCH][V2] BZ499063: undefined reference to `__udivdi3'
+Bugzilla: 499063
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+RH-Nacked-by: Prarit Bhargava <prarit@redhat.com>
+RH-Acked-by: Brian Maly <bmaly@redhat.com>
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+RH-Acked-by: Eugene Teo <eugene@redhat.com>
+
+BZ499063
+https://bugzilla.redhat.com/show_bug.cgi?id=499063
+
+Description:
+When I built the latest rhel5 kernel, I got the following compile error:
+
+kernel/built-in.o: In function `getnstimeofday':
+(.text+0xb6ae): undefined reference to `__umoddi3'
+kernel/built-in.o: In function `getnstimeofday':
+(.text+0xb6ce): undefined reference to `__udivdi3'
+
+This is due to that gcc optimizes the loop in timespec_add_ns() into mod
+operation, but i686 doesn't support 64-bit integer mod operation, so gcc
+will use libgcc's __umoddi3() and __udivdi3.
+
+The patch below prevents gcc to do this optimization.
+
+Upstream Status of this patch:
+This patch was already merged into upstream as commit
+38332cb98772f5ea757e6486bed7ed0381cb5f98.
+See:
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=blobdiff;f=include/linux/time.h;h=d32ef0ad4c0aaf8964d94abe215c5dbf4dde8aaf;hp=2091a19f1655aab8e5130256f83af4103efa9e3f;hb=38332cb98772f5ea757e6486bed7ed0381cb5f98;hpb=e48af19f56eb47a1f908ee8f16df9d246f955b21
+
+Test Status:
+I have tested this patch by compiling, it works fine on i686 with gcc 4.3.2.
+
+Acked-by: Brian Maly <bmaly@redhat.com>
+
+diff --git a/include/linux/time.h b/include/linux/time.h
+index a5b7399..49e4708 100644
+--- a/include/linux/time.h
++++ b/include/linux/time.h
+@@ -169,6 +169,10 @@ static inline void timespec_add_ns(struct timespec *a, u64 ns)
+ {
+ 	ns += a->tv_nsec;
+ 	while(unlikely(ns >= NSEC_PER_SEC)) {
++		/* The following asm() prevents the compiler from
++		 * optimising this loop into a modulo operation.  */
++		asm("" : "+r"(ns));
++
+ 		ns -= NSEC_PER_SEC;
+ 		a->tv_sec++;
+ 	}

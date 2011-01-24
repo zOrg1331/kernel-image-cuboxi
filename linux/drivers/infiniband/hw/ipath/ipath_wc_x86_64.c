@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2006, 2007 QLogic Corporation. All rights reserved.
+ * Copyright (c) 2006 QLogic, Inc. All rights reserved.
  * Copyright (c) 2003, 2004, 2005, 2006 PathScale, Inc. All rights reserved.
  *
  * This software is available to you under a choice of one of two
@@ -63,29 +63,12 @@ int ipath_enable_wc(struct ipath_devdata *dd)
 	 * of 2 address matching the length (which has to be a power of 2).
 	 * For rev1, that means the base address, for rev2, it will be just
 	 * the PIO buffers themselves.
-	 * For chips with two sets of buffers, the calculations are
-	 * somewhat more complicated; we need to sum, and the piobufbase
-	 * register has both offsets, 2K in low 32 bits, 4K in high 32 bits.
-	 * The buffers are still packed, so a single range covers both.
 	 */
-	if (dd->ipath_piobcnt2k && dd->ipath_piobcnt4k) { /* 2 sizes */
-		unsigned long pio2kbase, pio4kbase;
-		pio2kbase = dd->ipath_piobufbase & 0xffffffffUL;
-		pio4kbase = (dd->ipath_piobufbase >> 32) & 0xffffffffUL;
-		if (pio2kbase < pio4kbase) { /* all, for now */
-			pioaddr = addr + pio2kbase;
-			piolen = pio4kbase - pio2kbase +
-				dd->ipath_piobcnt4k * dd->ipath_4kalign;
-		} else {
-			pioaddr = addr + pio4kbase;
-			piolen = pio2kbase - pio4kbase +
-				dd->ipath_piobcnt2k * dd->ipath_palign;
-		}
-	} else {  /* single buffer size (2K, currently) */
-		pioaddr = addr + dd->ipath_piobufbase;
-		piolen = dd->ipath_piobcnt2k * dd->ipath_palign +
-			dd->ipath_piobcnt4k * dd->ipath_4kalign;
-	}
+	pioaddr = addr + dd->ipath_piobufbase;
+	piolen = (dd->ipath_piobcnt2k +
+		  dd->ipath_piobcnt4k) *
+		ALIGN(dd->ipath_piobcnt2k +
+		      dd->ipath_piobcnt4k, dd->ipath_palign);
 
 	for (bits = 0; !(piolen & (1ULL << bits)); bits++)
 		/* do nothing */ ;
@@ -140,8 +123,6 @@ int ipath_enable_wc(struct ipath_devdata *dd)
 			ipath_cdbg(VERBOSE, "Set mtrr for chip to WC, "
 				   "cookie is %d\n", cookie);
 			dd->ipath_wc_cookie = cookie;
-			dd->ipath_wc_base = (unsigned long) pioaddr;
-			dd->ipath_wc_len = (unsigned long) piolen;
 		}
 	}
 
@@ -155,16 +136,9 @@ int ipath_enable_wc(struct ipath_devdata *dd)
 void ipath_disable_wc(struct ipath_devdata *dd)
 {
 	if (dd->ipath_wc_cookie) {
-		int r;
 		ipath_cdbg(VERBOSE, "undoing WCCOMB on pio buffers\n");
-		r = mtrr_del(dd->ipath_wc_cookie, dd->ipath_wc_base,
-			     dd->ipath_wc_len);
-		if (r < 0)
-			dev_info(&dd->pcidev->dev,
-				 "mtrr_del(%lx, %lx, %lx) failed: %d\n",
-				 dd->ipath_wc_cookie, dd->ipath_wc_base,
-				 dd->ipath_wc_len, r);
-		dd->ipath_wc_cookie = 0; /* even on failure */
+		mtrr_del(dd->ipath_wc_cookie, 0, 0);
+		dd->ipath_wc_cookie = 0;
 	}
 }
 

@@ -1,0 +1,278 @@
+From: Josef Bacik <jbacik@redhat.com>
+Date: Tue, 10 Feb 2009 13:49:22 -0500
+Subject: [mm] write iovec cleanup
+Message-id: 1234291777-15344-10-git-send-email-jbacik@redhat.com
+O-Subject: [PATCH 09/24] [RHEL 5.4] mm: write iovec cleanup
+Bugzilla: 445433
+RH-Acked-by: Jeff Layton <jlayton@redhat.com>
+
+This is a backport of the upstream commit
+
+4a9e5ef1f4f15205e477817a5cefc34bd3f65f55
+
+and is in reference to bz 445433.
+
+This patch simply hides the nr_segs stuff in the different iovec helpers, which
+will keep things a bit cleaner, and gets us ready for the buffered write
+rewrite.
+
+Signed-off-by: Josef Bacik <jbacik@redhat.com>
+
+diff --git a/mm/filemap.c b/mm/filemap.c
+index 1694dab..ef74f14 100644
+--- a/mm/filemap.c
++++ b/mm/filemap.c
+@@ -2117,12 +2117,7 @@ generic_file_buffered_write(struct kiocb *iocb, const struct iovec *iov,
+ 	/*
+ 	 * handle partial DIO write.  Adjust cur_iov if needed.
+ 	 */
+-	if (likely(nr_segs == 1))
+-		buf = iov->iov_base + written;
+-	else {
+-		filemap_set_next_iovec(&cur_iov, &iov_offset, written);
+-		buf = cur_iov->iov_base + iov_offset;
+-	}
++	filemap_set_next_iovec(&cur_iov, nr_segs, &iov_offset, written);
+ 
+ 	do {
+ 		struct page *page;
+@@ -2132,6 +2127,7 @@ generic_file_buffered_write(struct kiocb *iocb, const struct iovec *iov,
+ 		size_t bytes;		/* Bytes to write to page */
+ 		size_t copied;		/* Bytes copied from user */
+ 
++		buf = cur_iov->iov_base + iov_offset;
+ 		offset = (pos & (PAGE_CACHE_SIZE - 1));
+ 		index = pos >> PAGE_CACHE_SHIFT;
+ 		bytes = PAGE_CACHE_SIZE - offset;
+@@ -2161,13 +2157,10 @@ generic_file_buffered_write(struct kiocb *iocb, const struct iovec *iov,
+ 		if (unlikely(status))
+ 			goto fs_write_aop_error;
+ 
+-		if (likely(nr_segs == 1))
+-			copied = filemap_copy_from_user(page, offset,
+-							buf, bytes);
+-		else
+-			copied = filemap_copy_from_user_iovec(page, offset,
+-						cur_iov, iov_offset, bytes);
++		copied = filemap_copy_from_user(page, offset,
++					cur_iov, nr_segs, iov_offset, bytes);
+ 		flush_dcache_page(page);
++
+ 		status = a_ops->commit_write(file, page, offset, offset+bytes);
+ 		if (unlikely(status < 0 || status == AOP_TRUNCATED_PAGE))
+ 			goto fs_write_aop_error;
+@@ -2178,20 +2171,11 @@ generic_file_buffered_write(struct kiocb *iocb, const struct iovec *iov,
+ 		if (unlikely(status > 0)) /* filesystem did partial write */
+ 			copied = status;
+ 
+-		if (likely(copied > 0)) {
+-			written += copied;
+-			count -= copied;
+-			pos += copied;
+-			buf += copied;
+-			if (unlikely(nr_segs > 1)) {
+-				filemap_set_next_iovec(&cur_iov,
+-						&iov_offset, copied);
+-				if (count)
+-					buf = cur_iov->iov_base + iov_offset;
+-			} else {
+-				iov_offset += copied;
+-			}
+-		}
++		written += copied;
++		count -= copied;
++		pos += copied;
++		filemap_set_next_iovec(&cur_iov, nr_segs, &iov_offset, copied);
++
+ 		unlock_page(page);
+ 		mark_page_accessed(page);
+ 		page_cache_release(page);
+diff --git a/mm/filemap.h b/mm/filemap.h
+index a1e10a2..b500d93 100644
+--- a/mm/filemap.h
++++ b/mm/filemap.h
+@@ -22,82 +22,82 @@ __filemap_copy_from_user_iovec_inatomic(char *vaddr,
+ 
+ /*
+  * Copy as much as we can into the page and return the number of bytes which
+- * were sucessfully copied.  If a fault is encountered then clear the page
+- * out to (offset+bytes) and return the number of bytes which were copied.
+- *
+- * NOTE: For this to work reliably we really want copy_from_user_inatomic_nocache
+- * to *NOT* zero any tail of the buffer that it failed to copy.  If it does,
+- * and if the following non-atomic copy succeeds, then there is a small window
+- * where the target page contains neither the data before the write, nor the
+- * data after the write (it contains zero).  A read at this time will see
+- * data that is inconsistent with any ordering of the read and the write.
+- * (This has been detected in practice).
++ * were sucessfully copied.  If a fault is encountered then return the number of
++ * bytes which were copied.
+  */
+ static inline size_t
+-filemap_copy_from_user(struct page *page, unsigned long offset,
+-			const char __user *buf, unsigned bytes)
++filemap_copy_from_user_atomic(struct page *page, unsigned long offset,
++			const struct iovec *iov, unsigned long nr_segs,
++			size_t base, size_t bytes)
+ {
+ 	char *kaddr;
+-	int left;
++	size_t copied;
+ 
+ 	kaddr = kmap_atomic(page, KM_USER0);
+-	left = __copy_from_user_inatomic_nocache(kaddr + offset, buf, bytes);
++	if (likely(nr_segs == 1)) {
++		int left;
++		char __user *buf = iov->iov_base + base;
++		left = __copy_from_user_inatomic_nocache(kaddr + offset,
++							buf, bytes);
++		copied = bytes - left;
++	} else {
++		copied = __filemap_copy_from_user_iovec_inatomic(kaddr + offset,
++							iov, base, bytes);
++	}
+ 	kunmap_atomic(kaddr, KM_USER0);
+ 
+-	if (left != 0) {
+-		/* Do it the slow way */
+-		kaddr = kmap(page);
+-		left = __copy_from_user_nocache(kaddr + offset, buf, bytes);
+-		kunmap(page);
+-	}
+-	return bytes - left;
++	return copied;
+ }
+ 
+ /*
+- * This has the same sideeffects and return value as filemap_copy_from_user().
+- * The difference is that on a fault we need to memset the remainder of the
+- * page (out to offset+bytes), to emulate filemap_copy_from_user()'s
+- * single-segment behaviour.
++ * This has the same sideeffects and return value as
++ * filemap_copy_from_user_atomic().
++ * The difference is that it attempts to resolve faults.
+  */
+ static inline size_t
+-filemap_copy_from_user_iovec(struct page *page, unsigned long offset,
+-			const struct iovec *iov, size_t base, size_t bytes)
++filemap_copy_from_user(struct page *page, unsigned long offset,
++			const struct iovec *iov, unsigned long nr_segs,
++			 size_t base, size_t bytes)
+ {
+ 	char *kaddr;
+ 	size_t copied;
+ 
+-	kaddr = kmap_atomic(page, KM_USER0);
+-	copied = __filemap_copy_from_user_iovec_inatomic(kaddr + offset, iov,
+-							 base, bytes);
+-	kunmap_atomic(kaddr, KM_USER0);
+-	if (copied != bytes) {
+-		kaddr = kmap(page);
+-		copied = __filemap_copy_from_user_iovec_inatomic(kaddr + offset, iov,
+-								 base, bytes);
+-		if (bytes - copied)
+-			memset(kaddr + offset + copied, 0, bytes - copied);
+-		kunmap(page);
++	kaddr = kmap(page);
++	if (likely(nr_segs == 1)) {
++		int left;
++		char __user *buf = iov->iov_base + base;
++		left = __copy_from_user_nocache(kaddr + offset, buf, bytes);
++		copied = bytes - left;
++	} else {
++		copied = __filemap_copy_from_user_iovec_inatomic(kaddr + offset,
++							iov, base, bytes);
+ 	}
++	kunmap(page);
+ 	return copied;
+ }
+ 
+ static inline void
+-filemap_set_next_iovec(const struct iovec **iovp, size_t *basep, size_t bytes)
++filemap_set_next_iovec(const struct iovec **iovp, unsigned long nr_segs,
++						 size_t *basep, size_t bytes)
+ {
+-	const struct iovec *iov = *iovp;
+-	size_t base = *basep;
++	if (likely(nr_segs == 1)) {
++		*basep += bytes;
++	} else {
++		const struct iovec *iov = *iovp;
++		size_t base = *basep;
+ 
+-	while (bytes) {
+-		int copy = min(bytes, iov->iov_len - base);
++		while (bytes) {
++			int copy = min(bytes, iov->iov_len - base);
+ 
+-		bytes -= copy;
+-		base += copy;
+-		if (iov->iov_len == base) {
+-			iov++;
+-			base = 0;
++			bytes -= copy;
++			base += copy;
++			if (iov->iov_len == base) {
++				iov++;
++				base = 0;
++			}
+ 		}
++		*iovp = iov;
++		*basep = base;
+ 	}
+-	*iovp = iov;
+-	*basep = base;
+ }
+ #endif
+diff --git a/mm/filemap_xip.c b/mm/filemap_xip.c
+index b4fd0d7..a83cc14 100644
+--- a/mm/filemap_xip.c
++++ b/mm/filemap_xip.c
+@@ -13,8 +13,8 @@
+ #include <linux/module.h>
+ #include <linux/uio.h>
+ #include <linux/rmap.h>
++#include <linux/uaccess.h>
+ #include <asm/tlbflush.h>
+-#include "filemap.h"
+ 
+ /*
+  * This is a file read routine for execute in place files, and uses
+@@ -286,6 +286,7 @@ __xip_file_write(struct file *filp, const char __user *buf,
+ 		unsigned long index;
+ 		unsigned long offset;
+ 		size_t copied;
++		char *kaddr;
+ 
+ 		offset = (pos & (PAGE_CACHE_SIZE -1)); /* Within page */
+ 		index = pos >> PAGE_CACHE_SHIFT;
+@@ -293,14 +294,6 @@ __xip_file_write(struct file *filp, const char __user *buf,
+ 		if (bytes > count)
+ 			bytes = count;
+ 
+-		/*
+-		 * Bring in the user page that we will copy from _first_.
+-		 * Otherwise there's a nasty deadlock on copying from the
+-		 * same page as we're writing to, without it being marked
+-		 * up-to-date.
+-		 */
+-		fault_in_pages_readable(buf, bytes);
+-
+ 		page = a_ops->get_xip_page(mapping,
+ 					   index*(PAGE_SIZE/512), 0);
+ 		if (IS_ERR(page) && (PTR_ERR(page) == -ENODATA)) {
+@@ -317,8 +310,13 @@ __xip_file_write(struct file *filp, const char __user *buf,
+ 			break;
+ 		}
+ 
+-		copied = filemap_copy_from_user(page, offset, buf, bytes);
++		fault_in_pages_readable(buf, bytes);
++		kaddr = kmap_atomic(page, KM_USER0);
++		copied = bytes -
++			__copy_from_user_inatomic_nocache(kaddr, buf, bytes);
++		kunmap_atomic(kaddr, KM_USER0);
+ 		flush_dcache_page(page);
++
+ 		if (likely(copied > 0)) {
+ 			status = copied;
+ 

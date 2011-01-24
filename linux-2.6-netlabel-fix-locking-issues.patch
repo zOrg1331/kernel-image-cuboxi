@@ -1,0 +1,61 @@
+From: Eric Paris <eparis@redhat.com>
+Subject: [PATCH RHEL5] NetLabel: BZ 221504 Correct locking in 	selinux_netlbl_inode_permission and selinux_netlbl_socket_setsid
+Date: Fri, 05 Jan 2007 17:47:18 -0500
+Bugzilla: 221504
+Message-Id: <1168037238.3339.98.camel@localhost.localdomain>
+Changelog: NetLabel: fix locking issues
+
+
+BZ 221504
+
+http://www.kernel.org/git/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=9883a13c72dbf8c518814b6091019643cdb34429
+and also (not the same thing)
+http://marc.theaimsgroup.com/?l=linux-netdev&m=116802828128874&w=2
+
+Two different locking problems pointed out by the lockdep code.  One has
+been fixed upstream and one was just submitted today.  I did hit both on
+my local system and haven't hit either with this patch.  No flags (and
+not even time for much upstream comment on the one patch) but they may
+still be coming.  
+
+The spinlock protecting the update of the "sksec->nlbl_state" variable
+is not currently softirq safe which can lead to problems.  This patch
+fixes this by changing the spin_{un}lock() functions into
+spin_{un}lock_bh() functions.
+
+do not call a sleeping lock API in an RCU read section. lock_sock_nested
+can sleep, its BH counterpart doesn't. selinux_netlbl_inode_permission()
+needs to use the BH counterpart unconditionally.
+
+added BH disabling, because this function can be called from non-atomic
+contexts too, so a naked bh_lock_sock() would be deadlock-prone.
+
+--- linux-2.6.18.i686/security/selinux/ss/services.c.pre.netlabel.locking
++++ linux-2.6.18.i686/security/selinux/ss/services.c
+@@ -2456,9 +2456,9 @@ static int selinux_netlbl_socket_setsid(
+ 
+ 	rc = netlbl_socket_setattr(sock, &secattr);
+ 	if (rc == 0) {
+-		spin_lock(&sksec->nlbl_lock);
++		spin_lock_bh(&sksec->nlbl_lock);
+ 		sksec->nlbl_state = NLBL_LABELED;
+-		spin_unlock(&sksec->nlbl_lock);
++		spin_unlock_bh(&sksec->nlbl_lock);
+ 	}
+ 
+ netlbl_socket_setsid_return:
+@@ -2624,9 +2624,11 @@ int selinux_netlbl_inode_permission(stru
+ 		rcu_read_unlock();
+ 		return 0;
+ 	}
+-	lock_sock(sock->sk);
++	local_bh_disable();
++	bh_lock_sock_nested(sock->sk);
+ 	rc = selinux_netlbl_socket_setsid(sock, sksec->sid);
+-	release_sock(sock->sk);
++	bh_unlock_sock(sock->sk);
++	local_bh_enable();
+ 	rcu_read_unlock();
+ 
+ 	return rc;
+

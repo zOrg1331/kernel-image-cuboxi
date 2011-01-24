@@ -25,8 +25,6 @@
 #define PARTITION_RISCIX_SCSI	2
 #define PARTITION_LINUX		9
 
-#if defined(CONFIG_ACORN_PARTITION_CUMANA) || \
-	defined(CONFIG_ACORN_PARTITION_ADFS)
 static struct adfs_discrecord *
 adfs_partition(struct parsed_partitions *state, char *name, char *data,
 	       unsigned long first_sector, int slot)
@@ -50,7 +48,6 @@ adfs_partition(struct parsed_partitions *state, char *name, char *data,
 	put_partition(state, slot, first_sector, nr_sects);
 	return dr;
 }
-#endif
 
 #ifdef CONFIG_ACORN_PARTITION_RISCIX
 
@@ -68,8 +65,6 @@ struct riscix_record {
 	struct riscix_part part[8];
 };
 
-#if defined(CONFIG_ACORN_PARTITION_CUMANA) || \
-	defined(CONFIG_ACORN_PARTITION_ADFS)
 static int
 riscix_partition(struct parsed_partitions *state, struct block_device *bdev,
 		unsigned long first_sect, int slot, unsigned long nr_sects)
@@ -110,7 +105,6 @@ riscix_partition(struct parsed_partitions *state, struct block_device *bdev,
 	return slot;
 }
 #endif
-#endif
 
 #define LINUX_NATIVE_MAGIC 0xdeafa1de
 #define LINUX_SWAP_MAGIC   0xdeafab1e
@@ -121,8 +115,6 @@ struct linux_part {
 	__le32 nr_sects;
 };
 
-#if defined(CONFIG_ACORN_PARTITION_CUMANA) || \
-	defined(CONFIG_ACORN_PARTITION_ADFS)
 static int
 linux_partition(struct parsed_partitions *state, struct block_device *bdev,
 		unsigned long first_sect, int slot, unsigned long nr_sects)
@@ -154,7 +146,6 @@ linux_partition(struct parsed_partitions *state, struct block_device *bdev,
 	put_dev_sector(sect);
 	return slot;
 }
-#endif
 
 #ifdef CONFIG_ACORN_PARTITION_CUMANA
 int
@@ -274,6 +265,16 @@ adfspart_check_ADFS(struct parsed_partitions *state, struct block_device *bdev)
 	start_sect = ((data[0x1fe] << 8) + data[0x1fd]) * sectscyl;
 	id = data[0x1fc] & 15;
 	put_dev_sector(sect);
+
+#ifdef CONFIG_BLK_DEV_MFM
+	if (MAJOR(bdev->bd_dev) == MFM_ACORN_MAJOR) {
+		extern void xd_set_geometry(struct block_device *,
+			unsigned char, unsigned char, unsigned int);
+		xd_set_geometry(bdev, dr->secspertrack, heads, 1);
+		invalidate_bdev(bdev, 1);
+		truncate_inode_pages(bdev->bd_inode->i_mapping, 0);
+	}
+#endif
 
 	/*
 	 * Work out start of non-adfs partition.

@@ -9,8 +9,8 @@
 #ifndef __EFS_FS_SB_H__
 #define __EFS_FS_SB_H__
 
-#include <linux/types.h>
-#include <linux/magic.h>
+/* statfs() magic number for EFS */
+#define EFS_SUPER_MAGIC	0x414A53
 
 /* EFS superblock magic numbers */
 #define EFS_MAGIC	0x072959

@@ -1,4 +1,6 @@
 /*
+ * $Id: magellan.c,v 1.16 2002/01/22 20:28:39 vojtech Exp $
+ *
  *  Copyright (c) 1999-2001 Vojtech Pavlik
  */
 
@@ -80,13 +82,15 @@ static int magellan_crunch_nibbles(unsigned char *data, int count)
 	return 0;
 }
 
-static void magellan_process_packet(struct magellan* magellan)
+static void magellan_process_packet(struct magellan* magellan, struct pt_regs *regs)
 {
 	struct input_dev *dev = magellan->dev;
 	unsigned char *data = magellan->data;
 	int i, t;
 
 	if (!magellan->idx) return;
+
+	input_regs(dev, regs);
 
 	switch (magellan->data[0]) {
 
@@ -111,12 +115,12 @@ static void magellan_process_packet(struct magellan* magellan)
 }
 
 static irqreturn_t magellan_interrupt(struct serio *serio,
-		unsigned char data, unsigned int flags)
+		unsigned char data, unsigned int flags, struct pt_regs *regs)
 {
 	struct magellan* magellan = serio_get_drvdata(serio);
 
 	if (data == '\r') {
-		magellan_process_packet(magellan);
+		magellan_process_packet(magellan, regs);
 		magellan->idx = 0;
 	} else {
 		if (magellan->idx < MAGELLAN_MAX_LENGTH)
@@ -155,7 +159,7 @@ static int magellan_connect(struct serio *serio, struct serio_driver *drv)
 	magellan = kzalloc(sizeof(struct magellan), GFP_KERNEL);
 	input_dev = input_allocate_device();
 	if (!magellan || !input_dev)
-		goto fail1;
+		goto fail;
 
 	magellan->dev = input_dev;
 	snprintf(magellan->phys, sizeof(magellan->phys), "%s/input0", serio->phys);
@@ -166,9 +170,10 @@ static int magellan_connect(struct serio *serio, struct serio_driver *drv)
 	input_dev->id.vendor = SERIO_MAGELLAN;
 	input_dev->id.product = 0x0001;
 	input_dev->id.version = 0x0100;
-	input_dev->dev.parent = &serio->dev;
+	input_dev->cdev.dev = &serio->dev;
+	input_dev->private = magellan;
 
-	input_dev->evbit[0] = BIT_MASK(EV_KEY) | BIT_MASK(EV_ABS);
+	input_dev->evbit[0] = BIT(EV_KEY) | BIT(EV_ABS);
 
 	for (i = 0; i < 9; i++)
 		set_bit(magellan_buttons[i], input_dev->keybit);
@@ -180,17 +185,13 @@ static int magellan_connect(struct serio *serio, struct serio_driver *drv)
 
 	err = serio_open(serio, drv);
 	if (err)
-		goto fail2;
+		goto fail;
 
-	err = input_register_device(magellan->dev);
-	if (err)
-		goto fail3;
-
+	input_register_device(magellan->dev);
 	return 0;
 
- fail3:	serio_close(serio);
- fail2:	serio_set_drvdata(serio, NULL);
- fail1:	input_free_device(input_dev);
+ fail:	serio_set_drvdata(serio, NULL);
+	input_free_device(input_dev);
 	kfree(magellan);
 	return err;
 }
@@ -228,7 +229,8 @@ static struct serio_driver magellan_drv = {
 
 static int __init magellan_init(void)
 {
-	return serio_register_driver(&magellan_drv);
+	serio_register_driver(&magellan_drv);
+	return 0;
 }
 
 static void __exit magellan_exit(void)

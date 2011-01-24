@@ -1,0 +1,45 @@
+This patch fixes oops for bz#202962, bz#198698, bz#141703.
+
+On s390, pages mapped by kernel get dirty when kernel stores into them.
+SetPageUptodate() clears the dirty bit, but only if the page was not
+up to date before. Thus, when it is called twice on the same page,
+the dirty bit is not cleared the second time around. This produces
+a erroneous dirty page and an oops.
+
+There's a more detailed explanation here:
+ http://marc.theaimsgroup.com/?t=115725548100001&r=1&w=2
+As always, Bugzilla has all the materials too.
+
+I tested this patch to fix the problem. I did not test squashfs to
+continue to work on all other platforms though... It seems like working.
+
+Squashfs is not upstream in Linus or Andrew's trees. We use it because
+of need (I asked Jeremy). The upstream maintainer (Phillip Lougher) liked
+the patch, but there was no "upstream" testing yet.
+
+Please review and ack. Especially I'm looking at those who knows what
+SetPageUptodate() and grab_cache_page_nowait() are.
+
+-- Pete
+
+diff -urp -X dontdiff linux-2.6.17-1.2519.4.5.el5/fs/squashfs/inode.c linux-2.6.17-1.2519.4.5.el5.z1/fs/squashfs/inode.c
+--- linux-2.6.17-1.2519.4.5.el5/fs/squashfs/inode.c	2006-08-25 01:44:10.000000000 -0400
++++ linux-2.6.17-1.2519.4.5.el5.z1/fs/squashfs/inode.c	2006-09-01 22:33:24.000000000 -0400
+@@ -1554,8 +1554,15 @@ static int squashfs_readpage(struct file
+ 			flush_dcache_page(page);
+ 			SetPageUptodate(page);
+ 			unlock_page(page);
+-		} else if ((push_page =
+-				grab_cache_page_nowait(page->mapping, i))) {
++		} else {
++			push_page = grab_cache_page_nowait(page->mapping, i);
++			if (!push_page)
++				continue;
++			if (PageUptodate(push_page)) {
++				unlock_page(push_page);
++				page_cache_release(push_page);
++				continue;
++			}
+  			pageaddr = kmap_atomic(push_page, KM_USER0);
+ 
+ 			memcpy(pageaddr, data_ptr + byte_offset,

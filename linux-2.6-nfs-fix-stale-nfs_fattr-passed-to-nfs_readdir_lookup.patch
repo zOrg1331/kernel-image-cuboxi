@@ -1,0 +1,194 @@
+From: Harshula Jayasuriya <harshula@redhat.com>
+Date: Wed, 25 Nov 2009 07:09:14 -0500
+Subject: [nfs] fix stale nfs_fattr passed to nfs_readdir_lookup
+Message-id: <1259132954.2910.23.camel@localhost.localdomain>
+Patchwork-id: 21490
+O-Subject: [RHEL5.5 PATCH] BZ531016: NFS: stale nfs_fattr passed to
+	nfs_readdir_lookup()
+Bugzilla: 531016
+RH-Acked-by: Peter Staubach <staubach@redhat.com>
+RH-Acked-by: Jeff Layton <jlayton@redhat.com>
+
+https://bugzilla.redhat.com/show_bug.cgi?id=531016
+
+This bug appears to be triggered during an nfs_readdir() when these two
+conditions are satisfied:
+
+a) An uninitialised stale struct nfs_fattr is passed to
+nfs_readdir_lookup()
+b) The dentry can not be found in the dentry cache
+
+------------------------------------------------------------
+nfs_readdir
+- nfs_revalidate_mapping
+- nfs_fattr_init
+- readdir_search_pagecache
+  - find_dirent_page
+    - read_cache_page
+      - nfs_readdir_filler
+    - find_dirent
+    - find_dirent_index
+    - dir_page_release
+- nfs_do_filldir
+  - nfs_readdir_lookup
+    - d_lookup
+    - d_alloc
+    - nfs_fhget
+      - nfs_refresh_inode
+        - nfs_update_inode
+  - filldir
+------------------------------------------------------------
+
+Most of the time nfs_readdir_lookup() finds the dentry in the dcache
+when d_lookup() is called. On the rare occasions when the dentry is not
+found in the dcache, a new dentry is allocated, nfs_fhget() is called
+and eventually nfs_update_inode(). Unfortunately the struct nfs_fattr
+that is passed to nfs_update_inode() can be stale and results in the
+stale metadata being copied to the inode.
+
+An updated nfs_entry pointing to the stale nfs_fattr is returned by
+readdir_search_pagecache(), where the size & valid fields are incorrect:
+------------------------------------------------------------
+Sep 22 12:12:12 kaedila-r53-7 kernel: nfs_readdir: 2.1: fattr->size: 6037821808640 fattr->valid: 0
+Sep 22 12:12:12 kaedila-r53-7 kernel: NFS: readdir_search_pagecache() searching for offset 0
+Sep 22 12:12:12 kaedila-r53-7 kernel: NFS: find_dirent_page: searching page 0 for target 0
+Sep 22 12:12:12 kaedila-r53-7 kernel: NFS: found cookie 325517684 at index 0
+Sep 22 12:12:12 kaedila-r53-7 kernel: NFS: find_dirent_page: returns 0
+Sep 22 12:12:12 kaedila-r53-7 kernel: NFS: readdir_search_pagecache: returns 0
+Sep 22 12:12:12 kaedila-r53-7 kernel: nfs_readdir: 2.2: fattr->size: 71236 fattr->valid: 6
+...
+Sep 22 12:12:13 kaedila-r53-7 kernel: NFS: nfs_update_inode(0:16/745512 ct=1 info=0x6)
+Sep 22 12:12:13 kaedila-r53-7 kernel: NFS: mtime change on server for file 0:16/745512
+Sep 22 12:12:13 kaedila-r53-7 kernel: NFS: isize change on server for file 0:16/745512
+Sep 22 12:12:13 kaedila-r53-7 kernel: nfs_update_inode: cur_isize: 71753 new_isize: 71236
+------------------------------------------------------------
+
+There is a check to ensure that a new dentry is only allocated if we
+have an nfs_fattr populated after an RPC reply:
+------------------------------------------------------------
+ 63 #define NFS_ATTR_FATTR          0x0002          /* post-op attributes */
+------------------------------------------------------------
+------------------------------------------------------------
+1067 static struct dentry *nfs_readdir_lookup(nfs_readdir_descriptor_t *desc)
+1068 {
+
+1114         if (!desc->plus || !(entry->fattr->valid & NFS_ATTR_FATTR))
+1115                 return NULL;
+
+1140 }
+------------------------------------------------------------
+The entry->fattr->valid should be 0 because there has not been an RPC
+reply and should have returned at line 1115. However, since the
+nfs_fattr is stale and entry->fattr->valid is 6, this critical check is
+passed and d_alloc() & nfs_update_inode() are called. The end result is
+that stale metadata is assumed to be recent metadata from the NFS server
+and is copied to the inode.
+
+Regards,
+Harshula
+
+
+Upstream Commit:
+------------------------------------------------------------
+commit 1f4eab7e7c1d90dcd8ca4d7c064ee78dfbb345eb
+Author: Neil Brown <neilb@suse.de>
+Date:   Mon Apr 16 09:35:27 2007 +1000
+
+    NFS: Set meaningful value for fattr->time_start in readdirplus results.
+
+    Don't use uninitialsed value for fattr->time_start in readdirplus results.
+
+    The 'fattr' structure filled in by nfs3_decode_direct does not get a
+    value for ->time_start set.
+    Thus if an entry is for an inode that we already have in cache,
+    when nfs_readdir_lookup calls nfs_fhget, it will call nfs_refresh_inode
+    and may update the inode with out-of-date information.
+
+    Directories are read a page at a time, so each page could have a
+    different timestamp that "should" be used to set the time_start for
+    the fattr for info in that page.  However storing the timestamp per
+    page is awkward.  (We could stick in the first 4 bytes and only read 4092
+    bytes, but that is a bigger code change than I am interested it).
+
+    This patch ignores the readdir_plus attributes if a readdir finds the
+    information already in cache, and otherwise sets ->time_start to the time
+    the readdir request was sent to the server.
+
+    It might be nice to store - in the directory inode - the time stamp for
+    the earliest readdir request that is still in the page cache, so that we
+    don't ignore attribute data that we don't have to.  This patch doesn't do
+    that.
+
+    Signed-off-by: Neil Brown <neilb@suse.de>
+    Signed-off-by: Trond Myklebust <Trond.Myklebust@netapp.com>
+------------------------------------------------------------
+
+diff --git a/fs/nfs/dir.c b/fs/nfs/dir.c
+index 5ff4dbc..250cac3 100644
+--- a/fs/nfs/dir.c
++++ b/fs/nfs/dir.c
+@@ -152,6 +152,8 @@ typedef struct {
+ 	struct nfs_entry *entry;
+ 	decode_dirent_t	decode;
+ 	int		plus;
++	unsigned long   timestamp;
++	int             timestamp_valid;
+ } nfs_readdir_descriptor_t;
+ 
+ /* Now we cache directories properly, by stuffing the dirent
+@@ -193,6 +195,8 @@ int nfs_readdir_filler(nfs_readdir_descriptor_t *desc, struct page *page)
+ 		}
+ 		goto error;
+ 	}
++	desc->timestamp = timestamp;
++	desc->timestamp_valid = 1;
+ 	SetPageUptodate(page);
+ 	/* Ensure consistent page alignment of the data.
+ 	 * Note: assumes we have exclusive access to this mapping either
+@@ -217,6 +221,10 @@ int dir_decode(nfs_readdir_descriptor_t *desc)
+ 	if (IS_ERR(p))
+ 		return PTR_ERR(p);
+ 	desc->ptr = p;
++	if (desc->timestamp_valid)
++		desc->entry->fattr->time_start = desc->timestamp;
++	else
++		desc->entry->fattr->valid &= ~NFS_ATTR_FATTR;
+ 	return 0;
+ }
+ 
+@@ -308,6 +316,10 @@ int find_dirent_page(nfs_readdir_descriptor_t *desc)
+ 			__FUNCTION__, desc->page_index,
+ 			(long long) *desc->dir_cookie);
+ 
++	/* If we find the page in the page_cache, we cannot be sure
++	 * how fresh the data is, so we will ignore readdir_plus attributes.
++	 */
++	desc->timestamp_valid = 0;
+ 	page = read_cache_page(inode->i_mapping, desc->page_index,
+ 			       (filler_t *)nfs_readdir_filler, desc);
+ 	if (IS_ERR(page)) {
+@@ -461,6 +473,7 @@ int uncached_readdir(nfs_readdir_descriptor_t *desc, void *dirent,
+ 	struct rpc_cred	*cred = nfs_file_cred(file);
+ 	struct page	*page = NULL;
+ 	int		status;
++	unsigned long	timestamp;
+ 
+ 	dfprintk(DIRCACHE, "NFS: uncached_readdir() searching for cookie %Lu\n",
+ 			(unsigned long long)*desc->dir_cookie);
+@@ -470,6 +483,7 @@ int uncached_readdir(nfs_readdir_descriptor_t *desc, void *dirent,
+ 		status = -ENOMEM;
+ 		goto out;
+ 	}
++	timestamp = jiffies;
+ 	status = NFS_PROTO(inode)->readdir(file->f_dentry, cred,
+ 						*desc->dir_cookie, page,
+ 						NFS_SERVER(inode)->dtsize,
+@@ -477,6 +491,8 @@ int uncached_readdir(nfs_readdir_descriptor_t *desc, void *dirent,
+ 	desc->page = page;
+ 	desc->ptr = kmap(page);		/* matching kunmap in nfs_do_filldir */
+ 	if (status >= 0) {
++		desc->timestamp = timestamp;
++		desc->timestamp_valid = 1;
+ 		if ((status = dir_decode(desc)) == 0)
+ 			desc->entry->prev_cookie = *desc->dir_cookie;
+ 	} else

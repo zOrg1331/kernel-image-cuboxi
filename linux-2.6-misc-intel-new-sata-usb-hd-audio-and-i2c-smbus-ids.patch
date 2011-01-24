@@ -1,0 +1,91 @@
+From: John Villalovos <jvillalo@redhat.com>
+Date: Thu, 28 Aug 2008 15:21:36 -0400
+Subject: [misc] intel: new SATA, USB, HD Audio and I2C(SMBUS) ids
+Message-id: 20080828192136.GA30649@linuxjohn.usersys.redhat.com
+O-Subject: [RHEL 5.3 PATCH] BZ 433538 Intel Ibex Peak (PCH) Fox Hollow SATA, USB, HD Audio and I2C(SMBUS) support
+Bugzilla: 433538
+
+Intel Ibex Peak (PCH) Fox Hollow SATA, USB, HD Audio and I2C(SMBUS)
+support
+
+Bugzilla:
+https://bugzilla.redhat.com/show_bug.cgi?id=433538
+
+We need PCI IDS for the Ibex Peak platform, in particular the Fox Hollow entry
+level server will be coming out before the RHEL 5.4 time frame.  This patch is
+a combination of three patches which are in upstream with some minor tweaks to
+match the current RHEL kernel.
+
+I have brew built it and all platforms built:
+https://brewweb.devel.redhat.com/taskinfo?taskID=1440218
+
+I have tested the kernel on x86_64 on my system and it boots fine.  We do NOT
+yet have hardware to test it.  Hardware will probably be arriving in the next
+two months.
+
+Upstream kernel commits that the patch is based on:
+
+ahci: RAID mode SATA patch for Device IDs:
+http://git.kernel.org/git/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=adcb5308dda3d2749342685f23953e13ba74ff68
+
+ata_piix: IDE Mode SATA patch for Device IDs:
+http://git.kernel.org/git/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=c6c6a1afefe51d488c050464f261d4711bea9a37
+
+HD Audio patch for Device IDs:
+http://git.kernel.org/git/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=b29c2360f11060a8e3fe09b16b550494d979371b
+
+This patch has been done against the -105 kernel.
+
+diff --git a/drivers/ata/ahci.c b/drivers/ata/ahci.c
+index eae701c..28a71f1 100644
+--- a/drivers/ata/ahci.c
++++ b/drivers/ata/ahci.c
+@@ -426,6 +426,8 @@ static const struct pci_device_id ahci_pci_tbl[] = {
+ 	{ PCI_VDEVICE(INTEL, 0x502b), board_ahci }, /* Tolapai */
+ 	{ PCI_VDEVICE(INTEL, 0x3a05), board_ahci }, /* ICH10 */
+ 	{ PCI_VDEVICE(INTEL, 0x3a25), board_ahci }, /* ICH10 */
++	{ PCI_VDEVICE(INTEL, 0x3b24), board_ahci }, /* PCH RAID */
++	{ PCI_VDEVICE(INTEL, 0x3b2b), board_ahci }, /* PCH RAID */
+ 
+ 	/* JMicron 360/1/3/5/6, match class to avoid IDE function */
+ 	{ PCI_VENDOR_ID_JMICRON, PCI_ANY_ID, PCI_ANY_ID, PCI_ANY_ID,
+diff --git a/drivers/ata/ata_piix.c b/drivers/ata/ata_piix.c
+index 625aeab..f8ce185 100644
+--- a/drivers/ata/ata_piix.c
++++ b/drivers/ata/ata_piix.c
+@@ -274,6 +274,14 @@ static const struct pci_device_id piix_pci_tbl[] = {
+ 	{ 0x8086, 0x3a20, PCI_ANY_ID, PCI_ANY_ID, 0, 0, ich8_sata },
+ 	/* SATA Controller IDE (ICH10) */
+ 	{ 0x8086, 0x3a26, PCI_ANY_ID, PCI_ANY_ID, 0, 0, ich8_2port_sata },
++	/* SATA Controller IDE (PCH) */
++	{ 0x8086, 0x3b20, PCI_ANY_ID, PCI_ANY_ID, 0, 0, ich8_sata },
++	/* SATA Controller IDE (PCH) */
++	{ 0x8086, 0x3b26, PCI_ANY_ID, PCI_ANY_ID, 0, 0, ich8_2port_sata },
++	/* SATA Controller IDE (PCH) */
++	{ 0x8086, 0x3b2d, PCI_ANY_ID, PCI_ANY_ID, 0, 0, ich8_2port_sata },
++	/* SATA Controller IDE (PCH) */
++	{ 0x8086, 0x3b2e, PCI_ANY_ID, PCI_ANY_ID, 0, 0, ich8_sata },
+ 
+ 	{ }	/* terminate list */
+ };
+diff --git a/sound/pci/hda/hda_intel.c b/sound/pci/hda/hda_intel.c
+index 490ac59..1c9dfbe 100644
+--- a/sound/pci/hda/hda_intel.c
++++ b/sound/pci/hda/hda_intel.c
+@@ -102,6 +102,7 @@ MODULE_SUPPORTED_DEVICE("{{Intel, ICH6},"
+ 			 "{Intel, ICH8},"
+ 			 "{Intel, ICH9},"
+ 			 "{Intel, ICH10},"
++			 "{Intel, PCH},"
+ 			 "{Intel, SCH},"
+ 			 "{ATI, SB450},"
+ 			 "{ATI, SB600},"
+@@ -2270,6 +2271,8 @@ static struct pci_device_id azx_ids[] = {
+ 	{ PCI_DEVICE(0x8086, 0x293f), .driver_data = AZX_DRIVER_ICH },
+ 	{ PCI_DEVICE(0x8086, 0x3a3e), .driver_data = AZX_DRIVER_ICH },
+ 	{ PCI_DEVICE(0x8086, 0x3a6e), .driver_data = AZX_DRIVER_ICH },
++	/* PCH */
++	{ PCI_DEVICE(0x8086, 0x3b56), .driver_data = AZX_DRIVER_ICH },
+ 	/* SCH */
+ 	{ PCI_DEVICE(0x8086, 0x811b), .driver_data = AZX_DRIVER_SCH },
+ 	/* ATI SB 450/600 */

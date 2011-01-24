@@ -1,11 +1,10 @@
 /*
  *  linux/drivers/message/fusion/mptlan.h
  *      IP Over Fibre Channel device driver.
- *      For use with LSI Fibre Channel PCI chip/adapters
- *      running LSI Fusion MPT (Message Passing Technology) firmware.
+ *      For use with LSI Logic Fibre Channel PCI chip/adapters
+ *      running LSI Logic Fusion MPT (Message Passing Technology) firmware.
  *
- *  Copyright (c) 2000-2008 LSI Corporation
- *  (mailto:DL-MPTFusionLinux@lsi.com)
+ *  Copyright (c) 2000-2005 LSI Logic Corporation
  *
  */
 /*=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=*/
@@ -75,7 +74,7 @@
 #include <asm/io.h>
 
     /* Override mptbase.h by pre-defining these! */
-#define MODULEAUTHOR	"LSI Corporation"
+#define MODULEAUTHOR	"LSI Logic Corporation"
 
 #include "mptbase.h"
 
@@ -122,7 +121,7 @@ MODULE_DESCRIPTION(LANAME);
 #define dlprintk(x)
 #endif
 
-#define NETDEV_TO_LANPRIV_PTR(d)	((struct mpt_lan_priv *)netdev_priv(d))
+#define NETDEV_TO_LANPRIV_PTR(d)	((struct mpt_lan_priv *)(d)->priv)
 #define NETDEV_PTR_TO_IOC_NAME_s(d)	(NETDEV_TO_LANPRIV_PTR(d)->mpt_dev->name)
 #define IOC_AND_NETDEV_NAMES_s_s(d)	NETDEV_PTR_TO_IOC_NAME_s(d), (d)->name
 

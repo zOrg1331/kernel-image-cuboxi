@@ -1,0 +1,51 @@
+From: Rob Evers <revers@redhat.com>
+Date: Wed, 27 Jan 2010 16:10:42 -0500
+Subject: [scsi] qla2xxx: fix timeout value for CT passthru cmds
+Message-id: <20100127161018.5066.21237.sendpatchset@localhost.localdomain>
+Patchwork-id: 22952
+O-Subject: [RHEL5.5 PATCH] qla2xxx: Correct timeout value for CT passthru
+	commands
+Bugzilla: 552327
+RH-Acked-by: Mike Christie <mchristi@redhat.com>
+RH-Acked-by: Tomas Henzl <thenzl@redhat.com>
+
+https://bugzilla.redhat.com/show_bug.cgi?id=552327
+
+Description:
+
+    Due to incorrect bracket placement the value was
+    getting set to 25 jiffies instead of 250 jiffies.
+
+Upstream status:
+
+    Confirmed upstream
+
+Testing:
+
+    Sanity tested by doing some minimal IO.
+
+Brew:
+
+    https://brewweb.devel.redhat.com/taskinfo?taskID=2222131
+
+
+diff --git a/drivers/scsi/qla2xxx/qla_attr.c b/drivers/scsi/qla2xxx/qla_attr.c
+index 7aba98a..6fea400 100644
+--- a/drivers/scsi/qla2xxx/qla_attr.c
++++ b/drivers/scsi/qla2xxx/qla_attr.c
+@@ -583,11 +583,14 @@ qla2x00_find_port(struct scsi_qla_host *ha, uint8_t *pn)
+ static void
+ qla2x00_wait_for_passthru_completion(struct scsi_qla_host *ha)
+ {
++	unsigned long timeout;
++
+ 	if (unlikely(pci_channel_offline(ha->pdev)))
+ 		return;
+ 
++	timeout = ((ha->r_a_tov / 10 * 2) + 5) * HZ;
+ 	if (!wait_for_completion_timeout(&ha->pass_thru_intr_comp,
+-	    (ha->r_a_tov / 10 * 2) + 5) * HZ) {
++	    timeout)) {
+ 		DEBUG2(qla_printk(KERN_WARNING, ha,
+ 		    "Passthru request timed out.\n"));
+ 		ha->isp_ops->fw_dump(ha, 0);

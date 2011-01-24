@@ -1,0 +1,176 @@
+From: Masami Hiramatsu <mhiramat@redhat.com>
+Date: Mon, 10 Sep 2007 12:36:45 -0400
+Subject: [ia64] enable kprobe's trap code on slot 1
+Message-id: 46E5729D.5060903@redhat.com
+O-Subject: Re: [RHEL5 PATCH] enable kprobe's trap code on slot 1 on ia64
+Bugzilla: 207107
+
+This patch enables kprobe to insert trap code on slot 1 on ia64.
+Since slot 1 of one instruction bundle crosses border of two consecutive
+8-byte (this means it can not be written atomically), kprobe on slot 1
+is disabled.
+This patch only replaces higher 8-bytes of the instruction bundle and
+changes the exception code to ignore the low 12 bits of the break
+number (which is across the border in the lower 8-bytes of the bundle).
+
+The original patch was merged into upstream kernel.
+Commit:     08ed38b68099f2a492196414b08a7f5dd8dc3537
+http://www.mail-archive.com/git-commits-head@vger.kernel.org/msg02626.html
+
+This patch can be applied for 2.6.18-44.el5.
+Since the original patch broke the kABI (add a slot member to the
+arch_specific_insn data structure which is a part of the kprobe data
+structure), I modified the patch to calculate the slot number from
+other parameters instead of reading it from the slot member.
+
+This patch resolves bz #207107.
+
+Testing: I built a test kernel and tested the patch by the command below:
+
+$ stap -e 'probe kernel.function("page_get_cache").inline {printf("%s\n",
+pp()); exit()}'
+
+"page_get_cache" is an inline function, and it is expanded in slot 1.
+When I tested it without this patch, the command failed to execute as below.
+
+--(result)--
+ERROR: probe kernel.function("page_get_cache@mm/slab.c:591").inline
+registration error (rc -22)
+
+diff --git a/arch/ia64/kernel/jprobes.S b/arch/ia64/kernel/jprobes.S
+index 5cd6226..f69389c 100644
+--- a/arch/ia64/kernel/jprobes.S
++++ b/arch/ia64/kernel/jprobes.S
+@@ -45,13 +45,14 @@
+  * to the correct location.
+  */
+ #include <asm/asmmacro.h>
++#include <asm/break.h>
+ 
+ 	/*
+ 	 * void jprobe_break(void)
+ 	 */
+ 	.section .kprobes.text, "ax"
+ ENTRY(jprobe_break)
+-	break.m 0x80300
++	break.m __IA64_BREAK_JPROBE
+ END(jprobe_break)
+ 
+ 	/*
+diff --git a/arch/ia64/kernel/kprobes.c b/arch/ia64/kernel/kprobes.c
+index 3092f33..5fcfc6c 100644
+--- a/arch/ia64/kernel/kprobes.c
++++ b/arch/ia64/kernel/kprobes.c
+@@ -296,12 +296,6 @@ static int __kprobes valid_kprobe_addr(int template, int slot,
+  		return -EINVAL;
+  	}
+ 
+-	if (slot == 1 && bundle_encoding[template][1] != L) {
+-		printk(KERN_WARNING "Inserting kprobes on slot #1 "
+-		       "is not supported\n");
+-		return -EINVAL;
+-	}
+-
+ 	return 0;
+ }
+ 
+@@ -451,25 +445,66 @@ int __kprobes arch_prepare_kprobe(struct kprobe *p)
+ 	return 0;
+ }
+ 
++static inline unsigned int get_kprobe_slot(struct kprobe *p)
++{
++	unsigned int slot = ((unsigned long)p->addr) & 0xf;
++	/* p->ainsn.insn contains the original unaltered kprobe_opcode_t */
++	unsigned int template = p->ainsn.insn->bundle.quad0.template;
++
++	/* Move to slot 2, if bundle is MLX type and kprobe slot is 1 */
++ 	if (slot == 1 && bundle_encoding[template][1] == L)
++  		slot = 2;
++
++	return slot;
++}
++
+ void __kprobes arch_arm_kprobe(struct kprobe *p)
+ {
+-	unsigned long addr = (unsigned long)p->addr;
+-	unsigned long arm_addr = addr & ~0xFULL;
++	unsigned long arm_addr;
++	bundle_t *src, *dest;
++	unsigned int slot = get_kprobe_slot(p);
++
++	arm_addr = ((unsigned long)p->addr) & ~0xFUL;
++	dest = &((kprobe_opcode_t *)arm_addr)->bundle;
++	src = &p->opcode.bundle;
+ 
+ 	flush_icache_range((unsigned long)p->ainsn.insn,
+ 			(unsigned long)p->ainsn.insn + sizeof(kprobe_opcode_t));
+-	memcpy((char *)arm_addr, &p->opcode, sizeof(kprobe_opcode_t));
++	switch (slot) {
++		case 0:
++			dest->quad0.slot0 = src->quad0.slot0;
++			break;
++		case 1:
++			dest->quad1.slot1_p1 = src->quad1.slot1_p1;
++			break;
++		case 2:
++			dest->quad1.slot2 = src->quad1.slot2;
++			break;
++	}
+ 	flush_icache_range(arm_addr, arm_addr + sizeof(kprobe_opcode_t));
+ }
+ 
+ void __kprobes arch_disarm_kprobe(struct kprobe *p)
+ {
+-	unsigned long addr = (unsigned long)p->addr;
+-	unsigned long arm_addr = addr & ~0xFULL;
++	unsigned long arm_addr;
++	bundle_t *src, *dest;
++	unsigned int slot = get_kprobe_slot(p);
+ 
++	arm_addr = ((unsigned long)p->addr) & ~0xFUL;
++	dest = &((kprobe_opcode_t *)arm_addr)->bundle;
+ 	/* p->ainsn.insn contains the original unaltered kprobe_opcode_t */
+-	memcpy((char *) arm_addr, (char *) p->ainsn.insn,
+-					 sizeof(kprobe_opcode_t));
++	src = &p->ainsn.insn->bundle;
++	switch (slot) {
++		case 0:
++			dest->quad0.slot0 = src->quad0.slot0;
++			break;
++		case 1:
++			dest->quad1.slot1_p1 = src->quad1.slot1_p1;
++			break;
++		case 2:
++			dest->quad1.slot2 = src->quad1.slot2;
++			break;
++	}
+ 	flush_icache_range(arm_addr, arm_addr + sizeof(kprobe_opcode_t));
+ }
+ 
+@@ -802,7 +837,9 @@ int __kprobes kprobe_exceptions_notify(struct notifier_block *self,
+ 	switch(val) {
+ 	case DIE_BREAK:
+ 		/* err is break number from ia64_bad_break() */
+-		if (args->err == 0x80200 || args->err == 0x80300 || args->err == 0)
++		if ((args->err >> 12) == (__IA64_BREAK_KPROBE >> 12)
++			|| args->err == __IA64_BREAK_JPROBE
++			|| args->err == 0)
+ 			if (pre_kprobes_handler(args))
+ 				ret = NOTIFY_STOP;
+ 		break;
+diff --git a/include/asm-ia64/break.h b/include/asm-ia64/break.h
+index 8167828..f034020 100644
+--- a/include/asm-ia64/break.h
++++ b/include/asm-ia64/break.h
+@@ -12,8 +12,8 @@
+  * OS-specific debug break numbers:
+  */
+ #define __IA64_BREAK_KDB		0x80100
+-#define __IA64_BREAK_KPROBE		0x80200
+-#define __IA64_BREAK_JPROBE		0x80300
++#define __IA64_BREAK_KPROBE		0x81000 /* .. 0x81fff */
++#define __IA64_BREAK_JPROBE		0x82000
+ 
+ /*
+  * OS-specific break numbers:

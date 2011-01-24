@@ -1,0 +1,644 @@
+From: Brad Peters <bpeters@redhat.com>
+Date: Sat, 13 Sep 2008 17:06:08 -0400
+Subject: [ppc64] subpage protection for pAVE
+Message-id: 20080913210608.11632.1617.sendpatchset@squad5-lp1.lab.bos.redhat.com
+O-Subject: [PATCH 2/2 RHEL5.3 bz439489] repost - Subpage protection for pAVE
+Bugzilla: 439489
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+RH-Acked-by: David Howells <dhowells@redhat.com>
+
+RHBZ#:
+======
+https://bugzilla.redhat.com/show_bug.cgi?id=439489
+
+Description:
+===========
+Feature / PPC Only
+
+Actual patch modifying default page size - see previous post for details.  This patch was ported to apply cleanly to the GIT tree.
+
+kABI Status:
+============
+No symbols were harmed.
+
+Brew:
+=====
+Built on all platforms.
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1471724
+
+Upstream Status:
+================
+Committed upstream - do not presently have commit #, but will shortly (requested in BZ)
+
+===============================================================
+
+Brad Peters 1-978-392-1000 x 23183
+IBM on-site partner.
+
+Proposed Patch:
+===============
+This patch is based on 2.6.18-111.el5
+
+diff --git a/arch/powerpc/Kconfig b/arch/powerpc/Kconfig
+index b1d52b7..265dfcb 100644
+--- a/arch/powerpc/Kconfig
++++ b/arch/powerpc/Kconfig
+@@ -643,6 +643,14 @@ config FORCE_MAX_ZONEORDER
+ 	default "9" if PPC_64K_PAGES
+ 	default "13"
+ 
++config PPC_SUBPAGE_PROT
++	bool "Support setting protections for 4k subpages"
++	depends on PPC_64K_PAGES
++	help
++	  This option adds support for a system call to allow user programs
++	  to set access permissions (read/write, readonly, or no access)
++	  on the 4k subpages of each 64k page.
++
+ config MATH_EMULATION
+ 	bool "Math emulation"
+ 	depends on 4xx || 8xx || E200 || E500
+diff --git a/arch/powerpc/kernel/head_64.S b/arch/powerpc/kernel/head_64.S
+index 0b0db94..f2a152a 100644
+--- a/arch/powerpc/kernel/head_64.S
++++ b/arch/powerpc/kernel/head_64.S
+@@ -1359,8 +1359,9 @@ _GLOBAL(handle_page_fault)
+  * the PTE insertion
+  */
+ 12:	bl	.save_nvgprs
++	mr	r5,r3
+ 	addi	r3,r1,STACK_FRAME_OVERHEAD
+-	lwz	r4,_DAR(r1)
++	ld	r4,_DAR(r1)
+ 	bl	.low_hash_fault
+ 	b	.ret_from_except
+ 
+diff --git a/arch/powerpc/mm/Makefile b/arch/powerpc/mm/Makefile
+index 93441e7..30d9ebd 100644
+--- a/arch/powerpc/mm/Makefile
++++ b/arch/powerpc/mm/Makefile
+@@ -19,3 +19,4 @@ obj-$(CONFIG_44x)		+= 44x_mmu.o
+ obj-$(CONFIG_FSL_BOOKE)		+= fsl_booke_mmu.o
+ obj-$(CONFIG_NEED_MULTIPLE_NODES) += numa.o
+ obj-$(CONFIG_HUGETLB_PAGE)	+= hugetlbpage.o
++obj-$(CONFIG_PPC_SUBPAGE_PROT) += subpage-prot.o
+diff --git a/arch/powerpc/mm/hash_low_64.S b/arch/powerpc/mm/hash_low_64.S
+index 7d3be5d..751c3fc 100644
+--- a/arch/powerpc/mm/hash_low_64.S
++++ b/arch/powerpc/mm/hash_low_64.S
+@@ -312,7 +312,7 @@ htab_pte_insert_failure:
+  *****************************************************************************/
+ 
+ /* _hash_page_4K(unsigned long ea, unsigned long access, unsigned long vsid,
+- *		 pte_t *ptep, unsigned long trap, int local)
++ *		 pte_t *ptep, unsigned long trap, int local, int subpg_prot)
+  */
+ 
+ /*
+@@ -394,12 +394,18 @@ _GLOBAL(__hash_page_4K)
+ 	xor	r28,r5,r0
+ 
+ 	/* Convert linux PTE bits into HW equivalents */
++#ifdef CONFIG_PPC_SUBPAGE_PROT
++	andc	r9,r30,r9
++	andi.	r3,r9,0x1fe		/* Get basic set of flags */
++	rlwinm	r0,r9,32-9+1,30,30	/* _PAGE_RW -> _PAGE_USER (r0) */
++#else
+ 	andi.	r3,r30,0x1fe		/* Get basic set of flags */
+-	xori	r3,r3,HPTE_R_N		/* _PAGE_EXEC -> NOEXEC */
+ 	rlwinm	r0,r30,32-9+1,30,30	/* _PAGE_RW -> _PAGE_USER (r0) */
++#endif
++	xori	r3,r3,HPTE_R_N		/* _PAGE_EXEC -> NOEXEC */
+ 	rlwinm	r4,r30,32-7+1,30,30	/* _PAGE_DIRTY -> _PAGE_USER (r4) */
+ 	and	r0,r0,r4		/* _PAGE_RW & _PAGE_DIRTY ->r0 bit 30*/
+-	andc	r0,r30,r0		/* r0 = pte & ~r0 */
++	andc	r0,r3,r0		/* r0 = pte & ~r0 */
+ 	rlwimi	r3,r0,32-1,31,31	/* Insert result into PP lsb */
+ 	ori	r3,r3,HPTE_R_C		/* Always add "C" bit for perf. */
+ 
+@@ -522,6 +528,10 @@ htab_inval_old_hpte:
+ 	li	r6,MMU_PAGE_64K		/* psize */
+ 	ld	r7,STK_PARM(r8)(r1)	/* local */
+ 	bl	.flush_hash_page
++	/* Clear out _PAGE_HPTE_SUB bits in the new linux PTE */
++	lis	r0,_PAGE_HPTE_SUB@h
++	ori	r0,r0,_PAGE_HPTE_SUB@l
++	andc	r30,r30,r0
+ 	b	htab_insert_pte
+ 	
+ htab_bail_ok:
+diff --git a/arch/powerpc/mm/hash_utils_64.c b/arch/powerpc/mm/hash_utils_64.c
+index 03119f1..0837837 100644
+--- a/arch/powerpc/mm/hash_utils_64.c
++++ b/arch/powerpc/mm/hash_utils_64.c
+@@ -602,10 +602,55 @@ void demote_segment_4k(struct mm_struct *mm, unsigned long addr)
+ 
+ EXPORT_SYMBOL_GPL(demote_segment_4k);
+ 
++#ifdef CONFIG_PPC_SUBPAGE_PROT
++/*
++ * This looks up a 2-bit protection code for a 4k subpage of a 64k page.
++ * Userspace sets the subpage permissions using the subpage_prot system call.
++ *
++ * Result is 0: full permissions, _PAGE_RW: read-only,
++ * _PAGE_USER or _PAGE_USER|_PAGE_RW: no access.
++ */
++static int subpage_protection(pgd_t *pgdir, unsigned long ea)
++{
++	struct subpage_prot_table *spt = pgd_subpage_prot(pgdir);
++	u32 spp = 0;
++	u32 **sbpm, *sbpp;
++
++	if (ea >= spt->maxaddr)
++		return 0;
++	if (ea < 0x100000000) {
++		/* addresses below 4GB use spt->low_prot */
++		sbpm = spt->low_prot;
++	} else {
++		sbpm = spt->protptrs[ea >> SBP_L3_SHIFT];
++		if (!sbpm)
++			return 0;
++	}
++	sbpp = sbpm[(ea >> SBP_L2_SHIFT) & (SBP_L2_COUNT - 1)];
++	if (!sbpp)
++		return 0;
++	spp = sbpp[(ea >> PAGE_SHIFT) & (SBP_L1_COUNT - 1)];
++
++	/* extract 2-bit bitfield for this 4k subpage */
++	spp >>= 30 - 2 * ((ea >> 12) & 0xf);
++
++	/* turn 0,1,2,3 into combination of _PAGE_USER and _PAGE_RW */
++	spp = ((spp & 2) ? _PAGE_USER : 0) | ((spp & 1) ? _PAGE_RW : 0);
++	return spp;
++}
++
++#else /* CONFIG_PPC_SUBPAGE_PROT */
++static inline int subpage_protection(pgd_t *pgdir, unsigned long ea)
++{
++       return 0;
++}
++#endif
++
+ /* Result code is:
+  *  0 - handled
+  *  1 - normal page fault
+  * -1 - critical hash insertion error
++ * -2 - access not permitted by subpage protection mechanism
+  */
+ int hash_page(unsigned long ea, unsigned long access, unsigned long trap)
+ {
+@@ -692,7 +737,7 @@ int hash_page(unsigned long ea, unsigned long access, unsigned long trap)
+ 
+ 	/* Do actual hashing */
+ #ifndef CONFIG_PPC_64K_PAGES
+-	rc = __hash_page_4K(ea, access, vsid, ptep, trap, local);
++	rc = __hash_page_4K(ea, access, vsid, ptep, trap, local, 0);
+ #else
+ 	/* If _PAGE_4K_PFN is set, make sure this is a 4k segment */
+ 	if (pte_val(*ptep) & _PAGE_4K_PFN) {
+@@ -722,28 +767,34 @@ int hash_page(unsigned long ea, unsigned long access, unsigned long trap)
+ 			spu_flush_all_slbs(mm);
+ #endif
+ 		}
+-		if (user_region) {
+-			if (psize != get_paca()->context.user_psize) {
+-				get_paca()->context = mm->context;
+-				slb_flush_and_rebolt();
+-#ifdef CONFIG_SPE_BASE
+-				spu_flush_all_slbs(mm);
+-#endif
+-			}
+-		} else if (get_paca()->vmalloc_sllp !=
+-			   mmu_psize_defs[mmu_vmalloc_psize].sllp) {
+-			get_paca()->vmalloc_sllp =
+-				mmu_psize_defs[mmu_vmalloc_psize].sllp;
+-			slb_vmalloc_update();
++	}
++	if (user_region) {
++		if (psize != get_paca()->context.user_psize) {
++			get_paca()->context = mm->context;
++			slb_flush_and_rebolt();
+ #ifdef CONFIG_SPE_BASE
+ 			spu_flush_all_slbs(mm);
+ #endif
+ 		}
++	} else if (get_paca()->vmalloc_sllp !=
++		   mmu_psize_defs[mmu_vmalloc_psize].sllp) {
++		get_paca()->vmalloc_sllp =
++			mmu_psize_defs[mmu_vmalloc_psize].sllp;
++		slb_vmalloc_update();
++#ifdef CONFIG_SPE_BASE
++		spu_flush_all_slbs(mm);
++#endif
+ 	}
+ 	if (psize == MMU_PAGE_64K)
+ 		rc = __hash_page_64K(ea, access, vsid, ptep, trap, local);
+-	else
+-		rc = __hash_page_4K(ea, access, vsid, ptep, trap, local);
++	else {
++		int spp = subpage_protection(pgdir, ea);
++		if (access & spp)
++			rc = -2;
++		else
++			rc = __hash_page_4K(ea, access, vsid, ptep, trap,
++					    local, spp);
++	}
+ #endif /* CONFIG_PPC_64K_PAGES */
+ 
+ #ifndef CONFIG_PPC_64K_PAGES
+@@ -790,7 +841,7 @@ void hash_preload(struct mm_struct *mm, unsigned long ea,
+ 	if (cpus_equal(mm->cpu_vm_mask, mask))
+ 		local = 1;
+ #ifndef CONFIG_PPC_64K_PAGES
+-	__hash_page_4K(ea, access, vsid, ptep, trap, local);
++	__hash_page_4K(ea, access, vsid, ptep, trap, local, 0);
+ #else
+ 	if (mmu_ci_restrictions) {
+ 		/* If this PTE is non-cacheable, switch to 4k */
+@@ -801,7 +852,8 @@ void hash_preload(struct mm_struct *mm, unsigned long ea,
+ 	if (mm->context.user_psize == MMU_PAGE_64K)
+ 		__hash_page_64K(ea, access, vsid, ptep, trap, local);
+ 	else
+-		__hash_page_4K(ea, access, vsid, ptep, trap, local);
++		__hash_page_4K(ea, access, vsid, ptep, trap, local,
++			       subpage_protection(pgdir, ea));
+ #endif /* CONFIG_PPC_64K_PAGES */
+ 	local_irq_restore(flags);
+ }
+@@ -842,11 +894,17 @@ void flush_hash_range(unsigned long number, int local)
+  * low_hash_fault is called when we the low level hash code failed
+  * to instert a PTE due to an hypervisor error
+  */
+-void low_hash_fault(struct pt_regs *regs, unsigned long address)
++void low_hash_fault(struct pt_regs *regs, unsigned long address, int rc)
+ {
+ 	if (user_mode(regs)) {
+ 		siginfo_t info;
+ 
++#ifdef CONFIG_PPC_SUBPAGE_PROT
++		if (rc == -2) {
++			_exception(SIGSEGV, regs, SEGV_ACCERR, address);
++			return;
++		}
++#endif
+ 		info.si_signo = SIGBUS;
+ 		info.si_errno = 0;
+ 		info.si_code = BUS_ADRERR;
+diff --git a/arch/powerpc/mm/subpage-prot.c b/arch/powerpc/mm/subpage-prot.c
+new file mode 100644
+index 0000000..bc269a7
+--- /dev/null
++++ b/arch/powerpc/mm/subpage-prot.c
+@@ -0,0 +1,217 @@
++/*
++ * Copyright 2007-2008 Paul Mackerras, IBM Corp.
++ *
++ * This program is free software; you can redistribute it and/or
++ * modify it under the terms of the GNU General Public License
++ * as published by the Free Software Foundation; either version
++ * 2 of the License, or (at your option) any later version.
++ */
++
++#include <linux/errno.h>
++#include <linux/kernel.h>
++#include <linux/gfp.h>
++#include <linux/slab.h>
++#include <linux/types.h>
++#include <linux/mm.h>
++#include <linux/hugetlb.h>
++
++#include <asm/pgtable.h>
++#include <asm/uaccess.h>
++#include <asm/tlbflush.h>
++
++/*
++ * Free all pages allocated for subpage protection maps and pointers.
++ * Also makes sure that the subpage_prot_table structure is
++ * reinitialized for the next user.
++ */
++void subpage_prot_free(pgd_t *pgd)
++{
++       struct subpage_prot_table *spt = pgd_subpage_prot(pgd);
++       unsigned long i, j, addr;
++       u32 **p;
++
++       for (i = 0; i < 4; ++i) {
++               if (spt->low_prot[i]) {
++                       free_page((unsigned long)spt->low_prot[i]);
++                       spt->low_prot[i] = NULL;
++               }
++       }
++       addr = 0;
++       for (i = 0; i < 2; ++i) {
++               p = spt->protptrs[i];
++               if (!p)
++                       continue;
++               spt->protptrs[i] = NULL;
++               for (j = 0; j < SBP_L2_COUNT && addr < spt->maxaddr;
++                    ++j, addr += PAGE_SIZE)
++                       if (p[j])
++                               free_page((unsigned long)p[j]);
++               free_page((unsigned long)p);
++       }
++       spt->maxaddr = 0;
++}
++
++static void hpte_flush_range(struct mm_struct *mm, unsigned long addr,
++                            int npages)
++{
++       pgd_t *pgd;
++       pud_t *pud;
++       pmd_t *pmd;
++       pte_t *pte;
++       spinlock_t *ptl;
++       unsigned long pt;
++
++       pgd = pgd_offset(mm, addr);
++       if (pgd_none(*pgd))
++               return;
++       pud = pud_offset(pgd, addr);
++       if (pud_none(*pud))
++               return;
++       pmd = pmd_offset(pud, addr);
++       if (pmd_none(*pmd))
++               return;
++       pte = pte_offset_map_lock(mm, pmd, addr, &ptl);
++       for (; npages > 0; --npages) {
++               if (pte_present(*pte)) {
++                       pt = pte_update(pte, 0);
++                       if (pt & _PAGE_HASHPTE)
++                               hpte_update(mm, addr, pte, pt, 0);
++               }
++               addr += PAGE_SIZE;
++               ++pte;
++       }
++       pte_unmap_unlock(pte - 1, ptl);
++       flush_tlb_pending();
++}
++
++/*
++ * Clear the subpage protection map for an address range, allowing
++ * all accesses that are allowed by the pte permissions.
++ */
++static void subpage_prot_clear(unsigned long addr, unsigned long len)
++{
++       struct mm_struct *mm = current->mm;
++       struct subpage_prot_table *spt = pgd_subpage_prot(mm->pgd);
++       u32 **spm, *spp;
++       int i, nw;
++       unsigned long next, limit;
++
++       down_write(&mm->mmap_sem);
++       limit = addr + len;
++       if (limit > spt->maxaddr)
++               limit = spt->maxaddr;
++       for (; addr < limit; addr = next) {
++               next = pmd_addr_end(addr, limit);
++               if (addr < 0x100000000) {
++                       spm = spt->low_prot;
++               } else {
++                       spm = spt->protptrs[addr >> SBP_L3_SHIFT];
++                       if (!spm)
++                               continue;
++               }
++               spp = spm[(addr >> SBP_L2_SHIFT) & (SBP_L2_COUNT - 1)];
++               if (!spp)
++                       continue;
++               spp += (addr >> PAGE_SHIFT) & (SBP_L1_COUNT - 1);
++
++               i = (addr >> PAGE_SHIFT) & (PTRS_PER_PTE - 1);
++               nw = PTRS_PER_PTE - i;
++               if (addr + (nw << PAGE_SHIFT) > next)
++                       nw = (next - addr) >> PAGE_SHIFT;
++
++               memset(spp, 0, nw * sizeof(u32));
++
++               /* now flush any existing HPTEs for the range */
++               hpte_flush_range(mm, addr, nw);
++       }
++       up_write(&mm->mmap_sem);
++}
++
++/*
++ * Copy in a subpage protection map for an address range.
++ * The map has 2 bits per 4k subpage, so 32 bits per 64k page.
++ * Each 2-bit field is 0 to allow any access, 1 to prevent writes,
++ * 2 or 3 to prevent all accesses.
++ * Note that the normal page protections also apply; the subpage
++ * protection mechanism is an additional constraint, so putting 0
++ * in a 2-bit field won't allow writes to a page that is otherwise
++ * write-protected.
++ */
++long sys_subpage_prot(unsigned long addr, unsigned long len, u32 __user *map)
++{
++       struct mm_struct *mm = current->mm;
++       struct subpage_prot_table *spt = pgd_subpage_prot(mm->pgd);
++       u32 **spm, *spp;
++       int i, nw;
++       unsigned long next, limit;
++       int err;
++
++       /* Check parameters */
++       if ((addr & ~PAGE_MASK) || (len & ~PAGE_MASK) ||
++           addr >= TASK_SIZE || len >= TASK_SIZE || addr + len > TASK_SIZE)
++               return -EINVAL;
++
++       if (is_hugepage_only_range(mm, addr, len))
++               return -EINVAL;
++
++       if (!map) {
++               /* Clear out the protection map for the address range */
++               subpage_prot_clear(addr, len);
++               return 0;
++       }
++
++       if (!access_ok(VERIFY_READ, map, (len >> PAGE_SHIFT) * sizeof(u32)))
++               return -EFAULT;
++
++       down_write(&mm->mmap_sem);
++       for (limit = addr + len; addr < limit; addr = next) {
++               next = pmd_addr_end(addr, limit);
++               err = -ENOMEM;
++               if (addr < 0x100000000) {
++                       spm = spt->low_prot;
++               } else {
++                       spm = spt->protptrs[addr >> SBP_L3_SHIFT];
++                       if (!spm) {
++                               spm = (u32 **)get_zeroed_page(GFP_KERNEL);
++                               if (!spm)
++                                       goto out;
++                               spt->protptrs[addr >> SBP_L3_SHIFT] = spm;
++                       }
++               }
++               spm += (addr >> SBP_L2_SHIFT) & (SBP_L2_COUNT - 1);
++               spp = *spm;
++               if (!spp) {
++                       spp = (u32 *)get_zeroed_page(GFP_KERNEL);
++                       if (!spp)
++                               goto out;
++                       *spm = spp;
++               }
++               spp += (addr >> PAGE_SHIFT) & (SBP_L1_COUNT - 1);
++
++               local_irq_disable();
++               demote_segment_4k(mm, addr);
++               local_irq_enable();
++
++               i = (addr >> PAGE_SHIFT) & (PTRS_PER_PTE - 1);
++               nw = PTRS_PER_PTE - i;
++               if (addr + (nw << PAGE_SHIFT) > next)
++                       nw = (next - addr) >> PAGE_SHIFT;
++
++               up_write(&mm->mmap_sem);
++               err = -EFAULT;
++               if (__copy_from_user(spp, map, nw * sizeof(u32)))
++                       goto out2;
++               map += nw;
++               down_write(&mm->mmap_sem);
++
++               /* now flush any existing HPTEs for the range */
++               hpte_flush_range(mm, addr, nw);
++       }
++       if (limit > spt->maxaddr)
++               spt->maxaddr = limit;
++       err = 0;
++ out:
++       up_write(&mm->mmap_sem);
++ out2:
++       return err;
++}
+diff --git a/include/asm-powerpc/mmu.h b/include/asm-powerpc/mmu.h
+index 4b7746d..e9063b3 100644
+--- a/include/asm-powerpc/mmu.h
++++ b/include/asm-powerpc/mmu.h
+@@ -245,7 +245,7 @@ static inline unsigned long hpt_hash(unsigned long va, unsigned int shift)
+ 
+ extern int __hash_page_4K(unsigned long ea, unsigned long access,
+ 			  unsigned long vsid, pte_t *ptep, unsigned long trap,
+-			  unsigned int local);
++			  unsigned int local, int subpage_prot);
+ extern int __hash_page_64K(unsigned long ea, unsigned long access,
+ 			   unsigned long vsid, pte_t *ptep, unsigned long trap,
+ 			   unsigned int local);
+@@ -259,6 +259,7 @@ extern int htab_bolt_mapping(unsigned long vstart, unsigned long vend,
+ 			     int psize);
+ extern int hash_page(unsigned long ea, unsigned long access,
+ 		     unsigned long trap);
++extern void demote_segment_4k(struct mm_struct *mm, unsigned long addr);
+ 
+ extern void htab_initialize(void);
+ extern void htab_initialize_secondary(void);
+diff --git a/include/asm-powerpc/pgalloc.h b/include/asm-powerpc/pgalloc.h
+index 881c14f..20bd341 100644
+--- a/include/asm-powerpc/pgalloc.h
++++ b/include/asm-powerpc/pgalloc.h
+@@ -45,6 +45,7 @@ static inline pgd_t *pgd_alloc(struct mm_struct *mm)
+ 
+ static inline void pgd_free(pgd_t *pgd)
+ {
++	subpage_prot_free(pgd);
+ 	kmem_cache_free(pgtable_cache[PGD_CACHE_NUM], pgd);
+ }
+ 
+diff --git a/include/asm-powerpc/pgtable-64k.h b/include/asm-powerpc/pgtable-64k.h
+index d926eb3..60af31b 100644
+--- a/include/asm-powerpc/pgtable-64k.h
++++ b/include/asm-powerpc/pgtable-64k.h
+@@ -96,6 +96,47 @@
+ 	remap_pfn_range((vma), (addr), (pfn), PAGE_SIZE,		\
+ 			__pgprot(pgprot_val((prot)) | _PAGE_4K_PFN))
+ 
++#ifdef CONFIG_PPC_SUBPAGE_PROT
++/*
++ * For the sub-page protection option, we extend the PGD with one of
++ * these.  Basically we have a 3-level tree, with the top level being
++ * the protptrs array.  To optimize speed and memory consumption when
++ * only addresses < 4GB are being protected, pointers to the first
++ * four pages of sub-page protection words are stored in the low_prot
++ * array.
++ * Each page of sub-page protection words protects 1GB (4 bytes
++ * protects 64k).  For the 3-level tree, each page of pointers then
++ * protects 8TB.
++ */
++struct subpage_prot_table {
++	unsigned long maxaddr;	/* only addresses < this are protected */
++	unsigned int **protptrs[2];
++	unsigned int *low_prot[4];
++};
++
++#undef PGD_TABLE_SIZE
++#define PGD_TABLE_SIZE		((sizeof(pgd_t) << PGD_INDEX_SIZE) + \
++				 sizeof(struct subpage_prot_table))
++
++#define SBP_L1_BITS		(PAGE_SHIFT - 2)
++#define SBP_L2_BITS		(PAGE_SHIFT - 3)
++#define SBP_L1_COUNT		(1 << SBP_L1_BITS)
++#define SBP_L2_COUNT		(1 << SBP_L2_BITS)
++#define SBP_L2_SHIFT		(PAGE_SHIFT + SBP_L1_BITS)
++#define SBP_L3_SHIFT		(SBP_L2_SHIFT + SBP_L2_BITS)
++
++extern void subpage_prot_free(pgd_t *pgd);
++
++static inline struct subpage_prot_table *pgd_subpage_prot(pgd_t *pgd)
++{
++	return (struct subpage_prot_table *)(pgd + PTRS_PER_PGD);
++}
++#else /* CONFIG_PPC_SUBPAGE_PROT */
++static inline void subpage_prot_free(pgd_t *pgd)
++{
++}
++#endif
++
+ #endif /*  __ASSEMBLY__ */
+ #endif /* __KERNEL__ */
+ #endif /* _ASM_POWERPC_PGTABLE_64K_H */
+diff --git a/include/asm-powerpc/syscalls.h b/include/asm-powerpc/syscalls.h
+index c2fe79d..54283bf 100644
+--- a/include/asm-powerpc/syscalls.h
++++ b/include/asm-powerpc/syscalls.h
+@@ -40,6 +40,7 @@ asmlinkage long ppc64_personality(unsigned long personality);
+ asmlinkage int ppc_rtas(struct rtas_args __user *uargs);
+ asmlinkage time_t sys64_time(time_t __user * tloc);
+ asmlinkage long ppc_newuname(struct new_utsname __user * name);
++long sys_subpage_prot(unsigned long addr, unsigned long len, u32 __user *map);
+ 
+ asmlinkage long sys_rt_sigsuspend(sigset_t __user *unewset,
+ 		size_t sigsetsize);
+diff --git a/include/asm-powerpc/systbl.h b/include/asm-powerpc/systbl.h
+index 4d56ff6..311b894 100644
+--- a/include/asm-powerpc/systbl.h
++++ b/include/asm-powerpc/systbl.h
+@@ -313,3 +313,4 @@ SYSCALL(ni_syscall)
+ SYSCALL(ni_syscall)
+ SYSCALL(ni_syscall)
+ COMPAT_SYS(fallocate)
++SYSCALL(subpage_prot)
+diff --git a/include/asm-powerpc/unistd.h b/include/asm-powerpc/unistd.h
+index f838c7b..f790bf6 100644
+--- a/include/asm-powerpc/unistd.h
++++ b/include/asm-powerpc/unistd.h
+@@ -333,9 +333,11 @@
+ /* #define __NR_sync_file_range2 308 */
+ #define __NR_fallocate		309
+ 
++#define __NR_subpage_prot	310
++
+ #ifdef __KERNEL__
+ 
+-#define __NR_syscalls		310
++#define __NR_syscalls		311
+ 
+ #define __NR__exit __NR_exit
+ #define NR_syscalls	__NR_syscalls
+diff --git a/kernel/sys_ni.c b/kernel/sys_ni.c
+index 2f54d32..5c23f69 100644
+--- a/kernel/sys_ni.c
++++ b/kernel/sys_ni.c
+@@ -125,6 +125,7 @@ cond_syscall(sys32_sysctl);
+ cond_syscall(ppc_rtas);
+ cond_syscall(sys_spu_run);
+ cond_syscall(sys_spu_create);
++cond_syscall(sys_subpage_prot);
+ 
+ /* mmu depending weak syscall entries */
+ cond_syscall(sys_mprotect);

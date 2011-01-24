@@ -1,0 +1,76 @@
+From: Bhavana Nagendra <bnagendr@redhat.com>
+Date: Fri, 29 Feb 2008 11:03:34 -0500
+Subject: [sata] SB700/SB800 64bit DMA support
+Message-id: 20080229154955.4251.28543.sendpatchset@allegro.boston.redhat.com
+O-Subject: [RHEL5.2 PATCH] AMD SB700/SB800 SATA support 64bit DMA
+Bugzilla: 434741
+
+Resolves BZ 434741
+
+SB700 SATA controller can support 64 bit DMA, and this patch adds the
+necessary support.  Without this patch customers would only be able
+to benefit from 4GB system memory even if there is more than 4GB
+physical memory in the system with SB700.
+
+This patch has been accepted by kernel.org, the git commit is:
+
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-
+2.6.git;a=commit;h=e39fc8c9fd0bb6f4018186801e4a53a5eccaaf70
+
+4G/6G memory boot     ----------------------   PASS
+AHCI/Native IDE/Combine Mode --------   PASS
+Hdd performance test     --------------------   PASS
+Bonnie++ on hdd   -----------------------------  PASS
+Burnintest for 5h   ------------------------------   PASS
+
+Acked-by: Jeff Garzik <jgarzik@redhat.com>
+Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+diff --git a/drivers/ata/ahci.c b/drivers/ata/ahci.c
+index 6c8fa83..f11bdbf 100644
+--- a/drivers/ata/ahci.c
++++ b/drivers/ata/ahci.c
+@@ -85,6 +85,7 @@ enum {
+ 	board_ahci_ign_iferr	= 2,
+ 	board_ahci_sb600	= 3,
+ 	board_ahci_mv		= 4,
++	board_ahci_sb700	= 5,
+ 
+ 	/* global controller registers */
+ 	HOST_CAP		= 0x00, /* host capabilities */
+@@ -442,6 +443,16 @@ static const struct ata_port_info ahci_port_info[] = {
+ 		.udma_mask	= ATA_UDMA6,
+ 		.port_ops	= &ahci_ops,
+ 	},
++	/* board_ahci_sb700 */
++	{
++		AHCI_HFLAGS	(AHCI_HFLAG_IGN_SERR_INTERNAL |
++				 AHCI_HFLAG_NO_PMP),
++		.flags		= AHCI_FLAG_COMMON,
++		.link_flags	= AHCI_LFLAG_COMMON,
++		.pio_mask	= 0x1f, /* pio0-4 */
++		.udma_mask	= ATA_UDMA6,
++		.port_ops	= &ahci_ops,
++	},
+ };
+ 
+ static const struct pci_device_id ahci_pci_tbl[] = {
+@@ -484,12 +495,12 @@ static const struct pci_device_id ahci_pci_tbl[] = {
+ 
+ 	/* ATI */
+ 	{ PCI_VDEVICE(ATI, 0x4380), board_ahci_sb600 }, /* ATI SB600 */
+-	{ PCI_VDEVICE(ATI, 0x4390), board_ahci_sb600 }, /* ATI SB700/800 */
+-	{ PCI_VDEVICE(ATI, 0x4391), board_ahci_sb600 }, /* ATI SB700/800 */
+-	{ PCI_VDEVICE(ATI, 0x4392), board_ahci_sb600 }, /* ATI SB700/800 */
+-	{ PCI_VDEVICE(ATI, 0x4393), board_ahci_sb600 }, /* ATI SB700/800 */
+-	{ PCI_VDEVICE(ATI, 0x4394), board_ahci_sb600 }, /* ATI SB700/800 */
+-	{ PCI_VDEVICE(ATI, 0x4395), board_ahci_sb600 }, /* ATI SB700/800 */
++	{ PCI_VDEVICE(ATI, 0x4390), board_ahci_sb700 }, /* ATI SB700/800 */
++	{ PCI_VDEVICE(ATI, 0x4391), board_ahci_sb700 }, /* ATI SB700/800 */
++	{ PCI_VDEVICE(ATI, 0x4392), board_ahci_sb700 }, /* ATI SB700/800 */
++	{ PCI_VDEVICE(ATI, 0x4393), board_ahci_sb700 }, /* ATI SB700/800 */
++	{ PCI_VDEVICE(ATI, 0x4394), board_ahci_sb700 }, /* ATI SB700/800 */
++	{ PCI_VDEVICE(ATI, 0x4395), board_ahci_sb700 }, /* ATI SB700/800 */
+ 
+ 	/* VIA */
+ 	{ PCI_VDEVICE(VIA, 0x3349), board_ahci_vt8251 }, /* VIA VT8251 */

@@ -1,0 +1,98 @@
+From: Aron Griffis <agriffis@redhat.com>
+Date: Wed, 24 Oct 2007 09:20:39 -0400
+Subject: [xen] ia64: fix free_irq_vector: double free
+Message-id: 20071024132038.GF15781@redhat.com
+O-Subject: [RHEL5.2 PATCH] BZ 208599 fix free_irq_vector: double free!
+Bugzilla: 208599
+
+https://bugzilla.redhat.com/show_bug.cgi?id=208599
+
+Please review and ACK for 5.2
+
+Description
+-----------
+RHEL5.1 Xen/IA64 generates the following during reboot on HP Integrity
+systems:
+
+    Please stand by while rebooting the system...
+    md: stopping all md devices.
+    ACPI: PCI interrupt for device 0000:14:02.1 disabled
+    GSI 65 (level, low) -> CPU 3 (0x0300) vector 56 unregistered
+--> free_irq_vector: double free!
+    ACPI: PCI interrupt for device 0000:14:02.0 disabled
+    GSI 64 (level, low) -> CPU 2 (0x0200) vector 55 unregistered
+--> free_irq_vector: double free!
+    xenbr0: port 2(peth0) entering disabled state
+    Completed flushing cache on controller 0
+    Restarting system.
+
+This problem was fixed in Xen-3.1 in a two-part patch to the
+hypervisor and kernel.  Since RHEL5.1 rebased the hypervisor to 3.1,
+just the kernel-side patch needs to be applied.
+
+Test Status
+-----------
+Built and booted 2.6.18-53.el5.bz208599.free_irq_vector.1xen on
+HP rx3600.  New messages:
+
+    Please stand by while rebooting the system...
+    md: stopping all md devices.
+    ACPI: PCI interrupt for device 0000:14:02.1 disabled
+    GSI 65 (level, low) -> CPU 3 (0x0300) vector 56 unregistered
+    ACPI: PCI interrupt for device 0000:14:02.0 disabled
+    GSI 64 (level, low) -> CPU 2 (0x0200) vector 55 unregistered
+    xenbr0: port 2(peth0) entering disabled state
+    Completed flushing cache on controller 0
+    Restarting system.
+
+Upstream Status
+---------------
+Applied in upstream Xen for almost a year now:
+http://xenbits.xensource.com/xen-unstable.hg?rev/4f1a3ae07dbc
+
+linux-2.6-xen-ia64-free_irq_vector.patch
+----------------------------------------
+
+Acked-by: Prarit Bhargava <prarit@redhat.com>
+Acked-by: "Stephen C. Tweedie" <sct@redhat.com>
+Acked-by: Jarod Wilson <jwilson@redhat.com>
+
+diff --git a/arch/ia64/kernel/iosapic.c b/arch/ia64/kernel/iosapic.c
+index 9d8e945..fc49f80 100644
+--- a/arch/ia64/kernel/iosapic.c
++++ b/arch/ia64/kernel/iosapic.c
+@@ -216,6 +216,16 @@ int xen_assign_irq_vector(int irq)
+ 
+ 	return irq_op.vector;
+ }
++
++void xen_free_irq_vector(int vector)
++{
++	struct physdev_irq irq_op;
++
++	irq_op.vector = vector;
++	if (HYPERVISOR_physdev_op(PHYSDEVOP_free_irq_vector, &irq_op))
++		printk(KERN_WARNING "%s: xen_free_irq_vecotr fail vector=%d\n",
++		       __FUNCTION__, vector);
++}
+ #endif /* XEN */
+ 
+ /*
+diff --git a/arch/ia64/kernel/irq_ia64.c b/arch/ia64/kernel/irq_ia64.c
+index bbb751d..819f495 100644
+--- a/arch/ia64/kernel/irq_ia64.c
++++ b/arch/ia64/kernel/irq_ia64.c
+@@ -97,6 +97,13 @@ free_irq_vector (int vector)
+ 	if (vector < IA64_FIRST_DEVICE_VECTOR || vector > IA64_LAST_DEVICE_VECTOR)
+ 		return;
+ 
++#ifdef CONFIG_XEN
++	if (is_running_on_xen()) {
++		extern void xen_free_irq_vector(int);
++		xen_free_irq_vector(vector);
++		return;
++	}
++#endif
+ 	pos = vector - IA64_FIRST_DEVICE_VECTOR;
+ 	if (!test_and_clear_bit(pos, ia64_vector_mask))
+ 		printk(KERN_WARNING "%s: double free!\n", __FUNCTION__);

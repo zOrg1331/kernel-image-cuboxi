@@ -1,0 +1,71 @@
+From: Brian Maly <bmaly@redhat.com>
+Subject: [RHEL5.1 patch] disable pnpacpi on IBM x460
+Date: Wed, 06 Jun 2007 19:23:25 -0400
+Bugzilla: 243730
+Message-Id: <466741ED.3080708@redhat.com>
+Changelog: [misc] disable pnpacpi on IBM x460
+
+
+Resolves IT# 122915, still waiting for the BZ. This issue came up at the 
+last minute.
+
+On the IBM x460, the RTC is sometimes not accessable if "pnpacpi=off" is 
+not used at boot.
+The problem is due to BIOS buggyness and occurs only when the HPET is 
+disabled in the BIOS, and occurs with all timesources. The RTC works 
+correctly when the HPET is enabled in the BIOS. This is related to BZ 
+220196 which has the same symptoms but have a different cause. To solve 
+this problem you need this patch to fix irq issues for RTC, then the 
+patch for BZ 220196 to get support HPET legacy replacement mode.
+
+This patch is low risk and simply disables pnpacpi during boot 
+automagically on the affected hardware.
+
+This patch was tested and resolves the problem.
+
+Brian
+
+
+
+--- linux-2.6.18.noarch/drivers/pnp/pnpacpi/core.c.orig	2007-06-06 17:34:09.000000000 -0400
++++ linux-2.6.18.noarch/drivers/pnp/pnpacpi/core.c	2007-06-06 18:46:28.000000000 -0400
+@@ -22,6 +22,7 @@
+ #include <linux/acpi.h>
+ #include <linux/pnp.h>
+ #include <acpi/acpi_bus.h>
++#include <linux/dmi.h>
+ #include "pnpacpi.h"
+ 
+ static int num = 0;
+@@ -236,10 +237,29 @@ static acpi_status __init pnpacpi_add_de
+ 	return AE_OK;
+ }
+ 
++static int __init disable_pnpacpi(struct dmi_system_id *d)
++{
++        printk(KERN_WARNING "%s detected. Disabling PnP-ACPI\n", d->ident);
++	pnpacpi_disabled = 1;
++        return 0;
++}
++
++static struct dmi_system_id pnpacpi_dmi_table[] __initdata = {
++        {       /* PnPBIOS GPF on boot */
++                .callback = disable_pnpacpi,
++                .ident = "IBM x460/x3950",
++                .matches = {
++                        DMI_MATCH(DMI_SYS_VENDOR, "IBM"),
++                        DMI_MATCH(DMI_PRODUCT_NAME, "IBM x3950-[88722RU]-"),
++                },
++        },
++        { }
++};
++
+ int pnpacpi_disabled __initdata;
+ static int __init pnpacpi_init(void)
+ {
+-	if (acpi_disabled || pnpacpi_disabled) {
++	if (acpi_disabled || pnpacpi_disabled || dmi_check_system(pnpacpi_dmi_table)) {
+ 		pnp_info("PnP ACPI: disabled");
+ 		return 0;
+ 	}
+

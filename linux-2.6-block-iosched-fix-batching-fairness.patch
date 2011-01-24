@@ -1,0 +1,88 @@
+From: Jeff Moyer <jmoyer@redhat.com>
+Date: Tue, 15 Dec 2009 13:08:37 -0500
+Subject: [block] iosched: fix batching fairness
+Message-id: <1260882517-14489-3-git-send-email-jmoyer@redhat.com>
+Patchwork-id: 21951
+O-Subject: [RHEL5 PATCH 2/2] Deadline iosched: Fix batching fairness
+Bugzilla: 462472
+RH-Acked-by: Vivek Goyal <vgoyal@redhat.com>
+
+fixes bug 462472
+
+commit 6f5d8aa6382eef2b26032c88656270bdae7f0c42
+Author: Aaron Carroll <aaronc@gelato.unsw.edu.au>
+Date:   Tue Oct 30 10:40:13 2007 +0100
+
+    Deadline iosched: Fix batching fairness
+
+    After switching data directions, deadline always starts the next batch
+    from the lowest-sector request.  This gives excessive deadline expiries
+    and large latency and throughput disparity between high- and low-sector
+    requests; an order of magnitude in some tests.
+
+    This patch changes the batching behaviour so new batches start from the
+    request whose expiry is earliest.
+
+Signed-off-by: Jeff Moyer <jmoyer@redhat.com>
+
+diff --git a/block/deadline-iosched.c b/block/deadline-iosched.c
+index fcf0482..4b7fe29 100644
+--- a/block/deadline-iosched.c
++++ b/block/deadline-iosched.c
+@@ -242,24 +242,6 @@ deadline_find_drq_rb(struct deadline_data *dd, sector_t sector, int data_dir)
+ }
+ 
+ /*
+- * deadline_find_first_drq finds the first (lowest sector numbered) request
+- * for the specified data_dir. Used to sweep back to the start of the disk
+- * (1-way elevator) after we process the last (highest sector) request.
+- */
+-static struct deadline_rq *
+-deadline_find_first_drq(struct deadline_data *dd, int data_dir)
+-{
+-	struct rb_node *n = dd->sort_list[data_dir].rb_node;
+-
+-	for (;;) {
+-		if (n->rb_left == NULL)
+-			return rb_entry_drq(n);
+-		
+-		n = n->rb_left;
+-	}
+-}
+-
+-/*
+  * add drq to rbtree and fifo
+  */
+ static void
+@@ -522,24 +504,20 @@ dispatch_writes:
+ dispatch_find_request:
+ 	/*
+ 	 * we are not running a batch, find best request for selected data_dir
+-	 * and start a new batch
+ 	 */
+-	if (deadline_check_fifo(dd, data_dir)) {
+-		/* An expired request exists - satisfy it */
++	if (deadline_check_fifo(dd, data_dir) || !dd->next_drq[data_dir]) {
++		/*
++		 * A deadline has expired, the last requeue was in the other
++		 * direction, or we have run out of higher-sectored requests.
++		 * Start again from the request with the earliest expiry time.
++		 */
+ 		drq = list_entry_fifo(dd->fifo_list[data_dir].next);
+-	} else if (dd->next_drq[data_dir]) {
++	} else {
+ 		/*
+ 		 * The last req was the same dir and we have a next request in
+ 		 * sort order. No expired requests so continue on from here.
+ 		 */
+ 		drq = dd->next_drq[data_dir];
+-	} else {
+-		/*
+-		 * The last req was the other direction or we have run out of
+-		 * higher-sectored requests. Go back to the lowest sectored
+-		 * request (1 way elevator) and start a new batch.
+-		 */
+-		drq = deadline_find_first_drq(dd, data_dir);
+ 	}
+ 
+ 	dd->batching = 0;

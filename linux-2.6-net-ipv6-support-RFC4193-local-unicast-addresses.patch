@@ -1,0 +1,40 @@
+From: Neil Horman <nhorman@redhat.com>
+Date: Wed, 15 Aug 2007 15:59:04 -0400
+Subject: [net] ipv6: support RFC4193 local unicast addresses
+Message-id: 20070815195904.GD15077@hmsendeavour.rdu.redhat.com
+O-Subject: [PATCH RHEL5.2] ipv6: enhance ipv6_addr_type to support RFC4193 local unicast addresses
+Bugzilla: 252264
+
+Hey all
+	This is a backport of upstream commit:
+c61a7d10efbd187ab9bb54871238ebd1dfcacd44
+It lets us identify and properly handle RFC 4391 local unicast addresses, and is
+needed for IPv6 DoD compliance.  Satisfies bz 252264.
+
+Regards
+Neil
+
+Acked-by: "David S. Miller" <davem@redhat.com>
+Acked-by: Thomas Graf <tgraf@redhat.com>
+Acked-by: Herbert Xu <herbert.xu@redhat.com>
+---
+ net/ipv6/addrconf.c |    3 +++
+ 1 files changed, 3 insertions(+), 0 deletions(-)
+
+diff --git a/net/ipv6/addrconf.c b/net/ipv6/addrconf.c
+index c7121fe..464eaff 100644
+--- a/net/ipv6/addrconf.c
++++ b/net/ipv6/addrconf.c
+@@ -256,6 +256,9 @@ int __ipv6_addr_type(const struct in6_addr *addr)
+ 	if ((st & htonl(0xFFC00000)) == htonl(0xFEC00000))
+ 		return (IPV6_ADDR_SITELOCAL | IPV6_ADDR_UNICAST |
+ 			IPV6_ADDR_SCOPE_TYPE(IPV6_ADDR_SCOPE_SITELOCAL));		/* addr-select 3.1 */
++	if ((st & htonl(0xFE000000)) == htonl(0xFC000000))
++		return (IPV6_ADDR_UNICAST |
++			IPV6_ADDR_SCOPE_TYPE(IPV6_ADDR_SCOPE_GLOBAL));			/* RFC 4193 */
+ 
+ 	if ((addr->s6_addr32[0] | addr->s6_addr32[1]) == 0) {
+ 		if (addr->s6_addr32[2] == 0) {
+-- 
+1.5.3.5.645.gbb47
+

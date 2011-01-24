@@ -1,0 +1,257 @@
+From: George Beshers <gbeshers@redhat.com>
+Subject: [RHEL5 - BZ#219091] Kexec, Kdump on SGI IA64 NUMA machines
+Date: Mon, 18 Dec 2006 13:32:43 -0500
+Bugzilla: 219091
+Message-Id: <4586DECB.4040702@redhat.com>
+Changelog: ia64: Kexec, Kdump on SGI IA64 NUMA machines fixes
+
+
+
+BZ#219091 works in conjunction with RH#218105;
+RH#219722 is covered by this commit:
+
+Problem:
+Supporting Kdump, Kexec on SGIs IA64 NUMA architectures which
+is critical for field maintenance.
+
+This is upstream as part of patch ae390618a9a4 by Zou Nan hai.
+
+   [IA64] IA64 Kexec/kdump
+
+   Changes and updates.
+
+   1. Remove fake rendz path and related code according to discuss with
+Khalid Aziz.
+   2. fc.i offset fix in relocate_kernel.S.
+   3. iospic shutdown code eoi and mask race fix from Fujitsu.
+   4. Warm boot hook in machine_kexec to SN SAL code from Jack Steiner.
+   5. Send slave to SAL slave loop patch from Jay Lan.
+   6. Kdump on non-recoverable MCA event patch from Jay Lan
+   7. Use CTL_UNNUMBERED in kdump_on_init sysctl.
+
+   Signed-off-by: Zou Nan hai <nanhai.zou@intel.com 
+   <mailto:nanhai.zou@intel.com>>
+   Signed-off-by: Tony Luck <tony.luck@intel.com 
+   <mailto:tony.luck@intel.com>>
+
+
+The proposed patch has been built both and tested against 
+kernel-2.6.18-1.2876.el5.
+
+George
+
+
+
+
+--- linux-2.6.18.ia64/arch/ia64/kernel/crash.c.orig	2006-12-11 11:13:29.000000000 -0500
++++ linux-2.6.18.ia64/arch/ia64/kernel/crash.c	2006-12-11 11:13:56.000000000 -0500
+@@ -24,6 +24,7 @@
+ int kdump_status[NR_CPUS];
+ atomic_t kdump_cpu_freezed;
+ int kdump_on_init = 1;
++extern int kdump_in_progress;
+ 
+ ssize_t
+ copy_oldmem_page(unsigned long pfn, char *buf,
+@@ -146,14 +147,21 @@
+ void
+ kdump_cpu_freeze(struct unw_frame_info *info, void *arg)
+ {
++	int cpuid = smp_processor_id();
++
+ 	local_irq_disable();
+ 	crash_save_this_cpu();
+ 	current->thread.ksp = (__u64)info->sw - 16;
+ 	atomic_inc(&kdump_cpu_freezed);
+-	kdump_status[smp_processor_id()] = 1;
++	kdump_status[cpuid] = 1;
+ 	mb();
+-	for (;;)
+-		cpu_relax();
++        /* return cpus (except cpu0) to SAL slave loop */
++        if (cpuid == 0) {
++                for (;;)
++                        cpu_relax();
++        } else {
++                ia64_jump_to_sal(&sal_boot_rendez_state[cpuid]);
++        }
+ }
+ 
+ static int
+@@ -165,12 +173,16 @@
+ 	if (!kdump_on_init)
+ 		return NOTIFY_DONE;
+ 
+-	if (val != DIE_INIT_MONARCH_ENTER && val != DIE_INIT_SLAVE_ENTER)
++	if (val != DIE_INIT_MONARCH_ENTER &&
++	    val != DIE_INIT_SLAVE_ENTER &&
++	    val != DIE_MCA_RENDZVOUS_LEAVE &&
++	    val != DIE_MCA_MONARCH_LEAVE)
+ 		return NOTIFY_DONE;
+ 
+ 	nd = (struct ia64_mca_notify_die *)args->err;
+ 	/* Reason code 1 means machine check rendezous*/
+-	if (nd->sos->rv_rc == 1)
++	if ((val==DIE_INIT_MONARCH_ENTER || val==DIE_INIT_SLAVE_ENTER) &&
++	    nd->sos->rv_rc == 1)
+ 		return NOTIFY_DONE;
+ 
+ 	if (kdump_sending_init)
+@@ -183,6 +195,15 @@
+ 		case DIE_INIT_SLAVE_ENTER:
+ 			unw_init_running(kdump_cpu_freeze, NULL);
+ 			break;
++		case DIE_MCA_RENDZVOUS_LEAVE:
++			if (kdump_in_progress)
++				unw_init_running(kdump_cpu_freeze, NULL);
++			break;
++		case DIE_MCA_MONARCH_LEAVE:
++			/* die_register->signr indicate if MCA is recoverable */
++			if (!args->signr)
++				machine_kdump_on_init();
++			break;
+ 	}
+ 	return NOTIFY_DONE;
+ }
+--- linux-2.6.18.ia64/include/asm-ia64/machvec.h.orig	2006-09-19 23:42:06.000000000 -0400
++++ linux-2.6.18.ia64/include/asm-ia64/machvec.h	2006-12-11 11:13:41.000000000 -0500
+@@ -35,6 +35,7 @@
+ typedef int ia64_mv_pci_legacy_write_t (struct pci_bus *, u16 port, u32 val,
+ 					u8 size);
+ typedef void ia64_mv_migrate_t(struct task_struct * task);
++typedef void ia64_mv_kernel_launch_event_t(void);
+ 
+ /* DMA-mapping interface: */
+ typedef void ia64_mv_dma_init (void);
+@@ -205,6 +206,7 @@
+ 	ia64_mv_readq_relaxed_t *readq_relaxed;
+ 	ia64_mv_migrate_t *migrate;
+ 	ia64_mv_msi_init_t *msi_init;
++	ia64_mv_kernel_launch_event_t *kernel_launch_event;
+ } __attribute__((__aligned__(16))); /* align attrib? see above comment */
+ 
+ #define MACHVEC_INIT(name)			\
+@@ -251,6 +253,7 @@
+ 	platform_readq_relaxed,			\
+ 	platform_migrate,			\
+ 	platform_msi_init,			\
++	platform_kernel_launch_event,		\
+ }
+ 
+ extern struct ia64_machine_vector ia64_mv;
+@@ -303,6 +306,9 @@
+ #ifndef platform_tlb_migrate_finish
+ # define platform_tlb_migrate_finish	machvec_noop_mm
+ #endif
++#ifndef platform_kernel_launch_event
++# define platform_kernel_launch_event	machvec_noop
++#endif
+ #ifndef platform_dma_init
+ # define platform_dma_init		swiotlb_init
+ #endif
+--- linux-2.6.18.ia64/include/asm-ia64/machvec_sn2.h.orig	2006-09-19 23:42:06.000000000 -0400
++++ linux-2.6.18.ia64/include/asm-ia64/machvec_sn2.h	2006-12-11 11:13:42.000000000 -0500
+@@ -67,6 +67,7 @@
+ extern ia64_mv_dma_mapping_error	sn_dma_mapping_error;
+ extern ia64_mv_dma_supported		sn_dma_supported;
+ extern ia64_mv_migrate_t		sn_migrate;
++extern ia64_mv_kernel_launch_event_t	sn_kernel_launch_event;
+ extern ia64_mv_msi_init_t		sn_msi_init;
+ 
+ 
+@@ -119,6 +120,7 @@
+ #define platform_dma_mapping_error		sn_dma_mapping_error
+ #define platform_dma_supported		sn_dma_supported
+ #define platform_migrate		sn_migrate
++#define platform_kernel_launch_event	sn_kernel_launch_event
+ #ifdef CONFIG_PCI_MSI
+ #define platform_msi_init		sn_msi_init
+ #else
+--- linux-2.6.18.ia64/include/asm-ia64/sn/sn_sal.h.orig	2006-09-19 23:42:06.000000000 -0400
++++ linux-2.6.18.ia64/include/asm-ia64/sn/sn_sal.h	2006-12-11 11:13:42.000000000 -0500
+@@ -87,6 +87,8 @@
+ #define  SN_SAL_INJECT_ERROR			   0x02000067
+ #define  SN_SAL_SET_CPU_NUMBER			   0x02000068
+ 
++#define SN_SAL_KERNEL_LAUNCH_EVENT		   0x02000069
++
+ /*
+  * Service-specific constants
+  */
+@@ -1154,4 +1156,13 @@
+ 	SAL_CALL_NOLOCK(rv, SN_SAL_SET_CPU_NUMBER, cpu, 0, 0, 0, 0, 0, 0);
+ 	return rv.status;
+ }
++
++static inline int
++ia64_sn_kernel_launch_event(void)
++{
++	struct ia64_sal_retval rv;
++
++	SAL_CALL_NOLOCK(rv, SN_SAL_KERNEL_LAUNCH_EVENT, 0, 0, 0, 0, 0, 0, 0);
++	return rv.status;
++}
+ #endif /* _ASM_IA64_SN_SN_SAL_H */
+--- linux-2.6.18.ia64/arch/ia64/sn/kernel/setup.c.orig	2006-09-19 23:42:06.000000000 -0400
++++ linux-2.6.18.ia64/arch/ia64/sn/kernel/setup.c	2006-12-11 11:13:42.000000000 -0500
+@@ -765,3 +765,11 @@
+ }
+ EXPORT_SYMBOL(sn_prom_feature_available);
+ 
++void
++sn_kernel_launch_event(void)
++{
++	/* ignore status until we understand possible failures, if any */
++	if (ia64_sn_kernel_launch_event())
++		printk(KERN_ERR "KEXEC is not supported in this PROM. Please update the PROM.\n");
++}
++
+--- linux-2.6.18.ia64/arch/ia64/kernel/machine_kexec.c.orig	2006-12-11 11:09:49.000000000 -0500
++++ linux-2.6.18.ia64/arch/ia64/kernel/machine_kexec.c	2006-12-11 11:13:42.000000000 -0500
+@@ -18,6 +18,7 @@
+ #include <asm/setup.h>
+ #include <asm/delay.h>
+ #include <asm/meminit.h>
++#include <asm/machvec.h>
+ 
+ typedef void (*relocate_new_kernel_t)(unsigned long, unsigned long,
+ 		struct ia64_boot_param *, unsigned long);
+@@ -125,6 +126,7 @@
+ 		ia64_eoi();
+ 		vector = ia64_get_ivr();
+ 	}
++	platform_kernel_launch_event();
+ 	rnk = (relocate_new_kernel_t)&code_addr;
+ 	(*rnk)(image->head, image->start, ia64_boot_param,
+ 		     GRANULEROUNDDOWN((unsigned long) pal_addr));
+--- linux-2.6.18.ia64/arch/ia64/kernel/mca.c.orig	2006-12-11 11:09:49.000000000 -0500
++++ linux-2.6.18.ia64/arch/ia64/kernel/mca.c	2006-12-11 11:13:56.000000000 -0500
+@@ -92,6 +92,11 @@
+ # define IA64_MCA_DEBUG(fmt...)
+ #endif
+ 
++#ifdef CONFIG_KEXEC
++/* Used by arch/ia64/kernel/crash.c */
++int kdump_in_progress;
++#endif
++
+ /* Used by mca_asm.S */
+ u32				ia64_mca_serialize;
+ DEFINE_PER_CPU(u64, ia64_mca_data); /* == __per_cpu_mca[smp_processor_id()] */
+@@ -1066,6 +1071,15 @@
+ 		rh->severity = sal_log_severity_corrected;
+ 		ia64_sal_clear_state_info(SAL_INFO_TYPE_MCA);
+ 		sos->os_status = IA64_MCA_CORRECTED;
++#ifdef CONFIG_KEXEC
++	} else {
++		kdump_in_progress = 1;
++		/* In the case of (!recover), notify_die(DIE_MCA_MONARCH_LEAVE)
++		   will not return. A dump kernel will be booted. Need to set
++		   nonarch_cpu here to get slave cpus out of looping in OS.
++		 */
++		monarch_cpu = -1;
++#endif
+ 	}
+ 	if (notify_die(DIE_MCA_MONARCH_LEAVE, "MCA", regs, (long)&nd, 0, recover)
+ 			== NOTIFY_STOP)
+

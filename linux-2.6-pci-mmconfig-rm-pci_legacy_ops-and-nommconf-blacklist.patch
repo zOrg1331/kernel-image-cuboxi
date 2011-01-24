@@ -1,0 +1,247 @@
+From: Tony Camuso <tcamuso@redhat.com>
+Date: Fri, 6 Jun 2008 14:02:07 -0400
+Subject: [pci] mmconfig: rm pci_legacy_ops and nommconf blacklist
+Message-id: 48497B9F.9080007@redhat.com
+O-Subject: [RHEL5.3 PATCH 2/3] PCI MMCONFIG: Remove pci_legacy_ops and nommconf blacklist
+Bugzilla: 441615 251493
+RH-Acked-by: Alan Cox <alan@redhat.com>
+
+commit 77f2f0a9e8b0e77d650ce8bac43b561ada95e4f6
+Author: Tony Camuso <tony.camuso@hp.com>
+Date:   Tue Jun 3 13:57:17 2008 -0400
+
+     Remove pci_legacy_ops and nommconf blacklist
+
+     The upstream patch completely obviates the need for a nommconf
+     blacklist by using conf1 (Port IO) accesses to the first 256
+     bytes of PCI config space. Only PCI express buses will access
+     beyond 256 bytes. This also obviates the need for a pci_ops
+     structure (pci_legacy_ops) containing a pointer to conf1
+     accesses. All references to the pci_legacy_ops are removed by
+     this patch.
+
+  arch/i386/pci/direct.c     |   51 +++++--------------------------------------
+  arch/i386/pci/init.c       |   17 +-------------
+  arch/i386/pci/mmconfig.c   |   41 -----------------------------------
+  arch/x86_64/pci/mmconfig.c |   25 ---------------------
+  4 files changed, 8 insertions(+), 126 deletions(-)
+
+     Signed-off-by: Tony Camuso <tcamuso@redhat.com>
+
+diff --git a/arch/i386/pci/direct.c b/arch/i386/pci/direct.c
+index 53e6092..5d81fb5 100644
+--- a/arch/i386/pci/direct.c
++++ b/arch/i386/pci/direct.c
+@@ -175,31 +175,6 @@ static struct pci_raw_ops pci_direct_conf2 = {
+ 	.write =	pci_conf2_write,
+ };
+ 
+-/*
+- * Legacy PCI Config read and write routines for buses that can't use
+- * MMCONFIG accesses in systems where MMCONFIG is the default PCI config
+- * access mechanism.
+- */
+-static struct pci_raw_ops *pci_legacy_conf;
+-
+-static int pci_ops_legacy_read(struct pci_bus *bus, unsigned int devfn,
+-			      int where, int size, u32 *value)
+-{
+-	return pci_legacy_conf->read(0, bus->number, devfn, where,
+-				     size, value);
+-}
+-
+-static int pci_ops_legacy_write(struct pci_bus *bus, unsigned int devfn,
+-			       int where, int size, u32 value)
+-{
+-	return pci_legacy_conf->write(0, bus->number, devfn, where,
+-				      size, value);
+-}
+-
+-struct pci_ops pci_legacy_ops = {
+-	.read =		pci_ops_legacy_read,
+-	.write =	pci_ops_legacy_write,
+-};
+ 
+ /*
+  * Before we decide to use direct hardware access mechanisms, we try to do some
+@@ -282,27 +257,22 @@ static int __init pci_check_type2(void)
+ void __init pci_direct_init(void)
+ {
+ 	struct resource *region, *region2;
+-	int type;
+ 
+-	if (((pci_probe & PCI_PROBE_CONF1) == 0) &&
+-	    ((pci_probe & PCI_USING_MMCONF) == 0))
++	if ((pci_probe & PCI_PROBE_CONF1) == 0)
+ 		goto type2;
+ 	region = request_region(0xCF8, 8, "PCI conf1");
+ 	if (!region)
+ 		goto type2;
+ 
+ 	if (pci_check_type1()) {
+-		type = 1;
++		printk(KERN_INFO "PCI: Using configuration type 1\n");
+ 		raw_pci_ops = &pci_direct_conf1;
+-		pci_legacy_conf = &pci_direct_conf1;
+-		goto pass;
++		return;
+ 	}
+ 	release_resource(region);
+ 
+  type2:
+-	if (((pci_probe & PCI_PROBE_CONF2) == 0) &&
+-	    ((pci_probe & PCI_USING_MMCONF) == 0))
+-
++	if ((pci_probe & PCI_PROBE_CONF2) == 0)
+ 		return;
+ 	region = request_region(0xCF8, 4, "PCI conf2");
+ 	if (!region)
+@@ -312,21 +282,12 @@ void __init pci_direct_init(void)
+ 		goto fail2;
+ 
+ 	if (pci_check_type2()) {
+-		type = 2;
++		printk(KERN_INFO "PCI: Using configuration type 2\n");
+ 		raw_pci_ops = &pci_direct_conf2;
+-		pci_legacy_conf = &pci_direct_conf2;
+-		goto pass;
++		return;
+ 	}
+ 
+ 	release_resource(region2);
+  fail2:
+ 	release_resource(region);
+-	return;
+- pass:
+-	if (pci_probe & PCI_USING_MMCONF)
+-		pr_info("PCI: Buses that can't use MMCONFIG will use type %x "
+-			"PCI conf access.\n", type);
+-	else
+-		pr_info("PCI: Using configuration type %x\n", type);
+-	return;
+ }
+diff --git a/arch/i386/pci/init.c b/arch/i386/pci/init.c
+index de166c0..7c611ec 100644
+--- a/arch/i386/pci/init.c
++++ b/arch/i386/pci/init.c
+@@ -6,17 +6,11 @@
+    in the right sequence from here. */
+ static __init int pci_access_init(void)
+ {
+-	struct pci_raw_ops *mmcfg_ops = NULL;
+-
+ #ifdef CONFIG_PCI_MMCONFIG
+ 	pci_mmcfg_init();
+-	/*
+-	 * We still need legacy PCI config access routines for devices that
+-	 * don't respond to MMCONFIG accesses. Save raw_pci_ops in a local
+-	 * variable to restore it if MMCONFIG was successfully initialized.
+-	 */
+-	mmcfg_ops = raw_pci_ops;
+ #endif
++	if (raw_pci_ops)
++		return 0;
+ 
+ #ifdef CONFIG_PCI_BIOS
+ 	pci_pcbios_init();
+@@ -30,12 +24,6 @@ static __init int pci_access_init(void)
+ #ifdef CONFIG_PCI_DIRECT
+ 	pci_direct_init();
+ #endif
+-	if (mmcfg_ops)
+-		raw_pci_ops = mmcfg_ops;
+-
+-	if (!raw_pci_ops)
+-		printk(KERN_ERR "PCI: Fatal: No PCI config space access "
+-		       "function found\n");
+ 	return 0;
+ }
+ arch_initcall(pci_access_init);
+diff --git a/arch/i386/pci/mmconfig.c b/arch/i386/pci/mmconfig.c
+index e8da038..4542946 100644
+--- a/arch/i386/pci/mmconfig.c
++++ b/arch/i386/pci/mmconfig.c
+@@ -185,47 +185,6 @@ static __init void unreachable_devices(void)
+ 	}
+ }
+ 
+-static int __devinit disable_mmconf(struct dmi_system_id *d)
+-{
+-	pci_probe &= ~PCI_PROBE_MMCONF;
+-	printk(KERN_INFO "%s detected: disabling PCI MMCONFIG\n", d->ident);
+-	return 0;
+-}
+-
+-
+-/*
+- * Systems which cannot use PCI MMCONFIG at this time...
+- */
+-static struct dmi_system_id __devinitdata nommconf_dmi_table[] = {
+-	{
+-		.callback = disable_mmconf,
+-		.ident = "HP Compaq dc5700 Microtower",
+-		.matches = {
+-			DMI_MATCH(DMI_PRODUCT_NAME, 
+-				"HP Compaq dc5700 Microtower"),
+-		},
+-	},
+-	{
+-		.callback = disable_mmconf,
+-		.ident = "DQ35MPE",
+-		.matches = {
+-			DMI_MATCH(DMI_BOARD_NAME,
+-				  "DQ35MPE"),
+-		},
+-	},
+-	{
+-		.callback = disable_mmconf,
+-		.ident = "DQ35JO",
+-		.matches = {
+-			DMI_MATCH(DMI_BOARD_NAME,
+-				  "DQ35JO"),
+-		},
+-	},
+-
+-	{}
+-};
+-
+-
+ void __init pci_mmcfg_init(void)
+ {
+ 	dmi_check_system(nommconf_dmi_table);
+diff --git a/arch/x86_64/pci/mmconfig.c b/arch/x86_64/pci/mmconfig.c
+index 8ec4728..4987502 100644
+--- a/arch/x86_64/pci/mmconfig.c
++++ b/arch/x86_64/pci/mmconfig.c
+@@ -161,31 +161,6 @@ static __init void unreachable_devices(void)
+ 	}
+ }
+ 
+-static int __devinit disable_mmconf(struct dmi_system_id *d)
+-{
+-	pci_probe &= ~PCI_PROBE_MMCONF;
+-	printk(KERN_INFO "%s detected: disabling PCI MMCONFIG\n", d->ident);
+-	return 0;
+-}
+-
+-
+-/*
+- * Systems which cannot use PCI MMCONFIG at this time...
+- */
+-static struct dmi_system_id __devinitdata nommconf_dmi_table[] = {
+-        {
+-                .callback = disable_mmconf,
+-                .ident = "HP Compaq dc5700 Microtower",
+-                .matches = {
+-                        DMI_MATCH(DMI_PRODUCT_NAME,
+-				  "HP Compaq dc5700 Microtower"),
+-                },
+-        },
+-
+-	{}
+-};
+-
+-
+ void __init pci_mmcfg_init(void)
+ {
+ 	int i;

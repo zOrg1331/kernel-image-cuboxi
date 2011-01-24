@@ -3,9 +3,9 @@
  *
  * Utility to set the Omap MUX and PULL_DWN registers from a table in mux.h
  *
- * Copyright (C) 2003 - 2008 Nokia Corporation
+ * Copyright (C) 2003 - 2005 Nokia Corporation
  *
- * Written by Tony Lindgren
+ * Written by Tony Lindgren <tony.lindgren@nokia.com>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -25,24 +25,28 @@
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/kernel.h>
-#include <linux/io.h>
 #include <asm/system.h>
+#include <asm/io.h>
 #include <linux/spinlock.h>
-#include <mach/mux.h>
+#include <asm/arch/mux.h>
 
 #ifdef CONFIG_OMAP_MUX
 
-static struct omap_mux_cfg *mux_cfg;
+#define OMAP24XX_L4_BASE	0x48000000
+#define OMAP24XX_PULL_ENA	(1 << 3)
+#define OMAP24XX_PULL_UP	(1 << 4)
 
-int __init omap_mux_register(struct omap_mux_cfg *arch_mux_cfg)
+static struct pin_config * pin_table;
+static unsigned long pin_table_sz;
+
+extern struct pin_config * omap730_pins;
+extern struct pin_config * omap1xxx_pins;
+extern struct pin_config * omap24xx_pins;
+
+int __init omap_mux_register(struct pin_config * pins, unsigned long size)
 {
-	if (!arch_mux_cfg || !arch_mux_cfg->pins || arch_mux_cfg->size == 0
-			|| !arch_mux_cfg->cfg_reg) {
-		printk(KERN_ERR "Invalid pin table\n");
-		return -EINVAL;
-	}
-
-	mux_cfg = arch_mux_cfg;
+	pin_table = pins;
+	pin_table_sz = size;
 
 	return 0;
 }
@@ -52,29 +56,141 @@ int __init omap_mux_register(struct omap_mux_cfg *arch_mux_cfg)
  */
 int __init_or_module omap_cfg_reg(const unsigned long index)
 {
-	struct pin_config *reg;
+	static DEFINE_SPINLOCK(mux_spin_lock);
 
-	if (cpu_is_omap44xx())
-		return 0;
+	unsigned long flags;
+	struct pin_config *cfg;
+	unsigned int reg_orig = 0, reg = 0, pu_pd_orig = 0, pu_pd = 0,
+		pull_orig = 0, pull = 0;
+	unsigned int mask, warn = 0;
 
-	if (mux_cfg == NULL) {
-		printk(KERN_ERR "Pin mux table not initialized\n");
-		return -ENODEV;
-	}
+	if (!pin_table)
+		BUG();
 
-	if (index >= mux_cfg->size) {
+	if (index >= pin_table_sz) {
 		printk(KERN_ERR "Invalid pin mux index: %lu (%lu)\n",
-		       index, mux_cfg->size);
+		       index, pin_table_sz);
 		dump_stack();
 		return -ENODEV;
 	}
 
-	reg = (struct pin_config *)&mux_cfg->pins[index];
+	cfg = (struct pin_config *)&pin_table[index];
+	if (cpu_is_omap24xx()) {
+		u8 reg = 0;
 
-	if (!mux_cfg->cfg_reg)
-		return -ENODEV;
+		reg |= cfg->mask & 0x7;
+		if (cfg->pull_val)
+			reg |= OMAP24XX_PULL_ENA;
+		if(cfg->pu_pd_val)
+			reg |= OMAP24XX_PULL_UP;
+#ifdef CONFIG_OMAP_MUX_DEBUG
+		printk("Muxing %s (0x%08x): 0x%02x -> 0x%02x\n",
+		       cfg->name, OMAP24XX_L4_BASE + cfg->mux_reg,
+		       omap_readb(OMAP24XX_L4_BASE + cfg->mux_reg), reg);
+#endif
+		omap_writeb(reg, OMAP24XX_L4_BASE + cfg->mux_reg);
 
-	return mux_cfg->cfg_reg(reg);
+		return 0;
+	}
+
+	/* Check the mux register in question */
+	if (cfg->mux_reg) {
+		unsigned	tmp1, tmp2;
+
+		spin_lock_irqsave(&mux_spin_lock, flags);
+		reg_orig = omap_readl(cfg->mux_reg);
+
+		/* The mux registers always seem to be 3 bits long */
+		mask = (0x7 << cfg->mask_offset);
+		tmp1 = reg_orig & mask;
+		reg = reg_orig & ~mask;
+
+		tmp2 = (cfg->mask << cfg->mask_offset);
+		reg |= tmp2;
+
+		if (tmp1 != tmp2)
+			warn = 1;
+
+		omap_writel(reg, cfg->mux_reg);
+		spin_unlock_irqrestore(&mux_spin_lock, flags);
+	}
+
+	/* Check for pull up or pull down selection on 1610 */
+	if (!cpu_is_omap1510()) {
+		if (cfg->pu_pd_reg && cfg->pull_val) {
+			spin_lock_irqsave(&mux_spin_lock, flags);
+			pu_pd_orig = omap_readl(cfg->pu_pd_reg);
+			mask = 1 << cfg->pull_bit;
+
+			if (cfg->pu_pd_val) {
+				if (!(pu_pd_orig & mask))
+					warn = 1;
+				/* Use pull up */
+				pu_pd = pu_pd_orig | mask;
+			} else {
+				if (pu_pd_orig & mask)
+					warn = 1;
+				/* Use pull down */
+				pu_pd = pu_pd_orig & ~mask;
+			}
+			omap_writel(pu_pd, cfg->pu_pd_reg);
+			spin_unlock_irqrestore(&mux_spin_lock, flags);
+		}
+	}
+
+	/* Check for an associated pull down register */
+	if (cfg->pull_reg) {
+		spin_lock_irqsave(&mux_spin_lock, flags);
+		pull_orig = omap_readl(cfg->pull_reg);
+		mask = 1 << cfg->pull_bit;
+
+		if (cfg->pull_val) {
+			if (pull_orig & mask)
+				warn = 1;
+			/* Low bit = pull enabled */
+			pull = pull_orig & ~mask;
+		} else {
+			if (!(pull_orig & mask))
+				warn = 1;
+			/* High bit = pull disabled */
+			pull = pull_orig | mask;
+		}
+
+		omap_writel(pull, cfg->pull_reg);
+		spin_unlock_irqrestore(&mux_spin_lock, flags);
+	}
+
+	if (warn) {
+#ifdef CONFIG_OMAP_MUX_WARNINGS
+		printk(KERN_WARNING "MUX: initialized %s\n", cfg->name);
+#endif
+	}
+
+#ifdef CONFIG_OMAP_MUX_DEBUG
+	if (cfg->debug || warn) {
+		printk("MUX: Setting register %s\n", cfg->name);
+		printk("      %s (0x%08x) = 0x%08x -> 0x%08x\n",
+		       cfg->mux_reg_name, cfg->mux_reg, reg_orig, reg);
+
+		if (!cpu_is_omap1510()) {
+			if (cfg->pu_pd_reg && cfg->pull_val) {
+				printk("      %s (0x%08x) = 0x%08x -> 0x%08x\n",
+				       cfg->pu_pd_name, cfg->pu_pd_reg,
+				       pu_pd_orig, pu_pd);
+			}
+		}
+
+		if (cfg->pull_reg)
+			printk("      %s (0x%08x) = 0x%08x -> 0x%08x\n",
+			       cfg->pull_name, cfg->pull_reg, pull_orig, pull);
+	}
+#endif
+
+#ifdef CONFIG_OMAP_MUX_ERRORS
+	return warn ? -ETXTBSY : 0;
+#else
+	return 0;
+#endif
 }
 EXPORT_SYMBOL(omap_cfg_reg);
 #else

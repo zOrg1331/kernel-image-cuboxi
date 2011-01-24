@@ -1,8 +1,10 @@
 /*
+ * $Id: block2mtd.c,v 1.30 2005/11/29 14:48:32 gleixner Exp $
+ *
  * block2mtd.c - create an mtd from a block device
  *
  * Copyright (C) 2001,2002	Simon Evans <spse@secret.org.uk>
- * Copyright (C) 2004-2006	Joern Engel <joern@wh.fh-wedel.de>
+ * Copyright (C) 2004-2006	Jörn Engel <joern@wh.fh-wedel.de>
  *
  * Licence: GPL
  */
@@ -17,6 +19,9 @@
 #include <linux/buffer_head.h>
 #include <linux/mutex.h>
 #include <linux/mount.h>
+
+#define VERSION "$Revision: 1.30 $"
+
 
 #define ERROR(fmt, args...) printk(KERN_ERR "block2mtd: " fmt "\n" , ## args)
 #define INFO(fmt, args...) printk(KERN_INFO "block2mtd: " fmt "\n" , ## args)
@@ -35,10 +40,59 @@ struct block2mtd_dev {
 static LIST_HEAD(blkmtd_device_list);
 
 
-static struct page *page_read(struct address_space *mapping, int index)
+#define PAGE_READAHEAD 64
+static void cache_readahead(struct address_space *mapping, int index)
 {
-	return read_mapping_page(mapping, index, NULL);
+	filler_t *filler = (filler_t*)mapping->a_ops->readpage;
+	int i, pagei;
+	unsigned ret = 0;
+	unsigned long end_index;
+	struct page *page;
+	LIST_HEAD(page_pool);
+	struct inode *inode = mapping->host;
+	loff_t isize = i_size_read(inode);
+
+	if (!isize) {
+		INFO("iSize=0 in cache_readahead\n");
+		return;
+	}
+
+	end_index = ((isize - 1) >> PAGE_CACHE_SHIFT);
+
+	read_lock_irq(&mapping->tree_lock);
+	for (i = 0; i < PAGE_READAHEAD; i++) {
+		pagei = index + i;
+		if (pagei > end_index) {
+			INFO("Overrun end of disk in cache readahead\n");
+			break;
+		}
+		page = radix_tree_lookup(&mapping->page_tree, pagei);
+		if (page && (!i))
+			break;
+		if (page)
+			continue;
+		read_unlock_irq(&mapping->tree_lock);
+		page = page_cache_alloc_cold(mapping);
+		read_lock_irq(&mapping->tree_lock);
+		if (!page)
+			break;
+		page->index = pagei;
+		list_add(&page->lru, &page_pool);
+		ret++;
+	}
+	read_unlock_irq(&mapping->tree_lock);
+	if (ret)
+		read_cache_pages(mapping, &page_pool, filler, NULL);
 }
+
+
+static struct page* page_readahead(struct address_space *mapping, int index)
+{
+	filler_t *filler = (filler_t*)mapping->a_ops->readpage;
+	cache_readahead(mapping, index);
+	return read_cache_page(mapping, index, filler, NULL);
+}
+
 
 /* erase a specified part of the device */
 static int _block2mtd_erase(struct block2mtd_dev *dev, loff_t to, size_t len)
@@ -51,14 +105,14 @@ static int _block2mtd_erase(struct block2mtd_dev *dev, loff_t to, size_t len)
 	u_long *max;
 
 	while (pages) {
-		page = page_read(mapping, index);
+		page = page_readahead(mapping, index);
 		if (!page)
 			return -ENOMEM;
 		if (IS_ERR(page))
 			return PTR_ERR(page);
 
-		max = page_address(page) + PAGE_SIZE;
-		for (p=page_address(page); p<max; p++)
+		max = (u_long*)page_address(page) + PAGE_SIZE;
+		for (p=(u_long*)page_address(page); p<max; p++)
 			if (*p != -1UL) {
 				lock_page(page);
 				memset(page_address(page), 0xff, PAGE_SIZE);
@@ -120,7 +174,8 @@ static int block2mtd_read(struct mtd_info *mtd, loff_t from, size_t len,
 			cpylen = len;	// this page
 		len = len - cpylen;
 
-		page = page_read(dev->blkdev->bd_inode->i_mapping, index);
+		//      Get page
+		page = page_readahead(dev->blkdev->bd_inode->i_mapping, index);
 		if (!page)
 			return -ENOMEM;
 		if (IS_ERR(page))
@@ -158,7 +213,8 @@ static int _block2mtd_write(struct block2mtd_dev *dev, const u_char *buf,
 			cpylen = len;			// this page
 		len = len - cpylen;
 
-		page = page_read(mapping, index);
+		//	Get page
+		page = page_readahead(mapping, index);
 		if (!page)
 			return -ENOMEM;
 		if (IS_ERR(page))
@@ -222,9 +278,8 @@ static void block2mtd_free_device(struct block2mtd_dev *dev)
 	kfree(dev->mtd.name);
 
 	if (dev->blkdev) {
-		invalidate_mapping_pages(dev->blkdev->bd_inode->i_mapping,
-					0, -1);
-		close_bdev_exclusive(dev->blkdev, FMODE_READ|FMODE_WRITE);
+		invalidate_inode_pages(dev->blkdev->bd_inode->i_mapping);
+		close_bdev_excl(dev->blkdev);
 	}
 
 	kfree(dev);
@@ -236,26 +291,26 @@ static struct block2mtd_dev *add_device(char *devname, int erase_size)
 {
 	struct block_device *bdev;
 	struct block2mtd_dev *dev;
-	char *name;
 
 	if (!devname)
 		return NULL;
 
-	dev = kzalloc(sizeof(struct block2mtd_dev), GFP_KERNEL);
+	dev = kmalloc(sizeof(struct block2mtd_dev), GFP_KERNEL);
 	if (!dev)
 		return NULL;
+	memset(dev, 0, sizeof(*dev));
 
 	/* Get a handle on the device */
-	bdev = open_bdev_exclusive(devname, FMODE_READ|FMODE_WRITE, NULL);
+	bdev = open_bdev_excl(devname, O_RDWR, NULL);
 #ifndef MODULE
 	if (IS_ERR(bdev)) {
 
 		/* We might not have rootfs mounted at this point. Try
 		   to resolve the device name by other means. */
 
-		dev_t devt = name_to_dev_t(devname);
-		if (devt) {
-			bdev = open_by_devnum(devt, FMODE_WRITE | FMODE_READ);
+		dev_t dev = name_to_dev_t(devname);
+		if (dev != 0) {
+			bdev = open_by_devnum(dev, FMODE_WRITE | FMODE_READ);
 		}
 	}
 #endif
@@ -275,13 +330,12 @@ static struct block2mtd_dev *add_device(char *devname, int erase_size)
 
 	/* Setup the MTD structure */
 	/* make the name contain the block device in */
-	name = kmalloc(sizeof("block2mtd: ") + strlen(devname) + 1,
+	dev->mtd.name = kmalloc(sizeof("block2mtd: ") + strlen(devname),
 			GFP_KERNEL);
-	if (!name)
+	if (!dev->mtd.name)
 		goto devinit_err;
 
-	sprintf(name, "block2mtd: %s", devname);
-	dev->mtd.name = name;
+	sprintf(dev->mtd.name, "block2mtd: %s", devname);
 
 	dev->mtd.size = dev->blkdev->bd_inode->i_size & PAGE_MASK;
 	dev->mtd.erasesize = erase_size;
@@ -302,7 +356,7 @@ static struct block2mtd_dev *add_device(char *devname, int erase_size)
 	}
 	list_add(&dev->list, &blkmtd_device_list);
 	INFO("mtd%d: [%s] erase_size = %dKiB [%d]", dev->mtd.index,
-			dev->mtd.name + strlen("block2mtd: "),
+			dev->mtd.name + strlen("blkmtd: "),
 			dev->mtd.erasesize >> 10, dev->mtd.erasesize);
 	return dev;
 
@@ -363,14 +417,14 @@ static inline void kill_final_newline(char *str)
 }
 
 
-#define parse_err(fmt, args...) do {	\
-	ERROR(fmt, ## args);		\
-	return 0;			\
+#define parse_err(fmt, args...) do {		\
+	ERROR("block2mtd: " fmt "\n", ## args);	\
+	return 0;				\
 } while (0)
 
 #ifndef MODULE
 static int block2mtd_init_called = 0;
-static char block2mtd_paramline[80 + 12]; /* 80 for device, 12 for erase size */
+static __initdata char block2mtd_paramline[80 + 12]; /* 80 for device, 12 for erase size */
 #endif
 
 
@@ -405,6 +459,7 @@ static int block2mtd_setup2(const char *val)
 	if (token[1]) {
 		ret = parse_num(&erase_size, token[1]);
 		if (ret) {
+			kfree(name);
 			parse_err("illegal erase size");
 		}
 	}
@@ -448,6 +503,7 @@ MODULE_PARM_DESC(block2mtd, "Device to use. \"block2mtd=<dev>[,<erasesize>]\"");
 static int __init block2mtd_init(void)
 {
 	int ret = 0;
+	INFO("version " VERSION);
 
 #ifndef MODULE
 	if (strlen(block2mtd_paramline))
@@ -469,7 +525,7 @@ static void __devexit block2mtd_exit(void)
 		block2mtd_sync(&dev->mtd);
 		del_mtd_device(&dev->mtd);
 		INFO("mtd%d: [%s] removed", dev->mtd.index,
-				dev->mtd.name + strlen("block2mtd: "));
+				dev->mtd.name + strlen("blkmtd: "));
 		list_del(&dev->list);
 		block2mtd_free_device(dev);
 	}
@@ -480,5 +536,5 @@ module_init(block2mtd_init);
 module_exit(block2mtd_exit);
 
 MODULE_LICENSE("GPL");
-MODULE_AUTHOR("Joern Engel <joern@lazybastard.org>");
+MODULE_AUTHOR("Simon Evans <spse@secret.org.uk> and others");
 MODULE_DESCRIPTION("Emulate an MTD using a block device");

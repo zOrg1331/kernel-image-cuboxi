@@ -21,17 +21,18 @@
 #include <linux/err.h>
 #include <linux/dma-mapping.h>
 #include <linux/clk.h>
-#include <linux/io.h>
 
 #include <asm/system.h>
-#include <mach/hardware.h>
-#include <mach/dma.h>
+#include <asm/hardware.h>
+#include <asm/dma.h>
 #include <asm/dma-mapping.h>
-#include <mach/clock.h>
+#include <asm/io.h>
+#include <asm/mach/dma.h>
+#include <asm/arch/clock.h>
 
 static struct dma_channel {
 	char *name;
-	void (*irq_handler) (int, int, void *);
+	void (*irq_handler) (int, int, void *, struct pt_regs *);
 	void *data;
 	struct pnx4008_dma_ll *ll;
 	u32 ll_dma;
@@ -46,7 +47,7 @@ static struct ll_pool {
 	int count;
 } ll_pool;
 
-static DEFINE_SPINLOCK(ll_lock);
+static spinlock_t ll_lock = SPIN_LOCK_UNLOCKED;
 
 struct pnx4008_dma_ll *pnx4008_alloc_ll_entry(dma_addr_t * ll_dma)
 {
@@ -134,7 +135,7 @@ static inline void dma_decrement_usage(void)
 	}
 }
 
-static DEFINE_SPINLOCK(dma_lock);
+static spinlock_t dma_lock = SPIN_LOCK_UNLOCKED;
 
 static inline void pnx4008_dma_lock(void)
 {
@@ -149,7 +150,8 @@ static inline void pnx4008_dma_unlock(void)
 #define VALID_CHANNEL(c)	(((c) >= 0) && ((c) < MAX_DMA_CHANNELS))
 
 int pnx4008_request_channel(char *name, int ch,
-			    void (*irq_handler) (int, int, void *), void *data)
+			    void (*irq_handler) (int, int, void *,
+						 struct pt_regs *), void *data)
 {
 	int i, found = 0;
 
@@ -191,7 +193,7 @@ void pnx4008_free_channel(int ch)
 	if (!dma_channels[ch].name) {
 		printk(KERN_CRIT
 		       "%s: trying to free channel %d which is already freed\n",
-		       __func__, ch);
+		       __FUNCTION__, ch);
 		return;
 	}
 
@@ -1031,7 +1033,7 @@ int pnx4008_dma_ch_enabled(int ch)
 
 EXPORT_SYMBOL_GPL(pnx4008_dma_ch_enabled);
 
-static irqreturn_t dma_irq_handler(int irq, void *dev_id)
+static irqreturn_t dma_irq_handler(int irq, void *dev_id, struct pt_regs *regs)
 {
 	int i;
 	unsigned long dint = __raw_readl(DMAC_INT_STAT);
@@ -1051,7 +1053,8 @@ static irqreturn_t dma_irq_handler(int irq, void *dev_id)
 					cause |= DMA_ERR_INT;
 				if (tcint & i_bit)
 					cause |= DMA_TC_INT;
-				channel->irq_handler(i, cause, channel->data);
+				channel->irq_handler(i, cause, channel->data,
+						     regs);
 			} else {
 				/*
 				 * IRQ for an unregistered DMA channel

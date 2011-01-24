@@ -1,0 +1,35 @@
+From: Bhavna Sarathy <bnagendr@redhat.com>
+Date: Tue, 9 Jun 2009 09:38:27 -0400
+Subject: [x86_64] kvm: fix libvirt based device assignment issue
+Message-id: 20090609133259.11704.29974.sendpatchset@allegro.boston.redhat.com
+O-Subject: [RHEL5.4 PATCH] [KVM] Fix libvirt based device assignment issue on AMD IOMMU
+Bugzilla: 504165
+RH-Acked-by: Dean Nelson <dnelson@redhat.com>
+RH-Acked-by: Chris Wright <chrisw@redhat.com>
+RH-Acked-by: Juan Quintela <quintela@redhat.com>
+
+Resolves BZ 504165
+
+This fixes a bug with device that could not be assigned to a KVM guest
+because it was still assigned to a dma_ops protection module.
+
+Brew build:
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1830208
+
+Tested on AMD IOMMU system at AMD and by Chris Wright.
+
+Please review and ACK
+
+diff --git a/arch/x86_64/kernel/amd_iommu.c b/arch/x86_64/kernel/amd_iommu.c
+index dab0ff5..5379f85 100644
+--- a/arch/x86_64/kernel/amd_iommu.c
++++ b/arch/x86_64/kernel/amd_iommu.c
+@@ -1841,7 +1841,7 @@ static int amd_iommu_attach_device(struct iommu_domain *dom,
+ 
+ 	old_domain = domain_for_device(devid);
+ 	if (old_domain)
+-		return -EBUSY;
++		detach_device(old_domain, devid);
+ 
+ 	attach_device(iommu, domain, devid);
+ 

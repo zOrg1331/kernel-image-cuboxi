@@ -101,6 +101,12 @@
 #define BTTV_BOARD_DVICO_DVBT_LITE         0x80
 #define BTTV_BOARD_DVICO_FUSIONHDTV_5_LITE 0x87
 
+struct cards {
+	__u32 pci_id;
+	__u16 card_id;
+	char  *name;
+};
+
 extern int bt878_num;
 
 struct bt878 {
@@ -128,7 +134,7 @@ struct bt878 {
 	dma_addr_t buf_dma;
 
 	u32 risc_size;
-	__le32 *risc_cpu;
+	u32 *risc_cpu;
 	dma_addr_t risc_dma;
 	u32 risc_pos;
 
@@ -143,10 +149,11 @@ void bt878_start(struct bt878 *bt, u32 controlreg, u32 op_sync_orin,
 void bt878_stop(struct bt878 *bt);
 
 #if defined(__powerpc__)	/* big-endian */
-static inline void io_st_le32(volatile unsigned __iomem *addr, unsigned val)
+extern __inline__ void io_st_le32(volatile unsigned __iomem *addr, unsigned val)
 {
-	st_le32(addr, val);
-	eieio();
+	__asm__ __volatile__("stwbrx %1,0,%2":"=m"(*addr):"r"(val),
+			     "r"(addr));
+	__asm__ __volatile__("eieio":::"memory");
 }
 
 #define bmtwrite(dat,adr)  io_st_le32((adr),(dat))

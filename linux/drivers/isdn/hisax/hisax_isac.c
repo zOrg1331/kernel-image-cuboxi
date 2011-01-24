@@ -433,7 +433,7 @@ static void l1m_debug(struct FsmInst *fi, char *fmt, ...)
 	char buf[256];
 	
 	va_start(args, fmt);
-	vsnprintf(buf, sizeof(buf), fmt, args);
+	vsprintf(buf, fmt, args);
 	DBG(DBG_L1M, "%s", buf);
 	va_end(args);
 }

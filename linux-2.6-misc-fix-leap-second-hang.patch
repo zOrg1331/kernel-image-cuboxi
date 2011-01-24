@@ -1,0 +1,181 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Date: Thu, 29 Jan 2009 08:28:39 -0500
+Subject: [misc] fix leap second hang
+Message-id: 4981AF07.8050005@redhat.com
+O-Subject: Re: [RHEL5 PATCH]: Fix leap second hang
+Bugzilla: 479765
+RH-Acked-by: Michal Schmidt <mschmidt@redhat.com>
+RH-Acked-by: Ivan Vecera <ivecera@redhat.com>
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+RH-Acked-by: Aristeu Rozanski <aris@redhat.com>
+
+During the leap second between 2008-2009 it was noticed that RHEL servers
+were hanging.
+
+Backport of http://lkml.org/lkml/2009/1/2/415.  However, our codebase is
+significantly different from upstream so I've implemented a
+leap_second_message() function that is available to all arches.
+
+Brew build: http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1666146
+
+Successfully tested by me.
+
+P.
+
+diff --git a/arch/i386/kernel/time.c b/arch/i386/kernel/time.c
+index 7ebde24..82fdd13 100644
+--- a/arch/i386/kernel/time.c
++++ b/arch/i386/kernel/time.c
+@@ -199,6 +199,8 @@ irqreturn_t timer_interrupt(int irq, void *dev_id, struct pt_regs *regs)
+ 		smp_send_timer_broadcast_ipi(regs);
+ #endif
+ 
++	leap_second_message();
++
+ 	return IRQ_HANDLED;
+ }
+ 
+diff --git a/arch/ia64/kernel/time.c b/arch/ia64/kernel/time.c
+index e036828..429e1a9 100644
+--- a/arch/ia64/kernel/time.c
++++ b/arch/ia64/kernel/time.c
+@@ -133,6 +133,7 @@ consider_steal_time(unsigned long new_itm, struct pt_regs *regs)
+ 				do_timer(regs);
+ 			local_cpu_data->itm_next = delta_itm + new_itm;
+ 			write_sequnlock(&xtime_lock);
++			leap_second_message();
+ 		} else {
+ 			local_cpu_data->itm_next = delta_itm + new_itm;
+ 		}
+@@ -188,6 +189,7 @@ timer_interrupt (int irq, void *dev_id, struct pt_regs *regs)
+ 			do_timer(regs);
+ 			local_cpu_data->itm_next = new_itm;
+ 			write_sequnlock(&xtime_lock);
++			leap_second_message();
+ 		} else
+ 			local_cpu_data->itm_next = new_itm;
+ 
+diff --git a/arch/powerpc/kernel/time.c b/arch/powerpc/kernel/time.c
+index 310f23f..ba9a535 100644
+--- a/arch/powerpc/kernel/time.c
++++ b/arch/powerpc/kernel/time.c
+@@ -669,6 +669,7 @@ void timer_interrupt(struct pt_regs * regs)
+ 			timer_check_rtc();
+ 		}
+ 		write_sequnlock(&xtime_lock);
++		leap_second_message();
+ 	}
+ 	
+ 	next_dec = tb_ticks_per_jiffy - ticks;
+diff --git a/arch/ppc/kernel/time.c b/arch/ppc/kernel/time.c
+index f4f3789..59cb7e5 100644
+--- a/arch/ppc/kernel/time.c
++++ b/arch/ppc/kernel/time.c
+@@ -182,6 +182,7 @@ void timer_interrupt(struct pt_regs * regs)
+ 				last_rtc_update += 60;
+ 		}
+ 		write_sequnlock(&xtime_lock);
++		leap_second_message();
+ 	}
+ 	if ( !disarm_decr[smp_processor_id()] )
+ 		set_dec(next_dec);
+diff --git a/arch/s390/kernel/time.c b/arch/s390/kernel/time.c
+index 812886e..f767bdd 100644
+--- a/arch/s390/kernel/time.c
++++ b/arch/s390/kernel/time.c
+@@ -220,6 +220,7 @@ void account_ticks(struct pt_regs *regs)
+ 	for (xticks = ticks; xticks > 0; xticks--)
+ 		do_timer(regs);
+ #endif
++	leap_second_message();
+ 
+ #ifdef CONFIG_VIRT_CPU_ACCOUNTING
+ 	account_tick_vtime(current);
+diff --git a/arch/x86_64/kernel/time.c b/arch/x86_64/kernel/time.c
+index fa1985f..9635380 100644
+--- a/arch/x86_64/kernel/time.c
++++ b/arch/x86_64/kernel/time.c
+@@ -487,6 +487,8 @@ void main_timer_handler(struct pt_regs *regs)
+ 	}
+  
+ 	write_sequnlock(&xtime_lock);
++
++	leap_second_message();
+ }
+ 
+ static irqreturn_t timer_interrupt(int irq, void *dev_id, struct pt_regs *regs)
+diff --git a/include/linux/timex.h b/include/linux/timex.h
+index d543d38..ab71c9a 100644
+--- a/include/linux/timex.h
++++ b/include/linux/timex.h
+@@ -311,6 +311,29 @@ extern u64 current_tick_length(void);
+ 
+ extern int do_adjtimex(struct timex *);
+ 
++/* Code based on patch from http://lkml.org/lkml/2009/1/2/415.
++   RHEL5 code base is significantly different from upstream so we have to
++   resort to this ... */
++
++extern unsigned long leap_second;
++
++static inline void leap_second_message(void)
++{
++	if (unlikely(leap_second != TIME_OK)) {
++		switch (leap_second) {
++		case TIME_INS:
++			printk(KERN_NOTICE "Clock: inserting leap second "
++					"23:59:60 UTC\n");
++			break;
++		case TIME_DEL:
++			printk(KERN_NOTICE "Clock: deleting leap second "
++					"23:59:59 UTC\n");
++			break;
++		}
++		leap_second = TIME_OK;
++	}
++}
++
+ #endif /* KERNEL */
+ 
+ #endif /* LINUX_TIMEX_H */
+diff --git a/kernel/timer.c b/kernel/timer.c
+index bafef95..0e831b5 100644
+--- a/kernel/timer.c
++++ b/kernel/timer.c
+@@ -34,6 +34,7 @@
+ #include <linux/cpu.h>
+ #include <linux/syscalls.h>
+ #include <linux/delay.h>
++#include <linux/timex.h>
+ 
+ #include <asm/uaccess.h>
+ #include <asm/unistd.h>
+@@ -740,6 +741,8 @@ long time_reftime;			/* time at last adjustment (s)	*/
+ long time_adjust;
+ long time_next_adjust;
+ 
++unsigned long leap_second = TIME_OK;
++
+ /*
+  * this routine handles the overflow of the microsecond field
+  *
+@@ -785,8 +788,7 @@ static void second_overflow(void)
+ 			time_interpolator_update(-NSEC_PER_SEC);
+ 			time_state = TIME_OOP;
+ 			clock_was_set();
+-			printk(KERN_NOTICE "Clock: inserting leap second "
+-					"23:59:60 UTC\n");
++			leap_second = TIME_INS;
+ 		}
+ 		break;
+ 	case TIME_DEL:
+@@ -800,8 +802,7 @@ static void second_overflow(void)
+ 			time_interpolator_update(NSEC_PER_SEC);
+ 			time_state = TIME_WAIT;
+ 			clock_was_set();
+-			printk(KERN_NOTICE "Clock: deleting leap second "
+-					"23:59:59 UTC\n");
++			leap_second = TIME_DEL;
+ 		}
+ 		break;
+ 	case TIME_OOP:

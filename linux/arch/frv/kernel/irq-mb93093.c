@@ -1,6 +1,6 @@
 /* irq-mb93093.c: MB93093 FPGA interrupt handling
  *
- * Copyright (C) 2006 Red Hat, Inc. All Rights Reserved.
+ * Copyright (C) 2004 Red Hat, Inc. All Rights Reserved.
  * Written by David Howells (dhowells@redhat.com)
  *
  * This program is free software; you can redistribute it and/or
@@ -17,13 +17,14 @@
 #include <linux/interrupt.h>
 #include <linux/init.h>
 #include <linux/irq.h>
-#include <linux/bitops.h>
 
 #include <asm/io.h>
 #include <asm/system.h>
+#include <asm/bitops.h>
 #include <asm/delay.h>
 #include <asm/irq.h>
 #include <asm/irc-regs.h>
+#include <asm/irq-routing.h>
 
 #define __reg16(ADDR) (*(volatile unsigned short *)(__region_CS2 + (ADDR)))
 
@@ -32,101 +33,66 @@
 #define __get_IFR()	({ __reg16(0x02); })
 #define __clr_IFR(M)	do { __reg16(0x02) = ~(M); wmb(); } while(0)
 
+static void frv_fpga_doirq(struct irq_source *source);
+static void frv_fpga_control(struct irq_group *group, int irq, int on);
+
+/*****************************************************************************/
 /*
- * off-CPU FPGA PIC operations
+ * FPGA IRQ multiplexor
  */
-static void frv_fpga_mask(unsigned int irq)
-{
-	uint16_t imr = __get_IMR();
+static struct irq_source frv_fpga[4] = {
+#define __FPGA(X, M)					\
+	[X] = {						\
+		.muxname	= "fpga."#X,		\
+		.irqmask	= M,			\
+		.doirq		= frv_fpga_doirq,	\
+	}
 
-	imr |= 1 << (irq - IRQ_BASE_FPGA);
-	__set_IMR(imr);
-}
-
-static void frv_fpga_ack(unsigned int irq)
-{
-	__clr_IFR(1 << (irq - IRQ_BASE_FPGA));
-}
-
-static void frv_fpga_mask_ack(unsigned int irq)
-{
-	uint16_t imr = __get_IMR();
-
-	imr |= 1 << (irq - IRQ_BASE_FPGA);
-	__set_IMR(imr);
-
-	__clr_IFR(1 << (irq - IRQ_BASE_FPGA));
-}
-
-static void frv_fpga_unmask(unsigned int irq)
-{
-	uint16_t imr = __get_IMR();
-
-	imr &= ~(1 << (irq - IRQ_BASE_FPGA));
-
-	__set_IMR(imr);
-}
-
-static struct irq_chip frv_fpga_pic = {
-	.name		= "mb93093",
-	.ack		= frv_fpga_ack,
-	.mask		= frv_fpga_mask,
-	.mask_ack	= frv_fpga_mask_ack,
-	.unmask		= frv_fpga_unmask,
-	.end		= frv_fpga_end,
+	__FPGA(0, 0x0700),
 };
 
-/*
- * FPGA PIC interrupt handler
- */
-static irqreturn_t fpga_interrupt(int irq, void *_mask)
+static struct irq_group frv_fpga_irqs = {
+	.first_irq	= IRQ_BASE_FPGA,
+	.control	= frv_fpga_control,
+	.sources = {
+		[ 8] = &frv_fpga[0],
+		[ 9] = &frv_fpga[0],
+		[10] = &frv_fpga[0],
+	},
+};
+
+
+static void frv_fpga_control(struct irq_group *group, int index, int on)
 {
-	uint16_t imr, mask = (unsigned long) _mask;
+	uint16_t imr = __get_IMR();
+
+	if (on)
+		imr &= ~(1 << index);
+	else
+		imr |= 1 << index;
+
+	__set_IMR(imr);
+}
+
+static void frv_fpga_doirq(struct irq_source *source)
+{
+	uint16_t mask, imr;
 
 	imr = __get_IMR();
-	mask = mask & ~imr & __get_IFR();
-
-	/* poll all the triggered IRQs */
-	while (mask) {
-		int irq;
-
-		asm("scan %1,gr0,%0" : "=r"(irq) : "r"(mask));
-		irq = 31 - irq;
-		mask &= ~(1 << irq);
-
-		generic_irq_handle(IRQ_BASE_FPGA + irq);
+	mask = source->irqmask & ~imr & __get_IFR();
+	if (mask) {
+		__set_IMR(imr | mask);
+		__clr_IFR(mask);
+		distribute_irqs(&frv_fpga_irqs, mask);
+		__set_IMR(imr);
 	}
-
-	return IRQ_HANDLED;
 }
 
-/*
- * define an interrupt action for each FPGA PIC output
- * - use dev_id to indicate the FPGA PIC input to output mappings
- */
-static struct irqaction fpga_irq[1]  = {
-	[0] = {
-		.handler	= fpga_interrupt,
-		.flags		= IRQF_DISABLED,
-		.name		= "fpga.0",
-		.dev_id		= (void *) 0x0700UL,
-	}
-};
-
-/*
- * initialise the motherboard FPGA's PIC
- */
 void __init fpga_init(void)
 {
-	int irq;
-
-	/* all PIC inputs are all set to be edge triggered */
 	__set_IMR(0x0700);
 	__clr_IFR(0x0000);
 
-	for (irq = IRQ_BASE_FPGA + 8; irq <= IRQ_BASE_FPGA + 10; irq++)
-		set_irq_chip_and_handler(irq, &frv_fpga_pic, handle_edge_irq);
-
-	/* the FPGA drives external IRQ input #2 on the CPU PIC */
-	setup_irq(IRQ_CPU_EXTERNAL2, &fpga_irq[0]);
+	frv_irq_route_external(&frv_fpga[0], IRQ_CPU_EXTERNAL2);
+	frv_irq_set_group(&frv_fpga_irqs);
 }

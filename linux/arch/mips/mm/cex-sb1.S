@@ -34,6 +34,8 @@
 	 * is changed.
 	 */
 
+        __INIT
+
 	.set	mips64
 	.set	noreorder
 	.set	noat
@@ -48,8 +50,6 @@
 	 * since the final 16 bytes of the exception vector memory
 	 * (0x170-0x17f) are used to preserve k0, k1, and ra.
 	 */
-
-	__CPUINIT
 
 LEAF(except_vec2_sb1)
 	/*

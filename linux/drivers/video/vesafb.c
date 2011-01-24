@@ -47,16 +47,17 @@ static struct fb_fix_screeninfo vesafb_fix __initdata = {
 	.accel	= FB_ACCEL_NONE,
 };
 
-static int   inverse    __read_mostly;
-static int   mtrr       __read_mostly;		/* disable mtrr */
-static int   vram_remap __initdata;		/* Set amount of memory to be used */
-static int   vram_total __initdata;		/* Set total amount of memory */
-static int   pmi_setpal __read_mostly = 1;	/* pmi for palette changes ??? */
-static int   ypan       __read_mostly;		/* 0..nothing, 1..ypan, 2..ywrap */
-static void  (*pmi_start)(void) __read_mostly;
-static void  (*pmi_pal)  (void) __read_mostly;
-static int   depth      __read_mostly;
-static int   vga_compat __read_mostly;
+static int             inverse   = 0;
+static int             mtrr      = 0; /* disable mtrr */
+static int	       vram_remap __initdata = 0; /* Set amount of memory to be used */
+static int	       vram_total __initdata = 0; /* Set total amount of memory */
+static int             pmi_setpal = 1;	/* pmi for palette changes ??? */
+static int             ypan       = 0;  /* 0..nothing, 1..ypan, 2..ywrap */
+static unsigned short  *pmi_base  = NULL;
+static void            (*pmi_start)(void);
+static void            (*pmi_pal)(void);
+static int             depth;
+static int             vga_compat;
 /* --------------------------------------------------------------------- */
 
 static int vesafb_pan_display(struct fb_var_screeninfo *var,
@@ -174,17 +175,8 @@ static int vesafb_setcolreg(unsigned regno, unsigned red, unsigned green,
 	return err;
 }
 
-static void vesafb_destroy(struct fb_info *info)
-{
-	if (info->screen_base)
-		iounmap(info->screen_base);
-	release_mem_region(info->aperture_base, info->aperture_size);
-	framebuffer_release(info);
-}
-
 static struct fb_ops vesafb_ops = {
 	.owner		= THIS_MODULE,
-	.fb_destroy     = vesafb_destroy,
 	.fb_setcolreg	= vesafb_setcolreg,
 	.fb_pan_display	= vesafb_pan_display,
 	.fb_fillrect	= cfb_fillrect,
@@ -295,10 +287,6 @@ static int __init vesafb_probe(struct platform_device *dev)
 	info->pseudo_palette = info->par;
 	info->par = NULL;
 
-	/* set vesafb aperture size for generic probing */
-	info->aperture_base = screen_info.lfb_base;
-	info->aperture_size = size_total;
-
 	info->screen_base = ioremap(vesafb_fix.smem_start, vesafb_fix.smem_len);
 	if (!info->screen_base) {
 		printk(KERN_ERR
@@ -324,7 +312,6 @@ static int __init vesafb_probe(struct platform_device *dev)
 		ypan = pmi_setpal = 0; /* not available or some DOS TSR ... */
 
 	if (ypan || pmi_setpal) {
-		unsigned short *pmi_base;
 		pmi_base  = (unsigned short*)phys_to_virt(((unsigned long)screen_info.vesapm_seg << 4) + screen_info.vesapm_off);
 		pmi_start = (void*)((char*)pmi_base + pmi_base[1]);
 		pmi_pal   = (void*)((char*)pmi_base + pmi_base[2]);
@@ -450,8 +437,8 @@ static int __init vesafb_probe(struct platform_device *dev)
 	info->fbops = &vesafb_ops;
 	info->var = vesafb_defined;
 	info->fix = vesafb_fix;
-	info->flags = FBINFO_FLAG_DEFAULT | FBINFO_MISC_FIRMWARE |
-		(ypan ? FBINFO_HWACCEL_YPAN : 0);
+	info->flags = FBINFO_FLAG_DEFAULT |
+		(ypan) ? FBINFO_HWACCEL_YPAN : 0;
 
 	if (!ypan)
 		info->fbops->fb_pan_display = NULL;
@@ -469,8 +456,6 @@ static int __init vesafb_probe(struct platform_device *dev)
 	       info->node, info->fix.id);
 	return 0;
 err:
-	if (info->screen_base)
-		iounmap(info->screen_base);
 	framebuffer_release(info);
 	release_mem_region(vesafb_fix.smem_start, size_total);
 	return err;

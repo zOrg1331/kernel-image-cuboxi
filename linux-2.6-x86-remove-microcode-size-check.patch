@@ -1,0 +1,61 @@
+From: Geoff Gustafson <grgustaf@redhat.com>
+Subject: [RHEL5 PATCH] remove microcode size check (bz 209455, 214798)
+Date: Thu, 09 Nov 2006 10:55:43 -0500
+Bugzilla: 214798
+Message-Id: <45534F7F.5070902@redhat.com>
+Changelog: remove microcode size check for i386
+
+
+This patch was posted to IT by Intel to remove a size check that 
+prevents the latest microcode update package (v1.15) from being loaded. 
+It was overlooked, and probably there should be a separate bz for the 
+kernel work vs. microcode_ctl, so I just opened 214798.
+
+The patch is upstream here:
+http://www.kernel.org/git/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=bd8e39f9e4c0960541c8c69e1f7cb321574d7c90 
+
+
+I have tested with kernel-2.6.18-1.2745.el5 on a Core 2 Duo desktop. 
+Without the patch, doing "service microcode_ctl start" with microcode 
+package 1.13 works, but 1.15 doesn't. With the patch, both work.
+
+Microcode 1.15 contains updates for Intel's latest CPUs.
+
+- Geoff
+
+
+
+Index: linux-2.6.17.x86_64/arch/i386/kernel/microcode.c
+===================================================================
+--- linux-2.6.17.x86_64.orig/arch/i386/kernel/microcode.c	2006-09-13 13:12:33.000000000 +0800
++++ linux-2.6.17.x86_64/arch/i386/kernel/microcode.c	2006-09-13 13:22:19.000000000 +0800
+@@ -250,14 +250,14 @@ static int find_matching_ucodes (void) 
+ 		}
+ 
+ 		total_size = get_totalsize(&mc_header);
+-		if ((cursor + total_size > user_buffer_size) || (total_size < DEFAULT_UCODE_TOTALSIZE)) {
++		if (cursor + total_size > user_buffer_size) {
+ 			printk(KERN_ERR "microcode: error! Bad data in microcode data file\n");
+ 			error = -EINVAL;
+ 			goto out;
+ 		}
+ 
+ 		data_size = get_datasize(&mc_header);
+-		if ((data_size + MC_HEADER_SIZE > total_size) || (data_size < DEFAULT_UCODE_DATASIZE)) {
++		if (data_size + MC_HEADER_SIZE > total_size) {
+ 			printk(KERN_ERR "microcode: error! Bad data in microcode data file\n");
+ 			error = -EINVAL;
+ 			goto out;
+@@ -460,11 +460,6 @@ static ssize_t microcode_write (struct f
+ {
+ 	ssize_t ret;
+ 
+-	if (len < DEFAULT_UCODE_TOTALSIZE) {
+-		printk(KERN_ERR "microcode: not enough data\n"); 
+-		return -EINVAL;
+-	}
+-
+ 	if ((len >> PAGE_SHIFT) > num_physpages) {
+ 		printk(KERN_ERR "microcode: too much data (max %ld pages)\n", num_physpages);
+ 		return -EINVAL;
+

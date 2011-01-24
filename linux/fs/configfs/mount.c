@@ -38,10 +38,10 @@
 
 struct vfsmount * configfs_mount = NULL;
 struct super_block * configfs_sb = NULL;
-struct kmem_cache *configfs_dir_cachep;
+kmem_cache_t *configfs_dir_cachep;
 static int configfs_mnt_count = 0;
 
-static const struct super_operations configfs_ops = {
+static struct super_operations configfs_ops = {
 	.statfs		= simple_statfs,
 	.drop_inode	= generic_delete_inode,
 };
@@ -84,7 +84,7 @@ static int configfs_fill_super(struct super_block *sb, void *data, int silent)
 		inode->i_op = &configfs_dir_inode_operations;
 		inode->i_fop = &configfs_dir_operations;
 		/* directory inodes start off with i_nlink == 2 (for "." entry) */
-		inc_nlink(inode);
+		inode->i_nlink++;
 	} else {
 		pr_debug("configfs: could not get root inode\n");
 		return -ENOMEM;
@@ -92,7 +92,7 @@ static int configfs_fill_super(struct super_block *sb, void *data, int silent)
 
 	root = d_alloc_root(inode);
 	if (!root) {
-		pr_debug("%s: could not get root dentry!\n",__func__);
+		pr_debug("%s: could not get root dentry!\n",__FUNCTION__);
 		iput(inode);
 		return -ENOMEM;
 	}
@@ -128,7 +128,7 @@ void configfs_release_fs(void)
 }
 
 
-static struct kobject *config_kobj;
+static decl_subsys(config, NULL, NULL);
 
 static int __init configfs_init(void)
 {
@@ -136,12 +136,13 @@ static int __init configfs_init(void)
 
 	configfs_dir_cachep = kmem_cache_create("configfs_dir_cache",
 						sizeof(struct configfs_dirent),
-						0, 0, NULL);
+						0, 0, NULL, NULL);
 	if (!configfs_dir_cachep)
 		goto out;
 
-	config_kobj = kobject_create_and_add("config", kernel_kobj);
-	if (!config_kobj) {
+	kset_set_kset_s(&config_subsys, kernel_subsys);
+	err = subsystem_register(&config_subsys);
+	if (err) {
 		kmem_cache_destroy(configfs_dir_cachep);
 		configfs_dir_cachep = NULL;
 		goto out;
@@ -150,19 +151,11 @@ static int __init configfs_init(void)
 	err = register_filesystem(&configfs_fs_type);
 	if (err) {
 		printk(KERN_ERR "configfs: Unable to register filesystem!\n");
-		kobject_put(config_kobj);
+		subsystem_unregister(&config_subsys);
 		kmem_cache_destroy(configfs_dir_cachep);
 		configfs_dir_cachep = NULL;
-		goto out;
 	}
 
-	err = configfs_inode_init();
-	if (err) {
-		unregister_filesystem(&configfs_fs_type);
-		kobject_put(config_kobj);
-		kmem_cache_destroy(configfs_dir_cachep);
-		configfs_dir_cachep = NULL;
-	}
 out:
 	return err;
 }
@@ -170,10 +163,9 @@ out:
 static void __exit configfs_exit(void)
 {
 	unregister_filesystem(&configfs_fs_type);
-	kobject_put(config_kobj);
+	subsystem_unregister(&config_subsys);
 	kmem_cache_destroy(configfs_dir_cachep);
 	configfs_dir_cachep = NULL;
-	configfs_inode_exit();
 }
 
 MODULE_AUTHOR("Oracle");

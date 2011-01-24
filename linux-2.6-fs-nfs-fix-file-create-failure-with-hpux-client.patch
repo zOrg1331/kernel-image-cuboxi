@@ -1,0 +1,115 @@
+From: Jeff Layton <jlayton@redhat.com>
+Date: Mon, 26 Jul 2010 11:15:55 -0400
+Subject: [fs] nfs: fix file create failure with HPUX client
+Message-id: <1280142955-8734-1-git-send-email-jlayton@redhat.com>
+Patchwork-id: 27091
+O-Subject: [RHEL5.6 PATCH] BZ#605720: nfsd(v2/v3): fix the failure of creation
+	from HPUX client
+Bugzilla: 605720
+RH-Acked-by: Steve Dickson <SteveD@redhat.com>
+
+From: wengang wang <wen.gang.wang@oracle.com>
+
+I'm not aware of any customers having reported this problem, but Oracle
+is apparently carrying a patch for OEL to fix this problem. The problem
+is apparently that the HPUX NFS client sets the mode of the file oddly
+on create. nfsd then attempts to do a follow on setattr to truncate the
+file, but that fails on some filesystems because of the mode.
+
+This patch fixes this by making the server skip the truncate if we're
+setting the size to zero and it was just created by nfsd. I don't have a
+client that behaves like this, but I've tested this patch from RHEL
+clients and it seems to be OK.
+
+The OEL patch for this seems to be based on an earlier version submitted
+by Wengang, but this one more closely matches what finally went
+upstream.
+
+Original patch description follows:
+
+-------------------------------[snip]----------------------------
+
+sometimes HPUX nfs client sends a create request to linux nfs server(v2/v3).
+the dump of the request is like:
+    obj_attributes
+        mode: value follows
+            set_it: value follows (1)
+            mode: 00
+        uid: no value
+            set_it: no value (0)
+        gid: value follows
+            set_it: value follows (1)
+            gid: 8030
+        size: value follows
+            set_it: value follows (1)
+            size: 0
+        atime: don't change
+            set_it: don't change (0)
+        mtime: don't change
+            set_it: don't change (0)
+
+note that mode is 00(havs no rwx privilege even for the owner) and it requires
+to set size to 0.
+
+as current nfsd(v2/v3) implementation, the server does mainly 2 steps:
+1) creates the file in mode specified by calling vfs_create().
+2) sets attributes for the file by calling nfsd_setattr().
+
+at step 2), it finally calls file system specific setattr() function which may
+fail when checking permission because changing size needs WRITE privilege but
+it has none since mode is 000.
+
+for this case, a new file created, we may simply ignore the request of
+setting size to 0, so that WRITE privilege is not needed and the open
+succeeds.
+
+Signed-off-by: Wengang Wang <wen.gang.wang@oracle.com>
+--
+ vfs.c |   19 +++++++++++++++++++
+ 1 file changed, 19 insertions(+)
+Signed-off-by: J. Bruce Fields <bfields@citi.umich.edu>
+
+diff --git a/fs/nfsd/vfs.c b/fs/nfsd/vfs.c
+index 9f636e2..bc4c754 100644
+--- a/fs/nfsd/vfs.c
++++ b/fs/nfsd/vfs.c
+@@ -1115,6 +1115,21 @@ nfsd_commit(struct svc_rqst *rqstp, struct svc_fh *fhp,
+ }
+ #endif /* CONFIG_NFSD_V3 */
+ 
++/* HPUX client sometimes creates a file in mode 000, and sets size to 0.
++ * setting size to 0 may fail for some specific file systems by the permission
++ * checking which requires WRITE permission but the mode is 000.
++ * we ignore the resizing(to 0) on the just new created file, since the size is
++ * 0 after file created.
++ *
++ * call this only after vfs_create() is called.
++ * */
++static void
++nfsd_check_ignore_resizing(struct iattr *iap)
++{
++	if ((iap->ia_valid & ATTR_SIZE) && (iap->ia_size == 0))
++		iap->ia_valid &= ~ATTR_SIZE;
++}
++
+ /*
+  * Create a file (regular, directory, device, fifo); UNIX sockets 
+  * not yet implemented.
+@@ -1197,6 +1212,8 @@ nfsd_create(struct svc_rqst *rqstp, struct svc_fh *fhp,
+ 	switch (type) {
+ 	case S_IFREG:
+ 		err = vfs_create(dirp, dchild, iap->ia_mode, NULL);
++		if (!err)
++			nfsd_check_ignore_resizing(iap);
+ 		break;
+ 	case S_IFDIR:
+ 		err = vfs_mkdir(dirp, dchild, iap->ia_mode);
+@@ -1350,6 +1367,8 @@ nfsd_create_v3(struct svc_rqst *rqstp, struct svc_fh *fhp,
+ 		/* setattr will sync the child (or not) */
+ 	}
+ 
++	nfsd_check_ignore_resizing(iap);
++
+ 	if (createmode == NFS3_CREATE_EXCLUSIVE) {
+ 		/* Cram the verifier into atime/mtime */
+ 		iap->ia_valid = ATTR_MTIME|ATTR_ATIME

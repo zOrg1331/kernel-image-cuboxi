@@ -1,0 +1,79 @@
+From: Hendrik Brueckner <brueckner@redhat.com>
+Date: Mon, 5 Jul 2010 10:48:49 -0400
+Subject: [s390] zfcp: fix reference counting on adisc
+Message-id: <20100705104848.GA26477@redhat.com>
+Patchwork-id: 26707
+O-Subject: [RHEL5.6 PATCH 1/1] [s390x] zfcp: fix reference counting on adisc
+Bugzilla: 610089
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+
+Description
+-----------
+Adapters and remote ports cannot be detached.
+Remote port reference counting within ADISC processing
+is not modified correctly.
+
+Adjust remote port reference counting according to ADISC
+request status.
+
+Bugzilla
+--------
+BZ 610089
+https://bugzilla.redhat.com/show_bug.cgi?id=610089
+
+Upstream status of the patch
+----------------------------
+The patch is upstream as of kernel version 2.6.27
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=9528539cc2d506aa232b0d93881ac4d19738752f
+
+Test status
+-----------
+The patch has been tested and fixes the problem.
+The fix has been verified by the IBM test department.
+
+
+diff --git a/drivers/s390/scsi/zfcp_erp.c b/drivers/s390/scsi/zfcp_erp.c
+index cfaf74c..8d7c761 100644
+--- a/drivers/s390/scsi/zfcp_erp.c
++++ b/drivers/s390/scsi/zfcp_erp.c
+@@ -438,21 +438,19 @@ zfcp_erp_adisc_handler(unsigned long data)
+  *
+  * Test status of a link to a remote port using the ELS command ADISC.
+  */
+-int
++void
+ zfcp_test_link(struct zfcp_port *port)
+ {
+ 	int retval;
+ 
+ 	zfcp_port_get(port);
+ 	retval = zfcp_erp_adisc(port);
+-	if (retval != 0 && retval != -EBUSY) {
+-		zfcp_port_put(port);
+-		retval = zfcp_erp_port_forced_reopen(port, 0, 65, 0);
+-		if (retval != 0)
+-			retval = -EPERM;
+-	}
++	if (retval == 0)
++		return;
+ 
+-	return retval;
++	zfcp_port_put(port);
++	if (retval != -EBUSY)
++		zfcp_erp_port_forced_reopen(port, 0, 65, NULL);
+ }
+ 
+ 
+diff --git a/drivers/s390/scsi/zfcp_ext.h b/drivers/s390/scsi/zfcp_ext.h
+index d59afb5..20b7320 100644
+--- a/drivers/s390/scsi/zfcp_ext.h
++++ b/drivers/s390/scsi/zfcp_ext.h
+@@ -159,7 +159,7 @@ extern int  zfcp_erp_thread_kill(struct zfcp_adapter *);
+ extern int  zfcp_erp_wait(struct zfcp_adapter *);
+ extern void zfcp_erp_async_handler(struct zfcp_erp_action *, unsigned long);
+ 
+-extern int  zfcp_test_link(struct zfcp_port *);
++extern void zfcp_test_link(struct zfcp_port *);
+ 
+ extern void zfcp_erp_port_boxed(struct zfcp_port *, u8 id, void *ref);
+ extern void zfcp_erp_unit_boxed(struct zfcp_unit *, u8 id, void *ref);

@@ -1,0 +1,71 @@
+From: Thomas Graf <tgraf@redhat.com>
+Date: Wed, 27 Feb 2008 13:23:15 +0100
+Subject: [misc] fix ALIGN macro
+Message-id: 20080227122315.GA9665@deb
+O-Subject: [RHEL 5.2 PATCH] BZ434940: Fix ALIGN() macro
+Bugzilla: 434940
+
+The hmac crypto algorithm fails to initialize properly due to a bug
+in the ALIGN() macro.
+
+This patch back ports the upstream fixes which prevents addresses
+from being truncated to `int' thus causing problems on 64bit platforms.
+
+Combined patch from commits:
+commit 4c8bd7eeee4c8f157fb61fb64b57500990b42e0e
+Author: David Miller <davem@davemloft.net>
+Date:   Fri Sep 22 22:31:36 2006 -0700
+
+    [KERNEL] Do not truncate to 'int' in ALIGN() macro.
+
+    Signed-off-by: David S. Miller <davem@davemloft.net>
+    Signed-off-by: Linus Torvalds <torvalds@osdl.org>
+
+commit 2ea5814472c3c910aed5c5b60f1f3b1000e353f1
+Author: Linus Torvalds <torvalds@woody.osdl.org>
+Date:   Sun Nov 26 19:05:22 2006 -0800
+
+    Fix 'ALIGN()' macro, take 2
+
+    You wouldn't think that doing an ALIGN() macro that aligns something up
+    to a power-of-two boundary would be likely to have bugs, would you?
+
+    But hey, in the wonderful world of mixing integer types, you have to be
+    careful.  This just makes sure that the alignment is interpreted in the
+    same type as the thing to be aligned.
+
+    Thanks to Roland Dreier, who noticed that the amso1100 driver got broken
+    by the previous fix (that just extended the mask to "unsigned long", but
+    was still broken in "unsigned long long" - it just happened to be the
+    same on 64-bit architectures).
+
+    See commit 4c8bd7eeee4c8f157fb61fb64b57500990b42e0e for the history of
+    bugs here...
+
+    Acked-by: Roland Dreier <rdreier@cisco.com>
+    Cc: Andrew Morton <akpm@osdl.org>
+    Cc: David Miller <davem@davemloft.net>
+    Cc: Al Viro <viro@zeniv.linux.org.uk>
+    Signed-off-by: Linus Torvalds <torvalds@osdl.org>
+
+Acked-by: Neil Horman <nhorman@redhat.com>
+Acked-by: "David S. Miller" <davem@redhat.com>
+Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+diff --git a/include/linux/kernel.h b/include/linux/kernel.h
+index f04d1af..ab8250f 100644
+--- a/include/linux/kernel.h
++++ b/include/linux/kernel.h
+@@ -31,8 +31,10 @@ extern const char linux_banner[];
+ 
+ #define STACK_MAGIC	0xdeadbeef
+ 
++#define ALIGN(x,a)		__ALIGN_MASK(x,(typeof(x))(a)-1)
++#define __ALIGN_MASK(x,mask)	(((x)+(mask))&~(mask))
++
+ #define ARRAY_SIZE(x) (sizeof(x) / sizeof((x)[0]))
+-#define ALIGN(x,a) (((x)+(a)-1)&~((a)-1))
+ #define FIELD_SIZEOF(t, f) (sizeof(((t*)0)->f))
+ #define DIV_ROUND_UP(n,d) (((n) + (d) - 1) / (d))
+ #define roundup(x, y) ((((x) + ((y) - 1)) / (y)) * (y))

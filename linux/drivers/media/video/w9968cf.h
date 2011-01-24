@@ -21,7 +21,7 @@
 #ifndef _W9968CF_H_
 #define _W9968CF_H_
 
-#include <linux/videodev2.h>
+#include <linux/videodev.h>
 #include <linux/usb.h>
 #include <linux/i2c.h>
 #include <linux/device.h>
@@ -33,7 +33,6 @@
 #include <linux/rwsem.h>
 #include <linux/mutex.h>
 
-#include <media/v4l2-device.h>
 #include <media/ovcamchip.h>
 
 #include "w9968cf_vpp.h"
@@ -43,6 +42,7 @@
  * Default values                                                           *
  ****************************************************************************/
 
+#define W9968CF_OVMOD_LOAD      1  /* automatic 'ovcamchip' module loading */
 #define W9968CF_VPPMOD_LOAD     1  /* automatic 'w9968cf-vpp' module loading */
 
 /* Comment/uncomment the following line to enable/disable debugging messages */
@@ -134,7 +134,7 @@ static const struct w9968cf_format w9968cf_formatlist[] = {
 
 #define W9968CF_MODULE_NAME     "V4L driver for W996[87]CF JPEG USB " \
 				"Dual Mode Camera Chip"
-#define W9968CF_MODULE_VERSION  "1:1.34-basic"
+#define W9968CF_MODULE_VERSION  "1:1.33-basic"
 #define W9968CF_MODULE_AUTHOR   "(C) 2002-2004 Luca Risolia"
 #define W9968CF_AUTHOR_EMAIL    "<luca.risolia@studio.unibo.it>"
 #define W9968CF_MODULE_LICENSE  "GPL"
@@ -195,9 +195,10 @@ enum w9968cf_vpp_flag {
 
 /* Main device driver structure */
 struct w9968cf_device {
+	struct device dev; /* device structure */
+
 	enum w9968cf_model_id id;   /* private device identifier */
 
-	struct v4l2_device v4l2_dev;
 	struct video_device* v4ldev; /* -> V4L structure */
 	struct list_head v4llist;    /* entry of the list of V4L cameras */
 
@@ -264,7 +265,7 @@ struct w9968cf_device {
 
 	/* I2C interface to kernel */
 	struct i2c_adapter i2c_adapter;
-	struct v4l2_subdev *sensor_sd;
+	struct i2c_client* sensor_client;
 
 	/* Locks */
 	struct mutex dev_mutex,    /* for probe, disconnect,open and close */
@@ -275,11 +276,6 @@ struct w9968cf_device {
 
 	char command[16]; /* name of the program holding the device */
 };
-
-static inline struct w9968cf_device *to_cam(struct v4l2_device *v4l2_dev)
-{
-	return container_of(v4l2_dev, struct w9968cf_device, v4l2_dev);
-}
 
 
 /****************************************************************************
@@ -295,14 +291,14 @@ static inline struct w9968cf_device *to_cam(struct v4l2_device *v4l2_dev)
 	if ( ((specific_debug) && (debug == (level))) ||                      \
 	     ((!specific_debug) && (debug >= (level))) ) {                    \
 		if ((level) == 1)                                             \
-			v4l2_err(&cam->v4l2_dev, fmt "\n", ## args);          \
+			dev_err(&cam->dev, fmt "\n", ## args);                \
 		else if ((level) == 2 || (level) == 3)                        \
-			v4l2_info(&cam->v4l2_dev, fmt "\n", ## args);         \
+			dev_info(&cam->dev, fmt "\n", ## args);               \
 		else if ((level) == 4)                                        \
-			v4l2_warn(&cam->v4l2_dev, fmt "\n", ## args);         \
+			dev_warn(&cam->dev, fmt "\n", ## args);               \
 		else if ((level) >= 5)                                        \
-			v4l2_info(&cam->v4l2_dev, "[%s:%d] " fmt "\n",        \
-				 __func__, __LINE__ , ## args);               \
+			dev_info(&cam->dev, "[%s:%d] " fmt "\n",              \
+				 __FUNCTION__, __LINE__ , ## args);           \
 	}                                                                     \
 }
 /* For generic kernel (not device specific) messages */
@@ -313,7 +309,7 @@ static inline struct w9968cf_device *to_cam(struct v4l2_device *v4l2_dev)
 		if ((level) >= 1 && (level) <= 4)                             \
 			pr_info("w9968cf: " fmt "\n", ## args);               \
 		else if ((level) >= 5)                                        \
-			pr_debug("w9968cf: [%s:%d] " fmt "\n", __func__,  \
+			pr_debug("w9968cf: [%s:%d] " fmt "\n", __FUNCTION__,  \
 				 __LINE__ , ## args);                         \
 	}                                                                     \
 }
@@ -325,7 +321,7 @@ static inline struct w9968cf_device *to_cam(struct v4l2_device *v4l2_dev)
 
 #undef PDBG
 #define PDBG(fmt, args...)                                                    \
-v4l2_info(&cam->v4l2_dev, "[%s:%d] " fmt "\n", __func__, __LINE__ , ## args);
+dev_info(&cam->dev, "[%s:%d] " fmt "\n", __FUNCTION__, __LINE__ , ## args);
 
 #undef PDBGG
 #define PDBGG(fmt, args...) do {;} while(0); /* nothing: it's a placeholder */

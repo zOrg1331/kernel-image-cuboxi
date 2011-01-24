@@ -1,0 +1,58 @@
+From: Mike Christie <mchristi@redhat.com>
+Date: Thu, 16 Sep 2010 01:27:59 -0400
+Subject: [scsi] log msg when getting Unit Attention
+Message-id: <1284600479-7762-1-git-send-email-mchristi@redhat.com>
+Patchwork-id: 28250
+O-Subject: [PATCH RHEL 5.6]: scsi: log msg when getting Unit Attention
+Bugzilla: 585431
+RH-Acked-by: Rob Evers <revers@redhat.com>
+RH-Acked-by: Tomas Henzl <thenzl@redhat.com>
+
+From: Mike Christie <mchristi@redhat.com>
+
+This is for bz 585431.
+
+>From the upstream commit:
+http://git.kernel.org/?p=linux/kernel/git/jejb/scsi-misc-2.6.git;a=commitdiff;h=6e49949c5e9e04d64e16df3723dd3f5bd25a29e2;hp=3e84beba608dee5a7c7711a3503eb2f335c78fca
+
+	If the user accidentally changes LUN mappings or it occurs
+	due to a bug, then it can cause data corruption that can take
+	months and months to track down. This patch adds a log
+	message when getting REPORT_LUNS_DATA_CHANGED and it adds
+	a generic message for other Unit Attentions with asc == 0x3f.
+
+	We are working on adding support for handling of these errors,
+	but I think until then we should at least log a message so
+	tracking down problems as a result of one of these changes
+	is a little easier.
+
+I have tested the patch by adding, removing and resizing luns with the
+netapp target sim which will cause the target to send a Unit Attentions
+with with the codes below.
+
+
+diff --git a/drivers/scsi/scsi_error.c b/drivers/scsi/scsi_error.c
+index b769b29..9563693 100644
+--- a/drivers/scsi/scsi_error.c
++++ b/drivers/scsi/scsi_error.c
+@@ -374,6 +374,20 @@ static int scsi_check_sense(struct scsi_cmnd *scmd)
+ 		if (scmd->device->allow_restart &&
+ 		    (sshdr.asc == 0x04) && (sshdr.ascq == 0x02))
+ 			return SCSI_MLQUEUE_DIS_FAIL;
++
++		if (sshdr.asc == 0x3f && sshdr.ascq == 0x0e)
++			scmd_printk(KERN_WARNING, scmd,
++				    "Warning! Received an indication that the "
++				    "LUN assignments on this target have "
++				    "changed. The Linux SCSI layer does not "
++				    "automatically remap LUN assignments.\n");
++		else if (sshdr.asc == 0x3f)
++			scmd_printk(KERN_WARNING, scmd,
++				    "Warning! Received an indication that the "
++				    "operating parameters on this target have "
++				    "changed. The Linux SCSI layer does not "
++				    "automatically adjust these parameters.\n");
++
+ 		return SCSI_MLQUEUE_DIS_FINISH;
+ 
+ 		/* these three are not supported */

@@ -1,0 +1,47 @@
+From: David Milburn <dmilburn@redhat.com>
+Date: Fri, 14 Nov 2008 06:46:03 -0600
+Subject: [libata] avoid overflow in ata_tf_read_block
+Message-id: 20081114124603.GA29050@dhcp-210.hsv.redhat.com
+O-Subject: [RHEL5.3 PATCH] libata: avoid overflow in ata_tf_read_block()
+Bugzilla: 471576
+RH-Acked-by: John Feeney <jfeeney@redhat.com>
+
+This patch fixes another possible overflow when
+using large disks, it was recently posted to lkml,
+I have only compile tested, please ACK.
+
+http://marc.info/?l=linux-kernel&m=122582386909461&w=2
+
+Thanks,
+David
+
+commit 44901a96847b9967c057832b185e2f34ee6a14e5
+Author: Roland Dreier <rdreier@cisco.com>
+Date:   Tue Nov 4 10:34:48 2008 -0800
+
+    libata: Avoid overflow in ata_tf_read_block() when tf->hba_lbal > 127
+
+    Phillip O'Donnell <phillip.odonnell@gmail.com> pointed out that the same
+    sign extension bug that was fixed in commit ba14a9c2 ("libata: Avoid
+    overflow in ata_tf_to_lba48() when tf->hba_lbal > 127") also appears to
+    exist in ata_tf_read_block().  Fix this by adding a cast to u64.
+
+    Signed-off-by: Roland Dreier <rolandd@cisco.com>
+    Signed-off-by: Jeff Garzik <jgarzik@redhat.com>
+
+ drivers/ata/libata-core.c |    2 +-
+ 1 files changed, 1 insertions(+), 1 deletions(-)
+
+diff --git a/drivers/ata/libata-core.c b/drivers/ata/libata-core.c
+index 2f46fcd..252e7dc 100644
+--- a/drivers/ata/libata-core.c
++++ b/drivers/ata/libata-core.c
+@@ -541,7 +541,7 @@ u64 ata_tf_read_block(struct ata_taskfile *tf, struct ata_device *dev)
+ 		if (tf->flags & ATA_TFLAG_LBA48) {
+ 			block |= (u64)tf->hob_lbah << 40;
+ 			block |= (u64)tf->hob_lbam << 32;
+-			block |= tf->hob_lbal << 24;
++			block |= (u64)tf->hob_lbal << 24;
+ 		} else
+ 			block |= (tf->device & 0xf) << 24;
+ 

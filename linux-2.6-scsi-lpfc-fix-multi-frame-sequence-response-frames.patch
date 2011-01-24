@@ -1,0 +1,29 @@
+From: Rob Evers <revers@redhat.com>
+Date: Mon, 4 Jan 2010 22:52:13 -0500
+Subject: [scsi] lpfc: Fix multi-frame sequence response frames
+Message-id: <20100104225219.24386.43326.sendpatchset@localhost.localdomain>
+Patchwork-id: 22301
+O-Subject: [RHEL5.5 PATCH 9/18] Fix multi-frame sequence response frames go to
+	wrong DID (CR: 96915)
+Bugzilla: 549763
+RH-Acked-by: Tomas Henzl <thenzl@redhat.com>
+RH-Acked-by: Mike Christie <mchristi@redhat.com>
+
+https://bugzilla.redhat.com/show_bug.cgi?id=549763
+
+Fix multi-frame sequence response frames go to wrong DID (CR: 96915)
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/scsi/lpfc/lpfc_sli.c b/drivers/scsi/lpfc/lpfc_sli.c
+index b19e1ea..07033e9 100644
+--- a/drivers/scsi/lpfc/lpfc_sli.c
++++ b/drivers/scsi/lpfc/lpfc_sli.c
+@@ -5910,7 +5910,6 @@ lpfc_sli4_iocb2wqe(struct lpfc_hba *phba, struct lpfc_iocbq *iocbq,
+ 					iocbq->iocb.un.ulpWord[3]);
+ 		wqe->generic.word3 = 0;
+ 		bf_set(wqe_rcvoxid, &wqe->generic, iocbq->iocb.ulpContext);
+-		bf_set(wqe_xc, &wqe->generic, 1);
+ 		/* The entire sequence is transmitted for this IOCB */
+ 		xmit_len = total_len;
+ 		cmnd = CMD_XMIT_SEQUENCE64_CR;

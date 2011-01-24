@@ -4,11 +4,10 @@
 # create a compressed vmlinux image from the original vmlinux
 #
 
-targets		:= vmlinux vmlinux.bin vmlinux.bin.gz \
-		   vmlinux.bin.bz2 vmlinux.bin.lzma \
-		   head_$(BITS).o misc.o piggy.o
+targets		:= vmlinux vmlinux.bin vmlinux.bin.gz head.o misc.o piggy.o
+EXTRA_AFLAGS	:= -traditional
 
-OBJECTS = $(obj)/head_$(BITS).o $(obj)/misc.o $(obj)/cache.o
+OBJECTS = $(obj)/head.o $(obj)/misc.o
 
 ifdef CONFIG_SH_STANDARD_BIOS
 OBJECTS += $(obj)/../../kernel/sh_bios.o
@@ -16,41 +15,27 @@ endif
 
 #
 # IMAGE_OFFSET is the load offset of the compression loader
+# Assign dummy values if these 2 variables are not defined,
+# in order to suppress error message.
 #
-IMAGE_OFFSET	:= $(shell /bin/bash -c 'printf "0x%08x" \
-		     $$[$(CONFIG_PAGE_OFFSET)  + \
-			$(KERNEL_MEMORY) + \
-			$(CONFIG_BOOT_LINK_OFFSET)]')
+CONFIG_MEMORY_START     ?= 0x0c000000
+CONFIG_BOOT_LINK_OFFSET ?= 0x00800000
+IMAGE_OFFSET := $(shell printf "0x%8x" $$[0x80000000+$(CONFIG_MEMORY_START)+$(CONFIG_BOOT_LINK_OFFSET)])
 
-LIBGCC	:= $(shell $(CC) $(KBUILD_CFLAGS) -print-libgcc-file-name)
+LDFLAGS_vmlinux := -Ttext $(IMAGE_OFFSET) -e startup -T $(obj)/../../kernel/vmlinux.lds
 
-ifeq ($(CONFIG_MCOUNT),y)
-ORIG_CFLAGS := $(KBUILD_CFLAGS)
-KBUILD_CFLAGS = $(subst -pg, , $(ORIG_CFLAGS))
-endif
-
-LDFLAGS_vmlinux := --oformat $(ld-bfd) -Ttext $(IMAGE_OFFSET) -e startup \
-		   -T $(obj)/../../kernel/vmlinux.lds
-
-$(obj)/vmlinux: $(OBJECTS) $(obj)/piggy.o $(LIBGCC) FORCE
+$(obj)/vmlinux: $(OBJECTS) $(obj)/piggy.o FORCE
 	$(call if_changed,ld)
 	@:
 
 $(obj)/vmlinux.bin: vmlinux FORCE
 	$(call if_changed,objcopy)
 
-vmlinux.bin.all-y := $(obj)/vmlinux.bin
-
-$(obj)/vmlinux.bin.gz: $(vmlinux.bin.all-y) FORCE
+$(obj)/vmlinux.bin.gz: $(obj)/vmlinux.bin FORCE
 	$(call if_changed,gzip)
-$(obj)/vmlinux.bin.bz2: $(vmlinux.bin.all-y) FORCE
-	$(call if_changed,bzip2)
-$(obj)/vmlinux.bin.lzma: $(vmlinux.bin.all-y) FORCE
-	$(call if_changed,lzma)
 
+LDFLAGS_piggy.o := -r --format binary --oformat elf32-sh-linux -T
 OBJCOPYFLAGS += -R .empty_zero_page
 
-LDFLAGS_piggy.o := -r --format binary --oformat $(ld-bfd) -T
-
-$(obj)/piggy.o: $(obj)/vmlinux.scr $(obj)/vmlinux.bin.$(suffix-y) FORCE
+$(obj)/piggy.o: $(obj)/vmlinux.scr $(obj)/vmlinux.bin.gz FORCE
 	$(call if_changed,ld)

@@ -1,0 +1,363 @@
+From: Christopher Lalancette <clalance@redhat.com>
+Date: Wed, 4 Nov 2009 08:11:33 -0500
+Subject: [xen] whitespace fixups in xen scheduler
+Message-id: <4AF13735.10706@redhat.com>
+Patchwork-id: 21306
+O-Subject: [RHEL5.5 PATCH 1/3]: Fix up whitespace issues in Xen scheduler
+Bugzilla: 529271
+RH-Acked-by: Don Dutile <ddutile@redhat.com>
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+RH-Acked-by: Justin M. Forbes <jforbes@redhat.com>
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+
+I wouldn't normally do a whitespace patch for RHEL, but the hard-virt scheduler
+code is difficult to read because of the myriad whitespace issues in
+xen/common/sched_credit.c.  Fix these up.  No functional change.
+
+This helps solve BZ 529271
+
+diff --git a/common/sched_credit.c b/common/sched_credit.c
+index d0c3359..adf4515 100644
+--- a/common/sched_credit.c
++++ b/common/sched_credit.c
+@@ -50,7 +50,7 @@
+     (CSCHED_CREDITS_PER_TICK * CSCHED_TICKS_PER_ACCT)
+ 
+ /* opt_hardvirt: This enables the both the dom0 bypass and
+- * hard virt dom0.  By default these are disabled so as to 
++ * hard virt dom0.  By default these are disabled so as to
+  * keep behavior as expected for workloads running on an
+  * existing dom0.
+  */
+@@ -340,7 +340,6 @@ __runq_insert(unsigned int cpu, struct csched_vcpu *svc)
+             if ( svc->pri == iter_svc->pri && credit < (CSCHED_CREDITS_PER_TSLICE/2) )
+                 break;
+         }
+-                                                                                                                             
+     }
+     else
+     {
+@@ -361,10 +360,10 @@ __runq_insert_special(unsigned int cpu, struct csched_vcpu *svc)
+     const struct list_head * const runq = RUNQ(cpu);
+     struct list_head *iter;
+     int new_credit, credit;
+-                                                                                                                             
++
+     BUG_ON( __vcpu_on_runq(svc) );
+     BUG_ON( cpu != svc->vcpu->processor );
+-                                                                                                                             
++
+     /* HV */
+     if (svc->hard_virt_pcpu_state_change)
+     {
+@@ -381,23 +380,20 @@ __runq_insert_special(unsigned int cpu, struct csched_vcpu *svc)
+     }
+     if (svc->vcpu->domain->domain_id == 0)
+        NUMBER_DOM0_VCPUS_PRESENT(cpu)++;
+-                                                                                                                             
+-                                                                                                                             
++
+     new_credit = atomic_read(&svc->credit);
+-                                                                                                                             
+-                                                                                                                             
++
+     list_for_each( iter, runq )
+     {
+         const struct csched_vcpu * const iter_svc = __runq_elem(iter);
+-        if ( svc->pri > iter_svc->pri)
++        if ( svc->pri > iter_svc->pri )
+            break;
+         credit = atomic_read(&iter_svc->credit);
+         if ( (svc->pri == iter_svc->pri && new_credit >= credit))
+             break;
+     }
+-                                                                                                                             
++
+     list_add_tail(&svc->runq_elem, iter);
+-                                                                                                                             
+ }
+ 
+ static inline void
+@@ -409,7 +405,7 @@ __runq_remove(struct csched_vcpu *svc)
+     /* HV */
+     if (svc->vcpu->domain->domain_id == 0)
+         NUMBER_DOM0_VCPUS_PRESENT(svc->vcpu->processor)--;
+-                                                                                                                             
++
+     if (svc->hard_virt_pcpu_state_change)
+     {
+        svc->hard_virt_pcpu_state_change = 0;
+@@ -423,7 +419,6 @@ __runq_remove(struct csched_vcpu *svc)
+                svc->pri = CSCHED_PRI_TS_OVER;
+        }
+     }
+-                                                                                                                             
+ }
+ 
+ static inline void
+@@ -440,9 +435,10 @@ __runq_tickle(unsigned int cpu, struct csched_vcpu *new)
+     /* If strictly higher priority than current VCPU, signal the CPU */
+     newcredit = atomic_read(&new->credit);
+     curcredit = atomic_read(&cur->credit);
+-    /* HV   */
+-    if ((opt_hardvirt && new->vcpu->domain->domain_id == 0) || (new->pri > cur->pri ) ||
+-          (new->pri == cur->pri && newcredit > curcredit && newcredit > -(CSCHED_CREDITS_PER_TSLICE>>3)) )
++    /* HV */
++    if ((opt_hardvirt && new->vcpu->domain->domain_id == 0) ||
++	(new->pri > cur->pri) ||
++	(new->pri == cur->pri && newcredit > curcredit && newcredit > -(CSCHED_CREDITS_PER_TSLICE>>3)) )
+     {
+         if ( cur->pri == CSCHED_PRI_IDLE )
+             CSCHED_STAT_CRANK(tickle_local_idler);
+@@ -614,18 +610,18 @@ csched_cpu_pick(struct vcpu *vc)
+         }
+         else
+         {
+-            /* Hmm.. This is of questionable value.. 
++            /* Hmm.. This is of questionable value..
+              * There are many cases where Vcpus are better off
+              * being on the same socket due to effective L2 sharing
+-             * and low impact of cache bouncing. 
++             * and low impact of cache bouncing.
+              * In the absence of any other workload, moving the Vcpus
+              * to different cores will be useful transiently but when
+              * the system gets busy since there is no mechanism to assert
+              * socket level affinities, it will be a hit on the performance.
+              * NUMA smartness has also gone for a toss here.
+-             * 
+-             * Eventually we would want to allocate memory for Virts from 
+-             * local NUMA nodes in which case NUMA affinities need to 
++             *
++             * Eventually we would want to allocate memory for Virts from
++             * local NUMA nodes in which case NUMA affinities need to
+              * implemented by the scheduler and this section
+              * needs to be thrown out  */
+             ASSERT( !cpu_isset(nxt, cpu_core_map[cpu]) );
+@@ -708,7 +704,7 @@ csched_vcpu_acct(unsigned int cpu)
+      * Update credits
+      */
+     atomic_sub(CSCHED_CREDITS_PER_TICK, &svc->credit);
+-                                                                                                                             
++
+     if ( credit < CSCHED_CREDITS_PER_TICK && svc->pri ==CSCHED_PRI_TS_UNDER )
+     {
+          svc->pri = CSCHED_PRI_TS_OVER;
+@@ -761,7 +757,7 @@ csched_vcpu_init(struct vcpu *vc)
+ 
+     /* HV */
+     if (opt_hardvirt && vc->domain->domain_id == 0 && !is_idle_vcpu(vc))
+-	svc->pri = CSCHED_PRI_RR;        
++	svc->pri = CSCHED_PRI_RR;
+     svc->credit_real_incr = 0;
+     atomic_set(&svc->hard_virt_pcpu, 0); /* HV */
+     svc->hard_virt_pcpu_state_change = 0;
+@@ -863,13 +859,13 @@ static unsigned int find_vcpu_count(struct domain *d)
+         vcpu_count++;
+     return vcpu_count;
+ }
+-                                                                                                                             
++
+ /* HV - Only online pcpus are considered as valid HV target */
+ static unsigned int find_available_online_cpus(unsigned int max_cpus)
+ {
+     int cpu;
+     unsigned int pcpu_count=0;
+-                                                                                                                             
++
+     for_each_online_cpu ( cpu )
+        pcpu_count++;
+     return pcpu_count - total_hard_virts;
+@@ -896,11 +892,11 @@ csched_dom_cntl(
+     else
+     {
+         ASSERT(op->cmd == XEN_DOMCTL_SCHEDOP_putinfo);
+-                                                                                                                             
++
+         /* HV */
+         hard_virt = (op->u.credit.weight >> 15) & 0x1;
+         op->u.credit.weight &= 0x7fff;
+-                                                                                                                             
++
+         if (hard_virt != atomic_read(&d->hard_virt))
+         {
+            if (!hard_virt)
+@@ -925,13 +921,15 @@ csched_dom_cntl(
+                   printk("total_hard_virts less than 0!!\n");
+                   total_hard_virts = 0;
+                }
+-                                                                                                                             
+            }
+            else
+            {
+-               /* This will convert the virt into a hard-virt - If this fails, the entire operation fails */
+-                                                                                                                             
+-               /* Hard Virt conversion is made atomic with respect to hardvirt destruction code path using a spinlock  */
++               /* This will convert the virt into a hard-virt - If this fails,
++                * the entire operation fails
++                */
++               /* Hard Virt conversion is made atomic with respect to hardvirt
++                * destruction code path using a spinlock
++                */
+                printk("Creating Hard-Virt %u\n", d->domain_id);
+                if (sdom->cap != 0U)
+                {
+@@ -941,7 +939,7 @@ csched_dom_cntl(
+                {
+                    return -0xDEAD;
+                }
+-                                                                                                                             
++
+                spin_lock(&csched_priv.hard_virt_lock);
+                vcpus_in_domain = find_vcpu_count(d);
+                hard_cpus_available = find_available_online_cpus(vcpus_in_domain);
+@@ -968,10 +966,7 @@ csched_dom_cntl(
+                   total_hard_virts++;
+                }
+                spin_unlock(&csched_priv.hard_virt_lock);
+-                                                                                                                             
+-                                                                                                                             
+            }
+-                                                                                                                             
+         }
+ 
+         spin_lock_irqsave(&csched_priv.lock, flags);
+@@ -986,7 +981,7 @@ csched_dom_cntl(
+             sdom->weight = op->u.credit.weight;
+         }
+ 
+-        if ( op->u.credit.cap != (uint16_t)~0U &&  !atomic_read(&d->hard_virt))
++        if ( op->u.credit.cap != (uint16_t)~0U && !atomic_read(&d->hard_virt) )
+             sdom->cap = op->u.credit.cap;
+ 
+         spin_unlock_irqrestore(&csched_priv.lock, flags);
+@@ -1078,7 +1073,7 @@ csched_runq_sort(unsigned int cpu)
+ 
+     elem = runq->next;
+     last_under = runq;
+-                                                                                                                             
++
+     while ( elem != runq )
+     {
+         next = elem->next;
+@@ -1086,7 +1081,7 @@ csched_runq_sort(unsigned int cpu)
+         if (svc_elem->pri != CSCHED_PRI_TS_UNDER && svc_elem->pri != CSCHED_PRI_RR)
+             break;
+         credit = atomic_read (&svc_elem->credit);
+-                                                                                                                             
++
+         if ( credit >= CSCHED_CREDITS_PER_TSLICE/2 )
+         {
+             /* does elem need to move up the runq? */
+@@ -1097,14 +1092,14 @@ csched_runq_sort(unsigned int cpu)
+             }
+             last_under = elem;
+         }
+-                                                                                                                             
++
+         elem = next;
+     }
+     /* HV - TODO - This sucks - 3 scans !! - Old-fashioned bubble sort is
+           likely to be no worse in most cases - Consider a rewrite */
+     elem = runq->next;
+     last_under = runq;
+-                                                                                                                             
++
+     while ( elem != runq )
+     {
+         next = elem->next;
+@@ -1121,7 +1116,7 @@ csched_runq_sort(unsigned int cpu)
+             }
+             last_under = elem;
+         }
+-                                                                                                                             
++
+         elem = next;
+     }
+ 
+@@ -1261,7 +1256,7 @@ csched_acct(void)
+             credit = atomic_read(&svc->credit);
+             credit_prev = credit;
+             credit_real_incr = svc->credit_real_incr;
+- 
++
+             if (credit <= 0)
+                 credit += credit_fair;
+             else
+@@ -1495,7 +1490,7 @@ csched_load_balance(int cpu, struct csched_vcpu *snext, int credit)
+         if ( !spin_trylock(&per_cpu(schedule_data, peer_cpu).schedule_lock) )
+         {
+             CSCHED_STAT_CRANK(steal_trylock_failed);
+-	    lock_failure_flag = 1;
++            lock_failure_flag = 1;
+             continue;
+         }
+ 
+@@ -1507,7 +1502,7 @@ csched_load_balance(int cpu, struct csched_vcpu *snext, int credit)
+         if ( speer != NULL )
+             return speer;
+     }
+-   
++
+     if ( lock_failure_flag && snext->pri == CSCHED_PRI_IDLE && repeat_count > 1 )
+     {
+         lock_failure_flag = 0;
+@@ -1627,13 +1622,11 @@ csched_rr_load_balance(int cpu, struct csched_vcpu *snext)
+     return snext;
+ }
+ 
+-                                                                                                                            
+- 
+ static struct csched_vcpu * __runq_find_dom0_vcpu(int cpu)
+ {
+     const struct list_head * const runq = RUNQ(cpu);
+     struct list_head *iter;
+-                                                                                                                             
++
+     list_for_each( iter, runq )
+     {
+         struct csched_vcpu * iter_svc = __runq_elem(iter);
+@@ -1677,7 +1670,7 @@ csched_schedule(s_time_t now)
+     else
+         BUG_ON( is_idle_vcpu(current) || list_empty(runq) );
+ 
+-    if (opt_hardvirt &&  NUMBER_DOM0_VCPUS_PRESENT(cpu) > 0)
++    if (opt_hardvirt && NUMBER_DOM0_VCPUS_PRESENT(cpu) > 0)
+     {
+         snext = __runq_find_dom0_vcpu(cpu);
+         if (snext){
+@@ -1696,11 +1689,12 @@ csched_schedule(s_time_t now)
+      * urgent work... If not, csched_load_balance() will return snext, but
+      * already removed from the runq.
+      */
+-    /* HV - hard_virt_multiple might report false positive if a RR vcpu was put to sleep when
+-       it was in the runq or migrated off- Acceptable tradeoff for overhead of updating
+-       maps at sleep/wakeup points.
+-       Since hard_virt_multiple for self isn't updated at this point, there is a
+-       very small chance of false positive from self - HV */
++    /* HV - hard_virt_multiple might report false positive if a RR vcpu was
++     * put to sleep when it was in the runq or migrated off- Acceptable
++     * tradeoff for overhead of updating maps at sleep/wakeup points.
++     * Since hard_virt_multiple for self isn't updated at this point, there is
++     * a very small chance of false positive from self
++     */
+     if ( snext->pri < CSCHED_PRI_RR && !cpus_empty(csched_priv.hard_virt_multiple) )
+     {
+         CSCHED_STAT_CRANK(rt_imbalance);
+@@ -1710,7 +1704,7 @@ csched_schedule(s_time_t now)
+              goto dom0_bypass;
+         }
+     }
+-                                                                                                                             
++
+     credit = atomic_read(&snext->credit);
+     if ( snext->pri > CSCHED_PRI_TS_OVER && credit > (CSCHED_CREDITS_PER_TSLICE >> 2))
+         __runq_remove(snext);
+@@ -1806,7 +1800,7 @@ csched_dump_pcpu(int cpu)
+             spc->runq_sort_last,
+             cpu_sibling_map[cpu].bits[0],
+             cpu_core_map[cpu].bits[0],
+-	    NUMBER_DOM0_VCPUS_PRESENT(cpu));
++            NUMBER_DOM0_VCPUS_PRESENT(cpu));
+ 
+     /* current VCPU */
+     svc = CSCHED_VCPU(per_cpu(schedule_data, cpu).curr);

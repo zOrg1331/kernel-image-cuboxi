@@ -1,0 +1,12 @@
+diff -urpX nopatch linux-2.6.18-92.1.18.el5.028stab060.2/include/linux/security.h linux-2.6.18-92.1.18.el5.028stab060.2-ow0/include/linux/security.h
+--- linux-2.6.18-92.1.18.el5.028stab060.2/include/linux/security.h	2009-01-22 13:22:20 +0000
++++ linux-2.6.18-92.1.18.el5.028stab060.2-ow0/include/linux/security.h	2009-03-01 04:42:30 +0000
+@@ -2517,6 +2517,8 @@ static inline int security_file_mmap_add
+ 					   unsigned long addr,
+ 					   unsigned long addr_only)
+ {
++	if ((addr < mmap_min_addr) && !capable(CAP_SYS_RAWIO))
++		return -EACCES;
+ 	return 0;
+ }
+ 

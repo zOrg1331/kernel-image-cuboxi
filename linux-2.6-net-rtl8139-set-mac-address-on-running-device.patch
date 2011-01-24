@@ -1,0 +1,127 @@
+From: Jiri Pirko <jpirko@redhat.com>
+Date: Tue, 26 May 2009 11:03:03 +0200
+Subject: [net] rtl8139: set mac address on running device
+Message-id: 20090526090302.GA11147@psychotron.englab.brq.redhat.com
+O-Subject: [RHEL5.5 patch] BZ502491 net: rtl8139: allow to set mac address on running device
+Bugzilla: 502491
+RH-Acked-by: Ivan Vecera <ivecera@redhat.com>
+RH-Acked-by: Michal Schmidt <mschmidt@redhat.com>
+RH-Acked-by: Alexander Viro <aviro@redhat.com>
+RH-Acked-by: Jiri Olsa <jolsa@redhat.com>
+RH-Acked-by: David Miller <davem@redhat.com>
+
+[RHEL5.5 patch] BZ502491 net: rtl8139: allow to set mac address on running device
+
+BZ502491
+https://bugzilla.redhat.com/show_bug.cgi?id=502491
+
+Description:
+So far there was not a chance to set a mac address on running 8139too or
+8139cp device. This is for example needed when you want to use this NIC as a
+bonding slave in bonding device in mode balance-alb. This patch allows it.
+
+Upstream:
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=bda6a15a0d283d531b865fb7c596bb3ff258e87e
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=c048aaf4ca854fa67a3bfa9dab5b9ddc5083b3b7
+
+Brew:
+https://brewweb.devel.redhat.com/taskinfo?taskID=1813103
+
+Test:
+Booted and tested on x86_64.
+
+Jirka
+
+Signed-off-by: Jiri Pirko <jpirko@redhat.com>
+
+diff --git a/drivers/net/8139cp.c b/drivers/net/8139cp.c
+index 1428bb7..38cfafc 100644
+--- a/drivers/net/8139cp.c
++++ b/drivers/net/8139cp.c
+@@ -1601,6 +1601,28 @@ static int cp_ioctl (struct net_device *dev, struct ifreq *rq, int cmd)
+ 	return rc;
+ }
+ 
++static int cp_set_mac_address(struct net_device *dev, void *p)
++{
++	struct cp_private *cp = netdev_priv(dev);
++	struct sockaddr *addr = p;
++
++	if (!is_valid_ether_addr(addr->sa_data))
++		return -EADDRNOTAVAIL;
++
++	memcpy(dev->dev_addr, addr->sa_data, dev->addr_len);
++
++	spin_lock_irq(&cp->lock);
++
++	cpw8_f(Cfg9346, Cfg9346_Unlock);
++	cpw32_f(MAC0 + 0, le32_to_cpu (*(__le32 *) (dev->dev_addr + 0)));
++	cpw32_f(MAC0 + 4, le32_to_cpu (*(__le32 *) (dev->dev_addr + 4)));
++	cpw8_f(Cfg9346, Cfg9346_Lock);
++
++	spin_unlock_irq(&cp->lock);
++
++	return 0;
++}
++
+ /* Serial EEPROM section. */
+ 
+ /*  EEPROM_Ctrl bits. */
+@@ -1936,6 +1958,7 @@ static int cp_init_one (struct pci_dev *pdev, const struct pci_device_id *ent)
+ 	dev->open = cp_open;
+ 	dev->stop = cp_close;
+ 	dev->set_multicast_list = cp_set_rx_mode;
++	dev->set_mac_address = cp_set_mac_address;
+ 	dev->hard_start_xmit = cp_start_xmit;
+ 	dev->get_stats = cp_get_stats;
+ 	dev->do_ioctl = cp_ioctl;
+diff --git a/drivers/net/8139too.c b/drivers/net/8139too.c
+index e4f4eaf..24f561a 100644
+--- a/drivers/net/8139too.c
++++ b/drivers/net/8139too.c
+@@ -629,6 +629,7 @@ static int rtl8139_poll(struct net_device *dev, int *budget);
+ #ifdef CONFIG_NET_POLL_CONTROLLER
+ static void rtl8139_poll_controller(struct net_device *dev);
+ #endif
++static int rtl8139_set_mac_address(struct net_device *dev, void *p);
+ static irqreturn_t rtl8139_interrupt (int irq, void *dev_instance,
+ 			       struct pt_regs *regs);
+ static int rtl8139_close (struct net_device *dev);
+@@ -985,6 +986,7 @@ static int __devinit rtl8139_init_one (struct pci_dev *pdev,
+ 	dev->stop = rtl8139_close;
+ 	dev->get_stats = rtl8139_get_stats;
+ 	dev->set_multicast_list = rtl8139_set_rx_mode;
++	dev->set_mac_address = rtl8139_set_mac_address;
+ 	dev->do_ioctl = netdev_ioctl;
+ 	dev->ethtool_ops = &rtl8139_ethtool_ops;
+ 	dev->tx_timeout = rtl8139_tx_timeout;
+@@ -2224,6 +2226,29 @@ static void rtl8139_poll_controller(struct net_device *dev)
+ }
+ #endif
+ 
++static int rtl8139_set_mac_address(struct net_device *dev, void *p)
++{
++	struct rtl8139_private *tp = netdev_priv(dev);
++	void __iomem *ioaddr = tp->mmio_addr;
++	struct sockaddr *addr = p;
++
++	if (!is_valid_ether_addr(addr->sa_data))
++		return -EADDRNOTAVAIL;
++
++	memcpy(dev->dev_addr, addr->sa_data, dev->addr_len);
++
++	spin_lock_irq(&tp->lock);
++
++	RTL_W8_F(Cfg9346, Cfg9346_Unlock);
++	RTL_W32_F(MAC0 + 0, cpu_to_le32 (*(u32 *) (dev->dev_addr + 0)));
++	RTL_W32_F(MAC0 + 4, cpu_to_le32 (*(u32 *) (dev->dev_addr + 4)));
++	RTL_W8_F(Cfg9346, Cfg9346_Lock);
++
++	spin_unlock_irq(&tp->lock);
++
++	return 0;
++}
++
+ static int rtl8139_close (struct net_device *dev)
+ {
+ 	struct rtl8139_private *tp = netdev_priv(dev);

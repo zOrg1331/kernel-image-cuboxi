@@ -1,0 +1,84 @@
+From: Sachin S. Prabhu <sprabhu@redhat.com>
+Date: Fri, 13 Mar 2009 15:56:08 +0000
+Subject: [nfs] add fine grain control for lookup cache in nfs
+Message-id: 49BA8218.5080004@redhat.com
+O-Subject: [RHEL5.4 PATCH 1/2]: Add fine grain control for lookup cache in nfs
+Bugzilla: 489285
+RH-Acked-by: Jeff Layton <jlayton@redhat.com>
+
+Backport of the following upstream patch to add finer grained control over the
+lookup cache.
+
+--
+commit 4eec952e42314b53e48fef1f54dd89cbf9789734
+Author: Trond Myklebust <Trond.Myklebust@netapp.com>
+Date:   Tue Jul 15 17:58:13 2008 -0400
+
+     NFS: Add options for finer control of the lookup cache
+
+     Add the flag NFS_MOUNT_LOOKUP_CACHE_NONEG to turn off the caching of
+     negative dentries. In reality what we do is to force
+     nfs_lookup_revalidate() to always discard negative dentries.
+
+     Add the flag NFS_MOUNT_LOOKUP_CACHE_NONE for enforcing stricter
+     revalidation of dentries. It forces the revalidate code to always do a
+     lookup instead of just checking the cached mtime of the parent directory.
+
+     Signed-off-by: Trond Myklebust <Trond.Myklebust@netapp.com>
+--
+
+Backport of the following upstream patch to add finer grained control over the lookup cache.
+
+--
+commit 4eec952e42314b53e48fef1f54dd89cbf9789734
+Author: Trond Myklebust <Trond.Myklebust@netapp.com>
+Date:   Tue Jul 15 17:58:13 2008 -0400
+
+    NFS: Add options for finer control of the lookup cache
+
+    Add the flag NFS_MOUNT_LOOKUP_CACHE_NONEG to turn off the caching of
+    negative dentries. In reality what we do is to force
+    nfs_lookup_revalidate() to always discard negative dentries.
+
+    Add the flag NFS_MOUNT_LOOKUP_CACHE_NONE for enforcing stricter
+    revalidation of dentries. It forces the revalidate code to always do a
+    lookup instead of just checking the cached mtime of the parent directory.
+
+    Signed-off-by: Trond Myklebust <Trond.Myklebust@netapp.com>
+--
+
+diff --git a/fs/nfs/dir.c b/fs/nfs/dir.c
+index 9630198..cdf2116 100644
+--- a/fs/nfs/dir.c
++++ b/fs/nfs/dir.c
+@@ -631,6 +631,8 @@ static inline int nfs_check_verifier(struct inode *dir, struct dentry *dentry)
+ {
+ 	if (IS_ROOT(dentry))
+ 		return 1;
++	if (NFS_SERVER(dir)->flags & NFS_MOUNT_LOOKUP_CACHE_NONE)
++		return 0;
+ 	if (!nfs_verify_change_attribute(dir, dentry->d_time))
+ 		return 0;
+ 	/* Revalidate nfsi->cache_change_attribute before we declare a match */
+@@ -712,6 +714,8 @@ int nfs_neg_need_reval(struct inode *dir, struct dentry *dentry,
+ 	/* Don't revalidate a negative dentry if we're creating a new file */
+ 	if (nd != NULL && nfs_lookup_check_intent(nd, LOOKUP_CREATE) != 0)
+ 		return 0;
++	if (NFS_SERVER(dir)->flags & NFS_MOUNT_LOOKUP_CACHE_NONEG)
++		return 1;
+ 	return !nfs_check_verifier(dir, dentry);
+ }
+ 
+diff --git a/include/linux/nfs_mount.h b/include/linux/nfs_mount.h
+index 2bbae41..f3a2548 100644
+--- a/include/linux/nfs_mount.h
++++ b/include/linux/nfs_mount.h
+@@ -66,5 +66,8 @@ struct nfs_mount_data {
+ #define NFS_MOUNT_UNSHARED  0x10000  /* 5 */
+ #define NFS_MOUNT_FLAGMASK	0xFFFFF
+ 
++/* The following are for internal use only */
++#define NFS_MOUNT_LOOKUP_CACHE_NONEG	0x20000
++#define NFS_MOUNT_LOOKUP_CACHE_NONE	0x40000
+ 
+ #endif

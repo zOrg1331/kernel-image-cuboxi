@@ -1,0 +1,52 @@
+From: Erik Jacobson <ejacobso@redhat.com>
+Subject: [RHEL5 Patch] BZ 222362 longer CD timeout
+Date: Thu, 11 Jan 2007 17:22:06 -0500
+Bugzilla: 222362
+Message-Id: <20070111222206.GA14036@redhat.com>
+Changelog: [misc] longer CD timeout
+
+
+The reason they thought you might be interested in considering this is
+because at least one DVD drive we've come across produces failure 
+messages due to linux's previous short timeout setting.  Windows, 
+which many drives are designed for, has a 7 second timeout while
+linux used to have a 5 second one.  This caused trouble with error
+messages at bootup on one of our systems in a certain hardware
+configuration.  They thought maybe the simple nature of the patch
+might have a big bang-for-buck :)
+
+We thought it could impact others so we wanted to report it and leave the 
+choice to Red Hat as to if this should be considered this late or not.  The 
+patch is very simple.
+
+As for testing, we fall a touch short.  We have a lack of lab equipment
+that has the problem DVD type today so we can only verify that it didn't 
+break anything at this moment.
+
+diff --git a/drivers/cdrom/cdrom.c b/drivers/cdrom/cdrom.c
+index 66d028d..3105ddd 100644
+--- a/drivers/cdrom/cdrom.c
++++ b/drivers/cdrom/cdrom.c
+@@ -337,6 +337,12 @@ static const char *mrw_address_space[] = { "DMA", "GAA" };
+ /* used in the audio ioctls */
+ #define CHECKAUDIO if ((ret=check_for_audio_disc(cdi, cdo))) return ret
+ 
++/*
++ * Another popular OS uses 7 seconds as the hard timeout for default
++ * commands, so it is a good choice for us as well.
++ */
++#define CDROM_DEF_TIMEOUT	(7 * HZ)
++
+ /* Not-exported routines. */
+ static int open_for_data(struct cdrom_device_info * cdi);
+ static int check_for_audio_disc(struct cdrom_device_info * cdi,
+@@ -1528,7 +1534,7 @@ void init_cdrom_command(struct packet_command *cgc, void *buf, int len,
+ 	cgc->buffer = (char *) buf;
+ 	cgc->buflen = len;
+ 	cgc->data_direction = type;
+-	cgc->timeout = 5*HZ;
++	cgc->timeout = CDROM_DEF_TIMEOUT;
+ }
+ 
+ /* DVD handling */
+

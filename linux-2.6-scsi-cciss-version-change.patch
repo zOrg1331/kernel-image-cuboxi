@@ -1,0 +1,45 @@
+From: Tomas Henzl <thenzl@redhat.com>
+Date: Wed, 19 Dec 2007 16:11:36 +0100
+Subject: [scsi] cciss version change
+Message-id: 476934A8.9000707@redhat.com
+O-Subject: [RHEL5.2 PATCH 1/8] RHEL 5.2: cciss version change
+Bugzilla: 423831
+
+This patch resolves the bz#423831: Cciss driver update: cciss version change
+
+Comment from HP:
+This patch bumps the version number to 3.6.20-RH1 to more closely match the
+HP released driver. Generally we change the version when we add new hardware
+support which is in a later patch.
+
+Signed-off-by: Mike Miller <mike.miller@hp.com>
+
+ drivers/block/cciss.c |   11 ++++++-----
+ 1 file changed, 6 insertions(+), 5 deletions(-)
+
+diff --git a/drivers/block/cciss.c b/drivers/block/cciss.c
+index 785078f..902871e 100644
+--- a/drivers/block/cciss.c
++++ b/drivers/block/cciss.c
+@@ -47,15 +47,16 @@
+ #include <linux/completion.h>
+ 
+ #define CCISS_DRIVER_VERSION(maj,min,submin) ((maj<<16)|(min<<8)|(submin))
+-#define DRIVER_NAME "HP CISS Driver (v 3.6.16-RH1)"
+-#define DRIVER_VERSION CCISS_DRIVER_VERSION(3,6,16)
++#define DRIVER_NAME "HP CISS Driver (v 3.6.20-RH1)"
++#define DRIVER_VERSION CCISS_DRIVER_VERSION(3,6,20)
+ 
+ /* Embedded module documentation macros - see modules.h */
+ MODULE_AUTHOR("Hewlett-Packard Company");
+-MODULE_DESCRIPTION("Driver for HP Controller SA5xxx SA6xxx version 3.6.16-RH1");
++MODULE_DESCRIPTION("Driver for HP Controller SA5xxx SA6xxx version 3.6.20-RH1");
+ MODULE_SUPPORTED_DEVICE("HP SA5i SA5i+ SA532 SA5300 SA5312 SA641 SA642 SA6400"
+-			" SA6i P600 P800 P400 P400i E200 E200i E500 P700m");
+-MODULE_VERSION("3.6.16-RH1");
++			" SA6i P600 P800 P400 P400i E200 E200i E500 P700m"
++			" and HP Smart Array G2 SAS/SATA Controllers");
++MODULE_VERSION("3.6.20-RH1");
+ MODULE_LICENSE("GPL");
+ 
+ #include "cciss_cmd.h"

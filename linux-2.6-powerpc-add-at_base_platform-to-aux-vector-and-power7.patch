@@ -1,0 +1,358 @@
+From: Steve Best <sbest@redhat.com>
+Date: Wed, 17 Nov 2010 16:04:23 -0500
+Subject: [powerpc] add AT_BASE_PLATFORM to Aux Vector and power7
+Message-id: <20101117155916.22918.41559.sendpatchset@squad5-lp1.lab.bos.redhat.com>
+Patchwork-id: 29468
+O-Subject: [PATCH RHEL5.6 BZ652279] powerpc: Adds AT_BASE_PLATFORM value to the
+	Aux Vector and power7 support
+Bugzilla: 652279
+RH-Acked-by: David Howells <dhowells@redhat.com>
+RH-Acked-by: Stefan Assmann <sassmann@redhat.com>
+RH-Acked-by: Ivan Vecera <ivecera@redhat.com>
+
+RHBZ#:
+------
+https://bugzilla.redhat.com/show_bug.cgi?id=652279
+
+Description:
+------------
+We need to have AT_BASE_PLATFORM support in RHEL 5.6 so that POWER7 systems
+running in compat mode can report 'power7' as AT_BASE_PLATFORM, and 'power6'
+as AT_PLATFORM.
+
+There are 2 parts to this patchset (kernel) and glibc.
+1) The kernel patch adds AT_BASE_PLATFORM value to the Aux Vector and power7 support
+2) In order for the GLIBC patches to perform their function there needs to be an
+accompanying kernel backport which will export the AT_BASE_PLATFORM values to the
+Aux Vector.
+
+The glibc patches are already in RHEL5.6 using 563563 and 563599 bzs.
+
+RHEL Version Found:
+-------------------
+RHEL 5.6
+
+kABI Status:
+------------
+No symbols were harmed.
+
+Brew:
+-----
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=2890804
+
+Upstream Status:
+----------------
+This patch does not have an upstream commit id equivalent per se. The back port
+to RHEL 5.6 simply adds "power7" record to "cpu_specs" and ported ELF_BASE_PLATFORM
+from the upstream kernel. We just made the kernel report the correct POWER version (7)
+and PPC_FEATURE_* to the glibc.
+
+Alexey Kardashevskiy did the back port.
+
+Test Status:
+------------
+Tested by me and Alexey Kardashevskiy at IBM.
+
+Test steps are below.
+
+ibm-js24-01 is p7 blade
+[root@ibm-js24-01 ~]# LD_SHOW_AUXV=1 /bin/true
+AT_DCACHEBSIZE:  0x80
+AT_ICACHEBSIZE:  0x80
+AT_UCACHEBSIZE:  0x0
+AT_SYSINFO_EHDR: 0x100000
+AT_HWCAP:        dfp arch_2_05 ic_snoop smt mmu fpu altivec ppc64 ppc32
+AT_PAGESZ:       65536
+AT_CLKTCK:       100
+AT_PHDR:         0x10000034
+AT_PHENT:        32
+AT_PHNUM:        8
+AT_BASE:         0xf7fa0000
+AT_FLAGS:        0x0
+AT_ENTRY:        0x10000970
+AT_UID:          0
+AT_EUID:         0
+AT_GID:          0
+AT_EGID:         0
+AT_SECURE:       0
+AT_PLATFORM:     power6
+AT_BASE_PLATFORM:power7
+
+ibm-js12-03 is p6 blade
+[root@ibm-js12-03 ~]# LD_SHOW_AUXV=1 /bin/true
+AT_DCACHEBSIZE:  0x80
+AT_ICACHEBSIZE:  0x80
+AT_UCACHEBSIZE:  0x0
+AT_SYSINFO_EHDR: 0x100000
+AT_HWCAP:        power6x dfp arch_2_05 ic_snoop smt mmu fpu altivec ppc64 ppc32
+AT_PAGESZ:       65536
+AT_CLKTCK:       100
+AT_PHDR:         0x10000034
+AT_PHENT:        32
+AT_PHNUM:        8
+AT_BASE:         0xf7fa0000
+AT_FLAGS:        0x0
+AT_ENTRY:        0x10000970
+AT_UID:          0
+AT_EUID:         0
+AT_GID:          0
+AT_EGID:         0
+AT_SECURE:       0
+AT_PLATFORM:     power6x
+AT_BASE_PLATFORM:power6x
+
+===============================================================
+Steve Best
+IBM on-site partner
+
+Proposed Patch:
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/arch/powerpc/kernel/cputable.c b/arch/powerpc/kernel/cputable.c
+index 179ea44..cc8e09e 100644
+--- a/arch/powerpc/kernel/cputable.c
++++ b/arch/powerpc/kernel/cputable.c
+@@ -22,6 +22,8 @@
+ 
+ struct cpu_spec* cur_cpu_spec = NULL;
+ EXPORT_SYMBOL(cur_cpu_spec);
++/* The platform string corresponding to the real PVR */
++const char *powerpc_base_platform;
+ 
+ /* NOTE:
+  * Unlike ppc32, ppc64 will only call this once for the boot CPU, it's
+@@ -56,6 +58,10 @@ extern void __setup_cpu_ppc970(unsigned long offset, struct cpu_spec* spec);
+ #define COMMON_USER_POWER6	(COMMON_USER_PPC64 | PPC_FEATURE_ARCH_2_05 |\
+ 				 PPC_FEATURE_SMT | PPC_FEATURE_ICACHE_SNOOP | \
+ 				 PPC_FEATURE_TRUE_LE)
++#define COMMON_USER_POWER7      (COMMON_USER_PPC64 | PPC_FEATURE_ARCH_2_06 |\
++                                 PPC_FEATURE_SMT | PPC_FEATURE_ICACHE_SNOOP | \
++                                 PPC_FEATURE_TRUE_LE | \
++                                 PPC_FEATURE_PSERIES_PERFMON_COMPAT)
+ #define COMMON_USER_BOOKE	(PPC_FEATURE_32 | PPC_FEATURE_HAS_MMU | \
+ 				 PPC_FEATURE_BOOKE)
+ 
+@@ -324,6 +330,23 @@ static struct cpu_spec cpu_specs[] = {
+ 		.oprofile_type		= PPC_OPROFILE_POWER4,
+ 		.platform		= "power6",
+ 	},
++	{	/* Power7 */
++		.pvr_mask		= 0xffff0000,
++		.pvr_value		= 0x003f0000,
++		.cpu_name		= "POWER7",
++		.cpu_features		= CPU_FTRS_POWER6,
++		.cpu_user_features	= COMMON_USER_POWER7,
++		.icache_bsize		= 128,
++		.dcache_bsize		= 128,
++		.num_pmcs		= 6,
++		.oprofile_cpu_type	= "ppc64/power7",
++		.oprofile_type		= PPC_OPROFILE_POWER4,
++		.oprofile_mmcra_sihv	= POWER6_MMCRA_SIHV,
++		.oprofile_mmcra_sipr	= POWER6_MMCRA_SIPR,
++		.oprofile_mmcra_clear	= POWER6_MMCRA_THRM |
++			POWER6_MMCRA_OTHER,
++		.platform		= "power7",
++	},
+ 	{	/* Cell Broadband Engine */
+ 		.pvr_mask		= 0xffff0000,
+ 		.pvr_value		= 0x00700000,
+@@ -1229,6 +1252,14 @@ struct cpu_spec *identify_cpu(unsigned long offset, unsigned int pvr)
+ 			} else
+ 				*t = *s;
+ 			*PTRRELOC(&cur_cpu_spec) = &the_cpu_spec;
++
++			/*
++			 * Set the base platform string once; assumes
++			 * we're called with real pvr first.
++			 */
++			if (*PTRRELOC(&powerpc_base_platform) == NULL)
++				*PTRRELOC(&powerpc_base_platform) = t->platform;
++
+ #ifdef CONFIG_PPC64
+ 			/* ppc64 expects identify_cpu to also call setup_cpu
+ 			 * for that processor. I will consolidate that at a
+diff --git a/fs/binfmt_elf.c b/fs/binfmt_elf.c
+index 47cc7cf..8fea560 100644
+--- a/fs/binfmt_elf.c
++++ b/fs/binfmt_elf.c
+@@ -135,6 +135,15 @@ static int padzero(unsigned long elf_bss)
+ #define STACK_ALLOC(sp, len) ({ sp -= len ; sp; })
+ #endif
+ 
++#ifndef ELF_BASE_PLATFORM
++/*
++ * AT_BASE_PLATFORM indicates the "real" hardware/microarchitecture.
++ * If the arch defines ELF_BASE_PLATFORM (in asm/elf.h), the value
++ * will be copied to the user stack in the same manner as AT_PLATFORM.
++ */
++#define ELF_BASE_PLATFORM NULL
++#endif
++
+ static int
+ create_elf_tables(struct linux_binprm *bprm, struct elfhdr *exec,
+ 		int interp_aout, unsigned long load_addr,
+@@ -147,7 +156,9 @@ create_elf_tables(struct linux_binprm *bprm, struct elfhdr *exec,
+ 	elf_addr_t __user *envp;
+ 	elf_addr_t __user *sp;
+ 	elf_addr_t __user *u_platform;
++	elf_addr_t __user *u_base_platform;
+ 	const char *k_platform = ELF_PLATFORM;
++        const char *k_base_platform = ELF_BASE_PLATFORM;
+ 	int items;
+ 	elf_addr_t *elf_info;
+ 	int ei_index = 0;
+@@ -177,6 +188,19 @@ create_elf_tables(struct linux_binprm *bprm, struct elfhdr *exec,
+ 			return -EFAULT;
+ 	}
+ 
++        /*
++         * If this architecture has a "base" platform capability
++         * string, copy it to userspace.
++         */
++        u_base_platform = NULL;
++        if (k_base_platform) {
++                size_t len = strlen(k_base_platform) + 1;
++
++             u_base_platform = (elf_addr_t __user *)STACK_ALLOC(p, len);
++             if (__copy_to_user(u_base_platform, k_base_platform, len))
++                     return -EFAULT;
++        }
++
+ 	/* Create the ELF interpreter info */
+ 	elf_info = (elf_addr_t *)current->mm->saved_auxv;
+ #define NEW_AUX_ENT(id, val) \
+@@ -210,6 +234,10 @@ create_elf_tables(struct linux_binprm *bprm, struct elfhdr *exec,
+ 		NEW_AUX_ENT(AT_PLATFORM,
+ 			    (elf_addr_t)(unsigned long)u_platform);
+ 	}
++	if (k_base_platform) {
++		NEW_AUX_ENT(AT_BASE_PLATFORM,
++			    (elf_addr_t)(unsigned long)u_base_platform);
++	}
+ 	if (bprm->interp_flags & BINPRM_FLAGS_EXECFD) {
+ 		NEW_AUX_ENT(AT_EXECFD, bprm->interp_data);
+ 	}
+diff --git a/fs/binfmt_elf_fdpic.c b/fs/binfmt_elf_fdpic.c
+index c9e830c..0a2c020 100644
+--- a/fs/binfmt_elf_fdpic.c
++++ b/fs/binfmt_elf_fdpic.c
+@@ -453,6 +453,15 @@ error_kill:
+ 
+ }
+ 
++#ifndef ELF_BASE_PLATFORM
++/*
++ * AT_BASE_PLATFORM indicates the "real" hardware/microarchitecture.
++ * If the arch defines ELF_BASE_PLATFORM (in asm/elf.h), the value
++ * will be copied to the user stack in the same manner as AT_PLATFORM.
++ */     
++#define ELF_BASE_PLATFORM NULL
++#endif  
++
+ /*****************************************************************************/
+ /*
+  * present useful information to the program
+@@ -466,7 +475,7 @@ static int create_elf_fdpic_tables(struct linux_binprm *bprm,
+ 	elf_caddr_t __user *argv, *envp;
+ 	size_t platform_len = 0, len;
+ 	char *k_platform;
+-	char __user *u_platform, *p;
++	char __user *u_platform, *u_base_platform, *p;
+ 	long hwcap;
+ 	int loop;
+ 
+@@ -497,6 +506,21 @@ static int create_elf_fdpic_tables(struct linux_binprm *bprm,
+ 			return -EFAULT;
+ 	}
+ 
++        /*      
++         * If this architecture has a "base" platform capability
++         * string, copy it to userspace.
++         */     
++        k_base_platform = ELF_BASE_PLATFORM;
++        u_base_platform = NULL;
++        
++        if (k_base_platform) {
++               platform_len = strlen(k_base_platform) + 1;
++               sp -= platform_len;
++               u_base_platform = (char __user *) sp;
++               if (__copy_to_user(u_base_platform, k_base_platform, platform_len) != 0)
++                        return -EFAULT;
++        }
++
+ #if defined(__i386__) && defined(CONFIG_SMP)
+ 	/* in some cases (e.g. Hyper-Threading), we want to avoid L1 evictions
+ 	 * by the processes running on the same package. One thing we can do is
+@@ -573,6 +597,13 @@ static int create_elf_fdpic_tables(struct linux_binprm *bprm,
+ 			    (elf_addr_t) (unsigned long) u_platform);
+ 	}
+ 
++	if (k_base_platform) {
++                nr = 0;
++                csp -= 2 * sizeof(unsigned long);
++                NEW_AUX_ENT(AT_BASE_PLATFORM,
++			(elf_addr_t) (unsigned long) u_base_platform);
++        }
++
+ 	csp -= DLINFO_ITEMS * 2 * sizeof(unsigned long);
+ 	NEW_AUX_ENT( 0, AT_HWCAP,	hwcap);
+ 	NEW_AUX_ENT( 1, AT_PAGESZ,	PAGE_SIZE);
+diff --git a/include/asm-powerpc/cputable.h b/include/asm-powerpc/cputable.h
+index d34313c..08fc292 100644
+--- a/include/asm-powerpc/cputable.h
++++ b/include/asm-powerpc/cputable.h
+@@ -23,8 +23,13 @@
+ #define PPC_FEATURE_SMT			0x00004000
+ #define PPC_FEATURE_ICACHE_SNOOP	0x00002000
+ #define PPC_FEATURE_ARCH_2_05		0x00001000
++#define PPC_FEATURE_PA6T                0x00000800
+ #define PPC_FEATURE_HAS_DFP		0x00000400
+ #define PPC_FEATURE_POWER6_EXT		0x00000200
++#define PPC_FEATURE_ARCH_2_06           0x00000100
++#define PPC_FEATURE_HAS_VSX             0x00000080
++#define PPC_FEATURE_PSERIES_PERFMON_COMPAT \
++                                        0x00000040
+ 
+ #define PPC_FEATURE_TRUE_LE		0x00000002
+ #define PPC_FEATURE_PPC_LE		0x00000001
+@@ -97,6 +102,8 @@ extern struct cpu_spec *identify_cpu(unsigned long offset, unsigned int pvr);
+ extern void do_feature_fixups(unsigned long value, void *fixup_start,
+ 			      void *fixup_end);
+ 
++extern const char *powerpc_base_platform;
++
+ #endif /* __ASSEMBLY__ */
+ 
+ /* CPU kernel features */
+diff --git a/include/asm-powerpc/elf.h b/include/asm-powerpc/elf.h
+index 779f7b5..0464239 100644
+--- a/include/asm-powerpc/elf.h
++++ b/include/asm-powerpc/elf.h
+@@ -226,6 +226,13 @@ extern int dump_task_fpu(struct task_struct *, elf_fpregset_t *);
+    intent than poking at uname or /proc/cpuinfo.  */
+ 
+ #define ELF_PLATFORM	(cur_cpu_spec->platform)
++/* While ELF_PLATFORM indicates the ISA supported by the platform, it
++ * may not accurately reflect the underlying behavior of the hardware
++ * (as in the case of running in Power5+ compatibility mode on a
++ * Power6 machine).  ELF_BASE_PLATFORM allows ld.so to load libraries
++ * that are tuned for the real hardware.
++ */              
++#define ELF_BASE_PLATFORM (powerpc_base_platform)
+ 
+ #ifdef __powerpc64__
+ # define ELF_PLAT_INIT(_r, load_addr)	do {	\
+diff --git a/include/linux/auxvec.h b/include/linux/auxvec.h
+index d2bc0d6..f538fb3 100644
+--- a/include/linux/auxvec.h
++++ b/include/linux/auxvec.h
+@@ -25,6 +25,8 @@
+ #define AT_CLKTCK 17	/* frequency at which times() increments */
+ 
+ #define AT_SECURE 23   /* secure mode boolean */
++#define AT_BASE_PLATFORM 24     /* string identifying real platform, may
++                                  * differ from AT_PLATFORM. */
+ 
+ #define AT_VECTOR_SIZE  44 /* Size of auxiliary table.  */
+ 

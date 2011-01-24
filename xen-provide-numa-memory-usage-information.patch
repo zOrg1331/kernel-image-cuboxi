@@ -1,0 +1,157 @@
+From: Bill Burns <bburns@redhat.com>
+Date: Thu, 20 Dec 2007 14:45:58 -0500
+Subject: [xen] provide NUMA memory usage information
+Message-id: 476AC676.1060208@redhat.com
+O-Subject: Re: [RHEL5.2 PATCH]: 0/2: NUMA xen tools and hypervisor fixes
+Bugzilla: 235850
+
+This patch addresses:
+
+ BZ 235850: LTC33766: 200939: Xen Hypervisor - Provide NUMA memory usage information
+
+This adds a new hypervisor sysctl hypercall 'XEN_SYSCTL_availheap' which
+returns the amount of memory available in each NUMA node on a system.
+This is a simple re-diff of the upstream change:
+
+  changeset:   15534:29761c9b9105
+  user:        kfraser@localhost.localdomain
+  date:        Wed Jul 11 13:03:57 2007 +0100
+  description:
+  Add new domctl hypercall to expose current heap values.  This
+  functionality is needed for probing how much memory is available in a
+  given node prior to VM creation.
+
+Since this is a completely new hypercall there is no ABI risk
+
+ common/page_alloc.c     |   22 +++++++++++++++++-----
+ common/sysctl.c         |   15 +++++++++++++++
+ include/public/sysctl.h |   13 +++++++++++++
+ include/xen/mm.h        |    2 ++
+ 4 files changed, 47 insertions(+), 5 deletions(-)
+
+Dan.
+--
+|=- Red Hat, Engineering, Emerging Technologies, Boston.  +1 978 392 2496 -=|
+|=-           Perl modules: http://search.cpan.org/~danberr/              -=|
+|=-               Projects: http://freshmeat.net/~danielpb/               -=|
+|=-  GnuPG: 7D3B9505   F3C9 553F A1DA 4AC2 5648 23C1 B3DF F742 7D3B 9505  -=|
+
+Acked-by: Jarod Wilson <jwilson@redhat.com>
+
+diff --git a/common/page_alloc.c b/common/page_alloc.c
+index 4cbece4..81baf22 100644
+--- a/common/page_alloc.c
++++ b/common/page_alloc.c
+@@ -927,6 +927,23 @@ void free_domheap_pages(struct page_info *pg, unsigned int order)
+         put_domain(d);
+ }
+ 
++unsigned long avail_domheap_pages_region(
++    unsigned int node, unsigned int min_width, unsigned int max_width)
++{
++    int zone_lo, zone_hi;
++
++    zone_lo = min_width ? (min_width - (PAGE_SHIFT + 1)) : (MEMZONE_XEN + 1);
++    zone_lo = max_t(int, MEMZONE_XEN + 1, zone_lo);
++    zone_lo = min_t(int, NR_ZONES - 1, zone_lo);
++
++    zone_hi = max_width ? (max_width - (PAGE_SHIFT + 1)) : (NR_ZONES - 1);
++    zone_hi = max_t(int, MEMZONE_XEN + 1, zone_hi);
++    zone_hi = min_t(int, NR_ZONES - 1, zone_hi);
++
++    return avail_heap_pages(zone_lo, zone_hi, node);
++}
++
++
+ 
+ unsigned long avail_domheap_pages(void)
+ {
+@@ -948,11 +965,6 @@ unsigned long avail_domheap_pages(void)
+     return avail_nrm + avail_dma;
+ }
+ 
+-unsigned long avail_nodeheap_pages(int node)
+-{
+-    return avail_heap_pages(0, NR_ZONES - 1, node);
+-}
+-
+ static void pagealloc_keyhandler(unsigned char key)
+ {
+     unsigned int zone = MEMZONE_XEN;
+diff --git a/common/sysctl.c b/common/sysctl.c
+index b839d7f..6fabf1d 100644
+--- a/common/sysctl.c
++++ b/common/sysctl.c
+@@ -21,6 +21,9 @@
+ #include <xen/keyhandler.h>
+ #include <asm/current.h>
+ #include <public/sysctl.h>
++#include <asm/numa.h>
++#include <xen/nodemask.h>
++
+ 
+ extern long arch_do_sysctl(
+     struct xen_sysctl *op, XEN_GUEST_HANDLE(xen_sysctl_t) u_sysctl);
+@@ -112,6 +115,18 @@ long do_sysctl(XEN_GUEST_HANDLE(xen_sysctl_t) u_sysctl)
+     }
+     break;
+ 
++    case XEN_SYSCTL_availheap:
++    {
++        op->u.availheap.avail_bytes = avail_domheap_pages_region(
++            op->u.availheap.node,
++            op->u.availheap.min_bitwidth,
++            op->u.availheap.max_bitwidth);
++        op->u.availheap.avail_bytes <<= PAGE_SHIFT;
++
++        ret = copy_to_guest(u_sysctl, op, 1) ? -EFAULT : 0;
++    }
++    break;
++
+ #ifdef PERF_COUNTERS
+     case XEN_SYSCTL_perfc_op:
+     {
+diff --git a/include/public/sysctl.h b/include/public/sysctl.h
+index d51052a..11f6db5 100644
+--- a/include/public/sysctl.h
++++ b/include/public/sysctl.h
+@@ -167,6 +167,18 @@ struct xen_sysctl_getcpuinfo {
+ typedef struct xen_sysctl_getcpuinfo xen_sysctl_getcpuinfo_t;
+ DEFINE_XEN_GUEST_HANDLE(xen_sysctl_getcpuinfo_t); 
+ 
++#define XEN_SYSCTL_availheap         9
++struct xen_sysctl_availheap {
++    /* IN variables. */
++    uint32_t min_bitwidth;  /* Smallest address width (zero if don't care). */
++    uint32_t max_bitwidth;  /* Largest address width (zero if don't care). */
++    int32_t  node;          /* NUMA node of interest (-1 for all nodes). */
++    /* OUT variables. */
++    uint64_t avail_bytes;   /* Bytes available in the specified region. */
++};
++typedef struct xen_sysctl_availheap xen_sysctl_availheap_t;
++DEFINE_XEN_GUEST_HANDLE(xen_sysctl_availheap_t);
++
+ struct xen_sysctl {
+     uint32_t cmd;
+     uint32_t interface_version; /* XEN_SYSCTL_INTERFACE_VERSION */
+@@ -178,6 +190,7 @@ struct xen_sysctl {
+         struct xen_sysctl_perfc_op          perfc_op;
+         struct xen_sysctl_getdomaininfolist getdomaininfolist;
+         struct xen_sysctl_debug_keys        debug_keys;
++        struct xen_sysctl_availheap         availheap;
+         struct xen_sysctl_getcpuinfo        getcpuinfo;
+         uint8_t                             pad[128];
+     } u;
+diff --git a/include/xen/mm.h b/include/xen/mm.h
+index a94d4ef..a5183fd 100644
+--- a/include/xen/mm.h
++++ b/include/xen/mm.h
+@@ -61,6 +61,8 @@ struct page_info *__alloc_domheap_pages(
+     struct domain *d, unsigned int cpu, unsigned int order, 
+     unsigned int memflags);
+ void free_domheap_pages(struct page_info *pg, unsigned int order);
++unsigned long avail_domheap_pages_region(
++    unsigned int node, unsigned int min_width, unsigned int max_width);
+ unsigned long avail_domheap_pages(void);
+ #define alloc_domheap_page(d) (alloc_domheap_pages(d,0,0))
+ #define free_domheap_page(p)  (free_domheap_pages(p,0))

@@ -17,6 +17,9 @@
 #include <linux/mtd/onenand.h>
 #include <linux/mtd/compatmac.h>
 
+extern int onenand_do_read_oob(struct mtd_info *mtd, loff_t from, size_t len,
+			       size_t *retlen, u_char *buf);
+
 /**
  * check_short_pattern - [GENERIC] check if a pattern is in the buffer
  * @param buf		the buffer to search
@@ -62,12 +65,10 @@ static int create_bbt(struct mtd_info *mtd, uint8_t *buf, struct nand_bbt_descr 
 	int startblock;
 	loff_t from;
 	size_t readlen, ooblen;
-	struct mtd_oob_ops ops;
-	int rgn;
 
 	printk(KERN_INFO "Scanning device for bad blocks\n");
 
-	len = 2;
+	len = 1;
 
 	/* We need only read few bytes from the OOB area */
 	scanlen = ooblen = 0;
@@ -77,42 +78,33 @@ static int create_bbt(struct mtd_info *mtd, uint8_t *buf, struct nand_bbt_descr 
 	/* Note that numblocks is 2 * (real numblocks) here;
 	 * see i += 2 below as it makses shifting and masking less painful
 	 */
-	numblocks = this->chipsize >> (bbm->bbt_erase_shift - 1);
+	numblocks = mtd->size >> (bbm->bbt_erase_shift - 1);
 	startblock = 0;
 	from = 0;
-
-	ops.mode = MTD_OOB_PLACE;
-	ops.ooblen = readlen;
-	ops.oobbuf = buf;
-	ops.len = ops.ooboffs = ops.retlen = ops.oobretlen = 0;
 
 	for (i = startblock; i < numblocks; ) {
 		int ret;
 
 		for (j = 0; j < len; j++) {
+			size_t retlen;
+
 			/* No need to read pages fully,
 			 * just read required OOB bytes */
-			ret = onenand_bbt_read_oob(mtd, from + j * mtd->writesize + bd->offs, &ops);
+			ret = onenand_do_read_oob(mtd, from + j * mtd->writesize + bd->offs,
+						  readlen, &retlen, &buf[0]);
 
-			/* If it is a initial bad block, just ignore it */
-			if (ret == ONENAND_BBT_READ_FATAL_ERROR)
-				return -EIO;
+			if (ret)
+				return ret;
 
-			if (ret || check_short_pattern(&buf[j * scanlen], scanlen, mtd->writesize, bd)) {
+			if (check_short_pattern(&buf[j * scanlen], scanlen, mtd->writesize, bd)) {
 				bbm->bbt[i >> 3] |= 0x03 << (i & 0x6);
 				printk(KERN_WARNING "Bad eraseblock %d at 0x%08x\n",
 					i >> 1, (unsigned int) from);
-				mtd->ecc_stats.badblocks++;
 				break;
 			}
 		}
 		i += 2;
-
-		if (FLEXONENAND(this)) {
-			rgn = flexonenand_region(mtd, from);
-			from += mtd->eraseregions[rgn].erasesize;
-		} else
-			from += (1 << bbm->bbt_erase_shift);
+		from += (1 << bbm->bbt_erase_shift);
 	}
 
 	return 0;
@@ -149,7 +141,7 @@ static int onenand_isbad_bbt(struct mtd_info *mtd, loff_t offs, int allowbbt)
 	uint8_t res;
 
 	/* Get block number * 2 */
-	block = (int) (onenand_block(this, offs) << 1);
+	block = (int) (offs >> (bbm->bbt_erase_shift - 1));
 	res = (bbm->bbt[block >> 3] >> (block & 0x06)) & 0x03;
 
 	DEBUG(MTD_DEBUG_LEVEL2, "onenand_isbad_bbt: bbt info for offs 0x%08x: (block %d) 0x%02x\n",
@@ -174,8 +166,8 @@ static int onenand_isbad_bbt(struct mtd_info *mtd, loff_t offs, int allowbbt)
  * marked good / bad blocks and writes the bad block table(s) to
  * the selected place.
  *
- * The bad block table memory is allocated here. It is freed
- * by the onenand_release function.
+ * The bad block table memory is allocated here. It must be freed
+ * by calling the onenand_free_bbt function.
  *
  */
 int onenand_scan_bbt(struct mtd_info *mtd, struct nand_bbt_descr *bd)
@@ -184,13 +176,15 @@ int onenand_scan_bbt(struct mtd_info *mtd, struct nand_bbt_descr *bd)
 	struct bbm_info *bbm = this->bbm;
 	int len, ret = 0;
 
-	len = this->chipsize >> (this->erase_shift + 2);
-	/* Allocate memory (2bit per block) and clear the memory bad block table */
-	bbm->bbt = kzalloc(len, GFP_KERNEL);
+	len = mtd->size >> (this->erase_shift + 2);
+	/* Allocate memory (2bit per block) */
+	bbm->bbt = kmalloc(len, GFP_KERNEL);
 	if (!bbm->bbt) {
 		printk(KERN_ERR "onenand_scan_bbt: Out of memory\n");
 		return -ENOMEM;
 	}
+	/* Clear the memory bad block table */
+	memset(bbm->bbt, 0x00, len);
 
 	/* Set the bad block position */
 	bbm->badblockpos = ONENAND_BADBLOCK_POS;
@@ -236,11 +230,13 @@ int onenand_default_bbt(struct mtd_info *mtd)
 	struct onenand_chip *this = mtd->priv;
 	struct bbm_info *bbm;
 
-	this->bbm = kzalloc(sizeof(struct bbm_info), GFP_KERNEL);
+	this->bbm = kmalloc(sizeof(struct bbm_info), GFP_KERNEL);
 	if (!this->bbm)
 		return -ENOMEM;
 
 	bbm = this->bbm;
+
+	memset(bbm, 0, sizeof(struct bbm_info));
 
 	/* 1KB page has same configuration as 2KB page */
 	if (!bbm->badblock_pattern)

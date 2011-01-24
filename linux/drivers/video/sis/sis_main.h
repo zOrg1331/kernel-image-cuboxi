@@ -67,7 +67,15 @@ static int sisfb_ypan = -1;
 static int sisfb_max = -1;
 static int sisfb_userom = 1;
 static int sisfb_useoem = -1;
+#ifdef MODULE
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,5,0)
+static int sisfb_mode_idx = -1;
+#else
+static int sisfb_mode_idx = MODE_INDEX_NONE;  /* Don't use a mode by default if we are a module */
+#endif
+#else
 static int sisfb_mode_idx = -1;               /* Use a default mode if we are inside the kernel */
+#endif
 static int sisfb_parm_rate = -1;
 static int sisfb_crt1off = 0;
 static int sisfb_forcecrt1 = -1;
@@ -85,6 +93,10 @@ static int sisfb_tvstd  = -1;
 static int sisfb_tvxposoffset = 0;
 static int sisfb_tvyposoffset = 0;
 static int sisfb_nocrt2rate = 0;
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,5,0)
+static int  sisfb_inverse = 0;
+static char sisfb_fontname[40];
+#endif
 #if !defined(__i386__) && !defined(__x86_64__)
 static int sisfb_resetcard = 0;
 static int sisfb_videoram = 0;
@@ -411,54 +423,54 @@ static const struct _sis_vrate {
 	u16 xres;
 	u16 yres;
 	u16 refresh;
-	bool SiS730valid32bpp;
+	BOOLEAN SiS730valid32bpp;
 } sisfb_vrate[] = {
-	{1,  320,  200,  70,  true},
-	{1,  320,  240,  60,  true},
-	{1,  400,  300,  60,  true},
-	{1,  512,  384,  60,  true},
-	{1,  640,  400,  72,  true},
-	{1,  640,  480,  60,  true}, {2,  640,  480,  72,  true}, {3,  640,  480,  75,  true},
-	{4,  640,  480,  85,  true}, {5,  640,  480, 100,  true}, {6,  640,  480, 120,  true},
-	{7,  640,  480, 160,  true}, {8,  640,  480, 200,  true},
-	{1,  720,  480,  60,  true},
-	{1,  720,  576,  58,  true},
-	{1,  768,  576,  58,  true},
-	{1,  800,  480,  60,  true}, {2,  800,  480,  75,  true}, {3,  800,  480,  85,  true},
-	{1,  800,  600,  56,  true}, {2,  800,  600,  60,  true}, {3,  800,  600,  72,  true},
-	{4,  800,  600,  75,  true}, {5,  800,  600,  85,  true}, {6,  800,  600, 105,  true},
-	{7,  800,  600, 120,  true}, {8,  800,  600, 160,  true},
-	{1,  848,  480,  39,  true}, {2,  848,  480,  60,  true},
-	{1,  856,  480,  39,  true}, {2,  856,  480,  60,  true},
-	{1,  960,  540,  60,  true},
-	{1,  960,  600,  60,  true},
-	{1, 1024,  576,  60,  true}, {2, 1024,  576,  75,  true}, {3, 1024,  576,  85,  true},
-	{1, 1024,  600,  60,  true},
-	{1, 1024,  768,  43,  true}, {2, 1024,  768,  60,  true}, {3, 1024,  768,  70, false},
-	{4, 1024,  768,  75, false}, {5, 1024,  768,  85,  true}, {6, 1024,  768, 100,  true},
-	{7, 1024,  768, 120,  true},
-	{1, 1152,  768,  60,  true},
-	{1, 1152,  864,  60,  true}, {2, 1152,  864,  75,  true}, {3, 1152,  864,  84,  true},
-	{1, 1280,  720,  60,  true}, {2, 1280,  720,  75,  true}, {3, 1280,  720,  85,  true},
-	{1, 1280,  768,  60,  true},
-	{1, 1280,  800,  60,  true},
-	{1, 1280,  854,  60,  true},
-	{1, 1280,  960,  60,  true}, {2, 1280,  960,  85,  true},
-	{1, 1280, 1024,  43,  true}, {2, 1280, 1024,  60,  true}, {3, 1280, 1024,  75,  true},
-	{4, 1280, 1024,  85,  true},
-	{1, 1360,  768,  60,  true},
-	{1, 1360, 1024,  59,  true},
-	{1, 1400, 1050,  60,  true}, {2, 1400, 1050,  75,  true},
-	{1, 1600, 1200,  60,  true}, {2, 1600, 1200,  65,  true}, {3, 1600, 1200,  70,  true},
-	{4, 1600, 1200,  75,  true}, {5, 1600, 1200,  85,  true}, {6, 1600, 1200, 100,  true},
-	{7, 1600, 1200, 120,  true},
-	{1, 1680, 1050,  60,  true},
-	{1, 1920, 1080,  30,  true},
-	{1, 1920, 1440,  60,  true}, {2, 1920, 1440,  65,  true}, {3, 1920, 1440,  70,  true},
-	{4, 1920, 1440,  75,  true}, {5, 1920, 1440,  85,  true}, {6, 1920, 1440, 100,  true},
-	{1, 2048, 1536,  60,  true}, {2, 2048, 1536,  65,  true}, {3, 2048, 1536,  70,  true},
-	{4, 2048, 1536,  75,  true}, {5, 2048, 1536,  85,  true},
-	{0,    0,    0,   0, false}
+	{1,  320,  200,  70,  TRUE},
+	{1,  320,  240,  60,  TRUE},
+	{1,  400,  300,  60,  TRUE},
+	{1,  512,  384,  60,  TRUE},
+	{1,  640,  400,  72,  TRUE},
+	{1,  640,  480,  60,  TRUE}, {2,  640,  480,  72,  TRUE}, {3,  640,  480,  75,  TRUE},
+	{4,  640,  480,  85,  TRUE}, {5,  640,  480, 100,  TRUE}, {6,  640,  480, 120,  TRUE},
+	{7,  640,  480, 160,  TRUE}, {8,  640,  480, 200,  TRUE},
+	{1,  720,  480,  60,  TRUE},
+	{1,  720,  576,  58,  TRUE},
+	{1,  768,  576,  58,  TRUE},
+	{1,  800,  480,  60,  TRUE}, {2,  800,  480,  75,  TRUE}, {3,  800,  480,  85,  TRUE},
+	{1,  800,  600,  56,  TRUE}, {2,  800,  600,  60,  TRUE}, {3,  800,  600,  72,  TRUE},
+	{4,  800,  600,  75,  TRUE}, {5,  800,  600,  85,  TRUE}, {6,  800,  600, 105,  TRUE},
+	{7,  800,  600, 120,  TRUE}, {8,  800,  600, 160,  TRUE},
+	{1,  848,  480,  39,  TRUE}, {2,  848,  480,  60,  TRUE},
+	{1,  856,  480,  39,  TRUE}, {2,  856,  480,  60,  TRUE},
+	{1,  960,  540,  60,  TRUE},
+	{1,  960,  600,  60,  TRUE},
+	{1, 1024,  576,  60,  TRUE}, {2, 1024,  576,  75,  TRUE}, {3, 1024,  576,  85,  TRUE},
+	{1, 1024,  600,  60,  TRUE},
+	{1, 1024,  768,  43,  TRUE}, {2, 1024,  768,  60,  TRUE}, {3, 1024,  768,  70, FALSE},
+	{4, 1024,  768,  75, FALSE}, {5, 1024,  768,  85,  TRUE}, {6, 1024,  768, 100,  TRUE},
+	{7, 1024,  768, 120,  TRUE},
+	{1, 1152,  768,  60,  TRUE},
+	{1, 1152,  864,  60,  TRUE}, {2, 1152,  864,  75,  TRUE}, {3, 1152,  864,  84,  TRUE},
+	{1, 1280,  720,  60,  TRUE}, {2, 1280,  720,  75,  TRUE}, {3, 1280,  720,  85,  TRUE},
+	{1, 1280,  768,  60,  TRUE},
+	{1, 1280,  800,  60,  TRUE},
+	{1, 1280,  854,  60,  TRUE},
+	{1, 1280,  960,  60,  TRUE}, {2, 1280,  960,  85,  TRUE},
+	{1, 1280, 1024,  43,  TRUE}, {2, 1280, 1024,  60,  TRUE}, {3, 1280, 1024,  75,  TRUE},
+	{4, 1280, 1024,  85,  TRUE},
+	{1, 1360,  768,  60,  TRUE},
+	{1, 1360, 1024,  59,  TRUE},
+	{1, 1400, 1050,  60,  TRUE}, {2, 1400, 1050,  75,  TRUE},
+	{1, 1600, 1200,  60,  TRUE}, {2, 1600, 1200,  65,  TRUE}, {3, 1600, 1200,  70,  TRUE},
+	{4, 1600, 1200,  75,  TRUE}, {5, 1600, 1200,  85,  TRUE}, {6, 1600, 1200, 100,  TRUE},
+	{7, 1600, 1200, 120,  TRUE},
+	{1, 1680, 1050,  60,  TRUE},
+	{1, 1920, 1080,  30,  TRUE},
+	{1, 1920, 1440,  60,  TRUE}, {2, 1920, 1440,  65,  TRUE}, {3, 1920, 1440,  70,  TRUE},
+	{4, 1920, 1440,  75,  TRUE}, {5, 1920, 1440,  85,  TRUE}, {6, 1920, 1440, 100,  TRUE},
+	{1, 2048, 1536,  60,  TRUE}, {2, 2048, 1536,  65,  TRUE}, {3, 2048, 1536,  70,  TRUE},
+	{4, 2048, 1536,  75,  TRUE}, {5, 2048, 1536,  85,  TRUE},
+	{0,    0,    0,   0, FALSE}
 };
 
 static struct _sisfbddcsmodes {
@@ -665,18 +677,64 @@ static struct _customttable {
 
 /* Interface used by the world */
 #ifndef MODULE
-static int sisfb_setup(char *options);
+SISINITSTATIC int sisfb_setup(char *options);
 #endif
 
 /* Interface to the low level console driver */
-static int sisfb_init(void);
+SISINITSTATIC int sisfb_init(void);
 
 /* fbdev routines */
 static int	sisfb_get_fix(struct fb_fix_screeninfo *fix, int con,
 				struct fb_info *info);
 
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,5,0)
+static int	sisfb_get_fix(struct fb_fix_screeninfo *fix,
+				int con,
+				struct fb_info *info);
+static int	sisfb_get_var(struct fb_var_screeninfo *var,
+				int con,
+				struct fb_info *info);
+static int	sisfb_set_var(struct fb_var_screeninfo *var,
+				int con,
+				struct fb_info *info);
+static void	sisfb_crtc_to_var(struct sis_video_info *ivideo,
+				struct fb_var_screeninfo *var);
+static int	sisfb_get_cmap(struct fb_cmap *cmap,
+				int kspc,
+				int con,
+				struct fb_info *info);
+static int	sisfb_set_cmap(struct fb_cmap *cmap,
+				int kspc,
+				int con,
+				struct fb_info *info);
+static int	sisfb_update_var(int con,
+				struct fb_info *info);
+static int	sisfb_switch(int con,
+			     struct fb_info *info);
+static void	sisfb_blank(int blank,
+				struct fb_info *info);
+static void	sisfb_set_disp(int con,
+				struct fb_var_screeninfo *var,
+				struct fb_info *info);
+static int	sis_getcolreg(unsigned regno, unsigned *red, unsigned *green,
+				unsigned *blue, unsigned *transp,
+				struct fb_info *fb_info);
+static void	sisfb_do_install_cmap(int con,
+				struct fb_info *info);
+static int	sisfb_ioctl(struct inode *inode, struct file *file,
+				unsigned int cmd, unsigned long arg, int con,
+				struct fb_info *info);
+#endif
+
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,5,0)
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,15)
 static int	sisfb_ioctl(struct fb_info *info, unsigned int cmd,
 			    unsigned long arg);
+#else
+static int	sisfb_ioctl(struct inode *inode, struct file *file,
+				unsigned int cmd, unsigned long arg,
+				struct fb_info *info);
+#endif
 static int	sisfb_set_par(struct fb_info *info);
 static int	sisfb_blank(int blank,
 				struct fb_info *info);
@@ -685,13 +743,14 @@ extern void	fbcon_sis_fillrect(struct fb_info *info,
 extern void	fbcon_sis_copyarea(struct fb_info *info,
 				const struct fb_copyarea *area);
 extern int	fbcon_sis_sync(struct fb_info *info);
+#endif
 
 /* Internal 2D accelerator functions */
 extern int	sisfb_initaccel(struct sis_video_info *ivideo);
 extern void	sisfb_syncaccel(struct sis_video_info *ivideo);
 
 /* Internal general routines */
-static void	sisfb_search_mode(char *name, bool quiet);
+static void	sisfb_search_mode(char *name, BOOLEAN quiet);
 static int	sisfb_validate_mode(struct sis_video_info *ivideo, int modeindex, u32 vbflags);
 static u8	sisfb_search_refresh_rate(struct sis_video_info *ivideo, unsigned int rate,
 				int index);
@@ -702,10 +761,10 @@ static int	sisfb_do_set_var(struct fb_var_screeninfo *var, int isactive,
 				struct fb_info *info);
 static void	sisfb_pre_setmode(struct sis_video_info *ivideo);
 static void	sisfb_post_setmode(struct sis_video_info *ivideo);
-static bool	sisfb_CheckVBRetrace(struct sis_video_info *ivideo);
-static bool	sisfbcheckvretracecrt2(struct sis_video_info *ivideo);
-static bool	sisfbcheckvretracecrt1(struct sis_video_info *ivideo);
-static bool	sisfb_bridgeisslave(struct sis_video_info *ivideo);
+static BOOLEAN	sisfb_CheckVBRetrace(struct sis_video_info *ivideo);
+static BOOLEAN	sisfbcheckvretracecrt2(struct sis_video_info *ivideo);
+static BOOLEAN	sisfbcheckvretracecrt1(struct sis_video_info *ivideo);
+static BOOLEAN	sisfb_bridgeisslave(struct sis_video_info *ivideo);
 static void	sisfb_detect_VB_connect(struct sis_video_info *ivideo);
 static void	sisfb_get_VB_type(struct sis_video_info *ivideo);
 static void	sisfb_set_TVxposoffset(struct sis_video_info *ivideo, int val);
@@ -737,25 +796,31 @@ static void		sisfb_free_node(struct SIS_HEAP *memheap, struct SIS_OH *poh);
 
 /* Routines from init.c/init301.c */
 extern unsigned short	SiS_GetModeID_LCD(int VGAEngine, unsigned int VBFlags, int HDisplay,
-				int VDisplay, int Depth, bool FSTN, unsigned short CustomT,
+				int VDisplay, int Depth, BOOLEAN FSTN, unsigned short CustomT,
 				int LCDwith, int LCDheight, unsigned int VBFlags2);
 extern unsigned short	SiS_GetModeID_TV(int VGAEngine, unsigned int VBFlags, int HDisplay,
 				int VDisplay, int Depth, unsigned int VBFlags2);
 extern unsigned short	SiS_GetModeID_VGA2(int VGAEngine, unsigned int VBFlags, int HDisplay,
 				int VDisplay, int Depth, unsigned int VBFlags2);
 extern void		SiSRegInit(struct SiS_Private *SiS_Pr, SISIOADDRESS BaseAddr);
-extern bool		SiSSetMode(struct SiS_Private *SiS_Pr, unsigned short ModeNo);
+extern BOOLEAN		SiSSetMode(struct SiS_Private *SiS_Pr, unsigned short ModeNo);
 extern void		SiS_SetEnableDstn(struct SiS_Private *SiS_Pr, int enable);
 extern void		SiS_SetEnableFstn(struct SiS_Private *SiS_Pr, int enable);
 
-extern bool		SiSDetermineROMLayout661(struct SiS_Private *SiS_Pr);
+extern BOOLEAN		SiSDetermineROMLayout661(struct SiS_Private *SiS_Pr);
 
-extern bool		sisfb_gettotalfrommode(struct SiS_Private *SiS_Pr, unsigned char modeno,
+extern BOOLEAN		sisfb_gettotalfrommode(struct SiS_Private *SiS_Pr, unsigned char modeno,
 				int *htotal, int *vtotal, unsigned char rateindex);
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(2,5,0)
 extern int		sisfb_mode_rate_to_dclock(struct SiS_Private *SiS_Pr,
 				unsigned char modeno, unsigned char rateindex);
 extern int		sisfb_mode_rate_to_ddata(struct SiS_Private *SiS_Pr, unsigned char modeno,
 				unsigned char rateindex, struct fb_var_screeninfo *var);
+#endif
+#if LINUX_VERSION_CODE < KERNEL_VERSION(2,5,0)
+extern void		SiS_Generic_ConvertCRData(struct SiS_Private *SiS_Pr, unsigned char *crdata, int xres,
+				int yres, struct fb_var_screeninfo *var, BOOLEAN writeres);
+#endif
 
 /* Chrontel TV, DDC and DPMS functions */
 extern unsigned short	SiS_GetCH700x(struct SiS_Private *SiS_Pr, unsigned short reg);

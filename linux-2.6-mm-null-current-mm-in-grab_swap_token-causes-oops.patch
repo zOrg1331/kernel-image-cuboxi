@@ -1,0 +1,39 @@
+From: Jerome Marchand <jmarchan@redhat.com>
+Subject: [RHEL5.1 PATCH] BZ231639: kernel thread current->mm dereference in  grab_swap_token causes oops
+Date: Mon, 26 Mar 2007 16:27:03 +0200
+Bugzilla: 231639
+Message-Id: <4607D837.3080807@redhat.com>
+Changelog: [mm] NULL current->mm dereference in grab_swap_token causes oops
+
+
+BZ# 231639
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=231639
+
+An ISV experiments crashes when a kernel thread with NULL mm and
+performing asynchronous direct i/o, executes grab_swap_token().
+
+A simple solution is to make grab_swap_token() exit silently when
+called from a NULL mm thread.
+
+I am not able to reproduce this bug, what requires the ISV software
+stack to be installed. However, our partner had already test the patch
+and no crash occurs anymore with the patch applied.
+
+This is a regression, this patch has been already applied in RHEL-4.
+
+Jérôme
+
+--- linux-2.6.18.noarch/mm/thrash.c.orig	2006-09-20 05:42:06.000000000 +0200
++++ linux-2.6.18.noarch/mm/thrash.c	2007-03-26 16:15:41.000000000 +0200
+@@ -54,6 +54,10 @@ void grab_swap_token(void)
+ 	struct mm_struct *mm;
+ 	int reason;
+ 
++	/* Some kernel threads without mm can fault on behalf of others. */
++	if (unlikely(!current->mm))
++		return;
++
+ 	/* We have the token. Let others know we still need it. */
+ 	if (has_swap_token(current->mm)) {
+ 		current->mm->recent_pagein = 1;
+

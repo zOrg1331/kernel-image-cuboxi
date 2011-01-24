@@ -17,7 +17,7 @@
  *
  * Copyright (C) IBM Corporation, 2004
  *
- * Author: Max Asböck <amax@us.ibm.com>
+ * Author: Max Asböck <amax@us.ibm.com> 
  *
  */
 
@@ -54,7 +54,7 @@ int ibmasm_send_i2o_message(struct service_processor *sp)
 	return 0;
 }
 
-irqreturn_t ibmasm_interrupt_handler(int irq, void * dev_id)
+irqreturn_t ibmasm_interrupt_handler(int irq, void * dev_id, struct pt_regs *regs)
 {
 	u32	mfa;
 	struct service_processor *sp = (struct service_processor *)dev_id;
@@ -67,7 +67,7 @@ irqreturn_t ibmasm_interrupt_handler(int irq, void * dev_id)
 	dbg("respond to interrupt at %s\n", get_timestamp(tsbuf));
 
 	if (mouse_interrupt_pending(sp)) {
-		ibmasm_handle_mouse_interrupt(sp);
+		ibmasm_handle_mouse_interrupt(sp, regs);
 		clear_mouse_interrupt(sp);
 	}
 

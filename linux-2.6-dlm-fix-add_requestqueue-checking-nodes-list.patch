@@ -1,0 +1,102 @@
+From: David Teigland <teigland@redhat.com>
+Subject: [RHEL5 PATCH] dlm: fix add_requestqueue checking nodes list
+Date: Mon, 27 Nov 2006 11:26:33 -0600
+Bugzilla: 214475
+Message-Id: <20061127172633.GB18093@redhat.com>
+Changelog: dlm: fix add_requestqueue checking nodes list
+
+
+bz 214475
+
+Requests that arrive after recovery has started are saved in the
+requestqueue and processed after recovery is done.  Some of these requests
+are purged during recovery if they are from nodes that have been removed.
+We move the purging of the requests (dlm_purge_requestqueue) to later in
+the recovery sequence which allows the routine saving requests
+(dlm_add_requestqueue) to avoid filtering out requests by nodeid since the
+same will be done by the purge.  The current code has add_requestqueue
+filtering by nodeid but doesn't hold any locks when accessing the list of
+current nodes.  This also means that we need to call the purge routine
+when the lockspace is being shut down since the add routine will not be
+rejecting requests itself any more.
+
+
+Index: latest/fs/dlm/recoverd.c
+===================================================================
+--- latest.orig/fs/dlm/recoverd.c
++++ latest/fs/dlm/recoverd.c
+@@ -94,14 +94,6 @@ static int ls_recover(struct dlm_ls *ls,
+ 	}
+ 
+ 	/*
+-	 * Purge directory-related requests that are saved in requestqueue.
+-	 * All dir requests from before recovery are invalid now due to the dir
+-	 * rebuild and will be resent by the requesting nodes.
+-	 */
+-
+-	dlm_purge_requestqueue(ls);
+-
+-	/*
+ 	 * Wait for all nodes to complete directory rebuild.
+ 	 */
+ 
+@@ -181,6 +173,14 @@ static int ls_recover(struct dlm_ls *ls,
+ 
+ 	dlm_release_root_list(ls);
+ 
++	/*
++	 * Purge directory-related requests that are saved in requestqueue.
++	 * All dir requests from before recovery are invalid now due to the dir
++	 * rebuild and will be resent by the requesting nodes.
++	 */
++
++	dlm_purge_requestqueue(ls);
++
+ 	dlm_set_recover_status(ls, DLM_RS_DONE);
+ 	error = dlm_recover_done_wait(ls);
+ 	if (error) {
+Index: latest/fs/dlm/requestqueue.c
+===================================================================
+--- latest.orig/fs/dlm/requestqueue.c
++++ latest/fs/dlm/requestqueue.c
+@@ -36,9 +36,6 @@ int dlm_add_requestqueue(struct dlm_ls *
+ 	int length = hd->h_length;
+ 	int rv = 0;
+ 
+-	if (dlm_is_removed(ls, nodeid))
+-		return 0;
+-
+ 	e = kmalloc(sizeof(struct rq_entry) + length, GFP_KERNEL);
+ 	if (!e) {
+ 		log_print("dlm_add_requestqueue: out of memory\n");
+@@ -133,6 +130,10 @@ static int purge_request(struct dlm_ls *
+ {
+ 	uint32_t type = ms->m_type;
+ 
++	/* the ls is being cleaned up and freed by release_lockspace */
++	if (!ls->ls_count)
++		return 1;
++
+ 	if (dlm_is_removed(ls, nodeid))
+ 		return 1;
+ 
+Index: latest/fs/dlm/lockspace.c
+===================================================================
+--- latest.orig/fs/dlm/lockspace.c
++++ latest/fs/dlm/lockspace.c
+@@ -22,6 +22,7 @@
+ #include "memory.h"
+ #include "lock.h"
+ #include "recover.h"
++#include "requestqueue.h"
+ 
+ #ifdef CONFIG_DLM_DEBUG
+ int dlm_create_debug_file(struct dlm_ls *ls);
+@@ -681,6 +682,7 @@ static int release_lockspace(struct dlm_
+ 	 * Free structures on any other lists
+ 	 */
+ 
++	dlm_purge_requestqueue(ls);
+ 	kfree(ls->ls_recover_args);
+ 	dlm_clear_free_entries(ls);
+ 	dlm_clear_members(ls);

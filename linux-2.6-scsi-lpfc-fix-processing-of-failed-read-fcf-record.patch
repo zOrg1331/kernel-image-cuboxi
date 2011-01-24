@@ -1,0 +1,29 @@
+From: Rob Evers <revers@redhat.com>
+Date: Mon, 4 Jan 2010 22:52:41 -0500
+Subject: [scsi] lpfc: Fix processing of failed read fcf record
+Message-id: <20100104225248.24386.69090.sendpatchset@localhost.localdomain>
+Patchwork-id: 22306
+O-Subject: [RHEL5.5 PATCH 14/18] Fix driver tries to process failed read fcf
+	record.
+Bugzilla: 549763
+RH-Acked-by: Tomas Henzl <thenzl@redhat.com>
+RH-Acked-by: Mike Christie <mchristi@redhat.com>
+
+https://bugzilla.redhat.com/show_bug.cgi?id=549763
+
+Fix driver tries to process failed read fcf record.
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/scsi/lpfc/lpfc_hbadisc.c b/drivers/scsi/lpfc/lpfc_hbadisc.c
+index c740fed..64932a0 100644
+--- a/drivers/scsi/lpfc/lpfc_hbadisc.c
++++ b/drivers/scsi/lpfc/lpfc_hbadisc.c
+@@ -1695,6 +1695,7 @@ lpfc_mbx_cmpl_read_fcf_record(struct lpfc_hba *phba, LPFC_MBOXQ_t *mboxq)
+ 					"with status x%x add_status x%x, mbx\n",
+ 					shdr_status, shdr_add_status);
+ 		}
++		goto out;
+ 	}
+ 	/* Interpreting the returned information of FCF records */
+ 	read_fcf = (struct lpfc_mbx_read_fcf_tbl *)virt_addr;

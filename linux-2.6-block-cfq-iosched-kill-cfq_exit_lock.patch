@@ -1,0 +1,324 @@
+From: Jeff Moyer <jmoyer@redhat.com>
+Date: Wed, 7 Jul 2010 13:48:29 -0400
+Subject: [block] cfq-iosched: kill cfq_exit_lock
+Message-id: <1278510510-27466-2-git-send-email-jmoyer@redhat.com>
+Patchwork-id: 26740
+O-Subject: [RHEL5 PATCH 1/2][v2] cfq-iosched: kill cfq_exit_lock
+Bugzilla: 582435
+RH-Acked-by: Vivek Goyal <vgoyal@redhat.com>
+
+The following circular locking dependency warning is printed for a RHEL 5.5
+debug kernel:
+=======================================================
+usb-storage: device scan complete
+[ INFO: possible circular locking dependency detected ]
+2.6.18-196.el5debug #1
+-------------------------------------------------------
+usb-stor-scan/765 is trying to acquire lock:
+ (cfq_exit_lock){--..}, at: [<ffffffff801599fd>] cfq_drop_dead_cic+0x19/0x69
+
+but task is already holding lock:
+ (&q->__queue_lock){.+..}, at: [<ffffffff801528f4>] blk_get_request+0x27/0x68
+
+which lock already depends on the new lock.
+
+It's clearly right, there is potential for a deadlock of queue_lock ->
+cfq_exit_lock -> queue_lock.  The following commit completely removes the
+cfq_exit_lock:
+
+  commit fc46379daf90dce57bf765c81d3b39f55150aac2
+  Author: Jens Axboe <axboe@suse.de>
+  Date:   Tue Aug 29 09:05:44 2006 +0200
+
+    [PATCH] cfq-iosched: kill cfq_exit_lock
+
+    cfq_exit_lock is protecting two things now:
+
+    - The per-ioc rbtree of cfq_io_contexts
+
+    - The per-cfqd linked list of cfq_io_contexts
+
+    The per-cfqd linked list can be protected by the queue lock, as it is (by
+    definition) per cfqd as the queue lock is.
+
+    The per-ioc rbtree is mainly used and updated by the process itself only.
+    The only outside use is the io priority changing. If we move the
+    priority changing to not browsing the rbtree, we can remove any locking
+    from the rbtree updates and lookup completely. Let the sys_ioprio syscall
+    just mark processes as having the iopriority changed and lazily update
+    the private cfq io contexts the next time io is queued, and we can
+    remove this locking as well.
+
+    Signed-off-by: Jens Axboe <axboe@suse.de>
+
+The patch, unfortunately, makes a modification to the struct io_context,
+exported in include/linux/blkdev.h.  These data structures are allocated
+using an allocator routine and are thus not embedded in other data
+structures.  It is, therefore, safe to add elements to the end of this
+structure.
+
+The following change is what was made in the upstream patch:
+
+-	int (*set_ioprio)(struct io_context *, unsigned int);
++	unsigned int ioprio_changed;
+
+and:
+
+-	if (ioc && ioc->set_ioprio)
+-		ioc->set_ioprio(ioc, ioprio);
++	if (ioc)
++		ioc->ioprio_changed = 1;
+
+Thus, instead of calling ioprio_changed in the context of the set_task_ioprio
+system call, only a flag is set indicating that a change is pending.  Given
+that the race is CFQ specific, we can leave the old interface in there
+(the set_ioprio function pointer, and even the call to set_ioprio as cfq
+will simply not fill in this function pointer) and implement both interfaces.
+This will ensure that all of the other crazy 3rd parties that implement I/O
+schedulers (all zero of them, afaict) will continue to function properly.
+
+I've tested this by reserving the machine listed in the bugzilla as
+exhibiting the problem.  I verified that an unpatched debug kernel indeed
+shows the circular locking dependency warning on boot.  After patching the
+kernel, the warning is gone.  Stratus also tested a version of this patch
+on 3 of their systems which exhibited the problem during cable-pull testing
+of their storage.  They confirmed that the problem was resolved.  (It has
+to be, of course, since the exit lock just plain doesn't exist anymore!)
+
+This addresses bug 582435.  Comments, as always, are welcome.
+
+Cheers,
+Jeff
+Signed-off-by: Jeff Moyer <jmoyer@redhat.com>
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/block/cfq-iosched.c b/block/cfq-iosched.c
+index c747c73..7f609df 100644
+--- a/block/cfq-iosched.c
++++ b/block/cfq-iosched.c
+@@ -36,8 +36,6 @@ static int cfq_slice_idle = HZ / 125;
+ #define CFQ_IDLE_GRACE		(HZ / 10)
+ #define CFQ_SLICE_SCALE		(5)
+ 
+-static DEFINE_SPINLOCK(cfq_exit_lock);
+-
+ /*
+  * for the hash of crq inside the cfqq
+  */
+@@ -1518,12 +1516,6 @@ static void cfq_free_io_context(struct io_context *ioc)
+ 		complete(ioc_gone);
+ }
+ 
+-static void cfq_trim(struct io_context *ioc)
+-{
+-	ioc->set_ioprio = NULL;
+-	cfq_free_io_context(ioc);
+-}
+-
+ static void cfq_exit_cfqq(struct cfq_data *cfqd, struct cfq_queue *cfqq)
+ {
+ 	struct cfq_queue *__cfqq, *next;
+@@ -1552,22 +1544,22 @@ static void cfq_exit_cfqq(struct cfq_data *cfqd, struct cfq_queue *cfqq)
+ 	cfq_put_queue(cfqq);
+ }
+ 
+-/*
+- * Called with interrupts disabled
+- */
+ static void cfq_exit_single_io_context(struct cfq_io_context *cic)
+ {
+ 	struct cfq_data *cfqd = cic->key;
+ 	request_queue_t *q;
++	unsigned long flags;
+ 
+ 	if (!cfqd)
+ 		return;
+ 
+ 	q = cfqd->queue;
+ 
+-	WARN_ON(!irqs_disabled());
++	spin_lock_irqsave(q->queue_lock, flags);
+ 
+-	spin_lock(q->queue_lock);
++	list_del_init(&cic->queue_list);
++	smp_wmb();
++	cic->key = NULL;
+ 
+ 	if (cic->cfqq[ASYNC]) {
+ 		cfq_exit_cfqq(cfqd, cic->cfqq[ASYNC]);
+@@ -1579,21 +1571,17 @@ static void cfq_exit_single_io_context(struct cfq_io_context *cic)
+ 		cic->cfqq[SYNC] = NULL;
+ 	}
+ 
+-	cic->key = NULL;
+-	list_del_init(&cic->queue_list);
+-	spin_unlock(q->queue_lock);
++	spin_unlock_irqrestore(q->queue_lock, flags);
+ }
+ 
+ static void cfq_exit_io_context(struct io_context *ioc)
+ {
+ 	struct cfq_io_context *__cic;
+-	unsigned long flags;
+ 	struct rb_node *n;
+ 
+ 	/*
+ 	 * put the reference this task is holding to the various queues
+ 	 */
+-	spin_lock_irqsave(&cfq_exit_lock, flags);
+ 
+ 	n = rb_first(&ioc->cic_root);
+ 	while (n != NULL) {
+@@ -1602,8 +1590,6 @@ static void cfq_exit_io_context(struct io_context *ioc)
+ 		cfq_exit_single_io_context(__cic);
+ 		n = rb_next(n);
+ 	}
+-
+-	spin_unlock_irqrestore(&cfq_exit_lock, flags);
+ }
+ 
+ static struct cfq_io_context *
+@@ -1698,15 +1684,12 @@ static inline void changed_ioprio(struct cfq_io_context *cic)
+ 	spin_unlock(cfqd->queue->queue_lock);
+ }
+ 
+-/*
+- * callback from sys_ioprio_set, irqs are disabled
+- */
+-static int cfq_ioc_set_ioprio(struct io_context *ioc, unsigned int ioprio)
++static void cfq_ioc_set_ioprio(struct io_context *ioc)
+ {
+ 	struct cfq_io_context *cic;
+ 	struct rb_node *n;
+ 
+-	spin_lock(&cfq_exit_lock);
++	ioc->ioprio_changed = 0;
+ 
+ 	n = rb_first(&ioc->cic_root);
+ 	while (n != NULL) {
+@@ -1715,10 +1698,6 @@ static int cfq_ioc_set_ioprio(struct io_context *ioc, unsigned int ioprio)
+ 		changed_ioprio(cic);
+ 		n = rb_next(n);
+ 	}
+-
+-	spin_unlock(&cfq_exit_lock);
+-
+-	return 0;
+ }
+ 
+ static struct cfq_queue *
+@@ -1823,10 +1802,8 @@ cfq_get_queue(struct cfq_data *cfqd, int is_sync, struct task_struct *tsk,
+ static void
+ cfq_drop_dead_cic(struct io_context *ioc, struct cfq_io_context *cic)
+ {
+-	spin_lock(&cfq_exit_lock);
++	WARN_ON(!list_empty(&cic->queue_list));
+ 	rb_erase(&cic->rb_node, &ioc->cic_root);
+-	list_del_init(&cic->queue_list);
+-	spin_unlock(&cfq_exit_lock);
+ 	kmem_cache_free(cfq_ioc_pool, cic);
+ 	atomic_dec(&ioc_count);
+ }
+@@ -1875,7 +1852,6 @@ cfq_cic_link(struct cfq_data *cfqd, struct io_context *ioc,
+ 	cic->ioc = ioc;
+ 	cic->key = cfqd;
+ 
+-	ioc->set_ioprio = cfq_ioc_set_ioprio;
+ restart:
+ 	parent = NULL;
+ 	p = &ioc->cic_root.rb_node;
+@@ -1897,11 +1873,12 @@ restart:
+ 			BUG();
+ 	}
+ 
+-	spin_lock(&cfq_exit_lock);
+ 	rb_link_node(&cic->rb_node, parent, p);
+ 	rb_insert_color(&cic->rb_node, &ioc->cic_root);
++
++	spin_lock_irq(cfqd->queue->queue_lock);
+ 	list_add(&cic->queue_list, &cfqd->cic_list);
+-	spin_unlock(&cfq_exit_lock);
++	spin_unlock_irq(cfqd->queue->queue_lock);
+ }
+ 
+ /*
+@@ -1931,6 +1908,9 @@ cfq_get_io_context(struct cfq_data *cfqd, gfp_t gfp_mask)
+ 
+ 	cfq_cic_link(cfqd, ioc, cic);
+ out:
++	smp_read_barrier_depends();
++	if (unlikely(ioc->ioprio_changed))
++		cfq_ioc_set_ioprio(ioc);
+ 	return cic;
+ err:
+ 	put_io_context(ioc);
+@@ -2613,7 +2593,6 @@ static void cfq_exit_queue(elevator_t *e)
+ 
+ 	cfq_shutdown_timer_wq(cfqd);
+ 
+-	spin_lock(&cfq_exit_lock);
+ 	spin_lock_irq(q->queue_lock);
+ 
+ 	if (cfqd->active_queue)
+@@ -2638,7 +2617,6 @@ static void cfq_exit_queue(elevator_t *e)
+ 	cfq_put_async_queues(cfqd);
+ 
+ 	spin_unlock_irq(q->queue_lock);
+-	spin_unlock(&cfq_exit_lock);
+ 
+ 	cfq_shutdown_timer_wq(cfqd);
+ 
+@@ -2845,7 +2823,7 @@ static struct elevator_type iosched_cfq = {
+ 		.elevator_may_queue_fn =	cfq_may_queue,
+ 		.elevator_init_fn =		cfq_init_queue,
+ 		.elevator_exit_fn =		cfq_exit_queue,
+-		.trim =				cfq_trim,
++		.trim =				cfq_free_io_context,
+ 	},
+ 	.elevator_attrs =	cfq_attrs,
+ 	.elevator_name =	"cfq",
+diff --git a/block/ll_rw_blk.c b/block/ll_rw_blk.c
+index a0f37a3..830dc1d 100644
+--- a/block/ll_rw_blk.c
++++ b/block/ll_rw_blk.c
+@@ -3832,6 +3832,7 @@ struct io_context *current_io_context(gfp_t gfp_flags)
+ 		atomic_set(&ret->refcount, 1);
+ 		ret->task = current;
+ 		ret->set_ioprio = NULL;
++		ret->ioprio_changed = 0;
+ 		ret->last_waited = jiffies; /* doesn't matter... */
+ 		ret->nr_batch_requests = 0; /* because this is 0 */
+ 		ret->aic = NULL;
+diff --git a/fs/ioprio.c b/fs/ioprio.c
+index c98b4b7..a3bc010 100644
+--- a/fs/ioprio.c
++++ b/fs/ioprio.c
+@@ -47,8 +47,11 @@ int set_task_ioprio(struct task_struct *task, int ioprio)
+ 	/* see wmb() in current_io_context() */
+ 	smp_read_barrier_depends();
+ 
+-	if (ioc && ioc->set_ioprio)
+-		ioc->set_ioprio(ioc, ioprio);
++	if (ioc) {
++		if (ioc->set_ioprio)
++			ioc->set_ioprio(ioc, ioprio);
++		ioc->ioprio_changed = 1;
++	}
+ 
+ 	task_unlock(task);
+ 	return 0;
+diff --git a/include/linux/blkdev.h b/include/linux/blkdev.h
+index 99b4017..4eb0a88 100644
+--- a/include/linux/blkdev.h
++++ b/include/linux/blkdev.h
+@@ -95,6 +95,9 @@ struct io_context {
+ 
+ 	struct as_io_context *aic;
+ 	struct rb_root cic_root;
++#ifndef __GENKSYMS__
++	unsigned int ioprio_changed;
++#endif
+ };
+ 
+ void put_io_context(struct io_context *ioc);

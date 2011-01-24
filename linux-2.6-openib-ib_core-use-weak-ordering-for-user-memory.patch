@@ -1,0 +1,353 @@
+From: AMEET M. PARANJAPE <aparanja@redhat.com>
+Date: Wed, 5 Nov 2008 22:14:51 -0500
+Subject: [openib] ib_core: use weak ordering for user memory
+Message-id: 20081106031416.3297.68962.sendpatchset@squad5-lp1.lab.bos.redhat.com
+O-Subject: [PATCH RHEL5.3 BZ469902 2/3] ib_core: use weak ordering for user memory
+Bugzilla: 469902
+RH-Acked-by: David Howells <dhowells@redhat.com>
+RH-Acked-by: Doug Ledford <dledford@redhat.com>
+
+RHBZ#:
+======
+https://bugzilla.redhat.com/show_bug.cgi?id=469902
+
+Description:
+===========
+This patch uses the new interface for Infiniband umem allocations
+to request relaxed ordering, as in the current OFED release.  This change only
+affects the cell platform. On non-powerpc architectures, the ib_umem_get
+and ib_umem_release functions that are changed as well as the new
+ib_umem_get_dmasync and  ib_umem_release_dmasync should get
+compiled into the same object code as the old b_umem_get and ib_umem_release
+functions before the patch. The addition of the allow_weak_ordering module
+parameter does change the module object code, but the setting of that parameter
+does not have an effect on the code path.
+
+The mlx4/qc.c and mthca_provider.c changes make the two infiniband device
+drivers use strong ordering (previously the default for all the mappings) on
+selected mappings, where this is required for data consistency.
+
+RHEL Version Found:
+================
+RHEL 5.3 Beta
+
+kABI Status:
+============
+No symbols were harmed.
+
+Brew:
+=====
+Built on all platforms.
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1560071
+
+Upstream Status:
+================
+This patch is a combination of other upstream patches with GIT ID:
+
+cb9fbc5c37b69ac584e61d449cfd590f5ae1f90d
+
+while others are already merged into the OFED-1.4 version of the kernel,
+and are expected to move info the 2.6.29 kernel, but is not part of 2.6.28-rc.
+
+Test Status:
+============
+A performance decrease is discovered on RHEL5.3 Beta expecially when executing
+the IMB benchmark (formerly known as Pallas) on InfiniBand connections. The
+performance decrease is up to 50%.
+
+After applying these patches the performance degradation is no longer present.
+
+===============================================================
+Ameet Paranjape 978-392-3903 ext 23903
+IBM on-site partner
+
+Proposed Patch:
+===============
+
+diff --git a/drivers/infiniband/core/umem.c b/drivers/infiniband/core/umem.c
+index 1a64dfc..dd4b7ad 100644
+--- a/drivers/infiniband/core/umem.c
++++ b/drivers/infiniband/core/umem.c
+@@ -38,9 +38,14 @@
+ #include <linux/dma-mapping.h>
+ #include <linux/sched.h>
+ #include <linux/hugetlb.h>
++#include <linux/dma-attrs.h>
+ 
+ #include "uverbs.h"
+ 
++static int allow_weak_ordering;
++module_param(allow_weak_ordering, bool, 0444);
++MODULE_PARM_DESC(allow_weak_ordering,  "Allow weak ordering for data registered memory");
++
+ #define IB_UMEM_MAX_PAGE_CHUNK						\
+ 	((PAGE_SIZE - offsetof(struct ib_umem_chunk, page_list)) /	\
+ 	 ((void *) &((struct ib_umem_chunk *) 0)->page_list[1] -	\
+@@ -96,14 +101,21 @@ static void dma_unmap_sg_ia64(struct ib_device *ibdev,
+ 
+ #endif
+ 
+-static void __ib_umem_release(struct ib_device *dev, struct ib_umem *umem, int dirty)
++static void __ib_umem_release(struct ib_device *dev, struct ib_umem *umem, int dirty, int dmasync)
+ {
+ 	struct ib_umem_chunk *chunk, *tmp;
+ 	int i;
+ 
++	DEFINE_DMA_ATTRS(attrs);
++
++	if (dmasync)
++		dma_set_attr(DMA_ATTR_WRITE_BARRIER, &attrs);
++	else if (allow_weak_ordering)
++		dma_set_attr(DMA_ATTR_WEAK_ORDERING, &attrs);
++
+ 	list_for_each_entry_safe(chunk, tmp, &umem->chunk_list, list) {
+-		ib_dma_unmap_sg(dev, chunk->page_list,
+-				chunk->nents, DMA_BIDIRECTIONAL);
++		ib_dma_unmap_sg_attrs(dev, chunk->page_list,
++				      chunk->nents, DMA_BIDIRECTIONAL, &attrs);
+ 		for (i = 0; i < chunk->nents; ++i) {
+ 			struct page *page = sg_page(&chunk->page_list[i]);
+ 
+@@ -122,9 +134,10 @@ static void __ib_umem_release(struct ib_device *dev, struct ib_umem *umem, int d
+  * @addr: userspace virtual address to start at
+  * @size: length of region to pin
+  * @access: IB_ACCESS_xxx flags for memory being pinned
++ * @dmasync: flush in-flight DMA when the memory region is written
+  */
+-struct ib_umem *ib_umem_get(struct ib_ucontext *context, unsigned long addr,
+-			    size_t size, int access)
++static struct ib_umem *__ib_umem_get(struct ib_ucontext *context, unsigned long addr,
++			    size_t size, int access, int dmasync)
+ {
+ 	struct ib_umem *umem;
+ 	struct page **page_list;
+@@ -137,6 +150,13 @@ struct ib_umem *ib_umem_get(struct ib_ucontext *context, unsigned long addr,
+ 	int ret;
+ 	int off;
+ 	int i;
++	DEFINE_DMA_ATTRS(attrs);
++
++	if (dmasync)
++		dma_set_attr(DMA_ATTR_WRITE_BARRIER, &attrs);
++	else if (allow_weak_ordering)
++		dma_set_attr(DMA_ATTR_WEAK_ORDERING, &attrs);
++
+ 
+ 	if (!can_do_mlock())
+ 		return ERR_PTR(-EPERM);
+@@ -224,10 +244,11 @@ struct ib_umem *ib_umem_get(struct ib_ucontext *context, unsigned long addr,
+ 				sg_set_page(&chunk->page_list[i], page_list[i + off], PAGE_SIZE, 0);
+ 			}
+ 
+-			chunk->nmap = ib_dma_map_sg(context->device,
+-						    &chunk->page_list[0],
+-						    chunk->nents,
+-						    DMA_BIDIRECTIONAL);
++			chunk->nmap = ib_dma_map_sg_attrs(context->device,
++							  &chunk->page_list[0],
++							  chunk->nents,
++							  DMA_BIDIRECTIONAL,
++							  &attrs);
+ 			if (chunk->nmap <= 0) {
+ 				for (i = 0; i < chunk->nents; ++i)
+ 					put_page(sg_page(&chunk->page_list[i]));
+@@ -247,7 +268,7 @@ struct ib_umem *ib_umem_get(struct ib_ucontext *context, unsigned long addr,
+ 
+ out:
+ 	if (ret < 0) {
+-		__ib_umem_release(context->device, umem, 0);
++		__ib_umem_release(context->device, umem, 0, dmasync);
+ 		kfree(umem);
+ 	} else
+ 		current->mm->locked_vm = locked;
+@@ -259,8 +280,21 @@ out:
+ 
+ 	return ret < 0 ? ERR_PTR(ret) : umem;
+ }
++
++struct ib_umem *ib_umem_get(struct ib_ucontext *context, unsigned long addr,
++			    size_t size, int access)
++{
++	return __ib_umem_get(context, addr, size, access, 0);
++}
+ EXPORT_SYMBOL(ib_umem_get);
+ 
++struct ib_umem *ib_umem_get_dmasync(struct ib_ucontext *context, unsigned long addr,
++			    size_t size, int access)
++{
++	return __ib_umem_get(context, addr, size, access, 1);
++}
++EXPORT_SYMBOL(ib_umem_get_dmasync);
++
+ static void ib_umem_account(struct work_struct *work)
+ {
+ 	struct ib_umem *umem = container_of(work, struct ib_umem, work);
+@@ -276,13 +310,13 @@ static void ib_umem_account(struct work_struct *work)
+  * ib_umem_release - release memory pinned with ib_umem_get
+  * @umem: umem struct to release
+  */
+-void ib_umem_release(struct ib_umem *umem)
++static void ib_umem_release_attr(struct ib_umem *umem, int dmasync)
+ {
+ 	struct ib_ucontext *context = umem->context;
+ 	struct mm_struct *mm;
+ 	unsigned long diff;
+ 
+-	__ib_umem_release(umem->context->device, umem, 1);
++	__ib_umem_release(umem->context->device, umem, 1, dmasync);
+ 
+ 	mm = get_task_mm(current);
+ 	if (!mm) {
+@@ -317,8 +351,19 @@ void ib_umem_release(struct ib_umem *umem)
+ 	mmput(mm);
+ 	kfree(umem);
+ }
++
++void ib_umem_release(struct ib_umem *umem)
++{
++	return ib_umem_release_attr(umem, 0);
++}
+ EXPORT_SYMBOL(ib_umem_release);
+ 
++void ib_umem_release_dmasync(struct ib_umem *umem)
++{
++	return ib_umem_release_attr(umem, 1);
++}
++EXPORT_SYMBOL(ib_umem_release_dmasync);
++
+ int ib_umem_page_count(struct ib_umem *umem)
+ {
+ 	struct ib_umem_chunk *chunk;
+diff --git a/drivers/infiniband/hw/mlx4/cq.c b/drivers/infiniband/hw/mlx4/cq.c
+index b730afa..b816fbc 100644
+--- a/drivers/infiniband/hw/mlx4/cq.c
++++ b/drivers/infiniband/hw/mlx4/cq.c
+@@ -142,7 +142,7 @@ struct ib_cq *mlx4_ib_create_cq(struct ib_device *ibdev, int entries, int vector
+ 			goto err_cq;
+ 		}
+ 
+-		cq->umem = ib_umem_get(context, ucmd.buf_addr, buf_size,
++		cq->umem = ib_umem_get_dmasync(context, ucmd.buf_addr, buf_size,
+ 				       IB_ACCESS_LOCAL_WRITE);
+ 		if (IS_ERR(cq->umem)) {
+ 			err = PTR_ERR(cq->umem);
+@@ -216,7 +216,7 @@ err_mtt:
+ 
+ err_buf:
+ 	if (context)
+-		ib_umem_release(cq->umem);
++		ib_umem_release_dmasync(cq->umem);
+ 	else
+ 		mlx4_buf_free(dev->dev, entries * sizeof (struct mlx4_cqe),
+ 			      &cq->buf.buf);
+@@ -241,7 +241,7 @@ int mlx4_ib_destroy_cq(struct ib_cq *cq)
+ 
+ 	if (cq->uobject) {
+ 		mlx4_ib_db_unmap_user(to_mucontext(cq->uobject->context), &mcq->db);
+-		ib_umem_release(mcq->umem);
++		ib_umem_release_dmasync(mcq->umem);
+ 	} else {
+ 		mlx4_buf_free(dev->dev, (cq->cqe + 1) * sizeof (struct mlx4_cqe),
+ 			      &mcq->buf.buf);
+diff --git a/drivers/infiniband/hw/mthca/mthca_provider.c b/drivers/infiniband/hw/mthca/mthca_provider.c
+index 9e491df..f445918 100644
+--- a/drivers/infiniband/hw/mthca/mthca_provider.c
++++ b/drivers/infiniband/hw/mthca/mthca_provider.c
+@@ -1013,7 +1013,8 @@ static struct ib_mr *mthca_reg_user_mr(struct ib_pd *pd, u64 start, u64 length,
+ 	if (!mr)
+ 		return ERR_PTR(-ENOMEM);
+ 
+-	mr->umem = ib_umem_get(pd->uobject->context, start, length, acc);
++	mr->umem = ib_umem_get_dmasync(pd->uobject->context, start,
++					 length, acc);
+ 	if (IS_ERR(mr->umem)) {
+ 		err = PTR_ERR(mr->umem);
+ 		goto err;
+diff --git a/include/rdma/ib_umem.h b/include/rdma/ib_umem.h
+index 2229842..7f34a68 100644
+--- a/include/rdma/ib_umem.h
++++ b/include/rdma/ib_umem.h
+@@ -36,6 +36,7 @@
+ #include <linux/list.h>
+ #include <linux/scatterlist.h>
+ #include <linux/workqueue.h>
++#include <linux/dma-attrs.h>
+ 
+ struct ib_ucontext;
+ 
+@@ -63,7 +64,10 @@ struct ib_umem_chunk {
+ 
+ struct ib_umem *ib_umem_get(struct ib_ucontext *context, unsigned long addr,
+ 			    size_t size, int access);
++struct ib_umem *ib_umem_get_dmasync(struct ib_ucontext *context, unsigned long addr,
++			    size_t size, int access);
+ void ib_umem_release(struct ib_umem *umem);
++void ib_umem_release_dmasync(struct ib_umem *umem);
+ int ib_umem_page_count(struct ib_umem *umem);
+ 
+ #else /* CONFIG_INFINIBAND_USER_MEM */
+@@ -75,7 +79,13 @@ static inline struct ib_umem *ib_umem_get(struct ib_ucontext *context,
+ 					  int access) {
+ 	return ERR_PTR(-EINVAL);
+ }
++static inline struct ib_umem *ib_umem_get_dmasync(struct ib_ucontext *context,
++					  unsigned long addr, size_t size,
++					  int access) {
++	return ERR_PTR(-EINVAL);
++}
+ static inline void ib_umem_release(struct ib_umem *umem) { }
++static inline void ib_umem_release_dmasync(struct ib_umem *umem) { }
+ static inline int ib_umem_page_count(struct ib_umem *umem) { return 0; }
+ 
+ #endif /* CONFIG_INFINIBAND_USER_MEM */
+diff --git a/include/rdma/ib_verbs.h b/include/rdma/ib_verbs.h
+index 81dacbb..c95e041 100644
+--- a/include/rdma/ib_verbs.h
++++ b/include/rdma/ib_verbs.h
+@@ -1540,6 +1540,24 @@ static inline void ib_dma_unmap_single(struct ib_device *dev,
+ 		dma_unmap_single(dev->dma_device, addr, size, direction);
+ }
+ 
++static inline u64 ib_dma_map_single_attrs(struct ib_device *dev,
++					  void *cpu_addr, size_t size,
++					  enum dma_data_direction direction,
++					  struct dma_attrs *attrs)
++{
++	return dma_map_single_attrs(dev->dma_device, cpu_addr, size,
++				    direction, attrs);
++}
++
++static inline void ib_dma_unmap_single_attrs(struct ib_device *dev,
++					     u64 addr, size_t size,
++					     enum dma_data_direction direction,
++					     struct dma_attrs *attrs)
++{
++	return dma_unmap_single_attrs(dev->dma_device, addr, size,
++				      direction, attrs);
++}
++
+ /**
+  * ib_dma_map_page - Map a physical page to DMA address
+  * @dev: The device for which the dma_addr is to be created
+@@ -1609,6 +1627,21 @@ static inline void ib_dma_unmap_sg(struct ib_device *dev,
+ 		dma_unmap_sg(dev->dma_device, sg, nents, direction);
+ }
+ 
++static inline int ib_dma_map_sg_attrs(struct ib_device *dev,
++				      struct scatterlist *sg, int nents,
++				      enum dma_data_direction direction,
++				      struct dma_attrs *attrs)
++{
++	return dma_map_sg_attrs(dev->dma_device, sg, nents, direction, attrs);
++}
++
++static inline void ib_dma_unmap_sg_attrs(struct ib_device *dev,
++					 struct scatterlist *sg, int nents,
++					 enum dma_data_direction direction,
++					 struct dma_attrs *attrs)
++{
++	dma_unmap_sg_attrs(dev->dma_device, sg, nents, direction, attrs);
++}
+ /**
+  * ib_sg_dma_address - Return the DMA address from a scatter/gather entry
+  * @dev: The device for which the DMA addresses were created

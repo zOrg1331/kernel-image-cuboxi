@@ -40,7 +40,6 @@
 #include <linux/kernel_stat.h>
 #include <linux/init.h>
 #include <linux/seq_file.h>
-#include <linux/module.h>
 
 #include <asm/system.h>
 #include <asm/traps.h>
@@ -187,8 +186,8 @@ __asm__ (__ALIGN_STR "\n"						   \
 "	jbra	ret_from_interrupt\n"					   \
 	 : : "i" (&kstat_cpu(0).irqs[n+8]), "i" (&irq_handler[n+8]),	   \
 	     "n" (PT_OFF_SR), "n" (n),					   \
-	     "i" (n & 8 ? (n & 16 ? &tt_mfp.int_mk_a : &st_mfp.int_mk_a)   \
-		        : (n & 16 ? &tt_mfp.int_mk_b : &st_mfp.int_mk_b)), \
+	     "i" (n & 8 ? (n & 16 ? &tt_mfp.int_mk_a : &mfp.int_mk_a)	   \
+		        : (n & 16 ? &tt_mfp.int_mk_b : &mfp.int_mk_b)),	   \
 	     "m" (preempt_count()), "di" (HARDIRQ_OFFSET)		   \
 );									   \
 	for (;;);			/* fake noreturn */		   \
@@ -333,14 +332,11 @@ static void atari_shutdown_irq(unsigned int irq)
 	atari_disable_irq(irq);
 	atari_turnoff_irq(irq);
 	m68k_irq_shutdown(irq);
-
-	if (irq == IRQ_AUTO_4)
-	    vectors[VEC_INT4] = falcon_hblhandler;
 }
 
 static struct irq_controller atari_irq_controller = {
 	.name		= "atari",
-	.lock		= __SPIN_LOCK_UNLOCKED(atari_irq_controller.lock),
+	.lock		= SPIN_LOCK_UNLOCKED,
 	.startup	= atari_startup_irq,
 	.shutdown	= atari_shutdown_irq,
 	.enable		= atari_enable_irq,
@@ -360,20 +356,20 @@ static struct irq_controller atari_irq_controller = {
 
 void __init atari_init_IRQ(void)
 {
-	m68k_setup_user_interrupt(VEC_USER, NUM_ATARI_SOURCES - IRQ_USER, NULL);
+	m68k_setup_user_interrupt(VEC_USER, 192, NULL);
 	m68k_setup_irq_controller(&atari_irq_controller, 1, NUM_ATARI_SOURCES - 1);
 
 	/* Initialize the MFP(s) */
 
 #ifdef ATARI_USE_SOFTWARE_EOI
-	st_mfp.vec_adr  = 0x48;	/* Software EOI-Mode */
+	mfp.vec_adr  = 0x48;	/* Software EOI-Mode */
 #else
-	st_mfp.vec_adr  = 0x40;	/* Automatic EOI-Mode */
+	mfp.vec_adr  = 0x40;	/* Automatic EOI-Mode */
 #endif
-	st_mfp.int_en_a = 0x00;	/* turn off MFP-Ints */
-	st_mfp.int_en_b = 0x00;
-	st_mfp.int_mk_a = 0xff;	/* no Masking */
-	st_mfp.int_mk_b = 0xff;
+	mfp.int_en_a = 0x00;	/* turn off MFP-Ints */
+	mfp.int_en_b = 0x00;
+	mfp.int_mk_a = 0xff;	/* no Masking */
+	mfp.int_mk_b = 0xff;
 
 	if (ATARIHW_PRESENT(TT_MFP)) {
 #ifdef ATARI_USE_SOFTWARE_EOI
@@ -407,8 +403,8 @@ void __init atari_init_IRQ(void)
 		 * gets overruns)
 		 */
 
-		vectors[VEC_INT2] = falcon_hblhandler;
-		vectors[VEC_INT4] = falcon_hblhandler;
+		if (!MACH_IS_HADES)
+			vectors[VEC_INT2] = falcon_hblhandler;
 	}
 
 	if (ATARIHW_PRESENT(PCM_8BIT) && ATARIHW_PRESENT(MICROWIRE)) {
@@ -445,7 +441,6 @@ unsigned long atari_register_vme_int(void)
 	free_vme_vec_bitmap |= 1 << i;
 	return VME_SOURCE_BASE + i;
 }
-EXPORT_SYMBOL(atari_register_vme_int);
 
 
 void atari_unregister_vme_int(unsigned long irq)
@@ -455,6 +450,5 @@ void atari_unregister_vme_int(unsigned long irq)
 		free_vme_vec_bitmap &= ~(1 << irq);
 	}
 }
-EXPORT_SYMBOL(atari_unregister_vme_int);
 
 

@@ -146,13 +146,13 @@
  *
  * use host->host_lock, not io_request_lock, cleanups
  *
- * 2002/10/04 - Alan Cox <alan@lxorguk.ukuu.org.uk>
+ * 2002/10/04 - Alan Cox <alan@redhat.com>
  *
- * Use dev_id for interrupts, kill __func__ pasting
+ * Use dev_id for interrupts, kill __FUNCTION__ pasting
  * Add a lock for the scb pool, clean up all other cli/sti usage stuff
  * Use the adapter lock for the other places we had the cli's
  *
- * 2002/10/06 - Alan Cox <alan@lxorguk.ukuu.org.uk>
+ * 2002/10/06 - Alan Cox <alan@redhat.com>
  *
  * Switch to new style error handling
  * Clean up delay to udelay, and yielding sleeps
@@ -178,10 +178,10 @@
 #include <linux/blkdev.h>
 #include <linux/init.h>
 #include <linux/stat.h>
-#include <linux/io.h>
 
 #include <asm/system.h>
 #include <asm/dma.h>
+#include <asm/io.h>
 
 #include <scsi/scsi.h>
 #include <scsi/scsi_cmnd.h>
@@ -640,12 +640,12 @@ static int __init wd7000_setup(char *str)
 	(void) get_options(str, ARRAY_SIZE(ints), ints);
 
 	if (wd7000_card_num >= NUM_CONFIGS) {
-		printk(KERN_ERR "%s: Too many \"wd7000=\" configurations in " "command line!\n", __func__);
+		printk(KERN_ERR "%s: Too many \"wd7000=\" configurations in " "command line!\n", __FUNCTION__);
 		return 0;
 	}
 
 	if ((ints[0] < 3) || (ints[0] > 5)) {
-		printk(KERN_ERR "%s: Error in command line!  " "Usage: wd7000=<IRQ>,<DMA>,IO>[,<BUS_ON>" "[,<BUS_OFF>]]\n", __func__);
+		printk(KERN_ERR "%s: Error in command line!  " "Usage: wd7000=<IRQ>,<DMA>,IO>[,<BUS_ON>" "[,<BUS_OFF>]]\n", __FUNCTION__);
 	} else {
 		for (i = 0; i < NUM_IRQS; i++)
 			if (ints[1] == wd7000_irq[i])
@@ -998,7 +998,7 @@ static int make_code(unsigned hosterr, unsigned scsierr)
 #define wd7000_intr_ack(host)   outb (0, host->iobase + ASC_INTR_ACK)
 
 
-static irqreturn_t wd7000_intr(int irq, void *dev_id)
+static irqreturn_t wd7000_intr(int irq, void *dev_id, struct pt_regs *regs)
 {
 	Adapter *host = (Adapter *) dev_id;
 	int flag, icmb, errstatus, icmb_status;
@@ -1091,7 +1091,6 @@ static int wd7000_queuecommand(struct scsi_cmnd *SCpnt,
 	unchar *cdb = (unchar *) SCpnt->cmnd;
 	unchar idlun;
 	short cdblen;
-	int nseg;
 	Adapter *host = (Adapter *) SCpnt->device->host->hostdata;
 
 	cdblen = SCpnt->cmd_len;
@@ -1107,29 +1106,28 @@ static int wd7000_queuecommand(struct scsi_cmnd *SCpnt,
 	SCpnt->host_scribble = (unchar *) scb;
 	scb->host = host;
 
-	nseg = scsi_sg_count(SCpnt);
-	if (nseg > 1) {
-		struct scatterlist *sg;
+	if (SCpnt->use_sg) {
+		struct scatterlist *sg = (struct scatterlist *) SCpnt->request_buffer;
 		unsigned i;
 
-		dprintk("Using scatter/gather with %d elements.\n", nseg);
+		if (SCpnt->device->host->sg_tablesize == SG_NONE) {
+			panic("wd7000_queuecommand: scatter/gather not supported.\n");
+		}
+		dprintk("Using scatter/gather with %d elements.\n", SCpnt->use_sg);
 
 		sgb = scb->sgb;
 		scb->op = 1;
 		any2scsi(scb->dataptr, (int) sgb);
-		any2scsi(scb->maxlen, nseg * sizeof(Sgb));
+		any2scsi(scb->maxlen, SCpnt->use_sg * sizeof(Sgb));
 
-		scsi_for_each_sg(SCpnt, sg, nseg, i) {
-			any2scsi(sgb[i].ptr, isa_page_to_bus(sg_page(sg)) + sg->offset);
-			any2scsi(sgb[i].len, sg->length);
+		for (i = 0; i < SCpnt->use_sg; i++) {
+			any2scsi(sgb[i].ptr, isa_page_to_bus(sg[i].page) + sg[i].offset);
+			any2scsi(sgb[i].len, sg[i].length);
 		}
 	} else {
 		scb->op = 0;
-		if (nseg) {
-			struct scatterlist *sg = scsi_sglist(SCpnt);
-			any2scsi(scb->dataptr, isa_page_to_bus(sg_page(sg)) + sg->offset);
-		}
-		any2scsi(scb->maxlen, scsi_bufflen(SCpnt));
+		any2scsi(scb->dataptr, isa_virt_to_bus(SCpnt->request_buffer));
+		any2scsi(scb->maxlen, SCpnt->request_bufflen);
 	}
 
 	/* FIXME: drop lock and yield here ? */
@@ -1524,7 +1522,7 @@ static __init int wd7000_detect(struct scsi_host_template *tpnt)
 				 *  For boards before rev 6.0, scatter/gather isn't supported.
 				 */
 				if (host->rev1 < 6)
-					sh->sg_tablesize = 1;
+					sh->sg_tablesize = SG_NONE;
 
 				present++;	/* count it */
 
@@ -1642,7 +1640,7 @@ static int wd7000_biosparam(struct scsi_device *sdev,
 			ip[2] = info[2];
 
 			if (info[0] == 255)
-				printk(KERN_INFO "%s: current partition table is " "using extended translation.\n", __func__);
+				printk(KERN_INFO "%s: current partition table is " "using extended translation.\n", __FUNCTION__);
 		}
 	}
 

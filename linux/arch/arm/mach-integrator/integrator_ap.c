@@ -27,15 +27,15 @@
 #include <linux/sysdev.h>
 #include <linux/amba/bus.h>
 #include <linux/amba/kmi.h>
-#include <linux/io.h>
 
-#include <mach/hardware.h>
+#include <asm/hardware.h>
+#include <asm/io.h>
 #include <asm/irq.h>
 #include <asm/setup.h>
 #include <asm/param.h>		/* HZ */
 #include <asm/mach-types.h>
 
-#include <mach/lm.h>
+#include <asm/arch/lm.h>
 
 #include <asm/mach/arch.h>
 #include <asm/mach/flash.h>
@@ -183,7 +183,7 @@ static void __init ap_init_irq(void)
 	for (i = 0; i < NR_IRQS; i++) {
 		if (((1 << i) & INTEGRATOR_SC_VALID_INT) != 0) {
 			set_irq_chip(i, &sc_chip);
-			set_irq_handler(i, handle_level_irq);
+			set_irq_handler(i, do_level_IRQ);
 			set_irq_flags(i, IRQF_VALID | IRQF_PROBE);
 		}
 	}
@@ -214,7 +214,7 @@ static int irq_resume(struct sys_device *dev)
 #endif
 
 static struct sysdev_class irq_class = {
-	.name		= "irq",
+	set_kset_name("irq"),
 	.suspend	= irq_suspend,
 	.resume		= irq_resume,
 };

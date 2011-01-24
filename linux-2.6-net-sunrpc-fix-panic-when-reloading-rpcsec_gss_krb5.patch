@@ -1,0 +1,68 @@
+From: Harshula Jayasuriya <harshula@redhat.com>
+Date: Thu, 25 Mar 2010 03:55:54 -0400
+Subject: [net] sunrpc: fix panic when reloading rpcsec_gss_krb5
+Message-id: <1269489354.4782.13.camel@localhost>
+Patchwork-id: 23749
+O-Subject: [RHEL5.6 PATCH] BZ570044: kernel panic when rmmod and insmod
+	rpcsec_gss_krb5 module
+Bugzilla: 570044
+RH-Acked-by: Jiri Olsa <jolsa@redhat.com>
+RH-Acked-by: Jeff Layton <jlayton@redhat.com>
+RH-Acked-by: Dean Nelson <dnelson@redhat.com>
+
+https://bugzilla.redhat.com/show_bug.cgi?id=570044
+
+The kernel panics when an already inserted rpcsec_gss_krb5 kernel module
+is removed (rmmod) and re-inserted (insmod or modprobe). The bug has
+already been fixed in the upstream mainline kernel.
+
+Regards,
+Harshula
+
+Upstream Commit:
+------------------------------------------------------------
+commit cb276805803b8e0616159d80a441ab26a931ada4
+Author: J. Bruce Fields <bfields@citi.umich.edu>
+Date:   Mon Jul 23 18:43:52 2007 -0700
+
+    nfsd: fix possible oops on re-insertion of rpcsec_gss modules
+
+    The handling of the re-registration case is wrong here; the "test" that was
+    returned from auth_domain_lookup will not be used again, so that reference
+    should be put.  And auth_domain_lookup never did anything with "new" in
+    this case, so we should just clean it up ourself.
+
+    Thanks to Akinobu Mita for bug report, analysis, and testing.
+
+    Cc: Akinobu Mita <akinobu.mita@gmail.com>
+    Signed-off-by: "J. Bruce Fields" <bfields@citi.umich.edu>
+    Cc: Neil Brown <neilb@suse.de>
+    Cc: Trond Myklebust <trond.myklebust@fys.uio.no>
+    Cc: <stable@kernel.org>
+    Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+    Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+------------------------------------------------------------
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/net/sunrpc/auth_gss/svcauth_gss.c b/net/sunrpc/auth_gss/svcauth_gss.c
+index 1062090..2860269 100644
+--- a/net/sunrpc/auth_gss/svcauth_gss.c
++++ b/net/sunrpc/auth_gss/svcauth_gss.c
+@@ -772,11 +772,12 @@ svcauth_gss_register_pseudoflavor(u32 pseudoflavor, char * name)
+ 	new->h.flavour = &svcauthops_gss;
+ 	new->pseudoflavor = pseudoflavor;
+ 
++	stat = 0;
+ 	test = auth_domain_lookup(name, &new->h);
+-	if (test != &new->h) { /* XXX Duplicate registration? */
+-		auth_domain_put(&new->h);
+-		/* dangling ref-count... */
+-		goto out;
++	if (test != &new->h) { /* Duplicate registration */
++		auth_domain_put(test);
++		kfree(new->h.name);
++		goto out_free_dom;
+ 	}
+ 	return 0;
+ 

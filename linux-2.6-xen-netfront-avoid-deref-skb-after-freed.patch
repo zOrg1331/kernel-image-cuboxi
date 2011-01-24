@@ -1,0 +1,48 @@
+From: Herbert Xu <herbert.xu@redhat.com>
+Subject: [RHEL5.1 PATCH] [XEN] netfront: Avoid deref'ing skb after it is 	potentially freed.
+Date: Mon, 13 Aug 2007 22:13:12 +0800
+Bugzilla: 251905
+Message-Id: <20070813141312.GA644@gondor.apana.org.au>
+Changelog: [XEN] netfront: Avoid deref'ing skb after it is potentially freed.
+
+
+Hi:
+
+RHEL5.1 BZ 251905
+
+This upstream patch fixes a potential use-after-free which
+may corrupt the interface stats counter.
+
+net front: Avoid deref'ing skb after it is potentially freed.
+Signed-off-by: Keir Fraser <keir@xensource.com>
+
+diff -r 840b9df48b6a drivers/xen/netfront/netfront.c
+--- a/drivers/xen/netfront/netfront.c	Tue Aug 07 09:37:41 2007 +0100
++++ b/drivers/xen/netfront/netfront.c	Mon Aug 13 22:05:25 2007 +0800
+@@ -1013,15 +1013,16 @@ static int network_start_xmit(struct sk_
+ 	if (notify)
+ 		notify_remote_via_irq(np->irq);
+ 
++	np->stats.tx_bytes += skb->len;
++	np->stats.tx_packets++;
++
++	/* Note: It is not safe to access skb after network_tx_buf_gc()! */
+ 	network_tx_buf_gc(dev);
+ 
+ 	if (!netfront_tx_slot_available(np))
+ 		netif_stop_queue(dev);
+ 
+ 	spin_unlock_irq(&np->tx_lock);
+-
+-	np->stats.tx_bytes += skb->len;
+-	np->stats.tx_packets++;
+ 
+ 	return 0;
+ 
+Cheers,
+-- 
+Visit Openswan at http://www.openswan.org/
+Email: Herbert Xu ~{PmV>HI~} <herbert@gondor.apana.org.au>
+Home Page: http://gondor.apana.org.au/~herbert/
+PGP Key: http://gondor.apana.org.au/~herbert/pubkey.txt
+

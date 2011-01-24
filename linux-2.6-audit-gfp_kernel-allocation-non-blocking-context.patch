@@ -1,0 +1,67 @@
+From: Alexander Viro <aviro@redhat.com>
+Subject: [PATCH RHEL5] fix bz#228409
+Date: Tue, 20 Mar 2007 13:55:53 -0400
+Bugzilla: 228409
+Message-Id: <20070320175553.GA18782@devserv.devel.redhat.com>
+Changelog: [audit] GFP_KERNEL allocations in non-blocking context fix
+
+
+[tested in LSPP kernels, merged into mainline]
+
+GFP_KERNEL allocations in non-blocking context; fixed by killing
+an idiotic use of security_getprocattr().
+
+Acked-by: Stephen Smalley <sds@tycho.nsa.gov>
+Acked-by: James Morris <jmorris@namei.org>
+Signed-off-by: Al Viro <viro@zeniv.linux.org.uk>
+---
+ kernel/auditsc.c |   24 +++++++++++-------------
+ 1 files changed, 11 insertions(+), 13 deletions(-)
+
+diff --git a/kernel/auditsc.c b/kernel/auditsc.c
+index 3599558..628c7ac 100644
+--- a/kernel/auditsc.c
++++ b/kernel/auditsc.c
+@@ -739,28 +739,26 @@ static inline void audit_free_context(struct audit_context *context)
+ void audit_log_task_context(struct audit_buffer *ab)
+ {
+ 	char *ctx = NULL;
+-	ssize_t len = 0;
++	unsigned len;
++	int error;
++	u32 sid;
++
++	selinux_get_task_sid(current, &sid);
++	if (!sid)
++		return;
+ 
+-	len = security_getprocattr(current, "current", NULL, 0);
+-	if (len < 0) {
+-		if (len != -EINVAL)
++	error = selinux_ctxid_to_string(sid, &ctx, &len);
++	if (error) {
++		if (error != -EINVAL)
+ 			goto error_path;
+ 		return;
+ 	}
+ 
+-	ctx = kmalloc(len, GFP_KERNEL);
+-	if (!ctx)
+-		goto error_path;
+-
+-	len = security_getprocattr(current, "current", ctx, len);
+-	if (len < 0 )
+-		goto error_path;
+-
+ 	audit_log_format(ab, " subj=%s", ctx);
++	kfree(ctx);
+ 	return;
+ 
+ error_path:
+-	kfree(ctx);
+ 	audit_panic("error in audit_log_task_context");
+ 	return;
+ }
+-- 
+1.5.0-rc2.GIT
+

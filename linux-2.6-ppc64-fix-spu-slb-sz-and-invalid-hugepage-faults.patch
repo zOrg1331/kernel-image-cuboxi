@@ -1,0 +1,127 @@
+From: Scott Moser <smoser@redhat.com>
+Subject: [PATCH RHEL5u1] bz285981 Softlockups when using Cell apps with 	hugetlbfs
+Date: Tue, 11 Sep 2007 10:56:15 -0400 (EDT)
+Bugzilla: 285981
+Message-Id: <Pine.LNX.4.64.0709111055340.27130@squad5-lp1.lab.boston.redhat.com>
+Changelog: [ppc64] Fix SPU slb size and invalidation on hugepage faults
+
+
+RHBZ#: 285981
+------
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=285981
+
+Description:
+------------
+Fix SPU slb size and invalidation on hugepage faults
+
+Looks like the spu data segment handler has an artifact of the
+address-space slices work - hugepage sizes aren't being encoded
+correctly in the SLBs inserted. This results in an infinite loop
+of hash misses when the SPE touches a hugepage mapping.
+
+This change corrects the page size encoding, and fixes the SPE/SPU
+typo in the SLB invalidation paths, so that the invalidation
+actually occurs.
+
+No applications that use Cell SPEs AND hugetlbfs will work without this
+patch.  Attempting to access hugepages from a SPE will result in 100% CPU
+load.
+
+This bug is reproducible with IBM's "CellBladeTester" application, and
+additionally with two demo apps from the Cell SDK, "fft" and "julia_set".
+The SDK is available at [1]
+
+RHEL Version Found:
+-------------------
+2.6.18-39.el5
+
+Test Status:
+------------
+To ensure cross platform build, this patch has been built with brew
+applied to kernel-2.6.18-46.el5. The build is available at [2].
+
+This patch has been tested by Jeremy Kerr of IBM.
+
+Proposed Patch:
+----------------
+Please review and ACK for RHEL5.1
+
+--
+ arch/powerpc/mm/hash_utils_64.c        |    8 ++++----
+ arch/powerpc/mm/hugetlbpage.c          |    4 ++--
+ arch/powerpc/platforms/cell/spu_base.c |    6 +++---
+ 3 files changed, 9 insertions(+), 9 deletions(-)
+Index: b/arch/powerpc/mm/hash_utils_64.c
+===================================================================
+--- a/arch/powerpc/mm/hash_utils_64.c
++++ b/arch/powerpc/mm/hash_utils_64.c
+@@ -587,7 +587,7 @@ void demote_segment_4k(struct mm_struct 
+ 	mm->context.sllp = SLB_VSID_USER | mmu_psize_defs[MMU_PAGE_4K].sllp;
+ 	get_paca()->context = mm->context;
+ 	slb_flush_and_rebolt();
+-#ifdef CONFIG_SPE_BASE
++#ifdef CONFIG_SPU_BASE
+ 	spu_flush_all_slbs(mm);
+ #endif
+ #endif
+@@ -711,7 +711,7 @@ int hash_page(unsigned long ea, unsigned
+ 				       "non-cacheable mapping\n");
+ 				psize = mmu_vmalloc_psize = MMU_PAGE_4K;
+ 			}
+-#ifdef CONFIG_SPE_BASE
++#ifdef CONFIG_SPU_BASE
+ 			spu_flush_all_slbs(mm);
+ #endif
+ 		}
+@@ -719,7 +719,7 @@ int hash_page(unsigned long ea, unsigned
+ 			if (psize != get_paca()->context.user_psize) {
+ 				get_paca()->context = mm->context;
+ 				slb_flush_and_rebolt();
+-#ifdef CONFIG_SPE_BASE
++#ifdef CONFIG_SPU_BASE
+ 				spu_flush_all_slbs(mm);
+ #endif
+ 			}
+@@ -728,7 +728,7 @@ int hash_page(unsigned long ea, unsigned
+ 			get_paca()->vmalloc_sllp =
+ 				mmu_psize_defs[mmu_vmalloc_psize].sllp;
+ 			slb_flush_and_rebolt();
+-#ifdef CONFIG_SPE_BASE
++#ifdef CONFIG_SPU_BASE
+ 			spu_flush_all_slbs(mm);
+ #endif
+ 		}
+Index: b/arch/powerpc/mm/hugetlbpage.c
+===================================================================
+--- a/arch/powerpc/mm/hugetlbpage.c
++++ b/arch/powerpc/mm/hugetlbpage.c
+@@ -513,8 +513,8 @@ int prepare_hugepage_range(unsigned long
+ 	if ((addr + len) > 0x100000000UL)
+ 		err = open_high_hpage_areas(current->mm,
+ 					    HTLB_AREA_MASK(addr, len));
+-#ifdef CONFIG_SPE_BASE
+-	spu_flush_all_slbs(mm);
++#ifdef CONFIG_SPU_BASE
++	spu_flush_all_slbs(current->mm);
+ #endif
+ 	if (err) {
+ 		printk(KERN_DEBUG "prepare_hugepage_range(%lx, %lx)"
+Index: b/arch/powerpc/platforms/cell/spu_base.c
+===================================================================
+--- a/arch/powerpc/platforms/cell/spu_base.c
++++ b/arch/powerpc/platforms/cell/spu_base.c
+@@ -147,10 +147,10 @@ static int __spu_trap_data_seg(struct sp
+ 
+ 	switch(REGION_ID(ea)) {
+ 	case USER_REGION_ID:
+-#ifdef CONFIG_PPC_MM_SLICES
+-		psize = get_slice_psize(mm, ea);
+-#else
+ 		psize = mm->context.user_psize;
++#ifdef CONFIG_HUGETLB_PAGE
++		if (in_hugepage_area(mm->context, ea))
++			psize = mmu_huge_psize;
+ #endif
+ 		vsid = (get_vsid(mm->context.id, ea) << SLB_VSID_SHIFT) |
+ 				SLB_VSID_USER;
+

@@ -11,6 +11,7 @@
 #include <linux/delay.h>
 #include <linux/serio.h>
 #include <linux/module.h>
+#include <linux/moduleparam.h>
 #include <linux/input.h>
 #include <linux/libps2.h>
 #include <linux/proc_fs.h>
@@ -89,8 +90,10 @@ static ssize_t trackpoint_set_int_attr(struct psmouse *psmouse, void *data,
 	struct trackpoint_attr_data *attr = data;
 	unsigned char *field = (unsigned char *)((char *)tp + attr->field_offset);
 	unsigned long value;
+	char *rest;
 
-	if (strict_strtoul(buf, 10, &value) || value > 255)
+	value = simple_strtoul(buf, &rest, 10);
+	if (*rest || value > 255)
 		return -EINVAL;
 
 	*field = value;
@@ -115,8 +118,10 @@ static ssize_t trackpoint_set_bit_attr(struct psmouse *psmouse, void *data,
 	struct trackpoint_attr_data *attr = data;
 	unsigned char *field = (unsigned char *)((char *)tp + attr->field_offset);
 	unsigned long value;
+	char *rest;
 
-	if (strict_strtoul(buf, 10, &value) || value > 1)
+	value = simple_strtoul(buf, &rest, 10);
+	if (*rest || value > 1)
 		return -EINVAL;
 
 	if (attr->inverted)
@@ -282,13 +287,12 @@ static int trackpoint_reconnect(struct psmouse *psmouse)
 	return 0;
 }
 
-int trackpoint_detect(struct psmouse *psmouse, bool set_properties)
+int trackpoint_detect(struct psmouse *psmouse, int set_properties)
 {
 	struct trackpoint_data *priv;
 	struct ps2dev *ps2dev = &psmouse->ps2dev;
 	unsigned char firmware_id;
 	unsigned char button_info;
-	int error;
 
 	if (trackpoint_start_protocol(psmouse, &firmware_id))
 		return -1;
@@ -301,7 +305,7 @@ int trackpoint_detect(struct psmouse *psmouse, bool set_properties)
 		button_info = 0;
 	}
 
-	psmouse->private = priv = kzalloc(sizeof(struct trackpoint_data), GFP_KERNEL);
+	psmouse->private = priv = kcalloc(1, sizeof(struct trackpoint_data), GFP_KERNEL);
 	if (!priv)
 		return -1;
 
@@ -314,14 +318,7 @@ int trackpoint_detect(struct psmouse *psmouse, bool set_properties)
 	trackpoint_defaults(priv);
 	trackpoint_sync(psmouse);
 
-	error = sysfs_create_group(&ps2dev->serio->dev.kobj, &trackpoint_attr_group);
-	if (error) {
-		printk(KERN_ERR
-			"trackpoint.c: failed to create sysfs attributes, error: %d\n",
-			error);
-		kfree(priv);
-		return -1;
-	}
+	sysfs_create_group(&ps2dev->serio->dev.kobj, &trackpoint_attr_group);
 
 	printk(KERN_INFO "IBM TrackPoint firmware: 0x%02x, buttons: %d/%d\n",
 		firmware_id, (button_info & 0xf0) >> 4, button_info & 0x0f);

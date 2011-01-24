@@ -36,19 +36,15 @@
 #include <linux/usb.h>
 #include <linux/namei.h>
 #include <linux/usbdevice_fs.h>
+#include <linux/smp_lock.h>
 #include <linux/parser.h>
 #include <linux/notifier.h>
-#include <linux/seq_file.h>
-#include <linux/smp_lock.h>
 #include <asm/byteorder.h>
 #include "usb.h"
 #include "hcd.h"
 
-#define USBFS_DEFAULT_DEVMODE (S_IWUSR | S_IRUGO)
-#define USBFS_DEFAULT_BUSMODE (S_IXUGO | S_IRUGO)
-#define USBFS_DEFAULT_LISTMODE S_IRUGO
-
-static const struct file_operations default_file_operations;
+static struct super_operations usbfs_ops;
+static struct file_operations default_file_operations;
 static struct vfsmount *usbfs_mount;
 static int usbfs_mount_count;	/* = 0 */
 static int ignore_mount = 0;
@@ -62,33 +58,9 @@ static uid_t listuid;	/* = 0 */
 static gid_t devgid;	/* = 0 */
 static gid_t busgid;	/* = 0 */
 static gid_t listgid;	/* = 0 */
-static umode_t devmode = USBFS_DEFAULT_DEVMODE;
-static umode_t busmode = USBFS_DEFAULT_BUSMODE;
-static umode_t listmode = USBFS_DEFAULT_LISTMODE;
-
-static int usbfs_show_options(struct seq_file *seq, struct vfsmount *mnt)
-{
-	if (devuid != 0)
-		seq_printf(seq, ",devuid=%u", devuid);
-	if (devgid != 0)
-		seq_printf(seq, ",devgid=%u", devgid);
-	if (devmode != USBFS_DEFAULT_DEVMODE)
-		seq_printf(seq, ",devmode=%o", devmode);
-	if (busuid != 0)
-		seq_printf(seq, ",busuid=%u", busuid);
-	if (busgid != 0)
-		seq_printf(seq, ",busgid=%u", busgid);
-	if (busmode != USBFS_DEFAULT_BUSMODE)
-		seq_printf(seq, ",busmode=%o", busmode);
-	if (listuid != 0)
-		seq_printf(seq, ",listuid=%u", listuid);
-	if (listgid != 0)
-		seq_printf(seq, ",listgid=%u", listgid);
-	if (listmode != USBFS_DEFAULT_LISTMODE)
-		seq_printf(seq, ",listmode=%o", listmode);
-
-	return 0;
-}
+static umode_t devmode = S_IWUSR | S_IRUGO;
+static umode_t busmode = S_IXUGO | S_IRUGO;
+static umode_t listmode = S_IRUGO;
 
 enum {
 	Opt_devuid, Opt_devgid, Opt_devmode,
@@ -97,7 +69,7 @@ enum {
 	Opt_err,
 };
 
-static const match_table_t tokens = {
+static match_table_t tokens = {
 	{Opt_devuid, "devuid=%u"},
 	{Opt_devgid, "devgid=%u"},
 	{Opt_devmode, "devmode=%o"},
@@ -122,9 +94,9 @@ static int parse_options(struct super_block *s, char *data)
 	devgid = 0;
 	busgid = 0;
 	listgid = 0;
-	devmode = USBFS_DEFAULT_DEVMODE;
-	busmode = USBFS_DEFAULT_BUSMODE;
-	listmode = USBFS_DEFAULT_LISTMODE;
+	devmode = S_IWUSR | S_IRUGO;
+	busmode = S_IXUGO | S_IRUGO;
+	listmode = S_IRUGO;
 
 	while ((p = strsep(&data, ",")) != NULL) {
 		substring_t args[MAX_OPT_ARGS];
@@ -180,8 +152,8 @@ static int parse_options(struct super_block *s, char *data)
 			listmode = option & S_IRWXUGO;
 			break;
 		default:
-			printk(KERN_ERR "usbfs: unrecognised mount option "
-			       "\"%s\" or missing value\n", p);
+			err("usbfs: unrecognised mount option \"%s\" "
+			    "or missing value\n", p);
 			return -EINVAL;
 		}
 	}
@@ -240,9 +212,7 @@ static void update_sb(struct super_block *sb)
 				update_special(bus);
 				break;
 			default:
-				printk(KERN_WARNING "usbfs: Unknown node %s "
-				       "mode %x found on remount!\n",
-				       bus->d_name.name, bus->d_inode->i_mode);
+				warn("Unknown node %s mode %x found on remount!\n",bus->d_name.name,bus->d_inode->i_mode);
 				break;
 			}
 		}
@@ -261,16 +231,12 @@ static int remount(struct super_block *sb, int *flags, char *data)
 		return 0;
 
 	if (parse_options(sb, data)) {
-		printk(KERN_WARNING "usbfs: mount parameter error.\n");
+		warn("usbfs: mount parameter error:");
 		return -EINVAL;
 	}
 
-	lock_kernel();
-
 	if (usbfs_mount && usbfs_mount->mnt_sb)
 		update_sb(usbfs_mount->mnt_sb);
-
-	unlock_kernel();
 
 	return 0;
 }
@@ -281,8 +247,10 @@ static struct inode *usbfs_get_inode (struct super_block *sb, int mode, dev_t de
 
 	if (inode) {
 		inode->i_mode = mode;
-		inode->i_uid = current_fsuid();
-		inode->i_gid = current_fsgid();
+		inode->i_uid = current->fsuid;
+		inode->i_gid = current->fsgid;
+		inode->i_blksize = PAGE_CACHE_SIZE;
+		inode->i_blocks = 0;
 		inode->i_atime = inode->i_mtime = inode->i_ctime = CURRENT_TIME;
 		switch (mode & S_IFMT) {
 		default:
@@ -296,7 +264,7 @@ static struct inode *usbfs_get_inode (struct super_block *sb, int mode, dev_t de
 			inode->i_fop = &simple_dir_operations;
 
 			/* directory inodes start off with i_nlink == 2 (for "." entry) */
-			inc_nlink(inode);
+			inode->i_nlink++;
 			break;
 		}
 	}
@@ -328,7 +296,7 @@ static int usbfs_mkdir (struct inode *dir, struct dentry *dentry, int mode)
 	mode = (mode & (S_IRWXUGO | S_ISVTX)) | S_IFDIR;
 	res = usbfs_mknod (dir, dentry, mode, 0);
 	if (!res)
-		inc_nlink(dir);
+		dir->i_nlink++;
 	return res;
 }
 
@@ -365,7 +333,7 @@ static int usbfs_unlink (struct inode *dir, struct dentry *dentry)
 {
 	struct inode *inode = dentry->d_inode;
 	mutex_lock(&inode->i_mutex);
-	drop_nlink(dentry->d_inode);
+	dentry->d_inode->i_nlink--;
 	dput(dentry);
 	mutex_unlock(&inode->i_mutex);
 	d_delete(dentry);
@@ -380,11 +348,10 @@ static int usbfs_rmdir(struct inode *dir, struct dentry *dentry)
 	mutex_lock(&inode->i_mutex);
 	dentry_unhash(dentry);
 	if (usbfs_empty(dentry)) {
-		drop_nlink(dentry->d_inode);
-		drop_nlink(dentry->d_inode);
+		dentry->d_inode->i_nlink -= 2;
 		dput(dentry);
 		inode->i_flags |= S_DEAD;
-		drop_nlink(dir);
+		dir->i_nlink--;
 		error = 0;
 	}
 	mutex_unlock(&inode->i_mutex);
@@ -412,7 +379,7 @@ static loff_t default_file_lseek (struct file *file, loff_t offset, int orig)
 {
 	loff_t retval = -EINVAL;
 
-	mutex_lock(&file->f_path.dentry->d_inode->i_mutex);
+	mutex_lock(&file->f_dentry->d_inode->i_mutex);
 	switch(orig) {
 	case 0:
 		if (offset > 0) {
@@ -429,30 +396,29 @@ static loff_t default_file_lseek (struct file *file, loff_t offset, int orig)
 	default:
 		break;
 	}
-	mutex_unlock(&file->f_path.dentry->d_inode->i_mutex);
+	mutex_unlock(&file->f_dentry->d_inode->i_mutex);
 	return retval;
 }
 
 static int default_open (struct inode *inode, struct file *file)
 {
-	if (inode->i_private)
-		file->private_data = inode->i_private;
+	if (inode->u.generic_ip)
+		file->private_data = inode->u.generic_ip;
 
 	return 0;
 }
 
-static const struct file_operations default_file_operations = {
+static struct file_operations default_file_operations = {
 	.read =		default_read_file,
 	.write =	default_write_file,
 	.open =		default_open,
 	.llseek =	default_file_lseek,
 };
 
-static const struct super_operations usbfs_ops = {
+static struct super_operations usbfs_ops = {
 	.statfs =	simple_statfs,
 	.drop_inode =	generic_delete_inode,
 	.remount_fs =	remount,
-	.show_options = usbfs_show_options,
 };
 
 static int usbfs_fill_super(struct super_block *sb, void *data, int silent)
@@ -468,13 +434,13 @@ static int usbfs_fill_super(struct super_block *sb, void *data, int silent)
 	inode = usbfs_get_inode(sb, S_IFDIR | 0755, 0);
 
 	if (!inode) {
-		dbg("%s: could not get inode!",__func__);
+		dbg("%s: could not get inode!",__FUNCTION__);
 		return -ENOMEM;
 	}
 
 	root = d_alloc_root(inode);
 	if (!root) {
-		dbg("%s: could not get root dentry!",__func__);
+		dbg("%s: could not get root dentry!",__FUNCTION__);
 		iput(inode);
 		return -ENOMEM;
 	}
@@ -515,13 +481,13 @@ static int fs_create_by_name (const char *name, mode_t mode,
 	*dentry = NULL;
 	mutex_lock(&parent->d_inode->i_mutex);
 	*dentry = lookup_one_len(name, parent, strlen(name));
-	if (!IS_ERR(*dentry)) {
+	if (!IS_ERR(dentry)) {
 		if ((mode & S_IFMT) == S_IFDIR)
 			error = usbfs_mkdir (parent->d_inode, *dentry, mode);
 		else 
 			error = usbfs_create (parent->d_inode, *dentry, mode);
 	} else
-		error = PTR_ERR(*dentry);
+		error = PTR_ERR(dentry);
 	mutex_unlock(&parent->d_inode->i_mutex);
 
 	return error;
@@ -529,7 +495,7 @@ static int fs_create_by_name (const char *name, mode_t mode,
 
 static struct dentry *fs_create_file (const char *name, mode_t mode,
 				      struct dentry *parent, void *data,
-				      const struct file_operations *fops,
+				      struct file_operations *fops,
 				      uid_t uid, gid_t gid)
 {
 	struct dentry *dentry;
@@ -543,7 +509,7 @@ static struct dentry *fs_create_file (const char *name, mode_t mode,
 	} else {
 		if (dentry->d_inode) {
 			if (data)
-				dentry->d_inode->i_private = data;
+				dentry->d_inode->u.generic_ip = data;
 			if (fops)
 				dentry->d_inode->i_fop = fops;
 			dentry->d_inode->i_uid = uid;
@@ -604,7 +570,7 @@ static int create_special_files (void)
 	/* create the devices special file */
 	retval = simple_pin_fs(&usb_fs_type, &usbfs_mount, &usbfs_mount_count);
 	if (retval) {
-		printk(KERN_ERR "Unable to get usbfs mount\n");
+		err ("Unable to get usbfs mount");
 		goto exit;
 	}
 
@@ -616,7 +582,7 @@ static int create_special_files (void)
 					       NULL, &usbfs_devices_fops,
 					       listuid, listgid);
 	if (devices_usbfs_dentry == NULL) {
-		printk(KERN_ERR "Unable to create devices usbfs file\n");
+		err ("Unable to create devices usbfs file");
 		retval = -ENODEV;
 		goto error_clean_mounts;
 	}
@@ -668,7 +634,7 @@ static void usbfs_add_bus(struct usb_bus *bus)
 	bus->usbfs_dentry = fs_create_file (name, busmode | S_IFDIR, parent,
 					    bus, NULL, busuid, busgid);
 	if (bus->usbfs_dentry == NULL) {
-		printk(KERN_ERR "Error creating usbfs bus entry\n");
+		err ("error creating usbfs bus entry");
 		return;
 	}
 }
@@ -696,10 +662,10 @@ static void usbfs_add_device(struct usb_device *dev)
 	sprintf (name, "%03d", dev->devnum);
 	dev->usbfs_dentry = fs_create_file (name, devmode | S_IFREG,
 					    dev->bus->usbfs_dentry, dev,
-					    &usbdev_file_operations,
+					    &usbfs_device_file_operations,
 					    devuid, devgid);
 	if (dev->usbfs_dentry == NULL) {
-		printk(KERN_ERR "Error creating usbfs device entry\n");
+		err ("error creating usbfs device entry");
 		return;
 	}
 
@@ -717,9 +683,24 @@ static void usbfs_add_device(struct usb_device *dev)
 
 static void usbfs_remove_device(struct usb_device *dev)
 {
+	struct dev_state *ds;
+	struct siginfo sinfo;
+
 	if (dev->usbfs_dentry) {
 		fs_remove_file (dev->usbfs_dentry);
 		dev->usbfs_dentry = NULL;
+	}
+	while (!list_empty(&dev->filelist)) {
+		ds = list_entry(dev->filelist.next, struct dev_state, list);
+		wake_up_all(&ds->wait);
+		list_del_init(&ds->list);
+		if (ds->discsignr) {
+			sinfo.si_signo = ds->discsignr;
+			sinfo.si_errno = EPIPE;
+			sinfo.si_code = SI_ASYNCIO;
+			sinfo.si_addr = ds->disccontext;
+			kill_proc_info_as_uid(ds->discsignr, &sinfo, ds->disc_pid, ds->disc_uid, ds->disc_euid, ds->secid);
+		}
 	}
 }
 
@@ -763,7 +744,7 @@ int __init usbfs_init(void)
 	usb_register_notify(&usbfs_nb);
 
 	/* create mount point for usbfs */
-	usbdir = proc_mkdir("bus/usb", NULL);
+	usbdir = proc_mkdir("usb", proc_bus);
 
 	return 0;
 }
@@ -773,6 +754,6 @@ void usbfs_cleanup(void)
 	usb_unregister_notify(&usbfs_nb);
 	unregister_filesystem(&usb_fs_type);
 	if (usbdir)
-		remove_proc_entry("bus/usb", NULL);
+		remove_proc_entry("usb", proc_bus);
 }
 

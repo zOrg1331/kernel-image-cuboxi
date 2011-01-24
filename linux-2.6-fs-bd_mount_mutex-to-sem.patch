@@ -1,0 +1,88 @@
+diff -Naurp kernel-orig/fs/block_dev.c kernel-modified/fs/block_dev.c
+--- kernel-orig/fs/block_dev.c	2006-09-27 14:11:05.000000000 +0530
++++ kernel-modified/fs/block_dev.c	2006-09-27 14:14:54.000000000 +0530
+@@ -261,7 +261,7 @@ static void init_once(void * foo, kmem_c
+ 	{
+ 		memset(bdev, 0, sizeof(*bdev));
+ 		mutex_init(&bdev->bd_mutex);
+-		mutex_init(&bdev->bd_mount_mutex);
++		sema_init(&bdev->bd_mount_sem, 1);
+ 		INIT_LIST_HEAD(&bdev->bd_inodes);
+ 		INIT_LIST_HEAD(&bdev->bd_list);
+ #ifdef CONFIG_SYSFS
+diff -Naurp kernel-orig/fs/buffer.c kernel-modified/fs/buffer.c
+--- kernel-orig/fs/buffer.c	2006-09-27 14:03:18.000000000 +0530
++++ kernel-modified/fs/buffer.c	2006-09-27 14:14:42.000000000 +0530
+@@ -215,7 +215,7 @@ struct super_block *freeze_bdev(struct b
+ {
+ 	struct super_block *sb;
+ 
+-	mutex_lock(&bdev->bd_mount_mutex);
++	down(&bdev->bd_mount_sem);
+ 	sb = get_super(bdev);
+ 	if (sb && !(sb->s_flags & MS_RDONLY)) {
+ 		sb->s_frozen = SB_FREEZE_WRITE;
+@@ -257,7 +257,7 @@ void thaw_bdev(struct block_device *bdev
+ 		drop_super(sb);
+ 	}
+ 
+-	mutex_unlock(&bdev->bd_mount_mutex);
++	up(&bdev->bd_mount_sem);
+ }
+ EXPORT_SYMBOL(thaw_bdev);
+ 
+diff -Naurp kernel-orig/fs/super.c kernel-modified/fs/super.c
+--- kernel-orig/fs/super.c	2006-09-27 14:03:26.000000000 +0530
++++ kernel-modified/fs/super.c	2006-09-27 14:14:48.000000000 +0530
+@@ -700,9 +700,9 @@ int get_sb_bdev(struct file_system_type 
+ 	 * will protect the lockfs code from trying to start a snapshot
+ 	 * while we are mounting
+ 	 */
+-	mutex_lock(&bdev->bd_mount_mutex);
++	down(&bdev->bd_mount_sem);
+ 	s = sget(fs_type, test_bdev_super, set_bdev_super, bdev);
+-	mutex_unlock(&bdev->bd_mount_mutex);
++	up(&bdev->bd_mount_sem);
+ 	if (IS_ERR(s))
+ 		goto error_s;
+ 
+diff -Naurp kernel-orig/include/linux/fs.h kernel-modified/include/linux/fs.h
+--- kernel-orig/include/linux/fs.h	2006-09-27 14:03:01.000000000 +0530
++++ kernel-modified/include/linux/fs.h	2006-09-27 14:14:21.000000000 +0530
+@@ -414,7 +414,7 @@ struct block_device {
+ 	struct inode *		bd_inode;	/* will die */
+ 	int			bd_openers;
+ 	struct mutex		bd_mutex;	/* open/close mutex */
+-	struct mutex		bd_mount_mutex;	/* mount mutex */
++	struct semaphore        bd_mount_sem;
+ 	struct list_head	bd_inodes;
+ 	void *			bd_holder;
+ 	int			bd_holders;
+Date: Thu, 26 Oct 2006 09:44:41 +0200
+From: Peter Zijlstra <pzijlstr@redhat.com>
+Subject: [RHEL5 PATCH] gfs2: fix build failure after bd_mount_mutex ->
+	bd_mount_sem conversion
+
+the bd_mount_mutex -> bd_mount_sem conversion forgot gfs2
+
+---
+ fs/gfs2/ops_fstype.c |    4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+Index: linux-2.6.18.noarch/fs/gfs2/ops_fstype.c
+===================================================================
+--- linux-2.6.18.noarch.orig/fs/gfs2/ops_fstype.c
++++ linux-2.6.18.noarch/fs/gfs2/ops_fstype.c
+@@ -883,9 +883,9 @@ static int gfs2_get_sb_meta(struct file_
+ 		error = -EBUSY;
+ 		goto error;
+ 	}
+-	mutex_lock(&sb->s_bdev->bd_mount_mutex);
++	down(&sb->s_bdev->bd_mount_sem);
+ 	new = sget(fs_type, test_bdev_super, set_bdev_super, sb->s_bdev);
+-	mutex_unlock(&sb->s_bdev->bd_mount_mutex);
++	up(&sb->s_bdev->bd_mount_sem);
+ 	if (IS_ERR(new)) {
+ 		error = PTR_ERR(new);
+ 		goto error;
+

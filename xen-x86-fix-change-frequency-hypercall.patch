@@ -1,0 +1,67 @@
+From: Bhavana Nagendra <bnagendr@redhat.com>
+Date: Fri, 15 Feb 2008 13:25:38 -0500
+Subject: [xen] x86: fix change frequency hypercall
+Message-id: 20080215182537.11293.9681.sendpatchset@localhost.localdomain
+O-Subject: [RHEL5.2 PATCH 3] Xen change frequency hypercall
+Bugzilla: 430938
+
+Resolves BZ 430938
+
+Fix XENPF_change_freq hypercall to not dereference a non-existent
+stack variable. Also sanity check (slightly) the frequency argument to
+cpu_frequency_change().
+
+Acked-by: Rik van Riel <riel@redhat.com>
+Acked-by: Chris Lalancette <clalance@redhat.com>
+
+diff --git a/arch/x86/platform_hypercall.c b/arch/x86/platform_hypercall.c
+index eef717c..6719541 100644
+--- a/arch/x86/platform_hypercall.c
++++ b/arch/x86/platform_hypercall.c
+@@ -40,9 +40,11 @@ DEFINE_SPINLOCK(xenpf_lock);
+ extern spinlock_t xenpf_lock;
+ #endif
+ 
++static DEFINE_PER_CPU(uint64_t, freq);
++
+ static long cpu_frequency_change_helper(void *data)
+ {
+-    return cpu_frequency_change(*(uint64_t *)data);
++    return cpu_frequency_change(this_cpu(freq));
+ }
+ 
+ ret_t do_platform_op(XEN_GUEST_HANDLE(xen_platform_op_t) u_xenpf_op)
+@@ -270,11 +272,12 @@ ret_t do_platform_op(XEN_GUEST_HANDLE(xen_platform_op_t) u_xenpf_op)
+         if ( cpufreq_controller != FREQCTL_dom0_kernel )
+             break;
+         ret = -EINVAL;
+-        if ( op->u.change_freq.flags != 0 )
++        if ( op->u.change_freq.flags || !cpu_online(op->u.change_freq.cpu) )
+             break;
++        per_cpu(freq, op->u.change_freq.cpu) = op->u.change_freq.freq;
+         ret = continue_hypercall_on_cpu(op->u.change_freq.cpu,
+                                         cpu_frequency_change_helper,
+-                                        &op->u.change_freq.freq);
++                                        NULL);
+         break;
+ 
+     case XENPF_getidletime:
+diff --git a/arch/x86/time.c b/arch/x86/time.c
+index ed61d39..45edc44 100644
+--- a/arch/x86/time.c
++++ b/arch/x86/time.c
+@@ -730,6 +730,14 @@ int cpu_frequency_change(u64 freq)
+     struct cpu_time *t = &this_cpu(cpu_time);
+     u64 curr_tsc;
+ 
++    /* Sanity check: CPU frequency allegedly dropping below 1MHz? */
++    if ( freq < 1000000u )
++    {
++        gdprintk(XENLOG_WARNING, "Rejecting CPU frequency change "
++                 "to %"PRIu64" Hz.\n", freq);
++        return -EINVAL;
++    }
++
+     local_irq_disable();
+     rdtscll(curr_tsc);
+     t->local_tsc_stamp = curr_tsc;

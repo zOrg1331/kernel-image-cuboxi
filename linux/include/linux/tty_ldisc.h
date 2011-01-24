@@ -59,12 +59,7 @@
  * 	low-level driver can "grab" an ioctl request before the line
  * 	discpline has a chance to see it.
  * 
- * long	(*compat_ioctl)(struct tty_struct * tty, struct file * file,
- * 		        unsigned int cmd, unsigned long arg);
- *
- *      Process ioctl calls from 32-bit process on 64-bit system
- *
- * void	(*set_termios)(struct tty_struct *tty, struct ktermios * old);
+ * void	(*set_termios)(struct tty_struct *tty, struct termios * old);
  *
  * 	This function notifies the line discpline that a change has
  * 	been made to the termios structure.
@@ -104,7 +99,7 @@
 #include <linux/fs.h>
 #include <linux/wait.h>
 
-struct tty_ldisc_ops {
+struct tty_ldisc {
 	int	magic;
 	char	*name;
 	int	num;
@@ -123,9 +118,7 @@ struct tty_ldisc_ops {
 			 const unsigned char * buf, size_t nr);	
 	int	(*ioctl)(struct tty_struct * tty, struct file * file,
 			 unsigned int cmd, unsigned long arg);
-	long	(*compat_ioctl)(struct tty_struct * tty, struct file * file,
-				unsigned int cmd, unsigned long arg);
-	void	(*set_termios)(struct tty_struct *tty, struct ktermios * old);
+	void	(*set_termios)(struct tty_struct *tty, struct termios * old);
 	unsigned int (*poll)(struct tty_struct *, struct file *,
 			     struct poll_table_struct *);
 	int	(*hangup)(struct tty_struct *tty);
@@ -140,11 +133,6 @@ struct tty_ldisc_ops {
 	struct  module *owner;
 	
 	int refcount;
-};
-
-struct tty_ldisc {
-	struct tty_ldisc_ops *ops;
-	atomic_t users;
 };
 
 #define TTY_LDISC_MAGIC	0x5403

@@ -21,13 +21,14 @@
 #include "udfdecl.h"
 #include <linux/fs.h>
 #include <linux/quotaops.h>
+#include <linux/udf_fs.h>
 #include <linux/sched.h>
 #include <linux/slab.h>
 
 #include "udf_i.h"
 #include "udf_sb.h"
 
-void udf_free_inode(struct inode *inode)
+void udf_free_inode(struct inode * inode)
 {
 	struct super_block *sb = inode->i_sb;
 	struct udf_sb_info *sbi = UDF_SB(sb);
@@ -36,125 +37,123 @@ void udf_free_inode(struct inode *inode)
 	 * Note: we must free any quota before locking the superblock,
 	 * as writing the quota to disk may need the lock as well.
 	 */
-	vfs_dq_free_inode(inode);
-	vfs_dq_drop(inode);
+	DQUOT_FREE_INODE(inode);
+	DQUOT_DROP(inode);
 
 	clear_inode(inode);
 
 	mutex_lock(&sbi->s_alloc_mutex);
-	if (sbi->s_lvid_bh) {
-		struct logicalVolIntegrityDescImpUse *lvidiu =
-							udf_sb_lvidiu(sbi);
+	if (sbi->s_lvidbh) {
 		if (S_ISDIR(inode->i_mode))
-			le32_add_cpu(&lvidiu->numDirs, -1);
+			UDF_SB_LVIDIU(sb)->numDirs =
+				cpu_to_le32(le32_to_cpu(UDF_SB_LVIDIU(sb)->numDirs) - 1);
 		else
-			le32_add_cpu(&lvidiu->numFiles, -1);
-		udf_updated_lvid(sb);
+			UDF_SB_LVIDIU(sb)->numFiles =
+				cpu_to_le32(le32_to_cpu(UDF_SB_LVIDIU(sb)->numFiles) - 1);
+		
+		mark_buffer_dirty(sbi->s_lvidbh);
 	}
 	mutex_unlock(&sbi->s_alloc_mutex);
 
-	udf_free_blocks(sb, NULL, &UDF_I(inode)->i_location, 0, 1);
+	udf_free_blocks(sb, NULL, UDF_I_LOCATION(inode), 0, 1);
 }
 
-struct inode *udf_new_inode(struct inode *dir, int mode, int *err)
+struct inode * udf_new_inode (struct inode *dir, int mode, int * err)
 {
 	struct super_block *sb = dir->i_sb;
 	struct udf_sb_info *sbi = UDF_SB(sb);
-	struct inode *inode;
+	struct inode * inode;
 	int block;
-	uint32_t start = UDF_I(dir)->i_location.logicalBlockNum;
-	struct udf_inode_info *iinfo;
-	struct udf_inode_info *dinfo = UDF_I(dir);
+	uint32_t start = UDF_I_LOCATION(dir).logicalBlockNum;
 
 	inode = new_inode(sb);
 
-	if (!inode) {
+	if (!inode)
+	{
 		*err = -ENOMEM;
 		return NULL;
 	}
 	*err = -ENOSPC;
 
-	iinfo = UDF_I(inode);
-	if (UDF_QUERY_FLAG(inode->i_sb, UDF_FLAG_USE_EXTENDED_FE)) {
-		iinfo->i_efe = 1;
-		if (UDF_VERS_USE_EXTENDED_FE > sbi->s_udfrev)
-			sbi->s_udfrev = UDF_VERS_USE_EXTENDED_FE;
-		iinfo->i_ext.i_data = kzalloc(inode->i_sb->s_blocksize -
-					    sizeof(struct extendedFileEntry),
-					    GFP_KERNEL);
-	} else {
-		iinfo->i_efe = 0;
-		iinfo->i_ext.i_data = kzalloc(inode->i_sb->s_blocksize -
-					    sizeof(struct fileEntry),
-					    GFP_KERNEL);
-	}
-	if (!iinfo->i_ext.i_data) {
-		iput(inode);
-		*err = -ENOMEM;
-		return NULL;
-	}
+	UDF_I_UNIQUE(inode) = 0;
+	UDF_I_LENEXTENTS(inode) = 0;
+	UDF_I_NEXT_ALLOC_BLOCK(inode) = 0;
+	UDF_I_NEXT_ALLOC_GOAL(inode) = 0;
+	UDF_I_STRAT4096(inode) = 0;
 
-	block = udf_new_block(dir->i_sb, NULL,
-			      dinfo->i_location.partitionReferenceNum,
-			      start, err);
-	if (*err) {
+	block = udf_new_block(dir->i_sb, NULL, UDF_I_LOCATION(dir).partitionReferenceNum,
+		start, err);
+	if (*err)
+	{
 		iput(inode);
 		return NULL;
 	}
 
 	mutex_lock(&sbi->s_alloc_mutex);
-	if (sbi->s_lvid_bh) {
-		struct logicalVolIntegrityDesc *lvid =
-			(struct logicalVolIntegrityDesc *)
-			sbi->s_lvid_bh->b_data;
-		struct logicalVolIntegrityDescImpUse *lvidiu =
-							udf_sb_lvidiu(sbi);
+	if (UDF_SB_LVIDBH(sb))
+	{
 		struct logicalVolHeaderDesc *lvhd;
 		uint64_t uniqueID;
-		lvhd = (struct logicalVolHeaderDesc *)
-				(lvid->logicalVolContentsUse);
+		lvhd = (struct logicalVolHeaderDesc *)(UDF_SB_LVID(sb)->logicalVolContentsUse);
 		if (S_ISDIR(mode))
-			le32_add_cpu(&lvidiu->numDirs, 1);
+			UDF_SB_LVIDIU(sb)->numDirs =
+				cpu_to_le32(le32_to_cpu(UDF_SB_LVIDIU(sb)->numDirs) + 1);
 		else
-			le32_add_cpu(&lvidiu->numFiles, 1);
-		iinfo->i_unique = uniqueID = le64_to_cpu(lvhd->uniqueID);
+			UDF_SB_LVIDIU(sb)->numFiles =
+				cpu_to_le32(le32_to_cpu(UDF_SB_LVIDIU(sb)->numFiles) + 1);
+		UDF_I_UNIQUE(inode) = uniqueID = le64_to_cpu(lvhd->uniqueID);
 		if (!(++uniqueID & 0x00000000FFFFFFFFUL))
 			uniqueID += 16;
 		lvhd->uniqueID = cpu_to_le64(uniqueID);
-		udf_updated_lvid(sb);
+		mark_buffer_dirty(UDF_SB_LVIDBH(sb));
 	}
-	mutex_unlock(&sbi->s_alloc_mutex);
 	inode->i_mode = mode;
-	inode->i_uid = current_fsuid();
-	if (dir->i_mode & S_ISGID) {
+	inode->i_uid = current->fsuid;
+	if (dir->i_mode & S_ISGID)
+	{
 		inode->i_gid = dir->i_gid;
 		if (S_ISDIR(mode))
 			mode |= S_ISGID;
-	} else {
-		inode->i_gid = current_fsgid();
 	}
-
-	iinfo->i_location.logicalBlockNum = block;
-	iinfo->i_location.partitionReferenceNum =
-				dinfo->i_location.partitionReferenceNum;
-	inode->i_ino = udf_get_lb_pblock(sb, &iinfo->i_location, 0);
-	inode->i_blocks = 0;
-	iinfo->i_lenEAttr = 0;
-	iinfo->i_lenAlloc = 0;
-	iinfo->i_use = 0;
-	if (UDF_QUERY_FLAG(inode->i_sb, UDF_FLAG_USE_AD_IN_ICB))
-		iinfo->i_alloc_type = ICBTAG_FLAG_AD_IN_ICB;
-	else if (UDF_QUERY_FLAG(inode->i_sb, UDF_FLAG_USE_SHORT_AD))
-		iinfo->i_alloc_type = ICBTAG_FLAG_AD_SHORT;
 	else
-		iinfo->i_alloc_type = ICBTAG_FLAG_AD_LONG;
+		inode->i_gid = current->fsgid;
+
+	UDF_I_LOCATION(inode).logicalBlockNum = block;
+	UDF_I_LOCATION(inode).partitionReferenceNum = UDF_I_LOCATION(dir).partitionReferenceNum;
+	inode->i_ino = udf_get_lb_pblock(sb, UDF_I_LOCATION(inode), 0);
+	inode->i_blksize = PAGE_SIZE;
+	inode->i_blocks = 0;
+	UDF_I_LENEATTR(inode) = 0;
+	UDF_I_LENALLOC(inode) = 0;
+	UDF_I_USE(inode) = 0;
+	if (UDF_QUERY_FLAG(inode->i_sb, UDF_FLAG_USE_EXTENDED_FE))
+	{
+		UDF_I_EFE(inode) = 1;
+		UDF_UPDATE_UDFREV(inode->i_sb, UDF_VERS_USE_EXTENDED_FE);
+		UDF_I_DATA(inode) = kmalloc(inode->i_sb->s_blocksize - sizeof(struct extendedFileEntry), GFP_KERNEL);
+		memset(UDF_I_DATA(inode), 0x00, inode->i_sb->s_blocksize - sizeof(struct extendedFileEntry));
+	}
+	else
+	{
+		UDF_I_EFE(inode) = 0;
+		UDF_I_DATA(inode) = kmalloc(inode->i_sb->s_blocksize - sizeof(struct fileEntry), GFP_KERNEL);
+		memset(UDF_I_DATA(inode), 0x00, inode->i_sb->s_blocksize - sizeof(struct fileEntry));
+	}
+	if (UDF_QUERY_FLAG(inode->i_sb, UDF_FLAG_USE_AD_IN_ICB))
+		UDF_I_ALLOCTYPE(inode) = ICBTAG_FLAG_AD_IN_ICB;
+	else if (UDF_QUERY_FLAG(inode->i_sb, UDF_FLAG_USE_SHORT_AD))
+		UDF_I_ALLOCTYPE(inode) = ICBTAG_FLAG_AD_SHORT;
+	else
+		UDF_I_ALLOCTYPE(inode) = ICBTAG_FLAG_AD_LONG;
 	inode->i_mtime = inode->i_atime = inode->i_ctime =
-		iinfo->i_crtime = current_fs_time(inode->i_sb);
+		UDF_I_CRTIME(inode) = current_fs_time(inode->i_sb);
 	insert_inode_hash(inode);
 	mark_inode_dirty(inode);
+	mutex_unlock(&sbi->s_alloc_mutex);
 
-	if (vfs_dq_alloc_inode(inode)) {
-		vfs_dq_drop(inode);
+	if (DQUOT_ALLOC_INODE(inode))
+	{
+		DQUOT_DROP(inode);
 		inode->i_flags |= S_NOQUOTA;
 		inode->i_nlink = 0;
 		iput(inode);

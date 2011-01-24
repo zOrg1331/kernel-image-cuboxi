@@ -1,0 +1,251 @@
+From: Jeff Layton <jlayton@redhat.com>
+Date: Mon, 23 Nov 2009 18:54:18 -0500
+Subject: [nfs] nfsd4: do exact check of attribute specified
+Message-id: <1259002458-27440-1-git-send-email-jlayton@redhat.com>
+Patchwork-id: 21470
+O-Subject: [RHEL5.5 PATCH] BZ#512361: nfsd4: do exact check about attribute
+	specified
+Bugzilla: 512361
+RH-Acked-by: Steve Dickson <SteveD@redhat.com>
+
+From: Yu Zhiguo <yuzg@cn.fujitsu.com>
+
+On certain NFSv4 operations, the client can specify a set of attributes
+that should be applied to the call. When the server receives a request
+containing an attribute that it doesn't support, it should return
+NFS4ERR_ATTRNOTSUPP.
+
+The RHEL5 server does not do this consistently. In most cases the server
+will just ignore attributes that it doesn't support. The following patch
+is a backport from upstream and fixes this. It's a bit different from
+what went upstream, mostly due to NFSv4.1 changes that I didn't want to
+take into RHEL.
+
+With this patch, RHEL5 passes the test provided by the reporter. I've
+also had this patch in my test kernels for a little while and haven't
+seen any regressions from it.
+
+Backported from upstream commit 3c8e03166ae234d16e7871f8009638e0946d303c
+
+Upstream patch description follows:
+
+	Server should return NFS4ERR_ATTRNOTSUPP if an attribute specified is
+	not supported in current environment.
+	Operations CREATE, NVERIFY, OPEN, SETATTR and VERIFY should do this check.
+
+	This bug is found when do newpynfs tests. The names of the tests that failed
+	are following:
+	  CR12 NVF7a NVF7b NVF7c NVF7d NVF7f NVF7r NVF7s
+	  OPEN15 VF7a VF7b VF7c VF7d VF7f VF7r VF7s
+
+	Add function do_check_fattr() to do exact check:
+	1, Check attribute specified is supported by the NFSv4 server or not.
+	2, Check FATTR4_WORD0_ACL & FATTR4_WORD0_FS_LOCATIONS are supported
+	   in current environment or not.
+	3, Check attribute specified is writable or not.
+
+	step 1 and 3 are done in function nfsd4_decode_fattr() but removed
+	to this function now.
+
+	Signed-off-by: Yu Zhiguo <yuzg@cn.fujitsu.com>
+	Signed-off-by: J. Bruce Fields <bfields@citi.umich.edu>
+
+diff --git a/fs/nfsd/nfs4proc.c b/fs/nfsd/nfs4proc.c
+index 8779b39..1a83bcb 100644
+--- a/fs/nfsd/nfs4proc.c
++++ b/fs/nfsd/nfs4proc.c
+@@ -58,6 +58,66 @@
+ 
+ #define NFSDDBG_FACILITY		NFSDDBG_PROC
+ 
++static u32 nfsd_attrmask[] = {
++	NFSD_WRITEABLE_ATTRS_WORD0,
++	NFSD_WRITEABLE_ATTRS_WORD1
++};
++
++static __be32
++check_attr_support(struct svc_rqst *rqstp, struct svc_fh *current_fh,
++		   u32 *bmval, u32 *writable)
++{
++	struct dentry *dentry = current_fh->fh_dentry;
++	struct svc_export *exp = current_fh->fh_export;
++
++	/*
++	 * Check about attributes are supported by the NFSv4 server or not.
++	 * According to spec, unsupported attributes return ERR_ATTRNOTSUPP.
++	 */
++	if ((bmval[0] & ~NFSD_SUPPORTED_ATTRS_WORD0) ||
++	    (bmval[1] & ~NFSD_SUPPORTED_ATTRS_WORD1))
++		return nfserr_attrnotsupp;
++
++	/*
++	 * Check FATTR4_WORD0_ACL & FATTR4_WORD0_FS_LOCATIONS can be supported
++	 * in current environment or not.
++	 */
++	if (bmval[0] & FATTR4_WORD0_ACL) {
++		if (!IS_POSIXACL(dentry->d_inode))
++			return nfserr_attrnotsupp;
++	}
++	if (bmval[0] & FATTR4_WORD0_FS_LOCATIONS) {
++		if (exp->ex_fslocs.locations == NULL)
++			return nfserr_attrnotsupp;
++	}
++
++	/*
++	 * According to spec, read-only attributes return ERR_INVAL.
++	 */
++	if (writable) {
++		if ((bmval[0] & ~writable[0]) || (bmval[1] & ~writable[1]))
++			return nfserr_inval;
++	}
++
++	return nfs_ok;
++}
++
++static __be32
++nfsd4_check_open_attributes(struct svc_rqst *rqstp,
++	struct svc_fh *current_fh, struct nfsd4_open *open)
++{
++	__be32 status = nfs_ok;
++
++	if (open->op_create == NFS4_OPEN_CREATE) {
++		if (open->op_createmode == NFS4_CREATE_UNCHECKED
++		    || open->op_createmode == NFS4_CREATE_GUARDED)
++			status = check_attr_support(rqstp, current_fh,
++					open->op_bmval, nfsd_attrmask);
++	}
++
++	return status;
++}
++
+ static inline void
+ fh_dup2(struct svc_fh *dst, struct svc_fh *src)
+ {
+@@ -204,6 +264,10 @@ nfsd4_open(struct svc_rqst *rqstp, struct svc_fh *current_fh, struct nfsd4_open
+ 	if (status)
+ 		goto out;
+ 
++	status = nfsd4_check_open_attributes(rqstp, current_fh, open);
++	if (status)
++		goto out;
++
+ 	/* Openowner is now set, so sequence id will get bumped.  Now we need
+ 	 * these checks before we do any creates: */
+ 	status = nfserr_grace;
+@@ -364,6 +428,11 @@ nfsd4_create(struct svc_rqst *rqstp, struct svc_fh *current_fh, struct nfsd4_cre
+ 	if (status)
+ 		return status;
+ 
++	status = check_attr_support(rqstp, current_fh, create->cr_bmval,
++				    nfsd_attrmask);
++	if (status)
++		return status;
++
+ 	switch (create->cr_type) {
+ 	case NF4LNK:
+ 		/* ugh! we have to null-terminate the linktext, or
+@@ -639,6 +708,12 @@ nfsd4_setattr(struct svc_rqst *rqstp, struct svc_fh *current_fh, struct nfsd4_se
+ 		}
+ 	}
+ 	status = nfs_ok;
++
++	status = check_attr_support(rqstp, current_fh, setattr->sa_bmval,
++				    nfsd_attrmask);
++	if (status)
++		return status;
++
+ 	if (setattr->sa_acl != NULL)
+ 		status = nfsd4_set_nfs4_acl(rqstp, current_fh, setattr->sa_acl);
+ 	if (status)
+@@ -706,9 +781,10 @@ nfsd4_verify(struct svc_rqst *rqstp, struct svc_fh *current_fh, struct nfsd4_ver
+ 	if (status)
+ 		return status;
+ 
+-	if ((verify->ve_bmval[0] & ~NFSD_SUPPORTED_ATTRS_WORD0)
+-	    || (verify->ve_bmval[1] & ~NFSD_SUPPORTED_ATTRS_WORD1))
+-		return nfserr_attrnotsupp;
++	status = check_attr_support(rqstp, current_fh, verify->ve_bmval, NULL);
++	if (status)
++		return status;
++
+ 	if ((verify->ve_bmval[0] & FATTR4_WORD0_RDATTR_ERROR)
+ 	    || (verify->ve_bmval[1] & NFSD_WRITEONLY_ATTRS_WORD1))
+ 		return nfserr_inval;
+diff --git a/fs/nfsd/nfs4xdr.c b/fs/nfsd/nfs4xdr.c
+index 597245c..8549223 100644
+--- a/fs/nfsd/nfs4xdr.c
++++ b/fs/nfsd/nfs4xdr.c
+@@ -235,9 +235,9 @@ nfsd4_decode_bitmap(struct nfsd4_compoundargs *argp, u32 *bmval)
+ 	DECODE_TAIL;
+ }
+ 
+-static int
+-nfsd4_decode_fattr(struct nfsd4_compoundargs *argp, u32 *bmval, struct iattr *iattr,
+-    struct nfs4_acl **acl)
++static __be32
++nfsd4_decode_fattr(struct nfsd4_compoundargs *argp, u32 *bmval,
++		   struct iattr *iattr, struct nfs4_acl **acl)
+ {
+ 	int expected_len, len = 0;
+ 	u32 dummy32;
+@@ -248,15 +248,6 @@ nfsd4_decode_fattr(struct nfsd4_compoundargs *argp, u32 *bmval, struct iattr *ia
+ 	if ((status = nfsd4_decode_bitmap(argp, bmval)))
+ 		return status;
+ 
+-	/*
+-	 * According to spec, unsupported attributes return ERR_NOTSUPP;
+-	 * read-only attributes return ERR_INVAL.
+-	 */
+-	if ((bmval[0] & ~NFSD_SUPPORTED_ATTRS_WORD0) || (bmval[1] & ~NFSD_SUPPORTED_ATTRS_WORD1))
+-		return nfserr_attrnotsupp;
+-	if ((bmval[0] & ~NFSD_WRITEABLE_ATTRS_WORD0) || (bmval[1] & ~NFSD_WRITEABLE_ATTRS_WORD1))
+-		return nfserr_inval;
+-
+ 	READ_BUF(4);
+ 	READ32(expected_len);
+ 
+@@ -389,7 +380,10 @@ nfsd4_decode_fattr(struct nfsd4_compoundargs *argp, u32 *bmval, struct iattr *ia
+ 			goto xdr_error;
+ 		}
+ 	}
+-	if (len != expected_len)
++	if (bmval[0] & ~NFSD_WRITEABLE_ATTRS_WORD0
++	    || bmval[1] & ~NFSD_WRITEABLE_ATTRS_WORD1)
++		READ_BUF(expected_len - len);
++	else if (len != expected_len)
+ 		goto xdr_error;
+ 
+ 	DECODE_TAIL;
+@@ -471,7 +465,9 @@ nfsd4_decode_create(struct nfsd4_compoundargs *argp, struct nfsd4_create *create
+ 	if ((status = check_filename(create->cr_name, create->cr_namelen, nfserr_inval)))
+ 		return status;
+ 
+-	if ((status = nfsd4_decode_fattr(argp, create->cr_bmval, &create->cr_iattr, &create->cr_acl)))
++	status = nfsd4_decode_fattr(argp, create->cr_bmval, &create->cr_iattr,
++				    &create->cr_acl);
++	if (status)
+ 		goto out;
+ 
+ 	DECODE_TAIL;
+@@ -632,7 +628,9 @@ nfsd4_decode_open(struct nfsd4_compoundargs *argp, struct nfsd4_open *open)
+ 		switch (open->op_createmode) {
+ 		case NFS4_CREATE_UNCHECKED:
+ 		case NFS4_CREATE_GUARDED:
+-			if ((status = nfsd4_decode_fattr(argp, open->op_bmval, &open->op_iattr, &open->op_acl)))
++			status = nfsd4_decode_fattr(argp, open->op_bmval,
++				&open->op_iattr, &open->op_acl);
++			if (status)
+ 				goto out;
+ 			break;
+ 		case NFS4_CREATE_EXCLUSIVE:
+@@ -826,7 +824,9 @@ nfsd4_decode_setattr(struct nfsd4_compoundargs *argp, struct nfsd4_setattr *seta
+ 	READ_BUF(sizeof(stateid_t));
+ 	READ32(setattr->sa_stateid.si_generation);
+ 	COPYMEM(&setattr->sa_stateid.si_opaque, sizeof(stateid_opaque_t));
+-	if ((status = nfsd4_decode_fattr(argp, setattr->sa_bmval, &setattr->sa_iattr, &setattr->sa_acl)))
++	status = nfsd4_decode_fattr(argp, setattr->sa_bmval, &setattr->sa_iattr,
++				    &setattr->sa_acl);
++	if (status)
+ 		goto out;
+ 
+ 	DECODE_TAIL;

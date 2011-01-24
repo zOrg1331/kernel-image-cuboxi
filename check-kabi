@@ -5,20 +5,19 @@
 # We use this script to check against reference Module.kabi files.
 #
 # Author: Jon Masters <jcm@redhat.com>
-# Copyright (C) 2007-2009 Red Hat, Inc.
+# Copyright (C) 2007 Red Hat, Inc.
 #
 # This software may be freely redistributed under the terms of the GNU
 # General Public License (GPL).
 
 # Changelog:
 # 
-# 2009/08/15 - Updated for use in RHEL6.
 # 2007/06/13 - Initial rewrite in python by Jon Masters.
 
 __author__ = "Jon Masters <jcm@redhat.com>"
-__version__ = "2.0"
-__date__ = "2009/08/15"
-__copyright__ = "Copyright (C) 2007-2009 Red Hat, Inc"
+__version__ = "1.0"
+__date__ = "2007/06/13"
+__copyright__ = "Copyright (C) 2007 Red Hat, Inc"
 __license__ = "GPL"
 
 import getopt

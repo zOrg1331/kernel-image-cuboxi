@@ -1,0 +1,47 @@
+From: Eugene Teo <eteo@redhat.com>
+Date: Thu, 11 Dec 2008 15:18:47 +0800
+Subject: [block] enforce a minimum SG_IO timeout
+Message-id: 4940BED7.3030304@redhat.com
+O-Subject: [RHEL5.4 patch] BZ#475406 kernel: enforce a minimum SG_IO timeout
+Bugzilla: 475406
+RH-Acked-by: Jiri Pirko <jpirko@redhat.com>
+RH-Acked-by: Jerome Marchand <jmarchan@redhat.com>
+CVE: CVE-2008-5700
+
+This is for bz#475406.
+
+ From Alan Cox:
+Looks like libata needs to enforce sensible minimum timeouts on SG_IO
+requests otherwise the code below (especially run ten at a time) which I
+was using to try and duplicate the kerneloops logged errors produces
+long spews of errors and forces the drives into PIO run as any user..
+
+Backport of upstream commit: f2f1fa78a155524b849edf359e42a3001ea652c0
+
+Brew build:
+http://porkchop.redhat.com/brewroot/scratch/eteo/task_1608691
+
+Test status:
+Booted on i686
+
+diff --git a/block/scsi_ioctl.c b/block/scsi_ioctl.c
+index 6fea359..8a3392a 100644
+--- a/block/scsi_ioctl.c
++++ b/block/scsi_ioctl.c
+@@ -42,6 +42,7 @@ const unsigned char scsi_command_size[8] =
+ EXPORT_SYMBOL(scsi_command_size);
+ 
+ #define BLK_DEFAULT_TIMEOUT	(60 * HZ)
++#define BLK_MIN_TIMEOUT		(7 * HZ)
+ 
+ #include <scsi/sg.h>
+ 
+@@ -311,6 +312,8 @@ static int sg_io(struct file *file, request_queue_t *q,
+ 		rq->timeout = q->sg_timeout;
+ 	if (!rq->timeout)
+ 		rq->timeout = BLK_DEFAULT_TIMEOUT;
++	if (rq->timeout < BLK_MIN_TIMEOUT)
++		rq->timeout = BLK_MIN_TIMEOUT;
+ 
+ 	rq->retries = 0;
+ 

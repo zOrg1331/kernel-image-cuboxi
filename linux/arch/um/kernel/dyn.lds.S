@@ -1,5 +1,4 @@
 #include <asm-generic/vmlinux.lds.h>
-#include <asm/page.h>
 
 OUTPUT_FORMAT(ELF_FORMAT)
 OUTPUT_ARCH(ELF_ARCH)
@@ -11,14 +10,19 @@ SECTIONS
   PROVIDE (__executable_start = START);
   . = START + SIZEOF_HEADERS;
   .interp         : { *(.interp) }
+  /* Used in arch/um/kernel/mem.c. Any memory between START and __binary_start
+   * is remapped.*/
   __binary_start = .;
   . = ALIGN(4096);		/* Init code and data */
-  _text = .;
   _stext = .;
   __init_begin = .;
-  INIT_TEXT_SECTION(PAGE_SIZE)
+  .init.text : {
+	_sinittext = .;
+	*(.init.text)
+	_einittext = .;
+  }
 
-  . = ALIGN(PAGE_SIZE);
+  . = ALIGN(4096);
 
   /* Read-only sections, merged into text segment: */
   .hash           : { *(.hash) }
@@ -57,7 +61,7 @@ SECTIONS
   } =0x90909090
   .plt            : { *(.plt) }
   .text           : {
-    TEXT_TEXT
+    *(.text)
     SCHED_TEXT
     LOCK_TEXT
     *(.fixup)
@@ -65,14 +69,12 @@ SECTIONS
     /* .gnu.warning sections are handled specially by elf32.em.  */
     *(.gnu.warning)
 
-    . = ALIGN(PAGE_SIZE);
+    . = ALIGN(4096);
+    __syscall_stub_start = .;
+    *(.__syscall_stub*)
+    __syscall_stub_end = .;
+    . = ALIGN(4096);
   } =0x90909090
-  . = ALIGN(PAGE_SIZE);
-  .syscall_stub : {
-	__syscall_stub_start = .;
-	*(.__syscall_stub*)
-	__syscall_stub_end = .;
-  }
   .fini           : {
     KEEP (*(.fini))
   } =0x90909090
@@ -81,7 +83,7 @@ SECTIONS
 
   #include "asm/common.lds.S"
 
-  init.data : { INIT_DATA }
+  init.data : { *(.init.data) }
 
   /* Ensure the __preinit_array_start label is properly aligned.  We
      could instead move the label definition inside the section, but
@@ -92,11 +94,9 @@ SECTIONS
   .init_array     : { *(.init_array) }
   .fini_array     : { *(.fini_array) }
   .data           : {
-    INIT_TASK_DATA(KERNEL_STACK_SIZE)
-    . = ALIGN(KERNEL_STACK_SIZE);
-    *(.data.init_irqstack)
-    DATA_DATA
-    *(.data.* .gnu.linkonce.d.*)
+    . = ALIGN(KERNEL_STACK_SIZE);		/* init_task */
+    *(.data.init_task)
+    *(.data .data.* .gnu.linkonce.d.*)
     SORT(CONSTRUCTORS)
   }
   .data1          : { *(.data1) }
@@ -134,8 +134,8 @@ SECTIONS
   .got            : { *(.got.plt) *(.got) }
   _edata = .;
   PROVIDE (edata = .);
+  __bss_start = .;
   .bss            : {
-   __bss_start = .;
    *(.dynbss)
    *(.bss .bss.* .gnu.linkonce.b.*)
    *(COMMON)
@@ -151,6 +151,4 @@ SECTIONS
   STABS_DEBUG
 
   DWARF_DEBUG
-
-  DISCARDS
 }

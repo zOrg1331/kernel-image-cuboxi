@@ -1,0 +1,58 @@
+From: Larry Woodman <lwoodman@redhat.com>
+Date: Wed, 15 Apr 2009 16:00:43 -0400
+Subject: [mm] msync does not sync data for a long time
+Message-id: 1239825643.3749.1.camel@dhcp-100-19-198.bos.redhat.com
+O-Subject: [Rhel5-U4 patch] msync(..., 0) does not sync data for a long time
+Bugzilla: 479079
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+
+If you do not pass MS_SYNC to msync() it does nothing and relies on
+kupdate to flush out the file's dirty pages.  kupdate has a problem
+where if you extend a file and dirty at lease one page in that extent
+every 30 seconds it will not start at the beginning and write out dirty
+pages in that file at lower offsets until it looks at that file once and
+no extensions and modifications were made.
+
+The reason for this is wb_kupdate sets wbc.range_cyclic = 1 and
+eventually calls mpage_writepages().  mpage_writepages() does not reset
+mapping->writeback_index = 0 unless it did not find any modified
+pagecache pages for that file the last time it ran.  This causes it to
+start looking at the last offset it used on the previous kupdate run
+rather than zero.  If an application extends and modifies a file's pages
+at a rate of at least 1 per 30 seconds kupdate will not write modified
+pages in that file at lower indexes.
+
+The fix for this is to initialize and pass the wbc range_start and
+range_end down to mpage_writepages() and change mpage_writepages() to
+not use range_cyclic for kupdate.  The performance consequence of this
+is no worse than calling mpage_writepages() from kupdate if pages were
+modified the last time it ran.
+
+Fixes BZ479079
+
+diff --git a/fs/mpage.c b/fs/mpage.c
+index 2d11334..44215a9 100644
+--- a/fs/mpage.c
++++ b/fs/mpage.c
+@@ -862,7 +862,7 @@ mpage_writepages(struct address_space *mapping,
+ 		writepage = mapping->a_ops->writepage;
+ 
+ 	pagevec_init(&pvec, 0);
+-	if (wbc->range_cyclic) {
++	if (wbc->range_cyclic && !wbc->for_kupdate) {
+ 		index = mapping->writeback_index; /* Start from prev offset */
+ 		end = -1;
+ 	} else {
+diff --git a/mm/page-writeback.c b/mm/page-writeback.c
+index e9fb402..cb415a8 100644
+--- a/mm/page-writeback.c
++++ b/mm/page-writeback.c
+@@ -405,6 +405,8 @@ static void wb_kupdate(unsigned long arg)
+ 		.nonblocking	= 1,
+ 		.for_kupdate	= 1,
+ 		.range_cyclic	= 1,
++		.range_start	= 0,
++		.range_end 	= LLONG_MAX,
+ 	};
+ 
+ 	sync_supers();

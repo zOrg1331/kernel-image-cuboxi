@@ -1,0 +1,55 @@
+From: Chris Lalancette <clalance@redhat.com>
+Date: Thu, 5 Mar 2009 14:17:24 +0100
+Subject: [x86] xen: silence WRMSR warnings
+Message-id: 49AFD0E4.7080505@redhat.com
+O-Subject: [RHEL5.4 PATCH]: Silence Xen WRMSR warnings
+Bugzilla: 470035
+RH-Acked-by: Justin M. Forbes <jforbes@redhat.com>
+
+All,
+     In 5.3, the acpi_cpufreq driver was updated to start using the APERF and
+MPERF MSR's.  The Xen hypervisor, however, didn't know anything about these
+MSR's, so it was denying writes to them.  Besides making it so that the
+acpi_cpufreq driver wouldn't properly work under Xen, it would also spew the
+following to the xm dmesg logs:
+
+Domain attempted WRMSR 00000000000000e8 from 00000016:3d0e9470 to 00000000:00000000
+
+The attached patch fixes this by implementing the APERF and MPERF MSR writes in
+the hypervisor.  This is a backport of xen-unstable c/s 19055, and fixes the
+issue for the reporter.  This should resolve BZ 470035.  Please review and ACK.
+
+--
+Chris Lalancette
+
+diff --git a/arch/x86/traps.c b/arch/x86/traps.c
+index bcf47f4..42d5274 100644
+--- a/arch/x86/traps.c
++++ b/arch/x86/traps.c
+@@ -1751,6 +1751,12 @@ static int emulate_privileged_op(struct cpu_user_regs *regs)
+                  wrmsr_safe(regs->ecx, eax, edx) )
+                 goto fail;
+             break;
++	case MSR_IA32_MPERF:
++	case MSR_IA32_APERF:
++            if ( (cpufreq_controller != FREQCTL_dom0_kernel) ||
++                 wrmsr_safe(regs->ecx, eax, edx) )
++                goto fail;
++            break;
+         default:
+             if ( wrmsr_hypervisor_regs(regs->ecx, eax, edx) )
+                 break;
+diff --git a/include/asm-x86/msr.h b/include/asm-x86/msr.h
+index 2638236..3d85857 100644
+--- a/include/asm-x86/msr.h
++++ b/include/asm-x86/msr.h
+@@ -198,6 +198,9 @@ static inline void write_efer(u64 val)
+ #define MSR_IA32_PERF_STATUS		0x198
+ #define MSR_IA32_PERF_CTL		0x199
+ 
++#define MSR_IA32_MPERF			0x000000e7
++#define MSR_IA32_APERF			0x000000e8
++
+ #define MSR_IA32_THERM_CONTROL		0x19a
+ #define MSR_IA32_THERM_INTERRUPT	0x19b
+ #define MSR_IA32_THERM_STATUS		0x19c

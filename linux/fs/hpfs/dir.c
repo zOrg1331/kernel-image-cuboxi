@@ -6,7 +6,6 @@
  *  directory VFS functions
  */
 
-#include <linux/smp_lock.h>
 #include "hpfs_fn.h"
 
 static int hpfs_dir_release(struct inode *inode, struct file *filp)
@@ -25,7 +24,7 @@ static loff_t hpfs_dir_lseek(struct file *filp, loff_t off, int whence)
 	loff_t new_off = off + (whence == 1 ? filp->f_pos : 0);
 	loff_t pos;
 	struct quad_buffer_head qbh;
-	struct inode *i = filp->f_path.dentry->d_inode;
+	struct inode *i = filp->f_dentry->d_inode;
 	struct hpfs_inode_info *hpfs_inode = hpfs_i(i);
 	struct super_block *s = i->i_sb;
 
@@ -53,7 +52,7 @@ fail:
 
 static int hpfs_readdir(struct file *filp, void *dirent, filldir_t filldir)
 {
-	struct inode *inode = filp->f_path.dentry->d_inode;
+	struct inode *inode = filp->f_dentry->d_inode;
 	struct hpfs_inode_info *hpfs_inode = hpfs_i(inode);
 	struct quad_buffer_head qbh;
 	struct hpfs_dirent *de;
@@ -85,8 +84,7 @@ static int hpfs_readdir(struct file *filp, void *dirent, filldir_t filldir)
 		}
 		if (!fno->dirflag) {
 			e = 1;
-			hpfs_error(inode->i_sb, "not a directory, fnode %08lx",
-					(unsigned long)inode->i_ino);
+			hpfs_error(inode->i_sb, "not a directory, fnode %08x",inode->i_ino);
 		}
 		if (hpfs_inode->i_dno != fno->u.external[0].disk_secno) {
 			e = 1;
@@ -146,11 +144,8 @@ static int hpfs_readdir(struct file *filp, void *dirent, filldir_t filldir)
 		}
 		if (de->first || de->last) {
 			if (hpfs_sb(inode->i_sb)->sb_chk) {
-				if (de->first && !de->last && (de->namelen != 2
-				    || de ->name[0] != 1 || de->name[1] != 1))
-					hpfs_error(inode->i_sb, "hpfs_readdir: bad ^A^A entry; pos = %08lx", old_pos);
-				if (de->last && (de->namelen != 1 || de ->name[0] != 255))
-					hpfs_error(inode->i_sb, "hpfs_readdir: bad \\377 entry; pos = %08lx", old_pos);
+				if (de->first && !de->last && (de->namelen != 2 || de ->name[0] != 1 || de->name[1] != 1)) hpfs_error(inode->i_sb, "hpfs_readdir: bad ^A^A entry; pos = %08x", old_pos);
+				if (de->last && (de->namelen != 1 || de ->name[0] != 255)) hpfs_error(inode->i_sb, "hpfs_readdir: bad \\377 entry; pos = %08x", old_pos);
 			}
 			hpfs_brelse4(&qbh);
 			goto again;

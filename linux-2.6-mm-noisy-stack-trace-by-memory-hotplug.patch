@@ -1,0 +1,55 @@
+From: Kei Tokunaga <ktokunag@redhat.com>
+Subject: [RHEL5 PATCH] Noisy stack trace is displayed by memory hotplug on  memory busy system
+Date: Tue, 07 Nov 2006 15:39:37 -0500
+Bugzilla: 213066
+Message-Id: <4550EF09.70402@redhat.com>
+Changelog: Noisy stack trace by memory hotplug on memory busy system
+
+
+BZ213066
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=213066
+
+This patch suppresses unnecessary stack trace displayed in
+the event of memory hotplug on memory busy system.
+
+When memory hot-add is executed, kernel tries to allocate
+new pages for mmap of new memories by calling alloc_pages()
+in __kmalloc_section_memmap().  Its order of memmap_size
+can be big enough (It becomes 8 in ia64) to cause a page
+allocation failure and stack trace is displayed in the
+failure case.  But in that case, __kmalloc_section_memmap()
+secondarily calls vmalloc() to allocate the memmap.  So,
+the stack trace is unnecessary at that point.  This patch
+fix the issue by adding __GFP_NOWARN to the flag when calling
+alloc_pages().
+
+Attached is for the latest CVS kernel (2.6.18-1.2746.el5),
+which is a small one-line fix.   The fix is already in
+upstream.
+
+We have put it though the paces on our boxes and verified
+that it works all right.
+
+Thanks,
+Kei
+
+---
+
+ linux-2.6.18-1.2746.el5-kei/mm/sparse.c |    2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff -puN mm/sparse.c~bz213066-suppress_unnecessary_stack_trace mm/sparse.c
+--- linux-2.6.18-1.2746.el5/mm/sparse.c~bz213066-suppress_unnecessary_stack_trace	2006-11-07 14:46:42.000000000 -0500
++++ linux-2.6.18-1.2746.el5-kei/mm/sparse.c	2006-11-07 14:46:42.000000000 -0500
+@@ -211,7 +211,7 @@ static struct page *__kmalloc_section_me
+ 	struct page *page, *ret;
+ 	unsigned long memmap_size = sizeof(struct page) * nr_pages;
+ 
+-	page = alloc_pages(GFP_KERNEL, get_order(memmap_size));
++	page = alloc_pages(GFP_KERNEL|__GFP_NOWARN, get_order(memmap_size));
+ 	if (page)
+ 		goto got_map_page;
+ 
+
+_
+

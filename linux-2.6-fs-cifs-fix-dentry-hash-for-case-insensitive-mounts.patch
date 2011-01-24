@@ -1,0 +1,45 @@
+From: Jeff Layton <jlayton@redhat.com>
+Date: Mon, 15 Feb 2010 16:08:14 -0500
+Subject: [fs] cifs: fix dentry hash for case-insensitive mounts
+Message-id: <1266250096-21498-3-git-send-email-jlayton@redhat.com>
+Patchwork-id: 23273
+O-Subject: [RHEL5.5 PATCH 2/4] BZ#562947: cifs: fix dentry hash calculation for
+	case-insensitive mounts
+Bugzilla: 562947
+RH-Acked-by: Steve Dickson <SteveD@redhat.com>
+
+(backported from 05507fa2ac8d5e503bcf33ee43329449027d9060)
+
+case-insensitive mounts shouldn't use full_name_hash(). Make sure we
+use the parent dentry's d_hash routine when one is set.
+
+Reported-by: Dave Kleikamp <shaggy@linux.vnet.ibm.com>
+Signed-off-by: Jeff Layton <jlayton@redhat.com>
+Signed-off-by: Steve French <sfrench@us.ibm.com>
+
+diff --git a/fs/cifs/readdir.c b/fs/cifs/readdir.c
+index c8a7a97..3468102 100644
+--- a/fs/cifs/readdir.c
++++ b/fs/cifs/readdir.c
+@@ -77,7 +77,11 @@ construct_dentry(struct qstr *qstring, struct file *file,
+ 
+ 	cFYI(1, ("For %s", qstring->name));
+ 
+-	qstring->hash = full_name_hash(qstring->name, qstring->len);
++	if (file->f_dentry->d_op && file->f_dentry->d_op->d_hash)
++		file->f_dentry->d_op->d_hash(file->f_dentry, qstring);
++	else
++		qstring->hash = full_name_hash(qstring->name, qstring->len);
++
+ 	tmp_dentry = d_lookup(file->f_dentry, qstring);
+ 	if (tmp_dentry) {
+ 		/* BB: overwrite old name? i.e. tmp_dentry->d_name and
+@@ -930,8 +934,6 @@ static int cifs_get_name_from_search_buf(struct qstr *pqst,
+ 		pqst->name = filename;
+ 		pqst->len = len;
+ 	}
+-	pqst->hash = full_name_hash(pqst->name, pqst->len);
+-/*	cFYI(1, ("filldir on %s",pqst->name));  */
+ 	return rc;
+ }
+ 

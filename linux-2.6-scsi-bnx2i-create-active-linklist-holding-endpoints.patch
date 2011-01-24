@@ -1,0 +1,161 @@
+From: Mike Christie <mchristi@redhat.com>
+Date: Fri, 13 Aug 2010 09:46:30 -0400
+Subject: [scsi] bnx2i: create active linklist holding endpoints
+Message-id: <1281692802-2810-3-git-send-email-mchristi@redhat.com>
+Patchwork-id: 27540
+O-Subject: [RHEL5.6 PATCH 02/14] BNX2I: Created an active linklist which holds
+	bnx2i endpoints
+Bugzilla: 568606
+
+From: Eddie Wai <eddie.wai@broadcom.com>
+
+For bz 568606.
+
+This introduces a new active linklist which would link up all active
+bnx2i_endpoints.  This will be used by subsequent patches that
+follows.
+
+http://git.kernel.org/?p=linux/kernel/git/jejb/scsi-misc-2.6.git;a=commit;h=46012e8b8de325472790d154f4cfb1cf2d4fc49a
+
+diff --git a/drivers/scsi/bnx2i/bnx2i.h b/drivers/scsi/bnx2i/bnx2i.h
+index 7a39a7f..d063e6c 100644
+--- a/drivers/scsi/bnx2i/bnx2i.h
++++ b/drivers/scsi/bnx2i/bnx2i.h
+@@ -301,6 +301,7 @@ struct iscsi_cid_queue {
+  * @cid_que:               iscsi cid queue
+  * @ep_rdwr_lock:          read / write lock to synchronize various ep lists
+  * @ep_ofld_list:          connection list for pending offload completion
++ * @ep_active_list:        connection list for active offload endpoints
+  * @ep_destroy_list:       connection list for pending offload completion
+  * @mp_bd_tbl:             BD table to be used with middle path requests
+  * @mp_bd_dma:             DMA address of 'mp_bd_tbl' memory buffer
+@@ -370,6 +371,7 @@ struct bnx2i_hba {
+ 
+ 	rwlock_t ep_rdwr_lock;
+ 	struct list_head ep_ofld_list;
++	struct list_head ep_active_list;
+ 	struct list_head ep_destroy_list;
+ 
+ 	/*
+@@ -645,6 +647,7 @@ enum {
+  * @link:               list head to link elements
+  * @hba:                adapter to which this connection belongs
+  * @conn:               iscsi connection this EP is linked to
++ * @cls_ep:             associated iSCSI endpoint pointer
+  * @sess:               iscsi session this EP is linked to
+  * @cm_sk:              cnic sock struct
+  * @hba_age:            age to detect if 'iscsid' issues ep_disconnect()
+@@ -664,6 +667,7 @@ struct bnx2i_endpoint {
+ 	struct list_head link;
+ 	struct bnx2i_hba *hba;
+ 	struct bnx2i_conn *conn;
++	struct iscsi_endpoint *cls_ep;
+ 	struct cnic_sock *cm_sk;
+ 	u32 hba_age;
+ 	u32 state;
+diff --git a/drivers/scsi/bnx2i/bnx2i_iscsi.c b/drivers/scsi/bnx2i/bnx2i_iscsi.c
+index d9efb7b..e0d66a9 100644
+--- a/drivers/scsi/bnx2i/bnx2i_iscsi.c
++++ b/drivers/scsi/bnx2i/bnx2i_iscsi.c
+@@ -385,6 +385,7 @@ static struct iscsi_endpoint *bnx2i_alloc_ep(struct bnx2i_hba *hba)
+ 	}
+ 
+ 	bnx2i_ep = ep->dd_data;
++	bnx2i_ep->cls_ep = ep;
+ 	INIT_LIST_HEAD(&bnx2i_ep->link);
+ 	bnx2i_ep->state = EP_STATE_IDLE;
+ 	bnx2i_ep->ep_iscsi_cid = (u16) -1;
+@@ -677,7 +678,6 @@ bnx2i_find_ep_in_ofld_list(struct bnx2i_hba *hba, u32 iscsi_cid)
+ 	return ep;
+ }
+ 
+-
+ /**
+  * bnx2i_find_ep_in_destroy_list - find iscsi_cid in destroy list
+  * @hba: 		pointer to adapter instance
+@@ -707,6 +707,39 @@ bnx2i_find_ep_in_destroy_list(struct bnx2i_hba *hba, u32 iscsi_cid)
+ 	return ep;
+ }
+ 
++
++/**
++ * bnx2i_ep_active_list_add - add an entry to ep active list
++ * @hba:	pointer to adapter instance
++ * @ep:		pointer to endpoint (transport indentifier) structure
++ *
++ * current active conn queue manager
++ */
++static void bnx2i_ep_active_list_add(struct bnx2i_hba *hba,
++				     struct bnx2i_endpoint *ep)
++{
++	write_lock_bh(&hba->ep_rdwr_lock);
++	list_add_tail(&ep->link, &hba->ep_active_list);
++	write_unlock_bh(&hba->ep_rdwr_lock);
++}
++
++
++/**
++ * bnx2i_ep_active_list_del - deletes an entry to ep active list
++ * @hba:	pointer to adapter instance
++ * @ep:		pointer to endpoint (transport indentifier) structure
++ *
++ * current active conn queue manager
++ */
++static void bnx2i_ep_active_list_del(struct bnx2i_hba *hba,
++				     struct bnx2i_endpoint *ep)
++{
++	write_lock_bh(&hba->ep_rdwr_lock);
++	list_del_init(&ep->link);
++	write_unlock_bh(&hba->ep_rdwr_lock);
++}
++
++
+ /**
+  * bnx2i_setup_host_queue_size - assigns shost->can_queue param
+  * @hba:	pointer to adapter instance
+@@ -783,6 +816,7 @@ struct bnx2i_hba *bnx2i_alloc_hba(struct cnic_dev *cnic)
+ 		goto mp_bdt_mem_err;
+ 
+ 	INIT_LIST_HEAD(&hba->ep_ofld_list);
++	INIT_LIST_HEAD(&hba->ep_active_list);
+ 	INIT_LIST_HEAD(&hba->ep_destroy_list);
+ 	rwlock_init(&hba->ep_rdwr_lock);
+ 
+@@ -851,6 +885,7 @@ void bnx2i_free_hba(struct bnx2i_hba *hba)
+ 
+ 	iscsi2_host_remove(shost);
+ 	INIT_LIST_HEAD(&hba->ep_ofld_list);
++	INIT_LIST_HEAD(&hba->ep_active_list);
+ 	INIT_LIST_HEAD(&hba->ep_destroy_list);
+ 	pci_dev_put(hba->pcidev);
+ 
+@@ -1763,15 +1798,19 @@ static struct iscsi_endpoint *bnx2i_ep_connect(struct Scsi_Host *shost,
+ 		goto conn_failed;
+ 	} else
+ 		rc = cnic->cm_connect(bnx2i_ep->cm_sk, &saddr);
+-
+ 	if (rc)
+ 		goto release_ep;
+ 
++	bnx2i_ep_active_list_add(hba, bnx2i_ep);
++
+ 	if (bnx2i_map_ep_dbell_regs(bnx2i_ep))
+-		goto release_ep;
++		goto del_active_ep;
++
+ 	mutex_unlock(&hba->net_dev_lock);
+ 	return ep;
+ 
++del_active_ep:
++	bnx2i_ep_active_list_del(hba, bnx2i_ep);
+ release_ep:
+ 	if (bnx2i_tear_down_conn(hba, bnx2i_ep)) {
+ 		mutex_unlock(&hba->net_dev_lock);
+@@ -1940,6 +1979,7 @@ int bnx2i_hw_ep_disconnect(struct bnx2i_endpoint *bnx2i_ep)
+ 	del_timer_sync(&bnx2i_ep->ofld_timer);
+ 
+ destroy_conn:
++	bnx2i_ep_active_list_del(hba, bnx2i_ep);
+ 	if (bnx2i_tear_down_conn(hba, bnx2i_ep))
+ 		ret = -EINVAL;
+ out:

@@ -19,6 +19,7 @@
  *
  */
 
+#include <sound/driver.h>
 #include <linux/time.h>
 #include <linux/slab.h>
 #include <sound/core.h>
@@ -153,8 +154,8 @@ int snd_seq_prioq_cell_in(struct snd_seq_prioq * f,
 	int count;
 	int prior;
 
-	if (snd_BUG_ON(!f || !cell))
-		return -EINVAL;
+	snd_assert(f, return -EINVAL);
+	snd_assert(cell, return -EINVAL);
 	
 	/* check flags */
 	prior = (cell->event.flags & SNDRV_SEQ_PRIORITY_MASK);
@@ -321,8 +322,7 @@ void snd_seq_prioq_leave(struct snd_seq_prioq * f, int client, int timestamp)
 			freeprev = cell;
 		} else {
 #if 0
-			printk(KERN_DEBUG "type = %i, source = %i, dest = %i, "
-			       "client = %i\n",
+			printk("type = %i, source = %i, dest = %i, client = %i\n",
 				cell->event.type,
 				cell->event.source.client,
 				cell->event.dest.client,

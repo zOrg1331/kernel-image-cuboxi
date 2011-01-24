@@ -1,22 +1,25 @@
 /*
+ * linux/fs/nfsd/nfs3acl.c
+ *
  * Process version 3 NFSACL requests.
  *
  * Copyright (C) 2002-2003 Andreas Gruenbacher <agruen@suse.de>
  */
 
-#include "nfsd.h"
-/* FIXME: nfsacl.h is a broken header */
+#include <linux/sunrpc/svc.h>
+#include <linux/nfs3.h>
+#include <linux/nfsd/nfsd.h>
+#include <linux/nfsd/cache.h>
+#include <linux/nfsd/xdr3.h>
+#include <linux/posix_acl.h>
 #include <linux/nfsacl.h>
-#include "cache.h"
-#include "xdr3.h"
-#include "vfs.h"
 
 #define RETURN_STATUS(st)	{ resp->status = (st); return (st); }
 
 /*
  * NULL call.
  */
-static __be32
+static int
 nfsd3_proc_null(struct svc_rqst *rqstp, void *argp, void *resp)
 {
 	return nfs_ok;
@@ -25,17 +28,16 @@ nfsd3_proc_null(struct svc_rqst *rqstp, void *argp, void *resp)
 /*
  * Get the Access and/or Default ACL of a file.
  */
-static __be32 nfsd3_proc_getacl(struct svc_rqst * rqstp,
+static int nfsd3_proc_getacl(struct svc_rqst * rqstp,
 		struct nfsd3_getaclargs *argp, struct nfsd3_getaclres *resp)
 {
 	svc_fh *fh;
 	struct posix_acl *acl;
-	__be32 nfserr = 0;
+	int nfserr = 0;
 
 	fh = fh_copy(&resp->fh, &argp->fh);
-	nfserr = fh_verify(rqstp, &resp->fh, 0, NFSD_MAY_NOP);
-	if (nfserr)
-		RETURN_STATUS(nfserr);
+	if ((nfserr = fh_verify(rqstp, &resp->fh, 0, MAY_NOP)))
+		RETURN_STATUS(nfserr_inval);
 
 	if (argp->mask & ~(NFS_ACL|NFS_ACLCNT|NFS_DFACL|NFS_DFACLCNT))
 		RETURN_STATUS(nfserr_inval);
@@ -91,15 +93,15 @@ fail:
 /*
  * Set the Access and/or Default ACL of a file.
  */
-static __be32 nfsd3_proc_setacl(struct svc_rqst * rqstp,
+static int nfsd3_proc_setacl(struct svc_rqst * rqstp,
 		struct nfsd3_setaclargs *argp,
 		struct nfsd3_attrstat *resp)
 {
 	svc_fh *fh;
-	__be32 nfserr = 0;
+	int nfserr = 0;
 
 	fh = fh_copy(&resp->fh, &argp->fh);
-	nfserr = fh_verify(rqstp, &resp->fh, 0, NFSD_MAY_SATTR);
+	nfserr = fh_verify(rqstp, &resp->fh, 0, MAY_SATTR);
 
 	if (!nfserr) {
 		nfserr = nfserrno( nfsd_set_posix_acl(
@@ -120,7 +122,7 @@ static __be32 nfsd3_proc_setacl(struct svc_rqst * rqstp,
 /*
  * XDR decode functions
  */
-static int nfs3svc_decode_getaclargs(struct svc_rqst *rqstp, __be32 *p,
+static int nfs3svc_decode_getaclargs(struct svc_rqst *rqstp, u32 *p,
 		struct nfsd3_getaclargs *args)
 {
 	if (!(p = nfs3svc_decode_fh(p, &args->fh)))
@@ -131,7 +133,7 @@ static int nfs3svc_decode_getaclargs(struct svc_rqst *rqstp, __be32 *p,
 }
 
 
-static int nfs3svc_decode_setaclargs(struct svc_rqst *rqstp, __be32 *p,
+static int nfs3svc_decode_setaclargs(struct svc_rqst *rqstp, u32 *p,
 		struct nfsd3_setaclargs *args)
 {
 	struct kvec *head = rqstp->rq_arg.head;
@@ -161,7 +163,7 @@ static int nfs3svc_decode_setaclargs(struct svc_rqst *rqstp, __be32 *p,
  */
 
 /* GETACL */
-static int nfs3svc_encode_getaclres(struct svc_rqst *rqstp, __be32 *p,
+static int nfs3svc_encode_getaclres(struct svc_rqst *rqstp, u32 *p,
 		struct nfsd3_getaclres *resp)
 {
 	struct dentry *dentry = resp->fh.fh_dentry;
@@ -169,21 +171,21 @@ static int nfs3svc_encode_getaclres(struct svc_rqst *rqstp, __be32 *p,
 	p = nfs3svc_encode_post_op_attr(rqstp, p, &resp->fh);
 	if (resp->status == 0 && dentry && dentry->d_inode) {
 		struct inode *inode = dentry->d_inode;
+		int w = nfsacl_size(
+			(resp->mask & NFS_ACL)   ? resp->acl_access  : NULL,
+			(resp->mask & NFS_DFACL) ? resp->acl_default : NULL);
 		struct kvec *head = rqstp->rq_res.head;
 		unsigned int base;
 		int n;
-		int w;
 
 		*p++ = htonl(resp->mask);
 		if (!xdr_ressize_check(rqstp, p))
 			return 0;
 		base = (char *)p - (char *)head->iov_base;
 
-		rqstp->rq_res.page_len = w = nfsacl_size(
-			(resp->mask & NFS_ACL)   ? resp->acl_access  : NULL,
-			(resp->mask & NFS_DFACL) ? resp->acl_default : NULL);
+		rqstp->rq_res.page_len = w;
 		while (w > 0) {
-			if (!rqstp->rq_respages[rqstp->rq_resused++])
+			if (!svc_take_res_page(rqstp))
 				return 0;
 			w -= PAGE_SIZE;
 		}
@@ -206,7 +208,7 @@ static int nfs3svc_encode_getaclres(struct svc_rqst *rqstp, __be32 *p,
 }
 
 /* SETACL */
-static int nfs3svc_encode_setaclres(struct svc_rqst *rqstp, __be32 *p,
+static int nfs3svc_encode_setaclres(struct svc_rqst *rqstp, u32 *p,
 		struct nfsd3_attrstat *resp)
 {
 	p = nfs3svc_encode_post_op_attr(rqstp, p, &resp->fh);
@@ -217,7 +219,7 @@ static int nfs3svc_encode_setaclres(struct svc_rqst *rqstp, __be32 *p,
 /*
  * XDR release functions
  */
-static int nfs3svc_release_getacl(struct svc_rqst *rqstp, __be32 *p,
+static int nfs3svc_release_getacl(struct svc_rqst *rqstp, u32 *p,
 		struct nfsd3_getaclres *resp)
 {
 	fh_put(&resp->fh);
@@ -261,6 +263,5 @@ struct svc_version	nfsd_acl_version3 = {
 		.vs_proc	= nfsd_acl_procedures3,
 		.vs_dispatch	= nfsd_dispatch,
 		.vs_xdrsize	= NFS3_SVC_XDRSIZE,
-		.vs_hidden	= 0,
 };
 

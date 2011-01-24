@@ -1,0 +1,109 @@
+From: Bob Peterson <rpeterso@redhat.com>
+Subject: [RHEL 5.1] [GFS2] bz #245832: soft lockup detected in 	databuf_lo_before_commit
+Date: Wed, 11 Jul 2007 15:29:35 -0500
+Bugzilla: 245832
+Message-Id: <1184185775.11507.231.camel@technetium.msp.redhat.com>
+Changelog: [GFS2] soft lockup detected in databuf_lo_before_commit
+
+
+Hi,
+
+This patch replaces the previous one posted to rhkernel-list for bug #245832.
+The previous patch wasn't changed, it just wasn't a complete solution.
+
+There were two causes for the lockup: (1) memory corruption due to writing
+log headers past the end of the log buffer, and (2) a variable that wasn't
+being protected by a lock which caused a number to go negative, causing an
+infinite while loop.
+
+Regards,
+
+Bob Peterson
+Red Hat Cluster Suite
+
+Signed-off-by: Bob Peterson <rpeterso@redhat.com>
+--
+diff -pur a/fs/gfs2/log.c b/fs/gfs2/log.c
+--- a/fs/gfs2/log.c	2007-07-10 12:28:00.000000000 -0500
++++ b/fs/gfs2/log.c	2007-07-11 14:15:58.000000000 -0500
+@@ -237,10 +237,7 @@ static void gfs2_ail2_empty_one(struct g
+ 		list_del(&bd->bd_ail_st_list);
+ 		list_del(&bd->bd_ail_gl_list);
+ 		atomic_dec(&bd->bd_gl->gl_ail_count);
+-		if (bd->bd_bh)
+-			brelse(bd->bd_bh);
+-		else
+-			kmem_cache_free(gfs2_bufdata_cachep, bd);
++		brelse(bd->bd_bh);
+ 	}
+ }
+ 
+@@ -583,6 +580,7 @@ static void log_flush_commit(struct gfs2
+ 	struct list_head *head = &sdp->sd_log_flush_list;
+ 	struct gfs2_log_buf *lb;
+ 	struct buffer_head *bh;
++	int flushcount = 0;
+ 
+ 	while (!list_empty(head)) {
+ 		lb = list_entry(head->next, struct gfs2_log_buf, lb_list);
+@@ -599,9 +597,20 @@ static void log_flush_commit(struct gfs2
+ 		} else
+ 			brelse(bh);
+ 		kfree(lb);
++		flushcount++;
+ 	}
+ 
+-	log_write_header(sdp, 0, 0);
++	/* If nothing was journaled, the header is unplanned and unwanted. */
++	if (flushcount)
++		log_write_header(sdp, 0, 0);
++	else {
++		unsigned int tail;
++		tail = current_tail(sdp);
++
++		gfs2_ail1_empty(sdp, 0);
++		if (sdp->sd_log_tail != tail)
++			log_pull_tail(sdp, tail);
++	}
+ }
+ 
+ /**
+diff -pur a/fs/gfs2/lops.c b/fs/gfs2/lops.c
+--- a/fs/gfs2/lops.c	2007-07-10 12:28:00.000000000 -0500
++++ b/fs/gfs2/lops.c	2007-07-11 14:31:56.000000000 -0500
+@@ -486,8 +486,8 @@ static void databuf_lo_add(struct gfs2_s
+ 		gfs2_pin(sdp, bd->bd_bh);
+ 		tr->tr_num_databuf_new++;
+ 	}
+-	sdp->sd_log_num_databuf++;
+ 	gfs2_log_lock(sdp);
++	sdp->sd_log_num_databuf++;
+ 	list_add(&le->le_list, &sdp->sd_log_le_databuf);
+ 	gfs2_log_unlock(sdp);
+ }
+@@ -523,7 +523,7 @@ static void databuf_lo_before_commit(str
+ 	struct buffer_head *bh = NULL,*bh1 = NULL;
+ 	struct gfs2_log_descriptor *ld;
+ 	unsigned int limit;
+-	unsigned int total_dbuf = sdp->sd_log_num_databuf;
++	unsigned int total_dbuf;
+ 	unsigned int total_jdata = sdp->sd_log_num_jdata;
+ 	unsigned int num, n;
+ 	__be64 *ptr = NULL;
+@@ -535,6 +535,7 @@ static void databuf_lo_before_commit(str
+ 	 * into the log along with a header
+ 	 */
+ 	gfs2_log_lock(sdp);
++	total_dbuf = sdp->sd_log_num_databuf;
+ 	bd2 = bd1 = list_prepare_entry(bd1, &sdp->sd_log_le_databuf,
+ 				       bd_le.le_list);
+ 	while(total_dbuf) {
+@@ -653,6 +654,7 @@ static void databuf_lo_before_commit(str
+ 				break;
+ 		}
+ 		bh = NULL;
++		BUG_ON(total_dbuf < num);
+ 		total_dbuf -= num;
+ 		total_jdata -= num;
+ 	}
+

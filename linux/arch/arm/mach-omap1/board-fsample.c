@@ -20,82 +20,51 @@
 #include <linux/mtd/partitions.h>
 #include <linux/input.h>
 
-#include <mach/hardware.h>
+#include <asm/hardware.h>
 #include <asm/mach-types.h>
 #include <asm/mach/arch.h>
 #include <asm/mach/flash.h>
 #include <asm/mach/map.h>
 
-#include <mach/tc.h>
-#include <mach/gpio.h>
-#include <mach/mux.h>
-#include <mach/fpga.h>
-#include <mach/nand.h>
-#include <mach/keypad.h>
-#include <mach/common.h>
-#include <mach/board.h>
-
-/* fsample is pretty close to p2-sample */
-
-#define fsample_cpld_read(reg) __raw_readb(reg)
-#define fsample_cpld_write(val, reg) __raw_writeb(val, reg)
-
-#define FSAMPLE_CPLD_BASE    0xE8100000
-#define FSAMPLE_CPLD_SIZE    SZ_4K
-#define FSAMPLE_CPLD_START   0x05080000
-
-#define FSAMPLE_CPLD_REG_A   (FSAMPLE_CPLD_BASE + 0x00)
-#define FSAMPLE_CPLD_SWITCH  (FSAMPLE_CPLD_BASE + 0x02)
-#define FSAMPLE_CPLD_UART    (FSAMPLE_CPLD_BASE + 0x02)
-#define FSAMPLE_CPLD_REG_B   (FSAMPLE_CPLD_BASE + 0x04)
-#define FSAMPLE_CPLD_VERSION (FSAMPLE_CPLD_BASE + 0x06)
-#define FSAMPLE_CPLD_SET_CLR (FSAMPLE_CPLD_BASE + 0x06)
-
-#define FSAMPLE_CPLD_BIT_BT_RESET         0
-#define FSAMPLE_CPLD_BIT_LCD_RESET        1
-#define FSAMPLE_CPLD_BIT_CAM_PWDN         2
-#define FSAMPLE_CPLD_BIT_CHARGER_ENABLE   3
-#define FSAMPLE_CPLD_BIT_SD_MMC_EN        4
-#define FSAMPLE_CPLD_BIT_aGPS_PWREN       5
-#define FSAMPLE_CPLD_BIT_BACKLIGHT        6
-#define FSAMPLE_CPLD_BIT_aGPS_EN_RESET    7
-#define FSAMPLE_CPLD_BIT_aGPS_SLEEPx_N    8
-#define FSAMPLE_CPLD_BIT_OTG_RESET        9
-
-#define fsample_cpld_set(bit) \
-    fsample_cpld_write((((bit) & 15) << 4) | 0x0f, FSAMPLE_CPLD_SET_CLR)
-
-#define fsample_cpld_clear(bit) \
-    fsample_cpld_write(0xf0 | ((bit) & 15), FSAMPLE_CPLD_SET_CLR)
+#include <asm/arch/tc.h>
+#include <asm/arch/gpio.h>
+#include <asm/arch/mux.h>
+#include <asm/arch/fpga.h>
+#include <asm/arch/keypad.h>
+#include <asm/arch/common.h>
+#include <asm/arch/board.h>
+#include <asm/arch/board-fsample.h>
 
 static int fsample_keymap[] = {
 	KEY(0,0,KEY_UP),
 	KEY(0,1,KEY_RIGHT),
 	KEY(0,2,KEY_LEFT),
 	KEY(0,3,KEY_DOWN),
-	KEY(0,4,KEY_ENTER),
-	KEY(1,0,KEY_F10),
+	KEY(0,4,KEY_CENTER),
+	KEY(0,5,KEY_0_5),
+	KEY(1,0,KEY_SOFT2),
 	KEY(1,1,KEY_SEND),
 	KEY(1,2,KEY_END),
 	KEY(1,3,KEY_VOLUMEDOWN),
 	KEY(1,4,KEY_VOLUMEUP),
 	KEY(1,5,KEY_RECORD),
-	KEY(2,0,KEY_F9),
+	KEY(2,0,KEY_SOFT1),
 	KEY(2,1,KEY_3),
 	KEY(2,2,KEY_6),
 	KEY(2,3,KEY_9),
-	KEY(2,4,KEY_KPDOT),
+	KEY(2,4,KEY_SHARP),
+	KEY(2,5,KEY_2_5),
 	KEY(3,0,KEY_BACK),
 	KEY(3,1,KEY_2),
 	KEY(3,2,KEY_5),
 	KEY(3,3,KEY_8),
 	KEY(3,4,KEY_0),
-	KEY(3,5,KEY_KPSLASH),
+	KEY(3,5,KEY_HEADSETHOOK),
 	KEY(4,0,KEY_HOME),
 	KEY(4,1,KEY_1),
 	KEY(4,2,KEY_4),
 	KEY(4,3,KEY_7),
-	KEY(4,4,KEY_KPASTERISK),
+	KEY(4,4,KEY_STAR),
 	KEY(4,5,KEY_POWER),
 	0
 };
@@ -109,7 +78,7 @@ static struct resource smc91x_resources[] = {
 	[1] = {
 		.start	= INT_730_MPU_EXT_NIRQ,
 		.end	= 0,
-		.flags	= IORESOURCE_IRQ | IORESOURCE_IRQ_HIGHEDGE,
+		.flags	= IORESOURCE_IRQ,
 	},
 };
 
@@ -167,7 +136,7 @@ static struct platform_device nor_device = {
 	.resource	= &nor_resource,
 };
 
-static struct omap_nand_platform_data nand_data = {
+static struct nand_platform_data nand_data = {
 	.options	= NAND_SAMSUNG_LP_OPTIONS,
 };
 
@@ -203,11 +172,9 @@ static struct resource kp_resources[] = {
 };
 
 static struct omap_kp_platform_data kp_data = {
-	.rows		= 8,
-	.cols		= 8,
-	.keymap		= fsample_keymap,
-	.keymapsize	= ARRAY_SIZE(fsample_keymap),
-	.delay		= 4,
+	.rows	= 8,
+	.cols	= 8,
+	.keymap = fsample_keymap,
 };
 
 static struct platform_device kp_device = {
@@ -235,24 +202,28 @@ static struct platform_device *devices[] __initdata = {
 
 #define P2_NAND_RB_GPIO_PIN	62
 
-static int nand_dev_ready(struct omap_nand_platform_data *data)
+static int nand_dev_ready(struct nand_platform_data *data)
 {
-	return gpio_get_value(P2_NAND_RB_GPIO_PIN);
+	return omap_get_gpio_datain(P2_NAND_RB_GPIO_PIN);
 }
+
+static struct omap_uart_config fsample_uart_config __initdata = {
+	.enabled_uarts = ((1 << 0) | (1 << 1)),
+};
 
 static struct omap_lcd_config fsample_lcd_config __initdata = {
 	.ctrl_name	= "internal",
 };
 
 static struct omap_board_config_kernel fsample_config[] = {
+	{ OMAP_TAG_UART,	&fsample_uart_config },
 	{ OMAP_TAG_LCD,		&fsample_lcd_config },
 };
 
 static void __init omap_fsample_init(void)
 {
-	if (gpio_request(P2_NAND_RB_GPIO_PIN, "NAND ready") < 0)
-		BUG();
-	nand_data.dev_ready = nand_dev_ready;
+	if (!(omap_request_gpio(P2_NAND_RB_GPIO_PIN)))
+		nand_data.dev_ready = nand_dev_ready;
 
 	omap_cfg_reg(L3_1610_FLASH_CS2B_OE);
 	omap_cfg_reg(M8_1610_FLASH_CS2B_WE);
@@ -262,7 +233,6 @@ static void __init omap_fsample_init(void)
 	omap_board_config = fsample_config;
 	omap_board_config_size = ARRAY_SIZE(fsample_config);
 	omap_serial_init();
-	omap_register_i2c_bus(1, 100, NULL, 0);
 }
 
 static void __init fsample_init_smc91x(void)
@@ -274,7 +244,7 @@ static void __init fsample_init_smc91x(void)
 	mdelay(50);
 }
 
-static void __init omap_fsample_init_irq(void)
+void omap_fsample_init_irq(void)
 {
 	omap1_init_common_hw();
 	omap_init_irq();

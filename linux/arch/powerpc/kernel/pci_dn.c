@@ -23,10 +23,13 @@
 #include <linux/pci.h>
 #include <linux/string.h>
 #include <linux/init.h>
+#include <linux/slab.h>
+#include <linux/bootmem.h>
 
 #include <asm/io.h>
 #include <asm/prom.h>
 #include <asm/pci-bridge.h>
+#include <asm/pSeries_reconfig.h>
 #include <asm/ppc-pci.h>
 #include <asm/firmware.h>
 
@@ -34,26 +37,33 @@
  * Traverse_func that inits the PCI fields of the device node.
  * NOTE: this *must* be done before read/write config to the device.
  */
-void * __devinit update_dn_pci_info(struct device_node *dn, void *data)
+static void * __devinit update_dn_pci_info(struct device_node *dn, void *data)
 {
 	struct pci_controller *phb = data;
-	const int *type =
-		of_get_property(dn, "ibm,pci-config-space-type", NULL);
-	const u32 *regs;
+	int *type = (int *)get_property(dn, "ibm,pci-config-space-type", NULL);
+	u32 *regs;
 	struct pci_dn *pdn;
 
-	pdn = alloc_maybe_bootmem(sizeof(*pdn), GFP_KERNEL);
+	if (mem_init_done)
+		pdn = kmalloc(sizeof(*pdn), GFP_KERNEL);
+	else
+		pdn = alloc_bootmem(sizeof(*pdn));
 	if (pdn == NULL)
 		return NULL;
 	memset(pdn, 0, sizeof(*pdn));
 	dn->data = pdn;
 	pdn->node = dn;
 	pdn->phb = phb;
-	regs = of_get_property(dn, "reg", NULL);
+	regs = (u32 *)get_property(dn, "reg", NULL);
 	if (regs) {
 		/* First register entry is addr (00BBSS00)  */
 		pdn->busno = (regs[0] >> 16) & 0xff;
 		pdn->devfn = (regs[0] >> 8) & 0xff;
+	}
+	if (firmware_has_feature(FW_FEATURE_ISERIES)) {
+		u32 *busp = (u32 *)get_property(dn, "linux,subbus", NULL);
+		if (busp)
+			pdn->bussubno = *busp;
 	}
 
 	pdn->pci_ext_config_space = (type && *type == 1);
@@ -86,11 +96,10 @@ void *traverse_pci_devices(struct device_node *start, traverse_func pre,
 
 	/* We started with a phb, iterate all childs */
 	for (dn = start->child; dn; dn = nextdn) {
-		const u32 *classp;
-		u32 class;
+		u32 *classp, class;
 
 		nextdn = NULL;
-		classp = of_get_property(dn, "class-code", NULL);
+		classp = (u32 *)get_property(dn, "class-code", NULL);
 		class = classp ? *classp : 0;
 
 		if (pre && ((ret = pre(dn, data)) != NULL))
@@ -127,7 +136,7 @@ void *traverse_pci_devices(struct device_node *start, traverse_func pre,
  */
 void __devinit pci_devs_phb_init_dynamic(struct pci_controller *phb)
 {
-	struct device_node *dn = phb->dn;
+	struct device_node * dn = (struct device_node *) phb->arch_data;
 	struct pci_dn *pdn;
 
 	/* PHB nodes themselves must not match */
@@ -183,6 +192,29 @@ struct device_node *fetch_dev_dn(struct pci_dev *dev)
 }
 EXPORT_SYMBOL(fetch_dev_dn);
 
+static int pci_dn_reconfig_notifier(struct notifier_block *nb, unsigned long action, void *node)
+{
+	struct device_node *np = node;
+	struct pci_dn *pci = NULL;
+	int err = NOTIFY_OK;
+
+	switch (action) {
+	case PSERIES_RECONFIG_ADD:
+		pci = np->parent->data;
+		if (pci)
+			update_dn_pci_info(np, pci->phb);
+		break;
+	default:
+		err = NOTIFY_DONE;
+		break;
+	}
+	return err;
+}
+
+static struct notifier_block pci_dn_reconfig_nb = {
+	.notifier_call = pci_dn_reconfig_notifier,
+};
+
 /** 
  * pci_devs_phb_init - Initialize phbs and pci devs under them.
  * 
@@ -199,4 +231,6 @@ void __init pci_devs_phb_init(void)
 	/* This must be done first so the device nodes have valid pci info! */
 	list_for_each_entry_safe(phb, tmp, &hose_list, list_node)
 		pci_devs_phb_init_dynamic(phb);
+
+	pSeries_reconfig_notifier_register(&pci_dn_reconfig_nb);
 }

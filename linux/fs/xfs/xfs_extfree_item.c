@@ -23,7 +23,6 @@
 #include "xfs_trans.h"
 #include "xfs_buf_item.h"
 #include "xfs_sb.h"
-#include "xfs_ag.h"
 #include "xfs_dmapi.h"
 #include "xfs_mount.h"
 #include "xfs_trans_priv.h"
@@ -34,6 +33,9 @@ kmem_zone_t	*xfs_efi_zone;
 kmem_zone_t	*xfs_efd_zone;
 
 STATIC void	xfs_efi_item_unlock(xfs_efi_log_item_t *);
+STATIC void	xfs_efi_item_abort(xfs_efi_log_item_t *);
+STATIC void	xfs_efd_item_abort(xfs_efd_log_item_t *);
+
 
 void
 xfs_efi_item_free(xfs_efi_log_item_t *efip)
@@ -41,7 +43,8 @@ xfs_efi_item_free(xfs_efi_log_item_t *efip)
 	int nexts = efip->efi_format.efi_nextents;
 
 	if (nexts > XFS_EFI_MAX_FAST_EXTENTS) {
-		kmem_free(efip);
+		kmem_free(efip, sizeof(xfs_efi_log_item_t) +
+				(nexts - 1) * sizeof(xfs_extent_t));
 	} else {
 		kmem_zone_free(xfs_efi_zone, efip);
 	}
@@ -82,7 +85,7 @@ xfs_efi_item_format(xfs_efi_log_item_t	*efip,
 
 	log_vector->i_addr = (xfs_caddr_t)&(efip->efi_format);
 	log_vector->i_len = size;
-	log_vector->i_type = XLOG_REG_TYPE_EFI_FORMAT;
+	XLOG_VEC_SET_TYPE(log_vector, XLOG_REG_TYPE_EFI_FORMAT);
 	ASSERT(size >= sizeof(xfs_efi_log_format_t));
 }
 
@@ -108,16 +111,20 @@ xfs_efi_item_pin(xfs_efi_log_item_t *efip)
 STATIC void
 xfs_efi_item_unpin(xfs_efi_log_item_t *efip, int stale)
 {
-	struct xfs_ail		*ailp = efip->efi_item.li_ailp;
+	xfs_mount_t	*mp;
+	SPLDECL(s);
 
-	spin_lock(&ailp->xa_lock);
+	mp = efip->efi_item.li_mountp;
+	AIL_LOCK(mp, s);
 	if (efip->efi_flags & XFS_EFI_CANCELED) {
-		/* xfs_trans_ail_delete() drops the AIL lock. */
-		xfs_trans_ail_delete(ailp, (xfs_log_item_t *)efip);
+		/*
+		 * xfs_trans_delete_ail() drops the AIL lock.
+		 */
+		xfs_trans_delete_ail(mp, (xfs_log_item_t *)efip, s);
 		xfs_efi_item_free(efip);
 	} else {
 		efip->efi_flags |= XFS_EFI_COMMITTED;
-		spin_unlock(&ailp->xa_lock);
+		AIL_UNLOCK(mp, s);
 	}
 }
 
@@ -131,23 +138,27 @@ xfs_efi_item_unpin(xfs_efi_log_item_t *efip, int stale)
 STATIC void
 xfs_efi_item_unpin_remove(xfs_efi_log_item_t *efip, xfs_trans_t *tp)
 {
-	struct xfs_ail		*ailp = efip->efi_item.li_ailp;
+	xfs_mount_t	*mp;
 	xfs_log_item_desc_t	*lidp;
+	SPLDECL(s);
 
-	spin_lock(&ailp->xa_lock);
+	mp = efip->efi_item.li_mountp;
+	AIL_LOCK(mp, s);
 	if (efip->efi_flags & XFS_EFI_CANCELED) {
 		/*
 		 * free the xaction descriptor pointing to this item
 		 */
 		lidp = xfs_trans_find_item(tp, (xfs_log_item_t *) efip);
 		xfs_trans_free_item(tp, lidp);
-
-		/* xfs_trans_ail_delete() drops the AIL lock. */
-		xfs_trans_ail_delete(ailp, (xfs_log_item_t *)efip);
+		/*
+		 * pull the item off the AIL.
+		 * xfs_trans_delete_ail() drops the AIL lock.
+		 */
+		xfs_trans_delete_ail(mp, (xfs_log_item_t *)efip, s);
 		xfs_efi_item_free(efip);
 	} else {
 		efip->efi_flags |= XFS_EFI_COMMITTED;
-		spin_unlock(&ailp->xa_lock);
+		AIL_UNLOCK(mp, s);
 	}
 }
 
@@ -173,7 +184,7 @@ STATIC void
 xfs_efi_item_unlock(xfs_efi_log_item_t *efip)
 {
 	if (efip->efi_item.li_flags & XFS_LI_ABORTED)
-		xfs_efi_item_free(efip);
+		xfs_efi_item_abort(efip);
 	return;
 }
 
@@ -188,6 +199,18 @@ STATIC xfs_lsn_t
 xfs_efi_item_committed(xfs_efi_log_item_t *efip, xfs_lsn_t lsn)
 {
 	return lsn;
+}
+
+/*
+ * This is called when the transaction logging the EFI is aborted.
+ * Free up the EFI and return.  No need to clean up the slot for
+ * the item in the transaction.  That was done by the unpin code
+ * which is called prior to this routine in the abort/fs-shutdown path.
+ */
+STATIC void
+xfs_efi_item_abort(xfs_efi_log_item_t *efip)
+{
+	xfs_efi_item_free(efip);
 }
 
 /*
@@ -219,7 +242,7 @@ xfs_efi_item_committing(xfs_efi_log_item_t *efip, xfs_lsn_t lsn)
 /*
  * This is the ops vector shared by all efi log items.
  */
-static struct xfs_item_ops xfs_efi_item_ops = {
+STATIC struct xfs_item_ops xfs_efi_item_ops = {
 	.iop_size	= (uint(*)(xfs_log_item_t*))xfs_efi_item_size,
 	.iop_format	= (void(*)(xfs_log_item_t*, xfs_log_iovec_t*))
 					xfs_efi_item_format,
@@ -232,6 +255,7 @@ static struct xfs_item_ops xfs_efi_item_ops = {
 	.iop_committed	= (xfs_lsn_t(*)(xfs_log_item_t*, xfs_lsn_t))
 					xfs_efi_item_committed,
 	.iop_push	= (void(*)(xfs_log_item_t*))xfs_efi_item_push,
+	.iop_abort	= (void(*)(xfs_log_item_t*))xfs_efi_item_abort,
 	.iop_pushbuf	= NULL,
 	.iop_committing = (void(*)(xfs_log_item_t*, xfs_lsn_t))
 					xfs_efi_item_committing
@@ -262,7 +286,6 @@ xfs_efi_init(xfs_mount_t	*mp,
 	efip->efi_item.li_type = XFS_LI_EFI;
 	efip->efi_item.li_ops = &xfs_efi_item_ops;
 	efip->efi_item.li_mountp = mp;
-	efip->efi_item.li_ailp = mp->m_ail;
 	efip->efi_format.efi_nextents = nextents;
 	efip->efi_format.efi_id = (__psint_t)(void*)efip;
 
@@ -340,22 +363,53 @@ void
 xfs_efi_release(xfs_efi_log_item_t	*efip,
 		uint			nextents)
 {
-	struct xfs_ail		*ailp = efip->efi_item.li_ailp;
-	int			extents_left;
+	xfs_mount_t	*mp;
+	int		extents_left;
+	SPLDECL(s);
 
+	mp = efip->efi_item.li_mountp;
 	ASSERT(efip->efi_next_extent > 0);
 	ASSERT(efip->efi_flags & XFS_EFI_COMMITTED);
 
-	spin_lock(&ailp->xa_lock);
+	AIL_LOCK(mp, s);
 	ASSERT(efip->efi_next_extent >= nextents);
 	efip->efi_next_extent -= nextents;
 	extents_left = efip->efi_next_extent;
 	if (extents_left == 0) {
-		/* xfs_trans_ail_delete() drops the AIL lock. */
-		xfs_trans_ail_delete(ailp, (xfs_log_item_t *)efip);
+		/*
+		 * xfs_trans_delete_ail() drops the AIL lock.
+		 */
+		xfs_trans_delete_ail(mp, (xfs_log_item_t *)efip, s);
 		xfs_efi_item_free(efip);
 	} else {
-		spin_unlock(&ailp->xa_lock);
+		AIL_UNLOCK(mp, s);
+	}
+}
+
+/*
+ * This is called when the transaction that should be committing the
+ * EFD corresponding to the given EFI is aborted.  The committed and
+ * canceled flags are used to coordinate the freeing of the EFI and
+ * the references by the transaction that committed it.
+ */
+STATIC void
+xfs_efi_cancel(
+	xfs_efi_log_item_t	*efip)
+{
+	xfs_mount_t	*mp;
+	SPLDECL(s);
+
+	mp = efip->efi_item.li_mountp;
+	AIL_LOCK(mp, s);
+	if (efip->efi_flags & XFS_EFI_COMMITTED) {
+		/*
+		 * xfs_trans_delete_ail() drops the AIL lock.
+		 */
+		xfs_trans_delete_ail(mp, (xfs_log_item_t *)efip, s);
+		xfs_efi_item_free(efip);
+	} else {
+		efip->efi_flags |= XFS_EFI_CANCELED;
+		AIL_UNLOCK(mp, s);
 	}
 }
 
@@ -365,7 +419,8 @@ xfs_efd_item_free(xfs_efd_log_item_t *efdp)
 	int nexts = efdp->efd_format.efd_nextents;
 
 	if (nexts > XFS_EFD_MAX_FAST_EXTENTS) {
-		kmem_free(efdp);
+		kmem_free(efdp, sizeof(xfs_efd_log_item_t) +
+				(nexts - 1) * sizeof(xfs_extent_t));
 	} else {
 		kmem_zone_free(xfs_efd_zone, efdp);
 	}
@@ -406,7 +461,7 @@ xfs_efd_item_format(xfs_efd_log_item_t	*efdp,
 
 	log_vector->i_addr = (xfs_caddr_t)&(efdp->efd_format);
 	log_vector->i_len = size;
-	log_vector->i_type = XLOG_REG_TYPE_EFD_FORMAT;
+	XLOG_VEC_SET_TYPE(log_vector, XLOG_REG_TYPE_EFD_FORMAT);
 	ASSERT(size >= sizeof(xfs_efd_log_format_t));
 }
 
@@ -459,7 +514,7 @@ STATIC void
 xfs_efd_item_unlock(xfs_efd_log_item_t *efdp)
 {
 	if (efdp->efd_item.li_flags & XFS_LI_ABORTED)
-		xfs_efd_item_free(efdp);
+		xfs_efd_item_abort(efdp);
 	return;
 }
 
@@ -483,6 +538,27 @@ xfs_efd_item_committed(xfs_efd_log_item_t *efdp, xfs_lsn_t lsn)
 
 	xfs_efd_item_free(efdp);
 	return (xfs_lsn_t)-1;
+}
+
+/*
+ * The transaction of which this EFD is a part has been aborted.
+ * Inform its companion EFI of this fact and then clean up after
+ * ourselves.  No need to clean up the slot for the item in the
+ * transaction.  That was done by the unpin code which is called
+ * prior to this routine in the abort/fs-shutdown path.
+ */
+STATIC void
+xfs_efd_item_abort(xfs_efd_log_item_t *efdp)
+{
+	/*
+	 * If we got a log I/O error, it's always the case that the LR with the
+	 * EFI got unpinned and freed before the EFD got aborted. So don't
+	 * reference the EFI at all in that case.
+	 */
+	if ((efdp->efd_item.li_flags & XFS_LI_ABORTED) == 0)
+		xfs_efi_cancel(efdp->efd_efip);
+
+	xfs_efd_item_free(efdp);
 }
 
 /*
@@ -513,7 +589,7 @@ xfs_efd_item_committing(xfs_efd_log_item_t *efip, xfs_lsn_t lsn)
 /*
  * This is the ops vector shared by all efd log items.
  */
-static struct xfs_item_ops xfs_efd_item_ops = {
+STATIC struct xfs_item_ops xfs_efd_item_ops = {
 	.iop_size	= (uint(*)(xfs_log_item_t*))xfs_efd_item_size,
 	.iop_format	= (void(*)(xfs_log_item_t*, xfs_log_iovec_t*))
 					xfs_efd_item_format,
@@ -526,6 +602,7 @@ static struct xfs_item_ops xfs_efd_item_ops = {
 	.iop_committed	= (xfs_lsn_t(*)(xfs_log_item_t*, xfs_lsn_t))
 					xfs_efd_item_committed,
 	.iop_push	= (void(*)(xfs_log_item_t*))xfs_efd_item_push,
+	.iop_abort	= (void(*)(xfs_log_item_t*))xfs_efd_item_abort,
 	.iop_pushbuf	= NULL,
 	.iop_committing = (void(*)(xfs_log_item_t*, xfs_lsn_t))
 					xfs_efd_item_committing
@@ -557,7 +634,6 @@ xfs_efd_init(xfs_mount_t	*mp,
 	efdp->efd_item.li_type = XFS_LI_EFD;
 	efdp->efd_item.li_ops = &xfs_efd_item_ops;
 	efdp->efd_item.li_mountp = mp;
-	efdp->efd_item.li_ailp = mp->m_ail;
 	efdp->efd_efip = efip;
 	efdp->efd_format.efd_nextents = nextents;
 	efdp->efd_format.efd_efi_id = efip->efi_format.efi_id;

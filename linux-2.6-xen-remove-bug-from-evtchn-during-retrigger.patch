@@ -1,0 +1,35 @@
+Date: Fri, 3 Nov 2006 15:33:50 -0200
+From: Glauber de Oliveira Costa <gcosta@redhat.com>
+Subject: [RHEL5 Xen] kernel BUG at drivers/xen/core/evtchn.c
+
+After a retrigger event in an evtchn, we should make sure the channel is
+unmasked, thus able to receive the interrupt, and not masked, as the
+code states. Though rare (as retriggerin does not seem to happen all the
+time), the bug is quite reproducible when rettriggering are in fact
+happening. Main reason, is that just before calling retrigger, we
+explicitly _unmask_ the channel (enabling us to see the irq edge _and_
+forcing the bug to happen!)
+
+This was not sent upstream, as it only affects kernel versions after the
+irq subsystem rework, which includes our 2.6.18 base, but excludes
+xen-unstable 2.6.16's. It was reported by a client in #210672, and
+client's initial test with the patch seems to fix the problem.
+
+Please ACK for inclusion
+
+-- 
+Glauber de Oliveira Costa
+Red Hat Inc.
+"Free as in Freedom"
+
+--- linux-2.6.18.x86_64/drivers/xen/core/evtchn.c.orig	2006-10-16 20:54:57.000000000 -0400
++++ linux-2.6.18.x86_64/drivers/xen/core/evtchn.c	2006-10-16 20:55:51.000000000 -0400
+@@ -478,7 +478,6 @@ static int retrigger(unsigned int irq)
+ 	shared_info_t *s = HYPERVISOR_shared_info;
+ 	if (!VALID_EVTCHN(evtchn))
+ 		return 1;
+-	BUG_ON(!synch_test_bit(evtchn, &s->evtchn_mask[0]));
+ 	synch_set_bit(evtchn, &s->evtchn_pending[0]);
+ 	return 1;
+ }
+

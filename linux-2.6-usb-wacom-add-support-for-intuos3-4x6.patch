@@ -1,0 +1,111 @@
+From: Aristeu Rozanski <aris@redhat.com>
+Date: Thu, 21 Aug 2008 09:39:12 -0400
+Subject: [usb] wacom: add support for Intuos3 4x6
+Message-id: 20080821133911.414813000@redhat.com
+O-Subject: [RHEL5.3 PATCH 1/3] wacom: add support for Intuos3 4x6"
+Bugzilla: 370471
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+RH-Acked-by: Mauro Carvalho Chehab <mchehab@redhat.com>
+
+https://bugzilla.redhat.com/show_bug.cgi?id=370471
+
+This patch adds support for Intuos3 4x6".
+
+Tested by the customer with success
+
+Upstream:
+071e0a2aee9c289f50b9329d0c26474ca94f7c7a
+8d32e3ae5972641ee9eb813e7a5c44a2b85d3694
+
+diff --git a/drivers/usb/input/wacom.c b/drivers/usb/input/wacom.c
+index e8c323e..9c4de10 100644
+--- a/drivers/usb/input/wacom.c
++++ b/drivers/usb/input/wacom.c
+@@ -97,6 +97,7 @@ enum {
+ 	WACOM_G4,
+ 	PL,
+ 	INTUOS,
++	INTUOS3S,
+ 	INTUOS3,
+ 	INTUOS312,
+ 	INTUOS319,
+@@ -649,7 +650,7 @@ static void wacom_intuos_irq(struct urb *urb, struct pt_regs *regs)
+ 	if ((wacom->features->type == CINTIQ) && !(data[1] & 0x40))
+ 		goto exit;
+ 
+-	if (wacom->features->type >= INTUOS3) {
++	if (wacom->features->type >= INTUOS3S) {
+ 		input_report_abs(dev, ABS_X, (data[2] << 9) | (data[3] << 1) | ((data[9] >> 1) & 1));
+ 		input_report_abs(dev, ABS_Y, (data[4] << 9) | (data[5] << 1) | (data[9] & 1));
+ 		input_report_abs(dev, ABS_DISTANCE, ((data[9] >> 2) & 0x3f));
+@@ -667,7 +668,7 @@ static void wacom_intuos_irq(struct urb *urb, struct pt_regs *regs)
+ 
+ 		if (data[1] & 0x02) {
+ 			/* Rotation packet */
+-			if (wacom->features->type >= INTUOS3) {
++			if (wacom->features->type >= INTUOS3S) {
+ 				/* I3 marker pen rotation reported as wheel
+ 				 * due to valuator limitation
+ 				 */
+@@ -682,7 +683,7 @@ static void wacom_intuos_irq(struct urb *urb, struct pt_regs *regs)
+ 					((t - 1) / 2) : -t / 2);
+ 			}
+ 
+-		} else if (!(data[1] & 0x10) && wacom->features->type < INTUOS3) {
++		} else if (!(data[1] & 0x10) && wacom->features->type < INTUOS3S) {
+ 			/* 4D mouse packet */
+ 			input_report_key(dev, BTN_LEFT,   data[8] & 0x01);
+ 			input_report_key(dev, BTN_MIDDLE, data[8] & 0x02);
+@@ -702,13 +703,15 @@ static void wacom_intuos_irq(struct urb *urb, struct pt_regs *regs)
+ 						 - ((data[8] & 0x02) >> 1));
+ 
+ 			/* I3 2D mouse side buttons */
+-			if (wacom->features->type >= INTUOS3 &&
++			if (wacom->features->type >= INTUOS3S &&
+ 			    wacom->features->type <= INTUOS319) {
+ 				input_report_key(dev, BTN_SIDE,   data[8] & 0x40);
+ 				input_report_key(dev, BTN_EXTRA,  data[8] & 0x20);
+ 			}
+ 
+-		} else if (wacom->features->type < INTUOS3) {
++		} else if (wacom->features->type < INTUOS3S ||
++			   wacom->features->type == INTUOS312 ||
++			   wacom->features->type == INTUOS319) {
+ 			/* Lens cursor packets */
+ 			input_report_key(dev, BTN_LEFT,   data[8] & 0x01);
+ 			input_report_key(dev, BTN_MIDDLE, data[8] & 0x02);
+@@ -774,6 +777,7 @@ static struct wacom_features wacom_features[] = {
+ 	{ "Wacom Intuos3 6x11",  10, 54204, 31750, 1023, 63, INTUOS3,    wacom_intuos_irq },
+ 	{ "Wacom Cintiq 21UX",   10, 87200, 65600, 1023, 63, CINTIQ,     wacom_intuos_irq },
+ 	{ "Wacom Intuos2 6x8",   10, 20320, 16240, 1023, 31, INTUOS,     wacom_intuos_irq },
++	{ "Wacom Intuos3 4x6",   10, 31496, 19685, 1023, 63, INTUOS3S,   wacom_intuos_irq },
+ 	{ }
+ };
+ 
+@@ -821,6 +825,7 @@ static struct usb_device_id wacom_ids[] = {
+ 	{ USB_DEVICE(USB_VENDOR_ID_WACOM, 0xB5) },
+ 	{ USB_DEVICE(USB_VENDOR_ID_WACOM, 0x3F) },
+ 	{ USB_DEVICE(USB_VENDOR_ID_WACOM, 0x47) },
++	{ USB_DEVICE(USB_VENDOR_ID_WACOM, 0xB7) },
+ 	{ }
+ };
+ 
+@@ -909,12 +914,14 @@ static int wacom_probe(struct usb_interface *intf, const struct usb_device_id *i
+ 		case INTUOS312:
+ 		case INTUOS319:
+ 		case CINTIQ:
++			input_dev->keybit[LONG(BTN_LEFT)] |= BIT(BTN_4) | BIT(BTN_5) | BIT(BTN_6) | BIT(BTN_7);
++			input_set_abs_params(input_dev, ABS_RY, 0, 4096, 0, 0);
++			/* fall through */
++		case INTUOS3S:
+ 			input_dev->keybit[LONG(BTN_DIGI)] |= BIT(BTN_TOOL_FINGER);
+-			input_dev->keybit[LONG(BTN_LEFT)] |= BIT(BTN_0) | BIT(BTN_1) | BIT(BTN_2) | BIT(BTN_3) | BIT(BTN_4) | BIT(BTN_5) | BIT(BTN_6) | BIT(BTN_7);
+-			input_set_abs_params(input_dev, ABS_RX, 0, 4097, 0, 0);
+-			input_set_abs_params(input_dev, ABS_RY, 0, 4097, 0, 0);
++			input_dev->keybit[LONG(BTN_LEFT)] |= BIT(BTN_0) | BIT(BTN_1) | BIT(BTN_2) | BIT(BTN_3);
++			input_set_abs_params(input_dev, ABS_RX, 0, 4096, 0, 0);
+ 			/* fall through */
+-
+ 		case INTUOS:
+ 			input_dev->evbit[0] |= BIT(EV_MSC) | BIT(EV_REL);
+ 			input_dev->mscbit[0] |= BIT(MSC_SERIAL);

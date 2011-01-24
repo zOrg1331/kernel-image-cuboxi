@@ -1,0 +1,84 @@
+--- src/fs/gfs/glock.c	2006-12-22 00:55:42.000000000 +0300
++++ src/fs/gfs/glock.c	2007-05-11 17:55:32.000000000 +0400
+@@ -2708,7 +2708,7 @@
+ 			t = jiffies;
+ 		}
+ 
+-		invalidate_inodes(sdp->sd_vfs);
++		invalidate_inodes(sdp->sd_vfs, 0);
+ 		schedule_timeout_interruptible(HZ / 10);
+ 	}
+ }
+--- src/fs/gfs/ops_address.c	2006-12-22 00:55:42.000000000 +0300
++++ src/fs/gfs/ops_address.c	2007-05-11 18:13:10.000000000 +0400
+@@ -447,7 +448,7 @@
+  * Returns: errno
+  */
+ 
+-static int
++static ssize_t
+ gfs_direct_IO(int rw, struct kiocb *iocb, const struct iovec *iov,
+ 	      loff_t offset, unsigned long nr_segs)
+ {
+--- src/fs/gfs/ops_file.c	2006-12-22 00:55:42.000000000 +0300
++++ src/fs/gfs/ops_file.c	2007-05-11 20:22:05.000000000 +0400
+@@ -150,7 +150,7 @@
+ 			if (end <= vma->vm_start)
+ 				break;
+ 			if (vma->vm_file &&
+-			    vma->vm_file->f_dentry->d_inode->i_sb == sb) {
++			    vma->vm_file->f_mapping->host->i_sb == sb) {
+ 				num_gh++;
+ 			}
+ 		}
+@@ -166,7 +166,7 @@
+ 			if (end <= vma->vm_start)
+ 				break;
+ 			if (vma->vm_file) {
+-				struct inode *inode = vma->vm_file->f_dentry->d_inode;
++				struct inode *inode = vma->vm_file->f_mapping->host;
+ 				if (inode->i_sb == sb)
+ 					gfs_holder_init(get_v2ip(inode)->i_gl,
+ 							vma2state(vma),
+@@ -224,7 +224,7 @@
+ 			if (end <= vma->vm_start)
+ 				break;
+ 			if (vma->vm_file &&
+-			    vma->vm_file->f_dentry->d_inode->i_sb == sb)
++			    vma->vm_file->f_mapping->host->i_sb == sb)
+ 				goto do_locks;
+ 		}
+ 
+--- src/fs/gfs/ops_fstype.c	2006-12-22 00:55:42.000000000 +0300
++++ src/fs/gfs/ops_fstype.c	2007-05-11 17:55:32.000000000 +0400
+@@ -724,7 +724,7 @@
+ 	gfs_gl_hash_clear(sdp, TRUE);
+ 	gfs_lm_unmount(sdp);
+ 	gfs_clear_dirty_j(sdp);
+-	while (invalidate_inodes(sb))
++	while (invalidate_inodes(sb, 1))
+ 		yield();
+ 
+ fail_sys:
+--- src/fs/gfs/ops_inode.c	2006-12-22 00:55:42.000000000 +0300
++++ src/fs/gfs/ops_inode.c	2007-05-11 17:55:32.000000000 +0400
+@@ -43,6 +43,8 @@
+ #include "trans.h"
+ #include "unlinked.h"
+ 
++#define system_utsname (*(init_utsname()))
++
+ /**
+  * gfs_security_init -
+  * @dip:
+--- src/fs/gfs/ops_super.c	2006-12-22 00:55:42.000000000 +0300
++++ src/fs/gfs/ops_super.c	2007-05-11 17:55:32.000000000 +0400
+@@ -169,7 +169,7 @@
+ 	gfs_clear_dirty_j(sdp);
+ 
+ 	/*  Get rid of any extra inodes  */
+-	while (invalidate_inodes(sb))
++	while (invalidate_inodes(sb, 1))
+ 		yield();
+ 
+ 	vfree(sdp);

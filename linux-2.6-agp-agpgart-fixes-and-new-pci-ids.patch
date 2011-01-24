@@ -1,0 +1,301 @@
+From: Geoff Gustafson <lkml@twopenguins.org>
+Subject: [RHEL5.1 PATCH] agpgart fixes and new pci ids (bz 227391)
+Date: Mon, 09 Apr 2007 17:40:30 -0400
+Bugzilla: 227391
+Message-Id: <461AB2CE.8090603@twopenguins.org>
+Changelog: [agp] agpgart fixes and new pci ids
+
+
+This patch backports three upstream agpgart fixes plus PCI IDs posted 
+yesterday, all needed to support the 965GM (Crestline) chipset graphics 
+from Intel. The graphics driver backports are not finished but this has 
+been tested by Intel with an early version. I built it against 14.EL5 
+and sanity checked it.
+
+- fixes detection of aperture size versus GTT size on G965
+- restore graphics device's pci space early in resume
+- don't try to remap i810 registers on resume
+- new PCI IDs for 965GM graphics
+
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=c41e0deb50c44f9d119c2268f1be05e6a6bb5772
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=4b95320fc4d21b0ff2f8604305dd6c851aff6096
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=e4ac5e4f55f55b16e084a46b1b8e233f490ba701
+http://marc.info/?l=linux-kernel&m=117607982308247&w=2
+
+- Geoff
+
+
+
+diff -Naurp linux-2.6.18.i386/drivers/char/agp/agp.h linux-2.6.18.i386-backport-agp/drivers/char/agp/agp.h
+--- linux-2.6.18.i386/drivers/char/agp/agp.h	2007-03-31 02:37:38.000000000 +0800
++++ linux-2.6.18.i386-backport-agp/drivers/char/agp/agp.h	2007-03-31 02:25:24.000000000 +0800
+@@ -225,6 +225,10 @@ struct agp_bridge_data {
+ #define I810_GMS_DISABLE	0x00000000
+ #define I810_PGETBL_CTL		0x2020
+ #define I810_PGETBL_ENABLED	0x00000001
++#define I965_PGETBL_SIZE_MASK	0x0000000e
++#define I965_PGETBL_SIZE_512KB	(0 << 1)
++#define I965_PGETBL_SIZE_256KB	(1 << 1)
++#define I965_PGETBL_SIZE_128KB	(2 << 1)
+ #define I810_DRAM_CTL		0x3000
+ #define I810_DRAM_ROW_0		0x00000001
+ #define I810_DRAM_ROW_0_SDRAM	0x00000001
+diff -Naurp linux-2.6.18.i386/drivers/char/agp/intel-agp.c linux-2.6.18.i386-backport-agp/drivers/char/agp/intel-agp.c
+--- linux-2.6.18.i386/drivers/char/agp/intel-agp.c	2007-03-31 02:37:38.000000000 +0800
++++ linux-2.6.18.i386-backport-agp/drivers/char/agp/intel-agp.c	2007-03-31 02:25:25.000000000 +0800
+@@ -17,11 +17,14 @@
+ #define PCI_DEVICE_ID_INTEL_82965Q_IG       0x2992
+ #define PCI_DEVICE_ID_INTEL_82965G_HB       0x29A0
+ #define PCI_DEVICE_ID_INTEL_82965G_IG       0x29A2
++#define PCI_DEVICE_ID_INTEL_82965GM_HB      0x2A00
++#define PCI_DEVICE_ID_INTEL_82965GM_IG      0x2A02
+ 
+ #define IS_I965 (agp_bridge->dev->device == PCI_DEVICE_ID_INTEL_82946GZ_HB || \
+                  agp_bridge->dev->device == PCI_DEVICE_ID_INTEL_82965G_1_HB || \
+                  agp_bridge->dev->device == PCI_DEVICE_ID_INTEL_82965Q_HB || \
+-                 agp_bridge->dev->device == PCI_DEVICE_ID_INTEL_82965G_HB)
++                 agp_bridge->dev->device == PCI_DEVICE_ID_INTEL_82965G_HB || \
++                 agp_bridge->dev->device == PCI_DEVICE_ID_INTEL_82965GM_HB)
+ 
+ 
+ /* Intel 815 register */
+@@ -117,13 +120,15 @@ static int intel_i810_configure(void)
+ 
+ 	current_size = A_SIZE_FIX(agp_bridge->current_size);
+ 
+-	pci_read_config_dword(intel_i810_private.i810_dev, I810_MMADDR, &temp);
+-	temp &= 0xfff80000;
+-
+-	intel_i810_private.registers = ioremap(temp, 128 * 4096);
+ 	if (!intel_i810_private.registers) {
+-		printk(KERN_ERR PFX "Unable to remap memory.\n");
+-		return -ENOMEM;
++		pci_read_config_dword(intel_i810_private.i810_dev, I810_MMADDR, &temp);
++		temp &= 0xfff80000;
++
++		intel_i810_private.registers = ioremap(temp, 128 * 4096);
++		if (!intel_i810_private.registers) {
++			printk(KERN_ERR PFX "Unable to remap memory.\n");
++			return -ENOMEM;
++		}
+ 	}
+ 
+ 	if ((readl(intel_i810_private.registers+I810_DRAM_CTL)
+@@ -370,6 +375,11 @@ static struct _intel_i830_private {
+ 	struct pci_dev *i830_dev;		/* device one */
+ 	volatile u8 __iomem *registers;
+ 	volatile u32 __iomem *gtt;		/* I915G */
++	/* gtt_entries is the number of gtt entries that are already mapped
++	* to stolen memory.  Stolen memory is larger than the memory mapped
++	* through gtt_entries, as it includes some reserved space for the BIOS
++	* popup and for the GTT.
++	*/
+ 	int gtt_entries;
+ } intel_i830_private;
+ 
+@@ -380,14 +390,41 @@ static void intel_i830_init_gtt_entries(
+ 	u8 rdct;
+ 	int local = 0;
+ 	static const int ddt[4] = { 0, 16, 32, 64 };
+-	int size;
++	int size;/* reserved space (in kb) at the top of stolen memory */
+ 
+ 	pci_read_config_word(agp_bridge->dev,I830_GMCH_CTRL,&gmch_ctrl);
+ 
+-	/* We obtain the size of the GTT, which is also stored (for some
+-	 * reason) at the top of stolen memory. Then we add 4KB to that
+-	 * for the video BIOS popup, which is also stored in there. */
+-	size = agp_bridge->driver->fetch_size() + 4;
++	if (IS_I965) {
++		u32 pgetbl_ctl;
++
++		pci_read_config_dword(agp_bridge->dev, I810_PGETBL_CTL,
++                                     &pgetbl_ctl);
++		/* The 965 has a field telling us the size of the GTT,
++		* which may be larger than what is necessary to map the
++		* aperture.
++		*/
++		switch (pgetbl_ctl & I965_PGETBL_SIZE_MASK) {
++		case I965_PGETBL_SIZE_128KB:
++			size = 128;
++			break;
++		case I965_PGETBL_SIZE_256KB:
++			size = 256;
++			break;
++		case I965_PGETBL_SIZE_512KB:
++			size = 512;
++			break;
++		default:
++			printk(KERN_INFO PFX "Unknown page table size, "
++				"assuming 512KB\n");
++			size = 512;
++		}
++		size += 4; /* add in BIOS popup space */
++	} else {
++		/* On previous hardware, the GTT size was just what was
++		* required to map the aperture.
++		*/
++		size = agp_bridge->driver->fetch_size() + 4;
++	}
+ 
+ 	if (agp_bridge->dev->device == PCI_DEVICE_ID_INTEL_82830_HB ||
+ 	    agp_bridge->dev->device == PCI_DEVICE_ID_INTEL_82845G_HB) {
+@@ -743,22 +780,27 @@ static int intel_i915_remove_entries(str
+ 	return 0;
+ }
+ 
+-static int intel_i915_fetch_size(void)
++/* Return the aperture size by just checking the resource length.  The effect
++ * described in the spec of the MSAC registers is just changing of the
++ * resource size.
++ */
++static int intel_i9xx_fetch_size(void)
+ {
+-	struct aper_size_info_fixed *values;
+-	u32 temp, offset;
++	int num_sizes = sizeof(intel_i830_sizes) / sizeof(*intel_i830_sizes);
++	int aper_size; /* size in megabytes */
++	int i;
+ 
+-#define I915_256MB_ADDRESS_MASK (1<<27)
++	aper_size = pci_resource_len(intel_i830_private.i830_dev, 2) / MB(1);
+ 
+-	values = A_SIZE_FIX(agp_bridge->driver->aperture_sizes);
++	for (i = 0; i < num_sizes; i++) {
++		if (aper_size == intel_i830_sizes[i].size) {
++			agp_bridge->current_size = intel_i830_sizes + i;
++			agp_bridge->previous_size = agp_bridge->current_size;
++			return aper_size;
++		}
++	}	
+ 
+-	pci_read_config_dword(intel_i830_private.i830_dev, I915_GMADDR, &temp);
+-	if (temp & I915_256MB_ADDRESS_MASK)
+-		offset = 0;	/* 128MB aperture */
+-	else
+-		offset = 2;	/* 256MB aperture */
+-	agp_bridge->previous_size = agp_bridge->current_size = (void *)(values + offset);
+-	return values[offset].size;
++	return 0;
+ }
+ 
+ /* The intel i915 automatically initializes the agp aperture during POST.
+@@ -821,37 +863,6 @@ static unsigned long intel_i965_mask_mem
+ 	return addr | bridge->driver->masks[type].mask;
+ }
+ 
+-static int intel_i965_fetch_size(void)
+-{
+-       struct aper_size_info_fixed *values;
+-       u32 offset = 0;
+-       u8 temp;
+-
+-#define I965_512MB_ADDRESS_MASK (3<<1)
+-
+-       values = A_SIZE_FIX(agp_bridge->driver->aperture_sizes);
+-
+-       pci_read_config_byte(intel_i830_private.i830_dev, I965_MSAC, &temp);
+-       temp &= I965_512MB_ADDRESS_MASK;
+-       switch (temp) {
+-       case 0x00:
+-               offset = 0; /* 128MB */
+-               break;
+-       case 0x06:
+-               offset = 3; /* 512MB */
+-               break;
+-       default:
+-       case 0x02:
+-               offset = 2; /* 256MB */
+-               break;
+-       }
+-
+-       agp_bridge->previous_size = agp_bridge->current_size = (void *)(values + offset);
+-
+-	/* The i965 GTT is always sized as if it had a 512kB aperture size */
+-	return 512;
+-}
+-
+ /* The intel i965 automatically initializes the agp aperture during POST.
+ + * Use the memory already set aside for in the GTT.
+ + */
+@@ -1574,7 +1585,7 @@ static struct agp_bridge_driver intel_91
+ 	.num_aperture_sizes	= 4,
+ 	.needs_scratch_page	= TRUE,
+ 	.configure		= intel_i915_configure,
+-	.fetch_size		= intel_i915_fetch_size,
++	.fetch_size		= intel_i9xx_fetch_size,
+ 	.cleanup		= intel_i915_cleanup,
+ 	.tlb_flush		= intel_i810_tlbflush,
+ 	.mask_memory		= intel_i810_mask_memory,
+@@ -1598,7 +1609,7 @@ static struct agp_bridge_driver intel_i9
+        .num_aperture_sizes     = 4,
+        .needs_scratch_page     = TRUE,
+        .configure              = intel_i915_configure,
+-       .fetch_size             = intel_i965_fetch_size,
++       .fetch_size             = intel_i9xx_fetch_size,
+        .cleanup                = intel_i915_cleanup,
+        .tlb_flush              = intel_i810_tlbflush,
+        .mask_memory            = intel_i965_mask_memory,
+@@ -1837,6 +1848,13 @@ static int __devinit agp_intel_probe(str
+ 			bridge->driver = &intel_845_driver;
+ 		name = "965G";
+ 		break;
++	case PCI_DEVICE_ID_INTEL_82965GM_HB:
++		if (find_i830(PCI_DEVICE_ID_INTEL_82965GM_IG))
++			bridge->driver = &intel_i965_driver;
++		else
++			bridge->driver = &intel_845_driver;
++		name = "965GM";
++		break;
+ 
+ 	case PCI_DEVICE_ID_INTEL_7505_0:
+ 		bridge->driver = &intel_7505_driver;
+@@ -1927,6 +1945,15 @@ static int agp_intel_resume(struct pci_d
+ 
+ 	pci_restore_state(pdev);
+ 
++	/* We should restore our graphics device's config space,
++	* as host bridge (00:00) resumes before graphics device (02:00),
++	* then our access to its pci space can work right. 
++	*/
++	if (intel_i810_private.i810_dev)
++		pci_restore_state(intel_i810_private.i810_dev);
++	if (intel_i830_private.i830_dev)
++		pci_restore_state(intel_i830_private.i830_dev);
++
+ 	if (bridge->driver == &intel_generic_driver)
+ 		intel_configure();
+ 	else if (bridge->driver == &intel_850_driver)
+@@ -1987,6 +2014,7 @@ static struct pci_device_id agp_intel_pc
+ 	ID(PCI_DEVICE_ID_INTEL_82965G_1_HB),
+ 	ID(PCI_DEVICE_ID_INTEL_82965Q_HB),
+ 	ID(PCI_DEVICE_ID_INTEL_82965G_HB),
++	ID(PCI_DEVICE_ID_INTEL_82965GM_HB),
+ 	{ }
+ };
+ 
+
+On G965, I810_PGETBL_CTL is a mmio offset, but we wrongly take it
+as pci config space offset in detecting GTT size. This one line patch
+fixs this.
+
+Signed-off-by: Wang Zhenyu <zhenyu.z.wang@intel.com>
+
+---
+diff --git a/drivers/char/agp/intel-agp.c b/drivers/char/agp/intel-agp.c
+index a9fdbf9..4c05c71 100644
+--- a/drivers/char/agp/intel-agp.c
++++ b/drivers/char/agp/intel-agp.c
+@@ -431,9 +431,8 @@ static void intel_i830_init_gtt_entries(
+ 
+ 	if (IS_I965) {
+ 		u32 pgetbl_ctl;
+-
+-		pci_read_config_dword(agp_bridge->dev, I810_PGETBL_CTL,
+-                                     &pgetbl_ctl);
++		pgetbl_ctl = readl(intel_i830_private.registers+I810_PGETBL_CTL);
++
+ 		/* The 965 has a field telling us the size of the GTT,
+ 		 * which may be larger than what is necessary to map the
+ 		 * aperture.
+

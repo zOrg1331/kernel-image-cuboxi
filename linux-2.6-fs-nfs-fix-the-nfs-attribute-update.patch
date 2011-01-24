@@ -1,0 +1,83 @@
+From: Jeff Layton <jlayton@redhat.com>
+Date: Mon, 28 Jun 2010 12:36:02 -0400
+Subject: [fs] nfs: fix the NFS attribute update
+Message-id: <1277728562-28052-5-git-send-email-jlayton@redhat.com>
+Patchwork-id: 26586
+O-Subject: [RHEL5.6 PATCH 4/4] BZ#601800: NFS: Fix the NFS attribute update
+Bugzilla: 601800
+RH-Acked-by: Steve Dickson <SteveD@redhat.com>
+
+From: Trond Myklebust <Trond.Myklebust@netapp.com>
+
+Currently nfs_refresh_inode() will only update the inode metadata if it
+sees that the RPC call that returned the nfs_fattr was started
+after the last update of the inode. This means that if we have parallel
+RPC calls to the same inode (when sending WRITE calls, for instance), we
+may often miss updates.
+
+This patch attempts to recover those missed updates by also accepting
+them if the ctime in the nfs_fattr is more recent than the inode's
+cached ctime.
+It also recovers the case where the file size has increased, but the
+ctime has not been updated due to limited ctime resolution.
+
+Signed-off-by: Trond Myklebust <Trond.Myklebust@netapp.com>
+Signed-off-by: Jeff Layton <jlayton@redhat.com>
+
+diff --git a/fs/nfs/inode.c b/fs/nfs/inode.c
+index a2662c4..9860f64 100644
+--- a/fs/nfs/inode.c
++++ b/fs/nfs/inode.c
+@@ -852,11 +852,49 @@ static int nfs_check_inode_attributes(struct inode *inode, struct nfs_fattr *fat
+ 	return 0;
+ }
+ 
+-static int nfs_refresh_inode_locked(struct inode *inode, struct nfs_fattr *fattr)
++static int nfs_ctime_need_update(const struct inode *inode, const struct nfs_fattr *fattr)
+ {
+-	struct nfs_inode *nfsi = NFS_I(inode);
++	return timespec_compare(&fattr->ctime, &inode->i_ctime) > 0;
++}
++
++static int nfs_size_need_update(const struct inode *inode, const struct nfs_fattr *fattr)
++{
++	return nfs_size_to_loff_t(fattr->size) > i_size_read(inode);
++}
+ 
+-	if (time_after(fattr->time_start, nfsi->last_updated))
++/**
++ * nfs_inode_attrs_need_update - check if the inode attributes need updating
++ * @inode - pointer to inode
++ * @fattr - attributes
++ *
++ * Attempt to divine whether or not an RPC call reply carrying stale
++ * attributes got scheduled after another call carrying updated ones.
++ *
++ * To do so, the function first assumes that a more recent ctime means
++ * that the attributes in fattr are newer, however it also attempt to
++ * catch the case where ctime either didn't change, or went backwards
++ * (if someone reset the clock on the server) by looking at whether
++ * or not this RPC call was started after the inode was last updated.
++ * Note also the check for jiffy wraparound if the last_updated timestamp
++ * is later than 'jiffies'.
++ *
++ * The function returns 'true' if it thinks the attributes in 'fattr' are
++ * more recent than the ones cached in the inode.
++ *
++ */
++static int nfs_inode_attrs_need_update(const struct inode *inode, const struct nfs_fattr *fattr)
++{
++	const struct nfs_inode *nfsi = NFS_I(inode);
++
++	return nfs_ctime_need_update(inode, fattr) ||
++			nfs_size_need_update(inode, fattr) ||
++			time_after(fattr->time_start, nfsi->last_updated) ||
++			time_after(nfsi->last_updated, jiffies);
++}
++
++static int nfs_refresh_inode_locked(struct inode *inode, struct nfs_fattr *fattr)
++{
++	if (nfs_inode_attrs_need_update(inode, fattr))
+ 		return nfs_update_inode(inode, fattr);
+ 	return nfs_check_inode_attributes(inode, fattr);
+ }

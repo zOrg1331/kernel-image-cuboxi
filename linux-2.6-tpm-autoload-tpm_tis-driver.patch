@@ -1,0 +1,55 @@
+From: John Feeney <jfeeney@redhat.com>
+Date: Thu, 26 Aug 2010 15:41:05 -0400
+Subject: [tpm] autoload tpm_tis driver
+Message-id: <4C768B11.5010405@redhat.com>
+Patchwork-id: 27832
+O-Subject: [RHEL5.6 PATCH] Autoload tpm_tis driver
+Bugzilla: 530123
+RH-Acked-by: Stefan Assmann <sassmann@redhat.com>
+
+bz530123
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=530123
+autoload tpm_tis driver
+
+Description of problem:
+The tpm_tis driver is required to complement the userspace
+component as defined by bz461716 ("Add TPM rng suppport") but
+tpm_tis does not automatically load on boot.
+
+Solution:
+The tpm_tis driver already has a list of supported pnp_device_ids.
+This patch simply exports that list as a MODULE_DEVICE_TABLE() so that
+the module autoloader will discover and load the module at boottime.
+
+upstream commit:
+31bde71c202722a76686c3cf69a254c8a912275a
+	Matt Domsch <Matt_Domsch@dell.com>
+	Tue, 3 Nov 2009 01:05:50 +0000 (12:05 +1100)
+
+Brew:
+Successfully built in Brew for all architectures (task_2705223).
+
+Testing:
+I have tested this on a number of rhts/beaker systems and found:
+[root@pogolinux-1 ~]# lsmod |grep tpm
+tpm_tis                48140  0
+tpm                    50464  1 tpm_tis
+tpm_bios               40960  1 tpm
+after booting, where an applicable device is present.
+
+Acks would be appreciated. Thanks.
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/char/tpm/tpm_tis.c b/drivers/char/tpm/tpm_tis.c
+index bda5166..ede24a2 100644
+--- a/drivers/char/tpm/tpm_tis.c
++++ b/drivers/char/tpm/tpm_tis.c
+@@ -623,6 +623,7 @@ static struct pnp_device_id tpm_pnp_tbl[] __devinitdata = {
+ 	{"", 0},		/* User Specified */
+ 	{"", 0}			/* Terminator */
+ };
++MODULE_DEVICE_TABLE(pnp, tpm_pnp_tbl);
+ 
+ static struct pnp_driver tis_pnp_driver = {
+ 	.name = "tpm_tis",

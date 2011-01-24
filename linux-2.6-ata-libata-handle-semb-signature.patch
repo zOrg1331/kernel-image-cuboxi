@@ -1,0 +1,94 @@
+From: David Milburn <dmilburn@redhat.com>
+Date: Mon, 22 Mar 2010 18:33:21 -0400
+Subject: [ata] libata: handle semb signature
+Message-id: <20100322183321.GA19448@localhost.localdomain>
+Patchwork-id: 23699
+O-Subject: [RHEL5.6 PATCH] libata: handle semb signature
+Bugzilla: 533093
+RH-Acked-by: Jeff Garzik <jgarzik@redhat.com>
+RH-Acked-by: John Feeney <jfeeney@redhat.com>
+
+After reset some drives may report a SEMB (Sata Enclosure Management
+Bridge) signature. This patch will allow the drive to be detected
+through the ATA IDENTIFY DEVICE command. This patch has been verified
+by the reporter in BZ 533093 using a Western Digital WDC WD2500AAJS-62B4A0
+drive with a -191.el5 test kernel. Please review and ACK.
+
+Thanks,
+David
+
+Upstream commit:
+
+commit 79b42babbac2a5a522b8e269fb2811b6e1063030
+Author: Tejun Heo <tj@kernel.org>
+Date:   Wed Apr 15 06:21:10 2009 +0900
+
+    libata: handle SEMB signature better
+
+    WDC WD1600JS-62MHB5 successfully hits the window between ATA/ATAPI-7
+    and Serial ATA II standards and reports 3c/c3 signature which now is
+    assigned to SEMB.  Make ata_dev_classify() report ATA_DEV_SEMB on the
+    sig and let ata_dev_read_id() work around it by trying IDENTIFY once.
+
+ drivers/ata/libata-core.c |   18 ++++++++++++++++--
+ 1 files changed, 16 insertions(+), 2 deletions(-)
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/ata/libata-core.c b/drivers/ata/libata-core.c
+index 4ab96b5..bafc513 100644
+--- a/drivers/ata/libata-core.c
++++ b/drivers/ata/libata-core.c
+@@ -1089,6 +1089,9 @@ unsigned int ata_dev_classify(const struct ata_taskfile *tf)
+ 	 *
+ 	 * We follow the current spec and consider that 0x69/0x96
+ 	 * identifies a port multiplier and 0x3c/0xc3 a SEMB device.
++	 * Unfortunately, WDC WD1600JS-62MHB5 (a hard drive) reports
++	 * SEMB signature.  This is worked around in
++	 * ata_dev_read_id().
+ 	 */
+ 	if ((tf->lbam == 0) && (tf->lbah == 0)) {
+ 		DPRINTK("found ATA device by sig\n");
+@@ -1106,8 +1109,8 @@ unsigned int ata_dev_classify(const struct ata_taskfile *tf)
+ 	}
+ 
+ 	if ((tf->lbam == 0x3c) && (tf->lbah == 0xc3)) {
+-		printk(KERN_INFO "ata: SEMB device ignored\n");
+-		return ATA_DEV_SEMB_UNSUP; /* not yet */
++		DPRINTK("found SEMB device by sig (could be ATA device)\n");
++		return ATA_DEV_SEMB;
+ 	}
+ 
+ 	DPRINTK("unknown device\n");
+@@ -1911,6 +1914,7 @@ int ata_dev_read_id(struct ata_device *dev, unsigned int *p_class,
+ 	struct ata_taskfile tf;
+ 	unsigned int err_mask = 0;
+ 	const char *reason;
++	bool is_semb = class == ATA_DEV_SEMB;
+ 	int may_fallback = 1, tried_spinup = 0;
+ 	int rc;
+ 
+@@ -1921,6 +1925,8 @@ int ata_dev_read_id(struct ata_device *dev, unsigned int *p_class,
+ 	ata_tf_init(dev, &tf);
+ 
+ 	switch (class) {
++	case ATA_DEV_SEMB:
++		class = ATA_DEV_ATA;	/* some hard drives report SEMB sig */
+ 	case ATA_DEV_ATA:
+ 		tf.command = ATA_CMD_ID_ATA;
+ 		break;
+@@ -1954,6 +1960,14 @@ int ata_dev_read_id(struct ata_device *dev, unsigned int *p_class,
+ 			return -ENOENT;
+ 		}
+ 
++		if (is_semb) {
++			ata_dev_printk(dev, KERN_INFO, "IDENTIFY failed on "
++				       "device w/ SEMB sig, disabled\n");
++			/* SEMB is not supported yet */
++			*p_class = ATA_DEV_SEMB_UNSUP;
++			return 0;
++		}
++
+ 		if ((err_mask == AC_ERR_DEV) && (tf.feature & ATA_ABORTED)) {
+ 			/* Device or controller might have reported
+ 			 * the wrong device class.  Give a shot at the

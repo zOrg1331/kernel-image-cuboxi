@@ -1,0 +1,231 @@
+From: Scott Moser <smoser@redhat.com>
+Subject: [RHEL5.1 PATCH] bz229593 Fix xmon=off and cleanup xmon initialization
+Date: Wed, 30 May 2007 10:19:46 -0400 (EDT)
+Bugzilla: 229593
+Message-Id: <Pine.LNX.4.64.0705301018300.5134@squad5-lp1.lab.boston.redhat.com>
+Changelog: [ppc] Fix xmon=off and cleanup xmon initialization
+
+
+RHBZ#: 229593
+------
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=229593
+
+Description:
+------------
+  [POWERPC] Fix xmon=off and cleanup xmon initialisation
+  
+  My patch to make the early xmon logic work with earlier early param
+  parsing (480f6f35a149802a94ad5c1a2673ed6ec8d2c158) breaks xmon=off.
+  
+  No one does this obviously as xmon rocks, but it should really work
+  as documented.
+  
+  While fixing that it struck me that we could move the xmon param
+  handling into xmon.c, and also consolidate the
+  xmon_init()/do_early_xmon logic into xmon_setup(). This means
+  xmon=early drops into xmon a little earlier on 32-bit, but it
+  seems to work just fine.
+  
+  Tested on PSERIES and CLASSIC32.
+  
+  Signed-off-by: Michael Ellerman <michael@ellerman.id.au>
+  Signed-off-by: Paul Mackerras <paulus@samba.org>
+
+RHEL Version Found:
+-------------------
+bug against 5.0
+
+Upstream Status:
+----------------
+This code is upstream in 2.6.19
+git commit [1] 476792839467c08ddeedd8b44a7423d415b68259
+
+
+Test Status:
+------------
+These patches have been built against 2.6.18-19.el5, and successfully
+built in brew task 794835 [2].
+
+Testing has been done by Chandru Siddalingappa of IBM.  The system
+successfully booted into a kdump kernel without entering into xmon when
+'xmon=off' was passed on the command line. 
+
+Proposed Patch:
+----------------
+Please review and ACK for RHEL5.1
+
+-- 
+[1] http://git.kernel.org/gitweb.cgi?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=476792839467c08ddeedd8b44a7423d415b68259
+[2] http://brewweb.devel.redhat.com/brew/taskinfo?taskID=794835
+
+---
+ arch/powerpc/kernel/setup-common.c |   21 ---------------------
+ arch/powerpc/kernel/setup_32.c     |    8 ++------
+ arch/powerpc/kernel/setup_64.c     |   12 ++++--------
+ arch/powerpc/xmon/xmon.c           |   35 +++++++++++++++++++++++++++++++++++
+ include/asm-powerpc/xmon.h         |    6 +++++-
+ 5 files changed, 46 insertions(+), 36 deletions(-)
+
+Index: linux-2.6.18.ppc64/arch/powerpc/kernel/setup-common.c
+===================================================================
+--- linux-2.6.18.ppc64.orig/arch/powerpc/kernel/setup-common.c
++++ linux-2.6.18.ppc64/arch/powerpc/kernel/setup-common.c
+@@ -442,27 +442,6 @@ void __init smp_setup_cpu_maps(void)
+ }
+ #endif /* CONFIG_SMP */
+ 
+-int __initdata do_early_xmon;
+-#ifdef CONFIG_XMON
+-static int __init early_xmon(char *p)
+-{
+-	/* ensure xmon is enabled */
+-	if (p) {
+-		if (strncmp(p, "on", 2) == 0)
+-			xmon_init(1);
+-		if (strncmp(p, "off", 3) == 0)
+-			xmon_init(0);
+-		if (strncmp(p, "early", 5) != 0)
+-			return 0;
+-	}
+-	xmon_init(1);
+-	do_early_xmon = 1;
+-
+-	return 0;
+-}
+-early_param("xmon", early_xmon);
+-#endif
+-
+ static __init int add_pcspkr(void)
+ {
+ 	struct device_node *np;
+Index: linux-2.6.18.ppc64/arch/powerpc/kernel/setup_32.c
+===================================================================
+--- linux-2.6.18.ppc64.orig/arch/powerpc/kernel/setup_32.c
++++ linux-2.6.18.ppc64/arch/powerpc/kernel/setup_32.c
+@@ -246,12 +246,11 @@ void __init setup_arch(char **cmdline_p)
+ 
+ 	smp_setup_cpu_maps();
+ 
+-#ifdef CONFIG_XMON_DEFAULT
+-	xmon_init(1);
+-#endif
+ 	/* Register early console */
+ 	register_early_udbg_console();
+ 
++	xmon_setup();
++
+ #if defined(CONFIG_KGDB)
+ 	if (ppc_md.kgdb_map_scc)
+ 		ppc_md.kgdb_map_scc();
+@@ -288,9 +287,6 @@ void __init setup_arch(char **cmdline_p)
+ 	init_mm.end_data = (unsigned long) _edata;
+ 	init_mm.brk = klimit;
+ 
+-	if (do_early_xmon)
+-		debugger(NULL);
+-
+ 	/* set up the bootmem stuff with available memory */
+ 	do_init_bootmem();
+ 	if ( ppc_md.progress ) ppc_md.progress("setup_arch: bootmem", 0x3eab);
+Index: linux-2.6.18.ppc64/arch/powerpc/kernel/setup_64.c
+===================================================================
+--- linux-2.6.18.ppc64.orig/arch/powerpc/kernel/setup_64.c
++++ linux-2.6.18.ppc64/arch/powerpc/kernel/setup_64.c
+@@ -406,18 +406,14 @@ void __init setup_system(void)
+ 	find_legacy_serial_ports();
+ 
+ 	/*
+-	 * Initialize xmon
+-	 */
+-#ifdef CONFIG_XMON_DEFAULT
+-	xmon_init(1);
+-#endif
+-	/*
+ 	 * Register early console
+ 	 */
+ 	register_early_udbg_console();
+ 
+-	if (do_early_xmon)
+-		debugger(NULL);
++	/*
++	 * Initialize xmon
++	 */
++	xmon_setup();
+ 
+ 	check_smt_enabled();
+ 	smp_setup_cpu_maps();
+Index: linux-2.6.18.ppc64/arch/powerpc/xmon/xmon.c
+===================================================================
+--- linux-2.6.18.ppc64.orig/arch/powerpc/xmon/xmon.c
++++ linux-2.6.18.ppc64/arch/powerpc/xmon/xmon.c
+@@ -2,6 +2,8 @@
+  * Routines providing a simple monitor for use on the PowerMac.
+  *
+  * Copyright (C) 1996-2005 Paul Mackerras.
++ * Copyright (C) 2001 PPC64 Team, IBM Corp
++ * Copyrignt (C) 2006 Michael Ellerman, IBM Corp
+  *
+  *      This program is free software; you can redistribute it and/or
+  *      modify it under the terms of the GNU General Public License
+@@ -143,6 +145,8 @@ static const char *getvecname(unsigned l
+ 
+ extern int print_insn_powerpc(unsigned long, unsigned long, int);
+ 
++int xmon_no_auto_backtrace;
++
+ extern void xmon_enter(void);
+ extern void xmon_leave(void);
+ 
+@@ -2587,3 +2591,34 @@ static int __init setup_xmon_sysrq(void)
+ }
+ __initcall(setup_xmon_sysrq);
+ #endif /* CONFIG_MAGIC_SYSRQ */
++
++int __initdata xmon_early, xmon_off;
++
++static int __init early_parse_xmon(char *p)
++{
++	if (!p || strncmp(p, "early", 5) == 0) {
++		/* just "xmon" is equivalent to "xmon=early" */
++		xmon_init(1);
++		xmon_early = 1;
++	} else if (strncmp(p, "on", 2) == 0)
++		xmon_init(1);
++	else if (strncmp(p, "off", 3) == 0)
++		xmon_off = 1;
++	else if (strncmp(p, "nobt", 4) == 0)
++		xmon_no_auto_backtrace = 1;
++	else
++		return 1;
++
++	return 0;
++}
++early_param("xmon", early_parse_xmon);
++
++void __init xmon_setup(void)
++{
++#ifdef CONFIG_XMON_DEFAULT
++	if (!xmon_off)
++		xmon_init(1);
++#endif
++	if (xmon_early)
++		debugger(NULL);
++}
+Index: linux-2.6.18.ppc64/include/asm-powerpc/xmon.h
+===================================================================
+--- linux-2.6.18.ppc64.orig/include/asm-powerpc/xmon.h
++++ linux-2.6.18.ppc64/include/asm-powerpc/xmon.h
+@@ -6,7 +6,11 @@ struct pt_regs;
+ 
+ extern int xmon(struct pt_regs *excp);
+ extern void xmon_printf(const char *fmt, ...);
+-extern void xmon_init(int);
++#ifdef CONFIG_XMON
++extern void xmon_setup(void);
++#else
++static inline void xmon_setup(void) { };
++#endif
+ 
+ #endif
+ #endif
+

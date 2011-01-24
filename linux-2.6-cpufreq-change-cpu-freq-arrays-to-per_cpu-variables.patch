@@ -1,0 +1,328 @@
+From: Alex Chiang <achiang@redhat.com>
+Date: Wed, 23 Sep 2009 21:04:23 -0400
+Subject: [cpufreq] change cpu freq arrays to per_cpu variables
+Message-id: <20090923210423.GE30562@algore>
+Patchwork-id: 20950
+O-Subject: [RHEL 5.5 BZ523505 Patch 4/5] [CPUFREQ] change cpu freq arrays to
+	per_cpu variables
+Bugzilla: 523505
+RH-Acked-by: Dave Jones <davej@redhat.com>
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+Backport of upstream, but minus the cpufreq_governor stuff since
+it's not in RHEL5:
+
+	commit 7a6aedfac98c6d54ecf97ca1ffb1e6a1f3d26aea
+	Author: Mike Travis <travis@sgi.com>
+	Date:   Tue Mar 25 15:06:53 2008 -0700
+
+	[CPUFREQ] change cpu freq arrays to per_cpu variables
+
+	Change cpufreq_policy and cpufreq_governor pointer tables
+	from arrays to per_cpu variables in the cpufreq subsystem.
+
+	Also some minor complaints from checkpatch.pl fixed.
+
+	Based on:
+	git://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux-2.6.git
+	git://git.kernel.org/pub/scm/linux/kernel/git/x86/linux-2.6-x86.git
+
+	Signed-off-by: Mike Travis <travis@sgi.com>
+	Signed-off-by: Dave Jones <davej@redhat.com>
+
+There is one extra reference to cpufreq_cpu_data[cpu] which was introduced
+into RHEL5 by c32b6b8e. Upstream no longer has that line, but I updated
+in this patch.
+
+diff --git a/drivers/cpufreq/cpufreq.c b/drivers/cpufreq/cpufreq.c
+index a6199fe..6e72f61 100644
+--- a/drivers/cpufreq/cpufreq.c
++++ b/drivers/cpufreq/cpufreq.c
+@@ -37,7 +37,7 @@
+  * also protects the cpufreq_cpu_data array.
+  */
+ static struct cpufreq_driver *cpufreq_driver;
+-static struct cpufreq_policy *cpufreq_cpu_data[NR_CPUS];
++static DEFINE_PER_CPU(struct cpufreq_policy *, cpufreq_cpu_data);
+ static DEFINE_SPINLOCK(cpufreq_driver_lock);
+ 
+ /*
+@@ -136,7 +136,7 @@ struct cpufreq_policy *cpufreq_cpu_get(unsigned int cpu)
+ 
+ 
+ 	/* get the CPU */
+-	data = cpufreq_cpu_data[cpu];
++	data = per_cpu(cpufreq_cpu_data, cpu);
+ 
+ 	if (!data)
+ 		goto err_out_put_module;
+@@ -304,7 +304,7 @@ void cpufreq_notify_transition(struct cpufreq_freqs *freqs, unsigned int state)
+ 	dprintk("notification %u of frequency transition to %u kHz\n",
+ 		state, freqs->new);
+ 
+-	policy = cpufreq_cpu_data[freqs->cpu];
++	policy = per_cpu(cpufreq_cpu_data, freqs->cpu);
+ 	switch (state) {
+ 
+ 	case CPUFREQ_PRECHANGE:
+@@ -762,7 +762,7 @@ static int cpufreq_add_dev (struct sys_device * sys_dev)
+ 
+ 			spin_lock_irqsave(&cpufreq_driver_lock, flags);
+ 			managed_policy->cpus = policy->cpus;
+-			cpufreq_cpu_data[cpu] = managed_policy;
++			per_cpu(cpufreq_cpu_data, cpu) = managed_policy;
+ 			spin_unlock_irqrestore(&cpufreq_driver_lock, flags);
+ 
+ 			dprintk("CPU already managed, adding link\n");
+@@ -803,7 +803,7 @@ static int cpufreq_add_dev (struct sys_device * sys_dev)
+ 	for_each_cpu_mask(j, policy->cpus) {
+ 		if (!cpu_online(j))
+ 			continue;
+-		cpufreq_cpu_data[j] = policy;
++		per_cpu(cpufreq_cpu_data, j) = policy;
+ 		per_cpu(policy_cpu, j) = policy->cpu;
+ 	}
+ 	spin_unlock_irqrestore(&cpufreq_driver_lock, flags);
+@@ -846,7 +846,7 @@ static int cpufreq_add_dev (struct sys_device * sys_dev)
+ err_out_unregister:
+ 	spin_lock_irqsave(&cpufreq_driver_lock, flags);
+ 	for_each_cpu_mask(j, policy->cpus)
+-		cpufreq_cpu_data[j] = NULL;
++		per_cpu(cpufreq_cpu_data, j) = NULL;
+ 	spin_unlock_irqrestore(&cpufreq_driver_lock, flags);
+ 
+ 	kobject_unregister(&policy->kobj);
+@@ -888,7 +888,7 @@ static int __cpufreq_remove_dev (struct sys_device * sys_dev)
+ 	dprintk("unregistering CPU %u\n", cpu);
+ 
+ 	spin_lock_irqsave(&cpufreq_driver_lock, flags);
+-	data = cpufreq_cpu_data[cpu];
++	data = per_cpu(cpufreq_cpu_data, cpu);
+ 
+ 	if (!data) {
+ 		spin_unlock_irqrestore(&cpufreq_driver_lock, flags);
+@@ -896,7 +896,7 @@ static int __cpufreq_remove_dev (struct sys_device * sys_dev)
+ 		unlock_policy_rwsem_write(cpu);
+ 		return -EINVAL;
+ 	}
+-	cpufreq_cpu_data[cpu] = NULL;
++	per_cpu(cpufreq_cpu_data, cpu) = NULL;
+ 
+ #ifdef CONFIG_SMP
+ 	/* if this isn't the CPU which is the parent of the kobj, we
+@@ -925,14 +925,14 @@ static int __cpufreq_remove_dev (struct sys_device * sys_dev)
+ #ifdef CONFIG_SMP
+ 	/* if we have other CPUs still registered, we need to unlink them,
+ 	 * or else wait_for_completion below will lock up. Clean the
+-	 * cpufreq_cpu_data[] while holding the lock, and remove the sysfs
+-	 * links afterwards.
++	 * per_cpu(cpufreq_cpu_data) while holding the lock, and remove the
++	 * sysfs links afterwards.
+ 	 */
+ 	if (unlikely(cpus_weight(data->cpus) > 1)) {
+ 		for_each_cpu_mask(j, data->cpus) {
+ 			if (j == cpu)
+ 				continue;
+-			cpufreq_cpu_data[j] = NULL;
++			per_cpu(cpufreq_cpu_data, j) = NULL;
+ 		}
+ 	}
+ 
+@@ -1049,7 +1049,7 @@ EXPORT_SYMBOL(cpufreq_quick_get);
+ 
+ static unsigned int __cpufreq_get(unsigned int cpu)
+ {
+-	struct cpufreq_policy *policy = cpufreq_cpu_data[cpu];
++	struct cpufreq_policy *policy = per_cpu(cpufreq_cpu_data, cpu);
+ 	unsigned int ret = 0;
+ 
+ 	if (!cpufreq_driver->get)
+@@ -1676,7 +1676,7 @@ static int cpufreq_cpu_callback(struct notifier_block *nfb,
+ 			if (unlikely(lock_policy_rwsem_write(cpu)))
+ 				BUG();
+ 
+-			policy = cpufreq_cpu_data[cpu];
++			policy = per_cpu(cpufreq_cpu_data, cpu);
+ 			if (policy) {
+ 				__cpufreq_driver_target(policy, policy->min,
+ 						CPUFREQ_RELATION_H);
+@@ -1733,7 +1733,8 @@ int cpufreq_register_driver(struct cpufreq_driver *driver_data)
+ 	cpufreq_driver = driver_data;
+ 	spin_unlock_irqrestore(&cpufreq_driver_lock, flags);
+ 
+-	ret = sysdev_driver_register(&cpu_sysdev_class,&cpufreq_sysdev_driver);
++	ret = sysdev_driver_register(&cpu_sysdev_class,
++					&cpufreq_sysdev_driver);
+ 
+ 	if ((!ret) && !(cpufreq_driver->flags & CPUFREQ_STICKY)) {
+ 		int i;
+@@ -1741,8 +1742,10 @@ int cpufreq_register_driver(struct cpufreq_driver *driver_data)
+ 
+ 		/* check for at least one working CPU */
+ 		for (i=0; i<NR_CPUS; i++)
+-			if (cpufreq_cpu_data[i])
++			if (cpu_possible(i) && per_cpu(cpufreq_cpu_data, i)) {
+ 				ret = 0;
++				break;
++			}
+ 
+ 		/* if all ->init() calls failed, unregister */
+ 		if (ret) {
+diff --git a/drivers/cpufreq/cpufreq_stats.c b/drivers/cpufreq/cpufreq_stats.c
+index 86a5603..c659acd 100644
+--- a/drivers/cpufreq/cpufreq_stats.c
++++ b/drivers/cpufreq/cpufreq_stats.c
+@@ -44,7 +44,7 @@ struct cpufreq_stats {
+ #endif
+ };
+ 
+-static struct cpufreq_stats *cpufreq_stats_table[NR_CPUS];
++static DEFINE_PER_CPU(struct cpufreq_stats *, cpufreq_stats_table);
+ 
+ struct cpufreq_stats_attribute {
+ 	struct attribute attr;
+@@ -59,7 +59,7 @@ cpufreq_stats_update (unsigned int cpu)
+ 
+ 	cur_time = get_jiffies_64();
+ 	spin_lock(&cpufreq_stats_lock);
+-	stat = cpufreq_stats_table[cpu];
++	stat = per_cpu(cpufreq_stats_table, cpu);
+ 	if (stat->time_in_state)
+ 		stat->time_in_state[stat->last_index] =
+ 			cputime64_add(stat->time_in_state[stat->last_index],
+@@ -72,11 +72,11 @@ cpufreq_stats_update (unsigned int cpu)
+ static ssize_t
+ show_total_trans(struct cpufreq_policy *policy, char *buf)
+ {
+-	struct cpufreq_stats *stat = cpufreq_stats_table[policy->cpu];
++	struct cpufreq_stats *stat = per_cpu(cpufreq_stats_table, policy->cpu);
+ 	if (!stat)
+ 		return 0;
+ 	return sprintf(buf, "%d\n",
+-			cpufreq_stats_table[stat->cpu]->total_trans);
++			per_cpu(cpufreq_stats_table, stat->cpu)->total_trans);
+ }
+ 
+ static ssize_t
+@@ -84,7 +84,7 @@ show_time_in_state(struct cpufreq_policy *policy, char *buf)
+ {
+ 	ssize_t len = 0;
+ 	int i;
+-	struct cpufreq_stats *stat = cpufreq_stats_table[policy->cpu];
++	struct cpufreq_stats *stat = per_cpu(cpufreq_stats_table, policy->cpu);
+ 	if (!stat)
+ 		return 0;
+ 	cpufreq_stats_update(stat->cpu);
+@@ -102,7 +102,7 @@ show_trans_table(struct cpufreq_policy *policy, char *buf)
+ 	ssize_t len = 0;
+ 	int i, j;
+ 
+-	struct cpufreq_stats *stat = cpufreq_stats_table[policy->cpu];
++	struct cpufreq_stats *stat = per_cpu(cpufreq_stats_table, policy->cpu);
+ 	if (!stat)
+ 		return 0;
+ 	cpufreq_stats_update(stat->cpu);
+@@ -168,7 +168,7 @@ freq_table_get_index(struct cpufreq_stats *stat, unsigned int freq)
+ static void
+ cpufreq_stats_free_table (unsigned int cpu)
+ {
+-	struct cpufreq_stats *stat = cpufreq_stats_table[cpu];
++	struct cpufreq_stats *stat = per_cpu(cpufreq_stats_table, cpu);
+ 	struct cpufreq_policy *policy = cpufreq_cpu_get(cpu);
+ 	if (policy && policy->cpu == cpu)
+ 		sysfs_remove_group(&policy->kobj, &stats_attr_group);
+@@ -176,7 +176,7 @@ cpufreq_stats_free_table (unsigned int cpu)
+ 		kfree(stat->time_in_state);
+ 		kfree(stat);
+ 	}
+-	cpufreq_stats_table[cpu] = NULL;
++	per_cpu(cpufreq_stats_table, cpu) = NULL;
+ 	if (policy)
+ 		cpufreq_cpu_put(policy);
+ }
+@@ -190,7 +190,7 @@ cpufreq_stats_create_table (struct cpufreq_policy *policy,
+ 	struct cpufreq_policy *data;
+ 	unsigned int alloc_size;
+ 	unsigned int cpu = policy->cpu;
+-	if (cpufreq_stats_table[cpu])
++	if (per_cpu(cpufreq_stats_table, cpu))
+ 		return -EBUSY;
+ 	if ((stat = kzalloc(sizeof(struct cpufreq_stats), GFP_KERNEL)) == NULL)
+ 		return -ENOMEM;
+@@ -205,7 +205,7 @@ cpufreq_stats_create_table (struct cpufreq_policy *policy,
+ 		goto error_out;
+ 
+ 	stat->cpu = cpu;
+-	cpufreq_stats_table[cpu] = stat;
++	per_cpu(cpufreq_stats_table, cpu) = stat;
+ 
+ 	for (i=0; table[i].frequency != CPUFREQ_TABLE_END; i++) {
+ 		unsigned int freq = table[i].frequency;
+@@ -249,7 +249,7 @@ error_out:
+ 	cpufreq_cpu_put(data);
+ error_get_fail:
+ 	kfree(stat);
+-	cpufreq_stats_table[cpu] = NULL;
++	per_cpu(cpufreq_stats_table, cpu) = NULL;
+ 	return ret;
+ }
+ 
+@@ -282,7 +282,7 @@ cpufreq_stat_notifier_trans (struct notifier_block *nb, unsigned long val,
+ 	if (val != CPUFREQ_POSTCHANGE)
+ 		return 0;
+ 
+-	stat = cpufreq_stats_table[freq->cpu];
++	stat = per_cpu(cpufreq_stats_table, freq->cpu);
+ 	if (!stat)
+ 		return 0;
+ 	old_index = freq_table_get_index(stat, freq->old);
+diff --git a/drivers/cpufreq/freq_table.c b/drivers/cpufreq/freq_table.c
+index 551f4cc..429fb39 100644
+--- a/drivers/cpufreq/freq_table.c
++++ b/drivers/cpufreq/freq_table.c
+@@ -164,7 +164,7 @@ int cpufreq_frequency_table_target(struct cpufreq_policy *policy,
+ }
+ EXPORT_SYMBOL_GPL(cpufreq_frequency_table_target);
+ 
+-static struct cpufreq_frequency_table *show_table[NR_CPUS];
++static DEFINE_PER_CPU(struct cpufreq_frequency_table *, show_table);
+ /**
+  * show_scaling_governor - show the current policy for the specified CPU
+  */
+@@ -175,10 +175,10 @@ static ssize_t show_available_freqs (struct cpufreq_policy *policy, char *buf)
+ 	ssize_t count = 0;
+ 	struct cpufreq_frequency_table *table;
+ 
+-	if (!show_table[cpu])
++	if (!per_cpu(show_table, cpu))
+ 		return -ENODEV;
+ 
+-	table = show_table[cpu];
++	table = per_cpu(show_table, cpu);
+ 
+ 	for (i=0; (table[i].frequency != CPUFREQ_TABLE_END); i++) {
+ 		if (table[i].frequency == CPUFREQ_ENTRY_INVALID)
+@@ -205,20 +205,20 @@ void cpufreq_frequency_table_get_attr(struct cpufreq_frequency_table *table,
+ 				      unsigned int cpu)
+ {
+ 	dprintk("setting show_table for cpu %u to %p\n", cpu, table);
+-	show_table[cpu] = table;
++	per_cpu(show_table, cpu) = table;
+ }
+ EXPORT_SYMBOL_GPL(cpufreq_frequency_table_get_attr);
+ 
+ void cpufreq_frequency_table_put_attr(unsigned int cpu)
+ {
+ 	dprintk("clearing show_table for cpu %u\n", cpu);
+-	show_table[cpu] = NULL;
++	per_cpu(show_table, cpu) = NULL;
+ }
+ EXPORT_SYMBOL_GPL(cpufreq_frequency_table_put_attr);
+ 
+ struct cpufreq_frequency_table *cpufreq_frequency_get_table(unsigned int cpu)
+ {
+-	return show_table[cpu];
++	return per_cpu(show_table, cpu);
+ }
+ EXPORT_SYMBOL_GPL(cpufreq_frequency_get_table);
+ 

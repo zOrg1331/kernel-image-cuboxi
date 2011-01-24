@@ -60,7 +60,7 @@ operation of the local communications in any other way though.
 
 The kernel command line takes options looking like the following:
 
-    decnet.addr=1,2
+    decnet=1,2
 
 the two numbers are the node address 1,2 = 1.2 For 2.2.xx kernels
 and early 2.3.xx kernels, you must use a comma when specifying the
@@ -82,7 +82,7 @@ ethernet address of your ethernet card has to be set according to the DECnet
 address of the node in order for it to be autoconfigured (and then appear in
 /proc/net/decnet_dev). There is a utility available at the above
 FTP sites called dn2ethaddr which can compute the correct ethernet
-address to use. The address can be set by ifconfig either before or
+address to use. The address can be set by ifconfig either before at
 at the time the device is brought up. If you are using RedHat you can
 add the line:
 

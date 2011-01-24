@@ -1,0 +1,215 @@
+From: Doug Chapman <dchapman@redhat.com>
+Date: Thu, 6 Dec 2007 16:15:55 -0500
+Subject: [cpufreq] remove hotplug cpu cruft
+Message-id: 1196975755.1083.9.camel@athlon
+O-Subject: [RHEL 5.2 PATCH 4/5] hang at 'Disabling ondemand cpu frequency scaling'
+Bugzilla: 253416
+
+Patch 4/5 for BZ 253416
+
+It was recommended by Dave Jones that I include this patch.
+
+Backport of:
+
+commit c120069779e3e35917c15393cf2847fa79811eb6
+Author: Dave Jones <davej@redhat.com>
+Date:   Mon Feb 5 16:12:43 2007 -0800
+
+    [CPUFREQ] Remove hotplug cpu crap
+
+    The hotplug CPU locking in cpufreq is horrendous.  No-one seems to care
+    enough to fix it, so just remove it so that the 99.9% of the real world
+    users of this code can use cpufreq without being bothered by warnings.
+
+diff --git a/drivers/cpufreq/cpufreq.c b/drivers/cpufreq/cpufreq.c
+index 66b274d..5ee1b94 100644
+--- a/drivers/cpufreq/cpufreq.c
++++ b/drivers/cpufreq/cpufreq.c
+@@ -453,10 +453,8 @@ static ssize_t store_##file_name					\
+ 	if (ret != 1)							\
+ 		return -EINVAL;						\
+ 									\
+-	lock_cpu_hotplug();						\
+ 	ret = __cpufreq_set_policy(policy, &new_policy);		\
+ 	policy->user_policy.object = policy->object;			\
+-	unlock_cpu_hotplug();						\
+ 									\
+ 	return ret ? ret : count;					\
+ }
+@@ -512,8 +510,6 @@ static ssize_t store_scaling_governor (struct cpufreq_policy * policy,
+ 	if (cpufreq_parse_governor(str_governor, &new_policy.policy, &new_policy.governor))
+ 		return -EINVAL;
+ 
+-	lock_cpu_hotplug();
+-
+ 	/* Do not use cpufreq_set_policy here or the user_policy.max
+ 	   will be wrongly overridden */
+ 	ret = __cpufreq_set_policy(policy, &new_policy);
+@@ -521,8 +517,6 @@ static ssize_t store_scaling_governor (struct cpufreq_policy * policy,
+ 	policy->user_policy.policy = policy->policy;
+ 	policy->user_policy.governor = policy->governor;
+ 
+-	unlock_cpu_hotplug();
+-
+ 	return ret ? ret : count;
+ }
+ 
+@@ -1342,7 +1336,6 @@ EXPORT_SYMBOL(cpufreq_unregister_notifier);
+  *********************************************************************/
+ 
+ 
+-/* Must be called with lock_cpu_hotplug held */
+ int __cpufreq_driver_target(struct cpufreq_policy *policy,
+ 			    unsigned int target_freq,
+ 			    unsigned int relation)
+@@ -1368,14 +1361,12 @@ int cpufreq_driver_target(struct cpufreq_policy *policy,
+ 	if (!policy)
+ 		return -EINVAL;
+ 
+-	lock_cpu_hotplug();
+ 	if (unlikely(lock_policy_rwsem_write(policy->cpu)))
+ 		return -EINVAL;
+ 
+ 	ret = __cpufreq_driver_target(policy, target_freq, relation);
+ 
+ 	unlock_policy_rwsem_write(policy->cpu);
+-	unlock_cpu_hotplug();
+ 
+ 	cpufreq_cpu_put(policy);
+ 	return ret;
+@@ -1383,7 +1374,6 @@ int cpufreq_driver_target(struct cpufreq_policy *policy,
+ EXPORT_SYMBOL_GPL(cpufreq_driver_target);
+ 
+ /*
+- * Locking: Must be called with the lock_cpu_hotplug() lock held
+  * when "event" is CPUFREQ_GOV_LIMITS
+  */
+ 
+@@ -1470,9 +1460,6 @@ int cpufreq_get_policy(struct cpufreq_policy *policy, unsigned int cpu)
+ EXPORT_SYMBOL(cpufreq_get_policy);
+ 
+ 
+-/*
+- * Locking: Must be called with the lock_cpu_hotplug() lock held
+- */
+ static int __cpufreq_set_policy(struct cpufreq_policy *data, struct cpufreq_policy *policy)
+ {
+ 	int ret = 0;
+@@ -1572,8 +1559,6 @@ int cpufreq_set_policy(struct cpufreq_policy *policy)
+ 	if (!data)
+ 		return -EINVAL;
+ 
+-	lock_cpu_hotplug();
+-
+ 	if (unlikely(lock_policy_rwsem_write(policy->cpu)))
+ 		return -EINVAL;
+ 
+@@ -1586,7 +1571,6 @@ int cpufreq_set_policy(struct cpufreq_policy *policy)
+ 
+ 	unlock_policy_rwsem_write(policy->cpu);
+ 
+-	unlock_cpu_hotplug();
+ 	cpufreq_cpu_put(data);
+ 
+ 	return ret;
+@@ -1610,7 +1594,6 @@ int cpufreq_update_policy(unsigned int cpu)
+ 	if (!data)
+ 		return -ENODEV;
+ 
+-	lock_cpu_hotplug();
+ 	if (unlikely(lock_policy_rwsem_write(cpu)))
+ 		return -EINVAL;
+ 
+@@ -1638,7 +1621,6 @@ int cpufreq_update_policy(unsigned int cpu)
+ 
+ 	unlock_policy_rwsem_write(cpu);
+ 
+-	unlock_cpu_hotplug();
+ 	cpufreq_cpu_put(data);
+ 	return ret;
+ }
+diff --git a/drivers/cpufreq/cpufreq_conservative.c b/drivers/cpufreq/cpufreq_conservative.c
+index c4c578d..4a5f921 100644
+--- a/drivers/cpufreq/cpufreq_conservative.c
++++ b/drivers/cpufreq/cpufreq_conservative.c
+@@ -73,14 +73,6 @@ static DEFINE_PER_CPU(struct cpu_dbs_info_s, cpu_dbs_info);
+ 
+ static unsigned int dbs_enable;	/* number of CPUs using this policy */
+ 
+-/*
+- * DEADLOCK ALERT! There is a ordering requirement between cpu_hotplug
+- * lock and dbs_mutex. cpu_hotplug lock should always be held before
+- * dbs_mutex. If any function that can potentially take cpu_hotplug lock
+- * (like __cpufreq_driver_target()) is being called with dbs_mutex taken, then
+- * cpu_hotplug lock should be taken before that. Note that cpu_hotplug lock
+- * is recursive for the same process. -Venki
+- */
+ static DEFINE_MUTEX 	(dbs_mutex);
+ static DECLARE_WORK	(dbs_work, do_dbs_timer, NULL);
+ 
+@@ -423,14 +415,12 @@ static void dbs_check_cpu(int cpu)
+ static void do_dbs_timer(void *data)
+ { 
+ 	int i;
+-	lock_cpu_hotplug();
+ 	mutex_lock(&dbs_mutex);
+ 	for_each_online_cpu(i)
+ 		dbs_check_cpu(i);
+ 	schedule_delayed_work(&dbs_work, 
+ 			usecs_to_jiffies(dbs_tuners_ins.sampling_rate));
+ 	mutex_unlock(&dbs_mutex);
+-	unlock_cpu_hotplug();
+ } 
+ 
+ static inline void dbs_timer_init(void)
+diff --git a/drivers/cpufreq/cpufreq_ondemand.c b/drivers/cpufreq/cpufreq_ondemand.c
+index 9218115..9853ef5 100644
+--- a/drivers/cpufreq/cpufreq_ondemand.c
++++ b/drivers/cpufreq/cpufreq_ondemand.c
+@@ -315,9 +315,7 @@ static void do_dbs_timer(struct cpu_dbs_info_s *dbs_info)
+ 		return;
+ 	}
+ 
+-	lock_cpu_hotplug();
+ 	dbs_check_cpu(dbs_info);
+-	unlock_cpu_hotplug();
+ 	queue_delayed_work_on(cpu, kondemand_wq, &dbs_info->work,
+ 			usecs_to_jiffies(dbs_tuners_ins.sampling_rate));
+ 	unlock_policy_rwsem_write(cpu);
+diff --git a/drivers/cpufreq/cpufreq_stats.c b/drivers/cpufreq/cpufreq_stats.c
+index c2ecc59..9926997 100644
+--- a/drivers/cpufreq/cpufreq_stats.c
++++ b/drivers/cpufreq/cpufreq_stats.c
+@@ -366,12 +366,10 @@ __exit cpufreq_stats_exit(void)
+ 	cpufreq_unregister_notifier(&notifier_trans_block,
+ 			CPUFREQ_TRANSITION_NOTIFIER);
+ 	unregister_hotcpu_notifier(&cpufreq_stat_cpu_notifier);
+-	lock_cpu_hotplug();
+ 	for_each_online_cpu(cpu) {
+ 		cpufreq_stat_cpu_callback(&cpufreq_stat_cpu_notifier, CPU_DEAD,
+ 			(void *)(long)cpu);
+ 	}
+-	unlock_cpu_hotplug();
+ }
+ 
+ MODULE_AUTHOR ("Zou Nan hai <nanhai.zou@intel.com>");
+diff --git a/drivers/cpufreq/cpufreq_userspace.c b/drivers/cpufreq/cpufreq_userspace.c
+index a06c204..29ada96 100644
+--- a/drivers/cpufreq/cpufreq_userspace.c
++++ b/drivers/cpufreq/cpufreq_userspace.c
+@@ -71,7 +71,6 @@ static int cpufreq_set(unsigned int freq, struct cpufreq_policy *policy)
+ 
+ 	dprintk("cpufreq_set for cpu %u, freq %u kHz\n", policy->cpu, freq);
+ 
+-	lock_cpu_hotplug();
+ 	mutex_lock(&userspace_mutex);
+ 	if (!cpu_is_managed[policy->cpu])
+ 		goto err;
+@@ -94,7 +93,6 @@ static int cpufreq_set(unsigned int freq, struct cpufreq_policy *policy)
+ 
+  err:
+ 	mutex_unlock(&userspace_mutex);
+-	unlock_cpu_hotplug();
+ 	return ret;
+ }
+ 

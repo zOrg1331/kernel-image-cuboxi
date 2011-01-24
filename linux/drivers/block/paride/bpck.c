@@ -464,12 +464,12 @@ static struct pi_protocol bpck = {
 
 static int __init bpck_init(void)
 {
-	return paride_register(&bpck);
+	return pi_register(&bpck)-1;
 }
 
 static void __exit bpck_exit(void)
 {
-	paride_unregister(&bpck);
+	pi_unregister(&bpck);
 }
 
 MODULE_LICENSE("GPL");

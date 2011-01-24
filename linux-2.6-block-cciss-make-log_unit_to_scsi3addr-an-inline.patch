@@ -1,0 +1,25 @@
+From: Tomas Henzl <thenzl@redhat.com>
+Date: Sun, 29 Aug 2010 15:49:59 -0400
+Subject: [block] cciss: make log_unit_to_scsi3addr an inline
+Message-id: <1283097002-3341-61-git-send-email-thenzl@redhat.com>
+Patchwork-id: 27905
+O-Subject: [RHEL6 PATCH 60/63] cciss: make log_unit_to_scsi3addr an inline
+	function
+Bugzilla: 568830
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+
+make log_unit_to_scsi3addr an inline function
+
+diff --git a/drivers/block/cciss.c b/drivers/block/cciss.c
+index 6b3ddca..a6c08db 100644
+--- a/drivers/block/cciss.c
++++ b/drivers/block/cciss.c
+@@ -1753,7 +1753,7 @@ static void cciss_softirq_done(struct request *rq)
+ 	spin_unlock_irqrestore(&h->lock, flags);
+ }
+ 
+-static void log_unit_to_scsi3addr(ctlr_info_t *h, unsigned char scsi3addr[],
++static inline void log_unit_to_scsi3addr(ctlr_info_t *h, unsigned char scsi3addr[],
+ 	uint32_t log_unit)
+ {
+ 	memcpy(scsi3addr, h->drv[log_unit]->LunID,

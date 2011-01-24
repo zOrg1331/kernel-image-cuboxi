@@ -1,0 +1,50 @@
+From: Thomas Graf <tgraf@redhat.com>
+Date: Tue, 31 Mar 2009 17:16:19 +0200
+Subject: [net] skip redirect msg if target addr is not link-local
+Message-id: 20090331151619.GA17811@plip.localdomain
+O-Subject: [RHEL5.4 PATCH] net: dont send redirect msg if target address is not link-local
+Bugzilla: 481209
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+RH-Acked-by: Jiri Pirko <jpirko@redhat.com>
+RH-Acked-by: David Miller <davem@redhat.com>
+
+Hey all -
+
+Current RHEL5 kernel sends redirect messages even though the target address
+is not a link local unicast address. As per RFC2461:
+
+	the redirect packet's Target Address defines as following:
+	An IP address that is a better first hop to use for
+	the ICMP Destination Address.  When the target is
+	the actual endpoint of communication, i.e., the
+	destination is a neighbor, the Target Address field
+	MUST contain the same value as the ICMP Destination
+	Address field.  Otherwise the target is a better
+	first-hop router and the Target Address MUST be the
+	router's link-local address so that hosts can
+	uniquely identify routers.
+
+Based on upstream commits:
+29556526b970c2e7d4ca808b6082c33981adfdff
+bf0b48dfc368c07c42b5a3a5658c8ee81b4283ac
+
+Please ACK.
+
+diff --git a/net/ipv6/ndisc.c b/net/ipv6/ndisc.c
+index 850b890..c16e097 100644
+--- a/net/ipv6/ndisc.c
++++ b/net/ipv6/ndisc.c
+@@ -1423,6 +1423,13 @@ void ndisc_send_redirect(struct sk_buff *skb, struct neighbour *neigh,
+  		return;
+  	}
+ 
++	if (!ipv6_addr_equal(&skb->nh.ipv6h->daddr, target) &&
++	    ipv6_addr_type(target) != (IPV6_ADDR_UNICAST|IPV6_ADDR_LINKLOCAL)) {
++		ND_PRINTK2(KERN_WARNING
++			"ICMPv6 Redirect: target address is not link-local unicast.\n");
++		return;
++	}
++
+ 	ndisc_flow_init(&fl, NDISC_REDIRECT, &saddr_buf, &skb->nh.ipv6h->saddr,
+ 			dev->ifindex);
+ 

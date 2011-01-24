@@ -1,6 +1,3 @@
-#ifndef __ISDN_SC_SCIOC_H__
-#define __ISDN_SC_SCIOC_H__
-
 /*
  * This software may be used and distributed according to the terms
  * of the GNU General Public License, incorporated herein by reference.
@@ -106,6 +103,3 @@ typedef struct {
 		POTInfo potsinfo;
 	} info;
 } boardInfo;
-
-#endif  /*  __ISDN_SC_SCIOC_H__  */
-

@@ -1,0 +1,43 @@
+From: Thomas Graf <tgraf@redhat.com>
+Date: Fri, 28 Mar 2008 00:06:19 +0100
+Subject: [net] ESP: ensure IV is in linear part of the skb
+Message-id: 20080327230618.GA10573@lsx.localdomain
+O-Subject: [RHEL5.2 PATCH] BZ#427248: [ESP] Ensure IV is in linear part of the skb to avoid BUG() due to OOB access
+Bugzilla: 427248
+
+This patch fixes a security issue where a specially crafted fragment
+holding the IV in the second fragment triggers a BUG() condition
+due to the IV size is not being taken into account when calling
+pskb_may_pull() to make sure it is in the linear part.
+
+Patch was submitted upstream to netdev a few minutes ago.
+
+Acked-by: "David S. Miller" <davem@redhat.com>
+Acked-by: James Morris <jmorris@redhat.com>
+
+diff --git a/net/ipv4/esp4.c b/net/ipv4/esp4.c
+index f0dba29..e620581 100644
+--- a/net/ipv4/esp4.c
++++ b/net/ipv4/esp4.c
+@@ -344,7 +344,7 @@ static int esp_input(struct xfrm_state *x, struct sk_buff *skb)
+ 	struct scatterlist *asg;
+ 	int err = -EINVAL;
+ 
+-	if (!pskb_may_pull(skb, sizeof(struct ip_esp_hdr)))
++	if (!pskb_may_pull(skb, sizeof(struct ip_esp_hdr) + crypto_aead_ivsize(aead)))
+ 		goto out;
+ 
+ 	if (elen <= 0)
+diff --git a/net/ipv6/esp6.c b/net/ipv6/esp6.c
+index 68e3099..ffbb136 100644
+--- a/net/ipv6/esp6.c
++++ b/net/ipv6/esp6.c
+@@ -301,7 +301,7 @@ static int esp6_input(struct xfrm_state *x, struct sk_buff *skb)
+ 	struct scatterlist *sg;
+ 	struct scatterlist *asg;
+ 
+-	if (!pskb_may_pull(skb, sizeof(struct ipv6_esp_hdr))) {
++	if (!pskb_may_pull(skb, sizeof(struct ipv6_esp_hdr) + crypto_aead_ivsize(aead))) {
+ 		ret = -EINVAL;
+ 		goto out;
+ 	}

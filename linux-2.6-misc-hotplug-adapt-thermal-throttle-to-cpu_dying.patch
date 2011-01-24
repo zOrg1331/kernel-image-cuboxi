@@ -1,0 +1,52 @@
+From: Eduardo Habkost <ehabkost@redhat.com>
+Date: Thu, 24 Sep 2009 13:46:29 -0300
+Subject: [misc] hotplug: adapt thermal throttle to CPU_DYING
+Message-id: 1253810790-11195-4-git-send-email-ehabkost@redhat.com
+O-Subject: [RHEL-5.5 PATCH 3/4] HOTPLUG: Adapt thermal throttle to CPU_DYING
+Bugzilla: 510814
+RH-Acked-by: Juan Quintela <quintela@redhat.com>
+
+Bugzilla: https://bugzilla.redhat.com/show_bug.cgi?id=510814
+
+This is a cherry-pick of upstream commit:
+
+commit 38ef6d195fb794e61a687ef8f5a37daf6044d576
+Author: Avi Kivity <avi@qumranet.com>
+Date:   Thu May 24 12:37:34 2007 +0300
+
+    HOTPLUG: Adapt thermal throttle to CPU_DYING
+
+    CPU_DYING is notified in atomic context, so no taking mutexes here.
+
+    Signed-off-by: Avi Kivity <avi@qumranet.com>
+
+Signed-off-by: Eduardo Habkost <ehabkost@redhat.com>
+
+diff --git a/arch/i386/kernel/cpu/mcheck/therm_throt.c b/arch/i386/kernel/cpu/mcheck/therm_throt.c
+index 7ba7c3a..1203dc5 100644
+--- a/arch/i386/kernel/cpu/mcheck/therm_throt.c
++++ b/arch/i386/kernel/cpu/mcheck/therm_throt.c
+@@ -134,19 +134,21 @@ static __cpuinit int thermal_throttle_cpu_callback(struct notifier_block *nfb,
+ 	int err;
+ 
+ 	sys_dev = get_cpu_sysdev(cpu);
+-	mutex_lock(&therm_cpu_lock);
+ 	switch (action) {
+ 	case CPU_ONLINE:
+ 	case CPU_ONLINE_FROZEN:
++		mutex_lock(&therm_cpu_lock);
+ 		err = thermal_throttle_add_dev(sys_dev);
++		mutex_unlock(&therm_cpu_lock);
+ 		WARN_ON(err);
+ 		break;
+ 	case CPU_DEAD:
+ 	case CPU_DEAD_FROZEN:
++		mutex_lock(&therm_cpu_lock);
+ 		thermal_throttle_remove_dev(sys_dev);
++		mutex_unlock(&therm_cpu_lock);
+ 		break;
+ 	}
+-	mutex_unlock(&therm_cpu_lock);
+ 	return NOTIFY_OK;
+ }
+ 

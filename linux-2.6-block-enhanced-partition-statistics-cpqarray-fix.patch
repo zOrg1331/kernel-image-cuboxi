@@ -1,0 +1,28 @@
+From: Jerome Marchand <jmarchand@redhat.com>
+Date: Tue, 15 Jul 2008 15:55:46 +0200
+Subject: [block] Enhanced Partition Statistics: cpqarray fix
+Message-id: 20080715135910.657471550@redhat.com
+O-Subject: [Patch RHEL5.3 5/9] Enhanced Partition Statistics: cpqarray fix
+Bugzilla: 224322
+RH-Acked-by: Anton Arapov <aarapov@redhat.com>
+
+bz224322
+
+Updates the enhanced partition statistics in SMART2 driver.
+
+commit: not needed on upstream.
+
+diff --git a/drivers/block/cpqarray.c b/drivers/block/cpqarray.c
+index 2e0b8d5..fc245d0 100644
+--- a/drivers/block/cpqarray.c
++++ b/drivers/block/cpqarray.c
+@@ -1038,7 +1038,8 @@ static inline void complete_command(cmdlist_t *cmd, int timeout)
+ 	if (blk_fs_request(rq)) {
+ 		const int rw = rq_data_dir(rq);
+ 
+-		disk_stat_add(rq->rq_disk, sectors[rw], rq->nr_sectors);
++		all_stat_add(rq->rq_disk, sectors[rw],
++			     rq->nr_sectors, rq->sector);
+ 	}
+ 
+ 	add_disk_randomness(rq->rq_disk);

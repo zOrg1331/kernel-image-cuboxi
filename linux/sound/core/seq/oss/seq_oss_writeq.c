@@ -63,10 +63,8 @@ snd_seq_oss_writeq_new(struct seq_oss_devinfo *dp, int maxlen)
 void
 snd_seq_oss_writeq_delete(struct seq_oss_writeq *q)
 {
-	if (q) {
-		snd_seq_oss_writeq_clear(q);	/* to be sure */
-		kfree(q);
-	}
+	snd_seq_oss_writeq_clear(q);	/* to be sure */
+	kfree(q);
 }
 
 

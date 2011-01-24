@@ -27,13 +27,13 @@
 #include <linux/kernel.h>
 #include <linux/init.h>
 #include <linux/spinlock.h>
+#include <linux/smp_lock.h>
 #include <linux/kthread.h>
 #include <linux/jiffies.h>
 #include <linux/reboot.h>
 #include <linux/device.h>
 #include <linux/platform_device.h>
 #include <linux/mutex.h>
-#include <linux/freezer.h>
 
 #include <asm/prom.h>
 
@@ -80,8 +80,7 @@ int wf_critical_overtemp(void)
 				"PATH=/sbin:/usr/sbin:/bin:/usr/bin",
 				NULL };
 
-	return call_usermodehelper(critical_overtemp_path,
-				   argv, envp, UMH_WAIT_EXEC);
+	return call_usermodehelper(critical_overtemp_path, argv, envp, 0);
 }
 EXPORT_SYMBOL_GPL(wf_critical_overtemp);
 
@@ -93,8 +92,7 @@ static int wf_thread_func(void *data)
 
 	DBG("wf: thread started\n");
 
-	set_freezable();
-	while (!kthread_should_stop()) {
+	while(!kthread_should_stop()) {
 		try_to_freeze();
 
 		if (time_after_eq(jiffies, next)) {
@@ -118,6 +116,12 @@ static int wf_thread_func(void *data)
 		delay = next - jiffies;
 		if (delay <= HZ)
 			schedule_timeout_interruptible(delay);
+
+		/* there should be no signal, but oh well */
+		if (signal_pending(current)) {
+			printk(KERN_WARNING "windfarm: thread got sigl !\n");
+			break;
+		}
 	}
 
 	DBG("wf: thread stopped\n");
@@ -210,13 +214,11 @@ int wf_register_control(struct wf_control *new_ct)
 	list_add(&new_ct->link, &wf_controls);
 
 	new_ct->attr.attr.name = new_ct->name;
+	new_ct->attr.attr.owner = THIS_MODULE;
 	new_ct->attr.attr.mode = 0644;
 	new_ct->attr.show = wf_show_control;
 	new_ct->attr.store = wf_store_control;
-	if (device_create_file(&wf_platform_device.dev, &new_ct->attr))
-		printk(KERN_WARNING "windfarm: device_create_file failed"
-			" for %s\n", new_ct->name);
-		/* the subsystem still does useful work without the file */
+	device_create_file(&wf_platform_device.dev, &new_ct->attr);
 
 	DBG("wf: Registered control %s\n", new_ct->name);
 
@@ -322,13 +324,11 @@ int wf_register_sensor(struct wf_sensor *new_sr)
 	list_add(&new_sr->link, &wf_sensors);
 
 	new_sr->attr.attr.name = new_sr->name;
+	new_sr->attr.attr.owner = THIS_MODULE;
 	new_sr->attr.attr.mode = 0444;
 	new_sr->attr.show = wf_show_sensor;
 	new_sr->attr.store = NULL;
-	if (device_create_file(&wf_platform_device.dev, &new_sr->attr))
-		printk(KERN_WARNING "windfarm: device_create_file failed"
-			" for %s\n", new_sr->name);
-		/* the subsystem still does useful work without the file */
+	device_create_file(&wf_platform_device.dev, &new_sr->attr);
 
 	DBG("wf: Registered sensor %s\n", new_sr->name);
 

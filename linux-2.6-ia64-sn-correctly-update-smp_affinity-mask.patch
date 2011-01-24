@@ -1,0 +1,113 @@
+From: luyu <luyu@redhat.com>
+Subject: [RHEL 5.1 PATCH] BZ 223867 SN correctly update smp_affinity mask
+Date: Wed, 09 May 2007 16:32:51 +0800
+Bugzilla: 223867
+Message-Id: <46418733.4070409@redhat.com>
+Changelog: [ia64] SN correctly update smp_affinity mask
+
+
+BZ  223867
+
+On Altix systems, the /proc/irq/nn/smp_affinity mask is not being setup
+at device iniitalization, or updated after an interrupt redirection.
+This patch resolves those issues.
+
+Signed-off-by: John Keller <jpk@sgi.com>
+Signed-off-by: Tony Luck <tony.luck@intel.com>
+
+http://git.kernel.org/?p=linux/kernel/git/aegl/linux-2.6.git;a=commit;h=c69577711a8fd232e6b309c3e99f9a8f96f63082
+
+I haven't test it on a SN box because I don't have access to it now. The 
+back port patch enclosed looks good to me.
+Please test and ACK.
+
+Thanks,
+Luming
+
+
+
+On Altix systems, the /proc/irq/nn/smp_affinity mask is not being setup
+at device iniitalization, or updated after an interrupt redirection.
+This patch resolves those issues.
+
+Index: linux/arch/ia64/sn/kernel/irq.c
+===================================================================
+--- linux.orig/arch/ia64/sn/kernel/irq.c	2006-09-19 22:42:06.000000000 -0500
++++ linux/arch/ia64/sn/kernel/irq.c	2007-01-18 17:12:32.465956038 -0600
+@@ -117,7 +117,10 @@ struct sn_irq_info *sn_retarget_vector(s
+ 				       nasid_t nasid, int slice)
+ {
+ 	int vector;
++	int cpuid;
++#ifdef CONFIG_SMP
+ 	int cpuphys;
++#endif
+ 	int64_t bridge;
+ 	int local_widget, status;
+ 	nasid_t local_nasid;
+@@ -146,7 +149,6 @@ struct sn_irq_info *sn_retarget_vector(s
+ 	vector = sn_irq_info->irq_irq;
+ 	/* Free the old PROM new_irq_info structure */
+ 	sn_intr_free(local_nasid, local_widget, new_irq_info);
+-	/* Update kernels new_irq_info with new target info */
+ 	unregister_intr_pda(new_irq_info);
+ 
+ 	/* allocate a new PROM new_irq_info struct */
+@@ -160,8 +162,10 @@ struct sn_irq_info *sn_retarget_vector(s
+ 		return NULL;
+ 	}
+ 
+-	cpuphys = nasid_slice_to_cpuid(nasid, slice);
+-	new_irq_info->irq_cpuid = cpuphys;
++	/* Update kernels new_irq_info with new target info */
++	cpuid = nasid_slice_to_cpuid(new_irq_info->irq_nasid,
++				     new_irq_info->irq_slice);
++	new_irq_info->irq_cpuid = cpuid;
+ 	register_intr_pda(new_irq_info);
+ 
+ 	pci_provider = sn_pci_provider[new_irq_info->irq_bridge_type];
+@@ -180,6 +184,7 @@ struct sn_irq_info *sn_retarget_vector(s
+ 	call_rcu(&sn_irq_info->rcu, sn_irq_info_free);
+ 
+ #ifdef CONFIG_SMP
++	cpuphys = cpu_physical_id(cpuid);
+ 	set_irq_affinity_info((vector & 0xff), cpuphys, 0);
+ #endif
+ 
+@@ -299,6 +304,9 @@ void sn_irq_fixup(struct pci_dev *pci_de
+ 	nasid_t nasid = sn_irq_info->irq_nasid;
+ 	int slice = sn_irq_info->irq_slice;
+ 	int cpu = nasid_slice_to_cpuid(nasid, slice);
++#ifdef CONFIG_SMP
++	int cpuphys;
++#endif
+ 
+ 	pci_dev_get(pci_dev);
+ 	sn_irq_info->irq_cpuid = cpu;
+@@ -311,6 +319,10 @@ void sn_irq_fixup(struct pci_dev *pci_de
+ 	spin_unlock(&sn_irq_info_lock);
+ 
+ 	register_intr_pda(sn_irq_info);
++#ifdef CONFIG_SMP
++	cpuphys = cpu_physical_id(cpu);
++	set_irq_affinity_info(sn_irq_info->irq_irq, cpuphys, 0);
++#endif
+ }
+ 
+ void sn_irq_unfixup(struct pci_dev *pci_dev)
+Index: linux/drivers/pci/msi-altix.c
+===================================================================
+--- linux.orig/drivers/pci/msi-altix.c	2007-01-18 17:12:26.000000000 -0600
++++ linux/drivers/pci/msi-altix.c	2007-01-18 17:13:38.578097935 -0600
+@@ -131,10 +131,6 @@ sn_msi_setup(struct pci_dev *pdev, unsig
+ 	 */
+ 	*data = 0x100 + (unsigned int)vector;
+ 
+-#ifdef CONFIG_SMP
+-	set_irq_affinity_info((vector & 0xff), sn_irq_info->irq_cpuid, 0);
+-#endif
+-
+ 	return 0;
+ }
+ 
+

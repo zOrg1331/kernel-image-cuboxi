@@ -37,14 +37,14 @@ struct amba_kmi_port {
 	unsigned int		open;
 };
 
-static irqreturn_t amba_kmi_int(int irq, void *dev_id)
+static irqreturn_t amba_kmi_int(int irq, void *dev_id, struct pt_regs *regs)
 {
 	struct amba_kmi_port *kmi = dev_id;
 	unsigned int status = readb(KMIIR);
 	int handled = IRQ_NONE;
 
 	while (status & KMIIR_RXINTR) {
-		serio_interrupt(kmi->io, readb(KMIDATA), 0);
+		serio_interrupt(kmi->io, readb(KMIDATA), 0, regs);
 		status = readb(KMIIR);
 		handled = IRQ_HANDLED;
 	}
@@ -57,7 +57,7 @@ static int amba_kmi_write(struct serio *io, unsigned char val)
 	struct amba_kmi_port *kmi = io->port_data;
 	unsigned int timeleft = 10000; /* timeout in 100ms */
 
-	while ((readb(KMISTAT) & KMISTAT_TXEMPTY) == 0 && --timeleft)
+	while ((readb(KMISTAT) & KMISTAT_TXEMPTY) == 0 && timeleft--)
 		udelay(10);
 
 	if (timeleft)
@@ -107,7 +107,7 @@ static void amba_kmi_close(struct serio *io)
 	clk_disable(kmi->clk);
 }
 
-static int amba_kmi_probe(struct amba_device *dev, struct amba_id *id)
+static int amba_kmi_probe(struct amba_device *dev, void *id)
 {
 	struct amba_kmi_port *kmi;
 	struct serio *io;
@@ -117,25 +117,27 @@ static int amba_kmi_probe(struct amba_device *dev, struct amba_id *id)
 	if (ret)
 		return ret;
 
-	kmi = kzalloc(sizeof(struct amba_kmi_port), GFP_KERNEL);
-	io = kzalloc(sizeof(struct serio), GFP_KERNEL);
+	kmi = kmalloc(sizeof(struct amba_kmi_port), GFP_KERNEL);
+	io = kmalloc(sizeof(struct serio), GFP_KERNEL);
 	if (!kmi || !io) {
 		ret = -ENOMEM;
 		goto out;
 	}
 
+	memset(kmi, 0, sizeof(struct amba_kmi_port));
+	memset(io, 0, sizeof(struct serio));
 
 	io->id.type	= SERIO_8042;
 	io->write	= amba_kmi_write;
 	io->open	= amba_kmi_open;
 	io->close	= amba_kmi_close;
-	strlcpy(io->name, dev_name(&dev->dev), sizeof(io->name));
-	strlcpy(io->phys, dev_name(&dev->dev), sizeof(io->phys));
+	strlcpy(io->name, dev->dev.bus_id, sizeof(io->name));
+	strlcpy(io->phys, dev->dev.bus_id, sizeof(io->phys));
 	io->port_data	= kmi;
 	io->dev.parent	= &dev->dev;
 
 	kmi->io 	= io;
-	kmi->base	= ioremap(dev->res.start, resource_size(&dev->res));
+	kmi->base	= ioremap(dev->res.start, KMI_SIZE);
 	if (!kmi->base) {
 		ret = -ENOMEM;
 		goto out;

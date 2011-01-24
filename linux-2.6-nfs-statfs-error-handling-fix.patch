@@ -1,0 +1,57 @@
+From: Jeff Layton <jlayton@redhat.com>
+Date: Tue, 8 Sep 2009 10:59:37 -0400
+Subject: [nfs] statfs error-handling fix
+Message-id: 1252421977-30333-1-git-send-email-jlayton@redhat.com
+O-Subject: [RHEL5.5 PATCH] BZ#519112: NFS: statfs error-handling fix
+Bugzilla: 519112
+RH-Acked-by: Jiri Olsa <jolsa@redhat.com>
+RH-Acked-by: Dean Nelson <dnelson@redhat.com>
+RH-Acked-by: Steve Dickson <SteveD@redhat.com>
+RH-Acked-by: Peter Staubach <staubach@redhat.com>
+
+From: Amnon Aaronsohn <amnonaar@gmail.com>
+
+The nfs statfs function returns a success code on error, and fills the
+output buffer with invalid values. The attached patch makes it return a
+correct error code instead.
+
+Signed-off-by: Amnon Aaronsohn <amnonaar@gmail.com>
+Cc: Trond Myklebust <trond.myklebust@fys.uio.no>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+Signed-off-by: Trond Myklebust <Trond.Myklebust@netapp.com>
+ (Modified patch to reinstate the dprintk())
+
+diff --git a/fs/nfs/super.c b/fs/nfs/super.c
+index 7e113ae..8c053bc 100644
+--- a/fs/nfs/super.c
++++ b/fs/nfs/super.c
+@@ -227,9 +227,9 @@ static int nfs_statfs(struct dentry *dentry, struct kstatfs *buf)
+ 	lock_kernel();
+ 
+ 	error = server->nfs_client->rpc_ops->statfs(server, fh, &res);
+-	buf->f_type = NFS_SUPER_MAGIC;
+ 	if (error < 0)
+ 		goto out_err;
++	buf->f_type = NFS_SUPER_MAGIC;
+ 
+ 	/*
+ 	 * Current versions of glibc do not correctly handle the
+@@ -256,15 +256,14 @@ static int nfs_statfs(struct dentry *dentry, struct kstatfs *buf)
+ 	buf->f_ffree = res.afiles;
+ 
+ 	buf->f_namelen = server->namelen;
+- out:
++
+ 	unlock_kernel();
+ 	return 0;
+ 
+  out_err:
+ 	dprintk("%s: statfs error = %d\n", __FUNCTION__, -error);
+-	buf->f_bsize = buf->f_blocks = buf->f_bfree = buf->f_bavail = -1;
+-	goto out;
+-
++	unlock_kernel();
++	return error;
+ }
+ 
+ /*

@@ -1,0 +1,76 @@
+From: Dave Airlie <airlied@redhat.com>
+Date: Fri, 3 Oct 2008 15:32:33 +1000
+Subject: [drm] support for Intel Cantiga and Eaglelake
+Message-id: 1223011953.3380.28.camel@clockmaker.usersys.redhat.com
+O-Subject: [RHEL5.3 BZ438400 PATCH] backport drm fixes for cantiga eaglelake
+Bugzilla: 438400
+RH-Acked-by: Mauro Carvalho Chehab <mchehab@redhat.com>
+
+>From fb0e6fa939b48ca8ea8466dfed6f1e00a74d4ba9 Mon Sep 17 00:00:00 2001
+From: Dave Airlie <airlied@dhcp-1-131.bne.redhat.com>
+Date: Sat, 4 Oct 2008 01:31:43 +1000
+Subject: [PATCH] drm: backport support for Cantiga/Eaglelake from upstream kernel
+
+This backports support for Intel G4x chipsets, Cantiga/Eaglelake to
+the RHEL5 drm.
+
+It adds the new pci ids, and disables the setting up of the hw status
+page for these chips which works the same as on the G33.
+
+It goes along with the previous AGP patch.
+
+Signed-off-by: Dave Airlie <airlied@redhat.com>
+
+diff --git a/drivers/char/drm/drm_pciids.h b/drivers/char/drm/drm_pciids.h
+index 76660f8..4cb940e 100644
+--- a/drivers/char/drm/drm_pciids.h
++++ b/drivers/char/drm/drm_pciids.h
+@@ -388,6 +388,10 @@
+ 	{0x8086, 0x29A2, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_I9XX|CHIP_I965}, \
+ 	{0x8086, 0x2A02, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_I9XX|CHIP_I965}, \
+ 	{0x8086, 0x2A12, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_I9XX|CHIP_I965}, \
++	{0x8086, 0x2a42, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_I9XX|CHIP_I965}, \
++	{0x8086, 0x2e02, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_I9XX|CHIP_I965}, \
++	{0x8086, 0x2e12, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_I9XX|CHIP_I965}, \
++	{0x8086, 0x2e22, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_I9XX|CHIP_I965}, \
+ 	{0x8086, 0x29C2, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_I9XX|CHIP_I915}, \
+ 	{0x8086, 0x29B2, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_I9XX|CHIP_I915}, \
+ 	{0x8086, 0x29D2, PCI_ANY_ID, PCI_ANY_ID, 0, 0, CHIP_I9XX|CHIP_I915}, \
+diff --git a/drivers/char/drm/i915_dma.c b/drivers/char/drm/i915_dma.c
+index 4667a61..5978aac 100644
+--- a/drivers/char/drm/i915_dma.c
++++ b/drivers/char/drm/i915_dma.c
+@@ -36,12 +36,23 @@
+ 			dev->pdev->device == 0x2992 || \
+ 			dev->pdev->device == 0x29A2 || \
+ 			dev->pdev->device == 0x2A02 || \
+-			dev->pdev->device == 0x2A12)
++			dev->pdev->device == 0x2A12 || \
++			dev->pdev->device == 0x2A42 || \
++			dev->pdev->device == 0x2e02 || \
++			dev->pdev->device == 0x2e12 || \
++			dev->pdev->device == 0x2e22)
+ 
+ #define IS_G33(dev)    (dev->pdev->device == 0x29C2 || \
+ 			dev->pdev->device == 0x29B2 || \
+ 			dev->pdev->device == 0x29D2)
+ 
++#define IS_IGD(dev)	(dev->pdev->device == 0x2a42)
++
++#define IS_G4X(dev)	(dev->pdev->device == 0x2e02 || \
++			 dev->pdev->device == 0x2e12 || \
++			 dev->pdev->device == 0x2e22)
++
++#define I915_NEED_GFX_HWS(dev) (IS_G33(dev) || IS_IGD(dev) || IS_G4X(dev))
+ 
+ /* Really want an OS-independent resettable timer.  Would like to have
+  * this loop run for (eg) 3 sec, but have the timer reset every time
+@@ -197,7 +208,7 @@ static int i915_initialize(drm_device_t * dev,
+ 	dev_priv->vblank_pipe = DRM_I915_VBLANK_PIPE_A;
+ 
+ 	/* Program Hardware Status Page */
+-	if (!IS_G33(dev)) {
++	if (!I915_NEED_GFX_HWS(dev)) {
+ 		dev_priv->status_page_dmah =
+ 			drm_pci_alloc(dev, PAGE_SIZE, PAGE_SIZE, 0xffffffff);
+ 

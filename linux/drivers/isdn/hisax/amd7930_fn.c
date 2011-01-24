@@ -232,12 +232,13 @@ Amd7930_new_ph(struct IsdnCardState *cs)
 
 
 static void
-Amd7930_bh(struct work_struct *work)
+Amd7930_bh(struct IsdnCardState *cs)
 {
-	struct IsdnCardState *cs =
-		container_of(work, struct IsdnCardState, tqueue);
+
         struct PStack *stptr;
 
+	if (!cs)
+		return;
 	if (test_and_clear_bit(D_CLEARBUSY, &cs->event)) {
                 if (cs->debug)
 			debugl1(cs, "Amd7930: bh, D-Channel Busy cleared");
@@ -594,7 +595,6 @@ Amd7930_l1hw(struct PStack *st, int pr, void *arg)
 				if (cs->debug & L1_DEB_WARN)
 					debugl1(cs, "Amd7930: l1hw: l2l1 tx_skb exist this shouldn't happen");
 				skb_queue_tail(&cs->sq, skb);
-				spin_unlock_irqrestore(&cs->lock, flags);
 				break;
 			}
 			if (cs->debug & DEB_DLOG_HEX)
@@ -733,7 +733,7 @@ dbusy_timer_handler(struct IsdnCardState *cs)
 			wByteAMD(cs, 0x21, 0x82);
 			wByteAMD(cs, 0x21, 0x02);
 			spin_unlock_irqrestore(&cs->lock, flags);
-			cs->irq_func(cs->irq, cs);
+			cs->irq_func(cs->irq, cs, NULL);
 
                         if (cs->debug & L1_DEB_ISAC)
 				debugl1(cs, "Amd7930: dbusy_timer_handler: Transmitter reset");
@@ -743,7 +743,8 @@ dbusy_timer_handler(struct IsdnCardState *cs)
 
 
 
-void Amd7930_init(struct IsdnCardState *cs)
+void __devinit
+Amd7930_init(struct IsdnCardState *cs)
 {
     WORD *ptr;
     BYTE cmd, cnt;
@@ -765,7 +766,7 @@ void Amd7930_init(struct IsdnCardState *cs)
                 /* read */
                 if (*ptr++ >= 0x100) {
 			if (cmd < 8)
-                                /* reset register */
+                                /* setzt Register zurück */
                                 rByteAMD(cs, cmd);
 			else {
 				wByteAMD(cs, 0x00, cmd);
@@ -788,7 +789,7 @@ void Amd7930_init(struct IsdnCardState *cs)
 void __devinit
 setup_Amd7930(struct IsdnCardState *cs)
 {
-        INIT_WORK(&cs->tqueue, Amd7930_bh);
+        INIT_WORK(&cs->tqueue, (void *)(void *) Amd7930_bh, cs);
 	cs->dbusytimer.function = (void *) dbusy_timer_handler;
 	cs->dbusytimer.data = (long) cs;
 	init_timer(&cs->dbusytimer);

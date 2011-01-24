@@ -1,0 +1,208 @@
+From: Don Zickus <dzickus@redhat.com>
+Subject: Re: [RHEL-5 PATCH] enabling lockdep on x86_64 hangs the system
+Date: Tue, 2 Jan 2007 17:40:51 -0500
+Bugzilla: 221198
+Message-Id: <20070102224051.GP5381@redhat.com>
+Changelog: x86_64: enabling lockdep hangs the system
+
+
+On Tue, Jan 02, 2007 at 05:33:45PM -0500, Don Zickus wrote:
+> bugzilla: 221198
+> 
+> When we grabbed a bunch of stack unwinder fixes that when into 2.6.19,
+> enabling lockdep on x86_64 caused boot problems.  We didn't care for
+> awhile because we disabled lockdep (and also we couldn't figure out why).  
+> 
+> Cheers,
+> Don
+>
+
+
+I think it was only needed for the printks and we can do them later.
+
+I put in a single early_printk so that we know the kernel is alive
+(early_printk doesn't need any locks)
+
+This makes some things easier for initialization of unwind for
+lockdep, which is needed by later patches.
+
+cc: mingo@elte.hu
+
+Signed-off-by: Andi Kleen <ak@suse.de>
+---
+ arch/x86_64/kernel/head64.c |    8 +-------
+ arch/x86_64/kernel/setup.c  |    2 ++
+ 2 files changed, 3 insertions(+), 7 deletions(-)
+
+Index: latest/arch/x86_64/kernel/head64.c
+===================================================================
+--- latest.orig/arch/x86_64/kernel/head64.c
++++ latest/arch/x86_64/kernel/head64.c
+@@ -52,15 +52,12 @@ static void __init copy_bootdata(char *r
+ 	new_data = *(u32 *) (x86_boot_params + NEW_CL_POINTER);
+ 	if (!new_data) {
+ 		if (OLD_CL_MAGIC != *(u16 *)(real_mode_data + OLD_CL_MAGIC_ADDR)) {
+-			printk("so old bootloader that it does not support commandline?!\n");
+ 			return;
+ 		}
+ 		new_data = __pa(real_mode_data) + *(u16 *)(real_mode_data + OLD_CL_OFFSET);
+-		printk("old bootloader convention, maybe loadlin?\n");
+ 	}
+ 	command_line = __va(new_data);
+ 	memcpy(saved_command_line, command_line, COMMAND_LINE_SIZE);
+-	printk("Bootdata ok (command line is %s)\n", saved_command_line);	
+ }
+ 
+ static void __init setup_boot_cpu_data(void)
+@@ -95,10 +92,7 @@ void __init x86_64_start_kernel(char * r
+ 	/* Make NULL pointers segfault */
+ 	zap_identity_mappings();
+ 
+-	/*
+-	 * This must be called really, really early:
+-	 */
+-	lockdep_init();
++	early_printk("Kernel alive\n");
+ 
+  	for (i = 0; i < NR_CPUS; i++)
+  		cpu_pda(i) = &boot_cpu_pda[i];
+Index: latest/arch/x86_64/kernel/setup.c
+===================================================================
+--- latest.orig/arch/x86_64/kernel/setup.c
++++ latest/arch/x86_64/kernel/setup.c
+@@ -521,6 +521,8 @@ static void discover_ebda(void)
+ 
+ void __init setup_arch(char **cmdline_p)
+ {
++	printk(KERN_INFO "Command line: %s\n", saved_command_line);
++
+  	ROOT_DEV = old_decode_dev(ORIG_ROOT_DEV);
+  	screen_info = SCREEN_INFO;
+ 	edid_info = EDID_INFO;
+Index: latest/arch/x86_64/kernel/mce.c
+===================================================================
+--- latest.orig/arch/x86_64/kernel/mce.c
++++ latest/arch/x86_64/kernel/mce.c
+@@ -182,7 +182,7 @@ void do_machine_check(struct pt_regs * r
+ 		goto out2;
+ 
+ 	memset(&m, 0, sizeof(struct mce));
+-	m.cpu = safe_smp_processor_id();
++	m.cpu = smp_processor_id();
+ 	rdmsrl(MSR_IA32_MCG_STATUS, m.mcgstatus);
+ 	if (!(m.mcgstatus & MCG_STATUS_RIPV))
+ 		kill_it = 1;
+Index: latest/arch/x86_64/kernel/smp.c
+===================================================================
+--- latest.orig/arch/x86_64/kernel/smp.c
++++ latest/arch/x86_64/kernel/smp.c
+@@ -521,27 +521,3 @@ asmlinkage void smp_call_function_interr
+ 		atomic_inc(&call_data->finished);
+ 	}
+ }
+-
+-int safe_smp_processor_id(void)
+-{
+-	unsigned apicid, i;
+-
+-	if (disable_apic)
+-		return 0;
+-
+-	apicid = hard_smp_processor_id();
+-	if (apicid < NR_CPUS && x86_cpu_to_apicid[apicid] == apicid)
+-		return apicid;
+-
+-	for (i = 0; i < NR_CPUS; ++i) {
+-		if (x86_cpu_to_apicid[i] == apicid)
+-			return i;
+-	}
+-
+-	/* No entries in x86_cpu_to_apicid?  Either no MPS|ACPI,
+-	 * or called too early.  Either way, we must be CPU 0. */
+-      	if (x86_cpu_to_apicid[0] == BAD_APICID)
+-		return 0;
+-
+-	return 0; /* Should not happen */
+-}
+Index: latest/arch/x86_64/kernel/traps.c
+===================================================================
+--- latest.orig/arch/x86_64/kernel/traps.c
++++ latest/arch/x86_64/kernel/traps.c
+@@ -242,7 +242,7 @@ static unsigned long *in_exception_stack
+ void dump_trace(struct task_struct *tsk, struct pt_regs *regs, unsigned long * stack,
+ 		struct stacktrace_ops *ops, void *data)
+ {
+-	const unsigned cpu = safe_smp_processor_id();
++	const unsigned cpu = smp_processor_id();
+ 	unsigned long *irqstack_end = (unsigned long *)cpu_pda(cpu)->irqstackptr;
+ 	unsigned used = 0;
+ 
+@@ -375,7 +375,7 @@ _show_stack(struct task_struct *tsk, str
+ {
+ 	unsigned long *stack;
+ 	int i;
+-	const int cpu = safe_smp_processor_id();
++	const int cpu = smp_processor_id();
+ 	unsigned long *irqstack_end = (unsigned long *) (cpu_pda(cpu)->irqstackptr);
+ 	unsigned long *irqstack = (unsigned long *) (cpu_pda(cpu)->irqstackptr - IRQSTACKSIZE);
+ 
+@@ -429,7 +429,7 @@ void show_registers(struct pt_regs *regs
+ 	int i;
+ 	int in_kernel = !user_mode(regs);
+ 	unsigned long rsp;
+-	const int cpu = safe_smp_processor_id(); 
++	const int cpu = smp_processor_id();
+ 	struct task_struct *cur = cpu_pda(cpu)->pcurrent;
+ 
+ 		rsp = regs->rsp;
+@@ -504,7 +504,7 @@ static unsigned int die_nest_count;
+ 
+ unsigned __kprobes long oops_begin(void)
+ {
+-	int cpu = safe_smp_processor_id();
++	int cpu = smp_processor_id();
+ 	unsigned long flags;
+ 
+ 	/* racy, but better than risking deadlock. */
+@@ -582,7 +582,7 @@ void __kprobes die_nmi(char *str, struct
+ 	 * We are in trouble anyway, lets at least try
+ 	 * to get a message out.
+ 	 */
+-	printk(str, safe_smp_processor_id());
++	printk(str, smp_processor_id());
+ 	show_registers(regs);
+ 	if (kexec_should_crash(current))
+ 		crash_kexec(regs);
+Index: latest/include/asm-x86_64/smp.h
+===================================================================
+--- latest.orig/include/asm-x86_64/smp.h
++++ latest/include/asm-x86_64/smp.h
+@@ -76,7 +76,6 @@ static inline int hard_smp_processor_id(
+ 	return GET_APIC_ID(*(unsigned int *)(APIC_BASE+APIC_ID));
+ }
+ 
+-extern int safe_smp_processor_id(void);
+ extern int __cpu_disable(void);
+ extern void __cpu_die(unsigned int cpu);
+ extern void prefill_possible_map(void);
+@@ -115,7 +114,6 @@ static inline int cpu_present_to_apicid(
+ 
+ #ifndef CONFIG_SMP
+ #define stack_smp_processor_id() 0
+-#define safe_smp_processor_id() 0
+ #define cpu_logical_map(x) (x)
+ #else
+ #include <asm/thread_info.h>
+Index: latest/arch/x86_64/kernel/nmi.c
+===================================================================
+--- latest.orig/arch/x86_64/kernel/nmi.c
++++ latest/arch/x86_64/kernel/nmi.c
+@@ -592,7 +592,7 @@ static nmi_callback_t nmi_callback = dum
+  
+ asmlinkage __kprobes void do_nmi(struct pt_regs * regs, long error_code)
+ {
+-	int cpu = safe_smp_processor_id();
++	int cpu = smp_processor_id();
+ 
+ 	nmi_enter();
+ 	add_pda(__nmi_count,1);

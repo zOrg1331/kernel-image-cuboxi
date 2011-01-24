@@ -1,0 +1,329 @@
+From: Neil Horman <nhorman@redhat.com>
+Date: Thu, 1 May 2008 13:51:49 -0400
+Subject: [net] 32/64 bit compat MCAST_ sock options support
+Message-id: 20080501175149.GF15988@hmsendeavour.rdu.redhat.com
+O-Subject: [RHEL 5.2.z / RHEL 5.3 PATCH] add support for 32/64 bit compat for MCAST_* socket options (bz 444582)
+Bugzilla: 444582
+
+Hey-
+	This is a backport of selected bits from a few upstream commits in Dave
+Millers git tree, adding support for 32/64 bit compatibility on all MCAST ipv4/6
+socket options.  Built in brew and tested successfully by IBM.  Only change from
+upstream is the addition of a few __GENKSYMS__ ifndefs to supress a few false
+positive kabi warnings.
+
+Regards
+Neil
+
+Acked-by: "David S. Miller" <davem@redhat.com>
+Acked-by: Thomas Graf <tgraf@redhat.com>
+
+diff --git a/include/net/compat.h b/include/net/compat.h
+index 9859b60..5e7f58f 100644
+--- a/include/net/compat.h
++++ b/include/net/compat.h
+@@ -39,4 +39,10 @@ extern int put_cmsg_compat(struct msghdr*, int, int, int, void *);
+ 
+ extern int cmsghdr_from_user_compat_to_kern(struct msghdr *, struct sock *, unsigned char *, int);
+ 
++extern int compat_mc_setsockopt(struct sock *, int, int, char __user *, int,
++	int (*)(struct sock *, int, int, char __user *, int));
++extern int compat_mc_getsockopt(struct sock *, int, int, char __user *, 
++	int __user *, int (*)(struct sock *, int, int, char __user *,
++				int __user *));
++
+ #endif /* NET_COMPAT_H */
+diff --git a/net/compat.c b/net/compat.c
+index d5d69fa..86d3ebc 100644
+--- a/net/compat.c
++++ b/net/compat.c
+@@ -26,6 +26,8 @@
+ 
+ #include <net/scm.h>
+ #include <net/sock.h>
++#include <net/ip.h>
++#include <net/ipv6.h>
+ #include <asm/uaccess.h>
+ #include <net/compat.h>
+ 
+@@ -589,6 +591,203 @@ asmlinkage long compat_sys_getsockopt(int fd, int level, int optname,
+ 	}
+ 	return err;
+ }
++
++struct compat_group_req {
++	__u32				 gr_interface;
++	struct __kernel_sockaddr_storage gr_group
++		__attribute__ ((aligned(4)));
++} __attribute__ ((packed));
++
++struct compat_group_source_req {
++	__u32				 gsr_interface;
++	struct __kernel_sockaddr_storage gsr_group
++		__attribute__ ((aligned(4)));
++	struct __kernel_sockaddr_storage gsr_source
++		__attribute__ ((aligned(4)));
++} __attribute__ ((packed));
++
++struct compat_group_filter {
++	__u32				 gf_interface;
++	struct __kernel_sockaddr_storage gf_group
++		__attribute__ ((aligned(4)));
++	__u32				 gf_fmode;
++	__u32				 gf_numsrc;
++	struct __kernel_sockaddr_storage gf_slist[1]
++		__attribute__ ((aligned(4)));
++} __attribute__ ((packed));
++
++#define __COMPAT_GF0_SIZE (sizeof(struct compat_group_filter) - \
++			sizeof(struct __kernel_sockaddr_storage))
++
++
++int compat_mc_setsockopt(struct sock *sock, int level, int optname,
++	char __user *optval, int optlen,
++	int (*setsockopt)(struct sock *,int,int,char __user *,int))
++{
++	char __user	*koptval = optval;
++	int		koptlen = optlen;
++
++	switch (optname) {
++	case MCAST_JOIN_GROUP:
++	case MCAST_LEAVE_GROUP:
++	{
++		struct compat_group_req __user *gr32 = (void *)optval;
++		struct group_req __user *kgr =
++			compat_alloc_user_space(sizeof(struct group_req));
++		u32 interface;
++
++		if (!access_ok(VERIFY_READ, gr32, sizeof(*gr32)) ||
++		    !access_ok(VERIFY_WRITE, kgr, sizeof(struct group_req)) ||
++		    __get_user(interface, &gr32->gr_interface) ||
++		    __put_user(interface, &kgr->gr_interface) ||
++		    copy_in_user(&kgr->gr_group, &gr32->gr_group,
++				sizeof(kgr->gr_group)))
++			return -EFAULT;
++		koptval = (char __user *)kgr;
++		koptlen = sizeof(struct group_req);
++		break;
++	}
++	case MCAST_JOIN_SOURCE_GROUP:
++	case MCAST_LEAVE_SOURCE_GROUP:
++	case MCAST_BLOCK_SOURCE:
++	case MCAST_UNBLOCK_SOURCE:
++	{
++		struct compat_group_source_req __user *gsr32 = (void *)optval;
++		struct group_source_req __user *kgsr = compat_alloc_user_space(
++			sizeof(struct group_source_req));
++		u32 interface;
++
++		if (!access_ok(VERIFY_READ, gsr32, sizeof(*gsr32)) ||
++		    !access_ok(VERIFY_WRITE, kgsr,
++			sizeof(struct group_source_req)) ||
++		    __get_user(interface, &gsr32->gsr_interface) ||
++		    __put_user(interface, &kgsr->gsr_interface) ||
++		    copy_in_user(&kgsr->gsr_group, &gsr32->gsr_group,
++				sizeof(kgsr->gsr_group)) ||
++		    copy_in_user(&kgsr->gsr_source, &gsr32->gsr_source,
++				sizeof(kgsr->gsr_source)))
++			return -EFAULT;
++		koptval = (char __user *)kgsr;
++		koptlen = sizeof(struct group_source_req);
++		break;
++	}
++	case MCAST_MSFILTER:
++	{
++		struct compat_group_filter __user *gf32 = (void *)optval;
++		struct group_filter __user *kgf;
++		u32 interface, fmode, numsrc;
++
++		if (!access_ok(VERIFY_READ, gf32, __COMPAT_GF0_SIZE) ||
++		    __get_user(interface, &gf32->gf_interface) ||
++		    __get_user(fmode, &gf32->gf_fmode) ||
++		    __get_user(numsrc, &gf32->gf_numsrc))
++			return -EFAULT;
++		koptlen = optlen + sizeof(struct group_filter) -
++				sizeof(struct compat_group_filter);
++		if (koptlen < GROUP_FILTER_SIZE(numsrc))
++			return -EINVAL;
++		kgf = compat_alloc_user_space(koptlen);
++		if (!access_ok(VERIFY_WRITE, kgf, koptlen) ||
++		    __put_user(interface, &kgf->gf_interface) ||
++		    __put_user(fmode, &kgf->gf_fmode) ||
++		    __put_user(numsrc, &kgf->gf_numsrc) ||
++		    copy_in_user(&kgf->gf_group, &gf32->gf_group,
++				sizeof(kgf->gf_group)) ||
++		    (numsrc && copy_in_user(kgf->gf_slist, gf32->gf_slist,
++				numsrc * sizeof(kgf->gf_slist[0]))))
++			return -EFAULT;
++		koptval = (char __user *)kgf;
++		break;
++	}
++
++	default:
++		break;
++	}
++	return setsockopt(sock, level, optname, koptval, koptlen);
++}
++
++EXPORT_SYMBOL(compat_mc_setsockopt);
++
++int compat_mc_getsockopt(struct sock *sock, int level, int optname,
++	char __user *optval, int __user *optlen,
++	int (*getsockopt)(struct sock *,int,int,char __user *,int __user *))
++{
++	struct compat_group_filter __user *gf32 = (void *)optval;
++	struct group_filter __user *kgf;
++	int __user	*koptlen;
++	u32 interface, fmode, numsrc;
++	int klen, ulen, err;
++
++	if (optname != MCAST_MSFILTER)
++		return getsockopt(sock, level, optname, optval, optlen);
++
++	koptlen = compat_alloc_user_space(sizeof(*koptlen));
++	if (!access_ok(VERIFY_READ, optlen, sizeof(*optlen)) ||
++	    __get_user(ulen, optlen))
++		return -EFAULT;
++
++	/* adjust len for pad */
++	klen = ulen + sizeof(*kgf) - sizeof(*gf32);
++
++	if (klen < GROUP_FILTER_SIZE(0))
++		return -EINVAL;
++
++	if (!access_ok(VERIFY_WRITE, koptlen, sizeof(*koptlen)) ||
++	    __put_user(klen, koptlen))
++		return -EFAULT;
++
++	/* have to allow space for previous compat_alloc_user_space, too */
++	kgf = compat_alloc_user_space(klen+sizeof(*optlen));
++
++	if (!access_ok(VERIFY_READ, gf32, __COMPAT_GF0_SIZE) ||
++	    __get_user(interface, &gf32->gf_interface) ||
++	    __get_user(fmode, &gf32->gf_fmode) ||
++	    __get_user(numsrc, &gf32->gf_numsrc) ||
++	    __put_user(interface, &kgf->gf_interface) ||
++	    __put_user(fmode, &kgf->gf_fmode) ||
++	    __put_user(numsrc, &kgf->gf_numsrc) ||
++	    copy_in_user(&kgf->gf_group,&gf32->gf_group,sizeof(kgf->gf_group)))
++		return -EFAULT;
++
++	err = getsockopt(sock, level, optname, (char __user *)kgf, koptlen);
++	if (err)
++		return err;
++
++	if (!access_ok(VERIFY_READ, koptlen, sizeof(*koptlen)) ||
++	    __get_user(klen, koptlen))
++		return -EFAULT;
++
++	ulen = klen - (sizeof(*kgf)-sizeof(*gf32));
++
++	if (!access_ok(VERIFY_WRITE, optlen, sizeof(*optlen)) ||
++	    __put_user(ulen, optlen))
++		return -EFAULT;
++
++	if (!access_ok(VERIFY_READ, kgf, klen) ||
++	    !access_ok(VERIFY_WRITE, gf32, ulen) ||
++	    __get_user(interface, &kgf->gf_interface) ||
++	    __get_user(fmode, &kgf->gf_fmode) ||
++	    __get_user(numsrc, &kgf->gf_numsrc) ||
++	    __put_user(interface, &gf32->gf_interface) ||
++	    __put_user(fmode, &gf32->gf_fmode) ||
++	    __put_user(numsrc, &gf32->gf_numsrc))
++		return -EFAULT;
++	if (numsrc) {
++		int copylen;
++
++		klen -= GROUP_FILTER_SIZE(0);
++		copylen = numsrc * sizeof(gf32->gf_slist[0]);
++		if (copylen > klen)
++			copylen = klen;
++	        if (copy_in_user(gf32->gf_slist, kgf->gf_slist, copylen))
++			return -EFAULT;
++	}
++	return err;
++}
++
++EXPORT_SYMBOL(compat_mc_getsockopt);
++
++
+ /* Argument list sizes for compat_sys_socketcall */
+ #define AL(x) ((x) * sizeof(u32))
+ static unsigned char nas[18]={AL(0),AL(3),AL(3),AL(3),AL(2),AL(3),
+diff --git a/net/ipv4/ip_sockglue.c b/net/ipv4/ip_sockglue.c
+index 4173a2a..a107827 100644
+--- a/net/ipv4/ip_sockglue.c
++++ b/net/ipv4/ip_sockglue.c
+@@ -37,6 +37,9 @@
+ #include <linux/mroute.h>
+ #include <net/route.h>
+ #include <net/xfrm.h>
++#ifndef __GENKSYMS__
++#include <net/compat.h>
++#endif
+ #if defined(CONFIG_IPV6) || defined(CONFIG_IPV6_MODULE)
+ #include <net/transp_v6.h>
+ #endif
+@@ -921,6 +924,10 @@ int compat_ip_setsockopt(struct sock *sk, int level, int optname,
+ 	if (level != SOL_IP)
+ 		return -ENOPROTOOPT;
+ 
++	if (optname >= MCAST_JOIN_GROUP && optname <= MCAST_MSFILTER)
++		return compat_mc_setsockopt(sk, level, optname, optval, optlen,
++			ip_setsockopt);
++
+ 	err = do_ip_setsockopt(sk, level, optname, optval, optlen);
+ #ifdef CONFIG_NETFILTER
+ 	/* we need to exclude all possible ENOPROTOOPTs except default case */
+@@ -1188,7 +1195,14 @@ int ip_getsockopt(struct sock *sk, int level,
+ int compat_ip_getsockopt(struct sock *sk, int level, int optname,
+ 			 char __user *optval, int __user *optlen)
+ {
+-	int err = do_ip_getsockopt(sk, level, optname, optval, optlen);
++	int err;
++
++	if (optname == MCAST_MSFILTER)
++		return compat_mc_getsockopt(sk, level, optname, optval, optlen,
++			ip_getsockopt);
++
++	err = do_ip_getsockopt(sk, level, optname, optval, optlen);
++
+ #ifdef CONFIG_NETFILTER
+ 	/* we need to exclude all possible ENOPROTOOPTs except default case */
+ 	if (err == -ENOPROTOOPT && optname != IP_PKTOPTIONS
+diff --git a/net/ipv6/ipv6_sockglue.c b/net/ipv6/ipv6_sockglue.c
+index 13580ff..2ea8e6b 100644
+--- a/net/ipv6/ipv6_sockglue.c
++++ b/net/ipv6/ipv6_sockglue.c
+@@ -52,6 +52,9 @@
+ #include <net/tcp.h>
+ #include <net/udp.h>
+ #include <net/xfrm.h>
++#ifndef __GENKSYMS__
++#include <net/compat.h>
++#endif
+ 
+ #include <asm/uaccess.h>
+ 
+@@ -769,6 +772,10 @@ int compat_ipv6_setsockopt(struct sock *sk, int level, int optname,
+ 	if (level != SOL_IPV6)
+ 		return -ENOPROTOOPT;
+ 
++	if (optname >= MCAST_JOIN_GROUP && optname <= MCAST_MSFILTER)
++		return compat_mc_setsockopt(sk, level, optname, optval, optlen,
++			ipv6_setsockopt);
++
+ 	err = do_ipv6_setsockopt(sk, level, optname, optval, optlen);
+ #ifdef CONFIG_NETFILTER
+ 	/* we need to exclude all possible ENOPROTOOPTs except default case */
+@@ -1057,6 +1064,10 @@ int compat_ipv6_getsockopt(struct sock *sk, int level, int optname,
+ 	if (level != SOL_IPV6)
+ 		return -ENOPROTOOPT;
+ 
++	if (optname == MCAST_MSFILTER)
++		return compat_mc_getsockopt(sk, level, optname, optval, optlen,
++			ipv6_getsockopt);
++
+ 	err = do_ipv6_getsockopt(sk, level, optname, optval, optlen);
+ #ifdef CONFIG_NETFILTER
+ 	/* we need to exclude all possible EINVALs except default case */

@@ -1,0 +1,35 @@
+From: Dean Nelson <dnelson@redhat.com>
+Date: Fri, 7 Aug 2009 20:20:42 -0400
+Subject: [net] ixgbe: return PCI_ERS_RESULT_DISCONNECT on fail
+Message-id: 20090808002041.4992.65121.send-patch@aqua
+O-Subject: [RHEL5.5 PATCH] ixgbe: return PCI_ERS_RESULT_DISCONNECT on permanent failure
+Bugzilla: 508388
+RH-Acked-by: Jiri Pirko <jpirko@redhat.com>
+RH-Acked-by: Andy Gospodarek <gospo@redhat.com>
+
+PCI drivers that implement the struct pci_error_handlers' error_detected
+callback should return PCI_ERS_RESULT_DISCONNECT if the state passed in is
+pci_channel_io_perm_failure. This patch fixes the issue for ixgbe.
+
+This patch is a backport of an upstream commit.
+See http://git.kernel.org/linus/3044b8d1ff8c05237652a692fb572a34e4d70146
+
+Actual testing of this patch was done by IBM.
+See RHBZ comments #11 & #12.
+
+Resolves RHBZ 508388.
+
+diff --git a/drivers/net/ixgbe/ixgbe_main.c b/drivers/net/ixgbe/ixgbe_main.c
+index b073887..01aa91a 100644
+--- a/drivers/net/ixgbe/ixgbe_main.c
++++ b/drivers/net/ixgbe/ixgbe_main.c
+@@ -4494,6 +4494,9 @@ static pci_ers_result_t ixgbe_io_error_detected(struct pci_dev *pdev,
+ 
+ 	netif_device_detach(netdev);
+ 
++	if (state == pci_channel_io_perm_failure)
++		return PCI_ERS_RESULT_DISCONNECT;
++
+ 	if (netif_running(netdev))
+ 		ixgbe_down(adapter);
+ 	pci_disable_device(pdev);

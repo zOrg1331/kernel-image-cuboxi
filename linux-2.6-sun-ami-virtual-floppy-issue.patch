@@ -1,0 +1,59 @@
+From: Pete Zaitcev <zaitcev@redhat.com>
+Subject: [RHEL5 patch] Sun/AMI virtual floppy issue
+Date: Mon, 8 Jan 2007 18:42:14 -0800
+Bugzilla: 219628
+Message-Id: <20070108184214.e52a33ef.zaitcev@redhat.com>
+Changelog: usb: Sun/AMI virtual floppy issue
+
+
+This is a fix for bug 219628. Sun servers use a virtual floppy which gets
+detected 8 times instead of one, and produces a bunch of 30-second timeouts
+while every LUN is being detected. Since USB storage only accepts one SCSI
+command at a time, floppy device is not accessible for 24 minutes after
+a reboot.
+
+The root cause has lots of boring details, but the main issue is that
+the firmware behaves poorly when it receives MODE SENSE command, which
+is where timeouts come from. Also, it reports its SCSI level as zero,
+or "legacy", which completely caught us (and writers of USB storage
+specs) by surprise. Such devices went out of fashion long before USB
+was invented, so nobody knows for sure what to do with them.
+
+Upstream, we used this case to streamline USB our stack a bit, getting
+rid of SCSI level remapping, but the blacklist was still necessary in
+the end. So for RHEL 5 I only want to add a blacklist which solves
+both problems. I don't like grabbing the really bleeding edge upstream
+for RHEL in case something crops up.
+
+I tested the patch on the hardware and it works.
+
+Please ack.
+
+-- Pete
+
+diff -urp -X dontdiff linux-2.6.18-1.2960.el5.bz219628.5/drivers/usb/storage/unusual_devs.h linux-2.6.18-1.2960.el5.bz219628.5a/drivers/usb/storage/unusual_devs.h
+--- linux-2.6.18-1.2960.el5.bz219628.5/drivers/usb/storage/unusual_devs.h	2006-09-19 23:42:06.000000000 -0400
++++ linux-2.6.18-1.2960.el5.bz219628.5a/drivers/usb/storage/unusual_devs.h	2007-01-08 15:06:02.000000000 -0500
+@@ -223,6 +223,21 @@ UNUSUAL_DEV(  0x045a, 0x5210, 0x0101, 0x
+ 		"Rio Karma",
+ 		US_SC_SCSI, US_PR_BULK, rio_karma_init, 0),
+ 
++/*
++ * This thing is found in a lot of Sun equipment (x4600, x4200m2, etc.)
++ * Reported by Pete Zaitcev <zaitcev@redhat.com>
++ * This device follows "legacy SCSI" (the one before SCSI 2), for which
++ * our USB stack is not set up well. We remap this to SCSI 2 and then
++ * device ignores LUN bits inside the CDB, where CBI transfer puts them.
++ * It also NAKs instead of STALL when transferring data for a failed command,
++ * so we must avoid sending MODE SENSE of any kind.
++ */
++UNUSUAL_DEV(  0x046b, 0xff40, 0x0100, 0x0100,
++		"AMI",
++		"Virtual Floppy",
++		US_SC_DEVICE, US_PR_DEVICE, NULL,
++		US_FL_SINGLE_LUN | US_FL_NOT_LOCKABLE | US_FL_NO_WP_DETECT),
++
+ /* Patch submitted by Philipp Friedrich <philipp@void.at> */
+ UNUSUAL_DEV(  0x0482, 0x0100, 0x0100, 0x0100,
+ 		"Kyocera",
+

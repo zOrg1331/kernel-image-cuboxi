@@ -1,0 +1,141 @@
+From: Stephen C. Tweedie <sct@redhat.com>
+Date: Fri, 28 Mar 2008 17:00:22 +0000
+Subject: [x86] xen: fix SWIOTLB overflows
+Message-id: 1206723622.17918.37.camel@sisko.scot.redhat.com
+O-Subject: [RHEL-5.2 patch] BZ 433554: Fix SWIOTLB overflows on Xen
+Bugzilla: 433554
+
+Hi,
+
+        https://bugzilla.redhat.com/show_bug.cgi?id=433554
+        Bugzilla Bug 433554: [RHEL5 U2] Kernel-xen PCI-DMA: Out of SW-
+        IOMMU space for 57344 bytes at device 0000:03:04.0
+
+is a 5.2 regression caused by a change in our handling of swiotlb bounce
+buffering in Xen.
+
+Exact details of the fix are included in the patch.  In addition, the
+reason why the regression was caused in the first place was the
+inclusion of a new check in the Xen swiotlb_map_sg() code.  In 5.2, we
+now test whether a sg segment spans a page boundary, and pass the
+segment to the swiotlb if so.
+
+However, the bio page merging already checks whether pages are machine-
+contiguous, and only ever creates page-spanning sg entries if it is
+truly safe to do so.  So the new check was overly cautious, and was
+causing unnecessary swiotlb use.  The fix allows bio to continue merging
+such pages without them getting swiotlb bounce buffering, which cures
+swiommu overflows we are seeing on some hardware.
+
+Patch has been built in a scratch brew build at
+
+        http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1233668
+
+and successfully tested on at least one affected system; more testing
+has been requested.  I've also tested that it cures a side-effect of the
+initial regression --- booting with swiotlb=off no longer causes a crash
+on boot.
+
+Patch has been sent upstream and the basic mechanism of the patch
+approved upstream in principle; but it has not yet been merged upstream.
+
+Cheers,
+ Stephen
+
+commit 952c63d05820a0ac730a8e0a6d902df5cafd6aff
+Author: Stephen Tweedie <sct@redhat.com>
+Date:   Thu Mar 13 17:49:28 2008 +0000
+
+    xen dma: avoid unnecessarily SWIOTLB bounce buffering.
+
+    On Xen kernels, BIOVEC_PHYS_MERGEABLE permits merging of disk IOs that
+    span multiple pages, provided that the pages are both pseudophysically-
+    AND machine-contiguous ---
+
+    	(((bvec_to_phys((vec1)) + (vec1)->bv_len) == bvec_to_phys((vec2))) && \
+    	 ((bvec_to_pseudophys((vec1)) + (vec1)->bv_len) == \
+    	  bvec_to_pseudophys((vec2))))
+
+    However, this best-effort merging of adjacent pages can occur in
+    regions of dom0 memory which just happen, by virtue of having been
+    initially set up that way, to be machine-contiguous.  Such pages
+    which occur outside of a range created by xen_create_contiguous_
+    region won't be seen as contiguous by range_straddles_page_boundary(),
+    so the pci-dma-xen.c code for dma_map_sg() will send these regions
+    to the swiotlb for bounce buffering.
+
+    This patch adds a new check, check_pages_physically_contiguous(),
+    to the test for pages stradding page boundaries both in
+    swiotlb_map_sg() and dma_map_sg(), to capture these ranges and map
+    them directly via virt_to_bus() mapping rather than through the
+    swiotlb.
+
+    Signed-off-by: Stephen Tweedie <sct@redhat.com>
+
+Acked-by: Rik van Riel <riel@redhat.com>
+Acked-by: Bill Burns <bburns@redhat.com>
+Acked-by: Chris Lalancette <clalance@redhat.com>
+
+diff --git a/arch/i386/kernel/pci-dma-xen.c b/arch/i386/kernel/pci-dma-xen.c
+index cdeda5a..14f3539 100644
+--- a/arch/i386/kernel/pci-dma-xen.c
++++ b/arch/i386/kernel/pci-dma-xen.c
+@@ -110,6 +110,39 @@ do {							\
+ 	}						\
+ } while (0)
+ 
++static int check_pages_physically_contiguous(unsigned long pfn, 
++					     unsigned int offset,
++					     size_t length)
++{
++	unsigned long next_mfn;
++	int i;
++	int nr_pages;
++	
++	next_mfn = pfn_to_mfn(pfn);
++	nr_pages = (offset + length + PAGE_SIZE-1) >> PAGE_SHIFT;
++	
++	for (i = 1; i < nr_pages; i++) {
++		if (pfn_to_mfn(++pfn) != ++next_mfn) 
++			return 0;
++	}
++	return 1;
++}
++
++int range_straddles_page_boundary(paddr_t p, size_t size)
++{
++	extern unsigned long *contiguous_bitmap;
++	unsigned long pfn = p >> PAGE_SHIFT;
++	unsigned int offset = p & ~PAGE_MASK;
++
++	if (offset + size <= PAGE_SIZE)
++		return 0;
++	if (test_bit(pfn, contiguous_bitmap))
++		return 0;
++	if (check_pages_physically_contiguous(pfn, offset, size))
++		return 0;
++	return 1;
++}
++
+ int
+ dma_map_sg(struct device *hwdev, struct scatterlist *sg, int nents,
+ 	   enum dma_data_direction direction)
+diff --git a/include/asm-i386/mach-xen/asm/dma-mapping.h b/include/asm-i386/mach-xen/asm/dma-mapping.h
+index 18b1a0d..fc917f2 100644
+--- a/include/asm-i386/mach-xen/asm/dma-mapping.h
++++ b/include/asm-i386/mach-xen/asm/dma-mapping.h
+@@ -22,13 +22,7 @@ address_needs_mapping(struct device *hwdev, dma_addr_t addr)
+ 	return (addr & ~mask) != 0;
+ }
+ 
+-static inline int
+-range_straddles_page_boundary(paddr_t p, size_t size)
+-{
+-	extern unsigned long *contiguous_bitmap;
+-	return ((((p & ~PAGE_MASK) + size) > PAGE_SIZE) &&
+-		!test_bit(p >> PAGE_SHIFT, contiguous_bitmap));
+-}
++extern int range_straddles_page_boundary(paddr_t p, size_t size);
+ 
+ #define dma_alloc_noncoherent(d, s, h, f) dma_alloc_coherent(d, s, h, f)
+ #define dma_free_noncoherent(d, s, v, h) dma_free_coherent(d, s, v, h)

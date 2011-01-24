@@ -15,7 +15,7 @@
     incorporated herein by reference.
     Donald Becker may be reached at becker@scyld.com
     
-    Updated for 2.5.x by Alan Cox <alan@lxorguk.ukuu.org.uk>
+    Updated for 2.5.x by Alan Cox <alan@redhat.com>
 
 ======================================================================*/
 
@@ -107,6 +107,7 @@ enum RxFilter {
 struct el3_private {
 	struct pcmcia_device	*p_dev;
     dev_node_t 		node;
+    struct net_device_stats stats;
     /* For transceiver monitoring */
     struct timer_list	media;
     u16			media_status;
@@ -144,22 +145,20 @@ DRV_NAME ".c " DRV_VERSION " 2001/10/13 00:08:50 (David Hinds)";
 static int tc589_config(struct pcmcia_device *link);
 static void tc589_release(struct pcmcia_device *link);
 
-static u16 read_eeprom(unsigned int ioaddr, int index);
+static u16 read_eeprom(kio_addr_t ioaddr, int index);
 static void tc589_reset(struct net_device *dev);
 static void media_check(unsigned long arg);
 static int el3_config(struct net_device *dev, struct ifmap *map);
 static int el3_open(struct net_device *dev);
-static netdev_tx_t el3_start_xmit(struct sk_buff *skb,
-					struct net_device *dev);
-static irqreturn_t el3_interrupt(int irq, void *dev_id);
+static int el3_start_xmit(struct sk_buff *skb, struct net_device *dev);
+static irqreturn_t el3_interrupt(int irq, void *dev_id, struct pt_regs *regs);
 static void update_stats(struct net_device *dev);
 static struct net_device_stats *el3_get_stats(struct net_device *dev);
 static int el3_rx(struct net_device *dev);
 static int el3_close(struct net_device *dev);
 static void el3_tx_timeout(struct net_device *dev);
-static void set_rx_mode(struct net_device *dev);
 static void set_multicast_list(struct net_device *dev);
-static const struct ethtool_ops netdev_ethtool_ops;
+static struct ethtool_ops netdev_ethtool_ops;
 
 static void tc589_detach(struct pcmcia_device *p_dev);
 
@@ -170,19 +169,6 @@ static void tc589_detach(struct pcmcia_device *p_dev);
     with Card Services.
 
 ======================================================================*/
-
-static const struct net_device_ops el3_netdev_ops = {
-	.ndo_open 		= el3_open,
-	.ndo_stop 		= el3_close,
-	.ndo_start_xmit		= el3_start_xmit,
-	.ndo_tx_timeout 	= el3_tx_timeout,
-	.ndo_set_config		= el3_config,
-	.ndo_get_stats		= el3_get_stats,
-	.ndo_set_multicast_list = set_multicast_list,
-	.ndo_change_mtu		= eth_change_mtu,
-	.ndo_set_mac_address 	= eth_mac_addr,
-	.ndo_validate_addr	= eth_validate_addr,
-};
 
 static int tc589_probe(struct pcmcia_device *link)
 {
@@ -202,17 +188,27 @@ static int tc589_probe(struct pcmcia_device *link)
     spin_lock_init(&lp->lock);
     link->io.NumPorts1 = 16;
     link->io.Attributes1 = IO_DATA_PATH_WIDTH_16;
-    link->irq.Attributes = IRQ_TYPE_DYNAMIC_SHARING|IRQ_HANDLE_PRESENT;
+    link->irq.Attributes = IRQ_TYPE_EXCLUSIVE | IRQ_HANDLE_PRESENT;
     link->irq.IRQInfo1 = IRQ_LEVEL_ID;
     link->irq.Handler = &el3_interrupt;
     link->irq.Instance = dev;
     link->conf.Attributes = CONF_ENABLE_IRQ;
     link->conf.IntType = INT_MEMORY_AND_IO;
     link->conf.ConfigIndex = 1;
+    link->conf.Present = PRESENT_OPTION;
 
-    dev->netdev_ops = &el3_netdev_ops;
+    /* The EL3-specific entries in the device structure. */
+    SET_MODULE_OWNER(dev);
+    dev->hard_start_xmit = &el3_start_xmit;
+    dev->set_config = &el3_config;
+    dev->get_stats = &el3_get_stats;
+    dev->set_multicast_list = &set_multicast_list;
+    dev->open = &el3_open;
+    dev->stop = &el3_close;
+#ifdef HAVE_TX_TIMEOUT
+    dev->tx_timeout = el3_tx_timeout;
     dev->watchdog_timeo = TX_TIMEOUT;
-
+#endif
     SET_ETHTOOL_OPS(dev, &netdev_ethtool_ops);
 
     return tc589_config(link);
@@ -257,26 +253,36 @@ static int tc589_config(struct pcmcia_device *link)
     struct net_device *dev = link->priv;
     struct el3_private *lp = netdev_priv(dev);
     tuple_t tuple;
-    __le16 buf[32];
-    __be16 *phys_addr;
+    cisparse_t parse;
+    u16 buf[32], *phys_addr;
     int last_fn, last_ret, i, j, multi = 0, fifo;
-    unsigned int ioaddr;
+    kio_addr_t ioaddr;
     char *ram_split[] = {"5:3", "3:1", "1:1", "3:5"};
     
     DEBUG(0, "3c589_config(0x%p)\n", link);
 
-    phys_addr = (__be16 *)dev->dev_addr;
+    phys_addr = (u16 *)dev->dev_addr;
     tuple.Attributes = 0;
+    tuple.DesiredTuple = CISTPL_CONFIG;
+    CS_CHECK(GetFirstTuple, pcmcia_get_first_tuple(link, &tuple));
     tuple.TupleData = (cisdata_t *)buf;
     tuple.TupleDataMax = sizeof(buf);
     tuple.TupleOffset = 0;
-    tuple.Attributes = TUPLE_RETURN_COMMON;
-
+    CS_CHECK(GetTupleData, pcmcia_get_tuple_data(link, &tuple));
+    CS_CHECK(ParseTuple, pcmcia_parse_tuple(link, &tuple, &parse));
+    link->conf.ConfigBase = parse.config.base;
+    link->conf.Present = parse.config.rmask[0];
+    
     /* Is this a 3c562? */
-    if (link->manf_id != MANFID_3COM)
+    tuple.DesiredTuple = CISTPL_MANFID;
+    tuple.Attributes = TUPLE_RETURN_COMMON;
+    if ((pcmcia_get_first_tuple(link, &tuple) == CS_SUCCESS) &&
+	(pcmcia_get_tuple_data(link, &tuple) == CS_SUCCESS)) {
+	if (le16_to_cpu(buf[0]) != MANFID_3COM)
 	    printk(KERN_INFO "3c589_cs: hmmm, is this really a "
 		   "3Com card??\n");
-    multi = (link->card_id == PRODID_3COM_3C562);
+	multi = (le16_to_cpu(buf[1]) == PRODID_3COM_3C562);
+    }
 
     /* For the 3c562, the base address must be xx00-xx7f */
     link->io.IOAddrLines = 16;
@@ -284,10 +290,9 @@ static int tc589_config(struct pcmcia_device *link)
 	if (multi && (j & 0x80)) continue;
 	link->io.BasePort1 = j ^ 0x300;
 	i = pcmcia_request_io(link, &link->io);
-	if (i == 0)
-		break;
+	if (i == CS_SUCCESS) break;
     }
-    if (i != 0) {
+    if (i != CS_SUCCESS) {
 	cs_error(link, RequestIO, i);
 	goto failed;
     }
@@ -302,14 +307,14 @@ static int tc589_config(struct pcmcia_device *link)
     /* The 3c589 has an extra EEPROM for configuration info, including
        the hardware address.  The 3c562 puts the address in the CIS. */
     tuple.DesiredTuple = 0x88;
-    if (pcmcia_get_first_tuple(link, &tuple) == 0) {
+    if (pcmcia_get_first_tuple(link, &tuple) == CS_SUCCESS) {
 	pcmcia_get_tuple_data(link, &tuple);
 	for (i = 0; i < 3; i++)
-	    phys_addr[i] = htons(le16_to_cpu(buf[i]));
+	    phys_addr[i] = htons(buf[i]);
     } else {
 	for (i = 0; i < 3; i++)
 	    phys_addr[i] = htons(read_eeprom(ioaddr, i));
-	if (phys_addr[0] == htons(0x6060)) {
+	if (phys_addr[0] == 0x6060) {
 	    printk(KERN_ERR "3c589_cs: IO port conflict at 0x%03lx"
 		   "-0x%03lx\n", dev->base_addr, dev->base_addr+15);
 	    goto failed;
@@ -338,10 +343,11 @@ static int tc589_config(struct pcmcia_device *link)
 
     strcpy(lp->node.dev_name, dev->name);
 
-    printk(KERN_INFO "%s: 3Com 3c%s, io %#3lx, irq %d, "
-	   "hw_addr %pM\n",
-	   dev->name, (multi ? "562" : "589"), dev->base_addr, dev->irq,
-	   dev->dev_addr);
+    printk(KERN_INFO "%s: 3Com 3c%s, io %#3lx, irq %d, hw_addr ",
+	   dev->name, (multi ? "562" : "589"), dev->base_addr,
+	   dev->irq);
+    for (i = 0; i < 6; i++)
+	printk("%02X%s", dev->dev_addr[i], ((i<5) ? ":" : "\n"));
     printk(KERN_INFO "  %dK FIFO split %s Rx:Tx, %s xcvr\n",
 	   (fifo & 7) ? 32 : 8, ram_split[(fifo >> 16) & 3],
 	   if_names[dev->if_port]);
@@ -409,7 +415,7 @@ static void tc589_wait_for_completion(struct net_device *dev, int cmd)
   Read a word from the EEPROM using the regular EEPROM access register.
   Assume that we are in register window zero.
 */
-static u16 read_eeprom(unsigned int ioaddr, int index)
+static u16 read_eeprom(kio_addr_t ioaddr, int index)
 {
     int i;
     outw(EEPROM_READ + index, ioaddr + 10);
@@ -427,7 +433,7 @@ static u16 read_eeprom(unsigned int ioaddr, int index)
 static void tc589_set_xcvr(struct net_device *dev, int if_port)
 {
     struct el3_private *lp = netdev_priv(dev);
-    unsigned int ioaddr = dev->base_addr;
+    kio_addr_t ioaddr = dev->base_addr;
     
     EL3WINDOW(0);
     switch (if_port) {
@@ -449,7 +455,7 @@ static void tc589_set_xcvr(struct net_device *dev, int if_port)
 
 static void dump_status(struct net_device *dev)
 {
-    unsigned int ioaddr = dev->base_addr;
+    kio_addr_t ioaddr = dev->base_addr;
     EL3WINDOW(1);
     printk(KERN_INFO "  irq status %04x, rx status %04x, tx status "
 	   "%02x  tx free %04x\n", inw(ioaddr+EL3_STATUS),
@@ -465,7 +471,7 @@ static void dump_status(struct net_device *dev)
 /* Reset and restore all of the 3c589 registers. */
 static void tc589_reset(struct net_device *dev)
 {
-    unsigned int ioaddr = dev->base_addr;
+    kio_addr_t ioaddr = dev->base_addr;
     int i;
     
     EL3WINDOW(0);
@@ -490,7 +496,8 @@ static void tc589_reset(struct net_device *dev)
     /* Switch to register set 1 for normal use. */
     EL3WINDOW(1);
 
-    set_rx_mode(dev);
+    /* Accept b-cast and phys addr only. */
+    outw(SetRxFilter | RxStation | RxBroadcast, ioaddr + EL3_CMD);
     outw(StatsEnable, ioaddr + EL3_CMD); /* Turn on statistics. */
     outw(RxEnable, ioaddr + EL3_CMD); /* Enable the receiver. */
     outw(TxEnable, ioaddr + EL3_CMD); /* Enable transmitter. */
@@ -523,7 +530,7 @@ static void netdev_set_msglevel(struct net_device *dev, u32 level)
 }
 #endif /* PCMCIA_DEBUG */
 
-static const struct ethtool_ops netdev_ethtool_ops = {
+static struct ethtool_ops netdev_ethtool_ops = {
 	.get_drvinfo		= netdev_get_drvinfo,
 #ifdef PCMCIA_DEBUG
 	.get_msglevel		= netdev_get_msglevel,
@@ -571,11 +578,12 @@ static int el3_open(struct net_device *dev)
 
 static void el3_tx_timeout(struct net_device *dev)
 {
-    unsigned int ioaddr = dev->base_addr;
+    struct el3_private *lp = netdev_priv(dev);
+    kio_addr_t ioaddr = dev->base_addr;
     
     printk(KERN_WARNING "%s: Transmit timed out!\n", dev->name);
     dump_status(dev);
-    dev->stats.tx_errors++;
+    lp->stats.tx_errors++;
     dev->trans_start = jiffies;
     /* Issue TX_RESET and TX_START commands. */
     tc589_wait_for_completion(dev, TxReset);
@@ -585,7 +593,8 @@ static void el3_tx_timeout(struct net_device *dev)
 
 static void pop_tx_status(struct net_device *dev)
 {
-    unsigned int ioaddr = dev->base_addr;
+    struct el3_private *lp = netdev_priv(dev);
+    kio_addr_t ioaddr = dev->base_addr;
     int i;
     
     /* Clear the Tx status stack. */
@@ -599,26 +608,22 @@ static void pop_tx_status(struct net_device *dev)
 	    DEBUG(1, "%s: transmit error: status 0x%02x\n",
 		  dev->name, tx_status);
 	    outw(TxEnable, ioaddr + EL3_CMD);
-	    dev->stats.tx_aborted_errors++;
+	    lp->stats.tx_aborted_errors++;
 	}
 	outb(0x00, ioaddr + TX_STATUS); /* Pop the status stack. */
     }
 }
 
-static netdev_tx_t el3_start_xmit(struct sk_buff *skb,
-					struct net_device *dev)
+static int el3_start_xmit(struct sk_buff *skb, struct net_device *dev)
 {
-    unsigned int ioaddr = dev->base_addr;
+    kio_addr_t ioaddr = dev->base_addr;
     struct el3_private *priv = netdev_priv(dev);
-    unsigned long flags;
 
     DEBUG(3, "%s: el3_start_xmit(length = %ld) called, "
 	  "status %4.4x.\n", dev->name, (long)skb->len,
 	  inw(ioaddr + EL3_STATUS));
 
-    spin_lock_irqsave(&priv->lock, flags);    
-
-    dev->stats.tx_bytes += skb->len;
+    priv->stats.tx_bytes += skb->len;
 
     /* Put out the doubleword header... */
     outw(skb->len, ioaddr + TX_FIFO);
@@ -633,19 +638,18 @@ static netdev_tx_t el3_start_xmit(struct sk_buff *skb,
 	outw(SetTxThreshold + 1536, ioaddr + EL3_CMD);
     }
 
-    pop_tx_status(dev);
-    spin_unlock_irqrestore(&priv->lock, flags);    
     dev_kfree_skb(skb);
+    pop_tx_status(dev);
     
-    return NETDEV_TX_OK;
+    return 0;
 }
 
 /* The EL3 interrupt handler. */
-static irqreturn_t el3_interrupt(int irq, void *dev_id)
+static irqreturn_t el3_interrupt(int irq, void *dev_id, struct pt_regs *regs)
 {
     struct net_device *dev = (struct net_device *) dev_id;
     struct el3_private *lp = netdev_priv(dev);
-    unsigned int ioaddr;
+    kio_addr_t ioaddr;
     __u16 status;
     int i = 0, handled = 1;
     
@@ -702,7 +706,7 @@ static irqreturn_t el3_interrupt(int irq, void *dev_id)
 		if (fifo_diag & 0x2000) {
 		    /* Rx underrun */
 		    tc589_wait_for_completion(dev, RxReset);
-		    set_rx_mode(dev);
+		    set_multicast_list(dev);
 		    outw(RxEnable, ioaddr + EL3_CMD);
 		}
 		outw(AckIntr | AdapterFailure, ioaddr + EL3_CMD);
@@ -731,19 +735,20 @@ static void media_check(unsigned long arg)
 {
     struct net_device *dev = (struct net_device *)(arg);
     struct el3_private *lp = netdev_priv(dev);
-    unsigned int ioaddr = dev->base_addr;
+    kio_addr_t ioaddr = dev->base_addr;
     u16 media, errs;
     unsigned long flags;
 
     if (!netif_device_present(dev)) goto reschedule;
 
+    EL3WINDOW(1);
     /* Check for pending interrupt with expired latency timer: with
        this, we can limp along even if the interrupt is blocked */
     if ((inw(ioaddr + EL3_STATUS) & IntLatch) &&
 	(inb(ioaddr + EL3_TIMER) == 0xff)) {
 	if (!lp->fast_poll)
 	    printk(KERN_WARNING "%s: interrupt(s) dropped!\n", dev->name);
-	el3_interrupt(dev->irq, dev);
+	el3_interrupt(dev->irq, lp, NULL);
 	lp->fast_poll = HZ;
     }
     if (lp->fast_poll) {
@@ -768,7 +773,7 @@ static void media_check(unsigned long arg)
 	outw(StatsDisable, ioaddr + EL3_CMD);
 	errs = inb(ioaddr + 0);
 	outw(StatsEnable, ioaddr + EL3_CMD);
-	dev->stats.tx_carrier_errors += errs;
+	lp->stats.tx_carrier_errors += errs;
 	if (errs || (lp->media_status & 0x0010)) media |= 0x0010;
     }
 
@@ -818,7 +823,7 @@ static struct net_device_stats *el3_get_stats(struct net_device *dev)
 	update_stats(dev);
 	spin_unlock_irqrestore(&lp->lock, flags);
     }
-    return &dev->stats;
+    return &lp->stats;
 }
 
 /*
@@ -831,20 +836,21 @@ static struct net_device_stats *el3_get_stats(struct net_device *dev)
 */
 static void update_stats(struct net_device *dev)
 {
-    unsigned int ioaddr = dev->base_addr;
+    struct el3_private *lp = netdev_priv(dev);
+    kio_addr_t ioaddr = dev->base_addr;
 
     DEBUG(2, "%s: updating the statistics.\n", dev->name);
     /* Turn off statistics updates while reading. */
     outw(StatsDisable, ioaddr + EL3_CMD);
     /* Switch to the stats window, and read everything. */
     EL3WINDOW(6);
-    dev->stats.tx_carrier_errors 	+= inb(ioaddr + 0);
-    dev->stats.tx_heartbeat_errors	+= inb(ioaddr + 1);
+    lp->stats.tx_carrier_errors 	+= inb(ioaddr + 0);
+    lp->stats.tx_heartbeat_errors	+= inb(ioaddr + 1);
     /* Multiple collisions. */	   	inb(ioaddr + 2);
-    dev->stats.collisions		+= inb(ioaddr + 3);
-    dev->stats.tx_window_errors		+= inb(ioaddr + 4);
-    dev->stats.rx_fifo_errors		+= inb(ioaddr + 5);
-    dev->stats.tx_packets		+= inb(ioaddr + 6);
+    lp->stats.collisions		+= inb(ioaddr + 3);
+    lp->stats.tx_window_errors		+= inb(ioaddr + 4);
+    lp->stats.rx_fifo_errors		+= inb(ioaddr + 5);
+    lp->stats.tx_packets		+= inb(ioaddr + 6);
     /* Rx packets   */			inb(ioaddr + 7);
     /* Tx deferrals */			inb(ioaddr + 8);
     /* Rx octets */			inw(ioaddr + 10);
@@ -857,25 +863,25 @@ static void update_stats(struct net_device *dev)
 
 static int el3_rx(struct net_device *dev)
 {
-    unsigned int ioaddr = dev->base_addr;
+    struct el3_private *lp = netdev_priv(dev);
+    kio_addr_t ioaddr = dev->base_addr;
     int worklimit = 32;
     short rx_status;
     
     DEBUG(3, "%s: in rx_packet(), status %4.4x, rx_status %4.4x.\n",
 	  dev->name, inw(ioaddr+EL3_STATUS), inw(ioaddr+RX_STATUS));
     while (!((rx_status = inw(ioaddr + RX_STATUS)) & 0x8000) &&
-		    worklimit > 0) {
-	worklimit--;
+	   (--worklimit >= 0)) {
 	if (rx_status & 0x4000) { /* Error, update stats. */
 	    short error = rx_status & 0x3800;
-	    dev->stats.rx_errors++;
+	    lp->stats.rx_errors++;
 	    switch (error) {
-	    case 0x0000:	dev->stats.rx_over_errors++; break;
-	    case 0x0800:	dev->stats.rx_length_errors++; break;
-	    case 0x1000:	dev->stats.rx_frame_errors++; break;
-	    case 0x1800:	dev->stats.rx_length_errors++; break;
-	    case 0x2000:	dev->stats.rx_frame_errors++; break;
-	    case 0x2800:	dev->stats.rx_crc_errors++; break;
+	    case 0x0000:	lp->stats.rx_over_errors++; break;
+	    case 0x0800:	lp->stats.rx_length_errors++; break;
+	    case 0x1000:	lp->stats.rx_frame_errors++; break;
+	    case 0x1800:	lp->stats.rx_length_errors++; break;
+	    case 0x2000:	lp->stats.rx_frame_errors++; break;
+	    case 0x2800:	lp->stats.rx_crc_errors++; break;
 	    }
 	} else {
 	    short pkt_len = rx_status & 0x7ff;
@@ -886,17 +892,19 @@ static int el3_rx(struct net_device *dev)
 	    DEBUG(3, "    Receiving packet size %d status %4.4x.\n",
 		  pkt_len, rx_status);
 	    if (skb != NULL) {
+		skb->dev = dev;
 		skb_reserve(skb, 2);
 		insl(ioaddr+RX_FIFO, skb_put(skb, pkt_len),
 			(pkt_len+3)>>2);
 		skb->protocol = eth_type_trans(skb, dev);
 		netif_rx(skb);
-		dev->stats.rx_packets++;
-		dev->stats.rx_bytes += pkt_len;
+		dev->last_rx = jiffies;
+		lp->stats.rx_packets++;
+		lp->stats.rx_bytes += pkt_len;
 	    } else {
 		DEBUG(1, "%s: couldn't allocate a sk_buff of"
 		      " size %d.\n", dev->name, pkt_len);
-		dev->stats.rx_dropped++;
+		lp->stats.rx_dropped++;
 	    }
 	}
 	/* Pop the top of the Rx FIFO */
@@ -907,11 +915,14 @@ static int el3_rx(struct net_device *dev)
     return 0;
 }
 
-static void set_rx_mode(struct net_device *dev)
+static void set_multicast_list(struct net_device *dev)
 {
-    unsigned int ioaddr = dev->base_addr;
+    struct el3_private *lp = netdev_priv(dev);
+    struct pcmcia_device *link = lp->p_dev;
+    kio_addr_t ioaddr = dev->base_addr;
     u16 opts = SetRxFilter | RxStation | RxBroadcast;
 
+    if (!pcmcia_dev_present(link)) return;
     if (dev->flags & IFF_PROMISC)
 	opts |= RxMulticast | RxProm;
     else if (dev->mc_count || (dev->flags & IFF_ALLMULTI))
@@ -919,26 +930,16 @@ static void set_rx_mode(struct net_device *dev)
     outw(opts, ioaddr + EL3_CMD);
 }
 
-static void set_multicast_list(struct net_device *dev)
-{
-	struct el3_private *priv = netdev_priv(dev);
-	unsigned long flags;
-
-	spin_lock_irqsave(&priv->lock, flags);
-	set_rx_mode(dev);
-	spin_unlock_irqrestore(&priv->lock, flags);
-}
-
 static int el3_close(struct net_device *dev)
 {
     struct el3_private *lp = netdev_priv(dev);
     struct pcmcia_device *link = lp->p_dev;
-    unsigned int ioaddr = dev->base_addr;
+    kio_addr_t ioaddr = dev->base_addr;
     
     DEBUG(1, "%s: shutting down ethercard.\n", dev->name);
 
     if (pcmcia_dev_present(link)) {
-	/* Turn off statistics ASAP.  We update dev->stats below. */
+	/* Turn off statistics ASAP.  We update lp->stats below. */
 	outw(StatsDisable, ioaddr + EL3_CMD);
 	
 	/* Disable the receiver and transmitter. */
@@ -976,8 +977,8 @@ static struct pcmcia_device_id tc589_ids[] = {
 	PCMCIA_MFC_DEVICE_PROD_ID1(0, "Motorola MARQUIS", 0xf03e4e77),
 	PCMCIA_DEVICE_MANF_CARD(0x0101, 0x0589),
 	PCMCIA_DEVICE_PROD_ID12("Farallon", "ENet", 0x58d93fc4, 0x992c2202),
-	PCMCIA_MFC_DEVICE_CIS_MANF_CARD(0, 0x0101, 0x0035, "cis/3CXEM556.cis"),
-	PCMCIA_MFC_DEVICE_CIS_MANF_CARD(0, 0x0101, 0x003d, "cis/3CXEM556.cis"),
+	PCMCIA_MFC_DEVICE_CIS_MANF_CARD(0, 0x0101, 0x0035, "3CXEM556.cis"),
+	PCMCIA_MFC_DEVICE_CIS_MANF_CARD(0, 0x0101, 0x003d, "3CXEM556.cis"),
 	PCMCIA_DEVICE_NULL,
 };
 MODULE_DEVICE_TABLE(pcmcia, tc589_ids);

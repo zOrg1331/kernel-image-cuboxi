@@ -317,23 +317,23 @@ InitTo310Pointer(struct SiS_Private *SiS_Pr)
 }
 #endif
 
-bool
+BOOLEAN
 SiSInitPtr(struct SiS_Private *SiS_Pr)
 {
    if(SiS_Pr->ChipType < SIS_315H) {
 #ifdef SIS300
       InitTo300Pointer(SiS_Pr);
 #else
-      return false;
+      return FALSE;
 #endif
    } else {
 #ifdef SIS315H
       InitTo310Pointer(SiS_Pr);
 #else
-      return false;
+      return FALSE;
 #endif
    }
-   return true;
+   return TRUE;
 }
 
 /*********************************************/
@@ -345,7 +345,7 @@ static
 #endif
 unsigned short
 SiS_GetModeID(int VGAEngine, unsigned int VBFlags, int HDisplay, int VDisplay,
-		int Depth, bool FSTN, int LCDwidth, int LCDheight)
+		int Depth, BOOLEAN FSTN, int LCDwidth, int LCDheight)
 {
    unsigned short ModeIndex = 0;
 
@@ -483,7 +483,7 @@ SiS_GetModeID(int VGAEngine, unsigned int VBFlags, int HDisplay, int VDisplay,
 
 unsigned short
 SiS_GetModeID_LCD(int VGAEngine, unsigned int VBFlags, int HDisplay, int VDisplay,
-		int Depth, bool FSTN, unsigned short CustomT, int LCDwidth, int LCDheight,
+		int Depth, BOOLEAN FSTN, unsigned short CustomT, int LCDwidth, int LCDheight,
 		unsigned int VBFlags2)
 {
    unsigned short ModeIndex = 0;
@@ -873,7 +873,7 @@ SiS_GetModeID_VGA2(int VGAEngine, unsigned int VBFlags, int HDisplay, int VDispl
 		break;
    }
 
-   return SiS_GetModeID(VGAEngine, 0, HDisplay, VDisplay, Depth, false, 0, 0);
+   return SiS_GetModeID(VGAEngine, 0, HDisplay, VDisplay, Depth, FALSE, 0, 0);
 }
 
 
@@ -1020,12 +1020,12 @@ SiS_GetSysFlags(struct SiS_Private *SiS_Pr)
 
    /* 661 and newer: NEVER write non-zero to SR11[7:4] */
    /* (SR11 is used for DDC and in enable/disablebridge) */
-   SiS_Pr->SiS_SensibleSR11 = false;
+   SiS_Pr->SiS_SensibleSR11 = FALSE;
    SiS_Pr->SiS_MyCR63 = 0x63;
    if(SiS_Pr->ChipType >= SIS_330) {
       SiS_Pr->SiS_MyCR63 = 0x53;
       if(SiS_Pr->ChipType >= SIS_661) {
-         SiS_Pr->SiS_SensibleSR11 = true;
+         SiS_Pr->SiS_SensibleSR11 = TRUE;
       }
    }
 
@@ -1253,7 +1253,7 @@ SiS_GetModeFlag(struct SiS_Private *SiS_Pr, unsigned short ModeNo,
 /*        HELPER: Determine ROM usage        */
 /*********************************************/
 
-bool
+BOOLEAN
 SiSDetermineROMLayout661(struct SiS_Private *SiS_Pr)
 {
    unsigned char  *ROMAddr  = SiS_Pr->VirtualRomBase;
@@ -1261,16 +1261,16 @@ SiSDetermineROMLayout661(struct SiS_Private *SiS_Pr)
 
    if(SiS_Pr->ChipType >= XGI_20) {
       /* XGI ROMs don't qualify */
-      return false;
+      return FALSE;
    } else if(SiS_Pr->ChipType >= SIS_761) {
       /* I very much assume 761, 340 and newer will use new layout */
-      return true;
+      return TRUE;
    } else if(SiS_Pr->ChipType >= SIS_661) {
       if((ROMAddr[0x1a] == 'N') &&
 	 (ROMAddr[0x1b] == 'e') &&
 	 (ROMAddr[0x1c] == 'w') &&
 	 (ROMAddr[0x1d] == 'V')) {
-	 return true;
+	 return TRUE;
       }
       romversoffs = ROMAddr[0x16] | (ROMAddr[0x17] << 8);
       if(romversoffs) {
@@ -1280,17 +1280,17 @@ SiSDetermineROMLayout661(struct SiS_Private *SiS_Pr)
 	 }
       }
       if((romvmaj != 0) || (romvmin >= 92)) {
-	 return true;
+	 return TRUE;
       }
    } else if(IS_SIS650740) {
       if((ROMAddr[0x1a] == 'N') &&
 	 (ROMAddr[0x1b] == 'e') &&
 	 (ROMAddr[0x1c] == 'w') &&
 	 (ROMAddr[0x1d] == 'V')) {
-	 return true;
+	 return TRUE;
       }
    }
-   return false;
+   return FALSE;
 }
 
 static void
@@ -1299,8 +1299,8 @@ SiSDetermineROMUsage(struct SiS_Private *SiS_Pr)
    unsigned char  *ROMAddr  = SiS_Pr->VirtualRomBase;
    unsigned short romptr = 0;
 
-   SiS_Pr->SiS_UseROM = false;
-   SiS_Pr->SiS_ROMNew = false;
+   SiS_Pr->SiS_UseROM = FALSE;
+   SiS_Pr->SiS_ROMNew = FALSE;
    SiS_Pr->SiS_PWDOffset = 0;
 
    if(SiS_Pr->ChipType >= XGI_20) return;
@@ -1312,15 +1312,15 @@ SiSDetermineROMUsage(struct SiS_Private *SiS_Pr)
 	  * of the BIOS image.
 	  */
 	 if((ROMAddr[3] == 0xe9) && ((ROMAddr[5] << 8) | ROMAddr[4]) > 0x21a)
-	    SiS_Pr->SiS_UseROM = true;
+	    SiS_Pr->SiS_UseROM = TRUE;
       } else if(SiS_Pr->ChipType < SIS_315H) {
 	 /* Sony's VAIO BIOS 1.09 follows the standard, so perhaps
 	  * the others do as well
 	  */
-	 SiS_Pr->SiS_UseROM = true;
+	 SiS_Pr->SiS_UseROM = TRUE;
       } else {
 	 /* 315/330 series stick to the standard(s) */
-	 SiS_Pr->SiS_UseROM = true;
+	 SiS_Pr->SiS_UseROM = TRUE;
 	 if((SiS_Pr->SiS_ROMNew = SiSDetermineROMLayout661(SiS_Pr))) {
 	    SiS_Pr->SiS_EMIOffset = 14;
 	    SiS_Pr->SiS_PWDOffset = 17;
@@ -1488,7 +1488,7 @@ SiS_GetVBType(struct SiS_Private *SiS_Pr)
 /*********************************************/
 
 #ifdef SIS_LINUX_KERNEL
-static bool
+static BOOLEAN
 SiS_CheckMemorySize(struct SiS_Private *SiS_Pr, unsigned short ModeNo,
 		unsigned short ModeIdIndex)
 {
@@ -1496,10 +1496,10 @@ SiS_CheckMemorySize(struct SiS_Private *SiS_Pr, unsigned short ModeNo,
    unsigned short modeflag = SiS_GetModeFlag(SiS_Pr, ModeNo, ModeIdIndex);
    unsigned short memorysize = ((modeflag & MemoryInfoFlag) >> MemorySizeShift) + 1;
 
-   if(!AdapterMemSize) return true;
+   if(!AdapterMemSize) return TRUE;
 
-   if(AdapterMemSize < memorysize) return false;
-   return true;
+   if(AdapterMemSize < memorysize) return FALSE;
+   return TRUE;
 }
 #endif
 
@@ -1605,7 +1605,7 @@ SiS_ClearBuffer(struct SiS_Private *SiS_Pr, unsigned short ModeNo)
 /*           HELPER: SearchModeID            */
 /*********************************************/
 
-bool
+BOOLEAN
 SiS_SearchModeID(struct SiS_Private *SiS_Pr, unsigned short *ModeNo,
 		unsigned short *ModeIdIndex)
 {
@@ -1617,7 +1617,7 @@ SiS_SearchModeID(struct SiS_Private *SiS_Pr, unsigned short *ModeNo,
 
       for((*ModeIdIndex) = 0; ;(*ModeIdIndex)++) {
 	 if(SiS_Pr->SiS_SModeIDTable[(*ModeIdIndex)].St_ModeID == (*ModeNo)) break;
-	 if(SiS_Pr->SiS_SModeIDTable[(*ModeIdIndex)].St_ModeID == 0xFF) return false;
+	 if(SiS_Pr->SiS_SModeIDTable[(*ModeIdIndex)].St_ModeID == 0xFF) return FALSE;
       }
 
       if((*ModeNo) == 0x07) {
@@ -1635,11 +1635,11 @@ SiS_SearchModeID(struct SiS_Private *SiS_Pr, unsigned short *ModeNo,
 
       for((*ModeIdIndex) = 0; ;(*ModeIdIndex)++) {
 	 if(SiS_Pr->SiS_EModeIDTable[(*ModeIdIndex)].Ext_ModeID == (*ModeNo)) break;
-	 if(SiS_Pr->SiS_EModeIDTable[(*ModeIdIndex)].Ext_ModeID == 0xFF) return false;
+	 if(SiS_Pr->SiS_EModeIDTable[(*ModeIdIndex)].Ext_ModeID == 0xFF) return FALSE;
       }
 
    }
-   return true;
+   return TRUE;
 }
 
 /*********************************************/
@@ -1696,13 +1696,13 @@ SiS_GetRefCRT1CRTC(struct SiS_Private *SiS_Pr, unsigned short Index, int UseWide
 /*           HELPER: LowModeTests            */
 /*********************************************/
 
-static bool
+static BOOLEAN
 SiS_DoLowModeTest(struct SiS_Private *SiS_Pr, unsigned short ModeNo)
 {
    unsigned short temp, temp1, temp2;
 
    if((ModeNo != 0x03) && (ModeNo != 0x10) && (ModeNo != 0x12))
-      return true;
+      return TRUE;
    temp = SiS_GetReg(SiS_Pr->SiS_P3d4,0x11);
    SiS_SetRegOR(SiS_Pr->SiS_P3d4,0x11,0x80);
    temp1 = SiS_GetReg(SiS_Pr->SiS_P3d4,0x00);
@@ -1712,13 +1712,13 @@ SiS_DoLowModeTest(struct SiS_Private *SiS_Pr, unsigned short ModeNo)
    SiS_SetReg(SiS_Pr->SiS_P3d4,0x11,temp);
    if((SiS_Pr->ChipType >= SIS_315H) ||
       (SiS_Pr->ChipType == SIS_300)) {
-      if(temp2 == 0x55) return false;
-      else return true;
+      if(temp2 == 0x55) return FALSE;
+      else return TRUE;
    } else {
-      if(temp2 != 0x55) return true;
+      if(temp2 != 0x55) return TRUE;
       else {
 	 SiS_SetRegOR(SiS_Pr->SiS_P3d4,0x35,0x01);
-	 return false;
+	 return FALSE;
       }
    }
 }
@@ -3237,14 +3237,14 @@ static void
 SiS_SetPitch(struct SiS_Private *SiS_Pr, ScrnInfoPtr pScrn)
 {
    SISPtr pSiS = SISPTR(pScrn);
-   bool isslavemode = false;
+   BOOLEAN isslavemode = FALSE;
 
    if( (pSiS->VBFlags2 & VB2_VIDEOBRIDGE) &&
        ( ((pSiS->VGAEngine == SIS_300_VGA) &&
 	  (SiS_GetReg(SiS_Pr->SiS_Part1Port,0x00) & 0xa0) == 0x20) ||
 	 ((pSiS->VGAEngine == SIS_315_VGA) &&
 	  (SiS_GetReg(SiS_Pr->SiS_Part1Port,0x00) & 0x50) == 0x10) ) ) {
-      isslavemode = true;
+      isslavemode = TRUE;
    }
 
    /* We need to set pitch for CRT1 if bridge is in slave mode, too */
@@ -3264,10 +3264,10 @@ SiS_SetPitch(struct SiS_Private *SiS_Pr, ScrnInfoPtr pScrn)
 
 #ifdef SIS_XORG_XF86
 /* We need pScrn for setting the pitch correctly */
-bool
-SiSSetMode(struct SiS_Private *SiS_Pr, ScrnInfoPtr pScrn, unsigned short ModeNo, bool dosetpitch)
+BOOLEAN
+SiSSetMode(struct SiS_Private *SiS_Pr, ScrnInfoPtr pScrn, unsigned short ModeNo, BOOLEAN dosetpitch)
 #else
-bool
+BOOLEAN
 SiSSetMode(struct SiS_Private *SiS_Pr, unsigned short ModeNo)
 #endif
 {
@@ -3277,8 +3277,8 @@ SiSSetMode(struct SiS_Private *SiS_Pr, unsigned short ModeNo)
 #ifdef SIS_LINUX_KERNEL
    unsigned short KeepLockReg;
 
-   SiS_Pr->UseCustomMode = false;
-   SiS_Pr->CRT1UsesCustomMode = false;
+   SiS_Pr->UseCustomMode = FALSE;
+   SiS_Pr->CRT1UsesCustomMode = FALSE;
 #endif
 
    SiS_Pr->SiS_flag_clearbuffer = 0;
@@ -3317,7 +3317,7 @@ SiSSetMode(struct SiS_Private *SiS_Pr, unsigned short ModeNo)
    SiS_UnLockCRT2(SiS_Pr);
 
    if(!SiS_Pr->UseCustomMode) {
-      if(!(SiS_SearchModeID(SiS_Pr, &ModeNo, &ModeIdIndex))) return false;
+      if(!(SiS_SearchModeID(SiS_Pr, &ModeNo, &ModeIdIndex))) return FALSE;
    } else {
       ModeIdIndex = 0;
    }
@@ -3347,18 +3347,18 @@ SiSSetMode(struct SiS_Private *SiS_Pr, unsigned short ModeNo)
 #ifdef SIS_LINUX_KERNEL
    /* Check memory size (kernel framebuffer driver only) */
    if(!SiS_CheckMemorySize(SiS_Pr, ModeNo, ModeIdIndex)) {
-      return false;
+      return FALSE;
    }
 #endif
 
    SiS_OpenCRTC(SiS_Pr);
 
    if(SiS_Pr->UseCustomMode) {
-      SiS_Pr->CRT1UsesCustomMode = true;
+      SiS_Pr->CRT1UsesCustomMode = TRUE;
       SiS_Pr->CSRClock_CRT1 = SiS_Pr->CSRClock;
       SiS_Pr->CModeFlag_CRT1 = SiS_Pr->CModeFlag;
    } else {
-      SiS_Pr->CRT1UsesCustomMode = false;
+      SiS_Pr->CRT1UsesCustomMode = FALSE;
    }
 
    /* Set mode on CRT1 */
@@ -3445,7 +3445,7 @@ SiSSetMode(struct SiS_Private *SiS_Pr, unsigned short ModeNo)
    if(KeepLockReg != 0xA1) SiS_SetReg(SiS_Pr->SiS_P3c4,0x05,0x00);
 #endif
 
-   return true;
+   return TRUE;
 }
 
 /*********************************************/
@@ -3454,14 +3454,14 @@ SiSSetMode(struct SiS_Private *SiS_Pr, unsigned short ModeNo)
 /*********************************************/
 
 #ifdef SIS_XORG_XF86
-bool
+BOOLEAN
 SiSBIOSSetMode(struct SiS_Private *SiS_Pr, ScrnInfoPtr pScrn,
-               DisplayModePtr mode, bool IsCustom)
+               DisplayModePtr mode, BOOLEAN IsCustom)
 {
    SISPtr pSiS = SISPTR(pScrn);
    unsigned short ModeNo = 0;
 
-   SiS_Pr->UseCustomMode = false;
+   SiS_Pr->UseCustomMode = FALSE;
 
    if((IsCustom) && (SiS_CheckBuildCustomMode(pScrn, mode, pSiS->VBFlags))) {
 
@@ -3475,13 +3475,13 @@ SiSBIOSSetMode(struct SiS_Private *SiS_Pr, ScrnInfoPtr pScrn,
 
       /* Don't need vbflags here; checks done earlier */
       ModeNo = SiS_GetModeNumber(pScrn, mode, pSiS->VBFlags);
-      if(!ModeNo) return false;
+      if(!ModeNo) return FALSE;
 
       xf86DrvMsgVerb(pScrn->scrnIndex, X_INFO, 3, "Setting standard mode 0x%x\n", ModeNo);
 
    }
 
-   return(SiSSetMode(SiS_Pr, pScrn, ModeNo, true));
+   return(SiSSetMode(SiS_Pr, pScrn, ModeNo, TRUE));
 }
 
 /*********************************************/
@@ -3489,9 +3489,9 @@ SiSBIOSSetMode(struct SiS_Private *SiS_Pr, ScrnInfoPtr pScrn,
 /*           for Dual-Head modes             */
 /*********************************************/
 
-bool
+BOOLEAN
 SiSBIOSSetModeCRT2(struct SiS_Private *SiS_Pr, ScrnInfoPtr pScrn,
-               DisplayModePtr mode, bool IsCustom)
+               DisplayModePtr mode, BOOLEAN IsCustom)
 {
    SISIOADDRESS BaseAddr = SiS_Pr->IOAddress;
    SISPtr  pSiS = SISPTR(pScrn);
@@ -3502,7 +3502,7 @@ SiSBIOSSetModeCRT2(struct SiS_Private *SiS_Pr, ScrnInfoPtr pScrn,
    unsigned short ModeNo = 0;
    unsigned char  backupreg = 0;
 
-   SiS_Pr->UseCustomMode = false;
+   SiS_Pr->UseCustomMode = FALSE;
 
    /* Remember: Custom modes for CRT2 are ONLY supported
     *     -) on the 30x/B/C, and
@@ -3516,7 +3516,7 @@ SiSBIOSSetModeCRT2(struct SiS_Private *SiS_Pr, ScrnInfoPtr pScrn,
    } else {
 
 	 ModeNo = SiS_GetModeNumber(pScrn, mode, pSiS->VBFlags);
-	 if(!ModeNo) return false;
+	 if(!ModeNo) return FALSE;
 
    }
 
@@ -3550,10 +3550,10 @@ SiSBIOSSetModeCRT2(struct SiS_Private *SiS_Pr, ScrnInfoPtr pScrn,
       if(pSiSEnt->CRT1ModeNo == -1) {
 	 xf86DrvMsgVerb(pScrn->scrnIndex, X_INFO, 3,
 		"Setting CRT2 mode delayed until after setting CRT1 mode\n");
-	 return true;
+	 return TRUE;
       }
 #endif
-      pSiSEnt->CRT2ModeSet = true;
+      pSiSEnt->CRT2ModeSet = TRUE;
    }
 #endif
 
@@ -3578,7 +3578,7 @@ SiSBIOSSetModeCRT2(struct SiS_Private *SiS_Pr, ScrnInfoPtr pScrn,
    SiS_UnLockCRT2(SiS_Pr);
 
    if(!SiS_Pr->UseCustomMode) {
-      if(!(SiS_SearchModeID(SiS_Pr, &ModeNo, &ModeIdIndex))) return false;
+      if(!(SiS_SearchModeID(SiS_Pr, &ModeNo, &ModeIdIndex))) return FALSE;
    } else {
       ModeIdIndex = 0;
    }
@@ -3658,7 +3658,7 @@ SiSBIOSSetModeCRT2(struct SiS_Private *SiS_Pr, ScrnInfoPtr pScrn,
 
    SiS_Handle760(SiS_Pr);
 
-   return true;
+   return TRUE;
 }
 
 /*********************************************/
@@ -3666,9 +3666,9 @@ SiSBIOSSetModeCRT2(struct SiS_Private *SiS_Pr, ScrnInfoPtr pScrn,
 /*           for Dual-Head modes             */
 /*********************************************/
 
-bool
+BOOLEAN
 SiSBIOSSetModeCRT1(struct SiS_Private *SiS_Pr, ScrnInfoPtr pScrn,
-                   DisplayModePtr mode, bool IsCustom)
+                   DisplayModePtr mode, BOOLEAN IsCustom)
 {
    SISIOADDRESS BaseAddr = SiS_Pr->IOAddress;
    SISPtr  pSiS = SISPTR(pScrn);
@@ -3677,10 +3677,10 @@ SiSBIOSSetModeCRT1(struct SiS_Private *SiS_Pr, ScrnInfoPtr pScrn,
 #ifdef SISDUALHEAD
    SISEntPtr pSiSEnt = pSiS->entityPrivate;
    unsigned char  backupcr30, backupcr31, backupcr38, backupcr35, backupp40d=0;
-   bool backupcustom;
+   BOOLEAN backupcustom;
 #endif
 
-   SiS_Pr->UseCustomMode = false;
+   SiS_Pr->UseCustomMode = FALSE;
 
    if((IsCustom) && (SiS_CheckBuildCustomMode(pScrn, mode, pSiS->VBFlags))) {
 
@@ -3697,7 +3697,7 @@ SiSBIOSSetModeCRT1(struct SiS_Private *SiS_Pr, ScrnInfoPtr pScrn,
    } else {
 
 	 ModeNo = SiS_GetModeNumber(pScrn, mode, 0); /* don't give VBFlags */
-	 if(!ModeNo) return false;
+	 if(!ModeNo) return FALSE;
 
 	 xf86DrvMsgVerb(pScrn->scrnIndex, X_INFO, 3,
 	 	"Setting standard mode 0x%x on CRT1\n", ModeNo);
@@ -3721,7 +3721,7 @@ SiSBIOSSetModeCRT1(struct SiS_Private *SiS_Pr, ScrnInfoPtr pScrn,
    SiS_UnLockCRT2(SiS_Pr);
 
    if(!SiS_Pr->UseCustomMode) {
-      if(!(SiS_SearchModeID(SiS_Pr, &ModeNo, &ModeIdIndex))) return false;
+      if(!(SiS_SearchModeID(SiS_Pr, &ModeNo, &ModeIdIndex))) return FALSE;
    } else {
       ModeIdIndex = 0;
    }
@@ -3771,11 +3771,11 @@ SiSBIOSSetModeCRT1(struct SiS_Private *SiS_Pr, ScrnInfoPtr pScrn,
 #endif
 
    if(SiS_Pr->UseCustomMode) {
-      SiS_Pr->CRT1UsesCustomMode = true;
+      SiS_Pr->CRT1UsesCustomMode = TRUE;
       SiS_Pr->CSRClock_CRT1 = SiS_Pr->CSRClock;
       SiS_Pr->CModeFlag_CRT1 = SiS_Pr->CModeFlag;
    } else {
-      SiS_Pr->CRT1UsesCustomMode = false;
+      SiS_Pr->CRT1UsesCustomMode = FALSE;
    }
 
    /* Reset CRT2 if changing mode on CRT1 */
@@ -3838,7 +3838,7 @@ SiSBIOSSetModeCRT1(struct SiS_Private *SiS_Pr, ScrnInfoPtr pScrn,
    /* Backup/Set ModeNo in BIOS scratch area */
    SiS_GetSetModeID(pScrn,ModeNo);
 
-   return true;
+   return TRUE;
 }
 #endif /* Linux_XF86 */
 
@@ -4082,7 +4082,7 @@ SiS_Generic_ConvertCRData(struct SiS_Private *SiS_Pr, unsigned char *crdata,
 			DisplayModePtr current
 #endif
 #ifdef SIS_LINUX_KERNEL
-			struct fb_var_screeninfo *var, bool writeres
+			struct fb_var_screeninfo *var, BOOLEAN writeres
 #endif
 )
 {

@@ -1,0 +1,35 @@
+From: Wendy Cheng <wcheng@redhat.com>
+Subject: [RHEL5.1 PATCH] GFS2: Move inode delete logic out of blocking_cb
+Date: Fri, 14 Sep 2007 10:24:24 -0400
+Bugzilla: 286821
+Message-Id: <46EA9998.2090906@redhat.com>
+Changelog: [GFS2] Move inode delete logic out of blocking_cb
+
+
+Fix Red Hat bugzilla 286821.
+
+-- Wendy
+
+Move inode deletion code out of blocking_cb handle_callback route to 
+avoid racy conditions that ends up blocking lock_dlm1 thread. 
+ 
+ glock.c |    6 +-----
+ 1 files changed, 1 insertion(+), 5 deletions(-)
+
+--- linux-e45/fs/gfs2/glock.c	2007-09-08 22:05:58.000000000 -0400
++++ a007/fs/gfs2/glock.c	2007-09-12 08:58:16.000000000 -0400
+@@ -715,12 +715,8 @@ static void handle_callback(struct gfs2_
+ 		gl->gl_demote_time = jiffies;
+ 		if (remote && gl->gl_ops->go_type == LM_TYPE_IOPEN &&
+ 		    gl->gl_object) {
+-			struct inode *inode = igrab(gl->gl_object);
++			gfs2_glock_schedule_for_reclaim(gl);
+ 			spin_unlock(&gl->gl_spin);
+-			if (inode) {
+-				d_prune_aliases(inode);
+-				iput(inode);
+-			}
+ 			return;
+ 		}
+ 	} else if (gl->gl_demote_state != LM_ST_UNLOCKED &&
+

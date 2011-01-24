@@ -1,0 +1,397 @@
+From: Eric Sandeen <sandeen@redhat.com>
+Date: Fri, 17 Apr 2009 13:43:12 -0500
+Subject: [fs] ext4: post-2.6.29 fixes
+Message-id: 49E8CDC0.4050007@redhat.com
+O-Subject: [RHEL5.4 PATCH 5/6] ext4 post-2.6.29 fixes
+Bugzilla: 485315
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+RH-Acked-by: Josef Bacik <josef@redhat.com>
+RH-Acked-by: Chuck Ebbert <cebbert@redhat.com>
+
+This is for bug
+Bug 485315 -  ext4 kernelspace rebase for RHEL5.4
+
+Rolls up a few post-2.6.29 fixes.  Note that this includes
+the "fsync on truncate or rename" Ted put in after the
+hoo-ha about lost buffered configfile data after a crash.
+
+Includes:
+
+7d8f9f7d150dded7b68e61ca6403a1f166fb4edf
+ext4: Automatically allocate delay allocated blocks on close
+
+8750c6d5fcbd3342b3d908d157f81d345c5325a7
+ext4: Automatically allocate delay allocated blocks on rename
+
+afd4672dc7610b7feef5190168aa917cc2e417e4
+ext4: Add auto_da_alloc mount option
+
+06705bff9114531a997a7d0c2520bea0f2927410
+ext4: Regularize mount options
+
+a7b19448ddbdc34b2b8fedc048ba154ca798667b
+ext4: fix typo which causes a memory leak on error path
+
+e7c9e3e99adf6c49c5d593a51375916acc039d1e
+ext4: fix locking typo in mballoc which could cause soft lockup hangs
+
+and a patch not yet merged in linus' tree to restrict a "normal"
+fallback condition to printk only once.
+
+diff --git a/Documentation/filesystems/ext4.txt b/Documentation/filesystems/ext4.txt
+index cec829b..7eb1b4e 100644
+--- a/Documentation/filesystems/ext4.txt
++++ b/Documentation/filesystems/ext4.txt
+@@ -180,8 +180,8 @@ commit=nrsec	(*)	Ext4 can be told to sync all its data and metadata
+ 			performance.
+ 
+ barrier=<0|1(*)>	This enables/disables the use of write barriers in
+-			the jbd code.  barrier=0 disables, barrier=1 enables.
+-			This also requires an IO stack which can support
++barrier(*)		the jbd code.  barrier=0 disables, barrier=1 enables.
++nobarrier		This also requires an IO stack which can support
+ 			barriers, and if jbd gets an error on a barrier
+ 			write, it will disable again with a warning.
+ 			Write barriers enforce proper on-disk ordering
+@@ -189,6 +189,9 @@ barrier=<0|1(*)>	This enables/disables the use of write barriers in
+ 			safe to use, at some performance penalty.  If
+ 			your disks are battery-backed in one way or another,
+ 			disabling barriers may safely improve performance.
++			The mount options "barrier" and "nobarrier" can
++			also be used to enable or disable barriers, for
++			consistency with other ext4 mount options.
+ 
+ inode_readahead=n	This tuning parameter controls the maximum
+ 			number of inode table blocks that ext4's inode
+@@ -310,6 +313,24 @@ journal_ioprio=prio	The I/O priority (from 0 to 7, where 0 is the
+ 			a slightly higher priority than the default I/O
+ 			priority.
+ 
++auto_da_alloc(*)	Many broken applications don't use fsync() when 
++noauto_da_alloc		replacing existing files via patterns such as
++			fd = open("foo.new")/write(fd,..)/close(fd)/
++			rename("foo.new", "foo"), or worse yet,
++			fd = open("foo", O_TRUNC)/write(fd,..)/close(fd).
++			If auto_da_alloc is enabled, ext4 will detect
++			the replace-via-rename and replace-via-truncate
++			patterns and force that any delayed allocation
++			blocks are allocated such that at the next
++			journal commit, in the default data=ordered
++			mode, the data blocks of the new file are forced
++			to disk before the rename() operation is
++			commited.  This provides roughly the same level
++			of guarantees as ext3, and avoids the
++			"zero-length" problem that can happen when a
++			system crashes before the delayed allocation
++			blocks are forced to disk.
++
+ Data Mode
+ =========
+ There are 3 different data modes:
+diff --git a/fs/ext4/ext4.h b/fs/ext4/ext4.h
+index 71e9d34..2122d9c 100644
+--- a/fs/ext4/ext4.h
++++ b/fs/ext4/ext4.h
+@@ -257,6 +257,7 @@ struct flex_groups {
+ #define EXT4_STATE_NEW			0x00000002 /* inode is newly created */
+ #define EXT4_STATE_XATTR		0x00000004 /* has in-inode xattrs */
+ #define EXT4_STATE_NO_EXPAND		0x00000008 /* No space for expansion */
++#define EXT4_STATE_DA_ALLOC_CLOSE	0x00000010 /* Alloc DA blks on close */
+ 
+ /* Used to pass group descriptor data when online resize is done */
+ struct ext4_new_group_input {
+@@ -532,7 +533,7 @@ do {									       \
+ #define EXT4_MOUNT_NO_UID32		0x02000  /* Disable 32-bit UIDs */
+ #define EXT4_MOUNT_XATTR_USER		0x04000	/* Extended user attributes */
+ #define EXT4_MOUNT_POSIX_ACL		0x08000	/* POSIX Access Control Lists */
+-#define EXT4_MOUNT_RESERVATION		0x10000	/* Preallocation */
++#define EXT4_MOUNT_NO_AUTO_DA_ALLOC	0x10000	/* No auto delalloc mapping */
+ #define EXT4_MOUNT_BARRIER		0x20000 /* Use block barriers */
+ #define EXT4_MOUNT_NOBH			0x40000 /* No bufferheads */
+ #define EXT4_MOUNT_QUOTA		0x80000 /* Some quota option set */
+@@ -1096,6 +1097,7 @@ extern int ext4_can_truncate(struct inode *inode);
+ extern void ext4_truncate(struct inode *);
+ extern void ext4_set_inode_flags(struct inode *);
+ extern void ext4_get_inode_flags(struct ext4_inode_info *);
++extern int ext4_alloc_da_blocks(struct inode *inode);
+ extern void ext4_set_aops(struct inode *inode);
+ extern int ext4_writepage_trans_blocks(struct inode *);
+ extern int ext4_meta_trans_blocks(struct inode *, int nrblocks, int idxblocks);
+diff --git a/fs/ext4/file.c b/fs/ext4/file.c
+index 77c1aca..91fcf3b 100644
+--- a/fs/ext4/file.c
++++ b/fs/ext4/file.c
+@@ -33,6 +33,10 @@
+  */
+ static int ext4_release_file(struct inode *inode, struct file *filp)
+ {
++	if (EXT4_I(inode)->i_state & EXT4_STATE_DA_ALLOC_CLOSE) {
++		ext4_alloc_da_blocks(inode);
++		EXT4_I(inode)->i_state &= ~EXT4_STATE_DA_ALLOC_CLOSE;
++	}
+ 	/* if we are the last writer on the inode, drop the block reservation */
+ 	if ((filp->f_mode & FMODE_WRITE) &&
+ 			(atomic_read(&inode->i_writecount) == 1))
+diff --git a/fs/ext4/ialloc.c b/fs/ext4/ialloc.c
+index f4770c9..b85d611 100644
+--- a/fs/ext4/ialloc.c
++++ b/fs/ext4/ialloc.c
+@@ -720,11 +720,12 @@ struct inode *ext4_new_inode(handle_t *handle, struct inode *dir, int mode)
+ 		ret2 = find_group_flex(sb, dir, &group);
+ 		if (ret2 == -1) {
+ 			ret2 = find_group_other(sb, dir, &group);
+-			if (ret2 == 0 && once)
++			if (ret2 == 0 && once) {
+ 				once = 0;
+ 				printk(KERN_NOTICE "ext4: find_group_flex "
+ 				       "failed, fallback succeeded dir %lu\n",
+ 				       dir->i_ino);
++			}
+ 		}
+ 		goto got_group;
+ 	}
+diff --git a/fs/ext4/inode.c b/fs/ext4/inode.c
+index 3a5ad62..e678f99 100644
+--- a/fs/ext4/inode.c
++++ b/fs/ext4/inode.c
+@@ -2816,6 +2816,48 @@ out:
+ 	return;
+ }
+ 
++/*
++ * Force all delayed allocation blocks to be allocated for a given inode.
++ */
++int ext4_alloc_da_blocks(struct inode *inode)
++{
++	if (!EXT4_I(inode)->i_reserved_data_blocks &&
++	    !EXT4_I(inode)->i_reserved_meta_blocks)
++		return 0;
++
++	/*
++	 * We do something simple for now.  The filemap_flush() will
++	 * also start triggering a write of the data blocks, which is
++	 * not strictly speaking necessary (and for users of
++	 * laptop_mode, not even desirable).  However, to do otherwise
++	 * would require replicating code paths in:
++	 * 
++	 * ext4_da_writepages() ->
++	 *    write_cache_pages() ---> (via passed in callback function)
++	 *        __mpage_da_writepage() -->
++	 *           mpage_add_bh_to_extent()
++	 *           mpage_da_map_blocks()
++	 *
++	 * The problem is that write_cache_pages(), located in
++	 * mm/page-writeback.c, marks pages clean in preparation for
++	 * doing I/O, which is not desirable if we're not planning on
++	 * doing I/O at all.
++	 *
++	 * We could call write_cache_pages(), and then redirty all of
++	 * the pages by calling redirty_page_for_writeback() but that
++	 * would be ugly in the extreme.  So instead we would need to
++	 * replicate parts of the code in the above functions,
++	 * simplifying them becuase we wouldn't actually intend to
++	 * write out the pages, but rather only collect contiguous
++	 * logical block extents, call the multi-block allocator, and
++	 * then update the buffer heads with the block allocations.
++	 * 
++	 * For now, though, we'll cheat by calling filemap_flush(),
++	 * which will map the blocks, and start the I/O, but not
++	 * actually wait for the I/O to complete.
++	 */
++	return filemap_flush(inode->i_mapping);
++}
+ 
+ /*
+  * bmap() is special.  It gets used by applications such as lilo and by
+@@ -3834,6 +3876,9 @@ void ext4_truncate(struct inode *inode)
+ 	if (!ext4_can_truncate(inode))
+ 		return;
+ 
++	if (inode->i_size == 0 && !test_opt(inode->i_sb, NO_AUTO_DA_ALLOC))
++		ei->i_state |= EXT4_STATE_DA_ALLOC_CLOSE;
++
+ 	if (EXT4_I(inode)->i_flags & EXT4_EXTENTS_FL) {
+ 		ext4_ext_truncate(inode);
+ 		return;
+diff --git a/fs/ext4/mballoc.c b/fs/ext4/mballoc.c
+index cd64d27..bd56471 100644
+--- a/fs/ext4/mballoc.c
++++ b/fs/ext4/mballoc.c
+@@ -2700,7 +2700,7 @@ int ext4_mb_init(struct super_block *sb, int needs_recovery)
+ 	i = (sb->s_blocksize_bits + 2) * sizeof(unsigned int);
+ 	sbi->s_mb_maxs = kmalloc(i, GFP_KERNEL);
+ 	if (sbi->s_mb_maxs == NULL) {
+-		kfree(sbi->s_mb_maxs);
++		kfree(sbi->s_mb_offsets);
+ 		return -ENOMEM;
+ 	}
+ 
+@@ -4438,7 +4438,7 @@ static void ext4_mb_add_n_trim(struct ext4_allocation_context *ac)
+ 						pa_inode_list) {
+ 		spin_lock(&tmp_pa->pa_lock);
+ 		if (tmp_pa->pa_deleted) {
+-			spin_unlock(&pa->pa_lock);
++			spin_unlock(&tmp_pa->pa_lock);
+ 			continue;
+ 		}
+ 		if (!added && pa->pa_free < tmp_pa->pa_free) {
+diff --git a/fs/ext4/namei.c b/fs/ext4/namei.c
+index 7c5dee9..0fc1bb0 100644
+--- a/fs/ext4/namei.c
++++ b/fs/ext4/namei.c
+@@ -2316,7 +2316,7 @@ static int ext4_rename(struct inode *old_dir, struct dentry *old_dentry,
+ 	struct inode *old_inode, *new_inode;
+ 	struct buffer_head *old_bh, *new_bh, *dir_bh;
+ 	struct ext4_dir_entry_2 *old_de, *new_de;
+-	int retval;
++	int retval, force_da_alloc = 0;
+ 
+ 	old_bh = new_bh = dir_bh = NULL;
+ 
+@@ -2454,6 +2454,8 @@ static int ext4_rename(struct inode *old_dir, struct dentry *old_dentry,
+ 		ext4_mark_inode_dirty(handle, new_inode);
+ 		if (!new_inode->i_nlink)
+ 			ext4_orphan_add(handle, new_inode);
++		if (!test_opt(new_dir->i_sb, NO_AUTO_DA_ALLOC))
++			force_da_alloc = 1;
+ 	}
+ 	retval = 0;
+ 
+@@ -2462,6 +2464,8 @@ end_rename:
+ 	brelse(old_bh);
+ 	brelse(new_bh);
+ 	ext4_journal_stop(handle);
++	if (retval == 0 && force_da_alloc)
++		ext4_alloc_da_blocks(old_inode);
+ 	return retval;
+ }
+ 
+diff --git a/fs/ext4/super.c b/fs/ext4/super.c
+index fad6def..8af7db5 100644
+--- a/fs/ext4/super.c
++++ b/fs/ext4/super.c
+@@ -803,8 +803,6 @@ static int ext4_show_options(struct seq_file *seq, struct vfsmount *vfs)
+ 	if (!test_opt(sb, POSIX_ACL) && (def_mount_opts & EXT4_DEFM_ACL))
+ 		seq_puts(seq, ",noacl");
+ #endif
+-	if (!test_opt(sb, RESERVATION))
+-		seq_puts(seq, ",noreservation");
+ 	if (sbi->s_commit_interval != JBD2_DEFAULT_MAX_COMMIT_AGE*HZ) {
+ 		seq_printf(seq, ",commit=%u",
+ 			   (unsigned) (sbi->s_commit_interval / HZ));
+@@ -855,6 +853,9 @@ static int ext4_show_options(struct seq_file *seq, struct vfsmount *vfs)
+ 	if (test_opt(sb, DATA_ERR_ABORT))
+ 		seq_puts(seq, ",data_err=abort");
+ 
++	if (test_opt(sb, NO_AUTO_DA_ALLOC))
++		seq_puts(seq, ",noauto_da_alloc");
++
+ 	ext4_show_quota_options(seq, sb);
+ 	return 0;
+ }
+@@ -976,7 +977,7 @@ enum {
+ 	Opt_resgid, Opt_resuid, Opt_sb, Opt_err_cont, Opt_err_panic, Opt_err_ro,
+ 	Opt_nouid32, Opt_debug, Opt_oldalloc, Opt_orlov,
+ 	Opt_user_xattr, Opt_nouser_xattr, Opt_acl, Opt_noacl,
+-	Opt_reservation, Opt_noreservation, Opt_noload, Opt_nobh, Opt_bh,
++	Opt_auto_da_alloc, Opt_noauto_da_alloc, Opt_noload, Opt_nobh, Opt_bh,
+ 	Opt_commit, Opt_min_batch_time, Opt_max_batch_time,
+ 	Opt_journal_update, Opt_journal_dev,
+ 	Opt_journal_checksum, Opt_journal_async_commit,
+@@ -984,8 +985,8 @@ enum {
+ 	Opt_data_err_abort, Opt_data_err_ignore,
+ 	Opt_usrjquota, Opt_grpjquota, Opt_offusrjquota, Opt_offgrpjquota,
+ 	Opt_jqfmt_vfsold, Opt_jqfmt_vfsv0, Opt_quota, Opt_noquota,
+-	Opt_ignore, Opt_barrier, Opt_err, Opt_resize, Opt_usrquota,
+-	Opt_grpquota, Opt_i_version,
++	Opt_ignore, Opt_barrier, Opt_nobarrier, Opt_err, Opt_resize,
++	Opt_usrquota, Opt_grpquota, Opt_i_version,
+ 	Opt_stripe, Opt_delalloc, Opt_nodelalloc,
+ 	Opt_inode_readahead_blks, Opt_journal_ioprio
+ };
+@@ -1011,8 +1012,6 @@ static match_table_t tokens = {
+ 	{Opt_nouser_xattr, "nouser_xattr"},
+ 	{Opt_acl, "acl"},
+ 	{Opt_noacl, "noacl"},
+-	{Opt_reservation, "reservation"},
+-	{Opt_noreservation, "noreservation"},
+ 	{Opt_noload, "noload"},
+ 	{Opt_nobh, "nobh"},
+ 	{Opt_bh, "bh"},
+@@ -1040,6 +1039,8 @@ static match_table_t tokens = {
+ 	{Opt_quota, "quota"},
+ 	{Opt_usrquota, "usrquota"},
+ 	{Opt_barrier, "barrier=%u"},
++	{Opt_barrier, "barrier"},
++	{Opt_nobarrier, "nobarrier"},
+ 	{Opt_i_version, "i_version"},
+ 	{Opt_stripe, "stripe=%u"},
+ 	{Opt_resize, "resize"},
+@@ -1047,6 +1048,9 @@ static match_table_t tokens = {
+ 	{Opt_nodelalloc, "nodelalloc"},
+ 	{Opt_inode_readahead_blks, "inode_readahead_blks=%u"},
+ 	{Opt_journal_ioprio, "journal_ioprio=%u"},
++	{Opt_auto_da_alloc, "auto_da_alloc=%u"},
++	{Opt_auto_da_alloc, "auto_da_alloc"},
++	{Opt_noauto_da_alloc, "noauto_da_alloc"},
+ 	{Opt_err, NULL},
+ };
+ 
+@@ -1179,12 +1183,6 @@ static int parse_options(char *options, struct super_block *sb,
+ 			       "not supported\n");
+ 			break;
+ #endif
+-		case Opt_reservation:
+-			set_opt(sbi->s_mount_opt, RESERVATION);
+-			break;
+-		case Opt_noreservation:
+-			clear_opt(sbi->s_mount_opt, RESERVATION);
+-			break;
+ 		case Opt_journal_update:
+ 			/* @@@ FIXME */
+ 			/* Eventually we will want to be able to create
+@@ -1387,9 +1385,14 @@ set_qf_format:
+ 		case Opt_abort:
+ 			set_opt(sbi->s_mount_opt, ABORT);
+ 			break;
++		case Opt_nobarrier:
++			clear_opt(sbi->s_mount_opt, BARRIER);
++			break;
+ 		case Opt_barrier:
+-			if (match_int(&args[0], &option))
+-				return 0;
++			if (match_int(&args[0], &option)) {
++				set_opt(sbi->s_mount_opt, BARRIER);
++				break;
++			}
+ 			if (option)
+ 				set_opt(sbi->s_mount_opt, BARRIER);
+ 			else
+@@ -1445,6 +1448,19 @@ set_qf_format:
+ 			*journal_ioprio = IOPRIO_PRIO_VALUE(IOPRIO_CLASS_BE,
+ 							    option);
+ 			break;
++		case Opt_noauto_da_alloc:
++			set_opt(sbi->s_mount_opt,NO_AUTO_DA_ALLOC);
++			break;
++		case Opt_auto_da_alloc:
++			if (match_int(&args[0], &option)) {
++				clear_opt(sbi->s_mount_opt, NO_AUTO_DA_ALLOC);
++				break;
++			}
++			if (option)
++				clear_opt(sbi->s_mount_opt, NO_AUTO_DA_ALLOC);
++			else
++				set_opt(sbi->s_mount_opt,NO_AUTO_DA_ALLOC);
++			break;
+ 		default:
+ 			printk(KERN_ERR
+ 			       "EXT4-fs: Unrecognized mount option \"%s\" "
+@@ -2073,7 +2089,6 @@ static int ext4_fill_super(struct super_block *sb, void *data, int silent)
+ 	sbi->s_min_batch_time = EXT4_DEF_MIN_BATCH_TIME;
+ 	sbi->s_max_batch_time = EXT4_DEF_MAX_BATCH_TIME;
+ 
+-	set_opt(sbi->s_mount_opt, RESERVATION);
+ 	set_opt(sbi->s_mount_opt, BARRIER);
+ 
+ 	/*

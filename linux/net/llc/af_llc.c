@@ -64,10 +64,10 @@ static inline u16 llc_ui_next_link_no(int sap)
  *
  *	Given an ARP header type return the corresponding ethernet protocol.
  */
-static inline __be16 llc_proto_type(u16 arphrd)
+static inline u16 llc_proto_type(u16 arphrd)
 {
 	return arphrd == ARPHRD_IEEE802_TR ?
-			 htons(ETH_P_TR_802_2) : htons(ETH_P_802_2);
+		         htons(ETH_P_TR_802_2) : htons(ETH_P_802_2);
 }
 
 /**
@@ -103,6 +103,7 @@ static inline u8 llc_ui_header_len(struct sock *sk, struct sockaddr_llc *addr)
  *	llc_ui_send_data - send data via reliable llc2 connection
  *	@sk: Connection the socket is using.
  *	@skb: Data the user wishes to send.
+ *	@addr: Source and destination fields provided by the user.
  *	@noblock: can we block waiting for data?
  *
  *	Send data via reliable llc2 connection.
@@ -113,7 +114,7 @@ static int llc_ui_send_data(struct sock* sk, struct sk_buff *skb, int noblock)
 	struct llc_sock* llc = llc_sk(sk);
 	int rc = 0;
 
-	if (unlikely(llc_data_accept_state(llc->state) ||
+	if (unlikely(llc_data_accept_state(llc->state) || 
 		     llc->remote_busy_flag ||
 		     llc->p_flag)) {
 		long timeout = sock_sndtimeo(sk, noblock);
@@ -127,8 +128,10 @@ static int llc_ui_send_data(struct sock* sk, struct sk_buff *skb, int noblock)
 
 static void llc_ui_sk_init(struct socket *sock, struct sock *sk)
 {
-	sock_graft(sk, sock);
 	sk->sk_type	= sock->type;
+	sk->sk_sleep	= &sock->wait;
+	sk->sk_socket	= sock;
+	sock->sk	= sk;
 	sock->ops	= &llc_ui_ops;
 }
 
@@ -140,30 +143,21 @@ static struct proto llc_proto = {
 
 /**
  *	llc_ui_create - alloc and init a new llc_ui socket
- *	@net: network namespace (must be default network)
  *	@sock: Socket to initialize and attach allocated sk to.
  *	@protocol: Unused.
- *	@kern: on behalf of kernel or userspace
  *
  *	Allocate and initialize a new llc_ui socket, validate the user wants a
  *	socket type we have available.
  *	Returns 0 upon success, negative upon failure.
  */
-static int llc_ui_create(struct net *net, struct socket *sock, int protocol,
-			 int kern)
+static int llc_ui_create(struct socket *sock, int protocol)
 {
 	struct sock *sk;
 	int rc = -ESOCKTNOSUPPORT;
 
-	if (!capable(CAP_NET_RAW))
-		return -EPERM;
-
-	if (net != &init_net)
-		return -EAFNOSUPPORT;
-
 	if (likely(sock->type == SOCK_DGRAM || sock->type == SOCK_STREAM)) {
 		rc = -ENOMEM;
-		sk = llc_sk_alloc(net, PF_LLC, GFP_KERNEL, &llc_proto);
+		sk = llc_sk_alloc(PF_LLC, GFP_KERNEL, &llc_proto);
 		if (sk) {
 			rc = 0;
 			llc_ui_sk_init(sock, sk);
@@ -188,7 +182,7 @@ static int llc_ui_release(struct socket *sock)
 	sock_hold(sk);
 	lock_sock(sk);
 	llc = llc_sk(sk);
-	dprintk("%s: closing local(%02X) remote(%02X)\n", __func__,
+	dprintk("%s: closing local(%02X) remote(%02X)\n", __FUNCTION__,
 		llc->laddr.lsap, llc->daddr.lsap);
 	if (!llc_send_disc(sk))
 		llc_ui_wait_for_disc(sk, sk->sk_rcvtimeo);
@@ -255,7 +249,7 @@ static int llc_ui_autobind(struct socket *sock, struct sockaddr_llc *addr)
 	if (!sock_flag(sk, SOCK_ZAPPED))
 		goto out;
 	rc = -ENODEV;
-	llc->dev = dev_getfirstbyhwtype(&init_net, addr->sllc_arphrd);
+	llc->dev = dev_getfirstbyhwtype(addr->sllc_arphrd);
 	if (!llc->dev)
 		goto out;
 	rc = -EUSERS;
@@ -298,7 +292,7 @@ static int llc_ui_bind(struct socket *sock, struct sockaddr *uaddr, int addrlen)
 	struct llc_sap *sap;
 	int rc = -EINVAL;
 
-	dprintk("%s: binding %02X\n", __func__, addr->sllc_sap);
+	dprintk("%s: binding %02X\n", __FUNCTION__, addr->sllc_sap);
 	if (unlikely(!sock_flag(sk, SOCK_ZAPPED) || addrlen != sizeof(*addr)))
 		goto out;
 	rc = -EAFNOSUPPORT;
@@ -306,7 +300,7 @@ static int llc_ui_bind(struct socket *sock, struct sockaddr *uaddr, int addrlen)
 		goto out;
 	rc = -ENODEV;
 	rtnl_lock();
-	llc->dev = dev_getbyhwaddr(&init_net, addr->sllc_arphrd, addr->sllc_mac);
+	llc->dev = dev_getbyhwaddr(addr->sllc_arphrd, addr->sllc_mac);
 	rtnl_unlock();
 	if (!llc->dev)
 		goto out;
@@ -330,7 +324,7 @@ static int llc_ui_bind(struct socket *sock, struct sockaddr *uaddr, int addrlen)
 		memset(&laddr, 0, sizeof(laddr));
 		memset(&daddr, 0, sizeof(daddr));
 		/*
-		 * FIXME: check if the address is multicast,
+		 * FIXME: check if the the address is multicast,
 		 * 	  only SOCK_DGRAM can do this.
 		 */
 		memcpy(laddr.mac, addr->sllc_mac, IFHWADDRLEN);
@@ -435,7 +429,7 @@ static int llc_ui_connect(struct socket *sock, struct sockaddr *uaddr,
 	rc = llc_establish_connection(sk, llc->dev->dev_addr,
 				      addr->sllc_mac, addr->sllc_sap);
 	if (rc) {
-		dprintk("%s: llc_ui_send_conn failed :-(\n", __func__);
+		dprintk("%s: llc_ui_send_conn failed :-(\n", __FUNCTION__);
 		sock->state  = SS_UNCONNECTED;
 		sk->sk_state = TCP_CLOSE;
 		goto out;
@@ -607,8 +601,8 @@ static int llc_ui_accept(struct socket *sock, struct socket *newsock, int flags)
 	struct sk_buff *skb;
 	int rc = -EOPNOTSUPP;
 
-	dprintk("%s: accepting on %02X\n", __func__,
-		llc_sk(sk)->laddr.lsap);
+	dprintk("%s: accepting on %02X\n", __FUNCTION__,
+	        llc_sk(sk)->laddr.lsap);
 	lock_sock(sk);
 	if (unlikely(sk->sk_type != SOCK_STREAM))
 		goto out;
@@ -622,8 +616,8 @@ static int llc_ui_accept(struct socket *sock, struct socket *newsock, int flags)
 		if (rc)
 			goto out;
 	}
-	dprintk("%s: got a new connection on %02X\n", __func__,
-		llc_sk(sk)->laddr.lsap);
+	dprintk("%s: got a new connection on %02X\n", __FUNCTION__,
+	        llc_sk(sk)->laddr.lsap);
 	skb = skb_dequeue(&sk->sk_receive_queue);
 	rc = -EINVAL;
 	if (!skb->sk)
@@ -643,7 +637,7 @@ static int llc_ui_accept(struct socket *sock, struct socket *newsock, int flags)
 	/* put original socket back into a clean listen state. */
 	sk->sk_state = TCP_LISTEN;
 	sk->sk_ack_backlog--;
-	dprintk("%s: ok success on %02X, client on %02X\n", __func__,
+	dprintk("%s: ok success on %02X, client on %02X\n", __FUNCTION__,
 		llc_sk(sk)->addr.sllc_sap, newllc->daddr.lsap);
 frees:
 	kfree_skb(skb);
@@ -688,7 +682,7 @@ static int llc_ui_recvmsg(struct kiocb *iocb, struct socket *sock,
 	if (flags & MSG_PEEK) {
 		peek_seq = llc->copied_seq;
 		seq = &peek_seq;
-	}
+ 	}
 
 	target = sock_rcvlowat(sk, flags & MSG_WAITALL, len);
 	copied = 0;
@@ -765,7 +759,7 @@ static int llc_ui_recvmsg(struct kiocb *iocb, struct socket *sock,
 			if (net_ratelimit())
 				printk(KERN_DEBUG "LLC(%s:%d): Application "
 						  "bug, race in MSG_PEEK.\n",
-				       current->comm, task_pid_nr(current));
+				       current->comm, current->pid);
 			peek_seq = llc->copied_seq;
 		}
 		continue;
@@ -836,7 +830,7 @@ static int llc_ui_sendmsg(struct kiocb *iocb, struct socket *sock,
 	size_t size = 0;
 	int rc = -EINVAL, copied = 0, hdrlen;
 
-	dprintk("%s: sending from %02X to %02X\n", __func__,
+	dprintk("%s: sending from %02X to %02X\n", __FUNCTION__,
 		llc->laddr.lsap, llc->daddr.lsap);
 	lock_sock(sk);
 	if (addr) {
@@ -866,7 +860,7 @@ static int llc_ui_sendmsg(struct kiocb *iocb, struct socket *sock,
 		goto release;
 	skb->dev      = llc->dev;
 	skb->protocol = llc_proto_type(addr->sllc_arphrd);
-	skb_reserve(skb, hdrlen);
+	skb_reserve(skb, hdrlen); 
 	rc = memcpy_fromiovec(skb_put(skb, copied), msg->msg_iov, copied);
 	if (rc)
 		goto out;
@@ -894,7 +888,7 @@ out:
 		kfree_skb(skb);
 release:
 		dprintk("%s: failed sending from %02X to %02X: %d\n",
-			__func__, llc->laddr.lsap, llc->daddr.lsap, rc);
+			__FUNCTION__, llc->laddr.lsap, llc->daddr.lsap, rc);
 	}
 	release_sock(sk);
 	return rc ? : copied;
@@ -917,7 +911,6 @@ static int llc_ui_getname(struct socket *sock, struct sockaddr *uaddr,
 	struct llc_sock *llc = llc_sk(sk);
 	int rc = 0;
 
-	memset(&sllc, 0, sizeof(sllc));
 	lock_sock(sk);
 	if (sock_flag(sk, SOCK_ZAPPED))
 		goto out;
@@ -939,7 +932,7 @@ static int llc_ui_getname(struct socket *sock, struct sockaddr *uaddr,
 
 		if (llc->dev) {
 			sllc.sllc_arphrd = llc->dev->type;
-			memcpy(&sllc.sllc_mac, llc->dev->dev_addr,
+			memcpy(&sllc.sllc_mac, &llc->dev->dev_addr,
 			       IFHWADDRLEN);
 		}
 	}
@@ -976,7 +969,7 @@ static int llc_ui_ioctl(struct socket *sock, unsigned int cmd,
  *	Set various connection specific parameters.
  */
 static int llc_ui_setsockopt(struct socket *sock, int level, int optname,
-			     char __user *optval, unsigned int optlen)
+			     char __user *optval, int optlen)
 {
 	struct sock *sk = sock->sk;
 	struct llc_sock *llc = llc_sk(sk);
@@ -1122,12 +1115,12 @@ static const struct proto_ops llc_ui_ops = {
 	.sendpage    = sock_no_sendpage,
 };
 
-static const char llc_proc_err_msg[] __initconst =
-	KERN_CRIT "LLC: Unable to register the proc_fs entries\n";
-static const char llc_sysctl_err_msg[] __initconst =
-	KERN_CRIT "LLC: Unable to register the sysctl entries\n";
-static const char llc_sock_err_msg[] __initconst =
-	KERN_CRIT "LLC: Unable to register the network family\n";
+static char llc_proc_err_msg[] __initdata =
+        KERN_CRIT "LLC: Unable to register the proc_fs entries\n";
+static char llc_sysctl_err_msg[] __initdata =
+        KERN_CRIT "LLC: Unable to register the sysctl entries\n";
+static char llc_sock_err_msg[] __initdata =
+        KERN_CRIT "LLC: Unable to register the network family\n";
 
 static int __init llc2_init(void)
 {

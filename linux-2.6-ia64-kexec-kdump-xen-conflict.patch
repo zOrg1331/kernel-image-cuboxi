@@ -1,0 +1,22 @@
+diff -Nraup a/include/asm-ia64/meminit.h b/include/asm-ia64/meminit.h
+--- a/include/asm-ia64/meminit.h        2006-08-15 05:52:24.000000000 +0800
++++ b/include/asm-ia64/meminit.h        2006-08-15 09:50:03.000000000 +0800
+@@ -15,15 +15,16 @@
+  * 	- initrd (optional)
+  * 	- command line string
+  * 	- kernel code & data
++ *	- crash dumping code reserved region
+  * 	- Kernel memory map built from EFI memory map
+  *	- xen start info
+  *
+  * More could be added if necessary
+  */
+ #ifndef CONFIG_XEN
+-#define IA64_MAX_RSVD_REGIONS 6
+-#else
+ #define IA64_MAX_RSVD_REGIONS 7
++#else
++#define IA64_MAX_RSVD_REGIONS 8
+ #endif
+ 
+ struct rsvd_region {

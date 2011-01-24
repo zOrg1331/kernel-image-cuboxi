@@ -1,0 +1,419 @@
+From: Larry Woodman <lwoodman@redhat.com>
+Date: Mon, 4 May 2009 17:26:20 -0400
+Subject: [mm] add tracepoints
+Message-id: 1241472380.10978.29.camel@dhcp-100-19-198.bos.redhat.com
+O-Subject: Re: [RHEL 5-U4 Patch] mm tracepoints
+Bugzilla: 493444
+RH-Acked-by: Dave Anderson <anderson@redhat.com>
+
+This patch is basically a RHEL5-U4 backport of the mm tracepoints
+submitted upstream:
+
+diff --git a/include/trace/mm.h b/include/trace/mm.h
+new file mode 100644
+index 0000000..e18fa8b
+--- /dev/null
++++ b/include/trace/mm.h
+@@ -0,0 +1,111 @@
++#ifndef _TRACE_MM_H
++#define _TRACE_MM_H
++
++#undef TRACE_SYSTEM
++#define TRACE_SYSTEM mm
++
++#include <linux/tracepoint.h>
++#include <linux/mm.h>
++
++DEFINE_TRACE(mm_anon_fault,
++	TPPROTO(struct mm_struct *mm, unsigned long address, unsigned long pfn),
++	TPARGS(mm, address, pfn));
++
++DEFINE_TRACE(mm_anon_pgin,
++	TPPROTO(struct mm_struct *mm, unsigned long address, unsigned long pfn),
++	TPARGS(mm, address, pfn));
++
++DEFINE_TRACE(mm_anon_cow,
++	TPPROTO(struct mm_struct *mm, unsigned long address, unsigned long pfn),
++	TPARGS(mm, address, pfn));
++
++DEFINE_TRACE(mm_anon_userfree,
++	TPPROTO(struct mm_struct *mm, unsigned long address, unsigned long pfn),
++	TPARGS(mm, address, pfn));
++
++DEFINE_TRACE(mm_anon_unmap,
++	TPPROTO(unsigned long pfn, int success),
++	TPARGS(pfn, success));
++
++DEFINE_TRACE(mm_filemap_fault,
++	TPPROTO(struct mm_struct *mm, unsigned long address, unsigned long pfn),
++	TPARGS(mm, address, pfn));
++
++DEFINE_TRACE(mm_filemap_cow,
++	TPPROTO(struct mm_struct *mm, unsigned long address, unsigned long pfn),
++	TPARGS(mm, address, pfn));
++
++DEFINE_TRACE(mm_filemap_unmap,
++	TPPROTO(unsigned long pfn, int success),
++	TPARGS(pfn, success));
++
++DEFINE_TRACE(mm_filemap_userunmap,
++	TPPROTO(struct mm_struct *mm, unsigned long address, unsigned long pfn),
++	TPARGS(mm, address, pfn));
++
++DEFINE_TRACE(mm_pagereclaim_pgout,
++	TPPROTO(unsigned long pfn, int anon),
++	TPARGS(pfn, anon));
++
++DEFINE_TRACE(mm_pagereclaim_free,
++	TPPROTO(unsigned long pfn, int anon),
++	TPARGS(pfn, anon));
++
++DEFINE_TRACE(mm_pdflush_bgwriteout,
++	TPPROTO(unsigned long count),
++	TPARGS(count));
++
++DEFINE_TRACE(mm_pdflush_kupdate,
++	TPPROTO(unsigned long count),
++	TPARGS(count));
++
++DEFINE_TRACE(mm_page_allocation,
++	TPPROTO(unsigned long pfn, unsigned long free),
++	TPARGS(pfn, free));
++
++DEFINE_TRACE(mm_kswapd_runs,
++	TPPROTO(unsigned long reclaimed),
++	TPARGS(reclaimed));
++
++DEFINE_TRACE(mm_directreclaim_reclaimall,
++	TPPROTO(unsigned long priority),
++	TPARGS(priority));
++
++DEFINE_TRACE(mm_directreclaim_reclaimzone,
++	TPPROTO(unsigned long reclaimed),
++	TPARGS(reclaimed));
++
++DEFINE_TRACE(mm_pagereclaim_shrinkzone,
++	TPPROTO(unsigned long reclaimed),
++	TPARGS(reclaimed));
++
++DEFINE_TRACE(mm_pagereclaim_shrinkactive,
++	TPPROTO(unsigned long scanned),
++	TPARGS(scanned));
++
++DEFINE_TRACE(mm_pagereclaim_shrinkactive_a2a,
++	TPPROTO(unsigned long pfn),
++	TPARGS(pfn));
++
++DEFINE_TRACE(mm_pagereclaim_shrinkactive_a2i,
++	TPPROTO(unsigned long pfn),
++	TPARGS(pfn));
++
++DEFINE_TRACE(mm_pagereclaim_shrinkinactive,
++	TPPROTO(unsigned long reclaimed),
++	TPARGS(reclaimed));
++
++DEFINE_TRACE(mm_pagereclaim_shrinkinactive_i2a,
++	TPPROTO(unsigned long pfn),
++	TPARGS(pfn));
++
++DEFINE_TRACE(mm_pagereclaim_shrinkinactive_i2i,
++	TPPROTO(unsigned long pfn),
++	TPARGS(pfn));
++
++DEFINE_TRACE(mm_page_free,
++	TPPROTO(unsigned long pfn),
++	TPARGS(pfn));
++
++#undef TRACE_SYSTEM
++#endif
+diff --git a/mm/filemap.c b/mm/filemap.c
+index 6aa48e1..f899d86 100644
+--- a/mm/filemap.c
++++ b/mm/filemap.c
+@@ -31,6 +31,7 @@
+ #include <linux/syscalls.h>
+ #include <linux/cpuset.h>
+ #include <linux/hardirq.h> /* for BUG_ON(!in_atomic()) only */
++#include <trace/mm.h>
+ #include "internal.h"
+ #include <trace/filemap.h>
+ 
+@@ -1502,6 +1503,7 @@ success:
+ 	mark_page_accessed(page);
+ 	if (type)
+ 		*type = majmin;
++	trace_mm_filemap_fault(area->vm_mm, address, page_to_pfn(page));
+ 	return page;
+ 
+ outside_data_content:
+diff --git a/mm/memory.c b/mm/memory.c
+index cffa52a..bbd2ba5 100644
+--- a/mm/memory.c
++++ b/mm/memory.c
+@@ -51,6 +51,7 @@
+ #include <linux/init.h>
+ #include <linux/writeback.h>
+ #include <linux/mmu_notifier.h>
++#include <trace/mm.h>
+ 
+ #include <asm/pgalloc.h>
+ #include <asm/uaccess.h>
+@@ -768,14 +769,18 @@ static unsigned long zap_pte_range(struct mmu_gather *tlb,
+ 						addr) != page->index)
+ 				set_pte_at(mm, addr, pte,
+ 					   pgoff_to_pte(page->index));
+-			if (PageAnon(page))
++			if (PageAnon(page)) {
+ 				anon_rss--;
+-			else {
++				trace_mm_anon_userfree(mm, addr,
++							page_to_pfn(page));
++			} else {
+ 				if (pte_dirty(ptent))
+ 					set_page_dirty(page);
+ 				if (pte_young(ptent))
+ 					SetPageReferenced(page);
+ 				file_rss--;
++				trace_mm_filemap_userunmap(mm, addr,
++							page_to_pfn(page));
+ 			}
+ 			page_remove_rmap(page);
+ 			tlb_remove_page(tlb, page);
+@@ -1952,9 +1957,13 @@ gotten:
+ 			if (!PageAnon(old_page)) {
+ 				dec_mm_counter(mm, file_rss);
+ 				inc_mm_counter(mm, anon_rss);
++				trace_mm_filemap_cow(mm, address,
++						page_to_pfn(new_page));
+ 			}
+-		} else
++		} else {
+ 			inc_mm_counter(mm, anon_rss);
++			trace_mm_anon_cow(mm, address, page_to_pfn(new_page));
++		}
+ 		flush_cache_page(vma, address, pte_pfn(orig_pte));
+ 		entry = mk_pte(new_page, vma->vm_page_prot);
+ 		entry = maybe_mkwrite(pte_mkdirty(entry), vma);
+@@ -2343,7 +2352,7 @@ static int do_swap_page(struct mm_struct *mm, struct vm_area_struct *vma,
+ 		int write_access, pte_t orig_pte)
+ {
+ 	spinlock_t *ptl;
+-	struct page *page;
++	struct page *page = NULL;
+ 	swp_entry_t entry;
+ 	pte_t pte;
+ 	int ret = VM_FAULT_MINOR;
+@@ -2426,6 +2435,7 @@ static int do_swap_page(struct mm_struct *mm, struct vm_area_struct *vma,
+ unlock:
+ 	pte_unmap_unlock(page_table, ptl);
+ out:
++	trace_mm_anon_pgin(mm, address, page_to_pfn(page));
+ 	return ret;
+ out_nomap:
+ 	pte_unmap_unlock(page_table, ptl);
+@@ -2487,6 +2497,7 @@ static int do_anonymous_page(struct mm_struct *mm, struct vm_area_struct *vma,
+ 	lazy_mmu_prot_update(entry);
+ unlock:
+ 	pte_unmap_unlock(page_table, ptl);
++	trace_mm_anon_fault(mm, address, page_to_pfn(page));
+ 	return VM_FAULT_MINOR;
+ release:
+ 	page_cache_release(page);
+diff --git a/mm/page-writeback.c b/mm/page-writeback.c
+index 6b3a818..d337e45 100644
+--- a/mm/page-writeback.c
++++ b/mm/page-writeback.c
+@@ -31,6 +31,7 @@
+ #include <linux/cpu.h>
+ #include <linux/syscalls.h>
+ #include <linux/rmap.h>
++#include <trace/mm.h>
+ 
+ /*
+  * The maximum number of pages to writeout in a single bdflush/kupdate
+@@ -359,6 +360,7 @@ static void background_writeout(unsigned long _min_pages)
+ 				break;
+ 		}
+ 	}
++	trace_mm_pdflush_bgwriteout(_min_pages);
+ }
+ 
+ /*
+@@ -421,6 +423,7 @@ static void wb_kupdate(unsigned long arg)
+ 	nr_to_write = global_page_state(NR_FILE_DIRTY) +
+ 			global_page_state(NR_UNSTABLE_NFS) +
+ 			(inodes_stat.nr_inodes - inodes_stat.nr_unused);
++	trace_mm_pdflush_kupdate(nr_to_write);
+ 	while (nr_to_write > 0) {
+ 		wbc.encountered_congestion = 0;
+ 		wbc.nr_to_write = max_writeback_pages;
+diff --git a/mm/page_alloc.c b/mm/page_alloc.c
+index 11b1925..4bbf86b 100644
+--- a/mm/page_alloc.c
++++ b/mm/page_alloc.c
+@@ -37,6 +37,7 @@
+ #include <linux/vmalloc.h>
+ #include <linux/mempolicy.h>
+ #include <linux/stop_machine.h>
++#include <trace/mm.h>
+ 
+ #include <asm/tlbflush.h>
+ #include <asm/div64.h>
+@@ -745,6 +746,7 @@ static void fastcall free_hot_cold_page(struct page *page, int cold)
+ 	if (free_pages_check(page))
+ 		return;
+ 
++	trace_mm_page_free(page_to_pfn(page));
+ 	kernel_map_pages(page, 1, 0);
+ 
+ 	pcp = &zone_pcp(zone, get_cpu())->pcp[cold];
+@@ -834,6 +836,7 @@ again:
+ 	BUG_ON(bad_range(zone, page));
+ 	if (prep_new_page(page, order, gfp_flags))
+ 		goto again;
++	trace_mm_page_allocation(page_to_pfn(page), zone->free_pages);
+ 	return page;
+ 
+ failed:
+@@ -919,9 +922,8 @@ get_page_from_freelist(gfp_t gfp_mask, unsigned int order,
+ 		}
+ 
+ 		page = buffered_rmqueue(zonelist, *z, order, gfp_mask);
+-		if (page) {
++		if (page) 
+ 			break;
+-		}
+ 	} while (*(++z) != NULL);
+ 	return page;
+ }
+diff --git a/mm/rmap.c b/mm/rmap.c
+index 0673a13..12bb716 100644
+--- a/mm/rmap.c
++++ b/mm/rmap.c
+@@ -54,6 +54,7 @@
+ #include <linux/rcupdate.h>
+ #include <linux/module.h>
+ #include <linux/mmu_notifier.h>
++#include <trace/mm.h>
+ 
+ #include <asm/tlbflush.h>
+ 
+@@ -808,6 +809,7 @@ static int try_to_unmap_anon(struct page *page, int migration)
+ 			break;
+ 	}
+ 	spin_unlock(&anon_vma->lock);
++	trace_mm_anon_unmap(page_to_pfn(page), ret == SWAP_SUCCESS);
+ 	return ret;
+ }
+ 
+@@ -904,6 +906,7 @@ static int try_to_unmap_file(struct page *page, int migration)
+ 		vma->vm_private_data = NULL;
+ out:
+ 	spin_unlock(&mapping->i_mmap_lock);
++	trace_mm_filemap_unmap(page_to_pfn(page), ret == SWAP_SUCCESS);
+ 	return ret;
+ }
+ 
+diff --git a/mm/vmscan.c b/mm/vmscan.c
+index 1f13601..8a11dd8 100644
+--- a/mm/vmscan.c
++++ b/mm/vmscan.c
+@@ -40,6 +40,7 @@
+ #include <asm/div64.h>
+ 
+ #include <linux/swapops.h>
++#include <trace/mm.h>
+ 
+ #include "internal.h"
+ 
+@@ -374,6 +375,7 @@ static pageout_t pageout(struct page *page, struct address_space *mapping)
+ 			ClearPageReclaim(page);
+ 		}
+ 
++		trace_mm_pagereclaim_pgout(page_to_pfn(page), PageAnon(page));
+ 		return PAGE_SUCCESS;
+ 	}
+ 
+@@ -560,15 +562,18 @@ free_it:
+ 		nr_reclaimed++;
+ 		if (!pagevec_add(&freed_pvec, page))
+ 			__pagevec_release_nonlru(&freed_pvec);
++		trace_mm_pagereclaim_free(page_to_pfn(page), PageAnon(page));
+ 		continue;
+ 
+ activate_locked:
+ 		SetPageActive(page);
+ 		pgactivate++;
++		trace_mm_pagereclaim_shrinkinactive_i2a(page_to_pfn(page));
+ keep_locked:
+ 		unlock_page(page);
+ keep:
+ 		list_add(&page->lru, &ret_pages);
++		trace_mm_pagereclaim_shrinkinactive_i2i(page_to_pfn(page));
+ 		BUG_ON(PageLRU(page));
+ 	}
+ 	list_splice(&ret_pages, page_list);
+@@ -697,6 +702,7 @@ static unsigned long shrink_inactive_list(unsigned long max_scan,
+ done:
+ 	local_irq_enable();
+ 	pagevec_release(&pvec);
++	trace_mm_pagereclaim_shrinkinactive(nr_reclaimed);
+ 	return nr_reclaimed;
+ }
+ 
+@@ -813,6 +819,7 @@ force_reclaim_mapped:
+ 			    (total_swap_pages == 0 && PageAnon(page)) ||
+ 			    page_referenced(page, 0)) {
+ 				list_add(&page->lru, &l_active);
++				trace_mm_pagereclaim_shrinkactive_a2a(page_to_pfn(page));
+ 				continue;
+ 			}
+ 		}
+@@ -832,6 +839,7 @@ force_reclaim_mapped:
+ 
+ 		list_move(&page->lru, &zone->inactive_list);
+ 		pgmoved++;
++		trace_mm_pagereclaim_shrinkactive_a2i(page_to_pfn(page));
+ 		if (!pagevec_add(&pvec, page)) {
+ 			zone->nr_inactive += pgmoved;
+ 			spin_unlock_irq(&zone->lru_lock);
+@@ -874,6 +882,7 @@ force_reclaim_mapped:
+ 	__count_vm_events(PGDEACTIVATE, pgdeactivate);
+ 	spin_unlock_irq(&zone->lru_lock);
+ 
++	trace_mm_pagereclaim_shrinkactive(pgscanned);
+ 	pagevec_release(&pvec);
+ }
+ 
+@@ -945,6 +954,7 @@ static void shrink_zone(int priority, struct zone *zone,
+ 
+ 	throttle_vm_writeout();
+ 
++	trace_mm_pagereclaim_shrinkzone(nr_reclaimed);
+ 	atomic_dec(&zone->reclaim_in_progress);
+ }
+ 
+@@ -988,6 +998,7 @@ static void shrink_zones(int priority, struct zone **zones,
+ 
+ 		shrink_zone(priority, zone, sc);
+ 	}
++	trace_mm_directreclaim_reclaimall(priority);
+ }
+  
+ /*
+@@ -1255,6 +1266,7 @@ out:
+ 		goto loop_again;
+ 	}
+ 
++	trace_mm_kswapd_runs(sc.nr_reclaimed);
+ 	return sc.nr_reclaimed;
+ }
+ 
+@@ -1658,6 +1670,7 @@ static int __zone_reclaim(struct zone *zone, gfp_t gfp_mask, unsigned int order)
+ 
+ 	p->reclaim_state = NULL;
+ 	current->flags &= ~(PF_MEMALLOC | PF_SWAPWRITE);
++	trace_mm_directreclaim_reclaimzone(sc.nr_reclaimed);
+ 	return sc.nr_reclaimed >= nr_pages;
+ }
+ 

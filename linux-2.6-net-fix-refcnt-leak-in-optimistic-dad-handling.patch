@@ -1,0 +1,48 @@
+From: Neil Horman <nhorman@redhat.com>
+Date: Fri, 14 Dec 2007 10:28:31 -0500
+Subject: [net] fix refcnt leak in optimistic dad handling
+Message-id: 20071214152831.GB8617@hmsendeavour.rdu.redhat.com
+O-Subject: [RHEL 5.2 PATCH] Fix refcnt leak in optimistic dad handling (bz 423791)
+Bugzilla: 423791
+
+Hey-
+	Jarod discovered during some Xen testing that one of the tap interfaces
+during shutdown had a non-zero refcnt that was preventing a clean system
+shutdown.  We've tracked it to this code, which was fixed upstream with commit
+ca043569390c528de4cd5ec9e07502f2bf4ecd1f
+This is a backport of that patch, and is confirmed to fix bz 423791.
+
+Regards
+Neil
+
+Acked-by: Chris Lalancette <clalance@redhat.com>
+Acked-by: Jarod Wilson <jwilson@redhat.com>
+Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+
+diff --git a/net/ipv6/ndisc.c b/net/ipv6/ndisc.c
+index 36e6bbf..5bf8543 100644
+--- a/net/ipv6/ndisc.c
++++ b/net/ipv6/ndisc.c
+@@ -621,7 +621,6 @@ void ndisc_send_rs(struct net_device *dev, struct in6_addr *saddr,
+         struct sk_buff *skb;
+         struct icmp6hdr *hdr;
+ 	__u8 * opt;
+-	struct inet6_ifaddr *ifp;
+ 	int send_sllao = dev->addr_len;
+         int len;
+ 	int err;
+@@ -636,12 +635,12 @@ void ndisc_send_rs(struct net_device *dev, struct in6_addr *saddr,
+ 	* supress the inclusion of the sllao.
+ 	*/
+ 	if (send_sllao) {
+-		ifp = ipv6_get_ifaddr(saddr, dev, 1);
++		struct inet6_ifaddr *ifp = ipv6_get_ifaddr(saddr, dev, 1);
+ 		if (ifp) {
+ 			if (ifp->flags & IFA_F_OPTIMISTIC)  {
+ 				send_sllao=0;
+-				in6_ifa_put(ifp);
+ 			}
++			in6_ifa_put(ifp);
+ 		} else {
+ 			send_sllao = 0;
+ 		}

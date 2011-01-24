@@ -1,0 +1,32 @@
+From: Dean Nelson <dnelson@redhat.com>
+Date: Thu, 22 Jul 2010 12:27:57 -0400
+Subject: [serial] remove contact info for ite887x chip support
+Message-id: <20100722122757.5885.39333.send-patch@localhost.localdomain>
+Patchwork-id: 27027
+O-Subject: [RHEL5.6 PATCH 4/4] serial: remove contact information for ite887x
+	chip support
+Bugzilla: 563271
+RH-Acked-by: Jarod Wilson <jarod@redhat.com>
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+Resolves RHBZ 563271.
+
+Remove Niels de Vos' contact information from comment in source.
+
+Backport of upstream commit:
+http://git.kernel.org/linus/79e95eba026944ec3353754f24e316d3aaa209fe
+
+
+diff --git a/drivers/serial/8250_pci.c b/drivers/serial/8250_pci.c
+index 657ac4c..05f3905 100644
+--- a/drivers/serial/8250_pci.c
++++ b/drivers/serial/8250_pci.c
+@@ -582,8 +582,6 @@ static int pci_netmos_init(struct pci_dev *dev)
+ }
+ 
+ /*
+- * ITE support by Niels de Vos <niels.devos@wincor-nixdorf.com>
+- *
+  * These chips are available with optionally one parallel port and up to
+  * two serial ports. Unfortunately they all have the same product id.
+  *

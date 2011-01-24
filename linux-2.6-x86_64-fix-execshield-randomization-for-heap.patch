@@ -1,0 +1,128 @@
+From: Brian Maly <bmaly@redhat.com>
+Subject: Re: [RHEL5 patch] x86_64: fix execshield randomization for heap
+Date: Wed, 08 Nov 2006 13:34:11 -0500
+Bugzilla: 214548
+Message-Id: <45522323.7020909@redhat.com>
+Changelog: x86_64: fix execshield randomization for heap
+
+Currently execshield randomization for heap (i.e. /proc/self/maps) works
+only on i386, but randomization is broken on x86_64. This patch adds
+this heap randomization functionality for x86_64 and resolves the issue.
+
+This item was a beta blocker (see BZ 213492). Randomization is currenly
+broken on x86_64 for heap, vdso and mmap. Since each is a different
+issue, I am breaking this BZ down into seperate BZ's. This issue was the
+only one straigtforward enough to resolve by codefreeze.
+
+I tested this with randtest.c (as well as observing randomization in
+/proc/self/maps)
+
+Brian
+
+--- linux-2.6.18.noarch/arch/x86_64/kernel/process.c.orig
++++ linux-2.6.18.noarch/arch/x86_64/kernel/process.c
+@@ -826,3 +826,45 @@ unsigned long arch_align_stack(unsigned 
+ 		sp -= get_random_int() % 8192;
+ 	return sp & ~0xf;
+ }
++
++/*
++ * Generate random brk address between 128MB and 196MB. (if the layout
++ * allows it.)
++ */
++void randomize_brk(unsigned long old_brk)
++{
++        unsigned long new_brk, range_start, range_end;
++
++#ifdef CONFIG_IA32_EMULATION
++	/* randomize_brk is called after SET_PERSONALITY, but before
++	   flush_thread.  So, the test if the process will be 32-bit
++	   or 64-bit is uglier.  */
++	if (test_thread_flag(TIF_ABI_PENDING) ^ test_thread_flag(TIF_IA32))
++	{
++		/* i?86 ELF32 binaries start at 0x8048000 or sometimes
++		   a little bit lower when prelinked.  */
++		range_start = 0x08000000;
++		if (current->mm->brk >= range_start)
++			range_start = current->mm->brk;
++		range_end = range_start + 0x02000000;
++		if (range_start >= 0xfe000000UL)
++			return;
++	} else
++#endif
++	{
++		/* x86-64 ELF64 binaries start at 4MB */
++		range_start = 0x00400000;
++		if (current->mm->brk >= range_start)
++			range_start = current->mm->brk;
++		/* For most binaries, try to keep heap start within low .5GB
++		   (so that usually whole heap fits within first 1GB (first PUD
++		   table)).  */
++		range_end = 0x20000000
++			    + ((range_start > 0x10000000) ? range_start : 0);
++	}
++
++	new_brk = randomize_range(range_start, range_end, 0);
++	if (new_brk)
++		current->mm->brk = new_brk;
++
++}
+--- linux-2.6.18.noarch/arch/x86_64/kernel/process-xen.c.orig
++++ linux-2.6.18.noarch/arch/x86_64/kernel/process-xen.c
+@@ -780,3 +780,45 @@ void _restore_vcpu(void)
+ {
+ }
+ #endif
++
++/*
++ * Generate random brk address between 128MB and 196MB. (if the layout
++ * allows it.)
++ */
++void randomize_brk(unsigned long old_brk)
++{
++	unsigned long new_brk, range_start, range_end;
++
++#ifdef CONFIG_IA32_EMULATION
++	/* randomize_brk is called after SET_PERSONALITY, but before
++	   flush_thread.  So, the test if the process will be 32-bit
++	   or 64-bit is uglier.  */
++	if (test_thread_flag(TIF_ABI_PENDING) ^ test_thread_flag(TIF_IA32))
++	{
++		/* i?86 ELF32 binaries start at 0x8048000 or sometimes
++		   a little bit lower when prelinked.  */
++		range_start = 0x08000000;
++		if (current->mm->brk >= range_start)
++			range_start = current->mm->brk;
++		range_end = range_start + 0x02000000;
++		if (range_start >= 0xfe000000UL)
++			return;
++	} else
++#endif
++	{
++		/* x86-64 ELF64 binaries start at 4MB */
++		range_start = 0x00400000;
++		if (current->mm->brk >= range_start)
++			range_start = current->mm->brk;
++		/* For most binaries, try to keep heap start within low .5GB
++		   (so that usually whole heap fits within first 1GB (first PUD
++		   table)).  */
++		range_end = 0x20000000
++			    + ((range_start > 0x10000000) ? range_start : 0);
++	}
++
++	new_brk = randomize_range(range_start, range_end, 0);
++	if (new_brk)
++		current->mm->brk = new_brk;
++
++}
+--- linux-2.6.18.noarch/include/asm-x86_64/elf.h.orig
++++ linux-2.6.18.noarch/include/asm-x86_64/elf.h
+@@ -165,4 +165,7 @@ extern int dump_task_fpu (struct task_st
+ 
+ #endif
+ 
++#define __HAVE_ARCH_RANDOMIZE_BRK
++extern void randomize_brk(unsigned long old_brk);
++
+ #endif
+

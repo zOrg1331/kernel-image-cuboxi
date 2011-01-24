@@ -1,0 +1,55 @@
+From: ddugger@redhat.com <ddugger@redhat.com>
+Date: Thu, 2 Apr 2009 08:46:12 -0600
+Subject: [pci] allow pci_alloc_child_bus to handle a NULL bridge
+Message-id: 200904021446.n32EkCuV017134@sobek.n0ano.com
+O-Subject: [RHEL5.4 PATCH 8/17] BZ493152: Backport: PCI: allow pci_alloc_child_bus() to handle a NULL bridge
+Bugzilla: 493152
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+RH-Acked-by: Chris Wright <chrisw@redhat.com>
+
+Upstream status: commit 3789fa8a2e534523c896a32a9f27f78d52ad7d82
+    Author: Yu Zhao <yu.zhao@intel.com>
+    Date:   Sat Nov 22 02:41:07 2008 +0800
+
+    PCI: allow pci_alloc_child_bus() to handle a NULL bridge
+
+    Allow pci_alloc_child_bus() to allocate buses without bridge devices.
+    Some SR-IOV devices can occupy more than one bus number, but there is no
+    explicit bridges because that have internal routing mechanism.
+
+    Signed-off-by: Yu Zhao <yu.zhao@intel.com>
+    Signed-off-by: Jesse Barnes <jbarnes@virtuousgeek.org>
+
+Signed-off-by: Gerd Hoffman <kraxel@redhat.com>
+Signed-off-by: Don Dugger <donald.d.dugger@intel.com>
+
+diff --git a/drivers/pci/probe.c b/drivers/pci/probe.c
+index 09c0dc7..dc92b8e 100644
+--- a/drivers/pci/probe.c
++++ b/drivers/pci/probe.c
+@@ -404,12 +404,10 @@ pci_alloc_child_bus(struct pci_bus *parent, struct pci_dev *bridge, int busnr)
+ 	if (!child)
+ 		return NULL;
+ 
+-	child->self = bridge;
+ 	child->parent = parent;
+ 	child->ops = parent->ops;
+ 	child->sysdata = parent->sysdata;
+ 	child->bus_flags = parent->bus_flags;
+-	child->bridge = get_device(&bridge->dev);
+ 
+ 	child->class_dev.class = &pcibus_class;
+ 	sprintf(child->class_dev.class_id, "%04x:%02x", pci_domain_nr(child), busnr);
+@@ -424,6 +422,12 @@ pci_alloc_child_bus(struct pci_bus *parent, struct pci_dev *bridge, int busnr)
+ 	child->primary = parent->secondary;
+ 	child->subordinate = 0xff;
+ 
++	if (!bridge)
++		return child;
++
++	child->self = bridge;
++	child->bridge = get_device(&bridge->dev);
++
+ 	/* Set up default resource pointers and names.. */
+ 	for (i = 0; i < 4; i++) {
+ 		child->resource[i] = &bridge->resource[PCI_BRIDGE_RESOURCES+i];

@@ -1,0 +1,67 @@
+From: George Beshers <gbeshers@redhat.com>
+Date: Thu, 3 Dec 2009 15:10:58 -0500
+Subject: [ia64] dma_get_required_mask altix workaround
+Message-id: <4B17D502.8040003@redhat.com>
+Patchwork-id: 21665
+O-Subject: [RHEL5.5 PATCH] dma_get_required_mask altix workaround
+Bugzilla: 517192
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+BZ#517192
+
+A direct back port of the upstream patch,
+
+  http://www.kernel.org/hg/index.cgi/linux-2.6/rev/8a0cc70eb319
+  commit 175add1981e53d22caba8f42d5f924a4de507b6c
+
+is unacceptable as it breaks kabi, but the patch log comment
+is still accurate:
+
+  [IA64] SN specific version of dma_get_required_mask()
+
+  Create a platform specific version of dma_get_required_mask()
+  for ia64 SN Altix. All SN Altix platforms support 64 bit DMA
+  addressing regardless of the size of system memory.
+  Create an ia64 machvec for dma_get_required_mask, with the
+  SN version unconditionally returning DMA_64BIT_MASK.
+
+  Signed-off-by: John Keller <jpk@sgi.com>
+  Signed-off-by: Tony Luck <tony.luck@intel.com>
+
+The attached patch is a bit of a hack, but is short and gets the
+job done; Prarit and Don confirmed my observation that avoiding
+kabi breakage caused things to stray too far from the original
+patch.
+
+The whitespace oversight has been addressed.
+
+Please ack.
+
+George
+
+Signed-off-by: Don Zickus <dzickus@redhat.com>
+
+diff --git a/drivers/base/platform.c b/drivers/base/platform.c
+index e90c4e1..8c0b947 100644
+--- a/drivers/base/platform.c
++++ b/drivers/base/platform.c
+@@ -544,9 +544,17 @@ int __init platform_bus_init(void)
+ #ifndef ARCH_HAS_DMA_GET_REQUIRED_MASK
+ u64 dma_get_required_mask(struct device *dev)
+ {
+-	u32 low_totalram = ((max_pfn - 1) << PAGE_SHIFT);
+-	u32 high_totalram = ((max_pfn - 1) >> (32 - PAGE_SHIFT));
+ 	u64 mask;
++	u32 low_totalram;
++	u32 high_totalram;
++
++#ifdef CONFIG_IA64
++	if (ia64_platform_is("sn2"))
++		return DMA_64BIT_MASK;
++#endif /* CONFIG_IA64 */
++
++	low_totalram = ((max_pfn - 1) << PAGE_SHIFT);
++	high_totalram = ((max_pfn - 1) >> (32 - PAGE_SHIFT));
+ 
+ 	if (!high_totalram) {
+ 		/* convert to mask just covering totalram */

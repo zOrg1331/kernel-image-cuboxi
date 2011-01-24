@@ -1,0 +1,51 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Date: Wed, 19 Dec 2007 13:11:53 -0500
+Subject: [scsi] stex: use resid for xfer len information
+Message-id: 20071219181153.32671.38452.sendpatchset@prarit.boston.redhat.com
+O-Subject: [RHEL5 PATCH]: use resid for xfer len information when issuing MGT_CMD
+Bugzilla: 251557
+
+Backport of
+
+http://git.kernel.org/?p=linux/kernel/git/jejb/scsi-misc-2.6.git;a=commit;h=968a5763fb7247feb0e69573a2975a7a0c094267
+
+[SCSI] stex: use resid for xfer len information
+
+The original implementation in stex_ys_commands() is inappropriate.
+For xfer len information, we should use resid instead.
+
+Resolves BZ 251557.
+
+Customer requested and tested on older RHEL5 kernel.  Compile tested by me
+(no HW in RH to test on).
+
+Acked-by: Jeff Garzik <jgarzik@redhat.com>
+
+diff --git a/drivers/scsi/stex.c b/drivers/scsi/stex.c
+index 8df1d72..cf253d0 100644
+--- a/drivers/scsi/stex.c
++++ b/drivers/scsi/stex.c
+@@ -35,11 +35,11 @@
+ #include <scsi/scsi_dbg.h>
+ 
+ #define DRV_NAME "stex"
+-#define ST_DRIVER_VERSION "3.6.0000.1"
++#define ST_DRIVER_VERSION "3.6.0102.2"
+ #define ST_VER_MAJOR 		3
+ #define ST_VER_MINOR 		6
+-#define ST_OEM 			0
+-#define ST_BUILD_VER 		1
++#define ST_OEM 			0102
++#define ST_BUILD_VER 		2
+ 
+ enum {
+ 	/* MU register offset */
+@@ -769,7 +769,7 @@ static void stex_ys_commands(struct st_hba *hba,
+ 
+ 	if (ccb->cmd->cmnd[0] == MGT_CMD &&
+ 		resp->scsi_status != SAM_STAT_CHECK_CONDITION) {
+-		ccb->cmd->request_bufflen =
++		ccb->cmd->resid = ccb->cmd->request_bufflen -
+ 			le32_to_cpu(*(__le32 *)&resp->variable[0]);
+ 		return;
+ 	}

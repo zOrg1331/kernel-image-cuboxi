@@ -1,0 +1,66 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Date: Mon, 30 Mar 2009 08:10:16 -0400
+Subject: [scsi] lpfc: remove duplicate pci* functions from driver
+Message-id: 20090330121015.29177.52978.sendpatchset@prarit.bos.redhat.com
+O-Subject: [RHEL5 PATCH 5/5]: lpfc - remove duplicate pci*() functions from driver
+Bugzilla: 442007
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+RH-Acked-by: David Miller <davem@redhat.com>
+RH-Acked-by: Tomas Henzl <thenzl@redhat.com>
+
+Backout pci*_select_region functions from lpfc driver.  These were imported
+in during a port forward of the driver.  They are now defined in
+drivers/pci/pci.c and are no longer needed in the lpfc driver.
+
+Resolves BZ 442007.
+
+diff --git a/drivers/scsi/lpfc/lpfc_init.c b/drivers/scsi/lpfc/lpfc_init.c
+index cd6d59f..486bd0f 100644
+--- a/drivers/scsi/lpfc/lpfc_init.c
++++ b/drivers/scsi/lpfc/lpfc_init.c
+@@ -68,45 +68,6 @@ static struct scsi_transport_template *lpfc_transport_template = NULL;
+ static struct scsi_transport_template *lpfc_vport_transport_template = NULL;
+ static DEFINE_IDR(lpfc_hba_index);
+ 
+-
+-
+-int pci_select_bars(struct pci_dev *dev, unsigned long flags)
+-{
+-	int i, bars = 0;
+-	for (i = 0; i < PCI_NUM_RESOURCES; i++)
+-		if (pci_resource_flags(dev, i) & flags)
+-			bars |= (1 << i);
+-	return bars;
+-}
+-
+-int pci_request_selected_regions(struct pci_dev *pdev, int bars,
+-				 char *res_name)
+-{
+-	int i;
+-
+-	for (i = 0; i < 6; i++)
+-		if (bars & (1 << i))
+-			if(pci_request_region(pdev, i, res_name))
+-				goto err_out;
+-	return 0;
+-
+-err_out:
+-	while(--i >= 0)
+-		if (bars & (1 << i))
+-			pci_release_region(pdev, i);
+-
+-	return -EBUSY;
+-}
+-
+-void pci_release_selected_regions(struct pci_dev *pdev, int bars)
+-{
+-	int i;
+-
+-	for (i = 0; i < 6; i++)
+-		if (bars & (1 << i))
+-			pci_release_region(pdev, i);
+-}
+-
+ /*
+  * lpfc_hba_max_vpi - Get the maximum supported VPI for an HBA
+  * @device: The PCI device ID for this HBA

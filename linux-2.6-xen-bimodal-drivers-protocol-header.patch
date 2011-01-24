@@ -1,0 +1,57 @@
+From: Gerd Hoffmann <kraxel@redhat.com>
+Subject: [RHEL-5.1 PATCH 1/10] xen:bimodal drivers, protocol header
+Date: Fri, 15 Jun 2007 10:25:43 +0200
+Bugzilla: 222128
+Message-Id: <46724D07.6090406@redhat.com>
+Changelog: [xen] bimodal drivers, protocol header
+
+
+  Hi,
+
+Starting with Xen 3.1 the 64bit hypervisor can run 32bit-pae paravirtual 
+guests.  Some paravirtual drivers have different data structures in 
+32bit vs. 64bit mode.  Thus the backend drivers must be bimodal, i.e.
+
+  (a) must be able to deal with multiple protocols.
+  (b) need to know which protocol the frontend driver speaks.
+
+This patch just adds a header file with the protocol names.
+
+cheers,
+  Gerd
+
+# HG changeset patch
+# User kfraser@localhost.localdomain
+# Date 1169563541 0
+# Node ID ffe52263b430cff6cd31237f5872c71a3622306b
+# Parent  914304b3a3da6fc5bad12f742bae3893b53d20bc
+bimodal: header file with protocol names.
+
+Signed-off-by: Gerd Hoffmann <kraxel@suse.de>
+
+diff -r 914304b3a3da -r ffe52263b430 xen/include/public/io/protocols.h
+--- /dev/null	Thu Jan 01 00:00:00 1970 +0000
++++ linux/include/xen/interface/io/protocols.h	Tue Jan 23 14:45:41 2007 +0000
+@@ -0,0 +1,21 @@
++#ifndef __XEN_PROTOCOLS_H__
++#define __XEN_PROTOCOLS_H__
++
++#define XEN_IO_PROTO_ABI_X86_32     "x86_32-abi"
++#define XEN_IO_PROTO_ABI_X86_64     "x86_64-abi"
++#define XEN_IO_PROTO_ABI_IA64       "ia64-abi"
++#define XEN_IO_PROTO_ABI_POWERPC64  "powerpc64-abi"
++
++#if defined(__i386__)
++# define XEN_IO_PROTO_ABI_NATIVE XEN_IO_PROTO_ABI_X86_32
++#elif defined(__x86_64__)
++# define XEN_IO_PROTO_ABI_NATIVE XEN_IO_PROTO_ABI_X86_64
++#elif defined(__ia64__)
++# define XEN_IO_PROTO_ABI_NATIVE XEN_IO_PROTO_ABI_IA64
++#elif defined(__powerpc64__)
++# define XEN_IO_PROTO_ABI_NATIVE XEN_IO_PROTO_ABI_POWERPC64
++#else
++# error arch fixup needed here
++#endif
++
++#endif
+

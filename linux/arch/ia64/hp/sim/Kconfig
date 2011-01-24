@@ -4,7 +4,6 @@ menu "HP Simulator drivers"
 
 config HP_SIMETH
 	bool "Simulated Ethernet "
-	depends on NET
 
 config HP_SIMSERIAL
 	bool "Simulated serial driver support"
@@ -14,8 +13,8 @@ config HP_SIMSERIAL_CONSOLE
 	depends on HP_SIMSERIAL
 
 config HP_SIMSCSI
-	bool "Simulated SCSI disk"
-	depends on SCSI=y
+	tristate "Simulated SCSI disk"
+	depends on SCSI
 
 endmenu
 

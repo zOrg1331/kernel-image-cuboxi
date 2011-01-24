@@ -1,4 +1,4 @@
-	/*
+/*
     cx24110 - Single Chip Satellite Channel Receiver driver module
 
     Copyright (C) 2002 Peter Hettkamp <peter.hettkamp@htp-tel.de> based on
@@ -25,6 +25,7 @@
 #include <linux/slab.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
+#include <linux/moduleparam.h>
 #include <linux/init.h>
 
 #include "dvb_frontend.h"
@@ -121,7 +122,7 @@ static int cx24110_writereg (struct cx24110_state* state, int reg, int data)
 
 	if ((err = i2c_transfer(state->i2c, &msg, 1)) != 1) {
 		dprintk ("%s: writereg error (err == %i, reg == 0x%02x,"
-			 " data == 0x%02x)\n", __func__, err, reg, data);
+			 " data == 0x%02x)\n", __FUNCTION__, err, reg, data);
 		return -EREMOTEIO;
 	}
 
@@ -247,13 +248,13 @@ static int cx24110_set_symbolrate (struct cx24110_state* state, u32 srate)
 	static const u32 bands[]={5000000UL,15000000UL,90999000UL/2};
 	int i;
 
-	dprintk("cx24110 debug: entering %s(%d)\n",__func__,srate);
+	dprintk("cx24110 debug: entering %s(%d)\n",__FUNCTION__,srate);
 	if (srate>90999000UL/2)
 		srate=90999000UL/2;
 	if (srate<500000)
 		srate=500000;
 
-	for(i = 0; (i < ARRAY_SIZE(bands)) && (srate>bands[i]); i++)
+	for(i=0;(i<sizeof(bands)/sizeof(bands[0]))&&(srate>bands[i]);i++)
 		;
 	/* first, check which sample rate is appropriate: 45, 60 80 or 90 MHz,
 	   and set the PLL accordingly (R07[1:0] Fclk, R06[7:4] PLLmult,
@@ -310,16 +311,15 @@ static int cx24110_set_symbolrate (struct cx24110_state* state, u32 srate)
 
 }
 
-static int _cx24110_pll_write (struct dvb_frontend* fe, u8 *buf, int len)
+int cx24110_pll_write (struct dvb_frontend* fe, u32 data)
 {
 	struct cx24110_state *state = fe->demodulator_priv;
-
-	if (len != 3)
-		return -EINVAL;
 
 /* tuner data is 21 bits long, must be left-aligned in data */
 /* tuner cx24108 is written through a dedicated 3wire interface on the demod chip */
 /* FIXME (low): add error handling, avoid infinite loops if HW fails... */
+
+	dprintk("cx24110 debug: cx24108_write(%8.8x)\n",data);
 
 	cx24110_writereg(state,0x6d,0x30); /* auto mode at 62kHz */
 	cx24110_writereg(state,0x70,0x15); /* auto mode 21 bits */
@@ -329,19 +329,19 @@ static int _cx24110_pll_write (struct dvb_frontend* fe, u8 *buf, int len)
 		cx24110_writereg(state,0x72,0);
 
 	/* write the topmost 8 bits */
-	cx24110_writereg(state,0x72,buf[0]);
+	cx24110_writereg(state,0x72,(data>>24)&0xff);
 
 	/* wait for the send to be completed */
 	while ((cx24110_readreg(state,0x6d)&0xc0)==0x80)
 		;
 
 	/* send another 8 bytes */
-	cx24110_writereg(state,0x72,buf[1]);
+	cx24110_writereg(state,0x72,(data>>16)&0xff);
 	while ((cx24110_readreg(state,0x6d)&0xc0)==0x80)
 		;
 
 	/* and the topmost 5 bits of this byte */
-	cx24110_writereg(state,0x72,buf[2]);
+	cx24110_writereg(state,0x72,(data>>8)&0xff);
 	while ((cx24110_readreg(state,0x6d)&0xc0)==0x80)
 		;
 
@@ -358,9 +358,9 @@ static int cx24110_initfe(struct dvb_frontend* fe)
 /* fixme (low): error handling */
 	int i;
 
-	dprintk("%s: init chip\n", __func__);
+	dprintk("%s: init chip\n", __FUNCTION__);
 
-	for(i = 0; i < ARRAY_SIZE(cx24110_regdata); i++) {
+	for(i=0;i<sizeof(cx24110_regdata)/sizeof(cx24110_regdata[0]);i++) {
 		cx24110_writereg(state, cx24110_regdata[i].reg, cx24110_regdata[i].data);
 	};
 
@@ -598,7 +598,7 @@ struct dvb_frontend* cx24110_attach(const struct cx24110_config* config,
 	int ret;
 
 	/* allocate memory for the internal state */
-	state = kzalloc(sizeof(struct cx24110_state), GFP_KERNEL);
+	state = kmalloc(sizeof(struct cx24110_state), GFP_KERNEL);
 	if (state == NULL) goto error;
 
 	/* setup the state */
@@ -642,7 +642,6 @@ static struct dvb_frontend_ops cx24110_ops = {
 	.release = cx24110_release,
 
 	.init = cx24110_initfe,
-	.write = _cx24110_pll_write,
 	.set_frontend = cx24110_set_frontend,
 	.get_frontend = cx24110_get_frontend,
 	.read_status = cx24110_read_status,
@@ -665,3 +664,4 @@ MODULE_AUTHOR("Peter Hettkamp");
 MODULE_LICENSE("GPL");
 
 EXPORT_SYMBOL(cx24110_attach);
+EXPORT_SYMBOL(cx24110_pll_write);

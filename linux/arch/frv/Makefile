@@ -39,13 +39,13 @@ endif
 ARCHMODFLAGS	+= -G0 -mlong-calls
 
 ifdef CONFIG_GPREL_DATA_8
-KBUILD_CFLAGS	+= -G8
+CFLAGS		+= -G8
 else
 ifdef CONFIG_GPREL_DATA_4
-KBUILD_CFLAGS	+= -G4
+CFLAGS		+= -G4
 else
 ifdef CONFIG_GPREL_DATA_NONE
-KBUILD_CFLAGS	+= -G0
+CFLAGS		+= -G0
 endif
 endif
 endif
@@ -53,26 +53,26 @@ endif
 #LDFLAGS_vmlinux	:= -Map linkmap.txt
 
 ifdef CONFIG_GC_SECTIONS
-KBUILD_CFLAGS	+= -ffunction-sections -fdata-sections
+CFLAGS		+= -ffunction-sections -fdata-sections
 LINKFLAGS	+= --gc-sections
 endif
 
 ifndef CONFIG_FRAME_POINTER
-KBUILD_CFLAGS	+= -mno-linked-fp
+CFLAGS		+= -mno-linked-fp
 endif
 
 ifdef CONFIG_CPU_FR451_COMPILE
-KBUILD_CFLAGS	+= -mcpu=fr450
-KBUILD_AFLAGS	+= -mcpu=fr450
+CFLAGS		+= -mcpu=fr450
+AFLAGS		+= -mcpu=fr450
 ASFLAGS		+= -mcpu=fr450
 else
 ifdef CONFIG_CPU_FR551_COMPILE
-KBUILD_CFLAGS	+= -mcpu=fr550
-KBUILD_AFLAGS	+= -mcpu=fr550
+CFLAGS		+= -mcpu=fr550
+AFLAGS		+= -mcpu=fr550
 ASFLAGS		+= -mcpu=fr550
 else
-KBUILD_CFLAGS	+= -mcpu=fr400
-KBUILD_AFLAGS	+= -mcpu=fr400
+CFLAGS		+= -mcpu=fr400
+AFLAGS		+= -mcpu=fr400
 ASFLAGS		+= -mcpu=fr400
 endif
 endif
@@ -80,16 +80,16 @@ endif
 # pretend the kernel is going to run on an FR400 with no media-fp unit
 # - reserve CC3 for use with atomic ops
 # - all the extra registers are dealt with only at context switch time
-KBUILD_CFLAGS	+= -mno-fdpic -mgpr-32 -msoft-float -mno-media
-KBUILD_CFLAGS	+= -ffixed-fcc3 -ffixed-cc3 -ffixed-gr15 -ffixed-icc2
-KBUILD_AFLAGS	+= -mno-fdpic
+CFLAGS		+= -mno-fdpic -mgpr-32 -msoft-float -mno-media
+CFLAGS		+= -ffixed-fcc3 -ffixed-cc3 -ffixed-gr15 -ffixed-icc2
+AFLAGS		+= -mno-fdpic
 ASFLAGS		+= -mno-fdpic
 
 # make sure the .S files get compiled with debug info
 # and disable optimisations that are unhelpful whilst debugging
 ifdef CONFIG_DEBUG_INFO
-#KBUILD_CFLAGS	+= -O1
-KBUILD_AFLAGS	+= -Wa,--gdwarf2
+CFLAGS		+= -O1
+AFLAGS		+= -Wa,--gdwarf2
 ASFLAGS		+= -Wa,--gdwarf2
 endif
 
@@ -108,8 +108,11 @@ Image: vmlinux
 bootstrap:
 	$(Q)$(MAKEBOOT) bootstrap
 
+archmrproper:
+	$(Q)$(MAKE) $(build)=arch/frv/boot mrproper
+
 archclean:
-	$(Q)$(MAKE) $(clean)=arch/frv/boot
+	$(Q)$(MAKE) $(build)=arch/frv/boot clean
 
 archdep: scripts/mkdep symlinks
 	$(Q)$(MAKE) $(build)=arch/frv/boot dep

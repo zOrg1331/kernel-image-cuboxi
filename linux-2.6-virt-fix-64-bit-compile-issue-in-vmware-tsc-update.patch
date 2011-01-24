@@ -1,0 +1,32 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Date: Thu, 9 Sep 2010 14:36:46 -0400
+Subject: [virt] fix 64-bit compile issue in VMWare TSC update
+Message-id: <20100909143646.18770.47630.sendpatchset@prarit.bos.redhat.com>
+Patchwork-id: 28189
+O-Subject: [RHEL5.6 BZ 538022 PATCH 2/1] Fix 64-bit compile issue
+Bugzilla: 538022
+RH-Acked-by: Jarod Wilson <jarod@redhat.com>
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+RH-Acked-by: Christopher Lalancette <clalance@redhat.com>
+RH-Acked-by: Larry Woodman <lwoodman@redhat.com>
+RH-Acked-by: Glauber Costa <glommer@redhat.com>
+
+Screwed up an obvious __i386__ ifdef.
+
+Resolves BZ 538022.
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/arch/i386/kernel/cpu/hypervisor.c b/arch/i386/kernel/cpu/hypervisor.c
+index 227ec9d..f621a7c 100644
+--- a/arch/i386/kernel/cpu/hypervisor.c
++++ b/arch/i386/kernel/cpu/hypervisor.c
+@@ -70,7 +70,7 @@ extern int timekeeping_use_tsc;
+ void init_tsc_timer(void)
+ {
+ 	if (timekeeping_use_tsc) {
+-#ifdef CONFIG_X86
++#ifdef __i386__
+ 		extern int enable_tsc_timer;
+ 		enable_tsc_timer = 1;
+ 		rdtscll(last_tsc_accounted);

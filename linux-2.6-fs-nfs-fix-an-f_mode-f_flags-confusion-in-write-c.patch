@@ -1,0 +1,40 @@
+From: Jeff Layton <jlayton@redhat.com>
+Date: Thu, 14 May 2009 12:19:28 -0400
+Subject: [fs] nfs: fix an f_mode/f_flags confusion in write.c
+Message-id: 1242317968-10572-1-git-send-email-jlayton@redhat.com
+O-Subject: [RHEL5.4 PATCH] BZ#490181: NFS: Fix an f_mode/f_flags confusion in fs/nfs/write.c
+Bugzilla: 490181
+RH-Acked-by: Josef Bacik <josef@redhat.com>
+
+From: Trond Myklebust <Trond.Myklebust@netapp.com>
+
+Another rather obvious bug that was fixed upstream a while ago, but
+that we never picked up in RHEL. O_SYNC is stored in filp->f_flags,
+not f_mode.
+
+The existing check is equivalent to:
+
+		!(file->f_mode & S_IFIFO)
+
+...so this check is effectively non-existent. The result, I think, is
+that the kernel extends writes to cover the entire page even when
+O_SYNC is set. I believe this just has performance implications. If
+an app is doing a bunch of writes to a file opened with O_SYNC, it's
+regularly flushing the entire page contents rather than just the piece
+that needs to be written.
+
+Signed-off-by: Trond Myklebust <Trond.Myklebust@netapp.com>
+
+diff --git a/fs/nfs/write.c b/fs/nfs/write.c
+index 31c3f23..e8c8faf 100644
+--- a/fs/nfs/write.c
++++ b/fs/nfs/write.c
+@@ -875,7 +875,7 @@ int nfs_updatepage(struct file *file, struct page *page,
+ 	 */
+ 	if (nfs_write_pageuptodate(page, inode) &&
+ 			inode->i_flock == NULL &&
+-			!(file->f_mode & O_SYNC)) {
++			!(file->f_flags & O_SYNC)) {
+ 		loff_t end_offs = i_size_read(inode) - 1;
+ 		unsigned long end_index = end_offs >> PAGE_CACHE_SHIFT;
+ 

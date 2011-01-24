@@ -1,0 +1,44 @@
+From: Bhavana Nagendra <bnagendr@redhat.com>
+Date: Tue, 16 Oct 2007 16:27:41 -0400
+Subject: [ide] SB700 contains two IDE channels
+Message-id: 20071016202019.23656.40677.sendpatchset@allegro.boston.redhat.com
+O-Subject: [RHEL5.2 PATCH] SB700 contains two IDE channels
+Bugzilla: 314571
+
+Resolves BZ 314571
+
+SB700 supports one physical IDE channel, but SB700 SATA controller
+supports combined mode. When the SATA combined mode is enabled,
+two SATA ports(port4 and port5) share one IDE channel from IDE
+controller, and PATA will share the other IDE channel.  This patch
+supports two  channels for the latest hardware.
+
+Brew build:
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1000798
+
+This build has gone through a QA cycle at AMD and the results are
+attached to the bugzilla.  All pass.
+
+This patch has been submitted upstream and it appears that the IDE
+maintainer has accepted it and applied the change.
+
+http://www.mail-archive.com/linux-ide@vger.kernel.org/msg10893.html
+
+Please ACK and include in RHEL5.2.
+
+Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+diff --git a/drivers/ide/pci/atiixp.c b/drivers/ide/pci/atiixp.c
+index 32bf0a2..39a02ca 100644
+--- a/drivers/ide/pci/atiixp.c
++++ b/drivers/ide/pci/atiixp.c
+@@ -355,7 +355,7 @@ static struct pci_device_id atiixp_pci_tbl[] = {
+ 	{ PCI_VENDOR_ID_ATI, PCI_DEVICE_ID_ATI_IXP300_IDE, PCI_ANY_ID, PCI_ANY_ID, 0, 0, 0},
+ 	{ PCI_VENDOR_ID_ATI, PCI_DEVICE_ID_ATI_IXP400_IDE, PCI_ANY_ID, PCI_ANY_ID, 0, 0, 0},
+ 	{ PCI_VENDOR_ID_ATI, PCI_DEVICE_ID_ATI_IXP600_IDE, PCI_ANY_ID, PCI_ANY_ID, 0, 0, 1},
+-	{ PCI_VENDOR_ID_ATI, PCI_DEVICE_ID_ATI_IXP700_IDE, PCI_ANY_ID, PCI_ANY_ID, 0, 0, 1},
++	{ PCI_VENDOR_ID_ATI, PCI_DEVICE_ID_ATI_IXP700_IDE, PCI_ANY_ID, PCI_ANY_ID, 0, 0, 0},
+ 	{ 0, },
+ };
+ MODULE_DEVICE_TABLE(pci, atiixp_pci_tbl);

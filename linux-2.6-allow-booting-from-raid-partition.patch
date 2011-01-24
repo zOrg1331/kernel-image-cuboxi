@@ -1,0 +1,44 @@
+Date: Tue, 19 Sep 2006 22:29:21 +0200
+From: Jan Glauber <jglauber@redhat.com>
+Subject: [RHEL5 Patch] BZ 196943 - detect raid devices on s390
+
+Booting from a raid device fails since the raid partitions are not
+detected (and therefore the raid is not assembled).
+
+This was already an issue for RHEL4 and is fixed there. Basically the
+same patch is needed for RHEL5. The only difference is that
+vtoc_format1_label is not longer a define but a struct.
+
+Please ack,
+Jan
+-- 
+jglauber@redhat.com
+jang@de.ibm.com
+
+diff -urNp linux-2.6.17.s390/fs/partitions/ibm.c linux-2.6.17.s390_xxx/fs/partitions/ibm.c
+--- linux-2.6.17.s390/fs/partitions/ibm.c	2006-09-18 16:11:10.000000000 +0200
++++ linux-2.6.17.s390_xxx/fs/partitions/ibm.c	2006-09-19 16:35:12.000000000 +0200
+@@ -128,6 +128,7 @@ ibm_partition(struct parsed_partitions *
+ 		while ((data = read_dev_sector(bdev, blk*(blocksize/512),
+ 					       &sect)) != NULL) {
+ 			struct vtoc_format1_label f1;
++			char *ch;
+ 
+ 			memcpy(&f1, data, sizeof(struct vtoc_format1_label));
+ 			put_dev_sector(sect);
+@@ -153,6 +154,14 @@ ibm_partition(struct parsed_partitions *
+ 			put_partition(state, counter + 1,
+ 				      offset * (blocksize >> 9),
+ 				      size * (blocksize >> 9));
++
++			/* Corrupting the label buffer now to save the stack. */
++			EBCASC(f1.DS1DSNAM, 44);
++			f1.DS1DSNAM[44] = 0;
++			ch = strstr(f1.DS1DSNAM, "PART");
++			if (ch != NULL && strncmp(ch + 9, "RAID  ", 6) == 0)
++				state->parts[counter + 1].flags = 1;
++
+ 			counter++;
+ 			blk++;
+ 		}
+

@@ -1,0 +1,52 @@
+From: Chip Coldwell <coldwell@redhat.com>
+Subject: [PATCH RHEL-5] 1/2 bz237889 scsi_transport_spi: fix sense buffer  size error
+Date: Fri, 4 May 2007 15:50:15 -0400 (EDT)
+Bugzilla: 237889
+Message-Id: <Pine.LNX.4.64.0705041547150.23728@bogart.boston.redhat.com>
+Changelog: [scsi] scsi_transport_spi: sense buffer size error
+
+
+
+This is a simple (one line offset) backport of an upstream fix to a
+simple programming error.  Compile-tested.
+
+commit 4ed381ee559ebfab32d3b21896c204992c36179a
+Author: James Bottomley <James.Bottomley@steeleye.com>
+
+    [SCSI] scsi_transport_spi: fix sense buffer size error
+    
+    The code does this:
+    
+    unsigned char sense[SCSI_SENSE_BUFFERSIZE];
+    ...
+    scsi_normalize_sense(sense, sizeof(*sense), sshdr)
+    
+    however the sizeof will return 1 not 96 which means the sense data will
+    have no valid ASC/ASCQ values.  Fix by putting the correct sense size.
+    The only affected case for this would have been the DV buffer sanity
+    check failure, which is fortunately quite rare.
+    
+    Signed-off-by: James Bottomley <James.Bottomley@SteelEye.com>
+
+diff --git a/drivers/scsi/scsi_transport_spi.c b/drivers/scsi/scsi_transport_spi.c
+index 29a9a53..7afe87b 100644
+--- a/drivers/scsi/scsi_transport_spi.c
++++ b/drivers/scsi/scsi_transport_spi.c
+@@ -121,7 +121,7 @@ static int spi_execute(struct scsi_device *sdev, const void *cmd,
+ 			if (!sshdr)
+ 				sshdr = &sshdr_tmp;
+ 
+-			if (scsi_normalize_sense(sense, sizeof(*sense),
++			if (scsi_normalize_sense(sense, SCSI_SENSE_BUFFERSIZE,
+ 						 sshdr)
+ 			    && sshdr->sense_key == UNIT_ATTENTION)
+ 				continue;
+
+Chip
+
+-- 
+Charles M. "Chip" Coldwell
+Senior Software Engineer
+Red Hat, Inc
+978-392-2426
+

@@ -1,0 +1,58 @@
+From: Danny Feng <dfeng@redhat.com>
+Date: Tue, 4 Aug 2009 07:12:31 -0400
+Subject: [misc] documentation: fix file-nr definition in fs.txt
+Message-id: 20090804111235.18807.3598.sendpatchset@danny
+O-Subject: [PATCH RHEL5.5] Documentation: update stale definition of file-nr in fs.txt
+Bugzilla: 497200
+RH-Acked-by: Amerigo Wang <amwang@redhat.com>
+
+BUGZ#:
+https://bugzilla.redhat.com/show_bug.cgi?id=497200
+
+Description:
+The definition of file-nr in Documentation/sysctl/fs.txt appears to be a bit
+stale. It was valid for the 2.4.x kernel, but some values are different for 2.6.
+An updated definition can be found in Documentation/filesystems/proc.txt
+
+Upstream status:
+A trivial patch sent to lkml, Andrew Morton has added to -mm tree.
+http://lkml.org/lkml/2009/8/2/340
+
+KABI:
+no harm
+
+Brew #:
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1915731
+
+Test status:
+Install kernel-doc.rpm, check /usr/share/doc/kernel-doc-2.6.18/Documentation/sysctl/fs.txt.
+It's corrected.
+
+diff --git a/Documentation/sysctl/fs.txt b/Documentation/sysctl/fs.txt
+index 5c3a519..6920aa8 100644
+--- a/Documentation/sysctl/fs.txt
++++ b/Documentation/sysctl/fs.txt
+@@ -82,13 +82,16 @@ handles that the Linux kernel will allocate. When you get lots
+ of error messages about running out of file handles, you might
+ want to increase this limit.
+ 
+-The three values in file-nr denote the number of allocated
+-file handles, the number of unused file handles and the maximum
+-number of file handles. When the allocated file handles come
+-close to the maximum, but the number of unused file handles is
+-significantly greater than 0, you've encountered a peak in your 
+-usage of file handles and you don't need to increase the maximum.
+-
++Historically, the three values in file-nr denoted the number of
++allocated file handles, the number of allocated but unused file
++handles, and the maximum number of file handles. Linux 2.6 always
++reports 0 as the number of free file handles -- this is not an
++error, it just means that the number of allocated file handles
++exactly matches the number of used file handles.
++
++Attempts to allocate more file descriptors than file-max are
++reported with printk, look for "VFS: file-max limit <number>
++reached".
+ ==============================================================
+ 
+ inode-max, inode-nr & inode-state:

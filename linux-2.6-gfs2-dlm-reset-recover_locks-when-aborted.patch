@@ -1,0 +1,26 @@
+Date: Thu, 2 Nov 2006 09:49:02 -0600
+From: David Teigland <teigland@redhat.com>
+Subject: [RHEL5 PATCH] dlm: res_recover_locks_count not reset when recover_locks is aborted
+
+BZ 213684
+
+If a node sends an lkb to the new master (RCOM_LOCK message) during
+recovery and recovery is then aborted on both nodes before it gets a
+reply, the res_recover_locks_count needs to be reset to 0 so that when the
+subsequent recovery comes along and sends the lkb to the new master again
+the assertion doesn't trigger that checks that counter is zero.
+
+
+Index: linux-2.6.19-rc1-rh/fs/dlm/recover.c
+===================================================================
+--- linux-2.6.19-rc1-rh.orig/fs/dlm/recover.c	2006-10-05 11:45:35.000000000 -0500
++++ linux-2.6.19-rc1-rh/fs/dlm/recover.c	2006-11-02 09:47:44.040946952 -0600
+@@ -252,6 +252,7 @@
+ 	spin_lock(&ls->ls_recover_list_lock);
+ 	list_for_each_entry_safe(r, s, &ls->ls_recover_list, res_recover_list) {
+ 		list_del_init(&r->res_recover_list);
++		r->res_recover_locks_count = 0;
+ 		dlm_put_rsb(r);
+ 		ls->ls_recover_list_count--;
+ 	}
+

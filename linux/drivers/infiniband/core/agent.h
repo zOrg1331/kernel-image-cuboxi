@@ -32,6 +32,8 @@
  * ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
  * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  * SOFTWARE.
+ *
+ * $Id: agent.h 1389 2004-12-27 22:56:47Z roland $
  */
 
 #ifndef __AGENT_H_
@@ -44,8 +46,8 @@ extern int ib_agent_port_open(struct ib_device *device, int port_num);
 
 extern int ib_agent_port_close(struct ib_device *device, int port_num);
 
-extern void agent_send_response(struct ib_mad *mad, struct ib_grh *grh,
-				struct ib_wc *wc, struct ib_device *device,
-				int port_num, int qpn);
+extern int agent_send_response(struct ib_mad *mad, struct ib_grh *grh,
+			       struct ib_wc *wc, struct ib_device *device,
+			       int port_num, int qpn);
 
 #endif	/* __AGENT_H_ */

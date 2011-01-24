@@ -1,0 +1,49 @@
+From: Tomas Henzl <thenzl@redhat.com>
+Date: Sun, 29 Aug 2010 15:49:58 -0400
+Subject: [block] cciss: fix enxio weirdness
+Message-id: <1283097002-3341-60-git-send-email-thenzl@redhat.com>
+Patchwork-id: 27900
+O-Subject: [RHEL6 PATCH 59/63] cciss: fix enxio weirdness
+Bugzilla: 568830
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+
+
+diff --git a/drivers/block/cciss.c b/drivers/block/cciss.c
+index c448b1d..6b3ddca 100644
+--- a/drivers/block/cciss.c
++++ b/drivers/block/cciss.c
+@@ -471,7 +471,7 @@ cciss_proc_write(struct file *file, const char __user *buf,
+ {
+ 	struct seq_file *seq = file->private_data;
+ 	ctlr_info_t *h = seq->private;
+-	int err, rc;
++	int err;
+ 	char *buffer;
+ 
+ 
+@@ -491,10 +491,8 @@ cciss_proc_write(struct file *file, const char __user *buf,
+ 		goto out;
+ 	buffer[length] = '\0';
+ 	if (strncmp(ENGAGE_SCSI, buffer, sizeof ENGAGE_SCSI - 1) == 0) {
+-		rc = cciss_engage_scsi(h->ctlr);
+-		if (rc != 0)
+-			err = -rc;
+-		else
++		err = cciss_engage_scsi(h->ctlr);
++		if (err == 0)
+ 			err = length;
+ 	}
+ 	else 
+diff --git a/drivers/block/cciss_scsi.c b/drivers/block/cciss_scsi.c
+index 216a44d..44f016f 100644
+--- a/drivers/block/cciss_scsi.c
++++ b/drivers/block/cciss_scsi.c
+@@ -1583,7 +1583,7 @@ cciss_engage_scsi(int ctlr)
+ 	if (sa->registered) {
+ 		printk("cciss%d: SCSI subsystem already engaged.\n", ctlr);
+ 		spin_unlock_irqrestore(CCISS_LOCK(ctlr), flags);
+-		return ENXIO;
++		return -ENXIO;
+ 	}
+ 	sa->registered = 1;
+ 	spin_unlock_irqrestore(CCISS_LOCK(ctlr), flags);

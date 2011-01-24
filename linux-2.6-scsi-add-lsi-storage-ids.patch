@@ -1,0 +1,64 @@
+From: Jesse Larrew <jlarrew@redhat.com>
+Date: Thu, 14 May 2009 01:00:11 -0400
+Subject: [scsi] add LSI storage IDs
+Message-id: 20090514045720.10947.77777.sendpatchset@squad5-lp1.lab.bos.redhat.com
+O-Subject: [PATCH RHEL5.4 7/10 BZ489582] Add LSI storage IDs
+Bugzilla: 489582
+RH-Acked-by: Mike Christie <mchristi@redhat.com>
+
+RHBZ#:
+======
+https://bugzilla.redhat.com/show_bug.cgi?id=489582
+
+Description:
+===========
+This is a bug fix for all archs.
+
+This patch adds LSI vendor and product IDs to the rdac device list.
+
+RHEL Version Found:
+================
+RHEL 5.3
+
+kABI Status:
+============
+No symbols were harmed.
+
+Brew:
+=====
+Built on all platforms.
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1794596
+
+Upstream Status:
+================
+commit: 273c4781529ef1bc901a27208736b0ccabd52178
+
+Test Status:
+============
+This patch has been tested by Chandra Seetharaman at IBM
+(sekharan@us.ibm.com).
+
+===============================================================
+
+Jesse Larrew
+IBM Onsite Partner
+978-392-3183
+jlarrew@redhat.com
+
+Proposed Patch:
+===============
+This patch is based on 2.6.18-136.el5.
+
+diff --git a/drivers/scsi/device_handler/scsi_dh_rdac.c b/drivers/scsi/device_handler/scsi_dh_rdac.c
+index af1e26a..9009bae 100644
+--- a/drivers/scsi/device_handler/scsi_dh_rdac.c
++++ b/drivers/scsi/device_handler/scsi_dh_rdac.c
+@@ -628,6 +628,8 @@ const struct scsi_dh_devlist rdac_dev_list[] = {
+ 	{"SUN", "LCSM100_F"},
+ 	{"DELL", "MD3000"},
+ 	{"DELL", "MD3000i"},
++	{"LSI", "INF-01-00"},
++	{"ENGENIO", "INF-01-00"},
+ 	{NULL, NULL},
+ };
+ 

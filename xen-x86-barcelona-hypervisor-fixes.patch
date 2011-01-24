@@ -1,0 +1,214 @@
+From: Bhavana Nagendra <bnagendr@redhat.com>
+Date: Wed, 19 Dec 2007 16:17:48 -0500
+Subject: [xen] x86: barcelona hypervisor fixes
+Message-id: 20071219211748.3801.53601.sendpatchset@localhost.localdomain
+O-Subject: [RHEL5.2 PATCH] barcelona hypervisor fixes
+Bugzilla: 421021
+
+Resolves BZ 421021
+
+Adding hypervisor changes related to barcelona that are all in the bare metal
+kernel.
+
+Brew build: 1086964
+
+Tested on Barcelona hardware and verified core enumeration, mce, apic numbering
+on a 2 socket system
+
+Please review and ACK.
+
+Acked-by: Rik van Riel <riel@redhat.com>
+Acked-by: "Stephen C. Tweedie" <sct@redhat.com>
+Acked-by: Markus Armbruster <armbru@redhat.com>
+Acked-by: Prarit Bhargava <prarit@redhat.com>
+Acked-by: "David S. Miller" <davem@redhat.com>
+
+diff --git a/arch/x86/apic.c b/arch/x86/apic.c
+index 3c6a14d..85f5126 100644
+--- a/arch/x86/apic.c
++++ b/arch/x86/apic.c
+@@ -737,7 +737,7 @@ static int __init detect_init_APIC (void)
+     switch (boot_cpu_data.x86_vendor) {
+     case X86_VENDOR_AMD:
+         if ((boot_cpu_data.x86 == 6 && boot_cpu_data.x86_model > 1) ||
+-            (boot_cpu_data.x86 == 15))        
++            (boot_cpu_data.x86 >= 15 && boot_cpu_data.x86 <= 17))
+             break;
+         goto no_apic;
+     case X86_VENDOR_INTEL:
+diff --git a/arch/x86/cpu/amd.c b/arch/x86/cpu/amd.c
+index 870361c..a742053 100644
+--- a/arch/x86/cpu/amd.c
++++ b/arch/x86/cpu/amd.c
+@@ -278,7 +278,7 @@ static void __init init_amd(struct cpuinfo_x86 *c)
+ 	}
+ 
+ 	switch (c->x86) {
+-	case 15:
++	case 15 ... 17:
+ 		set_bit(X86_FEATURE_K8, c->x86_capability);
+ 		break;
+ 	case 6:
+@@ -303,11 +303,8 @@ static void __init init_amd(struct cpuinfo_x86 *c)
+ 
+ 	display_cacheinfo(c);
+ 
+-	if (cpuid_eax(0x80000000) >= 0x80000008) {
++	if (cpuid_eax(0x80000000) >= 0x80000008)
+ 		c->x86_max_cores = (cpuid_ecx(0x80000008) & 0xff) + 1;
+-		if (c->x86_max_cores & (c->x86_max_cores - 1))
+-			c->x86_max_cores = 1;
+-	}
+ 
+ 	if (cpuid_eax(0x80000000) >= 0x80000007) {
+ 		c->x86_power = cpuid_edx(0x80000007);
+@@ -317,15 +314,18 @@ static void __init init_amd(struct cpuinfo_x86 *c)
+ 
+ #ifdef CONFIG_X86_HT
+ 	/*
+-	 * On a AMD dual core setup the lower bits of the APIC id
++	 * On a AMD multi core setup the lower bits of the APIC id
+ 	 * distingush the cores.  Assumes number of cores is a power
+ 	 * of two.
+ 	 */
+ 	if (c->x86_max_cores > 1) {
+ 		int cpu = smp_processor_id();
+-		unsigned bits = 0;
+-		while ((1 << bits) < c->x86_max_cores)
+-			bits++;
++		unsigned bits = (cpuid_ecx(0x80000008) >> 12) & 0xf;
++
++		if (bits == 0) {
++			while ((1 << bits) < c->x86_max_cores)
++				bits++;
++		}
+ 		cpu_core_id[cpu] = phys_proc_id[cpu] & ((1<<bits)-1);
+ 		phys_proc_id[cpu] >>= bits;
+ 		printk(KERN_INFO "CPU %d(%d) -> Core %d\n",
+diff --git a/arch/x86/cpu/mtrr/main.c b/arch/x86/cpu/mtrr/main.c
+index 72cab7b..a82caaa 100644
+--- a/arch/x86/cpu/mtrr/main.c
++++ b/arch/x86/cpu/mtrr/main.c
+@@ -55,7 +55,7 @@ u32 num_var_ranges = 0;
+ unsigned int *usage_table;
+ static DECLARE_MUTEX(mtrr_sem);
+ 
+-u32 size_or_mask, size_and_mask;
++u64 size_or_mask, size_and_mask;
+ 
+ static struct mtrr_ops * mtrr_ops[X86_VENDOR_NUM] = {};
+ 
+@@ -589,8 +589,8 @@ void __init mtrr_bp_init(void)
+ 			     boot_cpu_data.x86_mask == 0x4))
+ 				phys_addr = 36;
+ 
+-			size_or_mask = ~((1 << (phys_addr - PAGE_SHIFT)) - 1);
+-			size_and_mask = ~size_or_mask & 0xfff00000;
++			size_or_mask = ~((1ULL << (phys_addr - PAGE_SHIFT)) - 1);
++			size_and_mask = ~size_or_mask & 0xfffff00000ULL;
+ 		} else if (boot_cpu_data.x86_vendor == X86_VENDOR_CENTAUR &&
+ 			   boot_cpu_data.x86 == 6) {
+ 			/* VIA C* family have Intel style MTRRs, but
+diff --git a/arch/x86/cpu/mtrr/mtrr.h b/arch/x86/cpu/mtrr/mtrr.h
+index 99c9f26..5d8f904 100644
+--- a/arch/x86/cpu/mtrr/mtrr.h
++++ b/arch/x86/cpu/mtrr/mtrr.h
+@@ -83,7 +83,7 @@ void get_mtrr_state(void);
+ 
+ extern void set_mtrr_ops(struct mtrr_ops * ops);
+ 
+-extern u32 size_or_mask, size_and_mask;
++extern u64 size_or_mask, size_and_mask;
+ extern struct mtrr_ops * mtrr_if;
+ 
+ #define is_cpu(vnd)	(mtrr_if && mtrr_if->vendor == X86_VENDOR_##vnd)
+diff --git a/arch/x86/nmi.c b/arch/x86/nmi.c
+index f226e90..53d15a5 100644
+--- a/arch/x86/nmi.c
++++ b/arch/x86/nmi.c
+@@ -314,9 +314,14 @@ void __pminit setup_apic_nmi_watchdog(void)
+ 
+     switch (boot_cpu_data.x86_vendor) {
+     case X86_VENDOR_AMD:
+-        if (boot_cpu_data.x86 != 6 && boot_cpu_data.x86 != 15)
++        switch (boot_cpu_data.x86) {
++	case 6:
++	case 15 ... 17:
++	        setup_k7_watchdog();
++		break;
++	default:
+             return;
+-        setup_k7_watchdog();
++	}
+         break;
+     case X86_VENDOR_INTEL:
+         switch (boot_cpu_data.x86) {
+diff --git a/arch/x86/oprofile/nmi_int.c b/arch/x86/oprofile/nmi_int.c
+index 48ade0b..09549ca 100644
+--- a/arch/x86/oprofile/nmi_int.c
++++ b/arch/x86/oprofile/nmi_int.c
+@@ -348,6 +348,14 @@ static int __init nmi_init(void)
+ 				   give user space an consistent name. */
+ 				cpu_type = "x86-64/hammer";
+ 				break;
++			case 0x10:
++				model = &op_athlon_spec;
++				cpu_type = "x86-64/family10";
++				break;
++			case 0x11:
++				model = &op_athlon_spec;
++				cpu_type = "x86-64/family11";
++				break;
+ 			}
+ 			break;
+  
+diff --git a/arch/x86/oprofile/op_model_athlon.c b/arch/x86/oprofile/op_model_athlon.c
+index adcc920..45fd1d1 100644
+--- a/arch/x86/oprofile/op_model_athlon.c
++++ b/arch/x86/oprofile/op_model_athlon.c
+@@ -34,12 +34,15 @@
+ #define CTRL_WRITE(l,h,msrs,c) do {wrmsr(msrs->controls[(c)].addr, (l), (h));} while (0)
+ #define CTRL_SET_ACTIVE(n) (n |= (1<<22))
+ #define CTRL_SET_INACTIVE(n) (n &= ~(1<<22))
+-#define CTRL_CLEAR(x) (x &= (1<<21))
++#define CTRL_CLEAR(lo, hi) (lo &= (1<<21), hi = 0)
+ #define CTRL_SET_ENABLE(val) (val |= 1<<20)
+ #define CTRL_SET_USR(val,u) (val |= ((u & 1) << 16))
+ #define CTRL_SET_KERN(val,k) (val |= ((k & 1) << 17))
+-#define CTRL_SET_UM(val, m) (val |= (m << 8))
+-#define CTRL_SET_EVENT(val, e) (val |= e)
++#define CTRL_SET_UM(val, m) (val |= ((m & 0xff) << 8))
++#define CTRL_SET_EVENT_LOW(val, e) (val |= (e & 0xff))
++#define CTRL_SET_EVENT_HIGH(val, e) (val |= ((e >> 8) & 0xf))
++#define CTRL_SET_HOST_ONLY(val, h) (val |= ((h & 1) << 9))
++#define CTRL_SET_GUEST_ONLY(val, h) (val |= ((h & 1) << 8))
+ 
+ static unsigned long reset_value[NUM_COUNTERS];
+ 
+@@ -72,7 +75,7 @@ static void athlon_setup_ctrs(struct op_msrs const * const msrs)
+ 	/* clear all counters */
+ 	for (i = 0 ; i < NUM_CONTROLS; ++i) {
+ 		CTRL_READ(low, high, msrs, i);
+-		CTRL_CLEAR(low);
++		CTRL_CLEAR(low, high);
+ 		CTRL_WRITE(low, high, msrs, i);
+ 	}
+ 	
+@@ -89,12 +92,15 @@ static void athlon_setup_ctrs(struct op_msrs const * const msrs)
+ 			CTR_WRITE(counter_config[i].count, msrs, i);
+ 
+ 			CTRL_READ(low, high, msrs, i);
+-			CTRL_CLEAR(low);
++			CTRL_CLEAR(low, high);
+ 			CTRL_SET_ENABLE(low);
+ 			CTRL_SET_USR(low, counter_config[i].user);
+ 			CTRL_SET_KERN(low, counter_config[i].kernel);
+ 			CTRL_SET_UM(low, counter_config[i].unit_mask);
+-			CTRL_SET_EVENT(low, counter_config[i].event);
++			CTRL_SET_EVENT_LOW(low, counter_config[i].event);
++			CTRL_SET_EVENT_HIGH(high, counter_config[i].event);
++			CTRL_SET_HOST_ONLY(high, 0);
++			CTRL_SET_GUEST_ONLY(high, 0);
+ 			CTRL_WRITE(low, high, msrs, i);
+ 		} else {
+ 			reset_value[i] = 0;

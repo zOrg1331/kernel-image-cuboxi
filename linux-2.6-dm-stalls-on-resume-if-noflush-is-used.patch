@@ -1,0 +1,100 @@
+From: Milan Broz <mbroz@redhat.com>
+Subject: [RHEL 5.1 PATCH] dm: stalls on resume if noflush is used
+Date: Tue, 10 Apr 2007 16:58:04 +0200
+Bugzilla: 221330
+Message-Id: <461BA5FC.5060707@redhat.com>
+Changelog: [dm] stalls on resume if noflush is used
+
+
+RHEL5.1 device mapper: stalls on resume if noflush is used
+
+Resolves: rhbz#221330, it#110302
+
+Patch in RHEL4.5 and upstream in 2.6.20.
+
+Multipath devices can stall when resumed if noflush was used when
+suspending them, all paths have failed and queue_if_no_path is set.
+
+Mirroring and cluster mirroring is affected too.
+
+Fix tested with both multipath and mirror cases.
+
+
+Explanation:
+ 1 Something did fsync() on the block dev
+   holding inode->i_sem and possibly I_LOCK is set
+ 2 The fsync write is blocked by all-paths-down and queue_if_no_path
+ 3 dm_suspend() tries to bdget() and waits forever on the inode
+   being unlocked.
+   Or, in the middle of dm_resume(), __bind() tries to get
+   inode->i_sem to do __set_size() and waits forever
+
+What the patch does is:
+  - Skip bdget_disk() in case of noflush suspending
+  - At the table swapping, if bdget_disk() has not been done,
+    check if the table size is being changed.
+    If it's being changed, quit the swapping.
+  - Check before __set_size() whether bdget_disk() has been done.
+    (for the case where table size isn't changed during noflush)
+
+
+Index: linux-2.6.18/drivers/md/dm.c
+===================================================================
+--- linux-2.6.18.orig/drivers/md/dm.c	2007-04-10 11:40:51.000000000 +0200
++++ linux-2.6.18/drivers/md/dm.c	2007-04-10 16:52:51.000000000 +0200
+@@ -1116,7 +1116,8 @@ static int __bind(struct mapped_device *
+ 	if (size != get_capacity(md->disk))
+ 		memset(&md->geometry, 0, sizeof(md->geometry));
+ 
+-	__set_size(md, size);
++	if (md->suspended_bdev)
++		__set_size(md, size);
+ 	if (size == 0)
+ 		return 0;
+ 
+@@ -1264,6 +1265,11 @@ int dm_swap_table(struct mapped_device *
+ 	if (!dm_suspended(md))
+ 		goto out;
+ 
++	/* without bdev, the device size cannot be changed */
++	if (!md->suspended_bdev)
++		if (get_capacity(md->disk) != dm_table_get_size(table))
++			goto out;
++
+ 	__unbind(md);
+ 	r = __bind(md, table);
+ 
+@@ -1341,11 +1347,14 @@ int dm_suspend(struct mapped_device *md,
+ 	/* This does not get reverted if there's an error later. */
+ 	dm_table_presuspend_targets(map);
+ 
+-	md->suspended_bdev = bdget_disk(md->disk, 0);
+-	if (!md->suspended_bdev) {
+-		DMWARN("bdget failed in dm_suspend");
+-		r = -ENOMEM;
+-		goto flush_and_out;
++	/* bdget() can stall if the pending I/Os are not flushed */
++	if (!noflush) {
++		md->suspended_bdev = bdget_disk(md->disk, 0);
++		if (!md->suspended_bdev) {
++			DMWARN("bdget failed in dm_suspend");
++			r = -ENOMEM;
++			goto flush_and_out;
++		}
+ 	}
+ 
+ 	/*
+@@ -1471,8 +1480,10 @@ int dm_resume(struct mapped_device *md)
+ 
+ 	unlock_fs(md);
+ 
+-	bdput(md->suspended_bdev);
+-	md->suspended_bdev = NULL;
++	if (md->suspended_bdev) {
++		bdput(md->suspended_bdev);
++		md->suspended_bdev = NULL;
++	}
+ 
+ 	clear_bit(DMF_SUSPENDED, &md->flags);
+ 
+

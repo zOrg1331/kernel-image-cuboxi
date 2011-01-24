@@ -1,0 +1,38 @@
+From: Jeff Layton <jlayton@redhat.com>
+Date: Thu, 14 Feb 2008 13:22:47 -0500
+Subject: [fs] nlm: fix refcount leak in nlmsvc_grant_blocked
+Message-id: 1203013367-15163-1-git-send-email-jlayton@redhat.com
+O-Subject: [RHEL5.2 PATCH] BZ#432626: NLM: fix nlm_block refcount leak in nlmsvc_grant_blocked()
+Bugzilla: 432626
+
+Another late breaking patch to fix a regression in 5.2 kernels...
+
+The patch for 196318 added a kref_get() call to the top of
+nlmsvc_grant_blocked(), but did not remove the old kref_get() call near the
+bottom of the function. This makes this function take 2 references to the
+nlm_block rather than just one, causing a refcount leak on every time we call
+back the client to grant it a lock. This causes memory leaks and potentially
+other nastiness when lockd is shut down. The fix is to remove the old
+kref_get() call since it's no longer needed.
+
+I've not done any heavy testing on this, but it does fix the reproducer
+I have for this problem and makes this function match the current
+upstream code.
+
+Signed-off-by: Jeff Layton <jlayton@redhat.com>
+
+Acked-by: Peter Staubach <staubach@redhat.com>
+Acked-by: Steve Dickson <SteveD@redhat.com>
+
+diff --git a/fs/lockd/svclock.c b/fs/lockd/svclock.c
+index aa093bb..60ca5f1 100644
+--- a/fs/lockd/svclock.c
++++ b/fs/lockd/svclock.c
+@@ -771,7 +771,6 @@ callback:
+ 	nlmsvc_insert_block(block, 30 * HZ);
+ 
+ 	/* Call the client */
+-	kref_get(&block->b_count);
+ 	nlm_async_call(block->b_call, NLMPROC_GRANTED_MSG, &nlmsvc_grant_ops);
+ }
+ 

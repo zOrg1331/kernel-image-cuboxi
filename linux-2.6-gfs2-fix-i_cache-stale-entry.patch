@@ -1,0 +1,46 @@
+From: Wendy Cheng <wcheng@redhat.com>
+Subject: [RHEL 5.1 PATCH] Fix i_cache stale entry
+Date: Wed, 19 Sep 2007 12:20:34 -0400
+Bugzilla: 253756
+Message-Id: <46F14C52.50506@redhat.com>
+Changelog: [GFS2] Fix i_cache stale entry
+
+
+Two fixes: first one fixes i_cache flush problem. Upon glock lock 
+transfer, if the file is a large sparse file, the gfs2_meta_cache_flush 
+prematurely stops the flushing that leaves stale entries around. This 
+has generated few nasty issues including data corruption. Second one 
+corrects checking in gfs2_get_block_noalloc upon unmapped buffer.
+
+-- Wendy
+
+
+--- e47-brew/fs/gfs2/meta_io.c	2007-09-18 07:33:00.000000000 -0500
++++ e47/fs/gfs2/meta_io.c	2007-09-18 16:24:51.000000000 -0500
+@@ -374,10 +374,10 @@ void gfs2_meta_cache_flush(struct gfs2_i
+ 
+ 	for (x = 0; x < GFS2_MAX_META_HEIGHT; x++) {
+ 		bh_slot = &ip->i_cache[x];
+-		if (!*bh_slot)
+-			break;
+-		brelse(*bh_slot);
+-		*bh_slot = NULL;
++		if (*bh_slot) {
++			brelse(*bh_slot);
++			*bh_slot = NULL;
++		}
+ 	}
+ 
+ 	spin_unlock(&ip->i_spin);
+--- e47-brew/fs/gfs2/ops_address.c	2007-09-18 07:33:00.000000000 -0500
++++ e47/fs/gfs2/ops_address.c	2007-09-19 10:54:39.000000000 -0500
+@@ -90,7 +90,7 @@ static int gfs2_get_block_noalloc(struct
+ 	error = gfs2_block_map(inode, lblock, 0, bh_result);
+ 	if (error)
+ 		return error;
+-	if (bh_result->b_blocknr == 0)
++	if (!buffer_mapped(bh_result))
+ 		return -EIO;
+ 	return 0;
+ }
+

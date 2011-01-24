@@ -1,0 +1,47 @@
+From: Vitaly Mayatskikh <vmayatsk@redhat.com>
+Date: Wed, 27 Aug 2008 11:25:37 +0200
+Subject: [net] dccp_setsockopt_change integer overflow
+Message-id: m33akqajxq.fsf@gravicappa.englab.brq.redhat.com
+O-Subject: [RHEL-5.3 PATCH] BZ459235 CVE-2008-3276 Linux kernel dccp_setsockopt_change() integer overflow [rhel-5.3]
+Bugzilla: 459235
+RH-Acked-by: Jiri Pirko <jpirko@redhat.com>
+RH-Acked-by: David Miller <davem@redhat.com>
+CVE: CVE-2008-3276
+RH-Acked-by: Eugene Teo <eteo@redhat.com>
+
+Bugzilla: 459235
+CVE: CVE-2008-3276
+
+https://bugzilla.redhat.com/show_bug.cgi?id=459235
+
+Description:
+============
+Eugene Teo reported that an integer overflow flaw was found in the Linux
+kernel dccp_setsockopt_change() function. The vulnerability exists due
+to a lack of sanitisation performed on a user-controlled integer value
+before the value is employed as the size argument of a memory allocation
+operation. An attacker may leverage this vulnerability to trigger a
+kernel panic on a victim's machine remotely.
+
+Upstream status:
+================
+3e8a0a559c66ee9e7468195691a56fefc3589740
+
+Brew build: https://brewweb.devel.redhat.com/taskinfo?taskID=1439536
+
+diff --git a/net/dccp/proto.c b/net/dccp/proto.c
+index 6f14bb5..2a2f9e7 100644
+--- a/net/dccp/proto.c
++++ b/net/dccp/proto.c
+@@ -431,6 +431,11 @@ static int dccp_setsockopt_change(struct sock *sk, int type,
+ 
+ 	if (copy_from_user(&opt, optval, sizeof(opt)))
+ 		return -EFAULT;
++	/*
++	 * rfc4340: 6.1. Change Options
++	 */
++	if (opt.dccpsf_len < 1)
++		return -EINVAL;
+ 
+ 	val = kmalloc(opt.dccpsf_len, GFP_KERNEL);
+ 	if (!val)

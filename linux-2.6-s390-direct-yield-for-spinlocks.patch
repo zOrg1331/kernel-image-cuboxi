@@ -1,0 +1,310 @@
+From: Jan Glauber <jglauber@redhat.com>
+Subject: [RHEL5.1 PATCH] direct yield for spinlocks on s390
+Date: Tue, 20 Feb 2007 17:36:34 +0100
+Bugzilla: 228869
+Message-Id: <1171989394.6031.50.camel@localhost.localdomain>
+Changelog: [s390] direct yield for spinlocks on s390
+
+
+BZ 219871
+
+Add support for direct yield of spinlocks on s390. There is a new
+diagnose call (0x9c) that yields the remaining timeslice of the virtual cpu
+that tries to acquire a lock to the virtual cpu that is the current holder 
+of the lock.
+
+The patch doesn't change the spinlock kabi for s390 since R5 already
+contained a dummy field for the lock owner.
+
+With directed yield the very high number of diag calls due to spinlocks 
+(diag 0x44) rapidly decreases. That improves the performance on a z/VM
+with many Linux guests.
+
+Jan
+-- 
+jglauber@redhat.com
+jang@de.ibm.com
+
+ arch/s390/kernel/head31.S   |   11 ++++++++
+ arch/s390/kernel/head64.S   |   11 ++++++++
+ arch/s390/lib/spinlock.c    |   54 +++++++++++++++++++++++++-------------------
+ include/asm-s390/setup.h    |    1 
+ include/asm-s390/spinlock.h |   49 ++++++++++++++++++++++++++++++++-------
+ 5 files changed, 94 insertions(+), 32 deletions(-)
+
+diff -urpN linux-2.6.18.s390x/arch/s390/kernel/head31.S linux-2.6.18.s390x-i4i/arch/s390/kernel/head31.S
+--- linux-2.6.18.s390x/arch/s390/kernel/head31.S	2006-09-20 03:42:06.000000000 +0000
++++ linux-2.6.18.s390x-i4i/arch/s390/kernel/head31.S	2007-01-10 16:29:39.000000000 +0000
+@@ -239,6 +239,16 @@ startup_continue:
+ 	oi	3(%r12),0x80		# set IDTE flag
+ .Lchkidte:
+ 
++#
++# find out if the diag 0x9c is available
++#
++	mvc	__LC_PGM_NEW_PSW(8),.Lpcdiag9c-.LPG1(%r13)
++	stap   __LC_CPUID+4		# store cpu address
++	lh     %r1,__LC_CPUID+4
++	diag   %r1,0,0x9c		# test diag 0x9c
++	oi     2(%r12),1		# set diag9c flag
++.Lchkdiag9c:
++
+ 	lpsw  .Lentry-.LPG1(13)		# jump to _stext in primary-space,
+ 					# virtual and never return ...
+ 	.align	8
+@@ -266,6 +276,7 @@ startup_continue:
+ .Lpccsp:.long	0x00080000,0x80000000 + .Lchkcsp
+ .Lpcmvpg:.long	0x00080000,0x80000000 + .Lchkmvpg
+ .Lpcidte:.long	0x00080000,0x80000000 + .Lchkidte
++.Lpcdiag9c:.long 0x00080000,0x80000000 + .Lchkdiag9c
+ .Lmemsize:.long memory_size
+ .Lmchunk:.long	memory_chunk
+ .Lmflags:.long	machine_flags
+diff -urpN linux-2.6.18.s390x/arch/s390/kernel/head64.S linux-2.6.18.s390x-i4i/arch/s390/kernel/head64.S
+--- linux-2.6.18.s390x/arch/s390/kernel/head64.S	2006-09-20 03:42:06.000000000 +0000
++++ linux-2.6.18.s390x-i4i/arch/s390/kernel/head64.S	2007-01-10 16:29:39.000000000 +0000
+@@ -239,6 +239,17 @@ startup_continue:
+ 	oi	7(%r12),0x80		# set IDTE flag
+ 0:
+ 
++#
++# find out if the diag 0x9c is available
++#
++	la     %r1,0f-.LPG1(%r13)	# set program check address
++	stg    %r1,__LC_PGM_NEW_PSW+8
++	stap   __LC_CPUID+4		# store cpu address
++	lh     %r1,__LC_CPUID+4
++	diag   %r1,0,0x9c		# test diag 0x9c
++	oi     6(%r12),1		# set diag9c flag
++0:
++
+         lpswe .Lentry-.LPG1(13)         # jump to _stext in primary-space,
+                                         # virtual and never return ...
+         .align 16
+diff -urpN linux-2.6.18.s390x/arch/s390/lib/spinlock.c linux-2.6.18.s390x-i4i/arch/s390/lib/spinlock.c
+--- linux-2.6.18.s390x/arch/s390/lib/spinlock.c	2006-09-20 03:42:06.000000000 +0000
++++ linux-2.6.18.s390x-i4i/arch/s390/lib/spinlock.c	2007-01-10 16:29:39.000000000 +0000
+@@ -24,57 +24,68 @@ static int __init spin_retry_setup(char 
+ }
+ __setup("spin_retry=", spin_retry_setup);
+ 
+-static inline void
+-_diag44(void)
++static inline void _raw_yield(void)
+ {
+-#ifdef CONFIG_64BIT
+ 	if (MACHINE_HAS_DIAG44)
+-#endif
+ 		asm volatile("diag 0,0,0x44");
+ }
+ 
+-void
+-_raw_spin_lock_wait(raw_spinlock_t *lp, unsigned int pc)
++static inline void _raw_yield_cpu(int cpu)
++{
++	if (MACHINE_HAS_DIAG9C)
++		asm volatile("diag %0,0,0x9c"
++			     : : "d" (__cpu_logical_map[cpu]));
++	else
++		_raw_yield();
++}
++
++void _raw_spin_lock_wait(raw_spinlock_t *lp, unsigned int pc)
+ {
+ 	int count = spin_retry;
++	unsigned int cpu = ~smp_processor_id();
+ 
+ 	while (1) {
+ 		if (count-- <= 0) {
+-			_diag44();
++			unsigned int owner = lp->lock;
++			if (owner != 0)
++				_raw_yield_cpu(~owner);
+ 			count = spin_retry;
+ 		}
+ 		if (__raw_spin_is_locked(lp))
+ 			continue;
+-		if (_raw_compare_and_swap(&lp->lock, 0, pc) == 0)
++		if (_raw_compare_and_swap(&lp->lock, 0, cpu) == 0) {
++			lp->owner_pc = pc;
+ 			return;
++		}
+ 	}
+ }
+ EXPORT_SYMBOL(_raw_spin_lock_wait);
+ 
+-int
+-_raw_spin_trylock_retry(raw_spinlock_t *lp, unsigned int pc)
++int _raw_spin_trylock_retry(raw_spinlock_t *lp, unsigned int pc)
+ {
+-	int count = spin_retry;
++	unsigned int cpu = ~smp_processor_id();
++	int count;
+ 
+-	while (count-- > 0) {
++	for (count = spin_retry; count > 0; count--) {
+ 		if (__raw_spin_is_locked(lp))
+ 			continue;
+-		if (_raw_compare_and_swap(&lp->lock, 0, pc) == 0)
++		if (_raw_compare_and_swap(&lp->lock, 0, cpu) == 0) {
++			lp->owner_pc = pc;
+ 			return 1;
++		}
+ 	}
+ 	return 0;
+ }
+ EXPORT_SYMBOL(_raw_spin_trylock_retry);
+ 
+-void
+-_raw_read_lock_wait(raw_rwlock_t *rw)
++void _raw_read_lock_wait(raw_rwlock_t *rw)
+ {
+ 	unsigned int old;
+ 	int count = spin_retry;
+ 
+ 	while (1) {
+ 		if (count-- <= 0) {
+-			_diag44();
++			_raw_yield();
+ 			count = spin_retry;
+ 		}
+ 		if (!__raw_read_can_lock(rw))
+@@ -86,8 +97,7 @@ _raw_read_lock_wait(raw_rwlock_t *rw)
+ }
+ EXPORT_SYMBOL(_raw_read_lock_wait);
+ 
+-int
+-_raw_read_trylock_retry(raw_rwlock_t *rw)
++int _raw_read_trylock_retry(raw_rwlock_t *rw)
+ {
+ 	unsigned int old;
+ 	int count = spin_retry;
+@@ -103,14 +113,13 @@ _raw_read_trylock_retry(raw_rwlock_t *rw
+ }
+ EXPORT_SYMBOL(_raw_read_trylock_retry);
+ 
+-void
+-_raw_write_lock_wait(raw_rwlock_t *rw)
++void _raw_write_lock_wait(raw_rwlock_t *rw)
+ {
+ 	int count = spin_retry;
+ 
+ 	while (1) {
+ 		if (count-- <= 0) {
+-			_diag44();
++			_raw_yield();
+ 			count = spin_retry;
+ 		}
+ 		if (!__raw_write_can_lock(rw))
+@@ -121,8 +130,7 @@ _raw_write_lock_wait(raw_rwlock_t *rw)
+ }
+ EXPORT_SYMBOL(_raw_write_lock_wait);
+ 
+-int
+-_raw_write_trylock_retry(raw_rwlock_t *rw)
++int _raw_write_trylock_retry(raw_rwlock_t *rw)
+ {
+ 	int count = spin_retry;
+ 
+diff -urpN linux-2.6.18.s390x/include/asm-s390/setup.h linux-2.6.18.s390x-i4i/include/asm-s390/setup.h
+--- linux-2.6.18.s390x/include/asm-s390/setup.h	2006-09-20 03:42:06.000000000 +0000
++++ linux-2.6.18.s390x-i4i/include/asm-s390/setup.h	2007-01-10 16:29:39.000000000 +0000
+@@ -41,6 +41,7 @@ extern unsigned long machine_flags;
+ #define MACHINE_IS_P390		(machine_flags & 4)
+ #define MACHINE_HAS_MVPG	(machine_flags & 16)
+ #define MACHINE_HAS_IDTE	(machine_flags & 128)
++#define MACHINE_HAS_DIAG9C	(machine_flags & 256)
+ 
+ #ifndef __s390x__
+ #define MACHINE_HAS_IEEE	(machine_flags & 2)
+diff -urpN linux-2.6.18.s390x/include/asm-s390/spinlock.h linux-2.6.18.s390x-i4i/include/asm-s390/spinlock.h
+--- linux-2.6.18.s390x/include/asm-s390/spinlock.h	2006-09-20 03:42:06.000000000 +0000
++++ linux-2.6.18.s390x-i4i/include/asm-s390/spinlock.h	2007-01-10 16:29:39.000000000 +0000
+@@ -11,17 +11,38 @@
+ #ifndef __ASM_SPINLOCK_H
+ #define __ASM_SPINLOCK_H
+ 
++#include <linux/smp.h>
++
++#if __GNUC__ > 3 || (__GNUC__ == 3 && __GNUC_MINOR__ > 2)
++
+ static inline int
+ _raw_compare_and_swap(volatile unsigned int *lock,
+ 		      unsigned int old, unsigned int new)
+ {
+-	asm volatile ("cs %0,%3,0(%4)"
+-		      : "=d" (old), "=m" (*lock)
+-		      : "0" (old), "d" (new), "a" (lock), "m" (*lock)
+-		      : "cc", "memory" );
++	asm volatile(
++		"	cs	%0,%3,%1"
++		: "=d" (old), "=Q" (*lock)
++		: "0" (old), "d" (new), "Q" (*lock)
++		: "cc", "memory" );
+ 	return old;
+ }
+ 
++#else /* __GNUC__ */
++
++static inline int
++_raw_compare_and_swap(volatile unsigned int *lock,
++		      unsigned int old, unsigned int new)
++{
++	asm volatile(
++		"	cs	%0,%3,0(%4)"
++		: "=d" (old), "=m" (*lock)
++		: "0" (old), "d" (new), "a" (lock), "m" (*lock)
++		: "cc", "memory" );
++	return old;
++}
++
++#endif /* __GNUC__ */
++
+ /*
+  * Simple spin lock operations.  There are two variants, one clears IRQ's
+  * on the local processor, one does not.
+@@ -36,28 +57,38 @@ _raw_compare_and_swap(volatile unsigned 
+ #define __raw_spin_unlock_wait(lock) \
+ 	do { while (__raw_spin_is_locked(lock)) cpu_relax(); } while (0)
+ 
+-extern void _raw_spin_lock_wait(raw_spinlock_t *lp, unsigned int pc);
+-extern int _raw_spin_trylock_retry(raw_spinlock_t *lp, unsigned int pc);
++extern void _raw_spin_lock_wait(raw_spinlock_t *, unsigned int pc);
++extern int _raw_spin_trylock_retry(raw_spinlock_t *, unsigned int pc);
+ 
+ static inline void __raw_spin_lock(raw_spinlock_t *lp)
+ {
+ 	unsigned long pc = 1 | (unsigned long) __builtin_return_address(0);
++	int old;
+ 
+-	if (unlikely(_raw_compare_and_swap(&lp->lock, 0, pc) != 0))
+-		_raw_spin_lock_wait(lp, pc);
++	old = _raw_compare_and_swap(&lp->lock, 0, ~smp_processor_id());
++	if (likely(old == 0)) {
++		lp->owner_pc = pc;
++		return;
++	}
++	_raw_spin_lock_wait(lp, pc);
+ }
+ 
+ static inline int __raw_spin_trylock(raw_spinlock_t *lp)
+ {
+ 	unsigned long pc = 1 | (unsigned long) __builtin_return_address(0);
++	int old;
+ 
+-	if (likely(_raw_compare_and_swap(&lp->lock, 0, pc) == 0))
++	old = _raw_compare_and_swap(&lp->lock, 0, ~smp_processor_id());
++	if (likely(old == 0)) {
++		lp->owner_pc = pc;
+ 		return 1;
++	}
+ 	return _raw_spin_trylock_retry(lp, pc);
+ }
+ 
+ static inline void __raw_spin_unlock(raw_spinlock_t *lp)
+ {
++	lp->owner_pc = 0;
+ 	_raw_compare_and_swap(&lp->lock, lp->lock, 0);
+ }
+ 		
+

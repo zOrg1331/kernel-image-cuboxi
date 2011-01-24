@@ -1,0 +1,45 @@
+Subject: [PATCH 1/1] netmos 9901 PCIe serial support
+From: Denis Lunev <den@parallels.com>
+Date: Mon, 22 Nov 2010 16:17:38 +0300
+To: Pavel Emelianov <xemul@parallels.com>
+CC: "vzlin-dev@lists.sw.ru" <vzlin-dev@lists.sw.ru>
+
+Just add proper ID to 8250 serial implementation.
+
+Signed-off-by: Denis V. Lunev <den@openvz.org><mailto:den@openvz.org>
+
+
+---
+
+--- ./drivers/serial/8250_pci.c.orig	2010-10-22 19:01:56.000000000 +0400
++++ ./drivers/serial/8250_pci.c	2010-11-22 15:24:27.000000000 +0300
+@@ -576,6 +576,8 @@ static int pci_netmos_init(struct pci_de
+ 	/* subdevice 0x00PS means <P> parallel, <S> serial */
+ 	unsigned int num_serial = dev->subsystem_device & 0xf;
+ 
++	if (dev->device == PCI_DEVICE_ID_NETMOS_9901)
++		return 0;
+ 	if (num_serial == 0)
+ 		return -ENODEV;
+ 	return num_serial;
+@@ -2401,6 +2403,10 @@ static struct pci_device_id serial_pci_t
+ 		PCI_ANY_ID, PCI_ANY_ID, 0, 0,	/* 135a.0811 */
+ 		pbn_b2_2_115200 },
+ 
++	{	PCI_VENDOR_ID_NETMOS, PCI_DEVICE_ID_NETMOS_9901,
++		0xA000, 0x1000,
++		0, 0, pbn_b0_1_115200 },
++
+ 	/*
+ 	 * These entries match devices with class COMMUNICATION_SERIAL,
+ 	 * COMMUNICATION_MODEM or COMMUNICATION_MULTISERIAL
+--- ./include/linux/pci_ids.h.orig	2010-10-22 19:02:02.000000000 +0400
++++ ./include/linux/pci_ids.h	2010-11-22 15:23:22.000000000 +0300
+@@ -2461,6 +2461,7 @@
+ #define PCI_DEVICE_ID_NETMOS_9835	0x9835
+ #define PCI_DEVICE_ID_NETMOS_9845	0x9845
+ #define PCI_DEVICE_ID_NETMOS_9855	0x9855
++#define PCI_DEVICE_ID_NETMOS_9901	0x9901
+ 
+ #define PCI_VENDOR_ID_3COM_2		0xa727
+ 

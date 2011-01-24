@@ -19,11 +19,16 @@
  * Software Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
-#include <linux/blkdev.h>
-#include <linux/raid/md_u.h>
-#include <linux/seq_file.h>
-#include "md.h"
-#include "multipath.h"
+#include <linux/module.h>
+#include <linux/slab.h>
+#include <linux/spinlock.h>
+#include <linux/raid/multipath.h>
+#include <linux/buffer_head.h>
+#include <asm/atomic.h>
+
+#define MAJOR_NR MD_MAJOR
+#define MD_DRIVER
+#define MD_PERSONALITY
 
 #define MAX_WORK_PER_DISK 128
 
@@ -58,7 +63,7 @@ static void multipath_reschedule_retry (struct multipath_bh *mp_bh)
 {
 	unsigned long flags;
 	mddev_t *mddev = mp_bh->mddev;
-	multipath_conf_t *conf = mddev->private;
+	multipath_conf_t *conf = mddev_to_conf(mddev);
 
 	spin_lock_irqsave(&conf->device_lock, flags);
 	list_add(&mp_bh->retry_list, &conf->retry_list);
@@ -75,22 +80,26 @@ static void multipath_reschedule_retry (struct multipath_bh *mp_bh)
 static void multipath_end_bh_io (struct multipath_bh *mp_bh, int err)
 {
 	struct bio *bio = mp_bh->master_bio;
-	multipath_conf_t *conf = mp_bh->mddev->private;
+	multipath_conf_t *conf = mddev_to_conf(mp_bh->mddev);
 
-	bio_endio(bio, err);
+	bio_endio(bio, bio->bi_size, err);
 	mempool_free(mp_bh, conf->pool);
 }
 
-static void multipath_end_request(struct bio *bio, int error)
+static int multipath_end_request(struct bio *bio, unsigned int bytes_done,
+				 int error)
 {
 	int uptodate = test_bit(BIO_UPTODATE, &bio->bi_flags);
-	struct multipath_bh *mp_bh = bio->bi_private;
-	multipath_conf_t *conf = mp_bh->mddev->private;
+	struct multipath_bh * mp_bh = (struct multipath_bh *)(bio->bi_private);
+	multipath_conf_t *conf = mddev_to_conf(mp_bh->mddev);
 	mdk_rdev_t *rdev = conf->multipaths[mp_bh->path].rdev;
+
+	if (bio->bi_size)
+		return 1;
 
 	if (uptodate)
 		multipath_end_bh_io(mp_bh, 0);
-	else if (!bio_rw_flagged(bio, BIO_RW_AHEAD)) {
+	else if (!bio_rw_ahead(bio)) {
 		/*
 		 * oops, IO error:
 		 */
@@ -103,11 +112,12 @@ static void multipath_end_request(struct bio *bio, int error)
 	} else
 		multipath_end_bh_io(mp_bh, error);
 	rdev_dec_pending(rdev, conf->mddev);
+	return 0;
 }
 
 static void unplug_slaves(mddev_t *mddev)
 {
-	multipath_conf_t *conf = mddev->private;
+	multipath_conf_t *conf = mddev_to_conf(mddev);
 	int i;
 
 	rcu_read_lock();
@@ -115,12 +125,13 @@ static void unplug_slaves(mddev_t *mddev)
 		mdk_rdev_t *rdev = rcu_dereference(conf->multipaths[i].rdev);
 		if (rdev && !test_bit(Faulty, &rdev->flags)
 		    && atomic_read(&rdev->nr_pending)) {
-			struct request_queue *r_queue = bdev_get_queue(rdev->bdev);
+			request_queue_t *r_queue = bdev_get_queue(rdev->bdev);
 
 			atomic_inc(&rdev->nr_pending);
 			rcu_read_unlock();
 
-			blk_unplug(r_queue);
+			if (r_queue->unplug_fn)
+				r_queue->unplug_fn(r_queue);
 
 			rdev_dec_pending(rdev, mddev);
 			rcu_read_lock();
@@ -129,20 +140,22 @@ static void unplug_slaves(mddev_t *mddev)
 	rcu_read_unlock();
 }
 
-static void multipath_unplug(struct request_queue *q)
+static void multipath_unplug(request_queue_t *q)
 {
 	unplug_slaves(q->queuedata);
 }
 
 
-static int multipath_make_request(mddev_t *mddev, struct bio * bio)
+static int multipath_make_request (request_queue_t *q, struct bio * bio)
 {
-	multipath_conf_t *conf = mddev->private;
+	mddev_t *mddev = q->queuedata;
+	multipath_conf_t *conf = mddev_to_conf(mddev);
 	struct multipath_bh * mp_bh;
 	struct multipath_info *multipath;
+	const int rw = bio_data_dir(bio);
 
-	if (unlikely(bio_rw_flagged(bio, BIO_RW_BARRIER))) {
-		md_barrier_request(mddev, bio);
+	if (unlikely(bio_barrier(bio))) {
+		bio_endio(bio, bio->bi_size, -EOPNOTSUPP);
 		return 0;
 	}
 
@@ -151,9 +164,12 @@ static int multipath_make_request(mddev_t *mddev, struct bio * bio)
 	mp_bh->master_bio = bio;
 	mp_bh->mddev = mddev;
 
+	disk_stat_inc(mddev->gendisk, ios[rw]);
+	disk_stat_add(mddev->gendisk, sectors[rw], bio_sectors(bio));
+
 	mp_bh->path = multipath_map(conf);
 	if (mp_bh->path < 0) {
-		bio_endio(bio, -EIO);
+		bio_endio(bio, bio->bi_size, -EIO);
 		mempool_free(mp_bh, conf->pool);
 		return 0;
 	}
@@ -162,7 +178,7 @@ static int multipath_make_request(mddev_t *mddev, struct bio * bio)
 	mp_bh->bio = *bio;
 	mp_bh->bio.bi_sector += multipath->rdev->data_offset;
 	mp_bh->bio.bi_bdev = multipath->rdev->bdev;
-	mp_bh->bio.bi_rw |= (1 << BIO_RW_FAILFAST_TRANSPORT);
+	mp_bh->bio.bi_rw |= (1 << BIO_RW_FAILFAST);
 	mp_bh->bio.bi_end_io = multipath_end_request;
 	mp_bh->bio.bi_private = mp_bh;
 	generic_make_request(&mp_bh->bio);
@@ -171,7 +187,7 @@ static int multipath_make_request(mddev_t *mddev, struct bio * bio)
 
 static void multipath_status (struct seq_file *seq, mddev_t *mddev)
 {
-	multipath_conf_t *conf = mddev->private;
+	multipath_conf_t *conf = mddev_to_conf(mddev);
 	int i;
 	
 	seq_printf (seq, " [%d/%d] [", conf->raid_disks,
@@ -183,26 +199,30 @@ static void multipath_status (struct seq_file *seq, mddev_t *mddev)
 	seq_printf (seq, "]");
 }
 
-static int multipath_congested(void *data, int bits)
+static int multipath_issue_flush(request_queue_t *q, struct gendisk *disk,
+				 sector_t *error_sector)
 {
-	mddev_t *mddev = data;
-	multipath_conf_t *conf = mddev->private;
+	mddev_t *mddev = q->queuedata;
+	multipath_conf_t *conf = mddev_to_conf(mddev);
 	int i, ret = 0;
 
-	if (mddev_congested(mddev, bits))
-		return 1;
-
 	rcu_read_lock();
-	for (i = 0; i < mddev->raid_disks ; i++) {
+	for (i=0; i<mddev->raid_disks && ret == 0; i++) {
 		mdk_rdev_t *rdev = rcu_dereference(conf->multipaths[i].rdev);
 		if (rdev && !test_bit(Faulty, &rdev->flags)) {
-			struct request_queue *q = bdev_get_queue(rdev->bdev);
+			struct block_device *bdev = rdev->bdev;
+			request_queue_t *r_queue = bdev_get_queue(bdev);
 
-			ret |= bdi_congested(&q->backing_dev_info, bits);
-			/* Just like multipath_map, we just check the
-			 * first available device
-			 */
-			break;
+			if (!r_queue->issue_flush_fn)
+				ret = -EOPNOTSUPP;
+			else {
+				atomic_inc(&rdev->nr_pending);
+				rcu_read_unlock();
+				ret = r_queue->issue_flush_fn(r_queue, bdev->bd_disk,
+							      error_sector);
+				rdev_dec_pending(rdev, mddev);
+				rcu_read_lock();
+			}
 		}
 	}
 	rcu_read_unlock();
@@ -214,7 +234,7 @@ static int multipath_congested(void *data, int bits)
  */
 static void multipath_error (mddev_t *mddev, mdk_rdev_t *rdev)
 {
-	multipath_conf_t *conf = mddev->private;
+	multipath_conf_t *conf = mddev_to_conf(mddev);
 
 	if (conf->working_disks <= 1) {
 		/*
@@ -233,12 +253,10 @@ static void multipath_error (mddev_t *mddev, mdk_rdev_t *rdev)
 			char b[BDEVNAME_SIZE];
 			clear_bit(In_sync, &rdev->flags);
 			set_bit(Faulty, &rdev->flags);
-			set_bit(MD_CHANGE_DEVS, &mddev->flags);
+			mddev->sb_dirty = 1;
 			conf->working_disks--;
-			mddev->degraded++;
 			printk(KERN_ALERT "multipath: IO failure on %s,"
-				" disabling IO path.\n"
-				"multipath: Operation continuing"
+				" disabling IO path. \n	Operation continuing"
 				" on %d IO paths.\n",
 				bdevname (rdev->bdev,b),
 				conf->working_disks);
@@ -274,48 +292,36 @@ static int multipath_add_disk(mddev_t *mddev, mdk_rdev_t *rdev)
 {
 	multipath_conf_t *conf = mddev->private;
 	struct request_queue *q;
-	int err = -EEXIST;
+	int found = 0;
 	int path;
 	struct multipath_info *p;
-	int first = 0;
-	int last = mddev->raid_disks - 1;
-
-	if (rdev->raid_disk >= 0)
-		first = last = rdev->raid_disk;
 
 	print_multipath_conf(conf);
 
-	for (path = first; path <= last; path++)
+	for (path=0; path<mddev->raid_disks; path++) 
 		if ((p=conf->multipaths+path)->rdev == NULL) {
 			q = rdev->bdev->bd_disk->queue;
-			disk_stack_limits(mddev->gendisk, rdev->bdev,
-					  rdev->data_offset << 9);
+			blk_queue_stack_limits(mddev->queue, q);
 
 		/* as we don't honour merge_bvec_fn, we must never risk
-		 * violating it, so limit ->max_segments to one, lying
-		 * within a single page.
+		 * violating it, so limit ->max_sector to one PAGE, as
+		 * a one page request is never in violation.
 		 * (Note: it is very unlikely that a device with
 		 * merge_bvec_fn will be involved in multipath.)
 		 */
-			if (q->merge_bvec_fn) {
-				blk_queue_max_segments(mddev->queue, 1);
-				blk_queue_segment_boundary(mddev->queue,
-							   PAGE_CACHE_SIZE - 1);
-			}
+			if (q->merge_bvec_fn &&
+			    mddev->queue->max_sectors > (PAGE_SIZE>>9))
+				blk_queue_max_sectors(mddev->queue, PAGE_SIZE>>9);
 
 			conf->working_disks++;
-			mddev->degraded--;
 			rdev->raid_disk = path;
 			set_bit(In_sync, &rdev->flags);
 			rcu_assign_pointer(p->rdev, rdev);
-			err = 0;
-			md_integrity_add_rdev(rdev, mddev);
-			break;
+			found = 1;
 		}
 
 	print_multipath_conf(conf);
-
-	return err;
+	return found;
 }
 
 static int multipath_remove_disk(mddev_t *mddev, int number)
@@ -331,8 +337,7 @@ static int multipath_remove_disk(mddev_t *mddev, int number)
 	if (rdev) {
 		if (test_bit(In_sync, &rdev->flags) ||
 		    atomic_read(&rdev->nr_pending)) {
-			printk(KERN_ERR "hot-remove-disk, slot %d is identified"
-			       " but is still operational!\n", number);
+			printk(KERN_ERR "hot-remove-disk, slot %d is identified"				" but is still operational!\n", number);
 			err = -EBUSY;
 			goto abort;
 		}
@@ -342,9 +347,7 @@ static int multipath_remove_disk(mddev_t *mddev, int number)
 			/* lost the race, try later */
 			err = -EBUSY;
 			p->rdev = rdev;
-			goto abort;
 		}
-		md_integrity_register(mddev);
 	}
 abort:
 
@@ -367,7 +370,7 @@ static void multipathd (mddev_t *mddev)
 	struct multipath_bh *mp_bh;
 	struct bio *bio;
 	unsigned long flags;
-	multipath_conf_t *conf = mddev->private;
+	multipath_conf_t *conf = mddev_to_conf(mddev);
 	struct list_head *head = &conf->retry_list;
 
 	md_check_recovery(mddev);
@@ -397,7 +400,7 @@ static void multipathd (mddev_t *mddev)
 			*bio = *(mp_bh->master_bio);
 			bio->bi_sector += conf->multipaths[mp_bh->path].rdev->data_offset;
 			bio->bi_bdev = conf->multipaths[mp_bh->path].rdev->bdev;
-			bio->bi_rw |= (1 << BIO_RW_FAILFAST_TRANSPORT);
+			bio->bi_rw |= (1 << BIO_RW_FAILFAST);
 			bio->bi_end_io = multipath_end_request;
 			bio->bi_private = mp_bh;
 			generic_make_request(bio);
@@ -406,23 +409,13 @@ static void multipathd (mddev_t *mddev)
 	spin_unlock_irqrestore(&conf->device_lock, flags);
 }
 
-static sector_t multipath_size(mddev_t *mddev, sector_t sectors, int raid_disks)
-{
-	WARN_ONCE(sectors || raid_disks,
-		  "%s does not support generic reshape\n", __func__);
-
-	return mddev->dev_sectors;
-}
-
 static int multipath_run (mddev_t *mddev)
 {
 	multipath_conf_t *conf;
 	int disk_idx;
 	struct multipath_info *disk;
 	mdk_rdev_t *rdev;
-
-	if (md_check_no_bitmap(mddev))
-		return -EINVAL;
+	struct list_head *tmp;
 
 	if (mddev->level != LEVEL_MULTIPATH) {
 		printk("multipath: %s: raid level not set to multipath IO (%d)\n",
@@ -434,7 +427,6 @@ static int multipath_run (mddev_t *mddev)
 	 * bookkeeping area. [whatever we allocate in multipath_run(),
 	 * should be freed in multipath_stop()]
 	 */
-	mddev->queue->queue_lock = &mddev->queue->__queue_lock;
 
 	conf = kzalloc(sizeof(multipath_conf_t), GFP_KERNEL);
 	mddev->private = conf;
@@ -455,7 +447,7 @@ static int multipath_run (mddev_t *mddev)
 	}
 
 	conf->working_disks = 0;
-	list_for_each_entry(rdev, &mddev->disks, same_set) {
+	ITERATE_RDEV(mddev,rdev,tmp) {
 		disk_idx = rdev->raid_disk;
 		if (disk_idx < 0 ||
 		    disk_idx >= mddev->raid_disks)
@@ -463,23 +455,22 @@ static int multipath_run (mddev_t *mddev)
 
 		disk = conf->multipaths + disk_idx;
 		disk->rdev = rdev;
-		disk_stack_limits(mddev->gendisk, rdev->bdev,
-				  rdev->data_offset << 9);
 
+		blk_queue_stack_limits(mddev->queue,
+				       rdev->bdev->bd_disk->queue);
 		/* as we don't honour merge_bvec_fn, we must never risk
 		 * violating it, not that we ever expect a device with
 		 * a merge_bvec_fn to be involved in multipath */
-		if (rdev->bdev->bd_disk->queue->merge_bvec_fn) {
-			blk_queue_max_segments(mddev->queue, 1);
-			blk_queue_segment_boundary(mddev->queue,
-						   PAGE_CACHE_SIZE - 1);
-		}
+		if (rdev->bdev->bd_disk->queue->merge_bvec_fn &&
+		    mddev->queue->max_sectors > (PAGE_SIZE>>9))
+			blk_queue_max_sectors(mddev->queue, PAGE_SIZE>>9);
 
 		if (!test_bit(Faulty, &rdev->flags))
 			conf->working_disks++;
 	}
 
 	conf->raid_disks = mddev->raid_disks;
+	mddev->sb_dirty = 1;
 	conf->mddev = mddev;
 	spin_lock_init(&conf->device_lock);
 	INIT_LIST_HEAD(&conf->retry_list);
@@ -489,9 +480,9 @@ static int multipath_run (mddev_t *mddev)
 			mdname(mddev));
 		goto out_free_conf;
 	}
-	mddev->degraded = conf->raid_disks - conf->working_disks;
+	mddev->degraded = conf->raid_disks = conf->working_disks;
 
-	conf->pool = mempool_create_kmalloc_pool(NR_RESERVED_BUFS,
+	conf->pool = mempool_create_kzalloc_pool(NR_RESERVED_BUFS,
 						 sizeof(struct multipath_bh));
 	if (conf->pool == NULL) {
 		printk(KERN_ERR 
@@ -501,7 +492,7 @@ static int multipath_run (mddev_t *mddev)
 	}
 
 	{
-		mddev->thread = md_register_thread(multipathd, mddev, NULL);
+		mddev->thread = md_register_thread(multipathd, mddev, "%s_multipath");
 		if (!mddev->thread) {
 			printk(KERN_ERR "multipath: couldn't allocate thread"
 				" for %s\n", mdname(mddev));
@@ -515,12 +506,11 @@ static int multipath_run (mddev_t *mddev)
 	/*
 	 * Ok, everything is just fine now
 	 */
-	md_set_array_sectors(mddev, multipath_size(mddev, 0, 0));
+	mddev->array_size = mddev->size;
 
 	mddev->queue->unplug_fn = multipath_unplug;
-	mddev->queue->backing_dev_info.congested_fn = multipath_congested;
-	mddev->queue->backing_dev_info.congested_data = mddev;
-	md_integrity_register(mddev);
+	mddev->queue->issue_flush_fn = multipath_issue_flush;
+
 	return 0;
 
 out_free_conf:
@@ -536,7 +526,7 @@ out:
 
 static int multipath_stop (mddev_t *mddev)
 {
-	multipath_conf_t *conf = mddev->private;
+	multipath_conf_t *conf = mddev_to_conf(mddev);
 
 	md_unregister_thread(mddev->thread);
 	mddev->thread = NULL;
@@ -560,7 +550,6 @@ static struct mdk_personality multipath_personality =
 	.error_handler	= multipath_error,
 	.hot_add_disk	= multipath_add_disk,
 	.hot_remove_disk= multipath_remove_disk,
-	.size		= multipath_size,
 };
 
 static int __init multipath_init (void)
@@ -576,7 +565,6 @@ static void __exit multipath_exit (void)
 module_init(multipath_init);
 module_exit(multipath_exit);
 MODULE_LICENSE("GPL");
-MODULE_DESCRIPTION("simple multi-path personality for MD");
 MODULE_ALIAS("md-personality-7"); /* MULTIPATH */
 MODULE_ALIAS("md-multipath");
 MODULE_ALIAS("md-level--4");

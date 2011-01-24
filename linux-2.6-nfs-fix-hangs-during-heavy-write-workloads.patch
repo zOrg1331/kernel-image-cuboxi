@@ -1,0 +1,90 @@
+From: Peter Staubach <staubach@redhat.com>
+Date: Mon, 2 Feb 2009 16:14:46 -0500
+Subject: [nfs] fix hangs during heavy write workloads
+Message-id: 49876246.2060005@redhat.com
+O-Subject: [RHEL-5.4 PATCH] bz469848 [RHEL5.2] nfs_getattr() hangs during heavy write workloads
+Bugzilla: 469848
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+RH-Acked-by: Jeff Layton <jlayton@redhat.com>
+RH-Acked-by: Anton Arapov <aarapov@redhat.com>
+RH-Acked-by: Jon Masters <jcm@redhat.com>
+
+Hi.
+
+Attached is a patch which addresses bz469848, "[RHEL5.2]
+nfs_getattr() hangs during heavy write workloads".  The
+problem described in the bugzilla is a situation where an
+ls command, run in a directory which contains a large file
+being actively written to, can take a very long time to
+complete.  The ls command blocks, attempting to stat the
+file being written to.
+
+The problem is due to a combination of required file system
+semantics and the NFS client side page caching implementation.
+
+The file system semantics require that the modification time
+of a file reflect a time greater than or equal to the time of
+the last write system call made to the file.  In NFS, the file
+times are maintained by the server.  Thus, the file
+modification time is not updated until the server receives a
+WRITE request to write data into the file.
+
+The NFS client attempts to cache as many pages as possible
+before sending any data to the server.  Thus, there could
+potentially be a large amount of cached data, not yet written
+to the server, in the memory on the client.
+
+The semantics require that all of this dirty data be written
+to the server so that the correct modification time can be
+retrieved from the server.  Since this can be a large amount
+of data, this can take a very long time to flush.
+Additionally, if the file is being actively written to, then
+more pages could be being dirtied while pages are being
+written to the server.  The writing process can effectively
+starve the process doing the stat on the file.
+
+The solution is to block the writing process while the page
+flush is being done so that the process doing the stat is not
+starved.  The page flush will eventually complete and the
+stat processing can continue.
+
+This is the solution backported from upstream.
+
+    Thanx...
+
+       ps
+
+This patch is a backport of upstream commits:
+commit 28c494c5c8d425e15b7b82571e4df6d6bc34594d
+NFS: Prevent nfs_getattr() hang during heavy write workloads
+commit 634707388baa440d9c9d082cfc4c950500c8952b
+[PATCH] nfs: nfs_getattr() can't call nfs_sync_mapping_range() for non-regular files
+
+Flavio Leitner
+
+diff --git a/fs/nfs/inode.c b/fs/nfs/inode.c
+index 67a9bb9..33c1a52 100644
+--- a/fs/nfs/inode.c
++++ b/fs/nfs/inode.c
+@@ -445,8 +445,19 @@ int nfs_getattr(struct vfsmount *mnt, struct dentry *dentry, struct kstat *stat)
+ 	int need_atime = NFS_I(inode)->cache_validity & NFS_INO_INVALID_ATIME;
+ 	int err;
+ 
+-	/* Flush out writes to the server in order to update c/mtime */
+-	nfs_sync_inode_wait(inode, 0, 0, FLUSH_NOCOMMIT);
++	/*
++	 * Flush out writes to the server in order to update c/mtime.
++	 *
++	 * Hold the i_mutex to suspend application writes temporarily;
++	 * this prevents long-running writing applications from blocking
++	 * nfs_sync_inode_wait.
++	 */
++	if (S_ISREG(inode->i_mode)) {
++		mutex_lock(&inode->i_mutex);
++		nfs_sync_inode_wait(inode, 0, 0, FLUSH_NOCOMMIT);
++		mutex_unlock(&inode->i_mutex);
++	}
++
+ 
+ 	/*
+ 	 * We may force a getattr if the user cares about atime.

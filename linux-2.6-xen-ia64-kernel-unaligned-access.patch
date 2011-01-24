@@ -1,0 +1,73 @@
+From: Aron Griffis <aron@hp.com>
+Subject: BZ 212505 kernel unaligned access (kernel)
+Date: Tue, 5 Dec 2006 13:32:47 -0500
+Bugzilla: 212505
+Message-Id: <20061205183247.GA19349@fc.hp.com>
+Changelog: Xen: ia64 kernel unaligned access
+
+
+# HG changeset patch
+# User kfraser@localhost.localdomain
+# Date 1161190744 -3600
+# Node ID 02fba295d843686e9df0b5a346be5dc452358a87
+# Parent  70c869c376189761d30fe3fb6afcc762d7b38e1c
+[NET] front/back: Avoid unaligned accesses to IP datagrams. These
+cause noisy warnings on IA64.
+
+Signed-off-by: Kouya SHIMURA <kouya@jp.fujitsu.com>
+Signed-off-by: Akio Takebe <takebe_akio@jp.fujitsu.com>
+
+original changeset: 11815 (xen-unstable)
+
+diff -r 70c869c37618 -r 02fba295d843 drivers/xen/netback/netback.c
+--- a/drivers/xen/netback/netback.c	Thu Oct 26 16:49:07 2006 -0400
++++ b/drivers/xen/netback/netback.c	Wed Oct 18 17:59:04 2006 +0100
+@@ -188,7 +188,7 @@ static struct sk_buff *netbk_copy_skb(st
+ 	if (unlikely(!nskb))
+ 		goto err;
+ 
+-	skb_reserve(nskb, 16);
++	skb_reserve(nskb, 16 + NET_IP_ALIGN);
+ 	headlen = nskb->end - nskb->data;
+ 	if (headlen > skb_headlen(skb))
+ 		headlen = skb_headlen(skb);
+@@ -1211,7 +1211,7 @@ static void net_tx_action(unsigned long 
+ 			    ret < MAX_SKB_FRAGS) ?
+ 			PKT_PROT_LEN : txreq.size;
+ 
+-		skb = alloc_skb(data_len+16, GFP_ATOMIC);
++		skb = alloc_skb(data_len + 16 + NET_IP_ALIGN, GFP_ATOMIC);
+ 		if (unlikely(skb == NULL)) {
+ 			DPRINTK("Can't allocate a skb in start_xmit.\n");
+ 			netbk_tx_err(netif, &txreq, i);
+@@ -1219,7 +1219,7 @@ static void net_tx_action(unsigned long 
+ 		}
+ 
+ 		/* Packets passed to netif_rx() must have some headroom. */
+-		skb_reserve(skb, 16);
++		skb_reserve(skb, 16 + NET_IP_ALIGN);
+ 
+ 		if (extras[XEN_NETIF_EXTRA_TYPE_GSO - 1].type) {
+ 			struct netif_extra_info *gso;
+diff -r 70c869c37618 -r 02fba295d843 drivers/xen/netfront/netfront.c
+--- a/drivers/xen/netfront/netfront.c	Thu Oct 26 16:49:07 2006 -0400
++++ b/drivers/xen/netfront/netfront.c	Wed Oct 18 17:59:04 2006 +0100
+@@ -684,7 +684,7 @@ static void network_alloc_rx_buffers(str
+ 		 * necessary here.
+ 		 * 16 bytes added as necessary headroom for netif_receive_skb.
+ 		 */
+-		skb = alloc_skb(RX_COPY_THRESHOLD + 16,
++		skb = alloc_skb(RX_COPY_THRESHOLD + 16 + NET_IP_ALIGN,
+ 				GFP_ATOMIC | __GFP_NOWARN);
+ 		if (unlikely(!skb))
+ 			goto no_skb;
+@@ -702,7 +702,7 @@ no_skb:
+ 			break;
+ 		}
+ 
+-		skb_reserve(skb, 16); /* mimic dev_alloc_skb() */
++		skb_reserve(skb, 16 + NET_IP_ALIGN); /* mimic dev_alloc_skb() */
+ 		skb_shinfo(skb)->frags[0].page = page;
+ 		skb_shinfo(skb)->nr_frags = 1;
+ 		__skb_queue_tail(&np->rx_batch, skb);
+

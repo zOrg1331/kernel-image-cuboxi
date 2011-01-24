@@ -1,0 +1,30 @@
+From: Dave Anderson <anderson@redhat.com>
+Subject: Re: [RHEL 5.1 PATCH] BZ 222826: [RHEL5] Gdb does not accurately output   the backtrace.
+Date: Fri, 16 Feb 2007 10:24:03 -0500
+Bugzilla: 222826
+Message-Id: <45D5CC93.60E5B3BF@redhat.com>
+Changelog: [mm] Gdb does not accurately output the backtrace.
+
+
+>     [PATCH] Fix gate_vma.vm_flags
+>
+>     This patch fixes the initialization of gate_vma.vm_flags and
+>     gate_vma.vm_page_prot to reflect reality.  This makes the "[vdso]" line in
+>     /proc/PID/maps correctly show r-xp instead of ---p, when gate_vma is used
+>     (CONFIG_COMPAT_VDSO on i386).
+>
+
+--- linux-2.6.18.ia64/mm/memory.c.orig
++++ linux-2.6.18.ia64/mm/memory.c
+@@ -2683,8 +2683,8 @@ static int __init gate_vma_init(void)
+ 	gate_vma.vm_mm = NULL;
+ 	gate_vma.vm_start = FIXADDR_USER_START;
+ 	gate_vma.vm_end = FIXADDR_USER_END;
+-	gate_vma.vm_page_prot = PAGE_READONLY;
+-	gate_vma.vm_flags = 0;
++	gate_vma.vm_flags = VM_READ | VM_MAYREAD | VM_EXEC | VM_MAYEXEC;
++	gate_vma.vm_page_prot = __P101;
+ 	return 0;
+ }
+ __initcall(gate_vma_init);
+

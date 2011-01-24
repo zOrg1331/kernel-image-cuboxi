@@ -1,0 +1,212 @@
+From: Larry Woodman <lwoodman@redhat.com>
+Date: Fri, 2 Oct 2009 11:00:07 -0400
+Subject: [mm] prevent hangs/long pauses when zone_reclaim_mode=1
+Message-id: 4AC61577.3060707@redhat.com
+O-Subject: [RHEL5-U5 Patch] Prevent hangs/long pauses when zone_reclaim_mode=1
+Bugzilla: 507360
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+
+On a NUMA system zone_reclaim_mode controls whether the page allocator
+will go off node to satisfy an allocation or if zone_reclaim() will be
+called to reclaim the pages of the local zone even if other zones have
+free memory.   At boot-time the NUMA init code determines the cost of
+referencing remote memory versus reclaiming memory from the local node.
+If the remote memory distance as defined in the SLIT is greater than 20,
+zone_reclaim_mode is set to 1 and therefore zone_reclaim() will be
+called to reclaim memory from the local zone before going off zone for
+memory allocation.
+
+In RHEL5 zone_reclaim() can fail to free memory more often than the
+upstream kernel because anonymous and pagecache pages are mixed together
+on the zone's active and inactive lists.   Also, zone_reclaim() calls
+shrink_zone() which keeps taking the zone->lru_lock and causes lots of
+spinlock contention.  These problems do not exist in the upstream kernel
+due to the split LRU vm  changes and the ticketed spinlock code.
+
+Since neither of these changes can be backported to RHEL5 because of the
+kABI, we opted to backport one of the suggested upstream fixes for this
+problem to RHEL5.  The attached patch prevents zone_reclaim from being
+called within 30 seconds of a failure.  This prevents the system calling
+zone_reclaim() on every memory allocation only to have it fail every time.
+
+Fixes BZ 507360
+
+diff --git a/Documentation/sysctl/vm.txt b/Documentation/sysctl/vm.txt
+index 9f73447..bff590a 100644
+--- a/Documentation/sysctl/vm.txt
++++ b/Documentation/sysctl/vm.txt
+@@ -32,6 +32,7 @@ Currently, these files are in /proc/sys/vm:
+ - min_unmapped_ratio
+ - min_slab_ratio
+ - panic_on_oom
++- zone_reclaim_interval
+ 
+ ==============================================================
+ 
+@@ -219,3 +220,15 @@ rather than killing rogue processes, set this to 1.
+ 
+ The default value is 0.
+ 
++================================================================
++
++zone_reclaim_interval:
++
++The time allowed for off node allocations after zone reclaim
++has failed to reclaim enough pages to allow a local allocation.
++
++Time is set in seconds and set by default to 30 seconds.
++
++Reduce the interval if undesired off node allocations occur. However, too
++frequent scans will have a negative impact on off-node allocation performance.
++
+diff --git a/include/linux/mmzone.h b/include/linux/mmzone.h
+index deb05bf..5435483 100644
+--- a/include/linux/mmzone.h
++++ b/include/linux/mmzone.h
+@@ -263,6 +263,24 @@ struct zone {
+ 	char			*name;
+ } ____cacheline_internodealigned_in_smp;
+ 
++/*
++ * Extra per-zone data, which we cannot put in the struct zone
++ * because of RHEL kABI reasons.  We use the zone_idx and the
++ * zone->zone_pgdat->node_id as indices to the zone_extra_data
++ * array in mm/vmstat.c
++ */
++struct zone_extra_data {
++	/*
++	 * timestamp (in jiffies) of the last zone_reclaim that scanned
++	 * but failed to free enough pages. This is used to avoid repeated
++	 * scans when zone_reclaim() is unable to detect in advance that
++	 * the scanning is useless. This can happen for example if a zone
++	 * has large numbers of clean unmapped file pages on tmpfs
++	 */
++	unsigned long		zone_reclaim_failure;
++};
++
++extern struct zone_extra_data *zone_extra_data(struct zone * zone);
+ 
+ /*
+  * The "priority" of VM scanning is how much of the queues we will scan in one
+diff --git a/include/linux/swap.h b/include/linux/swap.h
+index a1ad00f..24ebcf4 100644
+--- a/include/linux/swap.h
++++ b/include/linux/swap.h
+@@ -200,6 +200,7 @@ extern long vm_total_pages;
+ 
+ #ifdef CONFIG_NUMA
+ extern int zone_reclaim_mode;
++extern int zone_reclaim_interval;
+ extern int sysctl_min_unmapped_ratio;
+ extern int sysctl_min_slab_ratio;
+ extern int zone_reclaim(struct zone *, gfp_t, unsigned int);
+diff --git a/include/linux/sysctl.h b/include/linux/sysctl.h
+index 65bb74a..e594513 100644
+--- a/include/linux/sysctl.h
++++ b/include/linux/sysctl.h
+@@ -207,6 +207,7 @@ enum
+ 	VM_MMAP_MIN_ADDR=38, 	/* amount of memory to protect from mmap */
+ 	VM_FLUSH_MMAP=39,       /* flush mmap()d pagecache pages */
+ 	VM_MAX_WRITEBACK_PAGES=40, /*maximum pages written per writeback loop */
++	VM_ZONE_RECLAIM_INTERVAL=41, /* interval between zone_reclaim failures */
+ };
+ 
+ 
+diff --git a/kernel/sysctl.c b/kernel/sysctl.c
+index 8f8dbb4..32f4130 100644
+--- a/kernel/sysctl.c
++++ b/kernel/sysctl.c
+@@ -1074,6 +1074,15 @@ static ctl_table vm_table[] = {
+ 		.extra1		= &zero,
+ 	},
+ 	{
++		.ctl_name       = VM_ZONE_RECLAIM_INTERVAL,
++		.procname       = "zone_reclaim_interval",
++		.data           = &zone_reclaim_interval,
++		.maxlen         = sizeof(zone_reclaim_interval),
++		.mode           = 0644,
++		.proc_handler   = &proc_dointvec_jiffies,
++		.strategy       = &sysctl_jiffies,
++	},
++	{
+ 		.ctl_name	= VM_MIN_UNMAPPED,
+ 		.procname	= "min_unmapped_ratio",
+ 		.data		= &sysctl_min_unmapped_ratio,
+diff --git a/mm/vmscan.c b/mm/vmscan.c
+index c137e8a..c9a94c9 100644
+--- a/mm/vmscan.c
++++ b/mm/vmscan.c
+@@ -1586,6 +1586,13 @@ int zone_reclaim_mode __read_mostly;
+ #define RECLAIM_SWAP (1<<2)	/* Swap pages out during reclaim */
+ 
+ /*
++ * Minimum time between zone_reclaim() scans that failed. Ordinarily, a
++ * scan will not fail because it will be determined in advance if it can
++ * succeeed but this does not always work. See mmzone.h
++ */
++int zone_reclaim_interval __read_mostly = 30*HZ;
++
++/*
+  * Priority for ZONE_RECLAIM. This determines the fraction of pages
+  * of a node considered for each zone_reclaim. 4 scans 1/16th of
+  * a zone.
+@@ -1679,6 +1686,7 @@ int zone_reclaim(struct zone *zone, gfp_t gfp_mask, unsigned int order)
+ 	cpumask_t mask;
+ 	int node_id;
+ 	int ret;
++	struct zone_extra_data *zed = zone_extra_data(zone);
+ 
+ 	/*
+ 	 * Zone reclaim reclaims unmapped file backed pages and
+@@ -1696,6 +1704,11 @@ int zone_reclaim(struct zone *zone, gfp_t gfp_mask, unsigned int order)
+ 			<= zone->min_slab_pages)
+ 		return 0;
+ 
++	/* Do not attempt a scan if scanning failed recently */
++	if (time_before(jiffies,
++			zed->zone_reclaim_failure + zone_reclaim_interval))
++		return 0;
++
+ 	/*
+ 	 * Avoid concurrent zone reclaims, do not reclaim in a zone that does
+ 	 * not have reclaimable pages and if we should not delay the allocation
+@@ -1717,6 +1730,14 @@ int zone_reclaim(struct zone *zone, gfp_t gfp_mask, unsigned int order)
+ 		return 0;
+ 	if (atomic_inc_and_test(&zone->reclaim_in_progress)) {
+ 		ret = __zone_reclaim(zone, gfp_mask, order);
++		/*
++		 * We were unable to reclaim enough pages to stay on node and
++		 * unable to detect in advance that the scan would fail. Allow
++		 * off node accesses for zone_reclaim_interval_jiffies before
++		 * trying zone_reclaim() again
++		 */
++		if (!ret)
++			zed->zone_reclaim_failure = jiffies;
+ 		atomic_dec(&zone->reclaim_in_progress);
+ 		return ret;
+ 	} else {
+diff --git a/mm/vmstat.c b/mm/vmstat.c
+index 6c4c611..d4bf766 100644
+--- a/mm/vmstat.c
++++ b/mm/vmstat.c
+@@ -376,6 +376,20 @@ void zone_statistics(struct zonelist *zonelist, struct zone *z)
+ }
+ #endif
+ 
++/*
++ * Extra zone data, which cannot be put into the struct zone
++ * for RHEL kABI reasons.  We only ever return a pointer to
++ * the struct for each individual zone so we can add entries
++ * to the zone_extra_data structure, without having anything
++ * in the kernel rely on the size of this array.
++ */
++static struct zone_extra_data zones_extra_data[MAX_NUMNODES][MAX_NR_ZONES];
++
++struct zone_extra_data *zone_extra_data(struct zone *zone)
++{
++	return &zones_extra_data[zone->zone_pgdat->node_id][zone_idx(zone)];
++}
++
+ #ifdef CONFIG_PROC_FS
+ 
+ #include <linux/seq_file.h>

@@ -23,6 +23,7 @@
 #include <linux/kernel.h>
 #include <linux/mm.h>
 #include <linux/module.h>
+#include <linux/a.out.h>
 #include <linux/user.h>
 #include <linux/string.h>
 #include <linux/linkage.h>
@@ -325,13 +326,13 @@ static inline int do_040writeback1(unsigned short wbs, unsigned long wba,
 
 	switch (wbs & WBSIZ_040) {
 	case BA_SIZE_BYTE:
-		res = put_user(wbd & 0xff, (char __user *)wba);
+		res = put_user(wbd & 0xff, (char *)wba);
 		break;
 	case BA_SIZE_WORD:
-		res = put_user(wbd & 0xffff, (short __user *)wba);
+		res = put_user(wbd & 0xffff, (short *)wba);
 		break;
 	case BA_SIZE_LONG:
-		res = put_user(wbd, (int __user *)wba);
+		res = put_user(wbd, (int *)wba);
 		break;
 	}
 
@@ -401,7 +402,7 @@ static inline void do_040writebacks(struct frame *fp)
  * called from sigreturn(), must ensure userspace code didn't
  * manipulate exception frame to circumvent protection, then complete
  * pending writebacks
- * we just clear TM2 to turn it into a userspace access
+ * we just clear TM2 to turn it into an userspace access
  */
 asmlinkage void berr_040cleanup(struct frame *fp)
 {
@@ -468,26 +469,15 @@ static inline void access_error040(struct frame *fp)
 			 * (if do_page_fault didn't fix the mapping,
                          * the writeback won't do good)
 			 */
-disable_wb:
 #ifdef DEBUG
 			printk(".. disabling wb2\n");
 #endif
 			if (fp->un.fmt7.wb2a == fp->un.fmt7.faddr)
 				fp->un.fmt7.wb2s &= ~WBV_040;
-			if (fp->un.fmt7.wb3a == fp->un.fmt7.faddr)
-				fp->un.fmt7.wb3s &= ~WBV_040;
 		}
-	} else {
-		/* In case of a bus error we either kill the process or expect
-		 * the kernel to catch the fault, which then is also responsible
-		 * for cleaning up the mess.
-		 */
-		current->thread.signo = SIGBUS;
-		current->thread.faddr = fp->un.fmt7.faddr;
-		if (send_fault_sig(&fp->ptregs) >= 0)
-			printk("68040 bus error (ssw=%x, faddr=%lx)\n", ssw,
-			       fp->un.fmt7.faddr);
-		goto disable_wb;
+	} else if (send_fault_sig(&fp->ptregs) > 0) {
+		printk("68040 access error, ssw=%x\n", ssw);
+		trap_c(fp);
 	}
 
 	do_040writebacks(fp);
@@ -883,7 +873,8 @@ void show_trace(unsigned long *stack)
 			if (i % 5 == 0)
 				printk("\n       ");
 #endif
-			printk(" [<%08lx>] %pS\n", addr, (void *)addr);
+			printk(" [<%08lx>]", addr);
+			print_symbol(" %s\n", addr);
 			i++;
 		}
 	}
@@ -899,15 +890,17 @@ void show_registers(struct pt_regs *regs)
 	int i;
 
 	print_modules();
-	printk("PC: [<%08lx>] %pS\n", regs->pc, (void *)regs->pc);
-	printk("SR: %04x  SP: %p  a2: %08lx\n", regs->sr, regs, regs->a2);
+	printk("PC: [<%08lx>]",regs->pc);
+	print_symbol(" %s", regs->pc);
+	printk("\nSR: %04x  SP: %p  a2: %08lx\n",
+	       regs->sr, regs, regs->a2);
 	printk("d0: %08lx    d1: %08lx    d2: %08lx    d3: %08lx\n",
 	       regs->d0, regs->d1, regs->d2, regs->d3);
 	printk("d4: %08lx    d5: %08lx    a0: %08lx    a1: %08lx\n",
 	       regs->d4, regs->d5, regs->a0, regs->a1);
 
 	printk("Process %s (pid: %d, task=%p)\n",
-		current->comm, task_pid_nr(current), current);
+		current->comm, current->pid, current);
 	addr = (unsigned long)&fp->un;
 	printk("Frame format=%X ", regs->format);
 	switch (regs->format) {
@@ -1018,7 +1011,7 @@ EXPORT_SYMBOL(dump_stack);
 void bad_super_trap (struct frame *fp)
 {
 	console_verbose();
-	if (fp->ptregs.vector < 4 * ARRAY_SIZE(vec_names))
+	if (fp->ptregs.vector < 4*sizeof(vec_names)/sizeof(vec_names[0]))
 		printk ("*** %s ***   FORMAT=%X\n",
 			vec_names[(fp->ptregs.vector) >> 2],
 			fp->ptregs.format);
@@ -1045,7 +1038,7 @@ void bad_super_trap (struct frame *fp)
 				fp->un.fmtb.daddr, space_names[ssw & DFC],
 				fp->ptregs.pc);
 	}
-	printk ("Current process id is %d\n", task_pid_nr(current));
+	printk ("Current process id is %d\n", current->pid);
 	die_if_kernel("BAD KERNEL TRAP", &fp->ptregs, 0);
 }
 
@@ -1057,6 +1050,7 @@ asmlinkage void trap_c(struct frame *fp)
 	if (fp->ptregs.sr & PS_S) {
 		if ((fp->ptregs.vector >> 2) == VEC_TRACE) {
 			/* traced a trapping instruction */
+			current->ptrace |= PT_DTRACE;
 		} else
 			bad_super_trap(fp);
 		return;
@@ -1176,7 +1170,6 @@ void die_if_kernel (char *str, struct pt_regs *fp, int nr)
 	console_verbose();
 	printk("%s: %08x\n",str,nr);
 	show_registers(fp);
-	add_taint(TAINT_DIE);
 	do_exit(SIGSEGV);
 }
 

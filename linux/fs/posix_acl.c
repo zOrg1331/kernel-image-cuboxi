@@ -58,9 +58,11 @@ posix_acl_clone(const struct posix_acl *acl, gfp_t flags)
 	if (acl) {
 		int size = sizeof(struct posix_acl) + acl->a_count *
 		           sizeof(struct posix_acl_entry);
-		clone = kmemdup(acl, size, flags);
-		if (clone)
+		clone = kmalloc(size, flags);
+		if (clone) {
+			memcpy(clone, acl, size);
 			atomic_set(&clone->a_refcount, 1);
+		}
 	}
 	return clone;
 }
@@ -217,11 +219,11 @@ posix_acl_permission(struct inode *inode, const struct posix_acl *acl, int want)
                 switch(pa->e_tag) {
                         case ACL_USER_OBJ:
 				/* (May have been checked already) */
-				if (inode->i_uid == current_fsuid())
+                                if (inode->i_uid == current->fsuid)
                                         goto check_perm;
                                 break;
                         case ACL_USER:
-				if (pa->e_id == current_fsuid())
+                                if (pa->e_id == current->fsuid)
                                         goto mask;
 				break;
                         case ACL_GROUP_OBJ:

@@ -233,7 +233,7 @@ static const int cc_to_error[16] = {
 	/* Bit Stuff  */ -EPROTO,
 	/* Data Togg  */ -EILSEQ,
 	/* Stall      */ -EPIPE,
-	/* DevNotResp */ -ETIME,
+	/* DevNotResp */ -ETIMEDOUT,
 	/* PIDCheck   */ -EPROTO,
 	/* UnExpPID   */ -EPROTO,
 	/* DataOver   */ -EOVERFLOW,
@@ -270,6 +270,7 @@ struct isp116x {
 	u32 rhdesca;
 	u32 rhdescb;
 	u32 rhstatus;
+	u32 rhport[2];
 
 	/* async schedule: control, bulk */
 	struct list_head async;
@@ -338,7 +339,7 @@ struct isp116x_ep {
 #endif
 
 #define ERR(stuff...)		printk(KERN_ERR "116x: " stuff)
-#define WARNING(stuff...)	printk(KERN_WARNING "116x: " stuff)
+#define WARN(stuff...)		printk(KERN_WARNING "116x: " stuff)
 #define INFO(stuff...)		printk(KERN_INFO "116x: " stuff)
 
 /* ------------------------------------------------- */
@@ -563,7 +564,7 @@ static void urb_dbg(struct urb *urb, char *msg)
 */
 static inline void dump_ptd(struct ptd *ptd)
 {
-	printk(KERN_WARNING "td: %x %d%c%d %d,%d,%d  %x %x%x%x\n",
+	printk("td: %x %d%c%d %d,%d,%d  %x %x%x%x\n",
 	       PTD_GET_CC(ptd), PTD_GET_FA(ptd),
 	       PTD_DIR_STR(ptd), PTD_GET_EP(ptd),
 	       PTD_GET_COUNT(ptd), PTD_GET_LEN(ptd), PTD_GET_MPS(ptd),
@@ -576,7 +577,7 @@ static inline void dump_ptd_out_data(struct ptd *ptd, u8 * buf)
 	int k;
 
 	if (PTD_GET_DIR(ptd) != PTD_DIR_IN && PTD_GET_LEN(ptd)) {
-		printk(KERN_WARNING "-> ");
+		printk("-> ");
 		for (k = 0; k < PTD_GET_LEN(ptd); ++k)
 			printk("%02x ", ((u8 *) buf)[k]);
 		printk("\n");
@@ -588,13 +589,13 @@ static inline void dump_ptd_in_data(struct ptd *ptd, u8 * buf)
 	int k;
 
 	if (PTD_GET_DIR(ptd) == PTD_DIR_IN && PTD_GET_COUNT(ptd)) {
-		printk(KERN_WARNING "<- ");
+		printk("<- ");
 		for (k = 0; k < PTD_GET_COUNT(ptd); ++k)
 			printk("%02x ", ((u8 *) buf)[k]);
 		printk("\n");
 	}
 	if (PTD_GET_LAST(ptd))
-		printk(KERN_WARNING "-\n");
+		printk("-\n");
 }
 
 #else

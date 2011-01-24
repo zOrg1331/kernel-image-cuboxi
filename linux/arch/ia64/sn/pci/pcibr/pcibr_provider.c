@@ -3,7 +3,7 @@
  * License.  See the file "COPYING" in the main directory of this archive
  * for more details.
  *
- * Copyright (C) 2001-2004, 2006 Silicon Graphics, Inc. All rights reserved.
+ * Copyright (C) 2001-2004 Silicon Graphics, Inc. All rights reserved.
  */
 
 #include <linux/interrupt.h>
@@ -15,14 +15,12 @@
 #include <asm/sn/pcibus_provider_defs.h>
 #include <asm/sn/pcidev.h>
 #include <asm/sn/sn_sal.h>
-#include <asm/sn/pic.h>
 #include <asm/sn/sn2/sn_hwperf.h>
 #include "xtalk/xwidgetdev.h"
 #include "xtalk/hubdev.h"
 
 int
-sal_pcibr_slot_enable(struct pcibus_info *soft, int device, void *resp,
-                      char **ssdt)
+sal_pcibr_slot_enable(struct pcibus_info *soft, int device, void *resp)
 {
 	struct ia64_sal_retval ret_stuff;
 	u64 busnum;
@@ -34,8 +32,7 @@ sal_pcibr_slot_enable(struct pcibus_info *soft, int device, void *resp,
 	segment = soft->pbi_buscommon.bs_persist_segment;
 	busnum = soft->pbi_buscommon.bs_persist_busnum;
 	SAL_CALL_NOLOCK(ret_stuff, (u64) SN_SAL_IOIF_SLOT_ENABLE, segment,
-			busnum, (u64) device, (u64) resp, (u64)ia64_tpa(ssdt),
-			0, 0);
+			busnum, (u64) device, (u64) resp, 0, 0, 0);
 
 	return (int)ret_stuff.v0;
 }
@@ -79,8 +76,8 @@ static int sal_pcibr_error_interrupt(struct pcibus_info *soft)
 
 u16 sn_ioboard_to_pci_bus(struct pci_bus *pci_bus)
 {
-	long rc;
-	u16 uninitialized_var(ioboard);		/* GCC be quiet */
+	s64 rc;
+	u16 ioboard;
 	nasid_t nasid = NASID_GET(SN_PCIBUS_BUSSOFT(pci_bus)->bs_base);
 
 	rc = ia64_sn_sysctl_ioboard_get(nasid, &ioboard);
@@ -98,13 +95,13 @@ u16 sn_ioboard_to_pci_bus(struct pci_bus *pci_bus)
  * bridge sends an error interrupt.
  */
 static irqreturn_t
-pcibr_error_intr_handler(int irq, void *arg)
+pcibr_error_intr_handler(int irq, void *arg, struct pt_regs *regs)
 {
-	struct pcibus_info *soft = arg;
+	struct pcibus_info *soft = (struct pcibus_info *)arg;
 
-	if (sal_pcibr_error_interrupt(soft) < 0)
+	if (sal_pcibr_error_interrupt(soft) < 0) {
 		panic("pcibr_error_intr_handler(): Fatal Bridge Error");
-
+	}
 	return IRQ_HANDLED;
 }
 
@@ -112,6 +109,7 @@ void *
 pcibr_bus_fixup(struct pcibus_bussoft *prom_bussoft, struct pci_controller *controller)
 {
 	int nasid, cnode, j;
+	cnodeid_t near_cnode;
 	struct hubdev_info *hubdev_info;
 	struct pcibus_info *soft;
 	struct sn_flush_device_kernel *sn_flush_device_kernel;
@@ -131,21 +129,20 @@ pcibr_bus_fixup(struct pcibus_bussoft *prom_bussoft, struct pci_controller *cont
 	}
 
 	memcpy(soft, prom_bussoft, sizeof(struct pcibus_info));
-	soft->pbi_buscommon.bs_base = (unsigned long)
-		ioremap(REGION_OFFSET(soft->pbi_buscommon.bs_base),
-			sizeof(struct pic));
+	soft->pbi_buscommon.bs_base =
+	    (((u64) soft->pbi_buscommon.
+	      bs_base << 4) >> 4) | __IA64_UNCACHED_OFFSET;
 
 	spin_lock_init(&soft->pbi_lock);
 
 	/*
 	 * register the bridge's error interrupt handler
 	 */
-	if (request_irq(SGI_PCIASIC_ERROR, pcibr_error_intr_handler,
+	if (request_irq(SGI_PCIASIC_ERROR, (void *)pcibr_error_intr_handler,
 			IRQF_SHARED, "PCIBR error", (void *)(soft))) {
 		printk(KERN_WARNING
 		       "pcibr cannot allocate interrupt for error handler\n");
 	}
-	sn_set_err_irq_affinity(SGI_PCIASIC_ERROR);
 
 	/* 
 	 * Update the Bridge with the "kernel" pagesize 
@@ -189,6 +186,20 @@ pcibr_bus_fixup(struct pcibus_bussoft *prom_bussoft, struct pci_controller *cont
 		return NULL;
 	}
 
+	if (prom_bussoft->bs_asic_type == PCIIO_ASIC_TYPE_TIOCP) {
+		/* TIO PCI Bridge: find nearest node with CPUs */
+		int e = sn_hwperf_get_nearest_node(cnode, NULL, &near_cnode);
+
+		if (e < 0) {
+			near_cnode = (cnodeid_t)-1; /* use any node */
+			printk(KERN_WARNING "pcibr_bus_fixup: failed to find "
+				"near node with CPUs to TIO node %d, err=%d\n",
+				cnode, e);
+		}
+		controller->node = near_cnode;
+	}
+	else
+		controller->node = cnode;
 	return soft;
 }
 

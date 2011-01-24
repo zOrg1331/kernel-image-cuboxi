@@ -1,4 +1,6 @@
 /*
+ *  linux/arch/mips/dec/time.c
+ *
  *  Copyright (C) 1991, 1992, 1995  Linus Torvalds
  *  Copyright (C) 2000, 2003  Maciej W. Rozycki
  *
@@ -7,18 +9,34 @@
  *
  */
 #include <linux/bcd.h>
+#include <linux/errno.h>
 #include <linux/init.h>
+#include <linux/interrupt.h>
+#include <linux/kernel.h>
 #include <linux/mc146818rtc.h>
+#include <linux/mm.h>
+#include <linux/module.h>
 #include <linux/param.h>
+#include <linux/sched.h>
+#include <linux/string.h>
+#include <linux/time.h>
+#include <linux/types.h>
 
-#include <asm/cpu-features.h>
-#include <asm/ds1287.h>
+#include <asm/bootinfo.h>
+#include <asm/cpu.h>
+#include <asm/div64.h>
+#include <asm/io.h>
+#include <asm/irq.h>
+#include <asm/mipsregs.h>
+#include <asm/sections.h>
 #include <asm/time.h>
+
 #include <asm/dec/interrupts.h>
 #include <asm/dec/ioasic.h>
+#include <asm/dec/ioasic_addrs.h>
 #include <asm/dec/machtype.h>
 
-void read_persistent_clock(struct timespec *ts)
+static unsigned long dec_rtc_get_time(void)
 {
 	unsigned int year, mon, day, hour, min, sec, real_year;
 	unsigned long flags;
@@ -43,28 +61,27 @@ void read_persistent_clock(struct timespec *ts)
 	spin_unlock_irqrestore(&rtc_lock, flags);
 
 	if (!(CMOS_READ(RTC_CONTROL) & RTC_DM_BINARY) || RTC_ALWAYS_BCD) {
-		sec = bcd2bin(sec);
-		min = bcd2bin(min);
-		hour = bcd2bin(hour);
-		day = bcd2bin(day);
-		mon = bcd2bin(mon);
-		year = bcd2bin(year);
+		sec = BCD2BIN(sec);
+		min = BCD2BIN(min);
+		hour = BCD2BIN(hour);
+		day = BCD2BIN(day);
+		mon = BCD2BIN(mon);
+		year = BCD2BIN(year);
 	}
 
 	year += real_year - 72 + 2000;
 
-	ts->tv_sec = mktime(year, mon, day, hour, min, sec);
-	ts->tv_nsec = 0;
+	return mktime(year, mon, day, hour, min, sec);
 }
 
 /*
- * In order to set the CMOS clock precisely, rtc_mips_set_mmss has to
+ * In order to set the CMOS clock precisely, dec_rtc_set_mmss has to
  * be called 500 ms after the second nowtime has started, because when
  * nowtime is written into the registers of the CMOS clock, it will
  * jump to the next second precisely 500 ms later.  Check the Dallas
  * DS1287 data sheet for details.
  */
-int rtc_mips_set_mmss(unsigned long nowtime)
+static int dec_rtc_set_mmss(unsigned long nowtime)
 {
 	int retval = 0;
 	int real_seconds, real_minutes, cmos_minutes;
@@ -82,7 +99,7 @@ int rtc_mips_set_mmss(unsigned long nowtime)
 
 	cmos_minutes = CMOS_READ(RTC_MINUTES);
 	if (!(save_control & RTC_DM_BINARY) || RTC_ALWAYS_BCD)
-		cmos_minutes = bcd2bin(cmos_minutes);
+		cmos_minutes = BCD2BIN(cmos_minutes);
 
 	/*
 	 * since we're only adjusting minutes and seconds,
@@ -98,8 +115,8 @@ int rtc_mips_set_mmss(unsigned long nowtime)
 
 	if (abs(real_minutes - cmos_minutes) < 30) {
 		if (!(save_control & RTC_DM_BINARY) || RTC_ALWAYS_BCD) {
-			real_seconds = bin2bcd(real_seconds);
-			real_minutes = bin2bcd(real_minutes);
+			real_seconds = BIN2BCD(real_seconds);
+			real_minutes = BIN2BCD(real_minutes);
 		}
 		CMOS_WRITE(real_seconds, RTC_SECONDS);
 		CMOS_WRITE(real_minutes, RTC_MINUTES);
@@ -123,32 +140,56 @@ int rtc_mips_set_mmss(unsigned long nowtime)
 	return retval;
 }
 
-void __init plat_time_init(void)
+
+static int dec_timer_state(void)
 {
-	u32 start, end;
-	int i = HZ / 10;
+	return (CMOS_READ(RTC_REG_C) & RTC_PF) != 0;
+}
 
-	/* Set up the rate of periodic DS1287 interrupts. */
-	ds1287_set_base_clock(HZ);
+static void dec_timer_ack(void)
+{
+	CMOS_READ(RTC_REG_C);			/* Ack the RTC interrupt.  */
+}
 
-	if (cpu_has_counter) {
-		while (!ds1287_timer_state())
-			;
+static unsigned int dec_ioasic_hpt_read(void)
+{
+	/*
+	 * The free-running counter is 32-bit which is good for about
+	 * 2 minutes, 50 seconds at possible count rates of up to 25MHz.
+	 */
+	return ioasic_read(IO_REG_FCTR);
+}
 
-		start = read_c0_count();
+static void dec_ioasic_hpt_init(unsigned int count)
+{
+	ioasic_write(IO_REG_FCTR, ioasic_read(IO_REG_FCTR) - count);
+}
 
-		while (i--)
-			while (!ds1287_timer_state())
-				;
 
-		end = read_c0_count();
+void __init dec_time_init(void)
+{
+	rtc_mips_get_time = dec_rtc_get_time;
+	rtc_mips_set_mmss = dec_rtc_set_mmss;
 
-		mips_hpt_frequency = (end - start) * 10;
-		printk(KERN_INFO "MIPS counter frequency %dHz\n",
-			mips_hpt_frequency);
-	} else if (IOASIC)
+	mips_timer_state = dec_timer_state;
+	mips_timer_ack = dec_timer_ack;
+
+	if (!cpu_has_counter && IOASIC) {
 		/* For pre-R4k systems we use the I/O ASIC's counter.  */
-		dec_ioasic_clocksource_init();
+		mips_hpt_read = dec_ioasic_hpt_read;
+		mips_hpt_init = dec_ioasic_hpt_init;
+	}
 
-	ds1287_clockevent_init(dec_interrupt[DEC_IRQ_RTC]);
+	/* Set up the rate of periodic DS1287 interrupts.  */
+	CMOS_WRITE(RTC_REF_CLCK_32KHZ | (16 - __ffs(HZ)), RTC_REG_A);
+}
+
+EXPORT_SYMBOL(do_settimeofday);
+
+void __init plat_timer_setup(struct irqaction *irq)
+{
+	setup_irq(dec_interrupt[DEC_IRQ_RTC], irq);
+
+	/* Enable periodic DS1287 interrupts.  */
+	CMOS_WRITE(CMOS_READ(RTC_REG_B) | RTC_PIE, RTC_REG_B);
 }

@@ -25,10 +25,10 @@
  
 struct sock_filter	/* Filter block */
 {
-	__u16	code;   /* Actual filter code */
-	__u8	jt;	/* Jump true */
-	__u8	jf;	/* Jump false */
-	__u32	k;      /* Generic multiuse field */
+        __u16	code;   /* Actual filter code */
+        __u8	jt;	/* Jump true */
+        __u8	jf;	/* Jump false */
+        __u32	k;      /* Generic multiuse field */
 };
 
 struct sock_fprog	/* Required for SO_ATTACH_FILTER. */
@@ -36,6 +36,20 @@ struct sock_fprog	/* Required for SO_ATTACH_FILTER. */
 	unsigned short		len;	/* Number of filter blocks */
 	struct sock_filter __user *filter;
 };
+
+#ifdef __KERNEL__
+struct sk_filter
+{
+	atomic_t		refcnt;
+        unsigned int         	len;	/* Number of filter blocks */
+        struct sock_filter     	insns[0];
+};
+
+static inline unsigned int sk_filter_len(struct sk_filter *fp)
+{
+	return fp->len*sizeof(struct sock_filter) + sizeof(*fp);
+}
+#endif
 
 /*
  * Instruction classes
@@ -121,34 +135,16 @@ struct sock_fprog	/* Required for SO_ATTACH_FILTER. */
 #define SKF_AD_PROTOCOL 0
 #define SKF_AD_PKTTYPE 	4
 #define SKF_AD_IFINDEX 	8
-#define SKF_AD_NLATTR	12
-#define SKF_AD_NLATTR_NEST	16
-#define SKF_AD_MAX	20
+#define SKF_AD_MAX 	12
 #define SKF_NET_OFF   (-0x100000)
 #define SKF_LL_OFF    (-0x200000)
 
 #ifdef __KERNEL__
-struct sk_filter
-{
-	atomic_t		refcnt;
-	unsigned int         	len;	/* Number of filter blocks */
-	struct rcu_head		rcu;
-	struct sock_filter     	insns[0];
-};
-
-static inline unsigned int sk_filter_len(const struct sk_filter *fp)
-{
-	return fp->len * sizeof(struct sock_filter) + sizeof(*fp);
-}
-
 struct sk_buff;
 struct sock;
 
-extern int sk_filter(struct sock *sk, struct sk_buff *skb);
-extern unsigned int sk_run_filter(struct sk_buff *skb,
-				  struct sock_filter *filter, int flen);
+extern unsigned int sk_run_filter(struct sk_buff *skb, struct sock_filter *filter, int flen);
 extern int sk_attach_filter(struct sock_fprog *fprog, struct sock *sk);
-extern int sk_detach_filter(struct sock *sk);
 extern int sk_chk_filter(struct sock_filter *filter, int flen);
 #endif /* __KERNEL__ */
 

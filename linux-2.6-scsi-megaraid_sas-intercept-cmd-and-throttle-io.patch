@@ -1,0 +1,304 @@
+From: Chip Coldwell <coldwell@redhat.com>
+Subject: Re: [RHEL5.1 PATCH] bz245184 megaraid_sas: intercept cmd timeout 	and throttle io
+Date: Tue, 4 Sep 2007 14:15:31 -0400 (Eastern Daylight Time)
+Bugzilla: 245184 247581
+Message-Id: <Pine.WNT.4.64.0709041412280.604@chiptop>
+Changelog: [scsi] megaraid_sas: intercept cmd timeout and throttle io
+
+This patch resolves an issue originally raised by 225221.  It was
+omitted during the omnibus megaraid_sas update because it required a
+KABI-breaking change to the scsi_host struct.  I have papered over
+this in the usual way (move the new struct element to the end and
+surround it with a preprocessor #ifndef __GENKSYMS___).
+Compile-tested by me
+
+functionality testing by LSI.  I've also rolled in the fix for
+bz247581, which just bumps the version number in the driver.
+
+On Mon, 20 Aug 2007, Pete Zaitcev wrote:
+> 
+> BTW, if the bifield trick falls through, you can play further tricks.
+> For example, put 0x1dead1af into a function pointer (like proc_info),
+> and have the core detect that. If found, it means "extended" host
+> template. It actually may be safer than a bitfield, I think.
+
+I have implemented this recommendation, and tested that the megaraid_sas 
+driver can be loaded on an unpatched kernel (2.6.18-36.el5) and the driver 
+functions as expected.
+
+The kernel has been build for all architectures, with no build issues:
+
+Please review and ACK/NACK as apropriate.
+
+ drivers/scsi/megaraid/megaraid_sas.c |   68 ++++++++++++++++++++++++++++++---
+ drivers/scsi/megaraid/megaraid_sas.h |   14 ++++--
+ drivers/scsi/scsi_error.c            |   12 +++++-
+ include/scsi/scsi_host.h             |   19 +++++++++
+ 4 files changed, 100 insertions(+), 13 deletions(-)
+
+diff --git a/drivers/scsi/megaraid/megaraid_sas.c b/drivers/scsi/megaraid/megaraid_sas.c
+index 00598b0..ec799fe 100644
+--- a/drivers/scsi/megaraid/megaraid_sas.c
++++ b/drivers/scsi/megaraid/megaraid_sas.c
+@@ -10,7 +10,7 @@
+  *	   2 of the License, or (at your option) any later version.
+  *
+  * FILE		: megaraid_sas.c
+- * Version	: v00.00.03.05
++ * Version	: v00.00.03.10
+  *
+  * Authors:
+  * 	Sreenivas Bagalkote	<Sreenivas.Bagalkote@lsi.com>
+@@ -884,6 +884,7 @@ megasas_queue_command(struct scsi_cmnd *scmd, void (*done) (struct scsi_cmnd *))
+ 		goto out_return_cmd;
+ 
+ 	cmd->scmd = scmd;
++	scmd->SCp.ptr = (char *)cmd;
+ 
+ 	/*
+ 	 * Issue the command to the FW
+@@ -917,7 +918,7 @@ static int megasas_slave_configure(struct scsi_device *sdev)
+ 	 * The RAID firmware may require extended timeouts.
+ 	 */
+ 	if (sdev->channel >= MEGASAS_MAX_PD_CHANNELS)
+-		sdev->timeout = 90 * HZ;
++		sdev->timeout = MEGASAS_DEFAULT_CMD_TIMEOUT * HZ;
+ 	return 0;
+ }
+ 
+@@ -979,8 +980,8 @@ static int megasas_generic_reset(struct scsi_cmnd *scmd)
+ 
+ 	instance = (struct megasas_instance *)scmd->device->host->hostdata;
+ 
+-	scmd_printk(KERN_NOTICE, scmd, "megasas: RESET -%ld cmd=%x\n",
+-	       scmd->serial_number, scmd->cmnd[0]);
++	scmd_printk(KERN_NOTICE, scmd, "megasas: RESET -%ld cmd=%x retries=%x\n",
++		 scmd->serial_number, scmd->cmnd[0], scmd->retries);
+ 
+ 	if (instance->hw_crit_error) {
+ 		printk(KERN_ERR "megasas: cannot recover from previous reset "
+@@ -998,6 +999,39 @@ static int megasas_generic_reset(struct scsi_cmnd *scmd)
+ }
+ 
+ /**
++ * megasas_reset_timer - quiesce the adapter if required
++ * @scmd:		scsi cmnd
++ *
++ * Sets the FW busy flag and reduces the host->can_queue if the
++ * cmd has not been completed within the timeout period.
++ */
++static enum
++scsi_eh_timer_return megasas_reset_timer(struct scsi_cmnd *scmd)
++{
++	struct megasas_cmd *cmd = (struct megasas_cmd *)scmd->SCp.ptr;
++	struct megasas_instance *instance;
++	unsigned long flags;
++
++	if (time_after(jiffies, scmd->jiffies_at_alloc +
++				(MEGASAS_DEFAULT_CMD_TIMEOUT * 2) * HZ)) {
++		return EH_NOT_HANDLED;
++	}
++
++	instance = cmd->instance;
++	if (!(instance->flag & MEGASAS_FW_BUSY)) {
++		/* FW is busy, throttle IO */
++		spin_lock_irqsave(instance->host->host_lock, flags);
++
++		instance->host->can_queue = 16;
++		instance->last_time = jiffies;
++		instance->flag |= MEGASAS_FW_BUSY;
++
++		spin_unlock_irqrestore(instance->host->host_lock, flags);
++	}
++	return EH_RESET_TIMER;
++}
++
++/**
+  * megasas_reset_device -	Device reset handler entry point
+  */
+ static int megasas_reset_device(struct scsi_cmnd *scmd)
+@@ -1110,6 +1144,8 @@ static struct scsi_host_template megasas_template = {
+ 	.eh_device_reset_handler = megasas_reset_device,
+ 	.eh_bus_reset_handler = megasas_reset_bus_host,
+ 	.eh_host_reset_handler = megasas_reset_bus_host,
++	.proc_info = (void *) RH_EXTENDED_MAGIC,
++	.eh_timed_out = megasas_reset_timer,
+ 	.bios_param = megasas_bios_param,
+ 	.use_clustering = ENABLE_CLUSTERING,
+ };
+@@ -1213,9 +1249,8 @@ megasas_complete_cmd(struct megasas_instance *instance, struct megasas_cmd *cmd,
+ 	int exception = 0;
+ 	struct megasas_header *hdr = &cmd->frame->hdr;
+ 
+-	if (cmd->scmd) {
+-		cmd->scmd->SCp.ptr = (char *)0;
+-	}
++	if (cmd->scmd)
++		cmd->scmd->SCp.ptr = NULL;
+ 
+ 	switch (hdr->cmd) {
+ 
+@@ -1804,6 +1839,7 @@ static void megasas_complete_cmd_dpc(unsigned long instance_addr)
+ 	u32 context;
+ 	struct megasas_cmd *cmd;
+ 	struct megasas_instance *instance = (struct megasas_instance *)instance_addr;
++	unsigned long flags;
+ 
+ 	/* If we have already declared adapter dead, donot complete cmds */
+ 	if (instance->hw_crit_error)
+@@ -1826,6 +1862,22 @@ static void megasas_complete_cmd_dpc(unsigned long instance_addr)
+ 	}
+ 
+ 	*instance->consumer = producer;
++
++	/*
++	 * Check if we can restore can_queue
++	 */
++	if (instance->flag & MEGASAS_FW_BUSY
++		&& time_after(jiffies, instance->last_time + 5 * HZ)
++		&& atomic_read(&instance->fw_outstanding) < 17) {
++
++		spin_lock_irqsave(instance->host->host_lock, flags);
++		instance->flag &= ~MEGASAS_FW_BUSY;
++		instance->host->can_queue =
++				instance->max_fw_cmds - MEGASAS_INT_CMDS;
++
++		spin_unlock_irqrestore(instance->host->host_lock, flags);
++	}
++
+ }
+ 
+ /**
+@@ -2396,6 +2448,8 @@ megasas_probe_one(struct pci_dev *pdev, const struct pci_device_id *id)
+ 	instance->init_id = MEGASAS_DEFAULT_INIT_ID;
+ 
+ 	megasas_dbg_lvl = 0;
++	instance->flag = 0;
++	instance->last_time = 0;
+ 
+ 	/*
+ 	 * Initialize MFI Firmware
+diff --git a/drivers/scsi/megaraid/megaraid_sas.h b/drivers/scsi/megaraid/megaraid_sas.h
+index 55eddcf..86604bf 100644
+--- a/drivers/scsi/megaraid/megaraid_sas.h
++++ b/drivers/scsi/megaraid/megaraid_sas.h
+@@ -18,9 +18,9 @@
+ /**
+  * MegaRAID SAS Driver meta data
+  */
+-#define MEGASAS_VERSION				"00.00.03.05"
+-#define MEGASAS_RELDATE				"Oct 02, 2006"
+-#define MEGASAS_EXT_VERSION			"Mon Oct 02 11:21:32 PDT 2006"
++#define MEGASAS_VERSION				"00.00.03.10"
++#define MEGASAS_RELDATE				"Mar 28, 2007"
++#define MEGASAS_EXT_VERSION			"Wed Mar 28 10:25:52 PST 2007"
+ 
+ /*
+  * Device IDs
+@@ -539,6 +539,8 @@ struct megasas_ctrl_info {
+ 
+ #define MEGASAS_DBG_LVL				1
+ 
++#define MEGASAS_FW_BUSY				1
++
+ /*
+  * When SCSI mid-layer calls driver's reset routine, driver waits for
+  * MEGASAS_RESET_WAIT_TIME seconds for all outstanding IO to complete. Note
+@@ -549,8 +551,8 @@ struct megasas_ctrl_info {
+ #define MEGASAS_RESET_WAIT_TIME			180
+ #define MEGASAS_INTERNAL_CMD_WAIT_TIME		180
+ #define	MEGASAS_RESET_NOTICE_INTERVAL		5
+-
+ #define MEGASAS_IOCTL_CMD			0
++#define MEGASAS_DEFAULT_CMD_TIMEOUT		90
+ 
+ /*
+  * FW reports the maximum of number of commands that it can accept (maximum
+@@ -1073,7 +1075,6 @@ struct megasas_instance {
+ 	struct megasas_register_set __iomem *reg_set;
+ 
+ 	s8 init_id;
+-	u8 reserved[3];
+ 
+ 	u16 max_num_sge;
+ 	u16 max_fw_cmds;
+@@ -1104,6 +1105,9 @@ struct megasas_instance {
+ 
+ 	struct megasas_instance_template *instancet;
+ 	struct tasklet_struct isr_tasklet;
++
++	u8 flag;
++	unsigned long last_time;
+ };
+ 
+ #define MEGASAS_IS_LOGICAL(scp)						\
+diff --git a/drivers/scsi/scsi_error.c b/drivers/scsi/scsi_error.c
+index 5c07a3b..b775066 100644
+--- a/drivers/scsi/scsi_error.c
++++ b/drivers/scsi/scsi_error.c
+@@ -184,10 +184,20 @@ int scsi_delete_timer(struct scsi_cmnd *scmd)
+  **/
+ void scsi_times_out(struct scsi_cmnd *scmd)
+ {
++	enum scsi_eh_timer_return (* eh_timed_out)(struct scsi_cmnd *);
++
+ 	scsi_log_completion(scmd, TIMEOUT_ERROR);
+ 
+ 	if (scmd->device->host->transportt->eh_timed_out)
+-		switch (scmd->device->host->transportt->eh_timed_out(scmd)) {
++		eh_timed_out = scmd->device->host->transportt->eh_timed_out;
++	else if ((scmd->device->host->hostt->proc_info == (void *) RH_EXTENDED_MAGIC) &&
++		 scmd->device->host->hostt->eh_timed_out)
++		eh_timed_out = scmd->device->host->hostt->eh_timed_out;
++	else
++		eh_timed_out = NULL;
++
++	if (eh_timed_out)
++		switch (eh_timed_out(scmd)) {
+ 		case EH_HANDLED:
+ 			__scsi_done(scmd);
+ 			return;
+diff --git a/include/scsi/scsi_host.h b/include/scsi/scsi_host.h
+index e05a37e..ab322bc 100644
+--- a/include/scsi/scsi_host.h
++++ b/include/scsi/scsi_host.h
+@@ -285,6 +285,10 @@ struct scsi_host_template {
+ 	 *
+ 	 * Status: OBSOLETE
+ 	 */
++	/* Red Hat KABI: set proc_info to RH_EXTENDED_MAGIC to enable
++	   Red Hat extensions of the scsi_host_template structure, namely
++	   the eh_timed_out function pointer. */
++#define RH_EXTENDED_MAGIC 0x1dead1af
+ 	int (*proc_info)(struct Scsi_Host *, char *, char **, off_t, int, int);
+ 
+ 	/*
+@@ -429,6 +433,21 @@ struct scsi_host_template {
+ 	 * module_init/module_exit.
+ 	 */
+ 	struct list_head legacy_hosts;
++
++#ifndef __GENKSYMS__
++	/*
++	 * This is an optional routine that allows the transport to become
++	 * involved when a scsi io timer fires. The return value tells the
++	 * timer routine how to finish the io timeout handling:
++	 * EH_HANDLED:		I fixed the error, please complete the command
++	 * EH_RESET_TIMER:	I need more time, reset the timer and
++	 *			begin counting again
++	 * EH_NOT_HANDLED	Begin normal error recovery
++	 *
++	 * Status: OPTIONAL
++	 */
++	enum scsi_eh_timer_return (* eh_timed_out)(struct scsi_cmnd *);
++#endif
+ };
+ 
+ /*
+
+-- 
+Charles M. "Chip" Coldwell
+Senior Software Engineer
+Red Hat, Inc
+978-392-2426
+

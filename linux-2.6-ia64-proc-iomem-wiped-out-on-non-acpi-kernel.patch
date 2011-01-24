@@ -1,0 +1,59 @@
+From: George Beshers <gbeshers@redhat.com>
+Date: Mon, 27 Aug 2007 14:44:27 -0400
+Subject: [ia64] proc/iomem wiped out on non ACPI kernel
+Message-id: 46D31B8B.8050305@redhat.com
+O-Subject: [Rhel 5.1 BZ257001] proc/iomem wiped out on non ACPI kernels, kdump uses /proc/iomem
+Bugzilla: 257001
+
+[Sorry if you see this twice]
+[BZ#257001 and IT#117278]
+
+Exception Request.
+
+The following patch should have been part of ACPI I/O support
+and its lack was detected during testing.
+
+The ACPI patches that were included enables proper ACPI support
+on systems with the newer prom revisions.  This patch is required for
+the Altix systems in the field with older proms (shame on me for
+keeping the machines at RedHat up to date :-/).
+
+>From the IT 117278:
+  On a non ACPI enabled kernel the pci windows won't be created at the
+  time this pci-to-system address space conversion is done.  Because of
+  that we must later go thru and manually overwrite these pci addresses
+  with the PIO addresses.  This happens in sn_io_slot_fixup().  As a
+  result of manually overwriting these addresses, the iomem tree will
+  no longer be a  ``sorted tree''... And because of it no longer being
+  sorted, /proc/iomem sometimes appears truncated.
+
+  So why is this an issue?  Well kdump uses this table to located the
+  "Crash kernel" entry within the /proc/iomem tree... if the iomem tree
+  is corrupted, /etc/init.d/kdump will fail to load the kdump kernel.
+
+diff --git a/arch/ia64/sn/kernel/io_init.c b/arch/ia64/sn/kernel/io_init.c
+index 113ad40..d62e0ca 100644
+--- a/arch/ia64/sn/kernel/io_init.c
++++ b/arch/ia64/sn/kernel/io_init.c
+@@ -247,10 +247,19 @@ sn_io_slot_fixup(struct pci_dev *dev)
+ 		addr = ((addr << 4) >> 4) | __IA64_UNCACHED_OFFSET;
+ 		dev->resource[idx].start = addr;
+ 		dev->resource[idx].end = addr + size;
++
++		/*
++		 * if it's already in the device structure, remove it before
++		 * inserting
++		 */
++		if (dev->resource[idx].parent && dev->resource[idx].parent->child)
++			release_resource(&dev->resource[idx]);
++ 
+ 		if (dev->resource[idx].flags & IORESOURCE_IO)
+-			dev->resource[idx].parent = &ioport_resource;
++			insert_resource(&ioport_resource, &dev->resource[idx]);
+ 		else
+-			dev->resource[idx].parent = &iomem_resource;
++			insert_resource(&iomem_resource, &dev->resource[idx]);
++
+ 		/* If ROM, mark as shadowed in PROM */
+ 		if (idx == PCI_ROM_RESOURCE)
+ 			dev->resource[idx].flags |= IORESOURCE_ROM_BIOS_COPY;

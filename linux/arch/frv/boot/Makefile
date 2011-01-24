@@ -8,9 +8,7 @@
 # Copyright (C) 1995-2000 Russell King
 #
 
-targets := Image zImage bootpImage
-
-SYSTEM	=$(LINUX)
+SYSTEM	=$(TOPDIR)/$(LINUX)
 
 ZTEXTADDR	 = 0x02080000
 PARAMS_PHYS	 = 0x0207c000
@@ -45,7 +43,7 @@ zImage:	$(CONFIGURE) compressed/$(LINUX)
 bootpImage: bootp/bootp
 	$(OBJCOPY) -O binary -R .note -R .comment -S bootp/bootp $@
 
-compressed/$(LINUX): $(LINUX) dep
+compressed/$(LINUX): $(TOPDIR)/$(LINUX) dep
 	@$(MAKE) -C compressed $(LINUX)
 
 bootp/bootp: zImage initrd
@@ -59,15 +57,16 @@ initrd:
 # installation
 #
 install: $(CONFIGURE) Image
-	sh ./install.sh $(KERNELRELEASE) Image System.map "$(INSTALL_PATH)"
+	sh ./install.sh $(KERNELRELEASE) Image $(TOPDIR)/System.map "$(INSTALL_PATH)"
 
 zinstall: $(CONFIGURE) zImage
-	sh ./install.sh $(KERNELRELEASE) zImage System.map "$(INSTALL_PATH)"
+	sh ./install.sh $(KERNELRELEASE) zImage $(TOPDIR)/System.map "$(INSTALL_PATH)"
 
 #
 # miscellany
 #
 mrproper clean:
+	$(RM) Image zImage bootpImage
 #	@$(MAKE) -C compressed clean
 #	@$(MAKE) -C bootp clean
 

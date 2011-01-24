@@ -1,0 +1,48 @@
+From: Hans-Joachim Picht <hpicht@redhat.com>
+Date: Fri, 16 Nov 2007 13:56:57 +0100
+Subject: [s390] fix dump on panic for DASDs under LPAR
+Message-id: 20071116125657.GP6053@redhat.com
+O-Subject: [RHEL5 U2 PATCH 8/14] s390 - Fix dump on panic for DASDs under LPAR.
+Bugzilla: 250352
+
+Description
+============
+
+Currently the ccw method is used to ipl the DASD dump record under LPAR.
+This mechanism is not reliable, which can cause dump failures. This fix
+now uses the diag 308 ipl method for all machines, which have diag308
+subcode 5 and 4 support.
+
+Bugzilla
+=========
+
+BZ 250352
+https://bugzilla.redhat.com/show_bug.cgi?id=250352
+
+Upstream status of the patch:
+=============================
+Patch included in git as commit e3d3683d1402c1737687cb698451d545f57c32a7
+
+Test status:
+============
+Kernel with patch was built and successfully tested
+
+Please ACK.
+
+With best regards,
+
+Hans
+
+diff --git a/arch/s390/kernel/ipl.c b/arch/s390/kernel/ipl.c
+index 6537581..a06f364 100644
+--- a/arch/s390/kernel/ipl.c
++++ b/arch/s390/kernel/ipl.c
+@@ -589,6 +589,8 @@ static int dump_set_type(enum dump_type type)
+ 	case DUMP_TYPE_CCW:
+ 		if (MACHINE_IS_VM)
+ 			dump_method = DUMP_METHOD_CCW_VM;
++		else if (diag308_set_works)
++			dump_method = DUMP_METHOD_CCW_DIAG;
+ 		else
+ 			dump_method = DUMP_METHOD_CCW_CIO;
+ 		break;

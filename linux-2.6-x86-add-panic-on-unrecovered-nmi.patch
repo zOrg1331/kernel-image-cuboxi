@@ -1,0 +1,255 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Subject: Re: [RHEL5 PATCH]: Regression: Add panic on unrecovered NMI
+Date: Mon, 08 Jan 2007 10:34:47 -0500
+Bugzilla: 220829
+Message-Id: <45A26497.40604@redhat.com>
+Changelog: x86: Add panic on unrecovered NMI
+
+
+
+
+Resubmitting after dzickus' suggestion to backport 2 additional changes.
+
+
+Add panic on unrecovered NMI.  Regression from RHEL4.
+
+Backport of
+
+http://www.kernel.org/git/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=8da5adda91df3d2fcc5300e68da491694c9af019
+
+http://www.kernel.org/git/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=29cbc78b90a73ad80f2f58ba2927956cf663abed
+
+http://www.kernel.org/git/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=c41c5cd3b20a2d81c30498f13b1527847a8fdf69
+
+Compiled and tested against latest RHEL5.
+
+Resolves BZ 220829.
+
+
+diff -urNp linux-2.6.18.x86_64.orig/arch/i386/kernel/nmi.c linux-2.6.18.x86_64/arch/i386/kernel/nmi.c
+--- linux-2.6.18.x86_64.orig/arch/i386/kernel/nmi.c	2007-01-09 14:34:35.000000000 -0500
++++ linux-2.6.18.x86_64/arch/i386/kernel/nmi.c	2007-01-09 14:34:55.000000000 -0500
+@@ -28,7 +28,7 @@
+ #include "mach_traps.h"
+ 
+ unsigned int nmi_watchdog = NMI_NONE;
+-extern int unknown_nmi_panic;
++int unknown_nmi_panic;
+ static unsigned int nmi_hz = HZ;
+ static unsigned int nmi_perfctr_msr;	/* the MSR to reset in NMI handler */
+ static unsigned int nmi_p4_cccr_val;
+diff -urNp linux-2.6.18.x86_64.orig/arch/i386/kernel/traps.c linux-2.6.18.x86_64/arch/i386/kernel/traps.c
+--- linux-2.6.18.x86_64.orig/arch/i386/kernel/traps.c	2007-01-09 14:34:35.000000000 -0500
++++ linux-2.6.18.x86_64/arch/i386/kernel/traps.c	2007-01-09 14:34:55.000000000 -0500
+@@ -58,6 +58,8 @@
+ 
+ #include "mach_traps.h"
+ 
++int panic_on_unrecovered_nmi;
++
+ asmlinkage int system_call(void);
+ 
+ struct desc_struct default_ldt[] = { { 0, 0 }, { 0, 0 }, { 0, 0 },
+@@ -729,10 +731,14 @@ gp_in_kernel:
+ 
+ static void mem_parity_error(unsigned char reason, struct pt_regs * regs)
+ {
+-	printk(KERN_EMERG "Uhhuh. NMI received. Dazed and confused, but trying "
+-			"to continue\n");
++	printk(KERN_EMERG "Uhhuh. NMI received for unknown reason %02x on "
++		"CPU %d.\n", reason, smp_processor_id());
+ 	printk(KERN_EMERG "You probably have a hardware problem with your RAM "
+ 			"chips\n");
++	if (panic_on_unrecovered_nmi)
++                panic("NMI: Not continuing");
++
++	printk(KERN_EMERG "Dazed and confused, but trying to continue\n");
+ 
+ 	/* Clear and disable the memory parity error line. */
+ 	clear_mem_error(reason);
+@@ -757,10 +763,13 @@ static void unknown_nmi_error(unsigned c
+ 		return;
+ 	}
+ #endif
+-	printk("Uhhuh. NMI received for unknown reason %02x on CPU %d.\n",
+-		reason, smp_processor_id());
+-	printk("Dazed and confused, but trying to continue\n");
+-	printk("Do you have a strange power saving mode enabled?\n");
++	printk(KERN_EMERG "Uhhuh. NMI received for unknown reason %02x on "
++		"CPU %d.\n", reason, smp_processor_id());
++	printk(KERN_EMERG "Do you have a strange power saving mode enabled?\n");
++	if (panic_on_unrecovered_nmi)
++                panic("NMI: Not continuing");
++
++	printk(KERN_EMERG "Dazed and confused, but trying to continue\n");
+ }
+ 
+ static DEFINE_SPINLOCK(nmi_print_lock);
+diff -urNp linux-2.6.18.x86_64.orig/arch/i386/kernel/traps-xen.c linux-2.6.18.x86_64/arch/i386/kernel/traps-xen.c
+--- linux-2.6.18.x86_64.orig/arch/i386/kernel/traps-xen.c 2007-01-09 14:34:35.000000000 -0500
++++ linux-2.6.18.x86_64/arch/i386/kernel/traps-xen.c	2007-01-09 14:34:55.000000000 -0500
+@@ -58,6 +58,8 @@
+ 
+ #include "mach_traps.h"
+ 
++int panic_on_unrecovered_nmi;
++
+ asmlinkage int system_call(void);
+ 
+ struct desc_struct default_ldt[] = { { 0, 0 }, { 0, 0 }, { 0, 0 },
+@@ -703,10 +705,14 @@ gp_in_kernel:
+ 
+ static void mem_parity_error(unsigned char reason, struct pt_regs * regs)
+ {
+-	printk(KERN_EMERG "Uhhuh. NMI received. Dazed and confused, but trying "
+-			"to continue\n");
++	printk(KERN_EMERG "Uhhuh. NMI received for unknown reason %02x on "
++		"CPU %d.\n", reason, smp_processor_id());
+ 	printk(KERN_EMERG "You probably have a hardware problem with your RAM "
+ 			"chips\n");
++	if (panic_on_unrecovered_nmi)
++                panic("NMI: Not continuing");
++
++	printk(KERN_EMERG "Dazed and confused, but trying to continue\n");
+ 
+ 	/* Clear and disable the memory parity error line. */
+ 	clear_mem_error(reason);
+@@ -731,10 +737,13 @@ static void unknown_nmi_error(unsigned c
+ 		return;
+ 	}
+ #endif
+-	printk("Uhhuh. NMI received for unknown reason %02x on CPU %d.\n",
+-		reason, smp_processor_id());
+-	printk("Dazed and confused, but trying to continue\n");
+-	printk("Do you have a strange power saving mode enabled?\n");
++	printk(KERN_EMERG "Uhhuh. NMI received for unknown reason %02x on "
++		"CPU %d.\n", reason, smp_processor_id());
++	printk(KERN_EMERG "Do you have a strange power saving mode enabled?\n");
++	if (panic_on_unrecovered_nmi)
++                panic("NMI: Not continuing");
++
++	printk(KERN_EMERG "Dazed and confused, but trying to continue\n");
+ }
+ 
+ static DEFINE_SPINLOCK(nmi_print_lock);
+diff -urNp linux-2.6.18.x86_64.orig/arch/x86_64/kernel/nmi.c linux-2.6.18.x86_64/arch/x86_64/kernel/nmi.c
+--- linux-2.6.18.x86_64.orig/arch/x86_64/kernel/nmi.c	2007-01-09 14:34:35.000000000 -0500
++++ linux-2.6.18.x86_64/arch/x86_64/kernel/nmi.c	2007-01-09 14:34:55.000000000 -0500
+@@ -28,6 +28,8 @@
+ #include <asm/mce.h>
+ #include <asm/intel_arch_perfmon.h>
+ 
++int unknown_nmi_panic;
++int panic_on_unrecovered_nmi;
+ /*
+  * lapic_nmi_owner tracks the ownership of the lapic NMI hardware:
+  * - it may be reserved by some other driver, or not
+diff -urNp linux-2.6.18.x86_64.orig/arch/x86_64/kernel/traps.c linux-2.6.18.x86_64/arch/x86_64/kernel/traps.c
+--- linux-2.6.18.x86_64.orig/arch/x86_64/kernel/traps.c	2007-01-09 14:34:35.000000000 -0500
++++ linux-2.6.18.x86_64/arch/x86_64/kernel/traps.c	2007-01-09 14:34:55.000000000 -0500
+@@ -734,8 +734,15 @@ asmlinkage void __kprobes do_general_pro
+ static __kprobes void
+ mem_parity_error(unsigned char reason, struct pt_regs * regs)
+ {
+-	printk("Uhhuh. NMI received. Dazed and confused, but trying to continue\n");
+-	printk("You probably have a hardware problem with your RAM chips\n");
++	printk(KERN_EMERG "Uhhuh. NMI received for unknown reason %02x.\n",
++		reason);
++	printk(KERN_EMERG "You probably have a hardware problem with your "
++		"RAM chips\n");
++
++	if (panic_on_unrecovered_nmi)
++		panic("NMI: Not continuing");
++
++	printk(KERN_EMERG "Dazed and confused, but trying to continue\n");
+ 
+ 	/* Clear and disable the memory parity error line. */
+ 	reason = (reason & 0xf) | 4;
+@@ -758,9 +765,15 @@ io_check_error(unsigned char reason, str
+ 
+ static __kprobes void
+ unknown_nmi_error(unsigned char reason, struct pt_regs * regs)
+-{	printk("Uhhuh. NMI received for unknown reason %02x.\n", reason);
+-	printk("Dazed and confused, but trying to continue\n");
+-	printk("Do you have a strange power saving mode enabled?\n");
++{
++	printk(KERN_EMERG "Uhhuh. NMI received for unknown reason %02x.\n",
++		reason);
++	printk(KERN_EMERG "Do you have a strange power saving mode enabled?\n");
++
++	if (panic_on_unrecovered_nmi)
++		panic("NMI: Not continuing");
++
++	printk(KERN_EMERG "Dazed and confused, but trying to continue\n");
+ }
+ 
+ /* Runs on IST stack. This code must keep interrupts off all the time.
+diff -urNp linux-2.6.18.x86_64.orig/include/asm-i386/nmi.h linux-2.6.18.x86_64/include/asm-i386/nmi.h
+--- linux-2.6.18.x86_64.orig/include/asm-i386/nmi.h	2007-01-09 14:34:35.000000000 -0500
++++ linux-2.6.18.x86_64/include/asm-i386/nmi.h	2007-01-09 14:34:55.000000000 -0500
+@@ -39,4 +39,6 @@ extern unsigned int nmi_watchdog;
+ #define NMI_LOCAL_APIC	2
+ #define NMI_INVALID	3
+ 
++extern int unknown_nmi_panic;
++
+ #endif /* ASM_NMI_H */
+diff -urNp linux-2.6.18.x86_64.orig/include/linux/kernel.h linux-2.6.18.x86_64/include/linux/kernel.h
+--- linux-2.6.18.x86_64.orig/include/linux/kernel.h	2007-01-09 14:34:35.000000000 -0500
++++ linux-2.6.18.x86_64/include/linux/kernel.h	2007-01-09 14:34:55.000000000 -0500
+@@ -187,6 +187,7 @@ extern void bust_spinlocks(int yes);
+ extern int oops_in_progress;		/* If set, an oops, panic(), BUG() or die() is in progress */
+ extern int panic_timeout;
+ extern int panic_on_oops;
++extern int panic_on_unrecovered_nmi;
+ extern int tainted;
+ extern const char *print_tainted(void);
+ extern void add_taint(unsigned);
+diff -urNp linux-2.6.18.x86_64.orig/include/linux/sysctl.h linux-2.6.18.x86_64/include/linux/sysctl.h
+--- linux-2.6.18.x86_64.orig/include/linux/sysctl.h	2007-01-09 14:34:35.000000000 -0500
++++ linux-2.6.18.x86_64/include/linux/sysctl.h	2007-01-09 14:34:55.000000000 -0500
+@@ -154,6 +154,7 @@ enum
+ 	KERN_COMPAT_LOG=73,	/* int: print compat layer  messages */
+ 	KERN_MAX_LOCK_DEPTH=74,
+ 	KERN_KDUMP_ON_INIT=75,	/* int: ia64 kdump with INIT */
++ 	KERN_PANIC_ON_NMI=76, /* int: whether we will panic on an unrecovered */
+ };
+ 
+ 
+diff -urNp linux-2.6.18.x86_64.orig/kernel/sysctl.c linux-2.6.18.x86_64/kernel/sysctl.c
+--- linux-2.6.18.x86_64.orig/kernel/sysctl.c	2007-01-09 14:34:35.000000000 -0500
++++ linux-2.6.18.x86_64/kernel/sysctl.c	2007-01-09 14:35:09.000000000 -0500
+@@ -52,6 +52,10 @@
+ extern int proc_nr_files(ctl_table *table, int write, struct file *filp,
+                      void __user *buffer, size_t *lenp, loff_t *ppos);
+ 
++#ifdef CONFIG_X86
++#include <asm/nmi.h>
++#endif
++
+ #if defined(CONFIG_SYSCTL)
+ 
+ /* External variables not in a header file. */
+@@ -75,7 +79,6 @@ extern int percpu_pagelist_fraction;
+ extern int compat_log;
+ 
+ #if defined(CONFIG_X86_LOCAL_APIC) && defined(CONFIG_X86)
+-int unknown_nmi_panic;
+ extern int proc_unknown_nmi_panic(ctl_table *, int, struct file *,
+ 				  void __user *, size_t *, loff_t *);
+ #endif
+@@ -689,6 +692,14 @@ static ctl_table kern_table[] = {
+ #endif
+ #if defined(CONFIG_X86)
+ 	{
++		.ctl_name	= KERN_PANIC_ON_NMI,
++		.procname	= "panic_on_unrecovered_nmi",
++		.data		= &panic_on_unrecovered_nmi,
++		.maxlen		= sizeof(int),
++		.mode		= 0644,
++		.proc_handler	= &proc_dointvec,
++	},
++	{
+ 		.ctl_name	= KERN_BOOTLOADER_TYPE,
+ 		.procname	= "bootloader_type",
+ 		.data		= &bootloader_type,

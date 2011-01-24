@@ -1,0 +1,38 @@
+From: George Beshers <gbeshers@redhat.com>
+Date: Thu, 31 Jul 2008 15:34:00 -0400
+Subject: [IA64] Don't set psr.ic and psr.i simultaneously
+Message-id: 20080731192805.4411.79984.sendpatchset@dhcp-100-2-194.bos.redhat.com
+O-Subject: [RHEL5.3 PATCH 16/19] [IA64] Don't set psr.ic and psr.i simultaneously
+Bugzilla: 455308
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+[patch] Don't set psr.ic and psr.i simultaneously
+
+BZ#455308
+
+Upstream: http://git.kernel.org/?p=linux/kernel/git/aegl/linux-2.6.git;a=commitdiff;h=83ce6ef8408bbc7d9322ab50ba592f83012dea94
+
+It's not a good idea to use "ssm psr.ic | psr.i" to simultaneously
+enable interrupts and interrupt state collection, the two bits can
+take effect asynchronously, so it is possible for an interrupt to
+be serviced while psr.ic is still zero.
+
+Signed-off-by: Tony Luck <tony.luck@intel.com>
+
+diff --git a/arch/ia64/kernel/mca_drv_asm.S b/arch/ia64/kernel/mca_drv_asm.S
+index f2d4900..3bccb06 100644
+--- a/arch/ia64/kernel/mca_drv_asm.S
++++ b/arch/ia64/kernel/mca_drv_asm.S
+@@ -40,7 +40,11 @@ GLOBAL_ENTRY(mca_handler_bhhook)
+ 	mov	b6=loc1
+ 	;;
+ 	mov	loc1=rp
+-	ssm	psr.i | psr.ic
++	ssm	psr.ic
++	;;
++	srlz.i
++	;;
++	ssm	psr.i
+ 	br.call.sptk.many rp=b6		// does not return ...
+ 	;;
+ 	mov	ar.pfs=loc0

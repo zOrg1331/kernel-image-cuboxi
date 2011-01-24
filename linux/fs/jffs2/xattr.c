@@ -1,14 +1,13 @@
 /*
  * JFFS2 -- Journalling Flash File System, Version 2.
  *
- * Copyright © 2006  NEC Corporation
+ * Copyright (C) 2006  NEC Corporation
  *
  * Created by KaiGai Kohei <kaigai@ak.jp.nec.com>
  *
  * For licensing information, see the file 'LICENCE' in this directory.
  *
  */
-
 #include <linux/kernel.h>
 #include <linux/slab.h>
 #include <linux/fs.h>
@@ -82,7 +81,7 @@ static int is_xattr_datum_unchecked(struct jffs2_sb_info *c, struct jffs2_xattr_
 static void unload_xattr_datum(struct jffs2_sb_info *c, struct jffs2_xattr_datum *xd)
 {
 	/* must be called under down_write(xattr_sem) */
-	D1(dbg_xattr("%s: xid=%u, version=%u\n", __func__, xd->xid, xd->version));
+	D1(dbg_xattr("%s: xid=%u, version=%u\n", __FUNCTION__, xd->xid, xd->version));
 	if (xd->xname) {
 		c->xdatum_mem_usage -= (xd->name_len + 1 + xd->value_len);
 		kfree(xd->xname);
@@ -400,6 +399,8 @@ static void unrefer_xattr_datum(struct jffs2_sb_info *c, struct jffs2_xattr_datu
 {
 	/* must be called under down_write(xattr_sem) */
 	if (atomic_dec_and_lock(&xd->refcnt, &c->erase_completion_lock)) {
+		uint32_t xid = xd->xid, version = xd->version;
+
 		unload_xattr_datum(c, xd);
 		xd->flags |= JFFS2_XFLAGS_DEAD;
 		if (xd->node == (void *)xd) {
@@ -410,8 +411,7 @@ static void unrefer_xattr_datum(struct jffs2_sb_info *c, struct jffs2_xattr_datu
 		}
 		spin_unlock(&c->erase_completion_lock);
 
-		dbg_xattr("xdatum(xid=%u, version=%u) was removed.\n",
-			  xd->xid, xd->version);
+		dbg_xattr("xdatum(xid=%u, version=%u) was removed.\n", xid, version);
 	}
 }
 
@@ -592,7 +592,7 @@ void jffs2_xattr_delete_inode(struct jffs2_sb_info *c, struct jffs2_inode_cache 
 	   When an inode with XATTR is removed, those XATTRs must be removed. */
 	struct jffs2_xattr_ref *ref, *_ref;
 
-	if (!ic || ic->pino_nlink > 0)
+	if (!ic || ic->nlink > 0)
 		return;
 
 	down_write(&c->xattr_sem);
@@ -754,10 +754,6 @@ void jffs2_clear_xattr_subsystem(struct jffs2_sb_info *c)
 		list_del(&xd->xindex);
 		jffs2_free_xattr_datum(xd);
 	}
-	list_for_each_entry_safe(xd, _xd, &c->xattr_unchecked, xindex) {
-		list_del(&xd->xindex);
-		jffs2_free_xattr_datum(xd);
-	}
 }
 
 #define XREF_TMPHASH_SIZE	(128)
@@ -829,7 +825,7 @@ void jffs2_build_xattr_subsystem(struct jffs2_sb_info *c)
 			   ref->xd and ref->ic are not valid yet. */
 			xd = jffs2_find_xattr_datum(c, ref->xid);
 			ic = jffs2_get_ino_cache(c, ref->ino);
-			if (!xd || !ic || !ic->pino_nlink) {
+			if (!xd || !ic) {
 				dbg_xattr("xref(ino=%u, xid=%u, xseqno=%u) is orphan.\n",
 					  ref->ino, ref->xid, ref->xseqno);
 				ref->xseqno |= XREF_DELETE_MARKER;
@@ -1252,7 +1248,7 @@ int jffs2_garbage_collect_xattr_ref(struct jffs2_sb_info *c, struct jffs2_xattr_
 	rc = jffs2_reserve_space_gc(c, totlen, &length, JFFS2_SUMMARY_XREF_SIZE);
 	if (rc) {
 		JFFS2_WARNING("%s: jffs2_reserve_space_gc() = %d, request = %u\n",
-			      __func__, rc, totlen);
+			      __FUNCTION__, rc, totlen);
 		rc = rc ? rc : -EBADFD;
 		goto out;
 	}

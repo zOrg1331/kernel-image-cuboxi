@@ -14,7 +14,7 @@
  *      - 3Com 3C339 Token Link Velocity
  *
  *  Maintainer(s):
- *    AF	Adam Fritzler
+ *    AF	Adam Fritzler		mid@auk.cx
  *
  *  Modification History:
  *	30-Dec-99	AF	Split off from the tms380tr driver.
@@ -96,7 +96,7 @@ static int __devinit tms_pci_attach(struct pci_dev *pdev, const struct pci_devic
 	static int versionprinted;
 	struct net_device *dev;
 	struct net_local *tp;
-	int ret;
+	int i, ret;
 	unsigned int pci_irq_line;
 	unsigned long pci_ioaddr;
 	struct card_info *cardinfo = &card_info_table[ent->driver_data];
@@ -115,11 +115,17 @@ static int __devinit tms_pci_attach(struct pci_dev *pdev, const struct pci_devic
 	dev = alloc_trdev(sizeof(struct net_local));
 	if (!dev)
 		return -ENOMEM;
+	SET_MODULE_OWNER(dev);
 
 	if (!request_region(pci_ioaddr, TMS_PCI_IO_EXTENT, dev->name)) {
 		ret = -EBUSY;
 		goto err_out_trdev;
 	}
+
+	ret = request_irq(pdev->irq, tms380tr_interrupt, IRQF_SHARED,
+			  dev->name, dev);
+	if (ret)
+		goto err_out_region;
 
 	dev->base_addr	= pci_ioaddr;
 	dev->irq 	= pci_irq_line;
@@ -131,16 +137,19 @@ static int __devinit tms_pci_attach(struct pci_dev *pdev, const struct pci_devic
 		
 	tms_pci_read_eeprom(dev);
 
-	printk("%s:    Ring Station Address: %pM\n",
-	       dev->name, dev->dev_addr);
+	printk("%s:    Ring Station Address: ", dev->name);
+	printk("%2.2x", dev->dev_addr[0]);
+	for (i = 1; i < 6; i++)
+		printk(":%2.2x", dev->dev_addr[i]);
+	printk("\n");
 		
 	ret = tmsdev_init(dev, &pdev->dev);
 	if (ret) {
 		printk("%s: unable to get memory for dev->priv.\n", dev->name);
-		goto err_out_region;
+		goto err_out_irq;
 	}
 
-	tp = netdev_priv(dev);
+	tp = dev->priv;
 	tp->setnselout = tms_pci_setnselout_pins;
 		
 	tp->sifreadb = tms_pci_sifreadb;
@@ -152,27 +161,22 @@ static int __devinit tms_pci_attach(struct pci_dev *pdev, const struct pci_devic
 
 	tp->tmspriv = cardinfo;
 
-	dev->netdev_ops = &tms380tr_netdev_ops;
-
-	ret = request_irq(pdev->irq, tms380tr_interrupt, IRQF_SHARED,
-			  dev->name, dev);
-	if (ret)
-		goto err_out_tmsdev;
-
+	dev->open = tms380tr_open;
+	dev->stop = tms380tr_close;
 	pci_set_drvdata(pdev, dev);
 	SET_NETDEV_DEV(dev, &pdev->dev);
 
 	ret = register_netdev(dev);
 	if (ret)
-		goto err_out_irq;
+		goto err_out_tmsdev;
 	
 	return 0;
 
-err_out_irq:
-	free_irq(pdev->irq, dev);
 err_out_tmsdev:
 	pci_set_drvdata(pdev, NULL);
 	tmsdev_term(dev);
+err_out_irq:
+	free_irq(pdev->irq, dev);
 err_out_region:
 	release_region(pci_ioaddr, TMS_PCI_IO_EXTENT);
 err_out_trdev:
@@ -206,7 +210,7 @@ static void tms_pci_read_eeprom(struct net_device *dev)
 static unsigned short tms_pci_setnselout_pins(struct net_device *dev)
 {
 	unsigned short val = 0;
-	struct net_local *tp = netdev_priv(dev);
+	struct net_local *tp = dev->priv;
 	struct card_info *cardinfo = tp->tmspriv;
   
 	if(tp->DataRate == SPEED_4)
@@ -220,7 +224,8 @@ static void __devexit tms_pci_detach (struct pci_dev *pdev)
 {
 	struct net_device *dev = pci_get_drvdata(pdev);
 
-	BUG_ON(!dev);
+	if (!dev)
+		BUG();
 	unregister_netdev(dev);
 	release_region(dev->base_addr, TMS_PCI_IO_EXTENT);
 	free_irq(dev->irq, dev);

@@ -1,0 +1,261 @@
+diff -Nurp -X dontdiff linux-2.6.18-1.2714.el5/drivers/net/ehea/ehea_ethtool.c patched_kernel/drivers/net/ehea/ehea_ethtool.c
+--- linux-2.6.18-1.2714.el5/drivers/net/ehea/ehea_ethtool.c	2006-10-27 12:50:51.000000000 +0200
++++ patched_kernel/drivers/net/ehea/ehea_ethtool.c	2006-10-27 12:55:35.000000000 +0200
+@@ -238,7 +238,7 @@ static void ehea_get_ethtool_stats(struc
+ 	data[i++] = port->port_res[0].swqe_refill_th;
+ 	data[i++] = port->resets;
+ 
+-	cb6 = kzalloc(H_CB_ALIGNMENT, GFP_KERNEL);
++	cb6 = kzalloc(PAGE_SIZE, GFP_KERNEL);
+ 	if (!cb6) {
+ 		ehea_error("no mem for cb6");
+ 		return;
+diff -Nurp -X dontdiff linux-2.6.18-1.2714.el5/drivers/net/ehea/ehea.h patched_kernel/drivers/net/ehea/ehea.h
+--- linux-2.6.18-1.2714.el5/drivers/net/ehea/ehea.h	2006-10-27 12:50:51.000000000 +0200
++++ patched_kernel/drivers/net/ehea/ehea.h	2006-10-27 12:55:35.000000000 +0200
+@@ -39,7 +39,7 @@
+ #include <asm/io.h>
+ 
+ #define DRV_NAME	"ehea"
+-#define DRV_VERSION	"EHEA_0032"
++#define DRV_VERSION	"EHEA_0032-01"
+ 
+ #define EHEA_MSG_DEFAULT (NETIF_MSG_LINK | NETIF_MSG_TIMER \
+ 	| NETIF_MSG_RX_ERR | NETIF_MSG_TX_ERR)
+@@ -105,9 +105,6 @@
+ #define EHEA_BCMC_VLANID_ALL	0x01
+ #define EHEA_BCMC_VLANID_SINGLE	0x00
+ 
+-/* Use this define to kmallocate pHYP control blocks */
+-#define H_CB_ALIGNMENT		4096
+-
+ #define EHEA_CACHE_LINE          128
+ 
+ /* Memory Regions */
+diff -Nurp -X dontdiff linux-2.6.18-1.2714.el5/drivers/net/ehea/ehea_main.c patched_kernel/drivers/net/ehea/ehea_main.c
+--- linux-2.6.18-1.2714.el5/drivers/net/ehea/ehea_main.c	2006-10-27 12:50:51.000000000 +0200
++++ patched_kernel/drivers/net/ehea/ehea_main.c	2006-10-27 12:55:35.000000000 +0200
+@@ -92,7 +92,7 @@ static struct net_device_stats *ehea_get
+ 
+ 	memset(stats, 0, sizeof(*stats));
+ 
+-	cb2 = kzalloc(H_CB_ALIGNMENT, GFP_KERNEL);
++	cb2 = kzalloc(PAGE_SIZE, GFP_KERNEL);
+ 	if (!cb2) {
+ 		ehea_error("no mem for cb2");
+ 		goto out;
+@@ -589,8 +589,8 @@ int ehea_sense_port_attr(struct ehea_por
+ 	u64 hret;
+ 	struct hcp_ehea_port_cb0 *cb0;
+ 
+-	cb0 = kzalloc(H_CB_ALIGNMENT, GFP_KERNEL);
+-	if (!cb0) {
++	cb0 = kzalloc(PAGE_SIZE, GFP_ATOMIC);   /* May be called via */
++	if (!cb0) {                                  /* ehea_neq_tasklet() */
+ 		ehea_error("no mem for cb0");
+ 		ret = -ENOMEM;
+ 		goto out;
+@@ -673,7 +673,7 @@ int ehea_set_portspeed(struct ehea_port 
+ 	u64 hret;
+ 	int ret = 0;
+ 
+-	cb4 = kzalloc(H_CB_ALIGNMENT, GFP_KERNEL);
++	cb4 = kzalloc(PAGE_SIZE, GFP_KERNEL);
+ 	if (!cb4) {
+ 		ehea_error("no mem for cb4");
+ 		ret = -ENOMEM;
+@@ -990,7 +990,7 @@ static int ehea_configure_port(struct eh
+ 	struct hcp_ehea_port_cb0 *cb0;
+ 
+ 	ret = -ENOMEM;
+-	cb0 = kzalloc(H_CB_ALIGNMENT, GFP_KERNEL);
++	cb0 = kzalloc(PAGE_SIZE, GFP_KERNEL);
+ 	if (!cb0)
+ 		goto out;
+ 
+@@ -1448,7 +1448,7 @@ static int ehea_set_mac_addr(struct net_
+ 		goto out;
+ 	}
+ 
+-	cb0 = kzalloc(H_CB_ALIGNMENT, GFP_KERNEL);
++	cb0 = kzalloc(PAGE_SIZE, GFP_KERNEL);
+ 	if (!cb0) {
+ 		ehea_error("no mem for cb0");
+ 		ret = -ENOMEM;
+@@ -1506,7 +1506,7 @@ static void ehea_promiscuous(struct net_
+ 	if ((enable && port->promisc) || (!enable && !port->promisc))
+ 		return;
+ 
+-	cb7 = kzalloc(H_CB_ALIGNMENT, GFP_KERNEL);
++	cb7 = kzalloc(PAGE_SIZE, GFP_ATOMIC);
+ 	if (!cb7) {
+ 		ehea_error("no mem for cb7");
+ 		goto out;
+@@ -1610,7 +1610,7 @@ static void ehea_add_multicast_entry(str
+ 	struct ehea_mc_list *ehea_mcl_entry;
+ 	u64 hret;
+ 
+-	ehea_mcl_entry = kzalloc(sizeof(*ehea_mcl_entry), GFP_KERNEL);
++	ehea_mcl_entry = kzalloc(sizeof(*ehea_mcl_entry), GFP_ATOMIC);
+ 	if (!ehea_mcl_entry) {
+ 		ehea_error("no mem for mcl_entry");
+ 		return;
+@@ -1875,7 +1875,7 @@ static void ehea_vlan_rx_register(struct
+ 
+ 	port->vgrp = grp;
+ 
+-	cb1 = kzalloc(H_CB_ALIGNMENT, GFP_KERNEL);
++	cb1 = kzalloc(PAGE_SIZE, GFP_KERNEL);
+ 	if (!cb1) {
+ 		ehea_error("no mem for cb1");
+ 		goto out;
+@@ -1904,7 +1904,7 @@ static void ehea_vlan_rx_add_vid(struct 
+ 	int index;
+ 	u64 hret;
+ 
+-	cb1 = kzalloc(H_CB_ALIGNMENT, GFP_KERNEL);
++	cb1 = kzalloc(PAGE_SIZE, GFP_KERNEL);
+ 	if (!cb1) {
+ 		ehea_error("no mem for cb1");
+ 		goto out;
+@@ -1940,7 +1940,7 @@ static void ehea_vlan_rx_kill_vid(struct
+ 	if (port->vgrp)
+ 		port->vgrp->vlan_devices[vid] = NULL;
+ 
+-	cb1 = kzalloc(H_CB_ALIGNMENT, GFP_KERNEL);
++	cb1 = kzalloc(PAGE_SIZE, GFP_KERNEL);
+ 	if (!cb1) {
+ 		ehea_error("no mem for cb1");
+ 		goto out;
+@@ -1973,7 +1973,7 @@ int ehea_activate_qp(struct ehea_adapter
+ 	u64 dummy64 = 0;
+ 	struct hcp_modify_qp_cb0* cb0;
+ 
+-	cb0 = kzalloc(H_CB_ALIGNMENT, GFP_KERNEL);
++	cb0 = kzalloc(PAGE_SIZE, GFP_KERNEL);
+ 	if (!cb0) {
+ 		ret = -ENOMEM;
+ 		goto out;
+@@ -2274,7 +2274,7 @@ int ehea_sense_adapter_attr(struct ehea_
+ 	u64 hret;
+ 	int ret;
+ 
+-	cb = kzalloc(H_CB_ALIGNMENT, GFP_KERNEL);
++	cb = kzalloc(PAGE_SIZE, GFP_KERNEL);
+ 	if (!cb) {
+ 		ret = -ENOMEM;
+ 		goto out;
+@@ -2345,7 +2345,7 @@ static int ehea_setup_single_port(struct
+ 		goto out;
+ 
+ 	/* Enable Jumbo frames */
+-	cb4 = kzalloc(H_CB_ALIGNMENT, GFP_KERNEL);
++	cb4 = kzalloc(PAGE_SIZE, GFP_KERNEL);
+ 	if (!cb4) {
+ 		ehea_error("no mem for cb4");
+ 	} else {
+diff -Nurp -X dontdiff linux-2.6.18-1.2714.el5/drivers/net/ehea/ehea_phyp.c patched_kernel/drivers/net/ehea/ehea_phyp.c
+--- linux-2.6.18-1.2714.el5/drivers/net/ehea/ehea_phyp.c	2006-10-27 12:50:51.000000000 +0200
++++ patched_kernel/drivers/net/ehea/ehea_phyp.c	2006-10-27 12:55:35.000000000 +0200
+@@ -88,7 +88,7 @@ u64 ehea_h_query_ehea_qp(const u64 adapt
+ {
+ 	u64 dummy;
+ 
+-	if ((((u64)cb_addr) & (PAGE_SIZE - 1)) != 0) {
++	if ((((u64)cb_addr) & (H_CB_ALIGNMENT - 1)) != 0) {
+ 		ehea_error("not on pageboundary");
+ 		return H_PARAMETER;
+ 	}
+@@ -404,8 +404,8 @@ u64 ehea_h_modify_ehea_qp(const u64 adap
+ {
+ 	u64 hret, dummy, act_out_swr, act_out_rwr;
+ 
+-	if ((((u64)cb_addr) & (PAGE_SIZE - 1)) != 0) {
+-		ehea_error("not on page boundary");
++	if ((((u64)cb_addr) & (H_CB_ALIGNMENT - 1)) != 0) {
++		ehea_error("not on pageboundary");
+ 		return H_PARAMETER;
+ 	}
+ 
+@@ -558,7 +558,7 @@ u64 ehea_h_register_rpage_mr(const u64 a
+ 			     const u8 pagesize, const u8 queue_type,
+ 			     const u64 log_pageaddr, const u64 count)
+ {
+-	if ((count > 1) && (log_pageaddr & 0xfff)) {
++	if ((count > 1) && (log_pageaddr & ~PAGE_MASK)) {
+ 		ehea_error("not on pageboundary");
+ 		return H_PARAMETER;
+ 	}
+diff -Nurp -X dontdiff linux-2.6.18-1.2714.el5/drivers/net/ehea/ehea_phyp.h patched_kernel/drivers/net/ehea/ehea_phyp.h
+--- linux-2.6.18-1.2714.el5/drivers/net/ehea/ehea_phyp.h	2006-10-27 12:50:51.000000000 +0200
++++ patched_kernel/drivers/net/ehea/ehea_phyp.h	2006-10-27 12:55:35.000000000 +0200
+@@ -81,14 +81,16 @@ static inline u32 get_longbusy_msecs(int
+ static inline void hcp_epas_ctor(struct h_epas *epas, u64 paddr_kernel,
+ 				 u64 paddr_user)
+ {
+-	epas->kernel.addr = ioremap(paddr_kernel, PAGE_SIZE);
++	/* To support 64k pages we must round to 64k page boundary */
++	epas->kernel.addr = ioremap((paddr_kernel & PAGE_MASK), PAGE_SIZE) +
++			    (paddr_kernel & ~PAGE_MASK);
+ 	epas->user.addr = paddr_user;
+ }
+ 
+ static inline void hcp_epas_dtor(struct h_epas *epas)
+ {
+ 	if (epas->kernel.addr)
+-		iounmap(epas->kernel.addr);
++		iounmap((void __iomem*)((u64)epas->kernel.addr & PAGE_MASK));
+ 
+ 	epas->user.addr = 0;
+ 	epas->kernel.addr = 0;
+diff -Nurp -X dontdiff linux-2.6.18-1.2714.el5/drivers/net/ehea/ehea_qmr.c patched_kernel/drivers/net/ehea/ehea_qmr.c
+--- linux-2.6.18-1.2714.el5/drivers/net/ehea/ehea_qmr.c	2006-10-27 12:50:51.000000000 +0200
++++ patched_kernel/drivers/net/ehea/ehea_qmr.c	2006-10-27 12:55:35.000000000 +0200
+@@ -209,11 +209,11 @@ int ehea_destroy_cq(struct ehea_cq *cq)
+ {
+ 	u64 adapter_handle, hret;
+ 
+-	adapter_handle = cq->adapter->handle;
+-
+ 	if (!cq)
+ 		return 0;
+ 
++	adapter_handle = cq->adapter->handle;
++
+ 	/* deregister all previous registered pages */
+ 	hret = ehea_h_free_resource(adapter_handle, cq->fw_handle);
+ 	if (hret != H_SUCCESS) {
+@@ -512,7 +512,7 @@ int ehea_reg_mr_adapter(struct ehea_adap
+ 
+ 	start = KERNELBASE;
+ 	end = (u64)high_memory;
+-	nr_pages = (end - start) / PAGE_SIZE;
++	nr_pages = (end - start) / EHEA_PAGESIZE;
+ 
+ 	pt =  kzalloc(PAGE_SIZE, GFP_KERNEL);
+ 	if (!pt) {
+@@ -538,9 +538,9 @@ int ehea_reg_mr_adapter(struct ehea_adap
+ 		if (nr_pages > 1) {
+ 			u64 num_pages = min(nr_pages, (u64)512);
+ 			for (i = 0; i < num_pages; i++)
+-				pt[i] = virt_to_abs((void*)(((u64)start)
+-							     + ((k++) *
+-								PAGE_SIZE)));
++				pt[i] = virt_to_abs((void*)(((u64)start) +
++							    ((k++) *
++							     EHEA_PAGESIZE)));
+ 
+ 			hret = ehea_h_register_rpage_mr(adapter->handle,
+ 							adapter->mr.handle, 0,
+@@ -548,8 +548,9 @@ int ehea_reg_mr_adapter(struct ehea_adap
+ 							num_pages);
+ 			nr_pages -= num_pages;
+ 		} else {
+-			u64 abs_adr = virt_to_abs((void*)(((u64)start)
+-							   + (k * PAGE_SIZE)));
++			u64 abs_adr = virt_to_abs((void*)(((u64)start) +
++							  (k * EHEA_PAGESIZE)));
++
+ 			hret = ehea_h_register_rpage_mr(adapter->handle,
+ 							adapter->mr.handle, 0,
+ 							0, abs_adr,1);

@@ -26,7 +26,7 @@
  *  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  *
  *  Stripped of 2.4 stuff ready for main kernel submit by
- *		Alan Cox <alan@lxorguk.ukuu.org.uk>
+ *		Alan Cox <alan@redhat.com>
  ****************************************************************************/
 
 #include <linux/version.h>
@@ -37,8 +37,7 @@
 #include <linux/sched.h>
 #include <linux/slab.h>
 #include <linux/init.h>
-#include <linux/videodev.h>
-#include <media/v4l2-ioctl.h>
+#include <linux/moduleparam.h>
 
 #include "cpia2.h"
 #include "cpia2dev.h"
@@ -88,6 +87,10 @@ MODULE_LICENSE("GPL");
 
 #define ABOUT "V4L-Driver for Vision CPiA2 based cameras"
 
+#ifndef VID_HARDWARE_CPIA2
+#error "VID_HARDWARE_CPIA2 should have been defined in linux/videodev.h"
+#endif
+
 struct control_menu_info {
 	int value;
 	char name[32];
@@ -102,7 +105,7 @@ static struct control_menu_info framerate_controls[] =
 	{ CPIA2_VP_FRAMERATE_25,   "25 fps"   },
 	{ CPIA2_VP_FRAMERATE_30,   "30 fps"   },
 };
-#define NUM_FRAMERATE_CONTROLS (ARRAY_SIZE(framerate_controls))
+#define NUM_FRAMERATE_CONTROLS (sizeof(framerate_controls)/sizeof(framerate_controls[0]))
 
 static struct control_menu_info flicker_controls[] =
 {
@@ -110,7 +113,7 @@ static struct control_menu_info flicker_controls[] =
 	{ FLICKER_50,    "50 Hz" },
 	{ FLICKER_60,    "60 Hz"  },
 };
-#define NUM_FLICKER_CONTROLS (ARRAY_SIZE(flicker_controls))
+#define NUM_FLICKER_CONTROLS (sizeof(flicker_controls)/sizeof(flicker_controls[0]))
 
 static struct control_menu_info lights_controls[] =
 {
@@ -119,7 +122,7 @@ static struct control_menu_info lights_controls[] =
 	{ 128, "Bottom"  },
 	{ 192, "Both"  },
 };
-#define NUM_LIGHTS_CONTROLS (ARRAY_SIZE(lights_controls))
+#define NUM_LIGHTS_CONTROLS (sizeof(lights_controls)/sizeof(lights_controls[0]))
 #define GPIO_LIGHTS_MASK 192
 
 static struct v4l2_queryctrl controls[] = {
@@ -232,7 +235,7 @@ static struct v4l2_queryctrl controls[] = {
 		.default_value = 0,
 	},
 };
-#define NUM_CONTROLS (ARRAY_SIZE(controls))
+#define NUM_CONTROLS (sizeof(controls)/sizeof(controls[0]))
 
 
 /******************************************************************************
@@ -240,9 +243,10 @@ static struct v4l2_queryctrl controls[] = {
  *  cpia2_open
  *
  *****************************************************************************/
-static int cpia2_open(struct file *file)
+static int cpia2_open(struct inode *inode, struct file *file)
 {
-	struct camera_data *cam = video_drvdata(file);
+	struct video_device *dev = video_devdata(file);
+	struct camera_data *cam = video_get_drvdata(dev);
 	int retval = 0;
 
 	if (!cam) {
@@ -303,7 +307,7 @@ err_return:
  *  cpia2_close
  *
  *****************************************************************************/
-static int cpia2_close(struct file *file)
+static int cpia2_close(struct inode *inode, struct file *file)
 {
 	struct video_device *dev = video_devdata(file);
 	struct camera_data *cam = video_get_drvdata(dev);
@@ -357,7 +361,8 @@ static int cpia2_close(struct file *file)
 static ssize_t cpia2_v4l_read(struct file *file, char __user *buf, size_t count,
 			      loff_t *off)
 {
-	struct camera_data *cam = video_drvdata(file);
+	struct video_device *dev = video_devdata(file);
+	struct camera_data *cam = video_get_drvdata(dev);
 	int noblock = file->f_flags&O_NONBLOCK;
 
 	struct cpia2_fh *fh = file->private_data;
@@ -381,7 +386,9 @@ static ssize_t cpia2_v4l_read(struct file *file, char __user *buf, size_t count,
  *****************************************************************************/
 static unsigned int cpia2_v4l_poll(struct file *filp, struct poll_table_struct *wait)
 {
-	struct camera_data *cam = video_drvdata(filp);
+	struct video_device *dev = video_devdata(filp);
+	struct camera_data *cam = video_get_drvdata(dev);
+
 	struct cpia2_fh *fh = filp->private_data;
 
 	if(!cam)
@@ -1021,6 +1028,7 @@ static int ioctl_queryctrl(void *arg,struct camera_data *cam)
 		if(cam->params.pnp_id.device_type == DEVICE_STV_672 &&
 		   cam->params.version.sensor_flags==CPIA2_VP_SENSOR_FLAGS_500){
 			// Maximum 15fps
+			int i;
 			for(i=0; i<c->maximum; ++i) {
 				if(framerate_controls[i].value ==
 				   CPIA2_VP_FRAMERATE_15) {
@@ -1064,7 +1072,7 @@ static int ioctl_querymenu(void *arg,struct camera_data *cam)
 
 	switch(m->id) {
 	case CPIA2_CID_FLICKER_MODE:
-		if (m->index >= NUM_FLICKER_CONTROLS)
+		if(m->index < 0 || m->index >= NUM_FLICKER_CONTROLS)
 			return -EINVAL;
 
 		strcpy(m->name, flicker_controls[m->index].name);
@@ -1082,14 +1090,14 @@ static int ioctl_querymenu(void *arg,struct camera_data *cam)
 					maximum = i;
 			}
 		}
-		if (m->index > maximum)
+		if(m->index < 0 || m->index > maximum)
 			return -EINVAL;
 
 		strcpy(m->name, framerate_controls[m->index].name);
 		break;
 	    }
 	case CPIA2_CID_LIGHTS:
-		if (m->index >= NUM_LIGHTS_CONTROLS)
+		if(m->index < 0 || m->index >= NUM_LIGHTS_CONTROLS)
 			return -EINVAL;
 
 		strcpy(m->name, lights_controls[m->index].name);
@@ -1573,10 +1581,12 @@ static int ioctl_dqbuf(void *arg,struct camera_data *cam, struct file *file)
  *  cpia2_ioctl
  *
  *****************************************************************************/
-static long cpia2_do_ioctl(struct file *file, unsigned int cmd, void *arg)
+static int cpia2_do_ioctl(struct inode *inode, struct file *file,
+			  unsigned int ioctl_nr, void *arg)
 {
-	struct camera_data *cam = video_drvdata(file);
-	long retval = 0;
+	struct video_device *dev = video_devdata(file);
+	struct camera_data *cam = video_get_drvdata(dev);
+	int retval = 0;
 
 	if (!cam)
 		return -ENOTTY;
@@ -1591,7 +1601,7 @@ static long cpia2_do_ioctl(struct file *file, unsigned int cmd, void *arg)
 	}
 
 	/* Priority check */
-	switch (cmd) {
+	switch (ioctl_nr) {
 	case VIDIOCSWIN:
 	case VIDIOCMCAPTURE:
 	case VIDIOC_S_FMT:
@@ -1618,7 +1628,7 @@ static long cpia2_do_ioctl(struct file *file, unsigned int cmd, void *arg)
 		break;
 	}
 
-	switch (cmd) {
+	switch (ioctl_nr) {
 	case VIDIOCGCAP:	/* query capabilities */
 		retval = ioctl_cap_query(arg, cam);
 		break;
@@ -1683,7 +1693,7 @@ static long cpia2_do_ioctl(struct file *file, unsigned int cmd, void *arg)
 	case VIDIOC_ENUMINPUT:
 	case VIDIOC_G_INPUT:
 	case VIDIOC_S_INPUT:
-		retval = ioctl_input(cmd, arg, cam);
+		retval = ioctl_input(ioctl_nr, arg,cam);
 		break;
 
 	case VIDIOC_ENUM_FMT:
@@ -1842,10 +1852,10 @@ static long cpia2_do_ioctl(struct file *file, unsigned int cmd, void *arg)
 	return retval;
 }
 
-static long cpia2_ioctl(struct file *file,
-		       unsigned int cmd, unsigned long arg)
+static int cpia2_ioctl(struct inode *inode, struct file *file,
+		       unsigned int ioctl_nr, unsigned long iarg)
 {
-	return video_usercopy(file, cmd, arg, cpia2_do_ioctl);
+	return video_usercopy(inode, file, ioctl_nr, iarg, cpia2_do_ioctl);
 }
 
 /******************************************************************************
@@ -1855,8 +1865,9 @@ static long cpia2_ioctl(struct file *file,
  *****************************************************************************/
 static int cpia2_mmap(struct file *file, struct vm_area_struct *area)
 {
-	struct camera_data *cam = video_drvdata(file);
 	int retval;
+	struct video_device *dev = video_devdata(file);
+	struct camera_data *cam = video_get_drvdata(dev);
 
 	/* Priority check */
 	struct cpia2_fh *fh = file->private_data;
@@ -1913,19 +1924,26 @@ static void reset_camera_struct_v4l(struct camera_data *cam)
 /***
  * The v4l video device structure initialized for this device
  ***/
-static const struct v4l2_file_operations fops_template = {
+static struct file_operations fops_template = {
 	.owner		= THIS_MODULE,
 	.open		= cpia2_open,
 	.release	= cpia2_close,
 	.read		= cpia2_v4l_read,
 	.poll		= cpia2_v4l_poll,
 	.ioctl		= cpia2_ioctl,
+	.llseek		= no_llseek,
+	.compat_ioctl	= v4l_compat_ioctl32,
 	.mmap		= cpia2_mmap,
 };
 
 static struct video_device cpia2_template = {
 	/* I could not find any place for the old .initialize initializer?? */
+	.owner=		THIS_MODULE,
 	.name=		"CPiA2 Camera",
+	.type=		VID_TYPE_CAPTURE,
+	.type2 = 	V4L2_CAP_VIDEO_CAPTURE |
+			V4L2_CAP_STREAMING,
+	.hardware=	VID_HARDWARE_CPIA2,
 	.minor=		-1,
 	.fops=		&fops_template,
 	.release=	video_device_release,
@@ -1948,7 +1966,8 @@ int cpia2_register_camera(struct camera_data *cam)
 	reset_camera_struct_v4l(cam);
 
 	/* register v4l device */
-	if (video_register_device(cam->vdev, VFL_TYPE_GRABBER, video_nr) < 0) {
+	if (video_register_device
+	    (cam->vdev, VFL_TYPE_GRABBER, video_nr) == -1) {
 		ERR("video_register_device failed\n");
 		video_device_release(cam->vdev);
 		return -ENODEV;
@@ -1969,7 +1988,7 @@ void cpia2_unregister_camera(struct camera_data *cam)
 	} else {
 		LOG("/dev/video%d removed while open, "
 		    "deferring video_unregister_device\n",
-		    cam->vdev->num);
+		    cam->vdev->minor);
 	}
 }
 

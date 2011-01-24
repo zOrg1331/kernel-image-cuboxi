@@ -16,10 +16,10 @@
 #include <linux/init.h>
 #include <linux/fb.h>
 #include <linux/mm.h>
-#include <linux/uaccess.h>
-#include <linux/of_device.h>
 
 #include <asm/io.h>
+#include <asm/prom.h>
+#include <asm/of_device.h>
 #include <asm/fbio.h>
 
 #include "sbuslib.h"
@@ -196,7 +196,9 @@ struct cg14_par {
 	u32			flags;
 #define CG14_FLAG_BLANKED	0x00000001
 
+	unsigned long		physbase;
 	unsigned long		iospace;
+	unsigned long		fbsize;
 
 	struct sbus_mmap_map	mmap_map[CG14_MMAP_ENTRIES];
 
@@ -269,7 +271,7 @@ static int cg14_mmap(struct fb_info *info, struct vm_area_struct *vma)
 	struct cg14_par *par = (struct cg14_par *) info->par;
 
 	return sbusfb_mmap_helper(par->mmap_map,
-				  info->fix.smem_start, info->fix.smem_len,
+				  par->physbase, par->fbsize,
 				  par->iospace, vma);
 }
 
@@ -341,8 +343,7 @@ static int cg14_ioctl(struct fb_info *info, unsigned int cmd, unsigned long arg)
 
 	default:
 		ret = sbusfb_ioctl_helper(cmd, arg, info,
-					  FBTYPE_MDICOLOR, 8,
-					  info->fix.smem_len);
+					  FBTYPE_MDICOLOR, 8, par->fbsize);
 		break;
 	};
 
@@ -353,8 +354,7 @@ static int cg14_ioctl(struct fb_info *info, unsigned int cmd, unsigned long arg)
  *  Initialisation
  */
 
-static void __devinit cg14_init_fix(struct fb_info *info, int linebytes,
-				    struct device_node *dp)
+static void cg14_init_fix(struct fb_info *info, int linebytes, struct device_node *dp)
 {
 	const char *name = dp->name;
 
@@ -368,7 +368,7 @@ static void __devinit cg14_init_fix(struct fb_info *info, int linebytes,
 	info->fix.accel = FB_ACCEL_SUN_CG14;
 }
 
-static struct sbus_mmap_map __cg14_mmap_map[CG14_MMAP_ENTRIES] __devinitdata = {
+static struct sbus_mmap_map __cg14_mmap_map[CG14_MMAP_ENTRIES] __initdata = {
 	{
 		.voff	= CG14_REGS,
 		.poff	= 0x80000000,
@@ -447,79 +447,77 @@ static struct sbus_mmap_map __cg14_mmap_map[CG14_MMAP_ENTRIES] __devinitdata = {
 	{ .size = 0 }
 };
 
-static void cg14_unmap_regs(struct of_device *op, struct fb_info *info,
-			    struct cg14_par *par)
+struct all_info {
+	struct fb_info info;
+	struct cg14_par par;
+};
+
+static void cg14_unmap_regs(struct all_info *all)
 {
-	if (par->regs)
-		of_iounmap(&op->resource[0],
-			   par->regs, sizeof(struct cg14_regs));
-	if (par->clut)
-		of_iounmap(&op->resource[0],
-			   par->clut, sizeof(struct cg14_clut));
-	if (par->cursor)
-		of_iounmap(&op->resource[0],
-			   par->cursor, sizeof(struct cg14_cursor));
-	if (info->screen_base)
-		of_iounmap(&op->resource[1],
-			   info->screen_base, info->fix.smem_len);
+	if (all->par.regs)
+		of_iounmap(all->par.regs, sizeof(struct cg14_regs));
+	if (all->par.clut)
+		of_iounmap(all->par.clut, sizeof(struct cg14_clut));
+	if (all->par.cursor)
+		of_iounmap(all->par.cursor, sizeof(struct cg14_cursor));
+	if (all->info.screen_base)
+		of_iounmap(all->info.screen_base, all->par.fbsize);
 }
 
-static int __devinit cg14_probe(struct of_device *op, const struct of_device_id *match)
+static int __devinit cg14_init_one(struct of_device *op)
 {
 	struct device_node *dp = op->node;
-	struct fb_info *info;
-	struct cg14_par *par;
+	struct all_info *all;
 	int is_8mb, linebytes, i, err;
 
-	info = framebuffer_alloc(sizeof(struct cg14_par), &op->dev);
+	all = kzalloc(sizeof(*all), GFP_KERNEL);
+	if (!all)
+		return -ENOMEM;
 
-	err = -ENOMEM;
-	if (!info)
-		goto out_err;
-	par = info->par;
+	spin_lock_init(&all->par.lock);
 
-	spin_lock_init(&par->lock);
-
-	sbusfb_fill_var(&info->var, dp, 8);
-	info->var.red.length = 8;
-	info->var.green.length = 8;
-	info->var.blue.length = 8;
+	sbusfb_fill_var(&all->info.var, dp->node, 8);
+	all->info.var.red.length = 8;
+	all->info.var.green.length = 8;
+	all->info.var.blue.length = 8;
 
 	linebytes = of_getintprop_default(dp, "linebytes",
-					  info->var.xres);
-	info->fix.smem_len = PAGE_ALIGN(linebytes * info->var.yres);
+					  all->info.var.xres);
+	all->par.fbsize = PAGE_ALIGN(linebytes * all->info.var.yres);
 
 	if (!strcmp(dp->parent->name, "sbus") ||
 	    !strcmp(dp->parent->name, "sbi")) {
-		info->fix.smem_start = op->resource[0].start;
-		par->iospace = op->resource[0].flags & IORESOURCE_BITS;
+		all->par.physbase = op->resource[0].start;
+		all->par.iospace = op->resource[0].flags & IORESOURCE_BITS;
 	} else {
-		info->fix.smem_start = op->resource[1].start;
-		par->iospace = op->resource[0].flags & IORESOURCE_BITS;
+		all->par.physbase = op->resource[1].start;
+		all->par.iospace = op->resource[0].flags & IORESOURCE_BITS;
 	}
 
-	par->regs = of_ioremap(&op->resource[0], 0,
-			       sizeof(struct cg14_regs), "cg14 regs");
-	par->clut = of_ioremap(&op->resource[0], CG14_CLUT1,
-			       sizeof(struct cg14_clut), "cg14 clut");
-	par->cursor = of_ioremap(&op->resource[0], CG14_CURSORREGS,
-				 sizeof(struct cg14_cursor), "cg14 cursor");
+	all->par.regs = of_ioremap(&op->resource[0], 0,
+				   sizeof(struct cg14_regs), "cg14 regs");
+	all->par.clut = of_ioremap(&op->resource[0], CG14_CLUT1,
+				   sizeof(struct cg14_clut), "cg14 clut");
+	all->par.cursor = of_ioremap(&op->resource[0], CG14_CURSORREGS,
+				   sizeof(struct cg14_cursor), "cg14 cursor");
 
-	info->screen_base = of_ioremap(&op->resource[1], 0,
-				       info->fix.smem_len, "cg14 ram");
+	all->info.screen_base = of_ioremap(&op->resource[1], 0,
+					   all->par.fbsize, "cg14 ram");
 
-	if (!par->regs || !par->clut || !par->cursor || !info->screen_base)
-		goto out_unmap_regs;
+	if (!all->par.regs || !all->par.clut || !all->par.cursor ||
+	    !all->info.screen_base)
+		cg14_unmap_regs(all);
 
 	is_8mb = (((op->resource[1].end - op->resource[1].start) + 1) ==
 		  (8 * 1024 * 1024));
 
-	BUILD_BUG_ON(sizeof(par->mmap_map) != sizeof(__cg14_mmap_map));
+	BUILD_BUG_ON(sizeof(all->par.mmap_map) != sizeof(__cg14_mmap_map));
 		
-	memcpy(&par->mmap_map, &__cg14_mmap_map, sizeof(par->mmap_map));
+	memcpy(&all->par.mmap_map, &__cg14_mmap_map,
+	       sizeof(all->par.mmap_map));
 
 	for (i = 0; i < CG14_MMAP_ENTRIES; i++) {
-		struct sbus_mmap_map *map = &par->mmap_map[i];
+		struct sbus_mmap_map *map = &all->par.mmap_map[i];
 
 		if (!map->size)
 			break;
@@ -533,62 +531,66 @@ static int __devinit cg14_probe(struct of_device *op, const struct of_device_id 
 			map->size *= 2;
 	}
 
-	par->mode = MDI_8_PIX;
-	par->ramsize = (is_8mb ? 0x800000 : 0x400000);
+	all->par.mode = MDI_8_PIX;
+	all->par.ramsize = (is_8mb ? 0x800000 : 0x400000);
 
-	info->flags = FBINFO_DEFAULT | FBINFO_HWACCEL_YPAN;
-	info->fbops = &cg14_ops;
+	all->info.flags = FBINFO_DEFAULT | FBINFO_HWACCEL_YPAN;
+	all->info.fbops = &cg14_ops;
+	all->info.par = &all->par;
 
-	__cg14_reset(par);
+	__cg14_reset(&all->par);
 
-	if (fb_alloc_cmap(&info->cmap, 256, 0))
-		goto out_unmap_regs;
+	if (fb_alloc_cmap(&all->info.cmap, 256, 0)) {
+		cg14_unmap_regs(all);
+		kfree(all);
+		return -ENOMEM;
+	}
+	fb_set_cmap(&all->info.cmap, &all->info);
 
-	fb_set_cmap(&info->cmap, info);
+	cg14_init_fix(&all->info, linebytes, dp);
 
-	cg14_init_fix(info, linebytes, dp);
+	err = register_framebuffer(&all->info);
+	if (err < 0) {
+		fb_dealloc_cmap(&all->info.cmap);
+		cg14_unmap_regs(all);
+		kfree(all);
+		return err;
+	}
 
-	err = register_framebuffer(info);
-	if (err < 0)
-		goto out_dealloc_cmap;
+	dev_set_drvdata(&op->dev, all);
 
-	dev_set_drvdata(&op->dev, info);
-
-	printk(KERN_INFO "%s: cgfourteen at %lx:%lx, %dMB\n",
+	printk("%s: cgfourteen at %lx:%lx, %dMB\n",
 	       dp->full_name,
-	       par->iospace, info->fix.smem_start,
-	       par->ramsize >> 20);
+	       all->par.iospace, all->par.physbase,
+	       all->par.ramsize >> 20);
 
 	return 0;
-
-out_dealloc_cmap:
-	fb_dealloc_cmap(&info->cmap);
-
-out_unmap_regs:
-	cg14_unmap_regs(op, info, par);
-
-out_err:
-	return err;
 }
 
-static int __devexit cg14_remove(struct of_device *op)
+static int __devinit cg14_probe(struct of_device *dev, const struct of_device_id *match)
 {
-	struct fb_info *info = dev_get_drvdata(&op->dev);
-	struct cg14_par *par = info->par;
+	struct of_device *op = to_of_device(&dev->dev);
 
-	unregister_framebuffer(info);
-	fb_dealloc_cmap(&info->cmap);
+	return cg14_init_one(op);
+}
 
-	cg14_unmap_regs(op, info, par);
+static int __devexit cg14_remove(struct of_device *dev)
+{
+	struct all_info *all = dev_get_drvdata(&dev->dev);
 
-	framebuffer_release(info);
+	unregister_framebuffer(&all->info);
+	fb_dealloc_cmap(&all->info.cmap);
 
-	dev_set_drvdata(&op->dev, NULL);
+	cg14_unmap_regs(all);
+
+	kfree(all);
+
+	dev_set_drvdata(&dev->dev, NULL);
 
 	return 0;
 }
 
-static const struct of_device_id cg14_match[] = {
+static struct of_device_id cg14_match[] = {
 	{
 		.name = "cgfourteen",
 	},
@@ -603,7 +605,7 @@ static struct of_platform_driver cg14_driver = {
 	.remove		= __devexit_p(cg14_remove),
 };
 
-static int __init cg14_init(void)
+int __init cg14_init(void)
 {
 	if (fb_get_options("cg14fb", NULL))
 		return -ENODEV;
@@ -611,7 +613,7 @@ static int __init cg14_init(void)
 	return of_register_driver(&cg14_driver, &of_bus_type);
 }
 
-static void __exit cg14_exit(void)
+void __exit cg14_exit(void)
 {
 	of_unregister_driver(&cg14_driver);
 }

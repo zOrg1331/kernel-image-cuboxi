@@ -1,0 +1,105 @@
+From: Bryn M. Reeves <bmr@redhat.com>
+Date: Thu, 2 Apr 2009 12:57:17 +0100
+Subject: [nfs] remove bogus lock-if-signalled case
+Message-id: 1238673437.858.294.camel@breeves.fab.redhat.com
+O-Subject: Re: [RHEL5.4 PATCH] BZ#456287 CVE-2008-4307 NFS: remove bogus lock-if-signalled case
+Bugzilla: 456288
+RH-Acked-by: Jeff Layton <jlayton@redhat.com>
+RH-Acked-by: Josef Bacik <josef@redhat.com>
+RH-Acked-by: Peter Staubach <staubach@redhat.com>
+RH-Acked-by: Eugene Teo <eugene@redhat.com>
+
+RHEL5 version of BZ#456282
+
+The nfs do_setlk routine in RHEL5's fs/nfs/file.c contains a check to
+see if we were interrupted by a signal while waiting for the network
+lock manager to return:
+
+         status = NFS_PROTO(inode)->lock(filp, cmd, fl);
+         /* If we were signalled we still need to ensure that
+          * we clean up any state on the server. We therefore
+          * record the lock call as having succeeded in orderto
+          * ensure that locks_remove_posix() cleans it out when
+          * the process exits.
+          */
+         if (status == -EINTR || status == -ERESTARTSYS)
+                 posix_lock_file_wait(filp, fl);
+
+We only record a VFS lock (via posix_lock_file_wait) in the case that
+we received a signal. This can end up leaving a half-baked posix lock
+on the inode's i_flock list.
+
+This causes problems when an fcntl call races with a close for the
+same file descriptor. We end up with this situation:
+
+[thread A]
+sys_close()
+     filp_close()
+         locks_remove_posix()
+         fput()
+             if(!count) __fput()       // count==1
+                 locks_remove_flock()
+[thread B]
+sys_fcntl()
+     fget()
+     do_fcntl()
+         fcntl_setlk()
+     fput()
+         if(!count) __fput()           // count==0
+             locks_remove_flock()
+
+Thread B's reference prevents thread A's close from calling
+locks_remove_flock() and we then BUG on the posix lock when thread B
+eventually calls locks_remove_flock.
+
+There's further analysis of the problem & various vmcores we received
+illustrating it in the bugzilla.
+
+Upstream deleted this check and now only calls
+posix_lock_file_wait for the NONLM case (via nfs/file.c's do_vfs_lock):
+
+commit c4d7c402b788b73dc24f1e54a57f89d3dc5eb7bc
+Author: Trond Myklebust <Trond.Myklebust@netapp.com>
+Date:   Tue Apr 1 20:26:52 2008 -0400
+
+     NFS: Remove the buggy lock-if-signalled case from do_setlk()
+
+     Both NLM and NFSv4 should be able to clean up adequately in the
+     case where the user interrupts the RPC call...
+
+     Signed-off-by: Trond Myklebust <Trond.Myklebust@netapp.com>it'
+
+Commit applies directly to RHEL5 HEAD.
+
+This has seen extensive testing here and at a number of customer
+sites. There are two reproducers in the tracking bugzilla (456282 comments
+#5, #13,
+#66) that have reliably triggered the problem on unpatched kernels.
+
+Regards,
+Bryn.
+
+diff --git a/fs/nfs/file.c b/fs/nfs/file.c
+index 426ae9f..38bb21a 100644
+--- a/fs/nfs/file.c
++++ b/fs/nfs/file.c
+@@ -527,17 +527,9 @@ static int do_setlk(struct file *filp, int cmd, struct file_lock *fl)
+ 
+ 	lock_kernel();
+ 	/* Use local locking if mounted with "-onolock" */
+-	if (!(NFS_SERVER(inode)->flags & NFS_MOUNT_NONLM)) {
++	if (!(NFS_SERVER(inode)->flags & NFS_MOUNT_NONLM))
+ 		status = NFS_PROTO(inode)->lock(filp, cmd, fl);
+-		/* If we were signalled we still need to ensure that
+-		 * we clean up any state on the server. We therefore
+-		 * record the lock call as having succeeded in order to
+-		 * ensure that locks_remove_posix() cleans it out when
+-		 * the process exits.
+-		 */
+-		if (status == -EINTR || status == -ERESTARTSYS)
+-			do_vfs_lock(filp, fl);
+-	} else
++	else
+ 		status = do_vfs_lock(filp, fl);
+ 	unlock_kernel();
+ 	if (status < 0)

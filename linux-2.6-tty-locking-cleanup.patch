@@ -1,0 +1,770 @@
+Date: Mon, 16 Oct 2006 15:40:43 +0200
+From: Peter Zijlstra <pzijlstr@redhat.com>
+Subject: Re: [RHEL5 PATCH 1/2 ]: BZ 210249 2.6.19 backport tty locking
+	fixups
+
+How about this roll-up
+
+b20c8122a3204496fca8b5343c93b60fe11dad04 [PATCH] selinux: fix tty locking tty locking
+0f0f1b400ce3c4780b9d974bc69e8b558d99aba4 [PATCH] Voyager: tty locking tty locking
+b1fc0b1f21c4082d24d1f456a846b4fa7d16a70b [PATCH] UML: tty locking tty locking
+fab2062ee4a3969a9c6cb7155534d0d15ddeff54 [PATCH] git-netdev-all: pc300_tty build fix build fix
+51dced544e3964b684afc99282ceceaa384b16a8 [S390] init_timer in tty3270. in tty3270.
+402749ea2538be9ddad981a990739b93a0178bc6 [PATCH] Remove unused tty_struct field tty_struct field
+527063ba985740e9cd271731c31f503f916681c9 [PATCH] tty_io.c: keep davej sane davej sane
+ca9bda00b4aafc42cd3d1b9d32934463e2993b4c [PATCH] tty locking on resize on resize
+b525a7e4445c4702dfc541930747517615c0c72a [PATCH] dquot: add proper locking when using current->signal->tty using current->signal->tty
+1266b1e1aed0a4d7d5cb569deca8c31cba34a990 [PATCH] tty: trivial kzalloc opportunity kzalloc opportunity
+808a0d389ff8d85017ec811085a6083394c02caf [PATCH] tty: lock ticogwinsz lock ticogwinsz
+3cfd0885fac78c130a119ed576d18b5948fa2a5a [PATCH] tty: stop the tty vanishing under procfs access procfs access
+5785c95baede8459d70c4aa0f7becb6e8b5fde4b [PATCH] tty: make termios_sem a mutex a mutex
+de2a84f2be8ed8a166f13d6aa2ae474541172bb2 [PATCH] solaris emulation: incorrect tty locking tty locking
+28298232a15c48ea9835d5d24577cde87923e55c [PATCH] tty: Fix bits and note more bits to fix to fix
+5f412b24240d92212e50ebbaff2dff20c9e6f3d0 [PATCH] Fix locking for tty drivers when doing urgent characters urgent characters
+eb84a20e9e6b98dcb33023ad22241d79107a08a7 [PATCH] audit/accounting: tty locking tty locking
+
+
+Index: linux-2.6.18.noarch/security/selinux/hooks.c
+===================================================================
+--- linux-2.6.18.noarch.orig/security/selinux/hooks.c
++++ linux-2.6.18.noarch/security/selinux/hooks.c
+@@ -1705,10 +1705,12 @@ static inline void flush_unauthorized_fi
+ {
+ 	struct avc_audit_data ad;
+ 	struct file *file, *devnull = NULL;
+-	struct tty_struct *tty = current->signal->tty;
++	struct tty_struct *tty;
+ 	struct fdtable *fdt;
+ 	long j = -1;
+ 
++	mutex_lock(&tty_mutex);
++	tty = current->signal->tty;
+ 	if (tty) {
+ 		file_list_lock();
+ 		file = list_entry(tty->tty_files.next, typeof(*file), f_u.fu_list);
+@@ -1728,6 +1730,7 @@ static inline void flush_unauthorized_fi
+ 		}
+ 		file_list_unlock();
+ 	}
++	mutex_unlock(&tty_mutex);
+ 
+ 	/* Revalidate access to inherited open files. */
+ 
+Index: linux-2.6.18.noarch/arch/i386/mach-voyager/voyager_thread.c
+===================================================================
+--- linux-2.6.18.noarch.orig/arch/i386/mach-voyager/voyager_thread.c
++++ linux-2.6.18.noarch/arch/i386/mach-voyager/voyager_thread.c
+@@ -130,7 +130,6 @@ thread(void *unused)
+ 	init_timer(&wakeup_timer);
+ 
+ 	sigfillset(&current->blocked);
+-	current->signal->tty = NULL;
+ 
+ 	printk(KERN_NOTICE "Voyager starting monitor thread\n");
+ 
+Index: linux-2.6.18.noarch/arch/um/kernel/exec.c
+===================================================================
+--- linux-2.6.18.noarch.orig/arch/um/kernel/exec.c
++++ linux-2.6.18.noarch/arch/um/kernel/exec.c
+@@ -41,9 +41,11 @@ static long execve1(char *file, char __u
+         long error;
+ 
+ #ifdef CONFIG_TTY_LOG
+-	task_lock(current);
++	mutex_lock(&tty_mutex);
++	task_lock(current);	/* FIXME:  is this needed ? */
+ 	log_exec(argv, current->signal->tty);
+ 	task_unlock(current);
++	mutex_unlock(&tty_mutex);
+ #endif
+         error = do_execve(file, argv, env, &current->thread.regs);
+         if (error == 0){
+Index: linux-2.6.18.noarch/drivers/net/wan/pc300.h
+===================================================================
+--- linux-2.6.18.noarch.orig/drivers/net/wan/pc300.h
++++ linux-2.6.18.noarch/drivers/net/wan/pc300.h
+@@ -100,6 +100,7 @@
+ #define	_PC300_H
+ 
+ #include <linux/hdlc.h>
++#include <net/syncppp.h>
+ #include "hd64572.h"
+ #include "pc300-falc-lh.h"
+ 
+Index: linux-2.6.18.noarch/drivers/s390/char/tty3270.c
+===================================================================
+--- linux-2.6.18.noarch.orig/drivers/s390/char/tty3270.c
++++ linux-2.6.18.noarch/drivers/s390/char/tty3270.c
+@@ -698,7 +698,6 @@ tty3270_alloc_view(void)
+ 	if (!tp->freemem_pages)
+ 		goto out_tp;
+ 	INIT_LIST_HEAD(&tp->freemem);
+-	init_timer(&tp->timer);
+ 	for (pages = 0; pages < TTY3270_STRING_PAGES; pages++) {
+ 		tp->freemem_pages[pages] = (void *)
+ 			__get_free_pages(GFP_KERNEL|GFP_DMA, 0);
+Index: linux-2.6.18.noarch/include/linux/tty.h
+===================================================================
+--- linux-2.6.18.noarch.orig/include/linux/tty.h
++++ linux-2.6.18.noarch/include/linux/tty.h
+@@ -174,7 +174,7 @@ struct tty_struct {
+ 	struct tty_driver *driver;
+ 	int index;
+ 	struct tty_ldisc ldisc;
+-	struct semaphore termios_sem;
++	struct mutex termios_mutex;
+ 	struct termios *termios, *termios_locked;
+ 	char name[64];
+ 	int pgrp;
+@@ -190,7 +190,6 @@ struct tty_struct {
+ 	struct tty_struct *link;
+ 	struct fasync_struct *fasync;
+ 	struct tty_bufhead buf;
+-	int max_flip_cnt;
+ 	int alt_speed;		/* For magic substitution of 38400 bps */
+ 	wait_queue_head_t write_wait;
+ 	wait_queue_head_t read_wait;
+Index: linux-2.6.18.noarch/drivers/char/tty_io.c
+===================================================================
+--- linux-2.6.18.noarch.orig/drivers/char/tty_io.c
++++ linux-2.6.18.noarch/drivers/char/tty_io.c
+@@ -129,6 +129,7 @@ LIST_HEAD(tty_drivers);			/* linked list
+ /* Semaphore to protect creating and releasing a tty. This is shared with
+    vt.c for deeply disgusting hack reasons */
+ DEFINE_MUTEX(tty_mutex);
++EXPORT_SYMBOL(tty_mutex);
+ 
+ int console_use_vt = 1;
+ 
+@@ -162,17 +163,11 @@ static void release_mem(struct tty_struc
+  *	been initialized in any way but has been zeroed
+  *
+  *	Locking: none
+- *	FIXME: use kzalloc
+  */
+ 
+ static struct tty_struct *alloc_tty_struct(void)
+ {
+-	struct tty_struct *tty;
+-
+-	tty = kmalloc(sizeof(struct tty_struct), GFP_KERNEL);
+-	if (tty)
+-		memset(tty, 0, sizeof(struct tty_struct));
+-	return tty;
++	return kzalloc(sizeof(struct tty_struct), GFP_KERNEL);
+ }
+ 
+ static void tty_buffer_free_all(struct tty_struct *);
+@@ -485,10 +480,9 @@ int tty_insert_flip_string(struct tty_st
+ 		tb->used += space;
+ 		copied += space;
+ 		chars += space;
+-	}
+-	/* There is a small chance that we need to split the data over
+-	   several buffers. If this is the case we must loop */
+-	while (unlikely(size > copied));
++		/* There is a small chance that we need to split the data over
++		   several buffers. If this is the case we must loop */
++	} while (unlikely(size > copied));
+ 	return copied;
+ }
+ EXPORT_SYMBOL(tty_insert_flip_string);
+@@ -523,10 +517,9 @@ int tty_insert_flip_string_flags(struct 
+ 		copied += space;
+ 		chars += space;
+ 		flags += space;
+-	}
+-	/* There is a small chance that we need to split the data over
+-	   several buffers. If this is the case we must loop */
+-	while (unlikely(size > copied));
++		/* There is a small chance that we need to split the data over
++		   several buffers. If this is the case we must loop */
++	} while (unlikely(size > copied));
+ 	return copied;
+ }
+ EXPORT_SYMBOL(tty_insert_flip_string_flags);
+@@ -628,9 +621,9 @@ EXPORT_SYMBOL_GPL(tty_prepare_flip_strin
+  
+ static void tty_set_termios_ldisc(struct tty_struct *tty, int num)
+ {
+-	down(&tty->termios_sem);
++	mutex_lock(&tty->termios_mutex);
+ 	tty->termios->c_line = num;
+-	up(&tty->termios_sem);
++	mutex_unlock(&tty->termios_mutex);
+ }
+ 
+ /*
+@@ -1348,9 +1341,9 @@ static void do_tty_hangup(void *data)
+ 	 */
+ 	if (tty->driver->flags & TTY_DRIVER_RESET_TERMIOS)
+ 	{
+-		down(&tty->termios_sem);
++		mutex_lock(&tty->termios_mutex);
+ 		*tty->termios = tty->driver->init_termios;
+-		up(&tty->termios_sem);
++		mutex_unlock(&tty->termios_mutex);
+ 	}
+ 	
+ 	/* Defer ldisc switch */
+@@ -2728,6 +2721,8 @@ static int tty_fasync(int fd, struct fil
+  *	Locking:
+  *		Called functions take tty_ldisc_lock
+  *		current->signal->tty check is safe without locks
++ *
++ *	FIXME: may race normal receive processing
+  */
+ 
+ static int tiocsti(struct tty_struct *tty, char __user *p)
+@@ -2750,18 +2745,21 @@ static int tiocsti(struct tty_struct *tt
+  *	@tty; tty
+  *	@arg: user buffer for result
+  *
+- *	Copies the kernel idea of the window size into the user buffer. No
+- *	locking is done.
++ *	Copies the kernel idea of the window size into the user buffer.
+  *
+- *	FIXME: Returning random values racing a window size set is wrong
+- *	should lock here against that
++ *	Locking: tty->termios_sem is taken to ensure the winsize data
++ *		is consistent.
+  */
+ 
+ static int tiocgwinsz(struct tty_struct *tty, struct winsize __user * arg)
+ {
+-	if (copy_to_user(arg, &tty->winsize, sizeof(*arg)))
+-		return -EFAULT;
+-	return 0;
++	int err;
++
++	mutex_lock(&tty->termios_mutex);
++	err = copy_to_user(arg, &tty->winsize, sizeof(*arg));
++	mutex_unlock(&tty->termios_mutex);
++
++	return err ? -EFAULT: 0;
+ }
+ 
+ /**
+@@ -2774,12 +2772,11 @@ static int tiocgwinsz(struct tty_struct 
+  *	actually has driver level meaning and triggers a VC resize.
+  *
+  *	Locking:
+- *		The console_sem is used to ensure we do not try and resize
+- *	the console twice at once.
+- *	FIXME: Two racing size sets may leave the console and kernel
+- *		parameters disagreeing. Is this exploitable ?
+- *	FIXME: Random values racing a window size get is wrong
+- *	should lock here against that
++ *		Called function use the console_sem is used to ensure we do
++ *	not try and resize the console twice at once.
++ *		The tty->termios_sem is used to ensure we don't double
++ *	resize and get confused. Lock order - tty->termios.sem before
++ *	console sem
+  */
+ 
+ static int tiocswinsz(struct tty_struct *tty, struct tty_struct *real_tty,
+@@ -2789,17 +2786,18 @@ static int tiocswinsz(struct tty_struct 
+ 
+ 	if (copy_from_user(&tmp_ws, arg, sizeof(*arg)))
+ 		return -EFAULT;
++
++	mutex_lock(&tty->termios_mutex);
+ 	if (!memcmp(&tmp_ws, &tty->winsize, sizeof(*arg)))
+-		return 0;
++		goto done;
++
+ #ifdef CONFIG_VT
+ 	if (tty->driver->type == TTY_DRIVER_TYPE_CONSOLE) {
+-		int rc;
+-
+-		acquire_console_sem();
+-		rc = vc_resize(tty->driver_data, tmp_ws.ws_col, tmp_ws.ws_row);
+-		release_console_sem();
+-		if (rc)
+-			return -ENXIO;
++		if (vc_lock_resize(tty->driver_data, tmp_ws.ws_col,
++					tmp_ws.ws_row)) {
++			mutex_unlock(&tty->termios_mutex);
++ 			return -ENXIO;
++		}
+ 	}
+ #endif
+ 	if (tty->pgrp > 0)
+@@ -2808,6 +2806,8 @@ static int tiocswinsz(struct tty_struct 
+ 		kill_pg(real_tty->pgrp, SIGWINCH, 1);
+ 	tty->winsize = tmp_ws;
+ 	real_tty->winsize = tmp_ws;
++done:
++	mutex_unlock(&tty->termios_mutex);
+ 	return 0;
+ }
+ 
+@@ -2882,9 +2882,7 @@ static int fionbio(struct file *file, in
+  *	Locking:
+  *		Takes tasklist lock internally to walk sessions
+  *		Takes task_lock() when updating signal->tty
+- *
+- *	FIXME: tty_mutex is needed to protect signal->tty references.
+- *	FIXME: why task_lock on the signal->tty reference ??
++ *		Takes tty_mutex() to protect tty instance
+  *
+  */
+ 
+@@ -2919,9 +2917,11 @@ static int tiocsctty(struct tty_struct *
+ 		} else
+ 			return -EPERM;
+ 	}
++	mutex_lock(&tty_mutex);
+ 	task_lock(current);
+ 	current->signal->tty = tty;
+ 	task_unlock(current);
++	mutex_unlock(&tty_mutex);
+ 	current->signal->tty_old_pgrp = 0;
+ 	tty->session = current->signal->session;
+ 	tty->pgrp = process_group(current);
+@@ -2961,8 +2961,6 @@ static int tiocgpgrp(struct tty_struct *
+  *	permitted where the tty session is our session.
+  *
+  *	Locking: None
+- *
+- *	FIXME: current->signal->tty referencing is unsafe.
+  */
+ 
+ static int tiocspgrp(struct tty_struct *tty, struct tty_struct *real_tty, pid_t __user *p)
+@@ -3041,19 +3039,20 @@ static int tiocsetd(struct tty_struct *t
+  *	timed break functionality.
+  *
+  *	Locking:
+- *		None
++ *		atomic_write_lock serializes
+  *
+- *	FIXME:
+- *		What if two overlap
+  */
+ 
+ static int send_break(struct tty_struct *tty, unsigned int duration)
+ {
++	if (mutex_lock_interruptible(&tty->atomic_write_lock))
++		return -EINTR;
+ 	tty->driver->break_ctl(tty, -1);
+ 	if (!signal_pending(current)) {
+ 		msleep_interruptible(duration);
+ 	}
+ 	tty->driver->break_ctl(tty, 0);
++	mutex_unlock(&tty->atomic_write_lock);
+ 	if (signal_pending(current))
+ 		return -EINTR;
+ 	return 0;
+@@ -3146,6 +3145,8 @@ int tty_ioctl(struct inode * inode, stru
+ 	if (tty_paranoia_check(tty, inode, "tty_ioctl"))
+ 		return -EINVAL;
+ 
++	/* CHECKME: is this safe as one end closes ? */
++
+ 	real_tty = tty;
+ 	if (tty->driver->type == TTY_DRIVER_TYPE_PTY &&
+ 	    tty->driver->subtype == PTY_TYPE_MASTER)
+@@ -3582,7 +3583,7 @@ static void initialize_tty_struct(struct
+ 	tty_buffer_init(tty);
+ 	INIT_WORK(&tty->buf.work, flush_to_ldisc, tty);
+ 	init_MUTEX(&tty->buf.pty_sem);
+-	init_MUTEX(&tty->termios_sem);
++	mutex_init(&tty->termios_mutex);
+ 	init_waitqueue_head(&tty->write_wait);
+ 	init_waitqueue_head(&tty->read_wait);
+ 	INIT_WORK(&tty->hangup_work, do_tty_hangup, tty);
+Index: linux-2.6.18.noarch/drivers/char/selection.c
+===================================================================
+--- linux-2.6.18.noarch.orig/drivers/char/selection.c
++++ linux-2.6.18.noarch/drivers/char/selection.c
+@@ -33,7 +33,7 @@ extern void poke_blanked_console(void);
+ 
+ /* Variables for selection control. */
+ /* Use a dynamic buffer, instead of static (Dec 1994) */
+-struct vc_data *sel_cons;		/* must not be disallocated */
++struct vc_data *sel_cons;		/* must not be deallocated */
+ static volatile int sel_start = -1; 	/* cleared by clear_selection */
+ static int sel_end;
+ static int sel_buffer_lth;
+Index: linux-2.6.18.noarch/drivers/char/vt.c
+===================================================================
+--- linux-2.6.18.noarch.orig/drivers/char/vt.c
++++ linux-2.6.18.noarch/drivers/char/vt.c
+@@ -878,8 +878,17 @@ int vc_resize(struct vc_data *vc, unsign
+ 	return err;
+ }
+ 
++int vc_lock_resize(struct vc_data *vc, unsigned int cols, unsigned int lines)
++{
++	int rc;
++
++	acquire_console_sem();
++	rc = vc_resize(vc, cols, lines);
++	release_console_sem();
++	return rc;
++}
+ 
+-void vc_disallocate(unsigned int currcons)
++void vc_deallocate(unsigned int currcons)
+ {
+ 	WARN_CONSOLE_UNLOCKED();
+ 
+@@ -3765,6 +3774,7 @@ EXPORT_SYMBOL(default_blu);
+ EXPORT_SYMBOL(update_region);
+ EXPORT_SYMBOL(redraw_screen);
+ EXPORT_SYMBOL(vc_resize);
++EXPORT_SYMBOL(vc_lock_resize);
+ EXPORT_SYMBOL(fg_console);
+ EXPORT_SYMBOL(console_blank_hook);
+ EXPORT_SYMBOL(console_blanked);
+Index: linux-2.6.18.noarch/drivers/char/vt_ioctl.c
+===================================================================
+--- linux-2.6.18.noarch.orig/drivers/char/vt_ioctl.c
++++ linux-2.6.18.noarch/drivers/char/vt_ioctl.c
+@@ -96,7 +96,7 @@ do_kdsk_ioctl(int cmd, struct kbentry __
+ 		if (!perm)
+ 			return -EPERM;
+ 		if (!i && v == K_NOSUCHMAP) {
+-			/* disallocate map */
++			/* deallocate map */
+ 			key_map = key_maps[s];
+ 			if (s && key_map) {
+ 			    key_maps[s] = NULL;
+@@ -819,20 +819,20 @@ int vt_ioctl(struct tty_struct *tty, str
+ 		if (arg > MAX_NR_CONSOLES)
+ 			return -ENXIO;
+ 		if (arg == 0) {
+-		    /* disallocate all unused consoles, but leave 0 */
++		    /* deallocate all unused consoles, but leave 0 */
+ 			acquire_console_sem();
+ 			for (i=1; i<MAX_NR_CONSOLES; i++)
+ 				if (! VT_BUSY(i))
+-					vc_disallocate(i);
++					vc_deallocate(i);
+ 			release_console_sem();
+ 		} else {
+-			/* disallocate a single console, if possible */
++			/* deallocate a single console, if possible */
+ 			arg--;
+ 			if (VT_BUSY(arg))
+ 				return -EBUSY;
+ 			if (arg) {			      /* leave 0 */
+ 				acquire_console_sem();
+-				vc_disallocate(arg);
++				vc_deallocate(arg);
+ 				release_console_sem();
+ 			}
+ 		}
+@@ -847,11 +847,8 @@ int vt_ioctl(struct tty_struct *tty, str
+ 		if (get_user(ll, &vtsizes->v_rows) ||
+ 		    get_user(cc, &vtsizes->v_cols))
+ 			return -EFAULT;
+-		for (i = 0; i < MAX_NR_CONSOLES; i++) {
+-			acquire_console_sem();
+-			vc_resize(vc_cons[i].d, cc, ll);
+-			release_console_sem();
+-		}
++		for (i = 0; i < MAX_NR_CONSOLES; i++)
++			vc_lock_resize(vc_cons[i].d, cc, ll);
+ 		return 0;
+ 	}
+ 
+Index: linux-2.6.18.noarch/include/linux/vt_kern.h
+===================================================================
+--- linux-2.6.18.noarch.orig/include/linux/vt_kern.h
++++ linux-2.6.18.noarch/include/linux/vt_kern.h
+@@ -33,7 +33,8 @@ extern int fg_console, last_console, wan
+ int vc_allocate(unsigned int console);
+ int vc_cons_allocated(unsigned int console);
+ int vc_resize(struct vc_data *vc, unsigned int cols, unsigned int lines);
+-void vc_disallocate(unsigned int console);
++int vc_lock_resize(struct vc_data *vc, unsigned int cols, unsigned int lines);
++void vc_deallocate(unsigned int console);
+ void reset_palette(struct vc_data *vc);
+ void do_blank_screen(int entering_gfx);
+ void do_unblank_screen(int leaving_gfx);
+Index: linux-2.6.18.noarch/fs/dquot.c
+===================================================================
+--- linux-2.6.18.noarch.orig/fs/dquot.c
++++ linux-2.6.18.noarch/fs/dquot.c
+@@ -834,6 +834,9 @@ static void print_warning(struct dquot *
+ 	if (!need_print_warning(dquot) || (flag && test_and_set_bit(flag, &dquot->dq_flags)))
+ 		return;
+ 
++	mutex_lock(&tty_mutex);
++	if (!current->signal->tty)
++		goto out_lock;
+ 	tty_write_message(current->signal->tty, dquot->dq_sb->s_id);
+ 	if (warntype == ISOFTWARN || warntype == BSOFTWARN)
+ 		tty_write_message(current->signal->tty, ": warning, ");
+@@ -861,6 +864,8 @@ static void print_warning(struct dquot *
+ 			break;
+ 	}
+ 	tty_write_message(current->signal->tty, msg);
++out_lock:
++	mutex_unlock(&tty_mutex);
+ }
+ 
+ static inline void flush_warnings(struct dquot **dquots, char *warntype)
+Index: linux-2.6.18.noarch/fs/proc/array.c
+===================================================================
+--- linux-2.6.18.noarch.orig/fs/proc/array.c
++++ linux-2.6.18.noarch/fs/proc/array.c
+@@ -355,6 +355,8 @@ static int do_task_stat(struct task_stru
+ 	sigemptyset(&sigign);
+ 	sigemptyset(&sigcatch);
+ 	cutime = cstime = utime = stime = cputime_zero;
++
++	mutex_lock(&tty_mutex);
+ 	read_lock(&tasklist_lock);
+ 	if (task->sighand) {
+ 		spin_lock_irq(&task->sighand->siglock);
+@@ -396,6 +398,7 @@ static int do_task_stat(struct task_stru
+ 	}
+ 	ppid = pid_alive(task) ? task->group_leader->parent->tgid : 0;
+ 	read_unlock(&tasklist_lock);
++	mutex_unlock(&tty_mutex);
+ 
+ 	if (!whole || num_threads<2) {
+ 		wchan = 0;
+Index: linux-2.6.18.noarch/drivers/char/tty_ioctl.c
+===================================================================
+--- linux-2.6.18.noarch.orig/drivers/char/tty_ioctl.c
++++ linux-2.6.18.noarch/drivers/char/tty_ioctl.c
+@@ -20,6 +20,7 @@
+ #include <linux/mm.h>
+ #include <linux/module.h>
+ #include <linux/bitops.h>
++#include <linux/mutex.h>
+ 
+ #include <asm/io.h>
+ #include <asm/uaccess.h>
+@@ -131,7 +132,7 @@ static void change_termios(struct tty_st
+ 
+ 	/* FIXME: we need to decide on some locking/ordering semantics
+ 	   for the set_termios notification eventually */
+-	down(&tty->termios_sem);
++	mutex_lock(&tty->termios_mutex);
+ 
+ 	*tty->termios = *new_termios;
+ 	unset_locked_termios(tty->termios, &old_termios, tty->termios_locked);
+@@ -176,7 +177,7 @@ static void change_termios(struct tty_st
+ 			(ld->set_termios)(tty, &old_termios);
+ 		tty_ldisc_deref(ld);
+ 	}
+-	up(&tty->termios_sem);
++	mutex_unlock(&tty->termios_mutex);
+ }
+ 
+ /**
+@@ -284,13 +285,13 @@ static int get_sgttyb(struct tty_struct 
+ {
+ 	struct sgttyb tmp;
+ 
+-	down(&tty->termios_sem);
++	mutex_lock(&tty->termios_mutex);
+ 	tmp.sg_ispeed = 0;
+ 	tmp.sg_ospeed = 0;
+ 	tmp.sg_erase = tty->termios->c_cc[VERASE];
+ 	tmp.sg_kill = tty->termios->c_cc[VKILL];
+ 	tmp.sg_flags = get_sgflags(tty);
+-	up(&tty->termios_sem);
++	mutex_unlock(&tty->termios_mutex);
+ 	
+ 	return copy_to_user(sgttyb, &tmp, sizeof(tmp)) ? -EFAULT : 0;
+ }
+@@ -345,12 +346,12 @@ static int set_sgttyb(struct tty_struct 
+ 	if (copy_from_user(&tmp, sgttyb, sizeof(tmp)))
+ 		return -EFAULT;
+ 
+-	down(&tty->termios_sem);		
++	mutex_lock(&tty->termios_mutex);
+ 	termios =  *tty->termios;
+ 	termios.c_cc[VERASE] = tmp.sg_erase;
+ 	termios.c_cc[VKILL] = tmp.sg_kill;
+ 	set_sgflags(&termios, tmp.sg_flags);
+-	up(&tty->termios_sem);
++	mutex_unlock(&tty->termios_mutex);
+ 	change_termios(tty, &termios);
+ 	return 0;
+ }
+@@ -422,24 +423,28 @@ static int set_ltchars(struct tty_struct
+  *
+  *	Send a high priority character to the tty even if stopped
+  *
+- *	Locking: none
+- *
+- *	FIXME: overlapping calls with start/stop tty lose state of tty
++ *	Locking: none for xchar method, write ordering for write method.
+  */
+ 
+-static void send_prio_char(struct tty_struct *tty, char ch)
++static int send_prio_char(struct tty_struct *tty, char ch)
+ {
+ 	int	was_stopped = tty->stopped;
+ 
+ 	if (tty->driver->send_xchar) {
+ 		tty->driver->send_xchar(tty, ch);
+-		return;
++		return 0;
+ 	}
++
++	if (mutex_lock_interruptible(&tty->atomic_write_lock))
++		return -ERESTARTSYS;
++
+ 	if (was_stopped)
+ 		start_tty(tty);
+ 	tty->driver->write(tty, &ch, 1);
+ 	if (was_stopped)
+ 		stop_tty(tty);
++	mutex_unlock(&tty->atomic_write_lock);
++	return 0;
+ }
+ 
+ int n_tty_ioctl(struct tty_struct * tty, struct file * file,
+@@ -513,11 +518,11 @@ int n_tty_ioctl(struct tty_struct * tty,
+ 				break;
+ 			case TCIOFF:
+ 				if (STOP_CHAR(tty) != __DISABLED_CHAR)
+-					send_prio_char(tty, STOP_CHAR(tty));
++					return send_prio_char(tty, STOP_CHAR(tty));
+ 				break;
+ 			case TCION:
+ 				if (START_CHAR(tty) != __DISABLED_CHAR)
+-					send_prio_char(tty, START_CHAR(tty));
++					return send_prio_char(tty, START_CHAR(tty));
+ 				break;
+ 			default:
+ 				return -EINVAL;
+@@ -592,11 +597,11 @@ int n_tty_ioctl(struct tty_struct * tty,
+ 		case TIOCSSOFTCAR:
+ 			if (get_user(arg, (unsigned int __user *) arg))
+ 				return -EFAULT;
+-			down(&tty->termios_sem);
++			mutex_lock(&tty->termios_mutex);
+ 			tty->termios->c_cflag =
+ 				((tty->termios->c_cflag & ~CLOCAL) |
+ 				 (arg ? CLOCAL : 0));
+-			up(&tty->termios_sem);
++			mutex_unlock(&tty->termios_mutex);
+ 			return 0;
+ 		default:
+ 			return -ENOIOCTLCMD;
+Index: linux-2.6.18.noarch/arch/sparc64/solaris/misc.c
+===================================================================
+--- linux-2.6.18.noarch.orig/arch/sparc64/solaris/misc.c
++++ linux-2.6.18.noarch/arch/sparc64/solaris/misc.c
+@@ -11,6 +11,7 @@
+ #include <linux/limits.h>
+ #include <linux/mm.h>
+ #include <linux/smp.h>
++#include <linux/tty.h>
+ #include <linux/mman.h>
+ #include <linux/file.h>
+ #include <linux/timex.h>
+@@ -422,7 +423,9 @@ asmlinkage int solaris_procids(int cmd, 
+ 			   Solaris setpgrp and setsid? */
+ 			ret = sys_setpgid(0, 0);
+ 			if (ret) return ret;
++			mutex_lock(&tty_mutex);
+ 			current->signal->tty = NULL;
++			mutex_unlock(&tty_mutex);
+ 			return process_group(current);
+ 		}
+ 	case 2: /* getsid */
+Index: linux-2.6.18.noarch/kernel/acct.c
+===================================================================
+--- linux-2.6.18.noarch.orig/kernel/acct.c
++++ linux-2.6.18.noarch/kernel/acct.c
+@@ -483,10 +483,14 @@ static void do_acct_process(struct file 
+ 	ac.ac_ppid = current->parent->tgid;
+ #endif
+ 
+-	read_lock(&tasklist_lock);	/* pin current->signal */
++	mutex_lock(&tty_mutex);
++	/* FIXME: Whoever is responsible for current->signal locking needs
++	   to use the same locking all over the kernel and document it */
++	read_lock(&tasklist_lock);
+ 	ac.ac_tty = current->signal->tty ?
+ 		old_encode_dev(tty_devnum(current->signal->tty)) : 0;
+ 	read_unlock(&tasklist_lock);
++	mutex_unlock(&tty_mutex);
+ 
+ 	spin_lock_irq(&current->sighand->siglock);
+ 	ac.ac_utime = encode_comp_t(jiffies_to_AHZ(cputime_to_jiffies(pacct->ac_utime)));
+Index: linux-2.6.18.noarch/kernel/auditsc.c
+===================================================================
+--- linux-2.6.18.noarch.orig/kernel/auditsc.c
++++ linux-2.6.18.noarch/kernel/auditsc.c
+@@ -817,6 +817,8 @@ static void audit_log_exit(struct audit_
+ 		audit_log_format(ab, " success=%s exit=%ld", 
+ 				 (context->return_valid==AUDITSC_SUCCESS)?"yes":"no",
+ 				 context->return_code);
++
++	mutex_lock(&tty_mutex);
+ 	if (tsk->signal && tsk->signal->tty && tsk->signal->tty->name)
+ 		tty = tsk->signal->tty->name;
+ 	else
+@@ -838,6 +840,9 @@ static void audit_log_exit(struct audit_
+ 		  context->gid,
+ 		  context->euid, context->suid, context->fsuid,
+ 		  context->egid, context->sgid, context->fsgid, tty);
++
++	mutex_unlock(&tty_mutex);
++
+ 	audit_log_task_info(ab, tsk);
+ 	if (context->filterkey) {
+ 		audit_log_format(ab, " key=");
+
+Date: Sun, 15 Oct 2006 13:53:03 -0400
+From: Prarit Bhargava <prarit@redhat.com>
+Subject: [RHEL5 PATCH 0/2 ]: BZ 210249 Additional tty locking fixups
+
+Additional tty locking changes, and a revalidation of current->signal->tty.
+
+Signed-off-by: Prarit Bhargava <prarit@redhat.com>
+
+--- linux-2.6.18.x86_64-1/drivers/char/tty_io.c	2006-10-15 11:32:57.000000000 -0400
++++ linux-2.6.18.x86_64-2/drivers/char/tty_io.c	2006-10-15 11:33:26.000000000 -0400
+@@ -1361,8 +1361,10 @@ static void do_tty_hangup(void *data)
+ 	read_lock(&tasklist_lock);
+ 	if (tty->session > 0) {
+ 		do_each_task_pid(tty->session, PIDTYPE_SID, p) {
++			task_lock(p);
+ 			if (p->signal->tty == tty)
+ 				p->signal->tty = NULL;
++			task_unlock(p);
+ 			if (!p->signal->leader)
+ 				continue;
+ 			group_send_sig_info(SIGHUP, SEND_SIG_PRIV, p);
+@@ -1514,14 +1516,27 @@ void disassociate_ctty(int on_exit)
+ 
+ 	/* Must lock changes to tty_old_pgrp */
+ 	mutex_lock(&tty_mutex);
++	task_lock(current);
+ 	current->signal->tty_old_pgrp = 0;
+-	tty->session = 0;
+-	tty->pgrp = -1;
++
++	/* It is possible that do_tty_hangup has free'd this tty */
++	if (current->signal->tty) {
++		current->signal->tty->session = 0;
++		current->signal->tty->pgrp = -1;
++	} else {
++#ifdef TTY_DEBUG_HANGUP
++		printk(KERN_DEBUG "error attempted to write to tty [0x%p]"
++		       " = NULL", tty);
++#endif
++	}
++	task_unlock(current);
+ 
+ 	/* Now clear signal->tty under the lock */
+ 	read_lock(&tasklist_lock);
+ 	do_each_task_pid(current->signal->session, PIDTYPE_SID, p) {
++		task_lock(p);
+ 		p->signal->tty = NULL;
++		task_unlock(p);
+ 	} while_each_task_pid(current->signal->session, PIDTYPE_SID, p);
+ 	read_unlock(&tasklist_lock);
+ 	mutex_unlock(&tty_mutex);
+

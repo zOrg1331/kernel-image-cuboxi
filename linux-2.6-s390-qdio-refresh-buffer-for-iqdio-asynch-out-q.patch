@@ -1,0 +1,59 @@
+From: Hans-Joachim Picht <hpicht@redhat.com>
+Subject: [RHEL5.1 PATCH] qdio: Refresh buffer states for IQDIO Asynchronous 	output queue
+Date: Tue, 11 Sep 2007 17:53:28 +0200
+Bugzilla: 222181
+Message-Id: <1189526008.30755.4.camel@localhost.localdomain>
+Changelog: [s390] qdio: Refresh buffer states for IQDIO Asynch output queue
+
+
+Problem:
+=========
+If iptables is running and qeth devices are active, shutdown/reboot 
+hangs.
+
+Bugzilla
+=========
+
+BZ 222181
+https://bugzilla.redhat.com/show_bug.cgi?id=222181
+
+Description:
+============
+
+Hipersocket Multicast queue works asynchronously. When sending buffers,
+the buffer state change may happen delayed. The tasklet for checking
+changes in the outbound queue excluded IQDIO async queues from this
+process. This created either a hang situation when the queue ran full,
+or presented a hang situation at interface close time.
+The tasklet processing is changed to include IQDIO async queues when
+requesting buffer state refresh.
+
+Upstream status of the patch:
+=============================
+linux-2.6 git
+
+Test status:
+============
+Kernel with patch was built and successfully tested
+
+
+Please ACK.
+
+With best regards,
+
+        Hans
+
+diff -Nupr linux-rhel5/drivers/s390/cio/qdio.c linux-rhel5-patched/drivers/s390/cio/qdio.c
+--- linux-rhel5/drivers/s390/cio/qdio.c	2007-09-10 10:28:33.000000000 +0200
++++ linux-rhel5-patched/drivers/s390/cio/qdio.c	2007-09-10 10:30:59.000000000 +0200
+@@ -739,7 +739,8 @@ qdio_get_outbound_buffer_frontier(struct
+ 	first_not_to_check=f+qdio_min(atomic_read(&q->number_of_buffers_used),
+ 				      (QDIO_MAX_BUFFERS_PER_Q-1));
+ 
+-	if ((!q->is_iqdio_q)&&(!q->hydra_gives_outbound_pcis))
++	if (((!q->is_iqdio_q)&&(!q->hydra_gives_outbound_pcis)) ||
++	    (q->queue_type == QDIO_IQDIO_QFMT_ASYNCH))
+ 		SYNC_MEMORY;
+ 
+ check_next:
+

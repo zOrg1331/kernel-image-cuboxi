@@ -1,0 +1,71 @@
+From: ddugger@redhat.com <ddugger@redhat.com>
+Date: Thu, 2 Apr 2009 08:46:23 -0600
+Subject: [pci] save and restore PCIe 2.0 registers
+Message-id: 200904021446.n32EkNRd017185@sobek.n0ano.com
+O-Subject: [RHEL5.4 PATCH 16/17] BZ493152: Backport: PCI: save and restore PCIe 2.0 registers
+Bugzilla: 493152
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+RH-Acked-by: Chris Wright <chrisw@redhat.com>
+
+Upstream status: commit 898585172fa729513d8636257b44bd1cfd279096
+    Author: Yu Zhao <yu.zhao@intel.com>
+    Date:   Mon Feb 16 02:55:47 2009 +0800
+
+    PCI: save and restore PCIe 2.0 registers
+
+    PCIe 2.0 defines several new registers (Device Control 2, Link Control 2,
+    and Slot Control 2). Save and retore them in pci_save_pcie_state() and
+    pci_restore_pcie_state().
+
+    Signed-off-by: Yu Zhao <yu.zhao@intel.com>
+    Signed-off-by: Jesse Barnes <jbarnes@virtuousgeek.org>
+
+Signed-off-by: Gerd Hoffman <kraxel@redhat.com>
+Signed-off-by: Don Dugger <donald.d.dugger@intel.com>
+
+diff --git a/drivers/pci/pci.c b/drivers/pci/pci.c
+index e5226f2..a0e35fa 100644
+--- a/drivers/pci/pci.c
++++ b/drivers/pci/pci.c
+@@ -567,7 +567,7 @@ static int pci_save_pcie_state(struct pci_dev *dev)
+ 	if (pos <= 0)
+ 		return 0;
+ 
+-	save_state = kzalloc(sizeof(*save_state) + sizeof(u16) * 4, GFP_KERNEL);
++	save_state = kzalloc(sizeof(*save_state) + sizeof(u16) * 7, GFP_KERNEL);
+ 	if (!save_state) {
+ 		dev_err(&dev->dev, "Out of memory in pci_save_pcie_state\n");
+ 		return -ENOMEM;
+@@ -578,6 +578,9 @@ static int pci_save_pcie_state(struct pci_dev *dev)
+ 	pci_read_config_word(dev, pos + PCI_EXP_LNKCTL, &cap[i++]);
+ 	pci_read_config_word(dev, pos + PCI_EXP_SLTCTL, &cap[i++]);
+ 	pci_read_config_word(dev, pos + PCI_EXP_RTCTL, &cap[i++]);
++	pci_read_config_word(dev, pos + PCI_EXP_DEVCTL2, &cap[i++]);
++	pci_read_config_word(dev, pos + PCI_EXP_LNKCTL2, &cap[i++]);
++	pci_read_config_word(dev, pos + PCI_EXP_SLTCTL2, &cap[i++]);
+ 	pci_add_saved_cap(dev, save_state);
+ 	return 0;
+ }
+@@ -598,6 +601,9 @@ static void pci_restore_pcie_state(struct pci_dev *dev)
+ 	pci_write_config_word(dev, pos + PCI_EXP_LNKCTL, cap[i++]);
+ 	pci_write_config_word(dev, pos + PCI_EXP_SLTCTL, cap[i++]);
+ 	pci_write_config_word(dev, pos + PCI_EXP_RTCTL, cap[i++]);
++	pci_write_config_word(dev, pos + PCI_EXP_DEVCTL2, cap[i++]);
++	pci_write_config_word(dev, pos + PCI_EXP_LNKCTL2, cap[i++]);
++	pci_write_config_word(dev, pos + PCI_EXP_SLTCTL2, cap[i++]);
+ 	pci_remove_saved_cap(save_state);
+ 	kfree(save_state);
+ }
+diff --git a/include/linux/pci_regs.h b/include/linux/pci_regs.h
+index 66e8755..ecb52aa 100644
+--- a/include/linux/pci_regs.h
++++ b/include/linux/pci_regs.h
+@@ -397,6 +397,8 @@
+ #define  PCI_EXP_DEVCAP2_ARI	0x20	/* Alternative Routing-ID */
+ #define PCI_EXP_DEVCTL2		40	/* Device Control 2 */
+ #define  PCI_EXP_DEVCTL2_ARI	0x20	/* Alternative Routing-ID */
++#define PCI_EXP_LNKCTL2		48	/* Link Control 2 */
++#define PCI_EXP_SLTCTL2		56	/* Slot Control 2 */
+ 
+ /* Extended Capabilities (PCI-X 2.0 and Express) */
+ #define PCI_EXT_CAP_ID(header)		(header & 0x0000ffff)

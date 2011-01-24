@@ -1,0 +1,51 @@
+From: Stefan Assmann <sassmann@redhat.com>
+Date: Mon, 6 Dec 2010 06:59:15 -0500
+Subject: [net] igb: fix tx packet count
+Message-id: <4CFC89C3.9060803@redhat.com>
+Patchwork-id: 29905
+O-Subject: [RHEL 5.6 PATCH] igb: fix tx packet count
+Bugzilla: 658801
+RH-Acked-by: Jiri Pirko <jpirko@redhat.com>
+RH-Acked-by: Dean Nelson <dnelson@redhat.com>
+RH-Acked-by: Michal Schmidt <mschmidt@redhat.com>
+RH-Acked-by: Andy Gospodarek <gospo@redhat.com>
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+
+Bugzilla:
+https://bugzilla.redhat.com/show_bug.cgi?id=658801
+
+Description:
+The number of tx packets counted is always 0. The code that takes care
+of counter was accidentally removed during the RHEL5.6 igb update. This
+is easy to verify with "netstat -i". This puts the code back in place.
+
+Upstream Status:
+No upstream relevance since this is a backport issue.
+
+Brew Build:
+https://brewweb.devel.redhat.com/taskinfo?taskID=2939342
+
+Test Status:
+Tested on a system with an igb NIC. With this patch the tx stats
+increase again. Customer also gave positive feedback.
+netstat -i
+Kernel Interface table
+Iface       MTU Met    RX-OK RX-ERR RX-DRP RX-OVR    TX-OK TX-ERR TX-DRP TX-OVR Flg
+eth2       1500   0    14763      0      0      0    36241      0      0 0 BMRU
+
+  Stefan
+
+diff --git a/drivers/net/igb/igb_main.c b/drivers/net/igb/igb_main.c
+index ec87c95..c6bdb38 100644
+--- a/drivers/net/igb/igb_main.c
++++ b/drivers/net/igb/igb_main.c
+@@ -5089,6 +5089,9 @@ static bool igb_clean_tx_irq(struct igb_q_vector *q_vector)
+ 	tx_ring->total_packets += total_packets;
+ 	tx_ring->tx_stats.bytes += total_bytes;
+ 	tx_ring->tx_stats.packets += total_packets;
++	/* RHEL5 only supports 1 tx queue, so update net_stats.tx_bytes directly */
++	adapter->net_stats.tx_bytes += total_bytes;
++	adapter->net_stats.tx_packets += total_packets;
+ 	return (count < tx_ring->count);
+ }
+ 

@@ -1,0 +1,67 @@
+From: dwysocha@redhat.com <dwysocha@redhat.com>
+Date: Tue, 18 Dec 2007 23:47:56 -0500
+Subject: [md] dm: export name and uuid
+Message-id: 20071219044940.751842141@redhat.com
+O-Subject: [RHEL5.2 PATCH 2/5] bz#184778: dm - export name and uuid
+Bugzilla: 184778
+
+This patch adds a function to obtain a copy of a mapped device's name and uuid.
+
+Signed-off-by: Mike Anderson <andmike@linux.vnet.ibm.com>
+Signed-off-by: Alasdair G Kergon <agk@redhat.com>
+Acked-by: Dave Wysochanski <dwysocha@redhat.com>
+
+Acked-by: Alasdair G Kergon <agk@redhat.com>
+
+diff --git a/drivers/md/dm-ioctl.c b/drivers/md/dm-ioctl.c
+index c72a81c..e20d907 100644
+--- a/drivers/md/dm-ioctl.c
++++ b/drivers/md/dm-ioctl.c
+@@ -1522,3 +1522,35 @@ void dm_interface_exit(void)
+ 
+ 	dm_hash_exit();
+ }
++
++/**
++ * dm_copy_name_and_uuid - Copy mapped device name & uuid into supplied buffers
++ * @md: Pointer to mapped_device
++ * @name: Buffer (size DM_NAME_LEN) for name
++ * @uuid: Buffer (size DM_UUID_LEN) for uuid or empty string if uuid not defined
++ */
++int dm_copy_name_and_uuid(struct mapped_device *md, char *name, char *uuid)
++{
++	int r = 0;
++	struct hash_cell *hc;
++
++	if (!md)
++		return -ENXIO;
++
++	dm_get(md);
++	down_read(&_hash_lock);
++	hc = dm_get_mdptr(md);
++	if (!hc || hc->md != md) {
++		r = -ENXIO;
++		goto out;
++	}
++
++	strcpy(name, hc->name);
++	strcpy(uuid, hc->uuid ? : "");
++
++out:
++	up_read(&_hash_lock);
++	dm_put(md);
++
++	return r;
++}
+diff --git a/include/linux/device-mapper.h b/include/linux/device-mapper.h
+index 06a5f1c..aa06a2f 100644
+--- a/include/linux/device-mapper.h
++++ b/include/linux/device-mapper.h
+@@ -182,6 +182,7 @@ int dm_wait_event(struct mapped_device *md, int event_nr);
+  * Info functions.
+  */
+ const char *dm_device_name(struct mapped_device *md);
++int dm_copy_name_and_uuid(struct mapped_device *md, char *name, char *uuid);
+ struct gendisk *dm_disk(struct mapped_device *md);
+ int dm_suspended(struct mapped_device *md);
+ int dm_noflush_suspending(struct dm_target *ti);

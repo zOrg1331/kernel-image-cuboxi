@@ -1,0 +1,41 @@
+From: Brad Peters <bpeters@redhat.com>
+Date: Thu, 20 Mar 2008 18:11:05 -0400
+Subject: [ppc64] hardware watchpoints: add DABRX init
+Message-id: 47E2E0F9.4050609@redhat.com
+O-Subject: Re: [RHEL 5.2 Patch 2/2] Fix Hardware Watchpoints - Add DABRX initialization
+Bugzilla: 438259
+
+Description:
+Adds initialization call for DABRX register
+
+Patch:
+Tested against 2.6.18-86.el5 <bpeters@redhat.com>
+----------
+
+Acked-by: Rik van Riel <riel@redhat.com>
+
+diff --git a/arch/powerpc/platforms/cell/setup.c b/arch/powerpc/platforms/cell/setup.c
+index 2693d17..3f3c660 100644
+--- a/arch/powerpc/platforms/cell/setup.c
++++ b/arch/powerpc/platforms/cell/setup.c
+@@ -203,6 +203,11 @@ static void __init cell_init_irq(void)
+ 	mpic_init_IRQ();
+ }
+ 
++static void __init cell_set_dabrx(void)
++{
++	mtspr(SPRN_DABRX, DABRX_KERNEL | DABRX_USER);
++}
++
+ static void __init cell_setup_arch(void)
+ {
+ #ifdef CONFIG_SPU_BASE
+@@ -212,6 +217,8 @@ static void __init cell_setup_arch(void)
+ 
+ 	cbe_regs_init();
+ 
++	cell_set_dabrx();
++
+ #ifdef CONFIG_CBE_RAS
+ 	cbe_ras_init();
+ #endif

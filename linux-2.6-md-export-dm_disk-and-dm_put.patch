@@ -1,0 +1,34 @@
+From: heinzm@redhat.com <heinzm@redhat.com>
+Date: Wed, 27 Aug 2008 14:16:43 +0200
+Subject: [md] export dm_disk and dm_put
+Message-id: 20080827121638.043407286@redhat.com
+O-Subject: [PATCH RHEL5.3 437180 07/11] dm.c.patch
+Bugzilla: 437180
+
+This patch exports 2 symbols (dm_disk and dm_put) being used by dm-raid45.c
+to allow for setting the RAID set component devices read ahead.
+
+Heinz
+
+Signed-off-by: Heinz Mauelshagen <heinzm@redhat.com>
+
+diff --git a/drivers/md/dm.c b/drivers/md/dm.c
+index 47b25b9..46bb24e 100644
+--- a/drivers/md/dm.c
++++ b/drivers/md/dm.c
+@@ -1285,6 +1285,7 @@ void dm_put(struct mapped_device *md)
+ 		free_dev(md);
+ 	}
+ }
++EXPORT_SYMBOL_GPL(dm_put);
+ 
+ /*
+  * Process the deferred bios
+@@ -1587,6 +1588,7 @@ struct gendisk *dm_disk(struct mapped_device *md)
+ {
+ 	return md->disk;
+ }
++EXPORT_SYMBOL_GPL(dm_disk);
+ 
+ int dm_suspended(struct mapped_device *md)
+ {

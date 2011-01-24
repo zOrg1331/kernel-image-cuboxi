@@ -1,5 +1,5 @@
 /*
- * sound/oss/trix.c
+ * sound/trix.c
  *
  * Low level driver for the MediaTrix AudioTrix Pro
  * (MT-0002-PC Control Chip)

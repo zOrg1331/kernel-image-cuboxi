@@ -1,0 +1,110 @@
+From: David Howells <dhowells@redhat.com>
+Subject: [RHEL5 PATCH] CacheFiles: Improve/Fix reference counting
+Date: Mon, 11 Dec 2006 14:37:22 +0000
+Bugzilla: 212844
+Message-Id: <18090.1165847842@redhat.com>
+Changelog: CacheFiles: Improve/Fix reference counting
+
+
+
+The attached patch improves and fixes reference counting in CacheFiles [BZ
+212844].
+
+This is done by two things:
+
+ (1) It keeps track as to whether a cache object is active, and will BUG if we
+     try to deactivate an object twice.
+
+ (2) Fixes dentry refcounting in part of the CacheFiles error handling.
+
+This *may* fix the kernel panic in BZ 212844, or it may help pin it down
+further.  The problem is that the bug report is incomplete, so I don't know
+the full circumstances that lead to the error.  I did, however, find a missing
+dput() in one of the error paths that *may* be the cause of the problem, but I
+can't prove it.
+
+I've tested this patch, as have Steve Dickson and Jay Turner.  Though the main
+bug has not recurred, I can't be sure that it's yet fixed.
+
+The patch also fixes debug command argument parsing as a supplementary fix.
+That bug can be shown to be fixed with relative ease as the debug command can
+be made to turn on debugging once it is fixed, and then it logs the mask it
+thinks it has extracted.
+
+David
+
+--- linux-2.6.18.i686/fs/cachefiles/cf-interface.c.orig	2006-11-06 15:54:22.533981000 -0500
++++ linux-2.6.18.i686/fs/cachefiles/cf-interface.c	2006-11-09 14:42:01.027990000 -0500
+@@ -235,10 +235,15 @@ static void cachefiles_put_object(struct
+ 		object->backer = NULL;
+ 	}
+ 
+-	/* note that an object is now inactive */
+-	write_lock(&cache->active_lock);
+-	rb_erase(&object->active_node, &cache->active_nodes);
+-	write_unlock(&cache->active_lock);
++	/* note that the object is now inactive */
++	if (test_bit(CACHEFILES_OBJECT_ACTIVE, &object->flags)) {
++		write_lock(&cache->active_lock);
++		if (!test_and_clear_bit(CACHEFILES_OBJECT_ACTIVE,
++					&object->flags))
++			BUG();
++		rb_erase(&object->active_node, &cache->active_nodes);
++		write_unlock(&cache->active_lock);
++	}
+ 
+ 	dput(object->dentry);
+ 	object->dentry = NULL;
+--- linux-2.6.18.i686/fs/cachefiles/cf-namei.c.orig	2006-11-06 15:54:22.541973000 -0500
++++ linux-2.6.18.i686/fs/cachefiles/cf-namei.c	2006-11-09 14:42:54.352204000 -0500
+@@ -31,8 +31,13 @@ static void cachefiles_mark_object_activ
+ 	struct rb_node **_p, *_parent = NULL;
+ 	struct dentry *dentry;
+ 
++	_enter(",%p", object);
++
+ 	write_lock(&cache->active_lock);
+ 
++	if (test_and_set_bit(CACHEFILES_OBJECT_ACTIVE, &object->flags))
++		BUG();
++
+ 	dentry = object->dentry;
+ 	_p = &cache->active_nodes.rb_node;
+ 	while (*_p) {
+@@ -669,6 +674,7 @@ check_error:
+ 
+ mkdir_error:
+ 	mutex_unlock(&dir->d_inode->i_mutex);
++	dput(subdir);
+ 	kerror("mkdir %s failed with error %d", dirname, ret);
+ 	goto error_out;
+ 
+--- linux-2.6.18.i686/fs/cachefiles/internal.h.orig	2006-11-06 15:54:22.544970000 -0500
++++ linux-2.6.18.i686/fs/cachefiles/internal.h	2006-11-08 11:17:27.341465000 -0500
+@@ -53,6 +53,8 @@ struct cachefiles_object {
+ 	struct dentry			*backer;	/* backing file */
+ 	loff_t				i_size;		/* object size */
+ 	atomic_t			usage;		/* basic object usage count */
++	unsigned long			flags;
++#define CACHEFILES_OBJECT_ACTIVE	0		/* T if marked active */
+ 	atomic_t			fscache_usage;	/* FSDEF object usage count */
+ 	uint8_t				type;		/* object type */
+ 	uint8_t				new;		/* T if object new */
+--- linux-2.6.18.i686/fs/cachefiles/cf-proc.c.orig	2006-11-06 15:54:22.536980000 -0500
++++ linux-2.6.18.i686/fs/cachefiles/cf-proc.c	2006-11-09 09:36:18.515069000 -0500
+@@ -574,12 +574,11 @@ static int cachefiles_proc_debug(struct 
+ 	_enter(",%s", args);
+ 
+ 	mask = simple_strtoul(args, &args, 0);
+-
+-	if (!args || !isspace(*args))
++	if (!args || args[0] != '\0')
+ 		goto inval;
+ 
+ 	cachefiles_debug = mask;
+-	_leave(" = 0");
++	_leave(" = %ld", mask);
+ 	return 0;
+ 
+ inval:
+

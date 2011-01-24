@@ -25,13 +25,13 @@
 #include <linux/ioport.h>
 #include <linux/slab.h>
 #include <linux/delay.h>
-#include <linux/io.h>
 
+#include <asm/io.h>
 #include <asm/irq.h>
 #include <asm/pgtable.h>
 #include <asm/page.h>
 #include <asm/system.h>
-#include <mach/hardware.h>
+#include <asm/hardware.h>
 #include <asm/mach-types.h>
 
 #include <asm/mach/pci.h>
@@ -41,7 +41,7 @@
 #include <asm/mach/flash.h>
 #include <asm/mach/arch.h>
 
-#include <mach/gpio.h>
+#include <asm/arch/gpio.h>
 
 
 /*************************************************************************
@@ -106,7 +106,7 @@ static void ixdp2x00_irq_unmask(unsigned int irq)
 		ixp2000_release_slowport(&old_cfg);
 }
 
-static void ixdp2x00_irq_handler(unsigned int irq, struct irq_desc *desc)
+static void ixdp2x00_irq_handler(unsigned int irq, struct irqdesc *desc, struct pt_regs *regs)
 {
         volatile u32 ex_interrupt = 0;
 	static struct slowport_cfg old_cfg;
@@ -129,21 +129,23 @@ static void ixdp2x00_irq_handler(unsigned int irq, struct irq_desc *desc)
 
 	for(i = 0; i < board_irq_count; i++) {
 		if(ex_interrupt & (1 << i))  {
+			struct irqdesc *cpld_desc;
 			int cpld_irq = IXP2000_BOARD_IRQ(0) + i;
-			generic_handle_irq(cpld_irq);
+			cpld_desc = irq_desc + cpld_irq;
+			desc_handle_irq(cpld_irq, cpld_desc, regs);
 		}
 	}
 
 	desc->chip->unmask(irq);
 }
 
-static struct irq_chip ixdp2x00_cpld_irq_chip = {
+static struct irqchip ixdp2x00_cpld_irq_chip = {
 	.ack	= ixdp2x00_irq_mask,
 	.mask	= ixdp2x00_irq_mask,
 	.unmask	= ixdp2x00_irq_unmask
 };
 
-void __init ixdp2x00_init_irq(volatile unsigned long *stat_reg, volatile unsigned long *mask_reg, unsigned long nr_of_irqs)
+void ixdp2x00_init_irq(volatile unsigned long *stat_reg, volatile unsigned long *mask_reg, unsigned long nr_irqs)
 {
 	unsigned int irq;
 
@@ -154,13 +156,13 @@ void __init ixdp2x00_init_irq(volatile unsigned long *stat_reg, volatile unsigne
 
 	board_irq_stat = stat_reg;
 	board_irq_mask = mask_reg;
-	board_irq_count = nr_of_irqs;
+	board_irq_count = nr_irqs;
 
 	*board_irq_mask = 0xffffffff;
 
 	for(irq = IXP2000_BOARD_IRQ(0); irq < IXP2000_BOARD_IRQ(board_irq_count); irq++) {
 		set_irq_chip(irq, &ixdp2x00_cpld_irq_chip);
-		set_irq_handler(irq, handle_level_irq);
+		set_irq_handler(irq, do_level_IRQ);
 		set_irq_flags(irq, IRQF_VALID);
 	}
 
@@ -193,7 +195,7 @@ void __init ixdp2x00_map_io(void)
  * instances  of the kernel. So far so good. Peers on the PCI bus running 
  * Linux is a common design in telecom systems. The problem is that instead 
  * of all the devices being controlled by a single host, different
- * devices are controlled by different NPUs on the same bus, leading to
+ * devices are controlles by different NPUs on the same bus, leading to
  * multiple hosts on the bus. The exact bus layout looks like:
  *
  *                   Bus 0
@@ -209,7 +211,7 @@ void __init ixdp2x00_map_io(void)
  *                  |      |         |         |      |
  *             ... Dev    PMC       Media     Eth0   Eth1 ...
  *
- * The master controls all but Eth1, which is controlled by the
+ * The master controlls all but Eth1, which is controlled by the
  * slave. What this means is that the both the master and the slave
  * have to scan the bus, but only one of them can enumerate the bus.
  * In addition, after the bus is scanned, each kernel must remove
@@ -239,14 +241,11 @@ void ixdp2x00_slave_pci_postinit(void)
 	/*
 	 * Remove PMC device is there is one
 	 */
-	if((dev = pci_get_bus_and_slot(1, IXDP2X00_PMC_DEVFN))) {
+	if((dev = pci_find_slot(1, IXDP2X00_PMC_DEVFN)))
 		pci_remove_bus_device(dev);
-		pci_dev_put(dev);
-	}
 
-	dev = pci_get_bus_and_slot(0, IXDP2X00_21555_DEVFN);
+	dev = pci_find_slot(0, IXDP2X00_21555_DEVFN);
 	pci_remove_bus_device(dev);
-	pci_dev_put(dev);
 }
 
 /**************************************************************************

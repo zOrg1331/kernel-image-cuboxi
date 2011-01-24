@@ -1,0 +1,64 @@
+From: Andy Gospodarek <gospo@redhat.com>
+Date: Wed, 27 Jan 2010 17:58:31 -0500
+Subject: [net] bonding: fix alb mode locking regression
+Message-id: <20100127175830.GA28333@gospo.rdu.redhat.com>
+Patchwork-id: 22954
+O-Subject: [RHEL5.5 PATCH] bonding: fix alb mode locking regression
+Bugzilla: 533496
+RH-Acked-by: John Linville <linville@redhat.com>
+RH-Acked-by: David S. Miller <davem@redhat.com>
+RH-Acked-by: Jiri Pirko <jpirko@redhat.com>
+
+A report that bonding mode 5 and 6 were not working well with Xen
+revealed that we were running some older code that contained an upstream
+regression.  This is a backport of the upstream commit:
+
+    commit 815bcc2719c12b6f5b511706e2d19728e07f0b02
+    Author: Jay Vosburgh <fubar@us.ibm.com>
+    Date:   Mon May 4 09:03:37 2009 +0000
+
+        bonding: fix alb mode locking regression
+
+        Fix locking issue in alb MAC address management; removed
+        incorrect locking and replaced with correct locking.  This bug was
+        introduced in commit 059fe7a578fba5bbb0fdc0365bfcf6218fa25eb0
+        ("bonding: Convert locks to _bh, rework alb locking for new locking")
+
+This has been tested in the past by the customer and by me.
+
+This will resolve RHBZ 533496.
+
+
+diff --git a/drivers/net/bonding/bond_alb.c b/drivers/net/bonding/bond_alb.c
+index da87852..a8f106d 100644
+--- a/drivers/net/bonding/bond_alb.c
++++ b/drivers/net/bonding/bond_alb.c
+@@ -1737,9 +1737,6 @@ int bond_alb_set_mac_address(struct net_device *bond_dev, void *addr)
+ 		}
+ 	}
+ 
+-	write_unlock_bh(&bond->curr_slave_lock);
+-	read_unlock(&bond->lock);
+-
+ 	if (swap_slave) {
+ 		alb_swap_mac_addr(bond, swap_slave, bond->curr_active_slave);
+ 		alb_fasten_mac_swap(bond, swap_slave, bond->curr_active_slave);
+@@ -1747,16 +1744,15 @@ int bond_alb_set_mac_address(struct net_device *bond_dev, void *addr)
+ 		alb_set_slave_mac_addr(bond->curr_active_slave, bond_dev->dev_addr,
+ 				       bond->alb_info.rlb_enabled);
+ 
++		read_lock(&bond->lock);
+ 		alb_send_learning_packets(bond->curr_active_slave, bond_dev->dev_addr);
+ 		if (bond->alb_info.rlb_enabled) {
+ 			/* inform clients mac address has changed */
+ 			rlb_req_update_slave_clients(bond, bond->curr_active_slave);
+ 		}
++		read_unlock(&bond->lock);
+ 	}
+ 
+-	read_lock(&bond->lock);
+-	write_lock_bh(&bond->curr_slave_lock);
+-
+ 	return 0;
+ }
+ 

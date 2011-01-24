@@ -61,7 +61,6 @@ remove_list(struct string_list **pb, struct string_list **pe)
 %token DOUBLE_KEYW
 %token ENUM_KEYW
 %token EXTERN_KEYW
-%token EXTENSION_KEYW
 %token FLOAT_KEYW
 %token INLINE_KEYW
 %token INT_KEYW
@@ -111,9 +110,7 @@ declaration:
 	;
 
 declaration1:
-	EXTENSION_KEYW TYPEDEF_KEYW { is_typedef = 1; } simple_declaration
-		{ $$ = $4; }
-	| TYPEDEF_KEYW { is_typedef = 1; } simple_declaration
+	TYPEDEF_KEYW { is_typedef = 1; } simple_declaration
 		{ $$ = $3; }
 	| simple_declaration
 	| function_definition
@@ -446,7 +443,7 @@ member_bitfield_declarator:
 
 attribute_opt:
 	/* empty */					{ $$ = NULL; }
-	| attribute_opt ATTRIBUTE_PHRASE
+	| ATTRIBUTE_PHRASE
 	;
 
 asm_definition:

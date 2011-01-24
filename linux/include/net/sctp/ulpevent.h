@@ -1,4 +1,4 @@
-/* SCTP kernel implementation
+/* SCTP kernel reference Implementation
  * (C) Copyright IBM Corp. 2001, 2004
  * Copyright (c) 1999-2000 Cisco, Inc.
  * Copyright (c) 1999-2001 Motorola, Inc.
@@ -10,15 +10,15 @@
  * sctp_ulpevent type is used to carry information from the state machine
  * upwards to the ULP.
  *
- * This file is part of the SCTP kernel implementation
+ * This file is part of the SCTP kernel reference Implementation
  *
- * This SCTP implementation is free software;
+ * The SCTP reference implementation is free software;
  * you can redistribute it and/or modify it under the terms of
  * the GNU General Public License as published by
  * the Free Software Foundation; either version 2, or (at your option)
  * any later version.
  *
- * This SCTP implementation is distributed in the hope that it
+ * The SCTP reference implementation is distributed in the hope that it
  * will be useful, but WITHOUT ANY WARRANTY; without even the implied
  *                 ************************
  * warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
@@ -63,11 +63,10 @@ struct sctp_ulpevent {
 	__u32 cumtsn;
 	int msg_flags;
 	int iif;
-	unsigned int rmem_len;
 };
 
 /* Retrieve the skb this event sits inside of. */
-static inline struct sk_buff *sctp_event2skb(const struct sctp_ulpevent *ev)
+static inline struct sk_buff *sctp_event2skb(struct sctp_ulpevent *ev)
 {
 	return container_of((void *)ev, struct sk_buff, cb);
 }
@@ -89,7 +88,6 @@ struct sctp_ulpevent *sctp_ulpevent_make_assoc_change(
 	__u16 error,
 	__u16 outbound,
 	__u16 inbound,
-	struct sctp_chunk *chunk,
 	gfp_t gfp);
 
 struct sctp_ulpevent *sctp_ulpevent_make_peer_addr_change(
@@ -121,16 +119,12 @@ struct sctp_ulpevent *sctp_ulpevent_make_pdapi(
 	const struct sctp_association *asoc,
 	__u32 indication, gfp_t gfp);
 
-struct sctp_ulpevent *sctp_ulpevent_make_adaptation_indication(
+struct sctp_ulpevent *sctp_ulpevent_make_adaption_indication(
 	const struct sctp_association *asoc, gfp_t gfp);
 
 struct sctp_ulpevent *sctp_ulpevent_make_rcvmsg(struct sctp_association *asoc,
 	struct sctp_chunk *chunk,
 	gfp_t gfp);
-
-struct sctp_ulpevent *sctp_ulpevent_make_authkey(
-	const struct sctp_association *asoc, __u16 key_id,
-	__u32 indication, gfp_t gfp);
 
 void sctp_ulpevent_read_sndrcvinfo(const struct sctp_ulpevent *event,
 	struct msghdr *);

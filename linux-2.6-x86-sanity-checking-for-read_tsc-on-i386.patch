@@ -1,0 +1,104 @@
+From: Brian Maly <bmaly@redhat.com>
+Date: Mon, 21 Apr 2008 18:46:38 -0400
+Subject: [x86] sanity checking for read_tsc on i386
+Message-id: 480D194E.40004@redhat.com
+O-Subject: [RHEL 5.2 patch] sanity checking for read_tsc() on i386
+Bugzilla: 443435
+
+resolves BZ 303158
+
+This patch adds a simple sanity check to read_tsc() to ensure we never
+return a reverse value (i.e. TSC never runs backward). If the read value
+from the TSC is less than the last value read, then we just return the
+same value as last time. Currently its possible for the TSC to go
+backward, causing gtod to go backward as well. This affects systems with
+both synchronized and unsynchronized TSC's.  The patch is low-risk (but
+not no-risk) and is a backport from upstream. Worth mentioning is that
+the patch has been submitted but not yet accepted upstream. Also, this
+should also be fixed in x86_64 as well since the problem exists there
+too, but Im posting only the i386 patch for 5.2 since we failed in i386
+vendor testing (whereas we did not on x86_64). The x86_64 fix might be a
+better candidate for 5.3 instead in that  it minimizes risk, but Im open
+to including the x86_64 fix in 5.2 if anyone feels strongly about it.
+
+Upstream thread:
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=47001d603375f857a7fab0e9c095d964a1ea0039
+
+Summation of problem (from upstream patch posting):
+CPU 0 updates the clock source variables under xtime/vyscall lock and
+CPU1, where the TSC is slighty behind CPU0, is reading the time right
+after the seqlock was unlocked.
+
+The clocksource reference data was updated with the TSC from CPU0 and
+the value which is read from TSC on CPU1 is less than the reference
+data. This results in a huge delta value due to the unsigned
+subtraction of the TSC value and the reference value. This algorithm
+can not be changed due to the support of wrapping clock sources like
+pm timer.
+
+The huge delta is converted to nanoseconds and added to xtime, which
+is then observable by the caller. The next gettimeofday call on CPU1
+will show the correct time again as now the TSC has advanced above the
+reference value.
+
+To prevent this TSC specific wreckage we need to compare the TSC value
+against the reference value and return the latter when it is larger
+than the actual TSC value.
+
+Brian
+
+Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+diff --git a/arch/i386/kernel/tsc.c b/arch/i386/kernel/tsc.c
+index 650b746..16dbae7 100644
+--- a/arch/i386/kernel/tsc.c
++++ b/arch/i386/kernel/tsc.c
+@@ -325,14 +325,27 @@ core_initcall(cpufreq_tsc);
+ 
+ static unsigned long current_tsc_khz = 0;
+ static int tsc_update_callback(void);
++static struct clocksource clocksource_tsc;
+ 
++/*
++ * We compare the TSC to the cycle_last value in the clocksource
++ * structure to avoid a nasty time-warp issue. This can be observed in
++ * a very small window right after one CPU updated cycle_last under
++ * xtime lock and the other CPU reads a TSC value which is smaller
++ * than the cycle_last reference value due to a TSC which is slighty
++ * behind. This delta is nowhere else observable, but in that case it
++ * results in a forward time jump in the range of hours due to the
++ * unsigned delta calculation of the time keeping core code, which is
++ * necessary to support wrapping clocksources like pm timer.
++ */
+ static cycle_t read_tsc(void)
+ {
+ 	cycle_t ret;
+ 
+ 	rdtscll(ret);
+ 
+-	return ret;
++	return ret >= clocksource_tsc.cycle_last ?
++		ret : clocksource_tsc.cycle_last;
+ }
+ 
+ static struct clocksource clocksource_tsc = {
+diff --git a/kernel/timer.c b/kernel/timer.c
+index 35a40dc..567eea3 100644
+--- a/kernel/timer.c
++++ b/kernel/timer.c
+@@ -1050,6 +1050,7 @@ static int change_clocksource(void)
+ 	u64 nsec;
+ 	new = clocksource_get_next();
+ 	if (clock != new) {
++		new->cycle_last = 0;
+ 		now = clocksource_read(new);
+ 		nsec =  __get_nsec_offset();
+ 		timespec_add_ns(&xtime, nsec);
+@@ -1117,6 +1118,7 @@ static int timekeeping_resume(struct sys_device *dev)
+ 
+ 	write_seqlock_irqsave(&xtime_lock, flags);
+ 	/* restart the last cycle value */
++	clock->cycle_last = 0;
+ 	clock->cycle_last = clocksource_read(clock);
+ 	clock->error = 0;
+ 	timekeeping_suspended = 0;

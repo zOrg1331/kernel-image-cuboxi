@@ -1,0 +1,45 @@
+From: Tomas Henzl <thenzl@redhat.com>
+Date: Thu, 23 Sep 2010 13:38:36 -0400
+Subject: [message] fusion: remove unnecessary printk flooding logs
+Message-id: <4C9B585C.9090907@redhat.com>
+Patchwork-id: 28359
+O-Subject: [RHEL5.6 PATCH] mptfusion : Remove printk which floods unnecessary
+	messages to var/log/message
+Bugzilla: 629081
+RH-Acked-by: David Milburn <dmilburn@redhat.com>
+RH-Acked-by: Jarod Wilson <jarod@redhat.com>
+RH-Acked-by: Dean Nelson <dnelson@redhat.com>
+
+This is for bz#629081
+
+This is a backport of
+commit e39e145dfb78d4e20d89139d2576306b4279c126
+Author: Kashyap, Desai <kashyap.desai@lsi.com>
+Date:   Wed Oct 7 11:26:54 2009 +0530
+[SCSI] mptctl : Remove printk which floods unnecessary messages to var/log/message
+
+It removes the debug message completely.
+
+Tomas
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/message/fusion/mptctl.c b/drivers/message/fusion/mptctl.c
+index 61f1fed..f06b291 100644
+--- a/drivers/message/fusion/mptctl.c
++++ b/drivers/message/fusion/mptctl.c
+@@ -632,13 +632,8 @@ __mptctl_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
+ 	 */
+ 	iocnumX = khdr.iocnum & 0xFF;
+ 	if (((iocnum = mpt_verify_adapter(iocnumX, &iocp)) < 0) ||
+-	    (iocp == NULL)) {
+-#ifdef	DMPT_DEBUG_IOCTL
+-		printk(KERN_DEBUG MYNAM "%s::mptctl_ioctl() @%d - ioc%d not found!\n",
+-				__FILE__, __LINE__, iocnumX);
+-#endif
++	    (iocp == NULL))
+ 		return -ENODEV;
+-	}
+ 
+ 	if (!iocp->active) {
+ 		printk(KERN_DEBUG MYNAM "%s::mptctl_ioctl() @%d - Controller disabled.\n",

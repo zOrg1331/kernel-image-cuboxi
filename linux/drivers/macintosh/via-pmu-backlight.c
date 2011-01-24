@@ -15,14 +15,14 @@
 
 #define MAX_PMU_LEVEL 0xFF
 
-static struct backlight_ops pmu_backlight_data;
-static DEFINE_SPINLOCK(pmu_backlight_lock);
-static int sleeping, uses_pmu_bl;
+static struct backlight_properties pmu_backlight_data;
+static spinlock_t pmu_backlight_lock;
+static int sleeping;
 static u8 bl_curve[FB_BACKLIGHT_LEVELS];
 
 static void pmu_backlight_init_curve(u8 off, u8 min, u8 max)
 {
-	int i, flat, count, range = (max - min);
+	unsigned int i, flat, count, range = (max - min);
 
 	bl_curve[0] = off;
 
@@ -68,14 +68,20 @@ static int pmu_backlight_get_level_brightness(int level)
 	return pmulevel;
 }
 
-static int __pmu_backlight_update_status(struct backlight_device *bd)
+static int pmu_backlight_update_status(struct backlight_device *bd)
 {
 	struct adb_request req;
-	int level = bd->props.brightness;
+	unsigned long flags;
+	int level = bd->props->brightness;
 
+	spin_lock_irqsave(&pmu_backlight_lock, flags);
 
-	if (bd->props.power != FB_BLANK_UNBLANK ||
-	    bd->props.fb_blank != FB_BLANK_UNBLANK)
+	/* Don't update brightness when sleeping */
+	if (sleeping)
+		goto out;
+
+	if (bd->props->power != FB_BLANK_UNBLANK ||
+	    bd->props->fb_blank != FB_BLANK_UNBLANK)
 		level = 0;
 
 	if (level > 0) {
@@ -93,32 +99,22 @@ static int __pmu_backlight_update_status(struct backlight_device *bd)
 		pmu_wait_complete(&req);
 	}
 
+out:
+	spin_unlock_irqrestore(&pmu_backlight_lock, flags);
+
 	return 0;
 }
 
-static int pmu_backlight_update_status(struct backlight_device *bd)
-{
-	unsigned long flags;
-	int rc = 0;
-
-	spin_lock_irqsave(&pmu_backlight_lock, flags);
-	/* Don't update brightness when sleeping */
-	if (!sleeping)
-		rc = __pmu_backlight_update_status(bd);
-	spin_unlock_irqrestore(&pmu_backlight_lock, flags);
-	return rc;
-}
-
-
 static int pmu_backlight_get_brightness(struct backlight_device *bd)
 {
-	return bd->props.brightness;
+	return bd->props->brightness;
 }
 
-static struct backlight_ops pmu_backlight_data = {
+static struct backlight_properties pmu_backlight_data = {
+	.owner		= THIS_MODULE,
 	.get_brightness	= pmu_backlight_get_brightness,
 	.update_status	= pmu_backlight_update_status,
-
+	.max_brightness	= (FB_BACKLIGHT_LEVELS - 1),
 };
 
 #ifdef CONFIG_PM
@@ -128,16 +124,6 @@ void pmu_backlight_set_sleep(int sleep)
 
 	spin_lock_irqsave(&pmu_backlight_lock, flags);
 	sleeping = sleep;
-	if (pmac_backlight && uses_pmu_bl) {
-		if (sleep) {
-			struct adb_request req;
-
-			pmu_request(&req, NULL, 2, PMU_POWER_CTRL,
-				    PMU_POW_BACKLIGHT | PMU_POW_OFF);
-			pmu_wait_complete(&req);
-		} else
-			__pmu_backlight_update_status(pmac_backlight);
-	}
 	spin_unlock_irqrestore(&pmu_backlight_lock, flags);
 }
 #endif /* CONFIG_PM */
@@ -161,16 +147,14 @@ void __init pmu_backlight_init()
 
 	snprintf(name, sizeof(name), "pmubl");
 
-	bd = backlight_device_register(name, NULL, NULL, &pmu_backlight_data);
+	bd = backlight_device_register(name, NULL, &pmu_backlight_data);
 	if (IS_ERR(bd)) {
-		printk(KERN_ERR "PMU Backlight registration failed\n");
-		return;
+		printk("pmubl: Backlight registration failed\n");
+		goto error;
 	}
-	uses_pmu_bl = 1;
-	bd->props.max_brightness = FB_BACKLIGHT_LEVELS - 1;
 	pmu_backlight_init_curve(0x7F, 0x46, 0x0E);
 
-	level = bd->props.max_brightness;
+	level = pmu_backlight_data.max_brightness;
 
 	if (autosave) {
 		/* read autosaved value if available */
@@ -180,12 +164,24 @@ void __init pmu_backlight_init()
 
 		level = pmu_backlight_curve_lookup(
 				(req.reply[0] >> 4) *
-				bd->props.max_brightness / 15);
+				pmu_backlight_data.max_brightness / 15);
 	}
 
-	bd->props.brightness = level;
-	bd->props.power = FB_BLANK_UNBLANK;
-	backlight_update_status(bd);
+	down(&bd->sem);
+	bd->props->brightness = level;
+	bd->props->power = FB_BLANK_UNBLANK;
+	bd->props->update_status(bd);
+	up(&bd->sem);
 
-	printk(KERN_INFO "PMU Backlight initialized (%s)\n", name);
+	mutex_lock(&pmac_backlight_mutex);
+	if (!pmac_backlight)
+		pmac_backlight = bd;
+	mutex_unlock(&pmac_backlight_mutex);
+
+	printk("pmubl: Backlight initialized (%s)\n", name);
+
+	return;
+
+error:
+	return;
 }

@@ -1,5 +1,5 @@
 /*
- *  Copyright (c) by Jaroslav Kysela <perex@perex.cz>
+ *  Copyright (c) by Jaroslav Kysela <perex@suse.cz>
  *  Routines for control of 16-bit SoundBlaster cards and clones
  *  Note: This is very ugly hardware which uses one 8-bit DMA channel and
  *        second 16-bit DMA channel. Unfortunately 8-bit DMA channel can't
@@ -33,6 +33,7 @@
  *
  */
 
+#include <sound/driver.h>
 #include <asm/io.h>
 #include <asm/dma.h>
 #include <linux/init.h>
@@ -44,7 +45,7 @@
 #include <sound/control.h>
 #include <sound/info.h>
 
-MODULE_AUTHOR("Jaroslav Kysela <perex@perex.cz>");
+MODULE_AUTHOR("Jaroslav Kysela <perex@suse.cz>");
 MODULE_DESCRIPTION("Routines for control of 16-bit SoundBlaster cards and clones");
 MODULE_LICENSE("GPL");
 
@@ -394,7 +395,7 @@ static int snd_sb16_capture_trigger(struct snd_pcm_substream *substream,
 	return result;
 }
 
-irqreturn_t snd_sb16dsp_interrupt(int irq, void *dev_id)
+irqreturn_t snd_sb16dsp_interrupt(int irq, void *dev_id, struct pt_regs *regs)
 {
 	struct snd_sb *chip = dev_id;
 	unsigned char status;
@@ -404,7 +405,7 @@ irqreturn_t snd_sb16dsp_interrupt(int irq, void *dev_id)
 	status = snd_sbmixer_read(chip, SB_DSP4_IRQSTATUS);
 	spin_unlock(&chip->mixer_lock);
 	if ((status & SB_IRQTYPE_MPUIN) && chip->rmidi_callback)
-		chip->rmidi_callback(irq, chip->rmidi->private_data);
+		chip->rmidi_callback(irq, chip->rmidi->private_data, regs);
 	if (status & SB_IRQTYPE_8BIT) {
 		ok = 0;
 		if (chip->mode & SB_MODE_PLAYBACK_8) {
@@ -562,11 +563,6 @@ static int snd_sb16_playback_open(struct snd_pcm_substream *substream)
       __open_ok:
 	if (chip->hardware == SB_HW_ALS100)
 		runtime->hw.rate_max = 48000;
-	if (chip->hardware == SB_HW_CS5530) {
-		runtime->hw.buffer_bytes_max = 32 * 1024;
-		runtime->hw.periods_min = 2;
-		runtime->hw.rate_min = 44100;
-	}
 	if (chip->mode & SB_RATE_LOCK)
 		runtime->hw.rate_min = runtime->hw.rate_max = chip->locked_rate;
 	chip->playback_substream = substream;
@@ -637,11 +633,6 @@ static int snd_sb16_capture_open(struct snd_pcm_substream *substream)
       __open_ok:
 	if (chip->hardware == SB_HW_ALS100)
 		runtime->hw.rate_max = 48000;
-	if (chip->hardware == SB_HW_CS5530) {
-		runtime->hw.buffer_bytes_max = 32 * 1024;
-		runtime->hw.periods_min = 2;
-		runtime->hw.rate_min = 44100;
-	}
 	if (chip->mode & SB_RATE_LOCK)
 		runtime->hw.rate_min = runtime->hw.rate_max = chip->locked_rate;
 	chip->capture_substream = substream;
@@ -669,8 +660,7 @@ static int snd_sb16_capture_close(struct snd_pcm_substream *substream)
 static int snd_sb16_set_dma_mode(struct snd_sb *chip, int what)
 {
 	if (chip->dma8 < 0 || chip->dma16 < 0) {
-		if (snd_BUG_ON(what))
-			return -EINVAL;
+		snd_assert(what == 0, return -EINVAL);
 		return 0;
 	}
 	if (what == 0) {

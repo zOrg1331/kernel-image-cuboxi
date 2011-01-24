@@ -1,0 +1,297 @@
+From: Mikulas Patocka <mpatocka@redhat.com>
+Date: Thu, 9 Sep 2010 13:04:55 -0400
+Subject: [md] dm: fix deadlock with fsync vs. resize in lvm
+Message-id: <Pine.LNX.4.64.1009090858540.26750@hs20-bc2-1.build.redhat.com>
+Patchwork-id: 28188
+O-Subject: [PATCH RHEL5] bz624068: deadlock: fsync vs. resize in lvm
+Bugzilla: 624068
+RH-Acked-by: Jonathan E Brassow <jbrassow@redhat.com>
+
+Hi
+
+This fixes bz624068 and several additional bugs found during review.
+
+Upstream status: none. But the issue is urgent. Please review carefully.
+The patch is long, but almost all it does is chaning inode->i_size to
+i_size_read(inode), so it should be easy to review. Additional
+considerations that were reviewed are in bugzilla.
+
+Testing: compiled kernel and verified basic lvm functionality w.r.t.
+resizing. I don't have a testcase, I think Milan Broz has, so he can try
+it, or it could be tested on the original failing site.
+
+Mikulas
+
+
+diff --git a/block/ioctl.c b/block/ioctl.c
+index 9fddb99..ddefff7 100644
+--- a/block/ioctl.c
++++ b/block/ioctl.c
+@@ -185,11 +185,11 @@ static int blkdev_locked_ioctl(struct file *file, struct block_device *bdev,
+ 	case BLKRRPART:
+ 		return blkdev_reread_part(bdev);
+ 	case BLKGETSIZE:
+-		if ((bdev->bd_inode->i_size >> 9) > ~0UL)
++		if ((i_size_read(bdev->bd_inode) >> 9) > ~0UL)
+ 			return -EFBIG;
+-		return put_ulong(arg, bdev->bd_inode->i_size >> 9);
++		return put_ulong(arg, i_size_read(bdev->bd_inode) >> 9);
+ 	case BLKGETSIZE64:
+-		return put_u64(arg, bdev->bd_inode->i_size);
++		return put_u64(arg, i_size_read(bdev->bd_inode));
+ 	case BLKTRACESTART:
+ 	case BLKTRACESTOP:
+ 	case BLKTRACESETUP:
+diff --git a/block/ll_rw_blk.c b/block/ll_rw_blk.c
+index 830dc1d..1032232 100644
+--- a/block/ll_rw_blk.c
++++ b/block/ll_rw_blk.c
+@@ -3155,7 +3155,7 @@ static void handle_bad_sector(struct bio *bio)
+ 			bdevname(bio->bi_bdev, b),
+ 			bio->bi_rw,
+ 			(unsigned long long)bio->bi_sector + bio_sectors(bio),
+-			(long long)(bio->bi_bdev->bd_inode->i_size >> 9));
++			(long long)(i_size_read(bio->bi_bdev->bd_inode) >> 9));
+ 
+ 	set_bit(BIO_EOF, &bio->bi_flags);
+ }
+@@ -3194,7 +3194,7 @@ void generic_make_request(struct bio *bio)
+ 
+ 	might_sleep();
+ 	/* Test device or partition size, when known. */
+-	maxsector = bio->bi_bdev->bd_inode->i_size >> 9;
++	maxsector = i_size_read(bio->bi_bdev->bd_inode) >> 9;
+ 	if (maxsector) {
+ 		sector_t sector = bio->bi_sector;
+ 
+@@ -3260,7 +3260,7 @@ end_io:
+ 		old_sector = bio->bi_sector;
+ 		old_dev = bio->bi_bdev->bd_dev;
+ 
+-		maxsector = bio->bi_bdev->bd_inode->i_size >> 9;
++		maxsector = i_size_read(bio->bi_bdev->bd_inode) >> 9;
+ 		if (maxsector) {
+ 			sector_t sector = bio->bi_sector;
+ 
+diff --git a/drivers/md/dm-snap.h b/drivers/md/dm-snap.h
+index aec48ed..7cd064a 100644
+--- a/drivers/md/dm-snap.h
++++ b/drivers/md/dm-snap.h
+@@ -211,7 +211,7 @@ int dm_create_transient(struct exception_store *store);
+  */
+ static inline sector_t get_dev_size(struct block_device *bdev)
+ {
+-	return bdev->bd_inode->i_size >> SECTOR_SHIFT;
++	return i_size_read(bdev->bd_inode) >> SECTOR_SHIFT;
+ }
+ 
+ static inline chunk_t sector_to_chunk(struct dm_snapshot *s, sector_t sector)
+diff --git a/drivers/md/dm.c b/drivers/md/dm.c
+index 461e686..036092e 100644
+--- a/drivers/md/dm.c
++++ b/drivers/md/dm.c
+@@ -1152,9 +1152,7 @@ static void __set_size(struct mapped_device *md, sector_t size)
+ {
+ 	set_capacity(md->disk, size);
+ 
+-	mutex_lock(&md->suspended_bdev->bd_inode->i_mutex);
+ 	i_size_write(md->suspended_bdev->bd_inode, (loff_t)size << SECTOR_SHIFT);
+-	mutex_unlock(&md->suspended_bdev->bd_inode->i_mutex);
+ }
+ 
+ static int __bind(struct mapped_device *md, struct dm_table *t)
+diff --git a/drivers/md/md.c b/drivers/md/md.c
+index 05c8873..1272711 100644
+--- a/drivers/md/md.c
++++ b/drivers/md/md.c
+@@ -341,7 +341,7 @@ static struct mdk_personality *find_pers(int level, char *clevel)
+ 
+ static inline sector_t calc_dev_sboffset(struct block_device *bdev)
+ {
+-	sector_t size = bdev->bd_inode->i_size >> BLOCK_SIZE_BITS;
++	sector_t size = i_size_read(bdev->bd_inode) >> BLOCK_SIZE_BITS;
+ 	return MD_NEW_SIZE_BLOCKS(size);
+ }
+ 
+@@ -1010,7 +1010,7 @@ static int super_1_load(mdk_rdev_t *rdev, mdk_rdev_t *refdev, int minor_version)
+ 	 */
+ 	switch(minor_version) {
+ 	case 0:
+-		sb_offset = rdev->bdev->bd_inode->i_size >> 9;
++		sb_offset = i_size_read(rdev->bdev->bd_inode) >> 9;
+ 		sb_offset -= 8*2;
+ 		sb_offset &= ~(sector_t)(4*2-1);
+ 		/* convert from sectors to K */
+@@ -1093,7 +1093,7 @@ static int super_1_load(mdk_rdev_t *rdev, mdk_rdev_t *refdev, int minor_version)
+ 			ret = 0;
+ 	}
+ 	if (minor_version) 
+-		rdev->size = ((rdev->bdev->bd_inode->i_size>>9) - le64_to_cpu(sb->data_offset)) / 2;
++		rdev->size = ((i_size_read(rdev->bdev->bd_inode)>>9) - le64_to_cpu(sb->data_offset)) / 2;
+ 	else
+ 		rdev->size = rdev->sb_offset;
+ 	if (rdev->size < le64_to_cpu(sb->data_size)/2)
+@@ -2030,7 +2030,7 @@ static mdk_rdev_t *md_import_device(dev_t newdev, int super_format, int super_mi
+ 	atomic_set(&rdev->read_errors, 0);
+ 	atomic_set(&rdev->corrected_errors, 0);
+ 
+-	size = rdev->bdev->bd_inode->i_size >> BLOCK_SIZE_BITS;
++	size = i_size_read(rdev->bdev->bd_inode) >> BLOCK_SIZE_BITS;
+ 	if (!size) {
+ 		printk(KERN_WARNING 
+ 			"md: %s has zero or unknown size, marking faulty!\n",
+@@ -3841,7 +3841,7 @@ static int add_new_disk(mddev_t * mddev, mdu_disk_info_t *info)
+ 
+ 		if (!mddev->persistent) {
+ 			printk(KERN_INFO "md: nonpersistent superblock ...\n");
+-			rdev->sb_offset = rdev->bdev->bd_inode->i_size >> BLOCK_SIZE_BITS;
++			rdev->sb_offset = i_size_read(rdev->bdev->bd_inode) >> BLOCK_SIZE_BITS;
+ 		} else 
+ 			rdev->sb_offset = calc_dev_sboffset(rdev->bdev);
+ 		rdev->size = calc_dev_size(rdev, mddev->chunk_size);
+@@ -3917,7 +3917,7 @@ static int hot_add_disk(mddev_t * mddev, dev_t dev)
+ 		rdev->sb_offset = calc_dev_sboffset(rdev->bdev);
+ 	else
+ 		rdev->sb_offset =
+-			rdev->bdev->bd_inode->i_size >> BLOCK_SIZE_BITS;
++			i_size_read(rdev->bdev->bd_inode) >> BLOCK_SIZE_BITS;
+ 
+ 	size = calc_dev_size(rdev, mddev->chunk_size);
+ 	rdev->size = size;
+diff --git a/drivers/mtd/devices/block2mtd.c b/drivers/mtd/devices/block2mtd.c
+index 401c6a2..31c69bb 100644
+--- a/drivers/mtd/devices/block2mtd.c
++++ b/drivers/mtd/devices/block2mtd.c
+@@ -337,7 +337,7 @@ static struct block2mtd_dev *add_device(char *devname, int erase_size)
+ 
+ 	sprintf(dev->mtd.name, "block2mtd: %s", devname);
+ 
+-	dev->mtd.size = dev->blkdev->bd_inode->i_size & PAGE_MASK;
++	dev->mtd.size = i_size_read(dev->blkdev->bd_inode) & PAGE_MASK;
+ 	dev->mtd.erasesize = erase_size;
+ 	dev->mtd.writesize = 1;
+ 	dev->mtd.type = MTD_RAM;
+diff --git a/fs/read_write.c b/fs/read_write.c
+index c5b80d9..2692187 100644
+--- a/fs/read_write.c
++++ b/fs/read_write.c
+@@ -36,7 +36,7 @@ loff_t generic_file_llseek(struct file *file, loff_t offset, int origin)
+ 	mutex_lock(&inode->i_mutex);
+ 	switch (origin) {
+ 		case 2:
+-			offset += inode->i_size;
++			offset += i_size_read(inode);
+ 			break;
+ 		case 1:
+ 			offset += file->f_pos;
+diff --git a/include/linux/nfsd/nfsfh.h b/include/linux/nfsd/nfsfh.h
+index 1f03c0f..fe268c4 100644
+--- a/include/linux/nfsd/nfsfh.h
++++ b/include/linux/nfsd/nfsfh.h
+@@ -245,7 +245,7 @@ fill_pre_wcc(struct svc_fh *fhp)
+ 	if (!fhp->fh_pre_saved) {
+ 		fhp->fh_pre_mtime = inode->i_mtime;
+ 		fhp->fh_pre_ctime = inode->i_ctime;
+-			fhp->fh_pre_size  = inode->i_size;
++			fhp->fh_pre_size  = i_size_read(inode);
+ 			fhp->fh_pre_saved = 1;
+ 	}
+ }
+diff --git a/net/tux/input.c b/net/tux/input.c
+index 34275b1..b5de27b 100644
+--- a/net/tux/input.c
++++ b/net/tux/input.c
+@@ -163,7 +163,7 @@ int lookup_object (tux_req_t *req, const unsigned int flag)
+ 		req->status = 403;
+ 		goto abort;
+ 	}
+-	req->total_file_len = dentry->d_inode->i_size;
++	req->total_file_len = i_size_read(dentry->d_inode);
+ out:
+ 	install_req_dentry(req, dentry, mnt);
+ 	return 0;
+diff --git a/net/tux/main.c b/net/tux/main.c
+index 663ce97..a881374 100644
+--- a/net/tux/main.c
++++ b/net/tux/main.c
+@@ -970,7 +970,7 @@ fetch_missed:
+ 			return;
+ 		}
+ 	}
+-	req->total_file_len = req->dentry->d_inode->i_size;
++	req->total_file_len = i_size_read(req->dentry->d_inode);
+ 	if (!req->output_len)
+ 		req->output_len = req->total_file_len;
+ 	if (tux_fetch_file(req, !cachemiss)) {
+diff --git a/net/tux/proto_ftp.c b/net/tux/proto_ftp.c
+index 2d56416..599e1ff 100644
+--- a/net/tux/proto_ftp.c
++++ b/net/tux/proto_ftp.c
+@@ -737,7 +737,7 @@ void ftp_get_size (tux_req_t *req, int cachemiss)
+ 		}
+ 	}
+ 	req->in_file->f_pos = 0;
+-	len = sprintf(file_size, "213 %Li\r\n", req->dentry->d_inode->i_size);
++	len = sprintf(file_size, "213 %Li\r\n", i_size_read(req->dentry->d_inode));
+ 	__ftp_send_async_message(req, file_size, 200, len);
+ }
+ 
+@@ -1050,7 +1050,7 @@ static char * ftp_print_dir_line (tux_req_t *req, char *tmp, char *d_name, int d
+ 	memset(tmp, ' ', size);
+ 	tmp += size;
+ 
+-	tmp += sprintf(tmp, "%8Li", inode->i_size);
++	tmp += sprintf(tmp, "%8Li", i_size_read(inode));
+ 	*tmp++ = ' ';
+ 
+ 	tmp += time_unix2ls(inode->i_mtime.tv_sec, tmp);
+diff --git a/net/tux/proto_http.c b/net/tux/proto_http.c
+index bb126dd..31cb077 100644
+--- a/net/tux/proto_http.c
++++ b/net/tux/proto_http.c
+@@ -765,6 +765,7 @@ static int lookup_url (tux_req_t *req, const unsigned int flag)
+ 	struct vfsmount *mnt = NULL;
+ 	struct inode *inode;
+ 	const char *filename;
++	loff_t i_siz;
+ 
+ 	/*
+ 	 * Do not do any etag or last_modified header checking
+@@ -846,12 +847,13 @@ repeat_lookup:
+ 		dentry = NULL;
+ 		goto repeat_lookup;
+ 	}
+-	if (tux_max_object_size && (inode->i_size > tux_max_object_size)) {
+-		TDprintk("too big object, %Ld bytes.\n", inode->i_size);
++	i_siz = i_size_read(inode);
++	if (tux_max_object_size && (i_siz > tux_max_object_size)) {
++		TDprintk("too big object, %Ld bytes.\n", i_siz);
+ 		req->status = 403;
+ 		goto abort;
+ 	}
+-	req->total_file_len = inode->i_size;
++	req->total_file_len = i_siz;
+ 	req->mtime = inode->i_mtime.tv_sec;
+ 
+ 	{
+@@ -991,9 +993,9 @@ int handle_gzip_req (tux_req_t *req, unsigned int flags)
+ 	}
+ 
+ 	inode = dentry->d_inode;
+-	size = inode->i_size;
++	size = i_size_read(inode);
+ 	orig_inode = req->dentry->d_inode;
+-	orig_size = orig_inode->i_size;
++	orig_size = i_size_read(orig_inode);
+ 
+ 	if (!tux_permission(inode)
+ 			&& (size < orig_size)
+@@ -2152,7 +2154,7 @@ static char * http_print_dir_line (tux_req_t *req, char *tmp, char *d_name, int
+ 		COPY_STR("        - ");
+ 		goto out_size;
+ 	}
+-	size = inode->i_size >> 10;
++	size = i_size_read(inode) >> 10;
+ 	if (size < 1024) {
+ 		tmp += sprintf(tmp, "%8Lik ", size);
+ 		goto out_size;

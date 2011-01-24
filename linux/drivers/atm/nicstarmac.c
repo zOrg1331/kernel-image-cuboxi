@@ -7,8 +7,6 @@
  * Read this ForeRunner's MAC address from eprom/eeprom
  */
 
-#include <linux/kernel.h>
-
 typedef void __iomem *virt_addr_t;
 
 #define CYCLE_DELAY 5
@@ -134,7 +132,7 @@ nicstar_read_eprom_status( virt_addr_t base )
    /* Send read instruction */
    val = NICSTAR_REG_READ( base, NICSTAR_REG_GENERAL_PURPOSE ) & 0xFFFFFFF0;
 
-   for (i=0; i<ARRAY_SIZE(rdsrtab); i++)
+   for (i=0; i<sizeof rdsrtab/sizeof rdsrtab[0]; i++)
    {
 	NICSTAR_REG_WRITE( base, NICSTAR_REG_GENERAL_PURPOSE,
 		(val | rdsrtab[i]) );
@@ -178,7 +176,7 @@ read_eprom_byte(virt_addr_t base, u_int8_t offset)
    val = NICSTAR_REG_READ( base, NICSTAR_REG_GENERAL_PURPOSE ) & 0xFFFFFFF0;
 
    /* Send READ instruction */
-   for (i=0; i<ARRAY_SIZE(readtab); i++)
+   for (i=0; i<sizeof readtab/sizeof readtab[0]; i++)
    {
 	NICSTAR_REG_WRITE( base, NICSTAR_REG_GENERAL_PURPOSE,
 		(val | readtab[i]) );

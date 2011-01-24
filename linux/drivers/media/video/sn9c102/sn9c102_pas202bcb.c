@@ -1,13 +1,13 @@
 /***************************************************************************
- * Plug-in for PAS202BCB image sensor connected to the SN9C1xx PC Camera   *
+ * Plug-in for PAS202BCB image sensor connected to the SN9C10x PC Camera   *
  * Controllers                                                             *
  *                                                                         *
  * Copyright (C) 2004 by Carlos Eduardo Medaglia Dyonisio                  *
  *                       <medaglia@undl.org.br>                            *
  *                       http://cadu.homelinux.com:8080/                   *
  *                                                                         *
- * Support for SN9C103, DAC Magnitude, exposure and green gain controls    *
- * added by Luca Risolia <luca.risolia@studio.unibo.it>                    *
+ * DAC Magnitude, exposure and green gain controls added by                *
+ * Luca Risolia <luca.risolia@studio.unibo.it>                             *
  *                                                                         *
  * This program is free software; you can redistribute it and/or modify    *
  * it under the terms of the GNU General Public License as published by    *
@@ -26,42 +26,21 @@
 
 #include <linux/delay.h>
 #include "sn9c102_sensor.h"
-#include "sn9c102_devtable.h"
+
+
+static struct sn9c102_sensor pas202bcb;
 
 
 static int pas202bcb_init(struct sn9c102_device* cam)
 {
 	int err = 0;
 
-	switch (sn9c102_get_bridge(cam)) {
-	case BRIDGE_SN9C101:
-	case BRIDGE_SN9C102:
-		err = sn9c102_write_const_regs(cam, {0x00, 0x10}, {0x00, 0x11},
-					       {0x00, 0x14}, {0x20, 0x17},
-					       {0x30, 0x19}, {0x09, 0x18});
-		break;
-	case BRIDGE_SN9C103:
-		err = sn9c102_write_const_regs(cam, {0x00, 0x02}, {0x00, 0x03},
-					       {0x1a, 0x04}, {0x20, 0x05},
-					       {0x20, 0x06}, {0x20, 0x07},
-					       {0x00, 0x10}, {0x00, 0x11},
-					       {0x00, 0x14}, {0x20, 0x17},
-					       {0x30, 0x19}, {0x09, 0x18},
-					       {0x02, 0x1c}, {0x03, 0x1d},
-					       {0x0f, 0x1e}, {0x0c, 0x1f},
-					       {0x00, 0x20}, {0x10, 0x21},
-					       {0x20, 0x22}, {0x30, 0x23},
-					       {0x40, 0x24}, {0x50, 0x25},
-					       {0x60, 0x26}, {0x70, 0x27},
-					       {0x80, 0x28}, {0x90, 0x29},
-					       {0xa0, 0x2a}, {0xb0, 0x2b},
-					       {0xc0, 0x2c}, {0xd0, 0x2d},
-					       {0xe0, 0x2e}, {0xf0, 0x2f},
-					       {0xff, 0x30});
-		break;
-	default:
-		break;
-	}
+	err += sn9c102_write_reg(cam, 0x00, 0x10);
+	err += sn9c102_write_reg(cam, 0x00, 0x11);
+	err += sn9c102_write_reg(cam, 0x00, 0x14);
+	err += sn9c102_write_reg(cam, 0x20, 0x17);
+	err += sn9c102_write_reg(cam, 0x30, 0x19);
+	err += sn9c102_write_reg(cam, 0x09, 0x18);
 
 	err += sn9c102_i2c_write(cam, 0x02, 0x14);
 	err += sn9c102_i2c_write(cam, 0x03, 0x40);
@@ -128,7 +107,7 @@ static int pas202bcb_set_pix_format(struct sn9c102_device* cam,
 	int err = 0;
 
 	if (pix->pixelformat == V4L2_PIX_FMT_SN9C10X)
-		err += sn9c102_write_reg(cam, 0x28, 0x17);
+		err += sn9c102_write_reg(cam, 0x24, 0x17);
 	else
 		err += sn9c102_write_reg(cam, 0x20, 0x17);
 
@@ -173,22 +152,10 @@ static int pas202bcb_set_ctrl(struct sn9c102_device* cam,
 static int pas202bcb_set_crop(struct sn9c102_device* cam,
 			      const struct v4l2_rect* rect)
 {
-	struct sn9c102_sensor* s = sn9c102_get_sensor(cam);
+	struct sn9c102_sensor* s = &pas202bcb;
 	int err = 0;
-	u8 h_start = 0,
+	u8 h_start = (u8)(rect->left - s->cropcap.bounds.left) + 4,
 	   v_start = (u8)(rect->top - s->cropcap.bounds.top) + 3;
-
-	switch (sn9c102_get_bridge(cam)) {
-	case BRIDGE_SN9C101:
-	case BRIDGE_SN9C102:
-		h_start = (u8)(rect->left - s->cropcap.bounds.left) + 4;
-		break;
-	case BRIDGE_SN9C103:
-		h_start = (u8)(rect->left - s->cropcap.bounds.left) + 3;
-		break;
-	default:
-		break;
-	}
 
 	err += sn9c102_write_reg(cam, h_start, 0x12);
 	err += sn9c102_write_reg(cam, v_start, 0x13);
@@ -197,10 +164,10 @@ static int pas202bcb_set_crop(struct sn9c102_device* cam,
 }
 
 
-static const struct sn9c102_sensor pas202bcb = {
+static struct sn9c102_sensor pas202bcb = {
 	.name = "PAS202BCB",
-	.maintainer = "Luca Risolia <luca.risolia@studio.unibo.it>",
-	.supported_bridge = BRIDGE_SN9C101 | BRIDGE_SN9C102 | BRIDGE_SN9C103,
+	.maintainer = "Carlos Eduardo Medaglia Dyonisio "
+		      "<medaglia@undl.org.br>",
 	.sysfs_ops = SN9C102_I2C_READ | SN9C102_I2C_WRITE,
 	.frequency = SN9C102_I2C_400KHZ | SN9C102_I2C_100KHZ,
 	.interface = SN9C102_I2C_2WIRES,
@@ -224,7 +191,7 @@ static const struct sn9c102_sensor pas202bcb = {
 			.minimum = 0x00,
 			.maximum = 0x1f,
 			.step = 0x01,
-			.default_value = 0x0b,
+			.default_value = 0x0c,
 			.flags = 0,
 		},
 		{
@@ -234,7 +201,7 @@ static const struct sn9c102_sensor pas202bcb = {
 			.minimum = 0x00,
 			.maximum = 0x0f,
 			.step = 0x01,
-			.default_value = 0x00,
+			.default_value = 0x01,
 			.flags = 0,
 		},
 		{
@@ -304,26 +271,16 @@ int sn9c102_probe_pas202bcb(struct sn9c102_device* cam)
 	 *  Minimal initialization to enable the I2C communication
 	 *  NOTE: do NOT change the values!
 	 */
-	switch (sn9c102_get_bridge(cam)) {
-	case BRIDGE_SN9C101:
-	case BRIDGE_SN9C102:
-		err = sn9c102_write_const_regs(cam,
-					       {0x01, 0x01}, /* power down */
-					       {0x40, 0x01}, /* power on */
-					       {0x28, 0x17});/* clock 24 MHz */
-		break;
-	case BRIDGE_SN9C103: /* do _not_ change anything! */
-		err = sn9c102_write_const_regs(cam, {0x09, 0x01}, {0x44, 0x01},
-					       {0x44, 0x02}, {0x29, 0x17});
-		break;
-	default:
-		break;
-	}
+	err += sn9c102_write_reg(cam, 0x01, 0x01); /* sensor power down */
+	err += sn9c102_write_reg(cam, 0x40, 0x01); /* sensor power on */
+	err += sn9c102_write_reg(cam, 0x28, 0x17); /* sensor clock at 24 MHz */
+	if (err)
+		return -EIO;
 
 	r0 = sn9c102_i2c_try_read(cam, &pas202bcb, 0x00);
 	r1 = sn9c102_i2c_try_read(cam, &pas202bcb, 0x01);
 
-	if (err || r0 < 0 || r1 < 0)
+	if (r0 < 0 || r1 < 0)
 		return -EIO;
 
 	pid = (r0 << 4) | ((r1 & 0xf0) >> 4);

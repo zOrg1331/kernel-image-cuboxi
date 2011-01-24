@@ -47,6 +47,7 @@
 #include <linux/interrupt.h>
 #include <linux/kernel.h>
 #include <linux/poll.h>
+#include <linux/pci.h>
 #include <linux/bitops.h>
 #include <linux/spinlock.h>
 #include <linux/smp_lock.h>
@@ -93,7 +94,7 @@ static struct au1550_state {
 	spinlock_t      lock;
 	struct mutex open_mutex;
 	struct mutex sem;
-	fmode_t          open_mode;
+	mode_t          open_mode;
 	wait_queue_head_t open_wait;
 
 	struct dmabuf {
@@ -718,7 +719,8 @@ prog_dmabuf_dac(struct au1550_state *s)
 }
 
 
-static void dac_dma_interrupt(int irq, void *dev_id)
+static void
+dac_dma_interrupt(int irq, void *dev_id, struct pt_regs *regs)
 {
 	struct au1550_state *s = (struct au1550_state *) dev_id;
 	struct dmabuf  *db = &s->dma_dac;
@@ -752,7 +754,8 @@ static void dac_dma_interrupt(int irq, void *dev_id)
 }
 
 
-static void adc_dma_interrupt(int irq, void *dev_id)
+static void
+adc_dma_interrupt(int irq, void *dev_id, struct pt_regs *regs)
 {
 	struct	au1550_state *s = (struct au1550_state *)dev_id;
 	struct	dmabuf  *dp = &s->dma_adc;
@@ -1353,11 +1356,11 @@ au1550_ioctl(struct inode *inode, struct file *file, unsigned int cmd,
 		((file->f_mode & FMODE_READ) && s->dma_adc.mapped);
 
 #ifdef DEBUG
-	for (count = 0; count < ARRAY_SIZE(ioctl_str); count++) {
+	for (count=0; count<sizeof(ioctl_str)/sizeof(ioctl_str[0]); count++) {
 		if (ioctl_str[count].cmd == cmd)
 			break;
 	}
-	if (count < ARRAY_SIZE(ioctl_str))
+	if (count < sizeof(ioctl_str) / sizeof(ioctl_str[0]))
 		pr_debug("ioctl %s, arg=0x%lxn", ioctl_str[count].str, arg);
 	else
 		pr_debug("ioctl 0x%x unknown, arg=0x%lx\n", cmd, arg);
@@ -1627,9 +1630,7 @@ au1550_ioctl(struct inode *inode, struct file *file, unsigned int cmd,
 				    sizeof(abinfo)) ? -EFAULT : 0;
 
 	case SNDCTL_DSP_NONBLOCK:
-		spin_lock(&file->f_lock);
 		file->f_flags |= O_NONBLOCK;
-		spin_unlock(&file->f_lock);
 		return 0;
 
 	case SNDCTL_DSP_GETODELAY:

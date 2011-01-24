@@ -1,0 +1,52 @@
+From: Stefan Assmann <sassmann@redhat.com>
+Date: Thu, 11 Feb 2010 10:55:03 -0500
+Subject: [net] igb: fix msix_other interrupt masking
+Message-id: <4B73E207.8020107@redhat.com>
+Patchwork-id: 23233
+O-Subject: [RHEL 5.5 PATCH v2] igb: fix msix_other interrupt masking
+Bugzilla: 552348
+RH-Acked-by: Stanislaw Gruszka <sgruszka@redhat.com>
+
+Bugzilla:
+https://bugzilla.redhat.com/show_bug.cgi?id=552348
+
+Description:
+The msix_other interrupt is being masked off and not functioning after
+the first interrupt. Therefore the VF wouldn't detect link.
+v2 addresses the missing initialization of adapter->eims_other in
+igb_configure_msix discovered by sgruszka.
+
+Upstream Status:
+Changes are part of commit
+http://git.kernel.org/linus/844290e56067aed0a54142d756565abb9614136c
+
+Brew Build:
+https://brewweb.devel.redhat.com/taskinfo?taskID=2251684
+
+Test Status:
+drjones and myself have confirmed this fix.
+v2 has been re-verified by myself only.
+
+  Stefan
+
+diff --git a/drivers/net/igb/igb_main.c b/drivers/net/igb/igb_main.c
+index ff31099..1a4ece2 100644
+--- a/drivers/net/igb/igb_main.c
++++ b/drivers/net/igb/igb_main.c
+@@ -586,6 +586,7 @@ static void igb_configure_msix(struct igb_adapter *adapter)
+ 
+ 		wr32(E1000_CTRL_EXT, tmp);
+ 		adapter->eims_enable_mask |= E1000_EIMS_OTHER;
++		adapter->eims_other = E1000_EIMS_OTHER;
+ 
+ 		break;
+ 
+@@ -3624,7 +3625,7 @@ static irqreturn_t igb_msix_other(int irq, void *data, struct pt_regs *regs)
+ 				E1000_IMS_DOUTSYNC);
+ 	else
+ 		wr32(E1000_IMS, E1000_IMS_LSC | E1000_IMS_DOUTSYNC);
+-	wr32(E1000_EIMS, E1000_EIMS_OTHER);
++	wr32(E1000_EIMS, adapter->eims_other);
+ 
+ 	return IRQ_HANDLED;
+ }

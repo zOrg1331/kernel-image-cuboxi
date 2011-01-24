@@ -1,0 +1,4173 @@
+From davej  Tue Sep 26 21:05:14 2006
+Return-Path: <git-commits-head-owner@vger.kernel.org>
+X-Spam-Checker-Version: SpamAssassin 3.1.4 (2006-07-25) on 
+	pressure.kernelslacker.org
+X-Spam-Level: 
+X-Spam-Status: No, score=-2.2 required=5.0 tests=AWL,BAYES_00,
+	UNPARSEABLE_RELAY autolearn=ham version=3.1.4
+Received: from pobox.devel.redhat.com [10.11.255.8]
+	by pressure.kernelslacker.org with IMAP (fetchmail-6.3.4)
+	for <davej@localhost> (single-drop); Tue, 26 Sep 2006 21:05:14 -0400 (EDT)
+Received: from pobox.devel.redhat.com ([unix socket])
+	 by pobox.devel.redhat.com (Cyrus v2.2.12-Invoca-RPM-2.2.12-3.RHEL4.1) with LMTPA;
+	 Tue, 26 Sep 2006 21:05:02 -0400
+X-Sieve: CMU Sieve 2.2
+Received: from int-mx1.corp.redhat.com (int-mx1.corp.redhat.com [172.16.52.254])
+	by pobox.devel.redhat.com (8.13.1/8.13.1) with ESMTP id k8R152vm028109;
+	Tue, 26 Sep 2006 21:05:02 -0400
+Received: from mx3.redhat.com (mx3.redhat.com [172.16.48.32])
+	by int-mx1.corp.redhat.com (8.12.11.20060308/8.12.11) with ESMTP id k8R152C4011122;
+	Tue, 26 Sep 2006 21:05:02 -0400
+Received: from vger.kernel.org (vger.kernel.org [209.132.176.167])
+	by mx3.redhat.com (8.13.1/8.13.1) with ESMTP id k8QMVSDf000343;
+	Tue, 26 Sep 2006 21:04:56 -0400
+Received: (majordomo@vger.kernel.org) by vger.kernel.org via listexpand
+	id S964892AbWIZXAt (ORCPT <rfc822;davej@redhat.com> + 4 others);
+	Tue, 26 Sep 2006 19:00:49 -0400
+Received: (majordomo@vger.kernel.org) by vger.kernel.org id S964905AbWIZXAt
+	(ORCPT <rfc822;git-commits-head-outgoing>);
+	Tue, 26 Sep 2006 19:00:49 -0400
+Received: from hera.kernel.org ([140.211.167.34]:57280 "EHLO hera.kernel.org")
+	by vger.kernel.org with ESMTP id S964892AbWIZXA1 (ORCPT
+	<rfc822;git-commits-head@vger.kernel.org>);
+	Tue, 26 Sep 2006 19:00:27 -0400
+Received: from hera.kernel.org (IDENT:U2FsdGVkX18RWKiMw+WqOMxuIJyFlHWt8Dn2zupdSxc@localhost [127.0.0.1])
+	by hera.kernel.org (8.13.7/8.13.7) with ESMTP id k8QN0O1p014026
+	(version=TLSv1/SSLv3 cipher=DHE-RSA-AES256-SHA bits=256 verify=NO)
+	for <git-commits-head@vger.kernel.org>; Tue, 26 Sep 2006 23:00:26 GMT
+Received: (from dwmw2@localhost)
+	by hera.kernel.org (8.13.7/8.13.1/Submit) id k8QN0OxT014024
+	for git-commits-head@vger.kernel.org; Tue, 26 Sep 2006 23:00:24 GMT
+Date: 	Tue, 26 Sep 2006 23:00:24 GMT
+Message-Id: <200609262300.k8QN0OxT014024@hera.kernel.org>
+From: Linux Kernel Mailing List <linux-kernel@vger.kernel.org>
+To: git-commits-head@vger.kernel.org
+Subject: [PATCH] Support patchable lock prefix for pure assembly files
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+X-Git-Commit: b4062b16094038334d9bbadac0397a3fc9e981b0
+X-Git-Parent: 538b5b419c7ae39a4b2deb15278da36102e42346
+Sender: git-commits-head-owner@vger.kernel.org
+Precedence: bulk
+X-Mailing-List: 	git-commits-head@vger.kernel.org
+X-RedHat-Spam-Score: 0.005 
+Status: RO
+Content-Length: 1048
+Lines: 37
+
+commit b4062b16094038334d9bbadac0397a3fc9e981b0
+tree e75506b979825010319f96a0868b71788ac856df
+parent 538b5b419c7ae39a4b2deb15278da36102e42346
+author Andi Kleen <ak@suse.de> 1159260748 +0200
+committer Andi Kleen <andi@basil.nowhere.org> 1159260748 +0200
+
+[PATCH] Support patchable lock prefix for pure assembly files
+
+Signed-off-by: Andi Kleen <ak@suse.de>
+
+ include/asm-x86_64/alternative-asm.i |   14 ++++++++++++++
+ 1 file changed, 14 insertions(+)
+
+diff --git a/include/asm-x86_64/alternative-asm.i b/include/asm-x86_64/alternative-asm.i
+new file mode 100644
+index 0000000..e4041f4
+--- /dev/null
++++ b/include/asm-x86_64/alternative-asm.i
+@@ -0,0 +1,12 @@
++#ifdef CONFIG_SMP
++	.macro LOCK_PREFIX
++1:	lock
++	.section .smp_locks,"a"
++	.align 8
++	.quad 1b
++	.previous
++	.endm
++#else
++	.macro LOCK_PREFIX
++	.endm
++#endif
+-
+To unsubscribe from this list: send the line "unsubscribe git-commits-head" in
+the body of a message to majordomo@vger.kernel.org
+More majordomo info at  http://vger.kernel.org/majordomo-info.html
+
+From davej  Tue Sep 26 21:05:15 2006
+Return-Path: <git-commits-head-owner@vger.kernel.org>
+X-Spam-Checker-Version: SpamAssassin 3.1.4 (2006-07-25) on 
+	pressure.kernelslacker.org
+X-Spam-Level: 
+X-Spam-Status: No, score=-2.2 required=5.0 tests=AWL,BAYES_00,
+	UNPARSEABLE_RELAY autolearn=ham version=3.1.4
+Received: from pobox.devel.redhat.com [10.11.255.8]
+	by pressure.kernelslacker.org with IMAP (fetchmail-6.3.4)
+	for <davej@localhost> (single-drop); Tue, 26 Sep 2006 21:05:15 -0400 (EDT)
+Received: from pobox.devel.redhat.com ([unix socket])
+	 by pobox.devel.redhat.com (Cyrus v2.2.12-Invoca-RPM-2.2.12-3.RHEL4.1) with LMTPA;
+	 Tue, 26 Sep 2006 21:05:11 -0400
+X-Sieve: CMU Sieve 2.2
+Received: from int-mx1.corp.redhat.com (int-mx1.corp.redhat.com [172.16.52.254])
+	by pobox.devel.redhat.com (8.13.1/8.13.1) with ESMTP id k8R15BG8028119;
+	Tue, 26 Sep 2006 21:05:11 -0400
+Received: from mx3.redhat.com (mx3.redhat.com [172.16.48.32])
+	by int-mx1.corp.redhat.com (8.12.11.20060308/8.12.11) with ESMTP id k8R15A6a011197;
+	Tue, 26 Sep 2006 21:05:10 -0400
+Received: from vger.kernel.org (vger.kernel.org [209.132.176.167])
+	by mx3.redhat.com (8.13.1/8.13.1) with ESMTP id k8QMVSDg000343;
+	Tue, 26 Sep 2006 21:05:03 -0400
+Received: (majordomo@vger.kernel.org) by vger.kernel.org via listexpand
+	id S964895AbWIZXAu (ORCPT <rfc822;davej@redhat.com> + 4 others);
+	Tue, 26 Sep 2006 19:00:50 -0400
+Received: (majordomo@vger.kernel.org) by vger.kernel.org id S964921AbWIZXAu
+	(ORCPT <rfc822;git-commits-head-outgoing>);
+	Tue, 26 Sep 2006 19:00:50 -0400
+Received: from hera.kernel.org ([140.211.167.34]:58816 "EHLO hera.kernel.org")
+	by vger.kernel.org with ESMTP id S964895AbWIZXAi (ORCPT
+	<rfc822;git-commits-head@vger.kernel.org>);
+	Tue, 26 Sep 2006 19:00:38 -0400
+Received: from hera.kernel.org (IDENT:U2FsdGVkX1+415A2z0D3yhz6U8YOI4TMZvOS8+8912g@localhost [127.0.0.1])
+	by hera.kernel.org (8.13.7/8.13.7) with ESMTP id k8QN0ReG014082
+	(version=TLSv1/SSLv3 cipher=DHE-RSA-AES256-SHA bits=256 verify=NO)
+	for <git-commits-head@vger.kernel.org>; Tue, 26 Sep 2006 23:00:28 GMT
+Received: (from dwmw2@localhost)
+	by hera.kernel.org (8.13.7/8.13.1/Submit) id k8QN0RZd014081
+	for git-commits-head@vger.kernel.org; Tue, 26 Sep 2006 23:00:27 GMT
+Date: 	Tue, 26 Sep 2006 23:00:27 GMT
+Message-Id: <200609262300.k8QN0RZd014081@hera.kernel.org>
+From: Linux Kernel Mailing List <linux-kernel@vger.kernel.org>
+To: git-commits-head@vger.kernel.org
+Subject: [PATCH] Clean up read write lock assembly
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+X-Git-Commit: 9a0b26e6bc4ae1979d9bcc6194e57a71b2b5cac6
+X-Git-Parent: b4062b16094038334d9bbadac0397a3fc9e981b0
+Sender: git-commits-head-owner@vger.kernel.org
+Precedence: bulk
+X-Mailing-List: 	git-commits-head@vger.kernel.org
+X-RedHat-Spam-Score: 0.005 
+Status: RO
+Content-Length: 6909
+Lines: 241
+
+commit 9a0b26e6bc4ae1979d9bcc6194e57a71b2b5cac6
+tree 01601a502007b85d4fc88f79de7a93c257ef9d97
+parent b4062b16094038334d9bbadac0397a3fc9e981b0
+author Andi Kleen <ak@suse.de> 1159260748 +0200
+committer Andi Kleen <andi@basil.nowhere.org> 1159260748 +0200
+
+[PATCH] Clean up read write lock assembly
+
+- Move the slow path fallbacks to their own assembly files
+This makes them much easier to read and is needed for the next change.
+- Add CFI annotations for unwinding (XXX need review)
+- Remove constant case which can never happen with out of line spinlocks
+- Use patchable LOCK prefixes
+- Don't use lock sections anymore for inline code because they can't
+be expressed by the unwinder (this adds one taken jump to the lock
+fast path)
+
+Cc: jbeulich@novell.com
+
+Signed-off-by: Andi Kleen <ak@suse.de>
+
+ arch/x86_64/lib/Makefile      |    2 -
+ arch/x86_64/lib/rwlock.S      |   38 +++++++++++++++++++++++
+ arch/x86_64/lib/thunk.S       |   30 ------------------
+ include/asm-x86_64/rwlock.h   |   68 ++++++------------------------------------
+ include/asm-x86_64/spinlock.h |   11 +-----
+ 5 files changed, 51 insertions(+), 98 deletions(-)
+
+diff --git a/arch/x86_64/lib/Makefile b/arch/x86_64/lib/Makefile
+index ccef6ae..b78d417 100644
+--- a/arch/x86_64/lib/Makefile
++++ b/arch/x86_64/lib/Makefile
+@@ -9,4 +9,4 @@ obj-y := io.o iomap_copy.o
+ lib-y := csum-partial.o csum-copy.o csum-wrappers.o delay.o \
+ 	usercopy.o getuser.o putuser.o  \
+ 	thunk.o clear_page.o copy_page.o bitstr.o bitops.o
+-lib-y += memcpy.o memmove.o memset.o copy_user.o
++lib-y += memcpy.o memmove.o memset.o copy_user.o rwlock.o
+diff --git a/arch/x86_64/lib/rwlock.S b/arch/x86_64/lib/rwlock.S
+new file mode 100644
+index 0000000..0cde1f8
+--- /dev/null
++++ b/arch/x86_64/lib/rwlock.S
+@@ -0,0 +1,38 @@
++/* Slow paths of read/write spinlocks. */
++
++#include <linux/linkage.h>
++#include <asm/rwlock.h>
++#include <asm/alternative-asm.i>
++#include <asm/dwarf2.h>
++
++/* rdi:	pointer to rwlock_t */
++ENTRY(__write_lock_failed)
++	CFI_STARTPROC
++	LOCK_PREFIX
++	addl $RW_LOCK_BIAS,(%rdi)
++1:	rep
++	nop
++	cmpl $RW_LOCK_BIAS,(%rdi)
++	jne 1b
++	LOCK_PREFIX
++	subl $RW_LOCK_BIAS,(%rdi)
++	jnz  __write_lock_failed
++	ret
++	CFI_ENDPROC
++END(__write_lock_failed)
++
++/* rdi:	pointer to rwlock_t */
++ENTRY(__read_lock_failed)
++	CFI_STARTPROC
++	LOCK_PREFIX
++	incl (%rdi)
++1:	rep
++	nop
++	cmpl $1,(%rdi)
++	js 1b
++	LOCK_PREFIX
++	decl (%rdi)
++	js __read_lock_failed
++	ret
++	CFI_ENDPROC
++END(__read_lock_failed)
+diff --git a/arch/x86_64/lib/thunk.S b/arch/x86_64/lib/thunk.S
+index 332ea5d..6cff27c 100644
+--- a/arch/x86_64/lib/thunk.S
++++ b/arch/x86_64/lib/thunk.S
+@@ -67,33 +67,3 @@ restore_norax:	
+ 	RESTORE_ARGS 1
+ 	ret
+ 	CFI_ENDPROC
+-
+-#ifdef CONFIG_SMP
+-/* Support for read/write spinlocks. */
+-	.text
+-/* rax:	pointer to rwlock_t */	
+-ENTRY(__write_lock_failed)
+-	lock
+-	addl $RW_LOCK_BIAS,(%rax)
+-1:	rep
+-	nop
+-	cmpl $RW_LOCK_BIAS,(%rax)
+-	jne 1b
+-	lock 
+-	subl $RW_LOCK_BIAS,(%rax)
+-	jnz  __write_lock_failed
+-	ret
+-
+-/* rax:	pointer to rwlock_t */	
+-ENTRY(__read_lock_failed)
+-	lock
+-	incl (%rax)
+-1:	rep
+-	nop
+-	cmpl $1,(%rax)
+-	js 1b
+-	lock
+-	decl (%rax)
+-	js __read_lock_failed
+-	ret
+-#endif
+diff --git a/include/asm-x86_64/rwlock.h b/include/asm-x86_64/rwlock.h
+index dea0e94..28a080d 100644
+--- a/include/asm-x86_64/rwlock.h
++++ b/include/asm-x86_64/rwlock.h
+@@ -18,69 +18,21 @@
+ #ifndef _ASM_X86_64_RWLOCK_H
+ #define _ASM_X86_64_RWLOCK_H
+ 
+-#include <linux/stringify.h>
+-
+ #define RW_LOCK_BIAS		 0x01000000
+-#define RW_LOCK_BIAS_STR	"0x01000000"
++#define RW_LOCK_BIAS_STR	 "0x01000000"
+ 
+-#define __build_read_lock_ptr(rw, helper)   \
++#define __build_read_lock(rw)   \
+ 	asm volatile(LOCK_PREFIX "subl $1,(%0)\n\t" \
+-		     "js 2f\n" \
+-		     "1:\n" \
+-		    LOCK_SECTION_START("") \
+-		     "2:\tcall " helper "\n\t" \
+-		     "jmp 1b\n" \
+-		    LOCK_SECTION_END \
+-		     ::"a" (rw) : "memory")
+-
+-#define __build_read_lock_const(rw, helper)   \
+-	asm volatile(LOCK_PREFIX "subl $1,%0\n\t" \
+-		     "js 2f\n" \
++		     "jns 1f\n" \
++		     "call __read_lock_failed\n" \
+ 		     "1:\n" \
+-		    LOCK_SECTION_START("") \
+-		     "2:\tpushq %%rax\n\t" \
+-		     "leaq %0,%%rax\n\t" \
+-		     "call " helper "\n\t" \
+-		     "popq %%rax\n\t" \
+-		     "jmp 1b\n" \
+-		    LOCK_SECTION_END \
+-		     :"=m" (*((volatile int *)rw))::"memory")
+-
+-#define __build_read_lock(rw, helper)	do { \
+-						if (__builtin_constant_p(rw)) \
+-							__build_read_lock_const(rw, helper); \
+-						else \
+-							__build_read_lock_ptr(rw, helper); \
+-					} while (0)
++		     ::"D" (rw), "i" (RW_LOCK_BIAS) : "memory")
+ 
+-#define __build_write_lock_ptr(rw, helper) \
+-	asm volatile(LOCK_PREFIX "subl $" RW_LOCK_BIAS_STR ",(%0)\n\t" \
+-		     "jnz 2f\n" \
++#define __build_write_lock(rw) \
++	asm volatile(LOCK_PREFIX "subl %1,(%0)\n\t" \
++		     "jz 1f\n" \
++		     "\tcall __write_lock_failed\n\t" \
+ 		     "1:\n" \
+-		     LOCK_SECTION_START("") \
+-		     "2:\tcall " helper "\n\t" \
+-		     "jmp 1b\n" \
+-		     LOCK_SECTION_END \
+-		     ::"a" (rw) : "memory")
+-
+-#define __build_write_lock_const(rw, helper) \
+-	asm volatile(LOCK_PREFIX "subl $" RW_LOCK_BIAS_STR ",%0\n\t" \
+-		     "jnz 2f\n" \
+-		     "1:\n" \
+-		    LOCK_SECTION_START("") \
+-		     "2:\tpushq %%rax\n\t" \
+-		     "leaq %0,%%rax\n\t" \
+-		     "call " helper "\n\t" \
+-		     "popq %%rax\n\t" \
+-		     "jmp 1b\n" \
+-		    LOCK_SECTION_END \
+-		     :"=m" (*((volatile long *)rw))::"memory")
+-
+-#define __build_write_lock(rw, helper)	do { \
+-						if (__builtin_constant_p(rw)) \
+-							__build_write_lock_const(rw, helper); \
+-						else \
+-							__build_write_lock_ptr(rw, helper); \
+-					} while (0)
++		     ::"D" (rw), "i" (RW_LOCK_BIAS) : "memory")
+ 
+ #endif
+diff --git a/include/asm-x86_64/spinlock.h b/include/asm-x86_64/spinlock.h
+index 248a79f..a8e3d89 100644
+--- a/include/asm-x86_64/spinlock.h
++++ b/include/asm-x86_64/spinlock.h
+@@ -79,13 +79,6 @@ #define __raw_spin_unlock_wait(lock) \
+  *
+  * On x86, we implement read-write locks as a 32-bit counter
+  * with the high bit (sign) being the "contended" bit.
+- *
+- * The inline assembly is non-obvious. Think about it.
+- *
+- * Changed to use the same technique as rw semaphores.  See
+- * semaphore.h for details.  -ben
+- *
+- * the helpers are in arch/i386/kernel/semaphore.c
+  */
+ 
+ #define __raw_read_can_lock(x)		((int)(x)->lock > 0)
+@@ -93,12 +86,12 @@ #define __raw_write_can_lock(x)		((x)->l
+ 
+ static inline void __raw_read_lock(raw_rwlock_t *rw)
+ {
+-	__build_read_lock(rw, "__read_lock_failed");
++	__build_read_lock(rw);
+ }
+ 
+ static inline void __raw_write_lock(raw_rwlock_t *rw)
+ {
+-	__build_write_lock(rw, "__write_lock_failed");
++	__build_write_lock(rw);
+ }
+ 
+ static inline int __raw_read_trylock(raw_rwlock_t *lock)
+-
+To unsubscribe from this list: send the line "unsubscribe git-commits-head" in
+the body of a message to majordomo@vger.kernel.org
+More majordomo info at  http://vger.kernel.org/majordomo-info.html
+
+From davej  Tue Sep 26 21:06:28 2006
+Return-Path: <git-commits-head-owner@vger.kernel.org>
+X-Spam-Checker-Version: SpamAssassin 3.1.4 (2006-07-25) on 
+	pressure.kernelslacker.org
+X-Spam-Level: 
+X-Spam-Status: No, score=-2.2 required=5.0 tests=AWL,BAYES_00,
+	UNPARSEABLE_RELAY autolearn=ham version=3.1.4
+Received: from pobox.devel.redhat.com [10.11.255.8]
+	by pressure.kernelslacker.org with IMAP (fetchmail-6.3.4)
+	for <davej@localhost> (single-drop); Tue, 26 Sep 2006 21:06:28 -0400 (EDT)
+Received: from pobox.devel.redhat.com ([unix socket])
+	 by pobox.devel.redhat.com (Cyrus v2.2.12-Invoca-RPM-2.2.12-3.RHEL4.1) with LMTPA;
+	 Tue, 26 Sep 2006 21:05:17 -0400
+X-Sieve: CMU Sieve 2.2
+Received: from int-mx1.corp.redhat.com (int-mx1.corp.redhat.com [172.16.52.254])
+	by pobox.devel.redhat.com (8.13.1/8.13.1) with ESMTP id k8R15H7b028185;
+	Tue, 26 Sep 2006 21:05:17 -0400
+Received: from mx3.redhat.com (mx3.redhat.com [172.16.48.32])
+	by int-mx1.corp.redhat.com (8.12.11.20060308/8.12.11) with ESMTP id k8R15Hwa011221;
+	Tue, 26 Sep 2006 21:05:17 -0400
+Received: from vger.kernel.org (vger.kernel.org [209.132.176.167])
+	by mx3.redhat.com (8.13.1/8.13.1) with ESMTP id k8QMVSDh000343;
+	Tue, 26 Sep 2006 21:05:11 -0400
+Received: (majordomo@vger.kernel.org) by vger.kernel.org via listexpand
+	id S964905AbWIZXA5 (ORCPT <rfc822;davej@redhat.com> + 4 others);
+	Tue, 26 Sep 2006 19:00:57 -0400
+Received: (majordomo@vger.kernel.org) by vger.kernel.org id S964925AbWIZXA5
+	(ORCPT <rfc822;git-commits-head-outgoing>);
+	Tue, 26 Sep 2006 19:00:57 -0400
+Received: from hera.kernel.org ([140.211.167.34]:60864 "EHLO hera.kernel.org")
+	by vger.kernel.org with ESMTP id S964905AbWIZXAz (ORCPT
+	<rfc822;git-commits-head@vger.kernel.org>);
+	Tue, 26 Sep 2006 19:00:55 -0400
+Received: from hera.kernel.org (IDENT:U2FsdGVkX19obaXUGw2C8mxSoIov3EPJfWzU9HhSOFQ@localhost [127.0.0.1])
+	by hera.kernel.org (8.13.7/8.13.7) with ESMTP id k8QN0jqm014309
+	(version=TLSv1/SSLv3 cipher=DHE-RSA-AES256-SHA bits=256 verify=NO)
+	for <git-commits-head@vger.kernel.org>; Tue, 26 Sep 2006 23:00:49 GMT
+Received: (from dwmw2@localhost)
+	by hera.kernel.org (8.13.7/8.13.1/Submit) id k8QN0eoY014255
+	for git-commits-head@vger.kernel.org; Tue, 26 Sep 2006 23:00:40 GMT
+Date: 	Tue, 26 Sep 2006 23:00:40 GMT
+Message-Id: <200609262300.k8QN0eoY014255@hera.kernel.org>
+From: Linux Kernel Mailing List <linux-kernel@vger.kernel.org>
+To: git-commits-head@vger.kernel.org
+Subject: [PATCH] i386: Remove const case for rwlocks
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+X-Git-Commit: 1a015b5644ec6df0a2c4cbeff1f8a3d24ba0478e
+X-Git-Parent: 9a0b26e6bc4ae1979d9bcc6194e57a71b2b5cac6
+Sender: git-commits-head-owner@vger.kernel.org
+Precedence: bulk
+X-Mailing-List: 	git-commits-head@vger.kernel.org
+X-RedHat-Spam-Score: 0.005 
+Status: RO
+Content-Length: 2567
+Lines: 80
+
+commit 1a015b5644ec6df0a2c4cbeff1f8a3d24ba0478e
+tree 776cc4bfdf3a6aa74269a5b8458759a2157c770a
+parent 9a0b26e6bc4ae1979d9bcc6194e57a71b2b5cac6
+author Andi Kleen <ak@suse.de> 1159260749 +0200
+committer Andi Kleen <andi@basil.nowhere.org> 1159260749 +0200
+
+[PATCH] i386: Remove const case for rwlocks
+
+rwlocks are now out of line, so it near never triggers.  Also it was
+incompatible with the new dwarf2 unwinder because it had unannotiatable
+push/pops.
+
+Signed-off-by: Andi Kleen <ak@suse.de>
+
+ include/asm-i386/rwlock.h |   38 ++------------------------------------
+ 1 file changed, 2 insertions(+), 36 deletions(-)
+
+diff --git a/include/asm-i386/rwlock.h b/include/asm-i386/rwlock.h
+index 87c069c..f40ccbd 100644
+--- a/include/asm-i386/rwlock.h
++++ b/include/asm-i386/rwlock.h
+@@ -20,52 +20,18 @@ #define _ASM_I386_RWLOCK_H
+ #define RW_LOCK_BIAS		 0x01000000
+ #define RW_LOCK_BIAS_STR	"0x01000000"
+ 
+-#define __build_read_lock_ptr(rw, helper)   \
++#define __build_read_lock(rw, helper)   \
+ 	asm volatile(LOCK_PREFIX " subl $1,(%0)\n\t" \
+ 			"jns 1f\n" \
+ 			"call " helper "\n\t" \
+ 			"1:\n" \
+ 			::"a" (rw) : "memory")
+ 
+-#define __build_read_lock_const(rw, helper)   \
+-	asm volatile(LOCK_PREFIX " subl $1,%0\n\t" \
+-			"jns 1f\n" \
+-			"pushl %%eax\n\t" \
+-			"leal %0,%%eax\n\t" \
+-			"call " helper "\n\t" \
+-			"popl %%eax\n\t" \
+-			"1:\n" \
+-			:"+m" (*(volatile int *)rw) : : "memory")
+-
+-#define __build_read_lock(rw, helper)	do { \
+-						if (__builtin_constant_p(rw)) \
+-							__build_read_lock_const(rw, helper); \
+-						else \
+-							__build_read_lock_ptr(rw, helper); \
+-					} while (0)
+-
+-#define __build_write_lock_ptr(rw, helper) \
++#define __build_write_lock(rw, helper) \
+ 	asm volatile(LOCK_PREFIX " subl $" RW_LOCK_BIAS_STR ",(%0)\n\t" \
+ 			"jz 1f\n" \
+ 			"call " helper "\n\t" \
+ 			"1:\n" \
+ 			::"a" (rw) : "memory")
+ 
+-#define __build_write_lock_const(rw, helper) \
+-	asm volatile(LOCK_PREFIX " subl $" RW_LOCK_BIAS_STR ",%0\n\t" \
+-			"jz 1f\n" \
+-			"pushl %%eax\n\t" \
+-			"leal %0,%%eax\n\t" \
+-			"call " helper "\n\t" \
+-			"popl %%eax\n\t" \
+-			"1:\n" \
+-			:"+m" (*(volatile int *)rw) : : "memory")
+-
+-#define __build_write_lock(rw, helper)	do { \
+-						if (__builtin_constant_p(rw)) \
+-							__build_write_lock_const(rw, helper); \
+-						else \
+-							__build_write_lock_ptr(rw, helper); \
+-					} while (0)
+-
+ #endif
+-
+To unsubscribe from this list: send the line "unsubscribe git-commits-head" in
+the body of a message to majordomo@vger.kernel.org
+More majordomo info at  http://vger.kernel.org/majordomo-info.html
+
+From davej  Tue Sep 26 21:11:20 2006
+Return-Path: <git-commits-head-owner@vger.kernel.org>
+X-Spam-Checker-Version: SpamAssassin 3.1.4 (2006-07-25) on 
+	pressure.kernelslacker.org
+X-Spam-Level: 
+X-Spam-Status: No, score=-2.2 required=5.0 tests=AWL,BAYES_00,
+	UNPARSEABLE_RELAY autolearn=ham version=3.1.4
+Received: from pobox.devel.redhat.com [10.11.255.8]
+	by pressure.kernelslacker.org with IMAP (fetchmail-6.3.4)
+	for <davej@localhost> (single-drop); Tue, 26 Sep 2006 21:11:20 -0400 (EDT)
+Received: from pobox.devel.redhat.com ([unix socket])
+	 by pobox.devel.redhat.com (Cyrus v2.2.12-Invoca-RPM-2.2.12-3.RHEL4.1) with LMTPA;
+	 Tue, 26 Sep 2006 21:10:15 -0400
+X-Sieve: CMU Sieve 2.2
+Received: from int-mx1.corp.redhat.com (int-mx1.corp.redhat.com [172.16.52.254])
+	by pobox.devel.redhat.com (8.13.1/8.13.1) with ESMTP id k8R1AFZw028681;
+	Tue, 26 Sep 2006 21:10:15 -0400
+Received: from mx3.redhat.com (mx3.redhat.com [172.16.48.32])
+	by int-mx1.corp.redhat.com (8.12.11.20060308/8.12.11) with ESMTP id k8R1AE8c012286;
+	Tue, 26 Sep 2006 21:10:14 -0400
+Received: from vger.kernel.org (vger.kernel.org [209.132.176.167])
+	by mx3.redhat.com (8.13.1/8.13.1) with ESMTP id k8QMVSEU000343;
+	Tue, 26 Sep 2006 21:10:07 -0400
+Received: (majordomo@vger.kernel.org) by vger.kernel.org via listexpand
+	id S964978AbWIZXB7 (ORCPT <rfc822;davej@redhat.com> + 4 others);
+	Tue, 26 Sep 2006 19:01:59 -0400
+Received: (majordomo@vger.kernel.org) by vger.kernel.org id S965000AbWIZXB6
+	(ORCPT <rfc822;git-commits-head-outgoing>);
+	Tue, 26 Sep 2006 19:01:58 -0400
+Received: from hera.kernel.org ([140.211.167.34]:4802 "EHLO hera.kernel.org")
+	by vger.kernel.org with ESMTP id S964978AbWIZXBm (ORCPT
+	<rfc822;git-commits-head@vger.kernel.org>);
+	Tue, 26 Sep 2006 19:01:42 -0400
+Received: from hera.kernel.org (IDENT:U2FsdGVkX1/y1rAyqBu3Ru/2gkEHTCqzzIluach/C3Y@localhost [127.0.0.1])
+	by hera.kernel.org (8.13.7/8.13.7) with ESMTP id k8QN1f73015743
+	(version=TLSv1/SSLv3 cipher=DHE-RSA-AES256-SHA bits=256 verify=NO)
+	for <git-commits-head@vger.kernel.org>; Tue, 26 Sep 2006 23:01:41 GMT
+Received: (from dwmw2@localhost)
+	by hera.kernel.org (8.13.7/8.13.1/Submit) id k8QN1eno015741
+	for git-commits-head@vger.kernel.org; Tue, 26 Sep 2006 23:01:40 GMT
+Date: 	Tue, 26 Sep 2006 23:01:40 GMT
+Message-Id: <200609262301.k8QN1eno015741@hera.kernel.org>
+From: Linux Kernel Mailing List <linux-kernel@vger.kernel.org>
+To: git-commits-head@vger.kernel.org
+Subject: [PATCH] annotate arch/x86_64/lib/*.S
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+X-Git-Commit: 8d379dad8f1670d233ac67b76b1c5a42ad3714a3
+X-Git-Parent: fb2e28485679418e459583605f9b19807a72ceca
+Sender: git-commits-head-owner@vger.kernel.org
+Precedence: bulk
+X-Mailing-List: 	git-commits-head@vger.kernel.org
+X-RedHat-Spam-Score: 0.005 
+Status: RO
+Content-Length: 17154
+Lines: 815
+
+commit 8d379dad8f1670d233ac67b76b1c5a42ad3714a3
+tree 7c0dff27bf08da33760b97529ee65aff911260d1
+parent fb2e28485679418e459583605f9b19807a72ceca
+author Jan Beulich <jbeulich@novell.com> 1159260752 +0200
+committer Andi Kleen <andi@basil.nowhere.org> 1159260752 +0200
+
+[PATCH] annotate arch/x86_64/lib/*.S
+
+Add unwind annotations to arch/x86_64/lib/*.S, and also use the macros
+provided by linux/linkage.h where-ever possible.
+
+Some of the alternative instructions handling needed to be adjusted so
+that the replacement code would also have valid unwind information.
+
+Signed-off-by: Jan Beulich <jbeulich@novell.com>
+Signed-off-by: Andi Kleen <ak@suse.de>
+
+ arch/x86_64/lib/clear_page.S |   47 +++++++++++++++----------
+ arch/x86_64/lib/copy_page.S  |   53 +++++++++++++++++++---------
+ arch/x86_64/lib/copy_user.S  |   39 +++++++++++++++------
+ arch/x86_64/lib/csum-copy.S  |   26 +++++++++++---
+ arch/x86_64/lib/getuser.S    |   32 ++++++++++-------
+ arch/x86_64/lib/iomap_copy.S |   10 +++--
+ arch/x86_64/lib/memcpy.S     |   69 +++++++++++++++++++++----------------
+ arch/x86_64/lib/memset.S     |   79 +++++++++++++++++++++++--------------------
+ arch/x86_64/lib/putuser.S    |   32 ++++++++++-------
+ 9 files changed, 244 insertions(+), 143 deletions(-)
+
+diff --git a/arch/x86_64/lib/clear_page.S b/arch/x86_64/lib/clear_page.S
+index 1f81b79..9a10a78 100644
+--- a/arch/x86_64/lib/clear_page.S
++++ b/arch/x86_64/lib/clear_page.S
+@@ -1,10 +1,22 @@
++#include <linux/linkage.h>
++#include <asm/dwarf2.h>
++
+ /*
+  * Zero a page. 	
+  * rdi	page
+  */			
+-	.globl clear_page
+-	.p2align 4
+-clear_page:
++	ALIGN
++clear_page_c:
++	CFI_STARTPROC
++	movl $4096/8,%ecx
++	xorl %eax,%eax
++	rep stosq
++	ret
++	CFI_ENDPROC
++ENDPROC(clear_page)
++
++ENTRY(clear_page)
++	CFI_STARTPROC
+ 	xorl   %eax,%eax
+ 	movl   $4096/64,%ecx
+ 	.p2align 4
+@@ -23,28 +35,25 @@ #define PUT(x) movq %rax,x*8(%rdi)
+ 	jnz	.Lloop
+ 	nop
+ 	ret
+-clear_page_end:
++	CFI_ENDPROC
++.Lclear_page_end:
++ENDPROC(clear_page)
+ 
+ 	/* Some CPUs run faster using the string instructions.
+ 	   It is also a lot simpler. Use this when possible */
+ 
+ #include <asm/cpufeature.h>
+ 
++	.section .altinstr_replacement,"ax"
++1:	.byte 0xeb					/* jmp <disp8> */
++	.byte (clear_page_c - clear_page) - (2f - 1b)	/* offset */
++2:
++	.previous
+ 	.section .altinstructions,"a"
+ 	.align 8
+-	.quad  clear_page
+-	.quad  clear_page_c
+-	.byte  X86_FEATURE_REP_GOOD
+-	.byte  clear_page_end-clear_page
+-	.byte  clear_page_c_end-clear_page_c
+-	.previous
+-
+-	.section .altinstr_replacement,"ax"
+-clear_page_c:
+-	movl $4096/8,%ecx
+-	xorl %eax,%eax
+-	rep 
+-	stosq
+-	ret
+-clear_page_c_end:
++	.quad clear_page
++	.quad 1b
++	.byte X86_FEATURE_REP_GOOD
++	.byte .Lclear_page_end - clear_page
++	.byte 2b - 1b
+ 	.previous
+diff --git a/arch/x86_64/lib/copy_page.S b/arch/x86_64/lib/copy_page.S
+index 8fa19d9..0ebb03b 100644
+--- a/arch/x86_64/lib/copy_page.S
++++ b/arch/x86_64/lib/copy_page.S
+@@ -1,17 +1,32 @@
+ /* Written 2003 by Andi Kleen, based on a kernel by Evandro Menezes */
+ 	
++#include <linux/linkage.h>
++#include <asm/dwarf2.h>
++
++	ALIGN
++copy_page_c:
++	CFI_STARTPROC
++	movl $4096/8,%ecx
++	rep movsq
++	ret
++	CFI_ENDPROC
++ENDPROC(copy_page_c)
++
+ /* Don't use streaming store because it's better when the target
+    ends up in cache. */
+ 	    
+ /* Could vary the prefetch distance based on SMP/UP */
+ 
+-	.globl copy_page
+-	.p2align 4
+-copy_page:
++ENTRY(copy_page)
++	CFI_STARTPROC
+ 	subq	$3*8,%rsp
++	CFI_ADJUST_CFA_OFFSET 3*8
+ 	movq	%rbx,(%rsp)
++	CFI_REL_OFFSET rbx, 0
+ 	movq	%r12,1*8(%rsp)
++	CFI_REL_OFFSET r12, 1*8
+ 	movq	%r13,2*8(%rsp)
++	CFI_REL_OFFSET r13, 2*8
+ 
+ 	movl	$(4096/64)-5,%ecx
+ 	.p2align 4
+@@ -72,30 +88,33 @@ copy_page:
+ 	jnz	.Loop2
+ 
+ 	movq	(%rsp),%rbx
++	CFI_RESTORE rbx
+ 	movq	1*8(%rsp),%r12
++	CFI_RESTORE r12
+ 	movq	2*8(%rsp),%r13
++	CFI_RESTORE r13
+ 	addq	$3*8,%rsp
++	CFI_ADJUST_CFA_OFFSET -3*8
+ 	ret
++.Lcopy_page_end:
++	CFI_ENDPROC
++ENDPROC(copy_page)
+ 
+ 	/* Some CPUs run faster using the string copy instructions.
+ 	   It is also a lot simpler. Use this when possible */
+ 
+ #include <asm/cpufeature.h>
+ 
++	.section .altinstr_replacement,"ax"
++1:	.byte 0xeb					/* jmp <disp8> */
++	.byte (copy_page_c - copy_page) - (2f - 1b)	/* offset */
++2:
++	.previous
+ 	.section .altinstructions,"a"
+ 	.align 8
+-	.quad  copy_page
+-	.quad  copy_page_c
+-	.byte  X86_FEATURE_REP_GOOD
+-	.byte  copy_page_c_end-copy_page_c
+-	.byte  copy_page_c_end-copy_page_c
+-	.previous
+-
+-	.section .altinstr_replacement,"ax"
+-copy_page_c:
+-	movl $4096/8,%ecx
+-	rep 
+-	movsq 
+-	ret
+-copy_page_c_end:
++	.quad copy_page
++	.quad 1b
++	.byte X86_FEATURE_REP_GOOD
++	.byte .Lcopy_page_end - copy_page
++	.byte 2b - 1b
+ 	.previous
+diff --git a/arch/x86_64/lib/copy_user.S b/arch/x86_64/lib/copy_user.S
+index f64569b..962f3a6 100644
+--- a/arch/x86_64/lib/copy_user.S
++++ b/arch/x86_64/lib/copy_user.S
+@@ -4,6 +4,9 @@
+  * Functions to copy from and to user space.		
+  */		 
+ 
++#include <linux/linkage.h>
++#include <asm/dwarf2.h>
++
+ #define FIX_ALIGNMENT 1
+ 
+ 	#include <asm/current.h>
+@@ -12,9 +15,8 @@ #define FIX_ALIGNMENT 1
+ 	#include <asm/cpufeature.h>
+ 
+ /* Standard copy_to_user with segment limit checking */		
+-	.globl copy_to_user
+-	.p2align 4	
+-copy_to_user:
++ENTRY(copy_to_user)
++	CFI_STARTPROC
+ 	GET_THREAD_INFO(%rax)
+ 	movq %rdi,%rcx
+ 	addq %rdx,%rcx
+@@ -25,9 +27,11 @@ copy_to_user:
+ 	.byte 0xe9	/* 32bit jump */
+ 	.long .Lcug-1f
+ 1:
++	CFI_ENDPROC
++ENDPROC(copy_to_user)
+ 
+ 	.section .altinstr_replacement,"ax"
+-3:	.byte 0xe9			/* replacement jmp with 8 bit immediate */
++3:	.byte 0xe9			/* replacement jmp with 32 bit immediate */
+ 	.long copy_user_generic_c-1b	/* offset */
+ 	.previous
+ 	.section .altinstructions,"a"
+@@ -40,9 +44,8 @@ copy_to_user:
+ 	.previous
+ 
+ /* Standard copy_from_user with segment limit checking */	
+-	.globl copy_from_user
+-	.p2align 4	
+-copy_from_user:
++ENTRY(copy_from_user)
++	CFI_STARTPROC
+ 	GET_THREAD_INFO(%rax)
+ 	movq %rsi,%rcx
+ 	addq %rdx,%rcx
+@@ -50,10 +53,13 @@ copy_from_user:
+ 	cmpq threadinfo_addr_limit(%rax),%rcx
+ 	jae  bad_from_user
+ 	/* FALL THROUGH to copy_user_generic */
++	CFI_ENDPROC
++ENDPROC(copy_from_user)
+ 	
+ 	.section .fixup,"ax"
+ 	/* must zero dest */
+ bad_from_user:
++	CFI_STARTPROC
+ 	movl %edx,%ecx
+ 	xorl %eax,%eax
+ 	rep
+@@ -61,6 +67,8 @@ bad_from_user:
+ bad_to_user:
+ 	movl	%edx,%eax
+ 	ret
++	CFI_ENDPROC
++END(bad_from_user)
+ 	.previous
+ 	
+ 		
+@@ -75,9 +83,8 @@ bad_to_user:
+  * Output:		
+  * eax uncopied bytes or 0 if successful.
+  */
+-	.globl copy_user_generic
+-	.p2align 4
+-copy_user_generic:
++ENTRY(copy_user_generic)
++	CFI_STARTPROC
+ 	.byte 0x66,0x66,0x90	/* 5 byte nop for replacement jump */
+ 	.byte 0x66,0x90
+ 1:
+@@ -95,6 +102,8 @@ copy_user_generic:
+ 	.previous
+ .Lcug:
+ 	pushq %rbx
++	CFI_ADJUST_CFA_OFFSET 8
++	CFI_REL_OFFSET rbx, 0
+ 	xorl %eax,%eax		/*zero for the exception handler */
+ 
+ #ifdef FIX_ALIGNMENT
+@@ -168,9 +177,13 @@ #endif
+ 	decl %ecx
+ 	jnz .Lloop_1
+ 
++	CFI_REMEMBER_STATE
+ .Lende:
+ 	popq %rbx
++	CFI_ADJUST_CFA_OFFSET -8
++	CFI_RESTORE rbx
+ 	ret
++	CFI_RESTORE_STATE
+ 
+ #ifdef FIX_ALIGNMENT
+ 	/* align destination */
+@@ -261,6 +274,9 @@ #endif
+ .Le_zero:
+ 	movq %rdx,%rax
+ 	jmp .Lende
++	CFI_ENDPROC
++ENDPROC(copy_user_generic)
++
+ 
+ 	/* Some CPUs run faster using the string copy instructions.
+ 	   This is also a lot simpler. Use them when possible.
+@@ -282,6 +298,7 @@ #endif
+   * this please consider this.
+    */
+ copy_user_generic_c:
++	CFI_STARTPROC
+ 	movl %edx,%ecx
+ 	shrl $3,%ecx
+ 	andl $7,%edx	
+@@ -294,6 +311,8 @@ copy_user_generic_c:
+ 	ret
+ 3:	lea (%rdx,%rcx,8),%rax
+ 	ret
++	CFI_ENDPROC
++END(copy_user_generic_c)
+ 
+ 	.section __ex_table,"a"
+ 	.quad 1b,3b
+diff --git a/arch/x86_64/lib/csum-copy.S b/arch/x86_64/lib/csum-copy.S
+index 72fd55e..f0dba36 100644
+--- a/arch/x86_64/lib/csum-copy.S
++++ b/arch/x86_64/lib/csum-copy.S
+@@ -5,8 +5,9 @@
+  * License.  See the file COPYING in the main directory of this archive
+  * for more details. No warranty for anything given at all.
+  */
+- 	#include <linux/linkage.h>
+-	#include <asm/errno.h>
++#include <linux/linkage.h>
++#include <asm/dwarf2.h>
++#include <asm/errno.h>
+ 
+ /*
+  * Checksum copy with exception handling.
+@@ -53,19 +54,24 @@
+ 	.endm
+ 	
+ 				
+-	.globl csum_partial_copy_generic
+-	.p2align 4
+-csum_partial_copy_generic:
++ENTRY(csum_partial_copy_generic)
++	CFI_STARTPROC
+ 	cmpl	 $3*64,%edx
+ 	jle	 .Lignore
+ 
+ .Lignore:		
+ 	subq  $7*8,%rsp
++	CFI_ADJUST_CFA_OFFSET 7*8
+ 	movq  %rbx,2*8(%rsp)
++	CFI_REL_OFFSET rbx, 2*8
+ 	movq  %r12,3*8(%rsp)
++	CFI_REL_OFFSET r12, 3*8
+ 	movq  %r14,4*8(%rsp)
++	CFI_REL_OFFSET r14, 4*8
+ 	movq  %r13,5*8(%rsp)
++	CFI_REL_OFFSET r13, 5*8
+ 	movq  %rbp,6*8(%rsp)
++	CFI_REL_OFFSET rbp, 6*8
+ 
+ 	movq  %r8,(%rsp)
+ 	movq  %r9,1*8(%rsp)
+@@ -208,14 +214,22 @@ csum_partial_copy_generic:
+ 	addl %ebx,%eax
+ 	adcl %r9d,%eax		/* carry */
+ 			
++	CFI_REMEMBER_STATE
+ .Lende:
+ 	movq 2*8(%rsp),%rbx
++	CFI_RESTORE rbx
+ 	movq 3*8(%rsp),%r12
++	CFI_RESTORE r12
+ 	movq 4*8(%rsp),%r14
++	CFI_RESTORE r14
+ 	movq 5*8(%rsp),%r13
++	CFI_RESTORE r13
+ 	movq 6*8(%rsp),%rbp
++	CFI_RESTORE rbp
+ 	addq $7*8,%rsp
++	CFI_ADJUST_CFA_OFFSET -7*8
+ 	ret
++	CFI_RESTORE_STATE
+ 
+ 	/* Exception handlers. Very simple, zeroing is done in the wrappers */
+ .Lbad_source:
+@@ -231,3 +245,5 @@ csum_partial_copy_generic:
+ 	jz   .Lende	
+ 	movl $-EFAULT,(%rax)
+ 	jmp .Lende
++	CFI_ENDPROC
++ENDPROC(csum_partial_copy_generic)
+diff --git a/arch/x86_64/lib/getuser.S b/arch/x86_64/lib/getuser.S
+index 3844d5e..5448876 100644
+--- a/arch/x86_64/lib/getuser.S
++++ b/arch/x86_64/lib/getuser.S
+@@ -27,25 +27,26 @@
+  */
+ 
+ #include <linux/linkage.h>
++#include <asm/dwarf2.h>
+ #include <asm/page.h>
+ #include <asm/errno.h>
+ #include <asm/asm-offsets.h>
+ #include <asm/thread_info.h>
+ 
+ 	.text
+-	.p2align 4
+-.globl __get_user_1
+-__get_user_1:	
++ENTRY(__get_user_1)
++	CFI_STARTPROC
+ 	GET_THREAD_INFO(%r8)
+ 	cmpq threadinfo_addr_limit(%r8),%rcx
+ 	jae bad_get_user
+ 1:	movzb (%rcx),%edx
+ 	xorl %eax,%eax
+ 	ret
++	CFI_ENDPROC
++ENDPROC(__get_user_1)
+ 
+-	.p2align 4
+-.globl __get_user_2
+-__get_user_2:
++ENTRY(__get_user_2)
++	CFI_STARTPROC
+ 	GET_THREAD_INFO(%r8)
+ 	addq $1,%rcx
+ 	jc 20f
+@@ -57,10 +58,11 @@ __get_user_2:
+ 	ret
+ 20:	decq    %rcx
+ 	jmp	bad_get_user
++	CFI_ENDPROC
++ENDPROC(__get_user_2)
+ 
+-	.p2align 4
+-.globl __get_user_4
+-__get_user_4:
++ENTRY(__get_user_4)
++	CFI_STARTPROC
+ 	GET_THREAD_INFO(%r8)
+ 	addq $3,%rcx
+ 	jc 30f
+@@ -72,10 +74,11 @@ __get_user_4:
+ 	ret
+ 30:	subq $3,%rcx
+ 	jmp bad_get_user
++	CFI_ENDPROC
++ENDPROC(__get_user_4)
+ 
+-	.p2align 4
+-.globl __get_user_8
+-__get_user_8:
++ENTRY(__get_user_8)
++	CFI_STARTPROC
+ 	GET_THREAD_INFO(%r8)
+ 	addq $7,%rcx
+ 	jc 40f
+@@ -87,11 +90,16 @@ __get_user_8:
+ 	ret
+ 40:	subq $7,%rcx
+ 	jmp bad_get_user
++	CFI_ENDPROC
++ENDPROC(__get_user_8)
+ 
+ bad_get_user:
++	CFI_STARTPROC
+ 	xorl %edx,%edx
+ 	movq $(-EFAULT),%rax
+ 	ret
++	CFI_ENDPROC
++END(bad_get_user)
+ 
+ .section __ex_table,"a"
+ 	.quad 1b,bad_get_user
+diff --git a/arch/x86_64/lib/iomap_copy.S b/arch/x86_64/lib/iomap_copy.S
+index 8bbade5..05a95e7 100644
+--- a/arch/x86_64/lib/iomap_copy.S
++++ b/arch/x86_64/lib/iomap_copy.S
+@@ -15,12 +15,16 @@
+  * Inc., 51 Franklin St, Fifth Floor, Boston, MA 02110-1301, USA.
+  */
+ 
++#include <linux/linkage.h>
++#include <asm/dwarf2.h>
++
+ /*
+  * override generic version in lib/iomap_copy.c
+  */
+- 	.globl __iowrite32_copy
+-	.p2align 4
+-__iowrite32_copy:
++ENTRY(__iowrite32_copy)
++	CFI_STARTPROC
+ 	movl %edx,%ecx
+ 	rep movsd
+ 	ret
++	CFI_ENDPROC
++ENDPROC(__iowrite32_copy)
+diff --git a/arch/x86_64/lib/memcpy.S b/arch/x86_64/lib/memcpy.S
+index 5554948..967b22f 100644
+--- a/arch/x86_64/lib/memcpy.S
++++ b/arch/x86_64/lib/memcpy.S
+@@ -1,6 +1,9 @@
+ /* Copyright 2002 Andi Kleen */
+ 	
+-	#include <asm/cpufeature.h>		
++#include <linux/linkage.h>
++#include <asm/dwarf2.h>
++#include <asm/cpufeature.h>
++
+ /*
+  * memcpy - Copy a memory block.
+  *
+@@ -13,12 +17,26 @@
+  * rax original destination
+  */	
+ 
+- 	.globl __memcpy
+-	.globl memcpy
+-	.p2align 4
+-__memcpy:
+-memcpy:		
++	ALIGN
++memcpy_c:
++	CFI_STARTPROC
++	movq %rdi,%rax
++	movl %edx,%ecx
++	shrl $3,%ecx
++	andl $7,%edx
++	rep movsq
++	movl %edx,%ecx
++	rep movsb
++	ret
++	CFI_ENDPROC
++ENDPROC(memcpy_c)
++
++ENTRY(__memcpy)
++ENTRY(memcpy)
++	CFI_STARTPROC
+ 	pushq %rbx
++	CFI_ADJUST_CFA_OFFSET 8
++	CFI_REL_OFFSET rbx, 0
+ 	movq %rdi,%rax
+ 
+ 	movl %edx,%ecx
+@@ -86,36 +104,27 @@ memcpy:		
+ 
+ .Lende:
+ 	popq %rbx
++	CFI_ADJUST_CFA_OFFSET -8
++	CFI_RESTORE rbx
+ 	ret
+ .Lfinal:
++	CFI_ENDPROC
++ENDPROC(memcpy)
++ENDPROC(__memcpy)
+ 
+ 	/* Some CPUs run faster using the string copy instructions.
+ 	   It is also a lot simpler. Use this when possible */
+ 
++	.section .altinstr_replacement,"ax"
++1:	.byte 0xeb				/* jmp <disp8> */
++	.byte (memcpy_c - memcpy) - (2f - 1b)	/* offset */
++2:
++	.previous
+ 	.section .altinstructions,"a"
+ 	.align 8
+-	.quad  memcpy
+-	.quad  memcpy_c
+-	.byte  X86_FEATURE_REP_GOOD
+-	.byte  .Lfinal-memcpy
+-	.byte  memcpy_c_end-memcpy_c
+-	.previous
+-
+-	.section .altinstr_replacement,"ax"
+- /* rdi	destination
+-  * rsi source
+-  * rdx count
+-  */
+-memcpy_c:
+-	movq %rdi,%rax
+-	movl %edx,%ecx
+-	shrl $3,%ecx
+-	andl $7,%edx	
+-	rep 
+-	movsq 
+-	movl %edx,%ecx
+-	rep
+-	movsb
+-	ret
+-memcpy_c_end:
++	.quad memcpy
++	.quad 1b
++	.byte X86_FEATURE_REP_GOOD
++	.byte .Lfinal - memcpy
++	.byte 2b - 1b
+ 	.previous
+diff --git a/arch/x86_64/lib/memset.S b/arch/x86_64/lib/memset.S
+index ad397f2..09ed1f6 100644
+--- a/arch/x86_64/lib/memset.S
++++ b/arch/x86_64/lib/memset.S
+@@ -1,4 +1,8 @@
+ /* Copyright 2002 Andi Kleen, SuSE Labs */
++
++#include <linux/linkage.h>
++#include <asm/dwarf2.h>
++
+ /*
+  * ISO C memset - set a memory block to a byte value.
+  *	
+@@ -8,11 +13,29 @@
+  * 
+  * rax   original destination
+  */	
+- 	.globl __memset
+-	.globl memset
+-	.p2align 4
+-memset:	
+-__memset:
++	ALIGN
++memset_c:
++	CFI_STARTPROC
++	movq %rdi,%r9
++	movl %edx,%r8d
++	andl $7,%r8d
++	movl %edx,%ecx
++	shrl $3,%ecx
++	/* expand byte value  */
++	movzbl %sil,%esi
++	movabs $0x0101010101010101,%rax
++	mulq %rsi		/* with rax, clobbers rdx */
++	rep stosq
++	movl %r8d,%ecx
++	rep stosb
++	movq %r9,%rax
++	ret
++	CFI_ENDPROC
++ENDPROC(memset_c)
++
++ENTRY(memset)
++ENTRY(__memset)
++	CFI_STARTPROC
+ 	movq %rdi,%r10
+ 	movq %rdx,%r11
+ 
+@@ -25,6 +48,7 @@ __memset:
+ 	movl  %edi,%r9d
+ 	andl  $7,%r9d
+ 	jnz  .Lbad_alignment
++	CFI_REMEMBER_STATE
+ .Lafter_bad_alignment:
+ 
+ 	movl %r11d,%ecx
+@@ -75,6 +99,7 @@ __memset:
+ 	movq	%r10,%rax
+ 	ret
+ 
++	CFI_RESTORE_STATE
+ .Lbad_alignment:
+ 	cmpq $7,%r11
+ 	jbe	.Lhandle_7
+@@ -84,42 +109,26 @@ __memset:
+ 	addq %r8,%rdi
+ 	subq %r8,%r11
+ 	jmp .Lafter_bad_alignment
++.Lfinal:
++	CFI_ENDPROC
++ENDPROC(memset)
++ENDPROC(__memset)
+ 
+ 	/* Some CPUs run faster using the string instructions.
+ 	   It is also a lot simpler. Use this when possible */
+ 
+ #include <asm/cpufeature.h>
+ 
++	.section .altinstr_replacement,"ax"
++1:	.byte 0xeb				/* jmp <disp8> */
++	.byte (memset_c - memset) - (2f - 1b)	/* offset */
++2:
++	.previous
+ 	.section .altinstructions,"a"
+ 	.align 8
+-	.quad  memset
+-	.quad  memset_c
+-	.byte  X86_FEATURE_REP_GOOD
+-	.byte  memset_c_end-memset_c
+-	.byte  memset_c_end-memset_c
+-	.previous
+-
+-	.section .altinstr_replacement,"ax"
+- /* rdi	destination
+-  * rsi value
+-  * rdx count
+-  */
+-memset_c:
+-	movq %rdi,%r9
+-	movl %edx,%r8d
+-	andl $7,%r8d		
+-	movl %edx,%ecx
+-	shrl $3,%ecx		
+-	/* expand byte value  */
+-	movzbl %sil,%esi
+-	movabs $0x0101010101010101,%rax
+-	mulq   %rsi		/* with rax, clobbers rdx */
+-	rep
+-	stosq	
+-	movl %r8d,%ecx
+-	rep
+-	stosb
+-	movq %r9,%rax
+-	ret
+-memset_c_end:
++	.quad memset
++	.quad 1b
++	.byte X86_FEATURE_REP_GOOD
++	.byte .Lfinal - memset
++	.byte 2b - 1b
+ 	.previous
+diff --git a/arch/x86_64/lib/putuser.S b/arch/x86_64/lib/putuser.S
+index 7f55939..4989f5a 100644
+--- a/arch/x86_64/lib/putuser.S
++++ b/arch/x86_64/lib/putuser.S
+@@ -25,25 +25,26 @@
+  */
+ 
+ #include <linux/linkage.h>
++#include <asm/dwarf2.h>
+ #include <asm/page.h>
+ #include <asm/errno.h>
+ #include <asm/asm-offsets.h>
+ #include <asm/thread_info.h>
+ 
+ 	.text
+-	.p2align 4
+-.globl __put_user_1
+-__put_user_1:
++ENTRY(__put_user_1)
++	CFI_STARTPROC
+ 	GET_THREAD_INFO(%r8)
+ 	cmpq threadinfo_addr_limit(%r8),%rcx
+ 	jae bad_put_user
+ 1:	movb %dl,(%rcx)
+ 	xorl %eax,%eax
+ 	ret
++	CFI_ENDPROC
++ENDPROC(__put_user_1)
+ 
+-	.p2align 4
+-.globl __put_user_2
+-__put_user_2:
++ENTRY(__put_user_2)
++	CFI_STARTPROC
+ 	GET_THREAD_INFO(%r8)
+ 	addq $1,%rcx
+ 	jc 20f
+@@ -55,10 +56,11 @@ __put_user_2:
+ 	ret
+ 20:	decq %rcx
+ 	jmp bad_put_user
++	CFI_ENDPROC
++ENDPROC(__put_user_2)
+ 
+-	.p2align 4
+-.globl __put_user_4
+-__put_user_4:
++ENTRY(__put_user_4)
++	CFI_STARTPROC
+ 	GET_THREAD_INFO(%r8)
+ 	addq $3,%rcx
+ 	jc 30f
+@@ -70,10 +72,11 @@ __put_user_4:
+ 	ret
+ 30:	subq $3,%rcx
+ 	jmp bad_put_user
++	CFI_ENDPROC
++ENDPROC(__put_user_4)
+ 
+-	.p2align 4
+-.globl __put_user_8
+-__put_user_8:
++ENTRY(__put_user_8)
++	CFI_STARTPROC
+ 	GET_THREAD_INFO(%r8)
+ 	addq $7,%rcx
+ 	jc 40f
+@@ -85,10 +88,15 @@ __put_user_8:
+ 	ret
+ 40:	subq $7,%rcx
+ 	jmp bad_put_user
++	CFI_ENDPROC
++ENDPROC(__put_user_8)
+ 
+ bad_put_user:
++	CFI_STARTPROC
+ 	movq $(-EFAULT),%rax
+ 	ret
++	CFI_ENDPROC
++END(bad_put_user)
+ 
+ .section __ex_table,"a"
+ 	.quad 1b,bad_put_user
+-
+To unsubscribe from this list: send the line "unsubscribe git-commits-head" in
+the body of a message to majordomo@vger.kernel.org
+More majordomo info at  http://vger.kernel.org/majordomo-info.html
+
+From davej  Tue Sep 26 21:13:02 2006
+Return-Path: <git-commits-head-owner@vger.kernel.org>
+X-Spam-Checker-Version: SpamAssassin 3.1.4 (2006-07-25) on 
+	pressure.kernelslacker.org
+X-Spam-Level: 
+X-Spam-Status: No, score=-2.2 required=5.0 tests=AWL,BAYES_00,
+	UNPARSEABLE_RELAY autolearn=ham version=3.1.4
+Received: from pobox.devel.redhat.com [10.11.255.8]
+	by pressure.kernelslacker.org with IMAP (fetchmail-6.3.4)
+	for <davej@localhost> (single-drop); Tue, 26 Sep 2006 21:13:02 -0400 (EDT)
+Received: from pobox.devel.redhat.com ([unix socket])
+	 by pobox.devel.redhat.com (Cyrus v2.2.12-Invoca-RPM-2.2.12-3.RHEL4.1) with LMTPA;
+	 Tue, 26 Sep 2006 21:12:33 -0400
+X-Sieve: CMU Sieve 2.2
+Received: from int-mx1.corp.redhat.com (int-mx1.corp.redhat.com [172.16.52.254])
+	by pobox.devel.redhat.com (8.13.1/8.13.1) with ESMTP id k8R1CWMP028896;
+	Tue, 26 Sep 2006 21:12:32 -0400
+Received: from mx3.redhat.com (mx3.redhat.com [172.16.48.32])
+	by int-mx1.corp.redhat.com (8.12.11.20060308/8.12.11) with ESMTP id k8R1CWSj012980;
+	Tue, 26 Sep 2006 21:12:32 -0400
+Received: from vger.kernel.org (vger.kernel.org [209.132.176.167])
+	by mx3.redhat.com (8.13.1/8.13.1) with ESMTP id k8QMVSEq000343;
+	Tue, 26 Sep 2006 21:12:26 -0400
+Received: (majordomo@vger.kernel.org) by vger.kernel.org via listexpand
+	id S965017AbWIZXC3 (ORCPT <rfc822;davej@redhat.com> + 4 others);
+	Tue, 26 Sep 2006 19:02:29 -0400
+Received: (majordomo@vger.kernel.org) by vger.kernel.org id S965013AbWIZXC3
+	(ORCPT <rfc822;git-commits-head-outgoing>);
+	Tue, 26 Sep 2006 19:02:29 -0400
+Received: from hera.kernel.org ([140.211.167.34]:40898 "EHLO hera.kernel.org")
+	by vger.kernel.org with ESMTP id S965008AbWIZXCD (ORCPT
+	<rfc822;git-commits-head@vger.kernel.org>);
+	Tue, 26 Sep 2006 19:02:03 -0400
+Received: from hera.kernel.org (IDENT:U2FsdGVkX1+qF3GGnhb5ROEmoRA9ifF+4wPISfHQwxY@localhost [127.0.0.1])
+	by hera.kernel.org (8.13.7/8.13.7) with ESMTP id k8QN21Nj016303
+	(version=TLSv1/SSLv3 cipher=DHE-RSA-AES256-SHA bits=256 verify=NO)
+	for <git-commits-head@vger.kernel.org>; Tue, 26 Sep 2006 23:02:01 GMT
+Received: (from dwmw2@localhost)
+	by hera.kernel.org (8.13.7/8.13.1/Submit) id k8QN21Bt016302
+	for git-commits-head@vger.kernel.org; Tue, 26 Sep 2006 23:02:01 GMT
+Date: 	Tue, 26 Sep 2006 23:02:01 GMT
+Message-Id: <200609262302.k8QN21Bt016302@hera.kernel.org>
+From: Linux Kernel Mailing List <linux-kernel@vger.kernel.org>
+To: git-commits-head@vger.kernel.org
+Subject: [PATCH] x86: Some preparationary cleanup for stack trace
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+X-Git-Commit: 5a1b3999d6cb7ab87f1f3b1700bc91839fd6fa29
+X-Git-Parent: 4ea8a5d8b57cd504b4b2de1212523848e7ab50cf
+Sender: git-commits-head-owner@vger.kernel.org
+Precedence: bulk
+X-Mailing-List: 	git-commits-head@vger.kernel.org
+X-RedHat-Spam-Score: 0.005 
+Status: RO
+Content-Length: 6837
+Lines: 186
+
+commit 5a1b3999d6cb7ab87f1f3b1700bc91839fd6fa29
+tree ec969406fe68d875d7904c364ea9a5b74c084567
+parent 4ea8a5d8b57cd504b4b2de1212523848e7ab50cf
+author Andi Kleen <ak@suse.de> 1159260754 +0200
+committer Andi Kleen <andi@basil.nowhere.org> 1159260754 +0200
+
+[PATCH] x86: Some preparationary cleanup for stack trace
+
+- Remove unused all_contexts parameter
+No caller used it
+- Move skip argument into the structure (needed for
+followon patches)
+
+Cc: mingo@elte.hu
+
+Signed-off-by: Andi Kleen <ak@suse.de>
+
+ arch/i386/kernel/stacktrace.c   |   11 +++--------
+ arch/s390/kernel/stacktrace.c   |   17 ++++++++---------
+ arch/x86_64/kernel/stacktrace.c |   14 +++++---------
+ include/linux/stacktrace.h      |    7 ++++---
+ kernel/lockdep.c                |    5 ++++-
+ 5 files changed, 24 insertions(+), 30 deletions(-)
+
+diff --git a/arch/i386/kernel/stacktrace.c b/arch/i386/kernel/stacktrace.c
+index e62a037..ae3c32a 100644
+--- a/arch/i386/kernel/stacktrace.c
++++ b/arch/i386/kernel/stacktrace.c
+@@ -61,12 +61,8 @@ #endif
+ 
+ /*
+  * Save stack-backtrace addresses into a stack_trace buffer.
+- * If all_contexts is set, all contexts (hardirq, softirq and process)
+- * are saved. If not set then only the current context is saved.
+  */
+-void save_stack_trace(struct stack_trace *trace,
+-		      struct task_struct *task, int all_contexts,
+-		      unsigned int skip)
++void save_stack_trace(struct stack_trace *trace, struct task_struct *task)
+ {
+ 	unsigned long ebp;
+ 	unsigned long *stack = &ebp;
+@@ -85,10 +81,9 @@ void save_stack_trace(struct stack_trace
+ 		struct thread_info *context = (struct thread_info *)
+ 				((unsigned long)stack & (~(THREAD_SIZE - 1)));
+ 
+-		ebp = save_context_stack(trace, skip, context, stack, ebp);
++		ebp = save_context_stack(trace, trace->skip, context, stack, ebp);
+ 		stack = (unsigned long *)context->previous_esp;
+-		if (!all_contexts || !stack ||
+-				trace->nr_entries >= trace->max_entries)
++		if (!stack || trace->nr_entries >= trace->max_entries)
+ 			break;
+ 		trace->entries[trace->nr_entries++] = ULONG_MAX;
+ 		if (trace->nr_entries >= trace->max_entries)
+diff --git a/arch/s390/kernel/stacktrace.c b/arch/s390/kernel/stacktrace.c
+index de83f38..d9428a0 100644
+--- a/arch/s390/kernel/stacktrace.c
++++ b/arch/s390/kernel/stacktrace.c
+@@ -59,9 +59,7 @@ static inline unsigned long save_context
+ 	}
+ }
+ 
+-void save_stack_trace(struct stack_trace *trace,
+-		      struct task_struct *task, int all_contexts,
+-		      unsigned int skip)
++void save_stack_trace(struct stack_trace *trace, struct task_struct *task)
+ {
+ 	register unsigned long sp asm ("15");
+ 	unsigned long orig_sp;
+@@ -69,22 +67,23 @@ void save_stack_trace(struct stack_trace
+ 	sp &= PSW_ADDR_INSN;
+ 	orig_sp = sp;
+ 
+-	sp = save_context_stack(trace, &skip, sp,
++	sp = save_context_stack(trace, &trace->skip, sp,
+ 				S390_lowcore.panic_stack - PAGE_SIZE,
+ 				S390_lowcore.panic_stack);
+-	if ((sp != orig_sp) && !all_contexts)
++	if ((sp != orig_sp) && !trace->all_contexts)
+ 		return;
+-	sp = save_context_stack(trace, &skip, sp,
++	sp = save_context_stack(trace, &trace->skip, sp,
+ 				S390_lowcore.async_stack - ASYNC_SIZE,
+ 				S390_lowcore.async_stack);
+-	if ((sp != orig_sp) && !all_contexts)
++	if ((sp != orig_sp) && !trace->all_contexts)
+ 		return;
+ 	if (task)
+-		save_context_stack(trace, &skip, sp,
++		save_context_stack(trace, &trace->skip, sp,
+ 				   (unsigned long) task_stack_page(task),
+ 				   (unsigned long) task_stack_page(task) + THREAD_SIZE);
+ 	else
+-		save_context_stack(trace, &skip, sp, S390_lowcore.thread_info,
++		save_context_stack(trace, &trace->skip, sp,
++				   S390_lowcore.thread_info,
+ 				   S390_lowcore.thread_info + THREAD_SIZE);
+ 	return;
+ }
+diff --git a/arch/x86_64/kernel/stacktrace.c b/arch/x86_64/kernel/stacktrace.c
+index 32cf55e..1c022af 100644
+--- a/arch/x86_64/kernel/stacktrace.c
++++ b/arch/x86_64/kernel/stacktrace.c
+@@ -109,9 +109,10 @@ out_restore:
+  * Save stack-backtrace addresses into a stack_trace buffer:
+  */
+ static inline unsigned long
+-save_context_stack(struct stack_trace *trace, unsigned int skip,
++save_context_stack(struct stack_trace *trace,
+ 		   unsigned long stack, unsigned long stack_end)
+ {
++	int skip = trace->skip;
+ 	unsigned long addr;
+ 
+ #ifdef CONFIG_FRAME_POINTER
+@@ -159,12 +160,8 @@ #define MAX_STACKS 10
+ 
+ /*
+  * Save stack-backtrace addresses into a stack_trace buffer.
+- * If all_contexts is set, all contexts (hardirq, softirq and process)
+- * are saved. If not set then only the current context is saved.
+  */
+-void save_stack_trace(struct stack_trace *trace,
+-		      struct task_struct *task, int all_contexts,
+-		      unsigned int skip)
++void save_stack_trace(struct stack_trace *trace, struct task_struct *task)
+ {
+ 	unsigned long stack = (unsigned long)&stack;
+ 	int i, nr_stacks = 0, stacks_done[MAX_STACKS];
+@@ -207,9 +204,8 @@ void save_stack_trace(struct stack_trace
+ 				return;
+ 		stacks_done[nr_stacks] = stack_end;
+ 
+-		stack = save_context_stack(trace, skip, stack, stack_end);
+-		if (!all_contexts || !stack ||
+-				trace->nr_entries >= trace->max_entries)
++		stack = save_context_stack(trace, stack, stack_end);
++		if (!stack || trace->nr_entries >= trace->max_entries)
+ 			return;
+ 		trace->entries[trace->nr_entries++] = ULONG_MAX;
+ 		if (trace->nr_entries >= trace->max_entries)
+diff --git a/include/linux/stacktrace.h b/include/linux/stacktrace.h
+index 9cc81e5..50e2b01 100644
+--- a/include/linux/stacktrace.h
++++ b/include/linux/stacktrace.h
+@@ -5,15 +5,16 @@ #ifdef CONFIG_STACKTRACE
+ struct stack_trace {
+ 	unsigned int nr_entries, max_entries;
+ 	unsigned long *entries;
++	int skip;	/* input argument: How many entries to skip */
++	int all_contexts; /* input argument: if true do than one stack */
+ };
+ 
+ extern void save_stack_trace(struct stack_trace *trace,
+-			     struct task_struct *task, int all_contexts,
+-			     unsigned int skip);
++			     struct task_struct *task);
+ 
+ extern void print_stack_trace(struct stack_trace *trace, int spaces);
+ #else
+-# define save_stack_trace(trace, task, all, skip)	do { } while (0)
++# define save_stack_trace(trace, task)			do { } while (0)
+ # define print_stack_trace(trace)			do { } while (0)
+ #endif
+ 
+diff --git a/kernel/lockdep.c b/kernel/lockdep.c
+index 9bad178..900b4cb 100644
+--- a/kernel/lockdep.c
++++ b/kernel/lockdep.c
+@@ -224,7 +224,10 @@ static int save_trace(struct stack_trace
+ 	trace->max_entries = MAX_STACK_TRACE_ENTRIES - nr_stack_trace_entries;
+ 	trace->entries = stack_trace + nr_stack_trace_entries;
+ 
+-	save_stack_trace(trace, NULL, 0, 3);
++	trace->skip = 3;
++	trace->all_contexts = 0;
++
++	save_stack_trace(trace, NULL);
+ 
+ 	trace->max_entries = trace->nr_entries;
+ 
+-
+To unsubscribe from this list: send the line "unsubscribe git-commits-head" in
+the body of a message to majordomo@vger.kernel.org
+More majordomo info at  http://vger.kernel.org/majordomo-info.html
+
+From davej  Tue Sep 26 21:13:06 2006
+Return-Path: <git-commits-head-owner@vger.kernel.org>
+X-Spam-Checker-Version: SpamAssassin 3.1.4 (2006-07-25) on 
+	pressure.kernelslacker.org
+X-Spam-Level: 
+X-Spam-Status: No, score=-2.2 required=5.0 tests=AWL,BAYES_00,
+	UNPARSEABLE_RELAY autolearn=ham version=3.1.4
+Received: from pobox.devel.redhat.com [10.11.255.8]
+	by pressure.kernelslacker.org with IMAP (fetchmail-6.3.4)
+	for <davej@localhost> (single-drop); Tue, 26 Sep 2006 21:13:06 -0400 (EDT)
+Received: from pobox.devel.redhat.com ([unix socket])
+	 by pobox.devel.redhat.com (Cyrus v2.2.12-Invoca-RPM-2.2.12-3.RHEL4.1) with LMTPA;
+	 Tue, 26 Sep 2006 21:12:45 -0400
+X-Sieve: CMU Sieve 2.2
+Received: from int-mx1.corp.redhat.com (int-mx1.corp.redhat.com [172.16.52.254])
+	by pobox.devel.redhat.com (8.13.1/8.13.1) with ESMTP id k8R1CjU0028907;
+	Tue, 26 Sep 2006 21:12:45 -0400
+Received: from mx3.redhat.com (mx3.redhat.com [172.16.48.32])
+	by int-mx1.corp.redhat.com (8.12.11.20060308/8.12.11) with ESMTP id k8R1Cip9013041;
+	Tue, 26 Sep 2006 21:12:44 -0400
+Received: from vger.kernel.org (vger.kernel.org [209.132.176.167])
+	by mx3.redhat.com (8.13.1/8.13.1) with ESMTP id k8QMVSEs000343;
+	Tue, 26 Sep 2006 21:12:38 -0400
+Received: (majordomo@vger.kernel.org) by vger.kernel.org via listexpand
+	id S965007AbWIZXCb (ORCPT <rfc822;davej@redhat.com> + 4 others);
+	Tue, 26 Sep 2006 19:02:31 -0400
+Received: (majordomo@vger.kernel.org) by vger.kernel.org id S965008AbWIZXCb
+	(ORCPT <rfc822;git-commits-head-outgoing>);
+	Tue, 26 Sep 2006 19:02:31 -0400
+Received: from hera.kernel.org ([140.211.167.34]:41666 "EHLO hera.kernel.org")
+	by vger.kernel.org with ESMTP id S965007AbWIZXCD (ORCPT
+	<rfc822;git-commits-head@vger.kernel.org>);
+	Tue, 26 Sep 2006 19:02:03 -0400
+Received: from hera.kernel.org (IDENT:U2FsdGVkX18GJeY/cmzR06qy96FRujb9ZX0lcfOB2yg@localhost [127.0.0.1])
+	by hera.kernel.org (8.13.7/8.13.7) with ESMTP id k8QN22bE016318
+	(version=TLSv1/SSLv3 cipher=DHE-RSA-AES256-SHA bits=256 verify=NO)
+	for <git-commits-head@vger.kernel.org>; Tue, 26 Sep 2006 23:02:02 GMT
+Received: (from dwmw2@localhost)
+	by hera.kernel.org (8.13.7/8.13.1/Submit) id k8QN223v016317
+	for git-commits-head@vger.kernel.org; Tue, 26 Sep 2006 23:02:02 GMT
+Date: 	Tue, 26 Sep 2006 23:02:02 GMT
+Message-Id: <200609262302.k8QN223v016317@hera.kernel.org>
+From: Linux Kernel Mailing List <linux-kernel@vger.kernel.org>
+To: git-commits-head@vger.kernel.org
+Subject: [PATCH] Avoid recursion in lockdep when stack tracer takes locks
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+X-Git-Commit: 3fa7c794fe4dc127f7fac3fad4d13628e68f89ce
+X-Git-Parent: 5a1b3999d6cb7ab87f1f3b1700bc91839fd6fa29
+Sender: git-commits-head-owner@vger.kernel.org
+Precedence: bulk
+X-Mailing-List: 	git-commits-head@vger.kernel.org
+X-RedHat-Spam-Score: 0.005 
+Status: RO
+Content-Length: 1275
+Lines: 40
+
+commit 3fa7c794fe4dc127f7fac3fad4d13628e68f89ce
+tree 855a6737a2275317bcd3f3a9934c33dcadba6e6f
+parent 5a1b3999d6cb7ab87f1f3b1700bc91839fd6fa29
+author Andi Kleen <ak@suse.de> 1159260754 +0200
+committer Andi Kleen <andi@basil.nowhere.org> 1159260754 +0200
+
+[PATCH] Avoid recursion in lockdep when stack tracer takes locks
+
+The new dwarf2 unwinder needs to take locks to do backtraces
+inside modules. This patch makes sure lockdep which calls
+stacktrace is not reentered.
+
+Thanks to Ingo for suggesting this simpler approach.
+
+Cc: mingo@elte.hu
+Signed-off-by: Andi Kleen <ak@suse.de>
+
+ kernel/lockdep.c |    4 ++++
+ 1 file changed, 4 insertions(+)
+
+diff --git a/kernel/lockdep.c b/kernel/lockdep.c
+index 900b4cb..c088e55 100644
+--- a/kernel/lockdep.c
++++ b/kernel/lockdep.c
+@@ -227,7 +227,11 @@ static int save_trace(struct stack_trace
+ 	trace->skip = 3;
+ 	trace->all_contexts = 0;
+ 
++	/* Make sure to not recurse in case the the unwinder needs to tak
++e	   locks. */
++	lockdep_off();
+ 	save_stack_trace(trace, NULL);
++	lockdep_on();
+ 
+ 	trace->max_entries = trace->nr_entries;
+ 
+-
+To unsubscribe from this list: send the line "unsubscribe git-commits-head" in
+the body of a message to majordomo@vger.kernel.org
+More majordomo info at  http://vger.kernel.org/majordomo-info.html
+
+From davej  Tue Sep 26 21:13:08 2006
+Return-Path: <git-commits-head-owner@vger.kernel.org>
+X-Spam-Checker-Version: SpamAssassin 3.1.4 (2006-07-25) on 
+	pressure.kernelslacker.org
+X-Spam-Level: 
+X-Spam-Status: No, score=-2.2 required=5.0 tests=AWL,BAYES_00,
+	UNPARSEABLE_RELAY autolearn=ham version=3.1.4
+Received: from pobox.devel.redhat.com [10.11.255.8]
+	by pressure.kernelslacker.org with IMAP (fetchmail-6.3.4)
+	for <davej@localhost> (single-drop); Tue, 26 Sep 2006 21:13:08 -0400 (EDT)
+Received: from pobox.devel.redhat.com ([unix socket])
+	 by pobox.devel.redhat.com (Cyrus v2.2.12-Invoca-RPM-2.2.12-3.RHEL4.1) with LMTPA;
+	 Tue, 26 Sep 2006 21:12:57 -0400
+X-Sieve: CMU Sieve 2.2
+Received: from int-mx1.corp.redhat.com (int-mx1.corp.redhat.com [172.16.52.254])
+	by pobox.devel.redhat.com (8.13.1/8.13.1) with ESMTP id k8R1Cv6m028922;
+	Tue, 26 Sep 2006 21:12:57 -0400
+Received: from mx3.redhat.com (mx3.redhat.com [172.16.48.32])
+	by int-mx1.corp.redhat.com (8.12.11.20060308/8.12.11) with ESMTP id k8R1Cu3M013088;
+	Tue, 26 Sep 2006 21:12:56 -0400
+Received: from vger.kernel.org (vger.kernel.org [209.132.176.167])
+	by mx3.redhat.com (8.13.1/8.13.1) with ESMTP id k8QMVSEu000343;
+	Tue, 26 Sep 2006 21:12:51 -0400
+Received: (majordomo@vger.kernel.org) by vger.kernel.org via listexpand
+	id S965013AbWIZXCd (ORCPT <rfc822;davej@redhat.com> + 4 others);
+	Tue, 26 Sep 2006 19:02:33 -0400
+Received: (majordomo@vger.kernel.org) by vger.kernel.org id S965018AbWIZXCc
+	(ORCPT <rfc822;git-commits-head-outgoing>);
+	Tue, 26 Sep 2006 19:02:32 -0400
+Received: from hera.kernel.org ([140.211.167.34]:46786 "EHLO hera.kernel.org")
+	by vger.kernel.org with ESMTP id S965009AbWIZXCG (ORCPT
+	<rfc822;git-commits-head@vger.kernel.org>);
+	Tue, 26 Sep 2006 19:02:06 -0400
+Received: from hera.kernel.org (IDENT:U2FsdGVkX1/qsjoW90QRcWfUMBFlAmsIBxEBZIGaizw@localhost [127.0.0.1])
+	by hera.kernel.org (8.13.7/8.13.7) with ESMTP id k8QN23JW016343
+	(version=TLSv1/SSLv3 cipher=DHE-RSA-AES256-SHA bits=256 verify=NO)
+	for <git-commits-head@vger.kernel.org>; Tue, 26 Sep 2006 23:02:03 GMT
+Received: (from dwmw2@localhost)
+	by hera.kernel.org (8.13.7/8.13.1/Submit) id k8QN23lE016342
+	for git-commits-head@vger.kernel.org; Tue, 26 Sep 2006 23:02:03 GMT
+Date: 	Tue, 26 Sep 2006 23:02:03 GMT
+Message-Id: <200609262302.k8QN23lE016342@hera.kernel.org>
+From: Linux Kernel Mailing List <linux-kernel@vger.kernel.org>
+To: git-commits-head@vger.kernel.org
+Subject: [PATCH] Move unwind_init earlier
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+X-Git-Commit: c9538ed49272fb244ac06ba643ff076a68a77e12
+X-Git-Parent: b7f5e3c7742d5332b78b831131f43fc3630e6322
+Sender: git-commits-head-owner@vger.kernel.org
+Precedence: bulk
+X-Mailing-List: 	git-commits-head@vger.kernel.org
+X-RedHat-Spam-Score: 0.005 
+Status: RO
+Content-Length: 1226
+Lines: 42
+
+commit c9538ed49272fb244ac06ba643ff076a68a77e12
+tree c720082e74ffbac1c29d88c21754d7605fe8e9b1
+parent b7f5e3c7742d5332b78b831131f43fc3630e6322
+author Andi Kleen <ak@suse.de> 1159260754 +0200
+committer Andi Kleen <andi@basil.nowhere.org> 1159260754 +0200
+
+[PATCH] Move unwind_init earlier
+
+Needed for use of the unwinder in lockdep, because lockdep runs really
+early too.
+
+Cc: jbeulich@novell.com
+
+Signed-off-by: Andi Kleen <ak@suse.de>
+
+ init/main.c |    2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/init/main.c b/init/main.c
+index 6b69564..913e48d 100644
+--- a/init/main.c
++++ b/init/main.c
+@@ -468,6 +468,7 @@ asmlinkage void __init start_kernel(void
+ 	 * Need to run as early as possible, to initialize the
+ 	 * lockdep hash:
+ 	 */
++	unwind_init();
+ 	lockdep_init();
+ 
+ 	local_irq_disable();
+@@ -506,7 +507,6 @@ asmlinkage void __init start_kernel(void
+ 		   __stop___param - __start___param,
+ 		   &unknown_bootoption);
+ 	sort_main_extable();
+-	unwind_init();
+ 	trap_init();
+ 	rcu_init();
+ 	init_IRQ();
+-
+To unsubscribe from this list: send the line "unsubscribe git-commits-head" in
+the body of a message to majordomo@vger.kernel.org
+More majordomo info at  http://vger.kernel.org/majordomo-info.html
+
+From davej  Tue Sep 26 21:13:09 2006
+Return-Path: <git-commits-head-owner@vger.kernel.org>
+X-Spam-Checker-Version: SpamAssassin 3.1.4 (2006-07-25) on 
+	pressure.kernelslacker.org
+X-Spam-Level: 
+X-Spam-Status: No, score=-2.2 required=5.0 tests=AWL,BAYES_00,
+	UNPARSEABLE_RELAY autolearn=ham version=3.1.4
+Received: from pobox.devel.redhat.com [10.11.255.8]
+	by pressure.kernelslacker.org with IMAP (fetchmail-6.3.4)
+	for <davej@localhost> (single-drop); Tue, 26 Sep 2006 21:13:09 -0400 (EDT)
+Received: from pobox.devel.redhat.com ([unix socket])
+	 by pobox.devel.redhat.com (Cyrus v2.2.12-Invoca-RPM-2.2.12-3.RHEL4.1) with LMTPA;
+	 Tue, 26 Sep 2006 21:13:04 -0400
+X-Sieve: CMU Sieve 2.2
+Received: from int-mx1.corp.redhat.com (int-mx1.corp.redhat.com [172.16.52.254])
+	by pobox.devel.redhat.com (8.13.1/8.13.1) with ESMTP id k8R1D4Cw028929;
+	Tue, 26 Sep 2006 21:13:04 -0400
+Received: from mx3.redhat.com (mx3.redhat.com [172.16.48.32])
+	by int-mx1.corp.redhat.com (8.12.11.20060308/8.12.11) with ESMTP id k8R1D3da013116;
+	Tue, 26 Sep 2006 21:13:03 -0400
+Received: from vger.kernel.org (vger.kernel.org [209.132.176.167])
+	by mx3.redhat.com (8.13.1/8.13.1) with ESMTP id k8QMVSEv000343;
+	Tue, 26 Sep 2006 21:12:56 -0400
+Received: (majordomo@vger.kernel.org) by vger.kernel.org via listexpand
+	id S965018AbWIZXCe (ORCPT <rfc822;davej@redhat.com> + 4 others);
+	Tue, 26 Sep 2006 19:02:34 -0400
+Received: (majordomo@vger.kernel.org) by vger.kernel.org id S965008AbWIZXCe
+	(ORCPT <rfc822;git-commits-head-outgoing>);
+	Tue, 26 Sep 2006 19:02:34 -0400
+Received: from hera.kernel.org ([140.211.167.34]:48834 "EHLO hera.kernel.org")
+	by vger.kernel.org with ESMTP id S965010AbWIZXCM (ORCPT
+	<rfc822;git-commits-head@vger.kernel.org>);
+	Tue, 26 Sep 2006 19:02:12 -0400
+Received: from hera.kernel.org (IDENT:U2FsdGVkX1+9+4G9hsWLlzyXGmkqyuGHlY2Ixa+J3e0@localhost [127.0.0.1])
+	by hera.kernel.org (8.13.7/8.13.7) with ESMTP id k8QN26io016405
+	(version=TLSv1/SSLv3 cipher=DHE-RSA-AES256-SHA bits=256 verify=NO)
+	for <git-commits-head@vger.kernel.org>; Tue, 26 Sep 2006 23:02:10 GMT
+Received: (from dwmw2@localhost)
+	by hera.kernel.org (8.13.7/8.13.1/Submit) id k8QN26jm016404
+	for git-commits-head@vger.kernel.org; Tue, 26 Sep 2006 23:02:06 GMT
+Date: 	Tue, 26 Sep 2006 23:02:06 GMT
+Message-Id: <200609262302.k8QN26jm016404@hera.kernel.org>
+From: Linux Kernel Mailing List <linux-kernel@vger.kernel.org>
+To: git-commits-head@vger.kernel.org
+Subject: [PATCH] Merge stacktrace and show_trace
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+X-Git-Commit: c0b766f13d8e1189ce4d00e54700c9d96b543b9a
+X-Git-Parent: c9538ed49272fb244ac06ba643ff076a68a77e12
+Sender: git-commits-head-owner@vger.kernel.org
+Precedence: bulk
+X-Mailing-List: 	git-commits-head@vger.kernel.org
+X-RedHat-Spam-Score: 0.005 
+Status: RO
+Content-Length: 14432
+Lines: 508
+
+commit c0b766f13d8e1189ce4d00e54700c9d96b543b9a
+tree 7acb6b7a46b3b0b53328f7d72949f75a57509064
+parent c9538ed49272fb244ac06ba643ff076a68a77e12
+author Andi Kleen <ak@suse.de> 1159260754 +0200
+committer Andi Kleen <andi@basil.nowhere.org> 1159260754 +0200
+
+[PATCH] Merge stacktrace and show_trace
+
+This unifies the standard backtracer and the new stacktrace
+in memory backtracer. The standard one is converted to use callbacks
+and then reimplement stacktrace using new callbacks.
+
+The main advantage is that stacktrace can now use the new dwarf2 unwinder
+and avoid false positives in many cases.
+
+I kept it simple to make sure the standard backtracer stays reliable.
+
+Cc: mingo@elte.hu
+
+Signed-off-by: Andi Kleen <ak@suse.de>
+
+ arch/x86_64/kernel/stacktrace.c |  214 ++++------------------------------------
+ arch/x86_64/kernel/traps.c      |   99 ++++++++++++++----
+ include/asm-x86_64/stacktrace.h |   18 +++
+ 3 files changed, 120 insertions(+), 211 deletions(-)
+
+diff --git a/arch/x86_64/kernel/stacktrace.c b/arch/x86_64/kernel/stacktrace.c
+index 1c022af..6026b31 100644
+--- a/arch/x86_64/kernel/stacktrace.c
++++ b/arch/x86_64/kernel/stacktrace.c
+@@ -7,211 +7,49 @@
+  */
+ #include <linux/sched.h>
+ #include <linux/stacktrace.h>
++#include <linux/module.h>
++#include <asm/stacktrace.h>
+ 
+-#include <asm/smp.h>
+-
+-static inline int
+-in_range(unsigned long start, unsigned long addr, unsigned long end)
++static void save_stack_warning(void *data, char *msg)
+ {
+-	return addr >= start && addr <= end;
+ }
+ 
+-static unsigned long
+-get_stack_end(struct task_struct *task, unsigned long stack)
++static void
++save_stack_warning_symbol(void *data, char *msg, unsigned long symbol)
+ {
+-	unsigned long stack_start, stack_end, flags;
+-	int i, cpu;
+-
+-	/*
+-	 * The most common case is that we are in the task stack:
+-	 */
+-	stack_start = (unsigned long)task->thread_info;
+-	stack_end = stack_start + THREAD_SIZE;
+-
+-	if (in_range(stack_start, stack, stack_end))
+-		return stack_end;
+-
+-	/*
+-	 * We are in an interrupt if irqstackptr is set:
+-	 */
+-	raw_local_irq_save(flags);
+-	cpu = safe_smp_processor_id();
+-	stack_end = (unsigned long)cpu_pda(cpu)->irqstackptr;
+-
+-	if (stack_end) {
+-		stack_start = stack_end & ~(IRQSTACKSIZE-1);
+-		if (in_range(stack_start, stack, stack_end))
+-			goto out_restore;
+-		/*
+-		 * We get here if we are in an IRQ context but we
+-		 * are also in an exception stack.
+-		 */
+-	}
+-
+-	/*
+-	 * Iterate over all exception stacks, and figure out whether
+-	 * 'stack' is in one of them:
+-	 */
+-	for (i = 0; i < N_EXCEPTION_STACKS; i++) {
+-		/*
+-		 * set 'end' to the end of the exception stack.
+-		 */
+-		stack_end = per_cpu(init_tss, cpu).ist[i];
+-		stack_start = stack_end - EXCEPTION_STKSZ;
+-
+-		/*
+-		 * Is 'stack' above this exception frame's end?
+-		 * If yes then skip to the next frame.
+-		 */
+-		if (stack >= stack_end)
+-			continue;
+-		/*
+-		 * Is 'stack' above this exception frame's start address?
+-		 * If yes then we found the right frame.
+-		 */
+-		if (stack >= stack_start)
+-			goto out_restore;
+-
+-		/*
+-		 * If this is a debug stack, and if it has a larger size than
+-		 * the usual exception stacks, then 'stack' might still
+-		 * be within the lower portion of the debug stack:
+-		 */
+-#if DEBUG_STKSZ > EXCEPTION_STKSZ
+-		if (i == DEBUG_STACK - 1 && stack >= stack_end - DEBUG_STKSZ) {
+-			/*
+-			 * Black magic. A large debug stack is composed of
+-			 * multiple exception stack entries, which we
+-			 * iterate through now. Dont look:
+-			 */
+-			do {
+-				stack_end -= EXCEPTION_STKSZ;
+-				stack_start -= EXCEPTION_STKSZ;
+-			} while (stack < stack_start);
+-
+-			goto out_restore;
+-		}
+-#endif
+-	}
+-	/*
+-	 * Ok, 'stack' is not pointing to any of the system stacks.
+-	 */
+-	stack_end = 0;
+-
+-out_restore:
+-	raw_local_irq_restore(flags);
+-
+-	return stack_end;
+ }
+ 
+-
+-/*
+- * Save stack-backtrace addresses into a stack_trace buffer:
+- */
+-static inline unsigned long
+-save_context_stack(struct stack_trace *trace,
+-		   unsigned long stack, unsigned long stack_end)
++static int save_stack_stack(void *data, char *name)
+ {
+-	int skip = trace->skip;
+-	unsigned long addr;
+-
+-#ifdef CONFIG_FRAME_POINTER
+-	unsigned long prev_stack = 0;
++	struct stack_trace *trace = (struct stack_trace *)data;
++	return trace->all_contexts ? 0 : -1;
++}
+ 
+-	while (in_range(prev_stack, stack, stack_end)) {
+-		pr_debug("stack:          %p\n", (void *)stack);
+-		addr = (unsigned long)(((unsigned long *)stack)[1]);
+-		pr_debug("addr:           %p\n", (void *)addr);
+-		if (!skip)
+-			trace->entries[trace->nr_entries++] = addr-1;
+-		else
+-			skip--;
+-		if (trace->nr_entries >= trace->max_entries)
+-			break;
+-		if (!addr)
+-			return 0;
+-		/*
+-		 * Stack frames must go forwards (otherwise a loop could
+-		 * happen if the stackframe is corrupted), so we move
+-		 * prev_stack forwards:
+-		 */
+-		prev_stack = stack;
+-		stack = (unsigned long)(((unsigned long *)stack)[0]);
+-	}
+-	pr_debug("invalid:        %p\n", (void *)stack);
+-#else
+-	while (stack < stack_end) {
+-		addr = ((unsigned long *)stack)[0];
+-		stack += sizeof(long);
+-		if (__kernel_text_address(addr)) {
+-			if (!skip)
+-				trace->entries[trace->nr_entries++] = addr-1;
+-			else
+-				skip--;
+-			if (trace->nr_entries >= trace->max_entries)
+-				break;
+-		}
++static void save_stack_address(void *data, unsigned long addr)
++{
++	struct stack_trace *trace = (struct stack_trace *)data;
++	if (trace->skip > 0) {
++		trace->skip--;
++		return;
+ 	}
+-#endif
+-	return stack;
++	if (trace->nr_entries < trace->max_entries - 1)
++		trace->entries[trace->nr_entries++] = addr;
+ }
+ 
+-#define MAX_STACKS 10
++static struct stacktrace_ops save_stack_ops = {
++	.warning = save_stack_warning,
++	.warning_symbol = save_stack_warning_symbol,
++	.stack = save_stack_stack,
++	.address = save_stack_address,
++};
+ 
+ /*
+  * Save stack-backtrace addresses into a stack_trace buffer.
+  */
+ void save_stack_trace(struct stack_trace *trace, struct task_struct *task)
+ {
+-	unsigned long stack = (unsigned long)&stack;
+-	int i, nr_stacks = 0, stacks_done[MAX_STACKS];
+-
+-	WARN_ON(trace->nr_entries || !trace->max_entries);
+-
+-	if (!task)
+-		task = current;
+-
+-	pr_debug("task: %p, ti: %p\n", task, task->thread_info);
+-
+-	if (!task || task == current) {
+-		/* Grab rbp right from our regs: */
+-		asm ("mov %%rbp, %0" : "=r" (stack));
+-		pr_debug("rbp:            %p\n", (void *)stack);
+-	} else {
+-		/* rbp is the last reg pushed by switch_to(): */
+-		stack = task->thread.rsp;
+-		pr_debug("other task rsp: %p\n", (void *)stack);
+-		stack = (unsigned long)(((unsigned long *)stack)[0]);
+-		pr_debug("other task rbp: %p\n", (void *)stack);
+-	}
+-
+-	while (1) {
+-		unsigned long stack_end = get_stack_end(task, stack);
+-
+-		pr_debug("stack:          %p\n", (void *)stack);
+-		pr_debug("stack end:      %p\n", (void *)stack_end);
+-
+-		/*
+-		 * Invalid stack addres?
+-		 */
+-		if (!stack_end)
+-			return;
+-		/*
+-		 * Were we in this stack already? (recursion)
+-		 */
+-		for (i = 0; i < nr_stacks; i++)
+-			if (stacks_done[i] == stack_end)
+-				return;
+-		stacks_done[nr_stacks] = stack_end;
+-
+-		stack = save_context_stack(trace, stack, stack_end);
+-		if (!stack || trace->nr_entries >= trace->max_entries)
+-			return;
+-		trace->entries[trace->nr_entries++] = ULONG_MAX;
+-		if (trace->nr_entries >= trace->max_entries)
+-			return;
+-		if (++nr_stacks >= MAX_STACKS)
+-			return;
+-	}
++	dump_trace(task, NULL, NULL, &save_stack_ops, trace);
++	trace->entries[trace->nr_entries++] = ULONG_MAX;
+ }
++EXPORT_SYMBOL(save_stack_trace);
+ 
+diff --git a/arch/x86_64/kernel/traps.c b/arch/x86_64/kernel/traps.c
+index 9ec2b1d..4ac18b0 100644
+--- a/arch/x86_64/kernel/traps.c
++++ b/arch/x86_64/kernel/traps.c
+@@ -45,6 +45,7 @@ #include <asm/pgalloc.h>
+ #include <asm/pda.h>
+ #include <asm/proto.h>
+ #include <asm/nmi.h>
++#include <asm/stacktrace.h>
+ 
+ asmlinkage void divide_error(void);
+ asmlinkage void debug(void);
+@@ -142,7 +143,7 @@ void printk_address(unsigned long addres
+ #endif
+ 
+ static unsigned long *in_exception_stack(unsigned cpu, unsigned long stack,
+-					unsigned *usedp, const char **idp)
++					unsigned *usedp, char **idp)
+ {
+ 	static char ids[][8] = {
+ 		[DEBUG_STACK - 1] = "#DB",
+@@ -234,13 +235,19 @@ #endif
+ 	return NULL;
+ }
+ 
+-static int show_trace_unwind(struct unwind_frame_info *info, void *context)
++struct ops_and_data {
++	struct stacktrace_ops *ops;
++	void *data;
++};
++
++static int dump_trace_unwind(struct unwind_frame_info *info, void *context)
+ {
++	struct ops_and_data *oad = (struct ops_and_data *)context;
+ 	int n = 0;
+ 
+ 	while (unwind(info) == 0 && UNW_PC(info)) {
+ 		n++;
+-		printk_address(UNW_PC(info));
++		oad->ops->address(oad->data, UNW_PC(info));
+ 		if (arch_unw_user_mode(info))
+ 			break;
+ 	}
+@@ -254,45 +261,51 @@ static int show_trace_unwind(struct unwi
+  * severe exception (double fault, nmi, stack fault, debug, mce) hardware stack
+  */
+ 
+-void show_trace(struct task_struct *tsk, struct pt_regs *regs, unsigned long * stack)
++void dump_trace(struct task_struct *tsk, struct pt_regs *regs, unsigned long * stack,
++		struct stacktrace_ops *ops, void *data)
+ {
+ 	const unsigned cpu = safe_smp_processor_id();
+ 	unsigned long *irqstack_end = (unsigned long *)cpu_pda(cpu)->irqstackptr;
+ 	unsigned used = 0;
+ 
+-	printk("\nCall Trace:\n");
+-
+ 	if (!tsk)
+ 		tsk = current;
+ 
+ 	if (call_trace >= 0) {
+ 		int unw_ret = 0;
+ 		struct unwind_frame_info info;
++		struct ops_and_data oad = { .ops = ops, .data = data };
+ 
+ 		if (regs) {
+ 			if (unwind_init_frame_info(&info, tsk, regs) == 0)
+-				unw_ret = show_trace_unwind(&info, NULL);
++				unw_ret = dump_trace_unwind(&info, &oad);
+ 		} else if (tsk == current)
+-			unw_ret = unwind_init_running(&info, show_trace_unwind, NULL);
++			unw_ret = unwind_init_running(&info, dump_trace_unwind, &oad);
+ 		else {
+ 			if (unwind_init_blocked(&info, tsk) == 0)
+-				unw_ret = show_trace_unwind(&info, NULL);
++				unw_ret = dump_trace_unwind(&info, &oad);
+ 		}
+ 		if (unw_ret > 0) {
+ 			if (call_trace == 1 && !arch_unw_user_mode(&info)) {
+-				print_symbol("DWARF2 unwinder stuck at %s\n",
++				ops->warning_symbol(data, "DWARF2 unwinder stuck at %s\n",
+ 					     UNW_PC(&info));
+ 				if ((long)UNW_SP(&info) < 0) {
+-					printk("Leftover inexact backtrace:\n");
++					ops->warning(data, "Leftover inexact backtrace:\n");
+ 					stack = (unsigned long *)UNW_SP(&info);
+ 				} else
+-					printk("Full inexact backtrace again:\n");
++					ops->warning(data, "Full inexact backtrace again:\n");
+ 			} else if (call_trace >= 1)
+ 				return;
+ 			else
+-				printk("Full inexact backtrace again:\n");
++				ops->warning(data, "Full inexact backtrace again:\n");
+ 		} else
+-			printk("Inexact backtrace:\n");
++			ops->warning(data, "Inexact backtrace:\n");
++	}
++	if (!stack) {
++		unsigned long dummy;
++		stack = &dummy;
++		if (tsk && tsk != current)
++			stack = (unsigned long *)tsk->thread.rsp;
+ 	}
+ 
+ 	/*
+@@ -312,7 +325,7 @@ #define HANDLE_STACK(cond) \
+ 			 * down the cause of the crash will be able to figure \
+ 			 * out the call path that was taken. \
+ 			 */ \
+-			printk_address(addr); \
++			ops->address(data, addr);   \
+ 		} \
+ 	} while (0)
+ 
+@@ -321,16 +334,17 @@ #define HANDLE_STACK(cond) \
+ 	 * current stack address. If the stacks consist of nested
+ 	 * exceptions
+ 	 */
+-	for ( ; ; ) {
+-		const char *id;
++	for (;;) {
++		char *id;
+ 		unsigned long *estack_end;
+ 		estack_end = in_exception_stack(cpu, (unsigned long)stack,
+ 						&used, &id);
+ 
+ 		if (estack_end) {
+-			printk(" <%s>", id);
++			if (ops->stack(data, id) < 0)
++				break;
+ 			HANDLE_STACK (stack < estack_end);
+-			printk(" <EOE>");
++			ops->stack(data, "<EOE>");
+ 			/*
+ 			 * We link to the next stack via the
+ 			 * second-to-last pointer (index -2 to end) in the
+@@ -345,7 +359,8 @@ #define HANDLE_STACK(cond) \
+ 				(IRQSTACKSIZE - 64) / sizeof(*irqstack);
+ 
+ 			if (stack >= irqstack && stack < irqstack_end) {
+-				printk(" <IRQ>");
++				if (ops->stack(data, "IRQ") < 0)
++					break;
+ 				HANDLE_STACK (stack < irqstack_end);
+ 				/*
+ 				 * We link to the next stack (which would be
+@@ -354,7 +369,7 @@ #define HANDLE_STACK(cond) \
+ 				 */
+ 				stack = (unsigned long *) (irqstack_end[-1]);
+ 				irqstack_end = NULL;
+-				printk(" <EOI>");
++				ops->stack(data, "EOI");
+ 				continue;
+ 			}
+ 		}
+@@ -362,15 +377,53 @@ #define HANDLE_STACK(cond) \
+ 	}
+ 
+ 	/*
+-	 * This prints the process stack:
++	 * This handles the process stack:
+ 	 */
+ 	HANDLE_STACK (((long) stack & (THREAD_SIZE-1)) != 0);
+ #undef HANDLE_STACK
++}
++EXPORT_SYMBOL(dump_trace);
+ 
++static void
++print_trace_warning_symbol(void *data, char *msg, unsigned long symbol)
++{
++	print_symbol(msg, symbol);
++	printk("\n");
++}
++
++static void print_trace_warning(void *data, char *msg)
++{
++	printk("%s\n", msg);
++}
++
++static int print_trace_stack(void *data, char *name)
++{
++	printk(" <%s> ", name);
++	return 0;
++}
++
++static void print_trace_address(void *data, unsigned long addr)
++{
++	printk_address(addr);
++}
++
++static struct stacktrace_ops print_trace_ops = {
++	.warning = print_trace_warning,
++	.warning_symbol = print_trace_warning_symbol,
++	.stack = print_trace_stack,
++	.address = print_trace_address,
++};
++
++void
++show_trace(struct task_struct *tsk, struct pt_regs *regs, unsigned long *stack)
++{
++	printk("\nCall Trace:\n");
++	dump_trace(tsk, regs, stack, &print_trace_ops, NULL);
+ 	printk("\n");
+ }
+ 
+-static void _show_stack(struct task_struct *tsk, struct pt_regs *regs, unsigned long * rsp)
++static void
++_show_stack(struct task_struct *tsk, struct pt_regs *regs, unsigned long *rsp)
+ {
+ 	unsigned long *stack;
+ 	int i;
+diff --git a/include/asm-x86_64/stacktrace.h b/include/asm-x86_64/stacktrace.h
+new file mode 100644
+index 0000000..5eb9799
+--- /dev/null
++++ b/include/asm-x86_64/stacktrace.h
+@@ -0,0 +1,18 @@
++#ifndef _ASM_STACKTRACE_H
++#define _ASM_STACKTRACE_H 1
++
++/* Generic stack tracer with callbacks */
++
++struct stacktrace_ops {
++	void (*warning)(void *data, char *msg);
++	/* msg must contain %s for the symbol */
++	void (*warning_symbol)(void *data, char *msg, unsigned long symbol);
++	void (*address)(void *data, unsigned long address);
++	/* On negative return stop dumping */
++	int (*stack)(void *data, char *name);
++};
++
++void dump_trace(struct task_struct *tsk, struct pt_regs *regs, unsigned long *stack,
++		struct stacktrace_ops *ops, void *data);
++
++#endif
+-
+To unsubscribe from this list: send the line "unsubscribe git-commits-head" in
+the body of a message to majordomo@vger.kernel.org
+More majordomo info at  http://vger.kernel.org/majordomo-info.html
+
+From davej  Tue Sep 26 21:13:11 2006
+Return-Path: <git-commits-head-owner@vger.kernel.org>
+X-Spam-Checker-Version: SpamAssassin 3.1.4 (2006-07-25) on 
+	pressure.kernelslacker.org
+X-Spam-Level: 
+X-Spam-Status: No, score=-2.2 required=5.0 tests=AWL,BAYES_00,
+	UNPARSEABLE_RELAY autolearn=ham version=3.1.4
+Received: from pobox.devel.redhat.com [10.11.255.8]
+	by pressure.kernelslacker.org with IMAP (fetchmail-6.3.4)
+	for <davej@localhost> (single-drop); Tue, 26 Sep 2006 21:13:11 -0400 (EDT)
+Received: from pobox.devel.redhat.com ([unix socket])
+	 by pobox.devel.redhat.com (Cyrus v2.2.12-Invoca-RPM-2.2.12-3.RHEL4.1) with LMTPA;
+	 Tue, 26 Sep 2006 21:13:10 -0400
+X-Sieve: CMU Sieve 2.2
+Received: from int-mx1.corp.redhat.com (int-mx1.corp.redhat.com [172.16.52.254])
+	by pobox.devel.redhat.com (8.13.1/8.13.1) with ESMTP id k8R1DAaZ028939;
+	Tue, 26 Sep 2006 21:13:10 -0400
+Received: from mx3.redhat.com (mx3.redhat.com [172.16.48.32])
+	by int-mx1.corp.redhat.com (8.12.11.20060308/8.12.11) with ESMTP id k8R1D9Vn013153;
+	Tue, 26 Sep 2006 21:13:09 -0400
+Received: from vger.kernel.org (vger.kernel.org [209.132.176.167])
+	by mx3.redhat.com (8.13.1/8.13.1) with ESMTP id k8QMVSEw000343;
+	Tue, 26 Sep 2006 21:13:03 -0400
+Received: (majordomo@vger.kernel.org) by vger.kernel.org via listexpand
+	id S965005AbWIZXCf (ORCPT <rfc822;davej@redhat.com> + 4 others);
+	Tue, 26 Sep 2006 19:02:35 -0400
+Received: (majordomo@vger.kernel.org) by vger.kernel.org id S965019AbWIZXCe
+	(ORCPT <rfc822;git-commits-head-outgoing>);
+	Tue, 26 Sep 2006 19:02:34 -0400
+Received: from hera.kernel.org ([140.211.167.34]:51138 "EHLO hera.kernel.org")
+	by vger.kernel.org with ESMTP id S965005AbWIZXCO (ORCPT
+	<rfc822;git-commits-head@vger.kernel.org>);
+	Tue, 26 Sep 2006 19:02:14 -0400
+Received: from hera.kernel.org (IDENT:U2FsdGVkX1+SE/+voR6ev4NPwjaNJCvV4hT/vu3gnhU@localhost [127.0.0.1])
+	by hera.kernel.org (8.13.7/8.13.7) with ESMTP id k8QN2Ckt016484
+	(version=TLSv1/SSLv3 cipher=DHE-RSA-AES256-SHA bits=256 verify=NO)
+	for <git-commits-head@vger.kernel.org>; Tue, 26 Sep 2006 23:02:12 GMT
+Received: (from dwmw2@localhost)
+	by hera.kernel.org (8.13.7/8.13.1/Submit) id k8QN2BvS016475
+	for git-commits-head@vger.kernel.org; Tue, 26 Sep 2006 23:02:11 GMT
+Date: 	Tue, 26 Sep 2006 23:02:11 GMT
+Message-Id: <200609262302.k8QN2BvS016475@hera.kernel.org>
+From: Linux Kernel Mailing List <linux-kernel@vger.kernel.org>
+To: git-commits-head@vger.kernel.org
+Subject: [PATCH] Check for end of stack trace before falling back
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+X-Git-Commit: be7a91709b90825990e571b2f20cea937d5eef6c
+X-Git-Parent: c0b766f13d8e1189ce4d00e54700c9d96b543b9a
+Sender: git-commits-head-owner@vger.kernel.org
+Precedence: bulk
+X-Mailing-List: 	git-commits-head@vger.kernel.org
+X-RedHat-Spam-Score: 0.005 
+Status: RO
+Content-Length: 1128
+Lines: 30
+
+commit be7a91709b90825990e571b2f20cea937d5eef6c
+tree fe09719e040b6d2ae535a08958f7e57f8a9babe6
+parent c0b766f13d8e1189ce4d00e54700c9d96b543b9a
+author Andi Kleen <ak@suse.de> 1159260754 +0200
+committer Andi Kleen <andi@basil.nowhere.org> 1159260754 +0200
+
+[PATCH] Check for end of stack trace before falling back
+
+Signed-off-by: Andi Kleen <ak@suse.de>
+
+ arch/x86_64/kernel/traps.c |    2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/arch/x86_64/kernel/traps.c b/arch/x86_64/kernel/traps.c
+index 4ac18b0..28e5334 100644
+--- a/arch/x86_64/kernel/traps.c
++++ b/arch/x86_64/kernel/traps.c
+@@ -292,6 +292,8 @@ void dump_trace(struct task_struct *tsk,
+ 				if ((long)UNW_SP(&info) < 0) {
+ 					ops->warning(data, "Leftover inexact backtrace:\n");
+ 					stack = (unsigned long *)UNW_SP(&info);
++					if (!stack)
++						return;
+ 				} else
+ 					ops->warning(data, "Full inexact backtrace again:\n");
+ 			} else if (call_trace >= 1)
+-
+To unsubscribe from this list: send the line "unsubscribe git-commits-head" in
+the body of a message to majordomo@vger.kernel.org
+More majordomo info at  http://vger.kernel.org/majordomo-info.html
+
+From davej  Tue Sep 26 21:14:25 2006
+Return-Path: <git-commits-head-owner@vger.kernel.org>
+X-Spam-Checker-Version: SpamAssassin 3.1.4 (2006-07-25) on 
+	pressure.kernelslacker.org
+X-Spam-Level: 
+X-Spam-Status: No, score=-2.2 required=5.0 tests=AWL,BAYES_00,
+	UNPARSEABLE_RELAY autolearn=ham version=3.1.4
+Received: from pobox.devel.redhat.com [10.11.255.8]
+	by pressure.kernelslacker.org with IMAP (fetchmail-6.3.4)
+	for <davej@localhost> (single-drop); Tue, 26 Sep 2006 21:14:25 -0400 (EDT)
+Received: from pobox.devel.redhat.com ([unix socket])
+	 by pobox.devel.redhat.com (Cyrus v2.2.12-Invoca-RPM-2.2.12-3.RHEL4.1) with LMTPA;
+	 Tue, 26 Sep 2006 21:13:17 -0400
+X-Sieve: CMU Sieve 2.2
+Received: from int-mx1.corp.redhat.com (int-mx1.corp.redhat.com [172.16.52.254])
+	by pobox.devel.redhat.com (8.13.1/8.13.1) with ESMTP id k8R1DGWT028944;
+	Tue, 26 Sep 2006 21:13:16 -0400
+Received: from mx3.redhat.com (mx3.redhat.com [172.16.48.32])
+	by int-mx1.corp.redhat.com (8.12.11.20060308/8.12.11) with ESMTP id k8R1DGAM013175;
+	Tue, 26 Sep 2006 21:13:16 -0400
+Received: from vger.kernel.org (vger.kernel.org [209.132.176.167])
+	by mx3.redhat.com (8.13.1/8.13.1) with ESMTP id k8QMVSEx000343;
+	Tue, 26 Sep 2006 21:13:09 -0400
+Received: (majordomo@vger.kernel.org) by vger.kernel.org via listexpand
+	id S965012AbWIZXCg (ORCPT <rfc822;davej@redhat.com> + 4 others);
+	Tue, 26 Sep 2006 19:02:36 -0400
+Received: (majordomo@vger.kernel.org) by vger.kernel.org id S965008AbWIZXCg
+	(ORCPT <rfc822;git-commits-head-outgoing>);
+	Tue, 26 Sep 2006 19:02:36 -0400
+Received: from hera.kernel.org ([140.211.167.34]:53186 "EHLO hera.kernel.org")
+	by vger.kernel.org with ESMTP id S965012AbWIZXCR (ORCPT
+	<rfc822;git-commits-head@vger.kernel.org>);
+	Tue, 26 Sep 2006 19:02:17 -0400
+Received: from hera.kernel.org (IDENT:U2FsdGVkX1/mWEUVqN4liYHEwTijQTqrEULulEEq4GU@localhost [127.0.0.1])
+	by hera.kernel.org (8.13.7/8.13.7) with ESMTP id k8QN2EtU016514
+	(version=TLSv1/SSLv3 cipher=DHE-RSA-AES256-SHA bits=256 verify=NO)
+	for <git-commits-head@vger.kernel.org>; Tue, 26 Sep 2006 23:02:14 GMT
+Received: (from dwmw2@localhost)
+	by hera.kernel.org (8.13.7/8.13.1/Submit) id k8QN2ES9016513
+	for git-commits-head@vger.kernel.org; Tue, 26 Sep 2006 23:02:14 GMT
+Date: 	Tue, 26 Sep 2006 23:02:14 GMT
+Message-Id: <200609262302.k8QN2ES9016513@hera.kernel.org>
+From: Linux Kernel Mailing List <linux-kernel@vger.kernel.org>
+To: git-commits-head@vger.kernel.org
+Subject: [PATCH] i386: Do stacktracer conversion too
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+X-Git-Commit: 2b14a78cd07a52001b8c3865ed615d8b9b905b78
+X-Git-Parent: be7a91709b90825990e571b2f20cea937d5eef6c
+Sender: git-commits-head-owner@vger.kernel.org
+Precedence: bulk
+X-Mailing-List: 	git-commits-head@vger.kernel.org
+X-RedHat-Spam-Score: 0.005 
+Status: RO
+Content-Length: 9930
+Lines: 342
+
+commit 2b14a78cd07a52001b8c3865ed615d8b9b905b78
+tree 415682b4b8a65322ed881fce5ae04fcb36f55930
+parent be7a91709b90825990e571b2f20cea937d5eef6c
+author Andi Kleen <ak@suse.de> 1159260754 +0200
+committer Andi Kleen <andi@basil.nowhere.org> 1159260754 +0200
+
+[PATCH] i386: Do stacktracer conversion too
+
+Following x86-64 patches. Reuses code from them in fact.
+
+Convert the standard backtracer to do all output using
+callbacks.   Use the x86-64 stack tracer implementation
+that uses these callbacks to implement the stacktrace interface.
+
+This allows to use the new dwarf2 unwinder for stacktrace
+and get better backtraces.
+
+Cc: mingo@elte.hu
+
+Signed-off-by: Andi Kleen <ak@suse.de>
+
+ arch/i386/kernel/Makefile     |    1 
+ arch/i386/kernel/stacktrace.c |   93 ------------------------------------
+ arch/i386/kernel/traps.c      |  108 +++++++++++++++++++++++++++++++-----------
+ include/asm-i386/stacktrace.h |    1 
+ 4 files changed, 82 insertions(+), 121 deletions(-)
+
+diff --git a/arch/i386/kernel/Makefile b/arch/i386/kernel/Makefile
+index dab4974..1a884b6 100644
+--- a/arch/i386/kernel/Makefile
++++ b/arch/i386/kernel/Makefile
+@@ -81,4 +81,5 @@ SYSCFLAGS_vsyscall-syms.o = -r
+ 	$(call if_changed,syscall)
+ 
+ k8-y                      += ../../x86_64/kernel/k8.o
++stacktrace-y		  += ../../x86_64/kernel/stacktrace.o
+ 
+diff --git a/arch/i386/kernel/stacktrace.c b/arch/i386/kernel/stacktrace.c
+deleted file mode 100644
+index ae3c32a..0000000
+--- a/arch/i386/kernel/stacktrace.c
++++ /dev/null
+@@ -1,93 +0,0 @@
+-/*
+- * arch/i386/kernel/stacktrace.c
+- *
+- * Stack trace management functions
+- *
+- *  Copyright (C) 2006 Red Hat, Inc., Ingo Molnar <mingo@redhat.com>
+- */
+-#include <linux/sched.h>
+-#include <linux/stacktrace.h>
+-
+-static inline int valid_stack_ptr(struct thread_info *tinfo, void *p)
+-{
+-	return	p > (void *)tinfo &&
+-		p < (void *)tinfo + THREAD_SIZE - 3;
+-}
+-
+-/*
+- * Save stack-backtrace addresses into a stack_trace buffer:
+- */
+-static inline unsigned long
+-save_context_stack(struct stack_trace *trace, unsigned int skip,
+-		   struct thread_info *tinfo, unsigned long *stack,
+-		   unsigned long ebp)
+-{
+-	unsigned long addr;
+-
+-#ifdef CONFIG_FRAME_POINTER
+-	while (valid_stack_ptr(tinfo, (void *)ebp)) {
+-		addr = *(unsigned long *)(ebp + 4);
+-		if (!skip)
+-			trace->entries[trace->nr_entries++] = addr;
+-		else
+-			skip--;
+-		if (trace->nr_entries >= trace->max_entries)
+-			break;
+-		/*
+-		 * break out of recursive entries (such as
+-		 * end_of_stack_stop_unwind_function):
+-	 	 */
+-		if (ebp == *(unsigned long *)ebp)
+-			break;
+-
+-		ebp = *(unsigned long *)ebp;
+-	}
+-#else
+-	while (valid_stack_ptr(tinfo, stack)) {
+-		addr = *stack++;
+-		if (__kernel_text_address(addr)) {
+-			if (!skip)
+-				trace->entries[trace->nr_entries++] = addr;
+-			else
+-				skip--;
+-			if (trace->nr_entries >= trace->max_entries)
+-				break;
+-		}
+-	}
+-#endif
+-
+-	return ebp;
+-}
+-
+-/*
+- * Save stack-backtrace addresses into a stack_trace buffer.
+- */
+-void save_stack_trace(struct stack_trace *trace, struct task_struct *task)
+-{
+-	unsigned long ebp;
+-	unsigned long *stack = &ebp;
+-
+-	WARN_ON(trace->nr_entries || !trace->max_entries);
+-
+-	if (!task || task == current) {
+-		/* Grab ebp right from our regs: */
+-		asm ("movl %%ebp, %0" : "=r" (ebp));
+-	} else {
+-		/* ebp is the last reg pushed by switch_to(): */
+-		ebp = *(unsigned long *) task->thread.esp;
+-	}
+-
+-	while (1) {
+-		struct thread_info *context = (struct thread_info *)
+-				((unsigned long)stack & (~(THREAD_SIZE - 1)));
+-
+-		ebp = save_context_stack(trace, trace->skip, context, stack, ebp);
+-		stack = (unsigned long *)context->previous_esp;
+-		if (!stack || trace->nr_entries >= trace->max_entries)
+-			break;
+-		trace->entries[trace->nr_entries++] = ULONG_MAX;
+-		if (trace->nr_entries >= trace->max_entries)
+-			break;
+-	}
+-}
+-
+diff --git a/arch/i386/kernel/traps.c b/arch/i386/kernel/traps.c
+index 3c85c89..4ced428 100644
+--- a/arch/i386/kernel/traps.c
++++ b/arch/i386/kernel/traps.c
+@@ -51,6 +51,7 @@ #include <asm/unwind.h>
+ #include <asm/smp.h>
+ #include <asm/arch_hooks.h>
+ #include <asm/kdebug.h>
++#include <asm/stacktrace.h>
+ 
+ #include <linux/module.h>
+ 
+@@ -118,26 +119,16 @@ static inline int valid_stack_ptr(struct
+ 		p < (void *)tinfo + THREAD_SIZE - 3;
+ }
+ 
+-/*
+- * Print one address/symbol entries per line.
+- */
+-static inline void print_addr_and_symbol(unsigned long addr, char *log_lvl)
+-{
+-	printk(" [<%08lx>] ", addr);
+-
+-	print_symbol("%s\n", addr);
+-}
+-
+ static inline unsigned long print_context_stack(struct thread_info *tinfo,
+ 				unsigned long *stack, unsigned long ebp,
+-				char *log_lvl)
++				struct stacktrace_ops *ops, void *data)
+ {
+ 	unsigned long addr;
+ 
+ #ifdef	CONFIG_FRAME_POINTER
+ 	while (valid_stack_ptr(tinfo, (void *)ebp)) {
+ 		addr = *(unsigned long *)(ebp + 4);
+-		print_addr_and_symbol(addr, log_lvl);
++		ops->address(data, addr);
+ 		/*
+ 		 * break out of recursive entries (such as
+ 		 * end_of_stack_stop_unwind_function):
+@@ -150,28 +141,35 @@ #else
+ 	while (valid_stack_ptr(tinfo, stack)) {
+ 		addr = *stack++;
+ 		if (__kernel_text_address(addr))
+-			print_addr_and_symbol(addr, log_lvl);
++			ops->address(data, addr);
+ 	}
+ #endif
+ 	return ebp;
+ }
+ 
++struct ops_and_data {
++	struct stacktrace_ops *ops;
++	void *data;
++};
++
+ static asmlinkage int
+-show_trace_unwind(struct unwind_frame_info *info, void *log_lvl)
++dump_trace_unwind(struct unwind_frame_info *info, void *data)
+ {
++	struct ops_and_data *oad = (struct ops_and_data *)data;
+ 	int n = 0;
+ 
+ 	while (unwind(info) == 0 && UNW_PC(info)) {
+ 		n++;
+-		print_addr_and_symbol(UNW_PC(info), log_lvl);
++		oad->ops->address(oad->data, UNW_PC(info));
+ 		if (arch_unw_user_mode(info))
+ 			break;
+ 	}
+ 	return n;
+ }
+ 
+-static void show_trace_log_lvl(struct task_struct *task, struct pt_regs *regs,
+-			       unsigned long *stack, char *log_lvl)
++void dump_trace(struct task_struct *task, struct pt_regs *regs,
++	        unsigned long *stack,
++		struct stacktrace_ops *ops, void *data)
+ {
+ 	unsigned long ebp;
+ 
+@@ -181,31 +179,37 @@ static void show_trace_log_lvl(struct ta
+ 	if (call_trace >= 0) {
+ 		int unw_ret = 0;
+ 		struct unwind_frame_info info;
++		struct ops_and_data oad = { .ops = ops, .data = data };
+ 
+ 		if (regs) {
+ 			if (unwind_init_frame_info(&info, task, regs) == 0)
+-				unw_ret = show_trace_unwind(&info, log_lvl);
++				unw_ret = dump_trace_unwind(&info, &oad);
+ 		} else if (task == current)
+-			unw_ret = unwind_init_running(&info, show_trace_unwind, log_lvl);
++			unw_ret = unwind_init_running(&info, dump_trace_unwind, &oad);
+ 		else {
+ 			if (unwind_init_blocked(&info, task) == 0)
+-				unw_ret = show_trace_unwind(&info, log_lvl);
++				unw_ret = dump_trace_unwind(&info, &oad);
+ 		}
+ 		if (unw_ret > 0) {
+ 			if (call_trace == 1 && !arch_unw_user_mode(&info)) {
+-				print_symbol("DWARF2 unwinder stuck at %s\n",
++				ops->warning_symbol(data, "DWARF2 unwinder stuck at %s\n",
+ 					     UNW_PC(&info));
+ 				if (UNW_SP(&info) >= PAGE_OFFSET) {
+-					printk("Leftover inexact backtrace:\n");
++					ops->warning(data, "Leftover inexact backtrace:\n");
+ 					stack = (void *)UNW_SP(&info);
+ 				} else
+-					printk("Full inexact backtrace again:\n");
++					ops->warning(data, "Full inexact backtrace again:\n");
+ 			} else if (call_trace >= 1)
+ 				return;
+ 			else
+-				printk("Full inexact backtrace again:\n");
++				ops->warning(data, "Full inexact backtrace again:\n");
+ 		} else
+-			printk("Inexact backtrace:\n");
++			ops->warning(data, "Inexact backtrace:\n");
++	} else 	if (!stack) {
++		unsigned long dummy;
++		stack = &dummy;
++		if (task && task != current)
++			stack = (unsigned long *)task->thread.esp;
+ 	}
+ 
+ 	if (task == current) {
+@@ -220,15 +224,63 @@ static void show_trace_log_lvl(struct ta
+ 		struct thread_info *context;
+ 		context = (struct thread_info *)
+ 			((unsigned long)stack & (~(THREAD_SIZE - 1)));
+-		ebp = print_context_stack(context, stack, ebp, log_lvl);
++		ebp = print_context_stack(context, stack, ebp, ops, data);
++		/* Should be after the line below, but somewhere
++		   in early boot context comes out corrupted and we
++		   can't reference it -AK */
++		if (ops->stack(data, "IRQ") < 0)
++			break;
+ 		stack = (unsigned long*)context->previous_esp;
+ 		if (!stack)
+ 			break;
+-		printk("%s =======================\n", log_lvl);
+ 	}
+ }
++EXPORT_SYMBOL(dump_trace);
++
++static void
++print_trace_warning_symbol(void *data, char *msg, unsigned long symbol)
++{
++	printk(data);
++	print_symbol(msg, symbol);
++	printk("\n");
++}
++
++static void print_trace_warning(void *data, char *msg)
++{
++	printk("%s%s\n", (char *)data, msg);
++}
++
++static int print_trace_stack(void *data, char *name)
++{
++	return 0;
++}
++
++/*
++ * Print one address/symbol entries per line.
++ */
++static void print_trace_address(void *data, unsigned long addr)
++{
++	printk("%s [<%08lx>] ", (char *)data, addr);
++	print_symbol("%s\n", addr);
++}
++
++static struct stacktrace_ops print_trace_ops = {
++	.warning = print_trace_warning,
++	.warning_symbol = print_trace_warning_symbol,
++	.stack = print_trace_stack,
++	.address = print_trace_address,
++};
++
++static void
++show_trace_log_lvl(struct task_struct *task, struct pt_regs *regs,
++		   unsigned long * stack, char *log_lvl)
++{
++	dump_trace(task, regs, stack, &print_trace_ops, log_lvl);
++	printk("%s =======================\n", log_lvl);
++}
+ 
+-void show_trace(struct task_struct *task, struct pt_regs *regs, unsigned long * stack)
++void show_trace(struct task_struct *task, struct pt_regs *regs,
++		unsigned long * stack)
+ {
+ 	show_trace_log_lvl(task, regs, stack, "");
+ }
+diff --git a/include/asm-i386/stacktrace.h b/include/asm-i386/stacktrace.h
+new file mode 100644
+index 0000000..7d1f6a5
+--- /dev/null
++++ b/include/asm-i386/stacktrace.h
+@@ -0,0 +1 @@
++#include <asm-x86_64/stacktrace.h>
+-
+To unsubscribe from this list: send the line "unsubscribe git-commits-head" in
+the body of a message to majordomo@vger.kernel.org
+More majordomo info at  http://vger.kernel.org/majordomo-info.html
+
+From davej  Tue Sep 26 21:14:27 2006
+Return-Path: <git-commits-head-owner@vger.kernel.org>
+X-Spam-Checker-Version: SpamAssassin 3.1.4 (2006-07-25) on 
+	pressure.kernelslacker.org
+X-Spam-Level: 
+X-Spam-Status: No, score=-2.2 required=5.0 tests=AWL,BAYES_00,
+	UNPARSEABLE_RELAY autolearn=ham version=3.1.4
+Received: from pobox.devel.redhat.com [10.11.255.8]
+	by pressure.kernelslacker.org with IMAP (fetchmail-6.3.4)
+	for <davej@localhost> (single-drop); Tue, 26 Sep 2006 21:14:27 -0400 (EDT)
+Received: from pobox.devel.redhat.com ([unix socket])
+	 by pobox.devel.redhat.com (Cyrus v2.2.12-Invoca-RPM-2.2.12-3.RHEL4.1) with LMTPA;
+	 Tue, 26 Sep 2006 21:13:22 -0400
+X-Sieve: CMU Sieve 2.2
+Received: from int-mx1.corp.redhat.com (int-mx1.corp.redhat.com [172.16.52.254])
+	by pobox.devel.redhat.com (8.13.1/8.13.1) with ESMTP id k8R1DMRA028950;
+	Tue, 26 Sep 2006 21:13:22 -0400
+Received: from mx3.redhat.com (mx3.redhat.com [172.16.48.32])
+	by int-mx1.corp.redhat.com (8.12.11.20060308/8.12.11) with ESMTP id k8R1DMJ8013210;
+	Tue, 26 Sep 2006 21:13:22 -0400
+Received: from vger.kernel.org (vger.kernel.org [209.132.176.167])
+	by mx3.redhat.com (8.13.1/8.13.1) with ESMTP id k8QMVSF0000343;
+	Tue, 26 Sep 2006 21:13:16 -0400
+Received: (majordomo@vger.kernel.org) by vger.kernel.org via listexpand
+	id S964962AbWIZXCh (ORCPT <rfc822;davej@redhat.com> + 4 others);
+	Tue, 26 Sep 2006 19:02:37 -0400
+Received: (majordomo@vger.kernel.org) by vger.kernel.org id S965019AbWIZXCg
+	(ORCPT <rfc822;git-commits-head-outgoing>);
+	Tue, 26 Sep 2006 19:02:36 -0400
+Received: from hera.kernel.org ([140.211.167.34]:55234 "EHLO hera.kernel.org")
+	by vger.kernel.org with ESMTP id S964962AbWIZXCW (ORCPT
+	<rfc822;git-commits-head@vger.kernel.org>);
+	Tue, 26 Sep 2006 19:02:22 -0400
+Received: from hera.kernel.org (IDENT:U2FsdGVkX1/eyRkUQbaLbXgOsO0HUcDGUKAbFPXiK7Q@localhost [127.0.0.1])
+	by hera.kernel.org (8.13.7/8.13.7) with ESMTP id k8QN2Lpb016600
+	(version=TLSv1/SSLv3 cipher=DHE-RSA-AES256-SHA bits=256 verify=NO)
+	for <git-commits-head@vger.kernel.org>; Tue, 26 Sep 2006 23:02:21 GMT
+Received: (from dwmw2@localhost)
+	by hera.kernel.org (8.13.7/8.13.1/Submit) id k8QN2KxN016597
+	for git-commits-head@vger.kernel.org; Tue, 26 Sep 2006 23:02:20 GMT
+Date: 	Tue, 26 Sep 2006 23:02:20 GMT
+Message-Id: <200609262302.k8QN2KxN016597@hera.kernel.org>
+From: Linux Kernel Mailing List <linux-kernel@vger.kernel.org>
+To: git-commits-head@vger.kernel.org
+Subject: [PATCH] i386: Terminate backtrace fallback early if unwinder stack pointer is zero
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+X-Git-Commit: 950fee84557416a3427dd404a13addc4be7b3e6c
+X-Git-Parent: 2b14a78cd07a52001b8c3865ed615d8b9b905b78
+Sender: git-commits-head-owner@vger.kernel.org
+Precedence: bulk
+X-Mailing-List: 	git-commits-head@vger.kernel.org
+X-RedHat-Spam-Score: 0.005 
+Status: RO
+Content-Length: 1164
+Lines: 31
+
+commit 950fee84557416a3427dd404a13addc4be7b3e6c
+tree 8deea7e7c6d4a57bb1970f0dcb9afa387a74729c
+parent 2b14a78cd07a52001b8c3865ed615d8b9b905b78
+author Andi Kleen <ak@suse.de> 1159260754 +0200
+committer Andi Kleen <andi@basil.nowhere.org> 1159260754 +0200
+
+[PATCH] i386: Terminate backtrace fallback early if unwinder stack pointer is zero
+
+Cc: jbeulich@novell.com
+Signed-off-by: Andi Kleen <ak@suse.de>
+
+ arch/i386/kernel/traps.c |    2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/arch/i386/kernel/traps.c b/arch/i386/kernel/traps.c
+index 4ced428..86fa7e4 100644
+--- a/arch/i386/kernel/traps.c
++++ b/arch/i386/kernel/traps.c
+@@ -197,6 +197,8 @@ void dump_trace(struct task_struct *task
+ 				if (UNW_SP(&info) >= PAGE_OFFSET) {
+ 					ops->warning(data, "Leftover inexact backtrace:\n");
+ 					stack = (void *)UNW_SP(&info);
++					if (!stack)
++						return;
+ 				} else
+ 					ops->warning(data, "Full inexact backtrace again:\n");
+ 			} else if (call_trace >= 1)
+-
+To unsubscribe from this list: send the line "unsubscribe git-commits-head" in
+the body of a message to majordomo@vger.kernel.org
+More majordomo info at  http://vger.kernel.org/majordomo-info.html
+
+From davej  Tue Sep 26 21:14:28 2006
+Return-Path: <git-commits-head-owner@vger.kernel.org>
+X-Spam-Checker-Version: SpamAssassin 3.1.4 (2006-07-25) on 
+	pressure.kernelslacker.org
+X-Spam-Level: 
+X-Spam-Status: No, score=-2.2 required=5.0 tests=AWL,BAYES_00,
+	UNPARSEABLE_RELAY autolearn=ham version=3.1.4
+Received: from pobox.devel.redhat.com [10.11.255.8]
+	by pressure.kernelslacker.org with IMAP (fetchmail-6.3.4)
+	for <davej@localhost> (single-drop); Tue, 26 Sep 2006 21:14:28 -0400 (EDT)
+Received: from pobox.devel.redhat.com ([unix socket])
+	 by pobox.devel.redhat.com (Cyrus v2.2.12-Invoca-RPM-2.2.12-3.RHEL4.1) with LMTPA;
+	 Tue, 26 Sep 2006 21:13:29 -0400
+X-Sieve: CMU Sieve 2.2
+Received: from int-mx1.corp.redhat.com (int-mx1.corp.redhat.com [172.16.52.254])
+	by pobox.devel.redhat.com (8.13.1/8.13.1) with ESMTP id k8R1DSn3028956;
+	Tue, 26 Sep 2006 21:13:28 -0400
+Received: from mx3.redhat.com (mx3.redhat.com [172.16.48.32])
+	by int-mx1.corp.redhat.com (8.12.11.20060308/8.12.11) with ESMTP id k8R1DSsU013217;
+	Tue, 26 Sep 2006 21:13:28 -0400
+Received: from vger.kernel.org (vger.kernel.org [209.132.176.167])
+	by mx3.redhat.com (8.13.1/8.13.1) with ESMTP id k8QMVSF1000343;
+	Tue, 26 Sep 2006 21:13:22 -0400
+Received: (majordomo@vger.kernel.org) by vger.kernel.org via listexpand
+	id S965011AbWIZXCi (ORCPT <rfc822;davej@redhat.com> + 4 others);
+	Tue, 26 Sep 2006 19:02:38 -0400
+Received: (majordomo@vger.kernel.org) by vger.kernel.org id S965008AbWIZXCh
+	(ORCPT <rfc822;git-commits-head-outgoing>);
+	Tue, 26 Sep 2006 19:02:37 -0400
+Received: from hera.kernel.org ([140.211.167.34]:57282 "EHLO hera.kernel.org")
+	by vger.kernel.org with ESMTP id S965011AbWIZXCZ (ORCPT
+	<rfc822;git-commits-head@vger.kernel.org>);
+	Tue, 26 Sep 2006 19:02:25 -0400
+Received: from hera.kernel.org (IDENT:U2FsdGVkX1+slZMeeTruKAghHMWlhHSYeBZwLeGlggQ@localhost [127.0.0.1])
+	by hera.kernel.org (8.13.7/8.13.7) with ESMTP id k8QN2Ncr016630
+	(version=TLSv1/SSLv3 cipher=DHE-RSA-AES256-SHA bits=256 verify=NO)
+	for <git-commits-head@vger.kernel.org>; Tue, 26 Sep 2006 23:02:23 GMT
+Received: (from dwmw2@localhost)
+	by hera.kernel.org (8.13.7/8.13.1/Submit) id k8QN2Moc016615
+	for git-commits-head@vger.kernel.org; Tue, 26 Sep 2006 23:02:22 GMT
+Date: 	Tue, 26 Sep 2006 23:02:22 GMT
+Message-Id: <200609262302.k8QN2Moc016615@hera.kernel.org>
+From: Linux Kernel Mailing List <linux-kernel@vger.kernel.org>
+To: git-commits-head@vger.kernel.org
+Subject: [PATCH] i386: Get ebp from unwinder state when continuing fallback backtrace
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+X-Git-Commit: a32cf3975bed3b84491f8ffeb24abe8c45d86ab0
+X-Git-Parent: 950fee84557416a3427dd404a13addc4be7b3e6c
+Sender: git-commits-head-owner@vger.kernel.org
+Precedence: bulk
+X-Mailing-List: 	git-commits-head@vger.kernel.org
+X-RedHat-Spam-Score: 0.005 
+Status: RO
+Content-Length: 2964
+Lines: 94
+
+commit a32cf3975bed3b84491f8ffeb24abe8c45d86ab0
+tree f327b09bc2b17e66645f1b7b97c3b7ac11133e1b
+parent 950fee84557416a3427dd404a13addc4be7b3e6c
+author Andi Kleen <ak@suse.de> 1159260754 +0200
+committer Andi Kleen <andi@basil.nowhere.org> 1159260754 +0200
+
+[PATCH] i386: Get ebp from unwinder state when continuing fallback backtrace
+
+Cc: jbeulich@novell.com
+Signed-off-by: Andi Kleen <ak@suse.de>
+
+ arch/i386/kernel/traps.c  |   22 ++++++++++++++--------
+ include/asm-i386/unwind.h |    3 +++
+ 2 files changed, 17 insertions(+), 8 deletions(-)
+
+diff --git a/arch/i386/kernel/traps.c b/arch/i386/kernel/traps.c
+index 86fa7e4..bdf949c 100644
+--- a/arch/i386/kernel/traps.c
++++ b/arch/i386/kernel/traps.c
+@@ -171,7 +171,7 @@ void dump_trace(struct task_struct *task
+ 	        unsigned long *stack,
+ 		struct stacktrace_ops *ops, void *data)
+ {
+-	unsigned long ebp;
++	unsigned long ebp = 0;
+ 
+ 	if (!task)
+ 		task = current;
+@@ -199,6 +199,7 @@ void dump_trace(struct task_struct *task
+ 					stack = (void *)UNW_SP(&info);
+ 					if (!stack)
+ 						return;
++					ebp = UNW_FP(&info);
+ 				} else
+ 					ops->warning(data, "Full inexact backtrace again:\n");
+ 			} else if (call_trace >= 1)
+@@ -207,20 +208,25 @@ void dump_trace(struct task_struct *task
+ 				ops->warning(data, "Full inexact backtrace again:\n");
+ 		} else
+ 			ops->warning(data, "Inexact backtrace:\n");
+-	} else 	if (!stack) {
++	}
++	if (!stack) {
+ 		unsigned long dummy;
+ 		stack = &dummy;
+ 		if (task && task != current)
+ 			stack = (unsigned long *)task->thread.esp;
+ 	}
+ 
+-	if (task == current) {
+-		/* Grab ebp right from our regs */
+-		asm ("movl %%ebp, %0" : "=r" (ebp) : );
+-	} else {
+-		/* ebp is the last reg pushed by switch_to */
+-		ebp = *(unsigned long *) task->thread.esp;
++#ifdef CONFIG_FRAME_POINTER
++	if (!ebp) {
++		if (task == current) {
++			/* Grab ebp right from our regs */
++			asm ("movl %%ebp, %0" : "=r" (ebp) : );
++		} else {
++			/* ebp is the last reg pushed by switch_to */
++			ebp = *(unsigned long *) task->thread.esp;
++		}
+ 	}
++#endif
+ 
+ 	while (1) {
+ 		struct thread_info *context;
+diff --git a/include/asm-i386/unwind.h b/include/asm-i386/unwind.h
+index 4c1a0b9..f0ac399 100644
+--- a/include/asm-i386/unwind.h
++++ b/include/asm-i386/unwind.h
+@@ -28,6 +28,8 @@ #define FRAME_RETADDR_OFFSET 4
+ #define FRAME_LINK_OFFSET    0
+ #define STACK_BOTTOM(tsk)    STACK_LIMIT((tsk)->thread.esp0)
+ #define STACK_TOP(tsk)       ((tsk)->thread.esp0)
++#else
++#define UNW_FP(frame) ((void)(frame), 0)
+ #endif
+ #define STACK_LIMIT(ptr)     (((ptr) - 1) & ~(THREAD_SIZE - 1))
+ 
+@@ -88,6 +90,7 @@ #else
+ 
+ #define UNW_PC(frame) ((void)(frame), 0)
+ #define UNW_SP(frame) ((void)(frame), 0)
++#define UNW_FP(frame) ((void)(frame), 0)
+ 
+ static inline int arch_unw_user_mode(const void *info)
+ {
+-
+To unsubscribe from this list: send the line "unsubscribe git-commits-head" in
+the body of a message to majordomo@vger.kernel.org
+More majordomo info at  http://vger.kernel.org/majordomo-info.html
+
+From davej  Tue Sep 26 21:14:30 2006
+Return-Path: <git-commits-head-owner@vger.kernel.org>
+X-Spam-Checker-Version: SpamAssassin 3.1.4 (2006-07-25) on 
+	pressure.kernelslacker.org
+X-Spam-Level: 
+X-Spam-Status: No, score=-2.2 required=5.0 tests=AWL,BAYES_00,
+	UNPARSEABLE_RELAY autolearn=ham version=3.1.4
+Received: from pobox.devel.redhat.com [10.11.255.8]
+	by pressure.kernelslacker.org with IMAP (fetchmail-6.3.4)
+	for <davej@localhost> (single-drop); Tue, 26 Sep 2006 21:14:30 -0400 (EDT)
+Received: from pobox.devel.redhat.com ([unix socket])
+	 by pobox.devel.redhat.com (Cyrus v2.2.12-Invoca-RPM-2.2.12-3.RHEL4.1) with LMTPA;
+	 Tue, 26 Sep 2006 21:13:35 -0400
+X-Sieve: CMU Sieve 2.2
+Received: from int-mx1.corp.redhat.com (int-mx1.corp.redhat.com [172.16.52.254])
+	by pobox.devel.redhat.com (8.13.1/8.13.1) with ESMTP id k8R1DYKG028960;
+	Tue, 26 Sep 2006 21:13:34 -0400
+Received: from mx3.redhat.com (mx3.redhat.com [172.16.48.32])
+	by int-mx1.corp.redhat.com (8.12.11.20060308/8.12.11) with ESMTP id k8R1DYDg013226;
+	Tue, 26 Sep 2006 21:13:34 -0400
+Received: from vger.kernel.org (vger.kernel.org [209.132.176.167])
+	by mx3.redhat.com (8.13.1/8.13.1) with ESMTP id k8QMVSF2000343;
+	Tue, 26 Sep 2006 21:13:28 -0400
+Received: (majordomo@vger.kernel.org) by vger.kernel.org via listexpand
+	id S965015AbWIZXCi (ORCPT <rfc822;davej@redhat.com> + 4 others);
+	Tue, 26 Sep 2006 19:02:38 -0400
+Received: (majordomo@vger.kernel.org) by vger.kernel.org id S965008AbWIZXCi
+	(ORCPT <rfc822;git-commits-head-outgoing>);
+	Tue, 26 Sep 2006 19:02:38 -0400
+Received: from hera.kernel.org ([140.211.167.34]:58818 "EHLO hera.kernel.org")
+	by vger.kernel.org with ESMTP id S965015AbWIZXC1 (ORCPT
+	<rfc822;git-commits-head@vger.kernel.org>);
+	Tue, 26 Sep 2006 19:02:27 -0400
+Received: from hera.kernel.org (IDENT:U2FsdGVkX19ruuH/JBvBkUvecWJby0xs2svlccW0nvU@localhost [127.0.0.1])
+	by hera.kernel.org (8.13.7/8.13.7) with ESMTP id k8QN2P5q016671
+	(version=TLSv1/SSLv3 cipher=DHE-RSA-AES256-SHA bits=256 verify=NO)
+	for <git-commits-head@vger.kernel.org>; Tue, 26 Sep 2006 23:02:25 GMT
+Received: (from dwmw2@localhost)
+	by hera.kernel.org (8.13.7/8.13.1/Submit) id k8QN2PuM016668
+	for git-commits-head@vger.kernel.org; Tue, 26 Sep 2006 23:02:25 GMT
+Date: 	Tue, 26 Sep 2006 23:02:25 GMT
+Message-Id: <200609262302.k8QN2PuM016668@hera.kernel.org>
+From: Linux Kernel Mailing List <linux-kernel@vger.kernel.org>
+To: git-commits-head@vger.kernel.org
+Subject: [PATCH] Don't force frame pointers for lockdep
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+X-Git-Commit: 3b8d1fe0f28202ce1592d9fbc216959b49b72c95
+X-Git-Parent: a32cf3975bed3b84491f8ffeb24abe8c45d86ab0
+Sender: git-commits-head-owner@vger.kernel.org
+Precedence: bulk
+X-Mailing-List: 	git-commits-head@vger.kernel.org
+X-RedHat-Spam-Score: 0.005 
+Status: RO
+Content-Length: 1100
+Lines: 33
+
+commit 3b8d1fe0f28202ce1592d9fbc216959b49b72c95
+tree a7b852cde2e72bb1dd3f88b7bf268693c35cf643
+parent a32cf3975bed3b84491f8ffeb24abe8c45d86ab0
+author Andi Kleen <ak@suse.de> 1159260754 +0200
+committer Andi Kleen <andi@basil.nowhere.org> 1159260754 +0200
+
+[PATCH] Don't force frame pointers for lockdep
+
+Now that stacktrace supports dwarf2 don't force frame pointers for lockdep anymore
+
+Cc: mingo@elte.hu
+Signed-off-by: Andi Kleen <ak@suse.de>
+
+ lib/Kconfig.debug |    2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/lib/Kconfig.debug b/lib/Kconfig.debug
+index 554ee68..c795a17 100644
+--- a/lib/Kconfig.debug
++++ b/lib/Kconfig.debug
+@@ -218,7 +218,7 @@ config LOCKDEP
+ 	bool
+ 	depends on DEBUG_KERNEL && TRACE_IRQFLAGS_SUPPORT && STACKTRACE_SUPPORT && LOCKDEP_SUPPORT
+ 	select STACKTRACE
+-	select FRAME_POINTER
++	select FRAME_POINTER if !X86
+ 	select KALLSYMS
+ 	select KALLSYMS_ALL
+ 
+-
+To unsubscribe from this list: send the line "unsubscribe git-commits-head" in
+the body of a message to majordomo@vger.kernel.org
+More majordomo info at  http://vger.kernel.org/majordomo-info.html
+
+From davej  Tue Sep 26 21:16:01 2006
+Return-Path: <git-commits-head-owner@vger.kernel.org>
+X-Spam-Checker-Version: SpamAssassin 3.1.4 (2006-07-25) on 
+	pressure.kernelslacker.org
+X-Spam-Level: 
+X-Spam-Status: No, score=-2.2 required=5.0 tests=AWL,BAYES_00,
+	UNPARSEABLE_RELAY autolearn=ham version=3.1.4
+Received: from pobox.devel.redhat.com [10.11.255.8]
+	by pressure.kernelslacker.org with IMAP (fetchmail-6.3.4)
+	for <davej@localhost> (single-drop); Tue, 26 Sep 2006 21:16:01 -0400 (EDT)
+Received: from pobox.devel.redhat.com ([unix socket])
+	 by pobox.devel.redhat.com (Cyrus v2.2.12-Invoca-RPM-2.2.12-3.RHEL4.1) with LMTPA;
+	 Tue, 26 Sep 2006 21:14:47 -0400
+X-Sieve: CMU Sieve 2.2
+Received: from int-mx1.corp.redhat.com (int-mx1.corp.redhat.com [172.16.52.254])
+	by pobox.devel.redhat.com (8.13.1/8.13.1) with ESMTP id k8R1El7W029048;
+	Tue, 26 Sep 2006 21:14:47 -0400
+Received: from mx3.redhat.com (mx3.redhat.com [172.16.48.32])
+	by int-mx1.corp.redhat.com (8.12.11.20060308/8.12.11) with ESMTP id k8R1ElDb013350;
+	Tue, 26 Sep 2006 21:14:47 -0400
+Received: from vger.kernel.org (vger.kernel.org [209.132.176.167])
+	by mx3.redhat.com (8.13.1/8.13.1) with ESMTP id k8QMVSFE000343;
+	Tue, 26 Sep 2006 21:14:41 -0400
+Received: (majordomo@vger.kernel.org) by vger.kernel.org via listexpand
+	id S965030AbWIZXDN (ORCPT <rfc822;davej@redhat.com> + 4 others);
+	Tue, 26 Sep 2006 19:03:13 -0400
+Received: (majordomo@vger.kernel.org) by vger.kernel.org id S965036AbWIZXDM
+	(ORCPT <rfc822;git-commits-head-outgoing>);
+	Tue, 26 Sep 2006 19:03:12 -0400
+Received: from hera.kernel.org ([140.211.167.34]:15555 "EHLO hera.kernel.org")
+	by vger.kernel.org with ESMTP id S965030AbWIZXDE (ORCPT
+	<rfc822;git-commits-head@vger.kernel.org>);
+	Tue, 26 Sep 2006 19:03:04 -0400
+Received: from hera.kernel.org (IDENT:U2FsdGVkX18cfowrsdA1vDvqb+NjLeHpqXfx1W3DUks@localhost [127.0.0.1])
+	by hera.kernel.org (8.13.7/8.13.7) with ESMTP id k8QN34jE018269
+	(version=TLSv1/SSLv3 cipher=DHE-RSA-AES256-SHA bits=256 verify=NO)
+	for <git-commits-head@vger.kernel.org>; Tue, 26 Sep 2006 23:03:04 GMT
+Received: (from dwmw2@localhost)
+	by hera.kernel.org (8.13.7/8.13.1/Submit) id k8QN34ma018265
+	for git-commits-head@vger.kernel.org; Tue, 26 Sep 2006 23:03:04 GMT
+Date: 	Tue, 26 Sep 2006 23:03:04 GMT
+Message-Id: <200609262303.k8QN34ma018265@hera.kernel.org>
+From: Linux Kernel Mailing List <linux-kernel@vger.kernel.org>
+To: git-commits-head@vger.kernel.org
+Subject: [PATCH] i386: move kernel_thread_helper into entry.S
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+X-Git-Commit: 02ba1a32dbd3d406530a17a2643a8f0f8cbf3acc
+X-Git-Parent: 3d08a256da8aed5300bd0752200ece426f49b050
+Sender: git-commits-head-owner@vger.kernel.org
+Precedence: bulk
+X-Mailing-List: 	git-commits-head@vger.kernel.org
+X-RedHat-Spam-Score: 0.005 
+Status: RO
+Content-Length: 1992
+Lines: 69
+
+commit 02ba1a32dbd3d406530a17a2643a8f0f8cbf3acc
+tree 34264fe17596eb3c83e485c26094d246e8841dac
+parent 3d08a256da8aed5300bd0752200ece426f49b050
+author Andi Kleen <ak@suse.de> 1159260755 +0200
+committer Andi Kleen <andi@basil.nowhere.org> 1159260755 +0200
+
+[PATCH] i386: move kernel_thread_helper into entry.S
+
+And add proper CFI annotation to it which was previously
+impossible. This prevents "stuck" messages by the dwarf2 unwinder
+when reaching the top of a kernel stack.
+
+Includes feedback from Jan Beulich
+
+Cc: jbeulich@novell.com
+Signed-off-by: Andi Kleen <ak@suse.de>
+
+ arch/i386/kernel/entry.S   |   13 +++++++++++++
+ arch/i386/kernel/process.c |    9 ---------
+ 2 files changed, 13 insertions(+), 9 deletions(-)
+
+diff --git a/arch/i386/kernel/entry.S b/arch/i386/kernel/entry.S
+index ba22ec8..dede506 100644
+--- a/arch/i386/kernel/entry.S
++++ b/arch/i386/kernel/entry.S
+@@ -950,6 +950,19 @@ ENTRY(arch_unwind_init_running)
+ ENDPROC(arch_unwind_init_running)
+ #endif
+ 
++ENTRY(kernel_thread_helper)
++	pushl $0		# fake return address for unwinder
++	CFI_STARTPROC
++	movl %edx,%eax
++	push %edx
++	CFI_ADJUST_CFA_OFFSET 4
++	call *%ebx
++	push %eax
++	CFI_ADJUST_CFA_OFFSET 4
++	call do_exit
++	CFI_ENDPROC
++ENDPROC(kernel_thread_helper)
++
+ .section .rodata,"a"
+ #include "syscall_table.S"
+ 
+diff --git a/arch/i386/kernel/process.c b/arch/i386/kernel/process.c
+index b741c3e..220aeca 100644
+--- a/arch/i386/kernel/process.c
++++ b/arch/i386/kernel/process.c
+@@ -321,15 +321,6 @@ void show_regs(struct pt_regs * regs)
+  * the "args".
+  */
+ extern void kernel_thread_helper(void);
+-__asm__(".section .text\n"
+-	".align 4\n"
+-	"kernel_thread_helper:\n\t"
+-	"movl %edx,%eax\n\t"
+-	"pushl %edx\n\t"
+-	"call *%ebx\n\t"
+-	"pushl %eax\n\t"
+-	"call do_exit\n"
+-	".previous");
+ 
+ /*
+  * Create a kernel thread
+-
+To unsubscribe from this list: send the line "unsubscribe git-commits-head" in
+the body of a message to majordomo@vger.kernel.org
+More majordomo info at  http://vger.kernel.org/majordomo-info.html
+
+From davej  Tue Sep 26 21:24:40 2006
+Return-Path: <git-commits-head-owner@vger.kernel.org>
+X-Spam-Checker-Version: SpamAssassin 3.1.4 (2006-07-25) on 
+	pressure.kernelslacker.org
+X-Spam-Level: 
+X-Spam-Status: No, score=-2.2 required=5.0 tests=AWL,BAYES_00,
+	UNPARSEABLE_RELAY autolearn=ham version=3.1.4
+Received: from pobox.devel.redhat.com [10.11.255.8]
+	by pressure.kernelslacker.org with IMAP (fetchmail-6.3.4)
+	for <davej@localhost> (single-drop); Tue, 26 Sep 2006 21:24:40 -0400 (EDT)
+Received: from pobox.devel.redhat.com ([unix socket])
+	 by pobox.devel.redhat.com (Cyrus v2.2.12-Invoca-RPM-2.2.12-3.RHEL4.1) with LMTPA;
+	 Tue, 26 Sep 2006 21:24:12 -0400
+X-Sieve: CMU Sieve 2.2
+Received: from int-mx1.corp.redhat.com (int-mx1.corp.redhat.com [172.16.52.254])
+	by pobox.devel.redhat.com (8.13.1/8.13.1) with ESMTP id k8R1OCfF030024;
+	Tue, 26 Sep 2006 21:24:12 -0400
+Received: from mx3.redhat.com (mx3.redhat.com [172.16.48.32])
+	by int-mx1.corp.redhat.com (8.12.11.20060308/8.12.11) with ESMTP id k8R1OBdv015243;
+	Tue, 26 Sep 2006 21:24:11 -0400
+Received: from vger.kernel.org (vger.kernel.org [209.132.176.167])
+	by mx3.redhat.com (8.13.1/8.13.1) with ESMTP id k8QMVSGi000343;
+	Tue, 26 Sep 2006 21:24:05 -0400
+Received: (majordomo@vger.kernel.org) by vger.kernel.org via listexpand
+	id S965107AbWIZXFh (ORCPT <rfc822;davej@redhat.com> + 4 others);
+	Tue, 26 Sep 2006 19:05:37 -0400
+Received: (majordomo@vger.kernel.org) by vger.kernel.org id S965123AbWIZXFh
+	(ORCPT <rfc822;git-commits-head-outgoing>);
+	Tue, 26 Sep 2006 19:05:37 -0400
+Received: from hera.kernel.org ([140.211.167.34]:34727 "EHLO hera.kernel.org")
+	by vger.kernel.org with ESMTP id S965107AbWIZXFR (ORCPT
+	<rfc822;git-commits-head@vger.kernel.org>);
+	Tue, 26 Sep 2006 19:05:17 -0400
+Received: from hera.kernel.org (IDENT:U2FsdGVkX1/cXNLnausOA4vVacToL84mYMF/5vjUCqc@localhost [127.0.0.1])
+	by hera.kernel.org (8.13.7/8.13.7) with ESMTP id k8QN5GgJ020662
+	(version=TLSv1/SSLv3 cipher=DHE-RSA-AES256-SHA bits=256 verify=NO)
+	for <git-commits-head@vger.kernel.org>; Tue, 26 Sep 2006 23:05:16 GMT
+Received: (from dwmw2@localhost)
+	by hera.kernel.org (8.13.7/8.13.1/Submit) id k8QN5GOO020661
+	for git-commits-head@vger.kernel.org; Tue, 26 Sep 2006 23:05:16 GMT
+Date: 	Tue, 26 Sep 2006 23:05:16 GMT
+Message-Id: <200609262305.k8QN5GOO020661@hera.kernel.org>
+From: Linux Kernel Mailing List <linux-kernel@vger.kernel.org>
+To: git-commits-head@vger.kernel.org
+Subject: [PATCH] Fix unwinder warning in traps.c
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+X-Git-Commit: b89ebd0b0a65d5371aa9ad98e873c4616056ca68
+X-Git-Parent: 0637a70a5db98182d9ad3d6ae1ee30acf20afde9
+Sender: git-commits-head-owner@vger.kernel.org
+Precedence: bulk
+X-Mailing-List: 	git-commits-head@vger.kernel.org
+X-RedHat-Spam-Score: 0.004 
+Status: RO
+Content-Length: 1265
+Lines: 40
+
+commit b89ebd0b0a65d5371aa9ad98e873c4616056ca68
+tree 7205fc3c9174f4f48d3fd59b86d99dfd66d5dfd3
+parent 0637a70a5db98182d9ad3d6ae1ee30acf20afde9
+author Andi Kleen <ak@suse.de> 1159260762 +0200
+committer Andi Kleen <andi@basil.nowhere.org> 1159260762 +0200
+
+[PATCH] Fix unwinder warning in traps.c
+
+Fix
+
+linux/arch/x86_64/kernel/traps.c: In function 'dump_trace':
+linux/arch/x86_64/kernel/traps.c:275: warning: cast to pointer from integer of different size
+
+with allnoconfig
+
+Cc: jbeulich@novell.com
+Signed-off-by: Andi Kleen <ak@suse.de>
+
+ include/asm-x86_64/unwind.h |    4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/include/asm-x86_64/unwind.h b/include/asm-x86_64/unwind.h
+index b8fa5cb..2e7ff10 100644
+--- a/include/asm-x86_64/unwind.h
++++ b/include/asm-x86_64/unwind.h
+@@ -99,8 +99,8 @@ #endif
+ 
+ #else
+ 
+-#define UNW_PC(frame) ((void)(frame), 0)
+-#define UNW_SP(frame) ((void)(frame), 0)
++#define UNW_PC(frame) ((void)(frame), 0UL)
++#define UNW_SP(frame) ((void)(frame), 0UL)
+ 
+ static inline int arch_unw_user_mode(const void *info)
+ {
+-
+To unsubscribe from this list: send the line "unsubscribe git-commits-head" in
+the body of a message to majordomo@vger.kernel.org
+More majordomo info at  http://vger.kernel.org/majordomo-info.html
+
+From davej  Fri Sep 29 14:09:13 2006
+Return-Path: <git-commits-head-owner@vger.kernel.org>
+X-Spam-Checker-Version: SpamAssassin 3.1.4 (2006-07-25) on 
+	pressure.kernelslacker.org
+X-Spam-Level: 
+X-Spam-Status: No, score=-2.2 required=5.0 tests=AWL,BAYES_00,
+	UNPARSEABLE_RELAY autolearn=ham version=3.1.4
+Received: from pobox.devel.redhat.com [10.11.255.8]
+	by pressure.kernelslacker.org with IMAP (fetchmail-6.3.4)
+	for <davej@localhost> (single-drop); Fri, 29 Sep 2006 14:09:13 -0400 (EDT)
+Received: from pobox.devel.redhat.com ([unix socket])
+	 by pobox.devel.redhat.com (Cyrus v2.2.12-Invoca-RPM-2.2.12-3.RHEL4.1) with LMTPA;
+	 Fri, 29 Sep 2006 14:08:51 -0400
+X-Sieve: CMU Sieve 2.2
+Received: from int-mx1.corp.redhat.com (int-mx1.corp.redhat.com [172.16.52.254])
+	by pobox.devel.redhat.com (8.13.1/8.13.1) with ESMTP id k8TI8obu030597;
+	Fri, 29 Sep 2006 14:08:50 -0400
+Received: from mx3.redhat.com (mx3.redhat.com [172.16.48.32])
+	by int-mx1.corp.redhat.com (8.12.11.20060308/8.12.11) with ESMTP id k8TI8od2031335;
+	Fri, 29 Sep 2006 14:08:50 -0400
+Received: from vger.kernel.org (vger.kernel.org [209.132.176.167])
+	by mx3.redhat.com (8.13.1/8.13.1) with ESMTP id k8TFmxU5012967;
+	Fri, 29 Sep 2006 14:08:44 -0400
+Received: (majordomo@vger.kernel.org) by vger.kernel.org via listexpand
+	id S1161638AbWI2RGF (ORCPT <rfc822;davej@redhat.com> + 4 others);
+	Fri, 29 Sep 2006 13:06:05 -0400
+Received: (majordomo@vger.kernel.org) by vger.kernel.org id S1161633AbWI2RGB
+	(ORCPT <rfc822;git-commits-head-outgoing>);
+	Fri, 29 Sep 2006 13:06:01 -0400
+Received: from hera.kernel.org ([140.211.167.34]:40368 "EHLO hera.kernel.org")
+	by vger.kernel.org with ESMTP id S1161641AbWI2RCP (ORCPT
+	<rfc822;git-commits-head@vger.kernel.org>);
+	Fri, 29 Sep 2006 13:02:15 -0400
+Received: from hera.kernel.org (IDENT:U2FsdGVkX19OnlmnRs/NngqlSmybT2qHIyoGwtUDIS4@localhost [127.0.0.1])
+	by hera.kernel.org (8.13.7/8.13.7) with ESMTP id k8TH2EIQ031476
+	(version=TLSv1/SSLv3 cipher=DHE-RSA-AES256-SHA bits=256 verify=NO)
+	for <git-commits-head@vger.kernel.org>; Fri, 29 Sep 2006 17:02:14 GMT
+Received: (from dwmw2@localhost)
+	by hera.kernel.org (8.13.7/8.13.1/Submit) id k8TH2EKU031475
+	for git-commits-head@vger.kernel.org; Fri, 29 Sep 2006 17:02:14 GMT
+Date: 	Fri, 29 Sep 2006 17:02:14 GMT
+Message-Id: <200609291702.k8TH2EKU031475@hera.kernel.org>
+From: Linux Kernel Mailing List <linux-kernel@vger.kernel.org>
+To: git-commits-head@vger.kernel.org
+Subject: [PATCH] unwind: fix unused variable warning when !CONFIG_MODULES
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+X-Git-Commit: e6cab99bb478e067b1a7a120333ff326954a2412
+X-Git-Parent: 0e51a720b9d9ea5ebf0fda39108919c6626bffa3
+Sender: git-commits-head-owner@vger.kernel.org
+Precedence: bulk
+X-Mailing-List: 	git-commits-head@vger.kernel.org
+X-RedHat-Spam-Score: 0.006 
+Status: RO
+Content-Length: 1524
+Lines: 46
+
+commit e6cab99bb478e067b1a7a120333ff326954a2412
+tree 59211a97c63eaa87db1b8e44343eb15f1be21d1a
+parent 0e51a720b9d9ea5ebf0fda39108919c6626bffa3
+author Chuck Ebbert <76306.1226@compuserve.com> 1159520397 -0700
+committer Linus Torvalds <torvalds@g5.osdl.org> 1159546691 -0700
+
+[PATCH] unwind: fix unused variable warning when !CONFIG_MODULES
+
+Fix "variable defined but not used" compiler warning in unwind.c when
+CONFIG_MODULES is not set.
+
+Signed-off-by: Chuck Ebbert <76306.1226@compuserve.com>
+Cc: Jan Beulich <jbeulich@novell.com>
+Cc: Andi Kleen <ak@muc.de>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+Signed-off-by: Linus Torvalds <torvalds@osdl.org>
+
+ kernel/unwind.c |    4 +++-
+ 1 file changed, 3 insertions(+), 1 deletion(-)
+
+diff --git a/kernel/unwind.c b/kernel/unwind.c
+index 3430475..2e23686 100644
+--- a/kernel/unwind.c
++++ b/kernel/unwind.c
+@@ -102,7 +102,7 @@ static struct unwind_table {
+ 	unsigned long size;
+ 	struct unwind_table *link;
+ 	const char *name;
+-} root_table, *last_table;
++} root_table;
+ 
+ struct unwind_item {
+ 	enum item_location {
+@@ -174,6 +174,8 @@ void __init unwind_init(void)
+ 
+ #ifdef CONFIG_MODULES
+ 
++static struct unwind_table *last_table;
++
+ /* Must be called with module_mutex held. */
+ void *unwind_add_table(struct module *module,
+                        const void *table_start,
+-
+To unsubscribe from this list: send the line "unsubscribe git-commits-head" in
+the body of a message to majordomo@vger.kernel.org
+More majordomo info at  http://vger.kernel.org/majordomo-info.html
+
+From davej  Tue Sep 26 21:17:51 2006
+Return-Path: <git-commits-head-owner@vger.kernel.org>
+X-Spam-Checker-Version: SpamAssassin 3.1.4 (2006-07-25) on 
+	pressure.kernelslacker.org
+X-Spam-Level: 
+X-Spam-Status: No, score=-2.2 required=5.0 tests=AWL,BAYES_00,
+	UNPARSEABLE_RELAY autolearn=ham version=3.1.4
+Received: from pobox.devel.redhat.com [10.11.255.8]
+	by pressure.kernelslacker.org with IMAP (fetchmail-6.3.4)
+	for <davej@localhost> (single-drop); Tue, 26 Sep 2006 21:17:51 -0400 (EDT)
+Received: from pobox.devel.redhat.com ([unix socket])
+	 by pobox.devel.redhat.com (Cyrus v2.2.12-Invoca-RPM-2.2.12-3.RHEL4.1) with LMTPA;
+	 Tue, 26 Sep 2006 21:17:04 -0400
+X-Sieve: CMU Sieve 2.2
+Received: from int-mx1.corp.redhat.com (int-mx1.corp.redhat.com [172.16.52.254])
+	by pobox.devel.redhat.com (8.13.1/8.13.1) with ESMTP id k8R1H3Ij029373;
+	Tue, 26 Sep 2006 21:17:04 -0400
+Received: from mx3.redhat.com (mx3.redhat.com [172.16.48.32])
+	by int-mx1.corp.redhat.com (8.12.11.20060308/8.12.11) with ESMTP id k8R1H3b6013922;
+	Tue, 26 Sep 2006 21:17:03 -0400
+Received: from vger.kernel.org (vger.kernel.org [209.132.176.167])
+	by mx3.redhat.com (8.13.1/8.13.1) with ESMTP id k8QMVSFa000343;
+	Tue, 26 Sep 2006 21:16:57 -0400
+Received: (majordomo@vger.kernel.org) by vger.kernel.org via listexpand
+	id S965066AbWIZXDi (ORCPT <rfc822;davej@redhat.com> + 4 others);
+	Tue, 26 Sep 2006 19:03:38 -0400
+Received: (majordomo@vger.kernel.org) by vger.kernel.org id S965068AbWIZXDh
+	(ORCPT <rfc822;git-commits-head-outgoing>);
+	Tue, 26 Sep 2006 19:03:37 -0400
+Received: from hera.kernel.org ([140.211.167.34]:53699 "EHLO hera.kernel.org")
+	by vger.kernel.org with ESMTP id S965045AbWIZXDY (ORCPT
+	<rfc822;git-commits-head@vger.kernel.org>);
+	Tue, 26 Sep 2006 19:03:24 -0400
+Received: from hera.kernel.org (IDENT:U2FsdGVkX18qaGswiJjq5N8uIA11Ek0jEp0riLZqQRw@localhost [127.0.0.1])
+	by hera.kernel.org (8.13.7/8.13.7) with ESMTP id k8QN3Nn7019137
+	(version=TLSv1/SSLv3 cipher=DHE-RSA-AES256-SHA bits=256 verify=NO)
+	for <git-commits-head@vger.kernel.org>; Tue, 26 Sep 2006 23:03:23 GMT
+Received: (from dwmw2@localhost)
+	by hera.kernel.org (8.13.7/8.13.1/Submit) id k8QN3N9o019136
+	for git-commits-head@vger.kernel.org; Tue, 26 Sep 2006 23:03:23 GMT
+Date: 	Tue, 26 Sep 2006 23:03:23 GMT
+Message-Id: <200609262303.k8QN3N9o019136@hera.kernel.org>
+From: Linux Kernel Mailing List <linux-kernel@vger.kernel.org>
+To: git-commits-head@vger.kernel.org
+Subject: [PATCH] i386: annotate FIX_STACK() and the rest of nmi()
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+X-Git-Commit: a549b86dd0f3cbffcd5f9343f4ae7fcd59f7e756
+X-Git-Parent: 1164c9994fe37d5b7035a5cf9328c98dd38af7b1
+Sender: git-commits-head-owner@vger.kernel.org
+Precedence: bulk
+X-Mailing-List: 	git-commits-head@vger.kernel.org
+X-RedHat-Spam-Score: 0.005 
+Status: RO
+Content-Length: 2888
+Lines: 98
+
+commit a549b86dd0f3cbffcd5f9343f4ae7fcd59f7e756
+tree 4405a0465a631a45945954f1ce1efa7d8fd24676
+parent 1164c9994fe37d5b7035a5cf9328c98dd38af7b1
+author Chuck Ebbert <76306.1226@compuserve.com> 1159260757 +0200
+committer Andi Kleen <andi@basil.nowhere.org> 1159260757 +0200
+
+[PATCH] i386: annotate FIX_STACK() and the rest of nmi()
+
+In i386's entry.S, FIX_STACK() needs annotation because it
+replaces the stack pointer.  And the rest of nmi() needs
+annotation in order to compile with these new annotations.
+
+Signed-off-by: Chuck Ebbert <76306.1226@compuserve.com>
+Signed-off-by: Andi Kleen <ak@suse.de>
+
+ arch/i386/kernel/entry.S  |   18 +++++++++++++++---
+ include/asm-i386/dwarf2.h |    2 ++
+ 2 files changed, 17 insertions(+), 3 deletions(-)
+
+diff --git a/arch/i386/kernel/entry.S b/arch/i386/kernel/entry.S
+index 0928f70..4b08452 100644
+--- a/arch/i386/kernel/entry.S
++++ b/arch/i386/kernel/entry.S
+@@ -699,9 +699,15 @@ device_not_available_emulate:
+ 	jne ok;					\
+ label:						\
+ 	movl TSS_sysenter_esp0+offset(%esp),%esp;	\
++	CFI_DEF_CFA esp, 0;			\
++	CFI_UNDEFINED eip;			\
+ 	pushfl;					\
++	CFI_ADJUST_CFA_OFFSET 4;		\
+ 	pushl $__KERNEL_CS;			\
+-	pushl $sysenter_past_esp
++	CFI_ADJUST_CFA_OFFSET 4;		\
++	pushl $sysenter_past_esp;		\
++	CFI_ADJUST_CFA_OFFSET 4;		\
++	CFI_REL_OFFSET eip, 0
+ 
+ KPROBE_ENTRY(debug)
+ 	RING0_INT_FRAME
+@@ -754,6 +760,7 @@ KPROBE_ENTRY(nmi)
+ 	cmpl $sysenter_entry,12(%esp)
+ 	je nmi_debug_stack_check
+ nmi_stack_correct:
++	/* We have a RING0_INT_FRAME here */
+ 	pushl %eax
+ 	CFI_ADJUST_CFA_OFFSET 4
+ 	SAVE_ALL
+@@ -764,9 +771,12 @@ nmi_stack_correct:
+ 	CFI_ENDPROC
+ 
+ nmi_stack_fixup:
++	RING0_INT_FRAME
+ 	FIX_STACK(12,nmi_stack_correct, 1)
+ 	jmp nmi_stack_correct
++
+ nmi_debug_stack_check:
++	/* We have a RING0_INT_FRAME here */
+ 	cmpw $__KERNEL_CS,16(%esp)
+ 	jne nmi_stack_correct
+ 	cmpl $debug,(%esp)
+@@ -777,8 +787,10 @@ nmi_debug_stack_check:
+ 	jmp nmi_stack_correct
+ 
+ nmi_16bit_stack:
+-	RING0_INT_FRAME
+-	/* create the pointer to lss back */
++	/* We have a RING0_INT_FRAME here.
++	 *
++	 * create the pointer to lss back
++	 */
+ 	pushl %ss
+ 	CFI_ADJUST_CFA_OFFSET 4
+ 	pushl %esp
+diff --git a/include/asm-i386/dwarf2.h b/include/asm-i386/dwarf2.h
+index fe2392f..5d1a8db 100644
+--- a/include/asm-i386/dwarf2.h
++++ b/include/asm-i386/dwarf2.h
+@@ -26,6 +26,7 @@ #define CFI_REGISTER .cfi_register
+ #define CFI_RESTORE .cfi_restore
+ #define CFI_REMEMBER_STATE .cfi_remember_state
+ #define CFI_RESTORE_STATE .cfi_restore_state
++#define CFI_UNDEFINED .cfi_undefined
+ 
+ #else
+ 
+@@ -46,6 +47,7 @@ #define CFI_REGISTER	ignore
+ #define CFI_RESTORE	ignore
+ #define CFI_REMEMBER_STATE ignore
+ #define CFI_RESTORE_STATE ignore
++#define CFI_UNDEFINED ignore
+ 
+ #endif
+ 
+-
+To unsubscribe from this list: send the line "unsubscribe git-commits-head" in
+the body of a message to majordomo@vger.kernel.org
+More majordomo info at  http://vger.kernel.org/majordomo-info.html
+
+From davej  Fri Oct  6 06:25:28 2006
+Return-Path: <git-commits-head-owner@vger.kernel.org>
+X-Spam-Checker-Version: SpamAssassin 3.1.4 (2006-07-25) on 
+	pressure.kernelslacker.org
+X-Spam-Level: 
+X-Spam-Status: No, score=-2.2 required=5.0 tests=AWL,BAYES_00,
+	UNPARSEABLE_RELAY autolearn=ham version=3.1.4
+Received: from pobox.devel.redhat.com [10.11.255.8]
+	by pressure.kernelslacker.org with IMAP (fetchmail-6.3.4)
+	for <davej@localhost> (single-drop); Fri, 06 Oct 2006 06:25:28 -0400 (EDT)
+Received: from pobox.devel.redhat.com ([unix socket])
+	 by pobox.devel.redhat.com (Cyrus v2.2.12-Invoca-RPM-2.2.12-3.RHEL4.1) with LMTPA;
+	 Fri, 06 Oct 2006 06:25:04 -0400
+X-Sieve: CMU Sieve 2.2
+Received: from int-mx1.corp.redhat.com (int-mx1.corp.redhat.com [172.16.52.254])
+	by pobox.devel.redhat.com (8.13.1/8.13.1) with ESMTP id k96AP4XI021568;
+	Fri, 6 Oct 2006 06:25:04 -0400
+Received: from mx3.redhat.com (mx3.redhat.com [172.16.48.32])
+	by int-mx1.corp.redhat.com (8.12.11.20060308/8.12.11) with ESMTP id k96AP4u8017427;
+	Fri, 6 Oct 2006 06:25:04 -0400
+Received: from vger.kernel.org (vger.kernel.org [209.132.176.167])
+	by mx3.redhat.com (8.13.1/8.13.1) with ESMTP id k968Cbsg003142;
+	Fri, 6 Oct 2006 06:24:57 -0400
+Received: (majordomo@vger.kernel.org) by vger.kernel.org via listexpand
+	id S932463AbWJFAAP (ORCPT <rfc822;davej@redhat.com> + 4 others);
+	Thu, 5 Oct 2006 20:00:15 -0400
+Received: (majordomo@vger.kernel.org) by vger.kernel.org id S932461AbWJFAAO
+	(ORCPT <rfc822;git-commits-head-outgoing>);
+	Thu, 5 Oct 2006 20:00:14 -0400
+Received: from hera.kernel.org ([140.211.167.34]:1467 "EHLO hera.kernel.org")
+	by vger.kernel.org with ESMTP id S932458AbWJFAAN (ORCPT
+	<rfc822;git-commits-head@vger.kernel.org>);
+	Thu, 5 Oct 2006 20:00:13 -0400
+Received: from hera.kernel.org (IDENT:U2FsdGVkX1+J4/NCRW5+8BHbW4Ea/ay3zGV/20ublLo@localhost [127.0.0.1])
+	by hera.kernel.org (8.13.7/8.13.7) with ESMTP id k9600B0x003320
+	(version=TLSv1/SSLv3 cipher=DHE-RSA-AES256-SHA bits=256 verify=NO)
+	for <git-commits-head@vger.kernel.org>; Fri, 6 Oct 2006 00:00:11 GMT
+Received: (from dwmw2@localhost)
+	by hera.kernel.org (8.13.7/8.13.1/Submit) id k9600AUO003314
+	for git-commits-head@vger.kernel.org; Fri, 6 Oct 2006 00:00:11 GMT
+Date: 	Fri, 6 Oct 2006 00:00:11 GMT
+Message-Id: <200610060000.k9600AUO003314@hera.kernel.org>
+From: Linux Kernel Mailing List <linux-kernel@vger.kernel.org>
+To: git-commits-head@vger.kernel.org
+Subject: [PATCH] x86: Terminate the kernel stacks for the unwinder
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+X-Git-Commit: 51ec28e1b2cb267a09a0b8eac1ccf8d61b7268bf
+X-Git-Parent: f015c6c4d733f68cbc1c5d231bb158abaa5c9606
+Sender: git-commits-head-owner@vger.kernel.org
+Precedence: bulk
+X-Mailing-List: 	git-commits-head@vger.kernel.org
+X-RedHat-Spam-Score: 0.006 
+Status: RO
+Content-Length: 2273
+Lines: 66
+
+commit 51ec28e1b2cb267a09a0b8eac1ccf8d61b7268bf
+tree 4686d439a49b98b98fc5048641ddfb50db3fbcd6
+parent f015c6c4d733f68cbc1c5d231bb158abaa5c9606
+author Andi Kleen <ak@suse.de> 1160066842 +0200
+committer Andi Kleen <andi@basil.nowhere.org> 1160066842 +0200
+
+[PATCH] x86: Terminate the kernel stacks for the unwinder
+
+Always make sure RIP/EIP is 0 in the registers stored on the top
+of the stack of a kernel thread. This makes sure the unwinder code
+won't try a fallback but knows the stack has ended.
+
+AK: this patch is a bit mysterious. in theory they should be terminated
+anyways, but it seems to fix at least one crash. Anyways double termination
+probably doesn't hurt.
+
+Signed-off-by: Andi Kleen <ak@suse.de>
+
+ arch/i386/kernel/process.c |    6 +++++-
+ arch/x86_64/kernel/entry.S |    5 +++++
+ 2 files changed, 10 insertions(+), 1 deletion(-)
+
+diff --git a/arch/i386/kernel/process.c b/arch/i386/kernel/process.c
+index dad02a9..b0a0780 100644
+--- a/arch/i386/kernel/process.c
++++ b/arch/i386/kernel/process.c
+@@ -328,6 +328,7 @@ extern void kernel_thread_helper(void);
+ int kernel_thread(int (*fn)(void *), void * arg, unsigned long flags)
+ {
+ 	struct pt_regs regs;
++	int err;
+ 
+ 	memset(&regs, 0, sizeof(regs));
+ 
+@@ -342,7 +343,10 @@ int kernel_thread(int (*fn)(void *), voi
+ 	regs.eflags = X86_EFLAGS_IF | X86_EFLAGS_SF | X86_EFLAGS_PF | 0x2;
+ 
+ 	/* Ok, create the new process.. */
+-	return do_fork(flags | CLONE_VM | CLONE_UNTRACED, 0, &regs, 0, NULL, NULL);
++	err = do_fork(flags | CLONE_VM | CLONE_UNTRACED, 0, &regs, 0, NULL, NULL);
++	if (err == 0) /* terminate kernel stack */
++		task_pt_regs(current)->eip = 0;
++	return err;
+ }
+ EXPORT_SYMBOL(kernel_thread);
+ 
+diff --git a/arch/x86_64/kernel/entry.S b/arch/x86_64/kernel/entry.S
+index b8285cf..ab9b2c4 100644
+--- a/arch/x86_64/kernel/entry.S
++++ b/arch/x86_64/kernel/entry.S
+@@ -978,6 +978,11 @@ ENTRY(kernel_thread)
+ 	call do_fork
+ 	movq %rax,RAX(%rsp)
+ 	xorl %edi,%edi
++	test %rax,%rax
++	jnz  1f
++	/* terminate stack in child */
++	movq %rdi,RIP(%rsp)
++1:
+ 
+ 	/*
+ 	 * It isn't worth to check for reschedule here,
+-
+To unsubscribe from this list: send the line "unsubscribe git-commits-head" in
+the body of a message to majordomo@vger.kernel.org
+More majordomo info at  http://vger.kernel.org/majordomo-info.html
+
+From davej  Fri Oct  6 06:25:41 2006
+Return-Path: <git-commits-head-owner@vger.kernel.org>
+X-Spam-Checker-Version: SpamAssassin 3.1.4 (2006-07-25) on 
+	pressure.kernelslacker.org
+X-Spam-Level: 
+X-Spam-Status: No, score=-2.2 required=5.0 tests=AWL,BAYES_00,
+	UNPARSEABLE_RELAY autolearn=ham version=3.1.4
+Received: from pobox.devel.redhat.com [10.11.255.8]
+	by pressure.kernelslacker.org with IMAP (fetchmail-6.3.4)
+	for <davej@localhost> (single-drop); Fri, 06 Oct 2006 06:25:41 -0400 (EDT)
+Received: from pobox.devel.redhat.com ([unix socket])
+	 by pobox.devel.redhat.com (Cyrus v2.2.12-Invoca-RPM-2.2.12-3.RHEL4.1) with LMTPA;
+	 Fri, 06 Oct 2006 06:25:18 -0400
+X-Sieve: CMU Sieve 2.2
+Received: from int-mx1.corp.redhat.com (int-mx1.corp.redhat.com [172.16.52.254])
+	by pobox.devel.redhat.com (8.13.1/8.13.1) with ESMTP id k96APH2k021649;
+	Fri, 6 Oct 2006 06:25:17 -0400
+Received: from mx3.redhat.com (mx3.redhat.com [172.16.48.32])
+	by int-mx1.corp.redhat.com (8.12.11.20060308/8.12.11) with ESMTP id k96APHXh017529;
+	Fri, 6 Oct 2006 06:25:17 -0400
+Received: from vger.kernel.org (vger.kernel.org [209.132.176.167])
+	by mx3.redhat.com (8.13.1/8.13.1) with ESMTP id k968Cbsi003142;
+	Fri, 6 Oct 2006 06:25:11 -0400
+Received: (majordomo@vger.kernel.org) by vger.kernel.org via listexpand
+	id S932462AbWJFAAR (ORCPT <rfc822;davej@redhat.com> + 4 others);
+	Thu, 5 Oct 2006 20:00:17 -0400
+Received: (majordomo@vger.kernel.org) by vger.kernel.org id S932470AbWJFAAR
+	(ORCPT <rfc822;git-commits-head-outgoing>);
+	Thu, 5 Oct 2006 20:00:17 -0400
+Received: from hera.kernel.org ([140.211.167.34]:3515 "EHLO hera.kernel.org")
+	by vger.kernel.org with ESMTP id S932462AbWJFAAO (ORCPT
+	<rfc822;git-commits-head@vger.kernel.org>);
+	Thu, 5 Oct 2006 20:00:14 -0400
+Received: from hera.kernel.org (IDENT:U2FsdGVkX1+mPXiCuCssAgcoVDa64PzkAWsUICOg/dc@localhost [127.0.0.1])
+	by hera.kernel.org (8.13.7/8.13.7) with ESMTP id k9600E7O003423
+	(version=TLSv1/SSLv3 cipher=DHE-RSA-AES256-SHA bits=256 verify=NO)
+	for <git-commits-head@vger.kernel.org>; Fri, 6 Oct 2006 00:00:14 GMT
+Received: (from dwmw2@localhost)
+	by hera.kernel.org (8.13.7/8.13.1/Submit) id k9600E8t003422
+	for git-commits-head@vger.kernel.org; Fri, 6 Oct 2006 00:00:14 GMT
+Date: 	Fri, 6 Oct 2006 00:00:14 GMT
+Message-Id: <200610060000.k9600E8t003422@hera.kernel.org>
+From: Linux Kernel Mailing List <linux-kernel@vger.kernel.org>
+To: git-commits-head@vger.kernel.org
+Subject: [PATCH] x86-64: Annotate interrupt frame backlink in interrupt handlers
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+X-Git-Commit: 7d0b0e8ddbdda58a852ccff010c0339a38552cc7
+X-Git-Parent: 0a5ace2ab08d45cd78d7ef0067cdcd5c812ac54f
+Sender: git-commits-head-owner@vger.kernel.org
+Precedence: bulk
+X-Mailing-List: 	git-commits-head@vger.kernel.org
+X-RedHat-Spam-Score: 0.006 
+Status: RO
+Content-Length: 1379
+Lines: 40
+
+commit 7d0b0e8ddbdda58a852ccff010c0339a38552cc7
+tree b3bbe80bbcc38f5ee07b6b235f4bf1fd210e5efe
+parent 0a5ace2ab08d45cd78d7ef0067cdcd5c812ac54f
+author Andi Kleen <ak@suse.de> 1160066842 +0200
+committer Andi Kleen <andi@basil.nowhere.org> 1160066842 +0200
+
+[PATCH] x86-64: Annotate interrupt frame backlink in interrupt handlers
+
+Add correct CFI annotation to the backlink on top of the interrupt stack.
+
+Signed-off-by: Andi Kleen <ak@suse.de>
+
+ arch/x86_64/kernel/entry.S |    3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/arch/x86_64/kernel/entry.S b/arch/x86_64/kernel/entry.S
+index ab9b2c4..38a7b2d 100644
+--- a/arch/x86_64/kernel/entry.S
++++ b/arch/x86_64/kernel/entry.S
+@@ -535,6 +535,8 @@ #define XCPT_FRAME _frame ORIG_RAX
+ 1:	incl	%gs:pda_irqcount
+ 	cmoveq %gs:pda_irqstackptr,%rsp
+ 	push    %rbp			# backlink for old unwinder
++	CFI_ADJUST_CFA_OFFSET 8
++	CFI_REL_OFFSET rbp,0
+ 	/*
+ 	 * We entered an interrupt context - irqs are off:
+ 	 */
+@@ -1174,6 +1176,7 @@ ENTRY(call_softirq)
+ 	incl %gs:pda_irqcount
+ 	cmove %gs:pda_irqstackptr,%rsp
+ 	push  %rbp			# backlink for old unwinder
++	CFI_ADJUST_CFA_OFFSET    8
+ 	call __do_softirq
+ 	leaveq
+ 	CFI_DEF_CFA_REGISTER	rsp
+-
+To unsubscribe from this list: send the line "unsubscribe git-commits-head" in
+the body of a message to majordomo@vger.kernel.org
+More majordomo info at  http://vger.kernel.org/majordomo-info.html
+
+From davej  Fri Oct  6 17:53:37 2006
+Return-path: <linux-kernel-owner+davej=40kernelslacker.org-S1422987AbWJFVwu@vger.kernel.org>
+X-Spam-Checker-Version: SpamAssassin 3.1.4 (2006-07-25) on 
+	pressure.kernelslacker.org
+X-Spam-Level: 
+X-Spam-Status: No, score=-2.5 required=5.0 tests=AWL,BAYES_00,
+	FORGED_RCVD_HELO,UNPARSEABLE_RELAY autolearn=ham version=3.1.4
+Envelope-to: davej@kernelslacker.org
+Delivery-date: Fri, 06 Oct 2006 22:53:15 +0100
+Received: from testure.choralone.org [194.9.77.134]
+	by pressure.kernelslacker.org with IMAP (fetchmail-6.3.4)
+	for <davej@localhost> (single-drop); Fri, 06 Oct 2006 17:53:37 -0400 (EDT)
+Received: from vger.kernel.org ([209.132.176.167])
+	by testure.choralone.org with esmtp (Exim 4.63)
+	(envelope-from <linux-kernel-owner+davej=40kernelslacker.org-S1422987AbWJFVwu@vger.kernel.org>)
+	id 1GVxd5-00085d-IH
+	for davej@kernelslacker.org; Fri, 06 Oct 2006 22:53:15 +0100
+Received: (majordomo@vger.kernel.org) by vger.kernel.org via listexpand
+	id S1422987AbWJFVwu (ORCPT <rfc822;davej@kernelslacker.org>);
+	Fri, 6 Oct 2006 17:52:50 -0400
+Received: (majordomo@vger.kernel.org) by vger.kernel.org id S1422990AbWJFVwu
+	(ORCPT <rfc822;linux-kernel-outgoing>);
+	Fri, 6 Oct 2006 17:52:50 -0400
+Received: from mx1.redhat.com ([66.187.233.31]:10189 "EHLO mx1.redhat.com")
+	by vger.kernel.org with ESMTP id S1422987AbWJFVwt (ORCPT
+	<rfc822;linux-kernel@vger.kernel.org>);
+	Fri, 6 Oct 2006 17:52:49 -0400
+Received: from int-mx1.corp.redhat.com (int-mx1.corp.redhat.com [172.16.52.254])
+	by mx1.redhat.com (8.12.11.20060308/8.12.11) with ESMTP id k96Lql1L032296;
+	Fri, 6 Oct 2006 17:52:47 -0400
+Received: from nwo.kernelslacker.org (vpn-248-1.boston.redhat.com [10.13.248.1])
+	by int-mx1.corp.redhat.com (8.12.11.20060308/8.12.11) with ESMTP id k96LqkFc031646;
+	Fri, 6 Oct 2006 17:52:46 -0400
+Received: from nwo.kernelslacker.org (localhost.localdomain [127.0.0.1])
+	by nwo.kernelslacker.org (8.13.8/8.13.7) with ESMTP id k96LqkOj015433;
+	Fri, 6 Oct 2006 17:52:46 -0400
+Received: (from davej@localhost)
+	by nwo.kernelslacker.org (8.13.8/8.13.8/Submit) id k96LqjSa015432;
+	Fri, 6 Oct 2006 17:52:45 -0400
+X-Authentication-Warning: nwo.kernelslacker.org: davej set sender to davej@redhat.com using -f
+Date:	Fri, 6 Oct 2006 17:52:45 -0400
+From:	Dave Jones <davej@redhat.com>
+To:	ak@suse.de
+Cc:	Linux Kernel <linux-kernel@vger.kernel.org>
+Subject: remove pointless printk from i386 oops output
+Message-ID: <20061006215245.GA15420@redhat.com>
+Mail-Followup-To: Dave Jones <davej@redhat.com>, ak@suse.de,
+	Linux Kernel <linux-kernel@vger.kernel.org>
+Mime-Version: 1.0
+Content-Type: text/plain; charset=us-ascii
+Content-Disposition: inline
+User-Agent: Mutt/1.4.2.2i
+Sender:	linux-kernel-owner@vger.kernel.org
+Precedence: bulk
+X-Mailing-List:	linux-kernel@vger.kernel.org
+Status: RO
+Content-Length: 938
+Lines: 24
+
+This just got removed on x86-64, do the same on 32bit.
+It always annoyed me when this ate a line of oops output pushing
+interesting stuff off the screen.
+ 
+Signed-off-by: Dave Jones <davej@redhat.com>
+
+--- linux-2.6.18.noarch/arch/i386/kernel/traps.c~	2006-10-06 17:41:47.000000000 -0400
++++ linux-2.6.18.noarch/arch/i386/kernel/traps.c	2006-10-06 17:42:03.000000000 -0400
+@@ -837,7 +837,6 @@ void die_nmi (struct pt_regs *regs, cons
+ 	printk(" on CPU%d, eip %08lx, registers:\n",
+ 		smp_processor_id(), regs->eip);
+ 	show_registers(regs);
+-	printk(KERN_EMERG "console shuts up ...\n");
+ 	console_silent();
+ 	spin_unlock(&nmi_print_lock);
+ 	bust_spinlocks(0);
+
+-- 
+http://www.codemonkey.org.uk
+-
+To unsubscribe from this list: send the line "unsubscribe linux-kernel" in
+the body of a message to majordomo@vger.kernel.org
+More majordomo info at  http://vger.kernel.org/majordomo-info.html
+Please read the FAQ at  http://www.tux.org/lkml/
+
+From davej  Fri Oct  6 17:55:11 2006
+Return-path: <linux-kernel-owner+davej=40kernelslacker.org-S1422990AbWJFVyQ@vger.kernel.org>
+X-Spam-Checker-Version: SpamAssassin 3.1.4 (2006-07-25) on 
+	pressure.kernelslacker.org
+X-Spam-Level: 
+X-Spam-Status: No, score=-2.5 required=5.0 tests=AWL,BAYES_00,
+	FORGED_RCVD_HELO,UNPARSEABLE_RELAY autolearn=ham version=3.1.4
+Envelope-to: davej@kernelslacker.org
+Delivery-date: Fri, 06 Oct 2006 22:54:38 +0100
+Received: from testure.choralone.org [194.9.77.134]
+	by pressure.kernelslacker.org with IMAP (fetchmail-6.3.4)
+	for <davej@localhost> (single-drop); Fri, 06 Oct 2006 17:55:11 -0400 (EDT)
+Received: from vger.kernel.org ([209.132.176.167])
+	by testure.choralone.org with esmtp (Exim 4.63)
+	(envelope-from <linux-kernel-owner+davej=40kernelslacker.org-S1422990AbWJFVyQ@vger.kernel.org>)
+	id 1GVxeQ-000860-35
+	for davej@kernelslacker.org; Fri, 06 Oct 2006 22:54:38 +0100
+Received: (majordomo@vger.kernel.org) by vger.kernel.org via listexpand
+	id S1422990AbWJFVyQ (ORCPT <rfc822;davej@kernelslacker.org>);
+	Fri, 6 Oct 2006 17:54:16 -0400
+Received: (majordomo@vger.kernel.org) by vger.kernel.org id S1422991AbWJFVyQ
+	(ORCPT <rfc822;linux-kernel-outgoing>);
+	Fri, 6 Oct 2006 17:54:16 -0400
+Received: from mx1.redhat.com ([66.187.233.31]:18638 "EHLO mx1.redhat.com")
+	by vger.kernel.org with ESMTP id S1422990AbWJFVyP (ORCPT
+	<rfc822;linux-kernel@vger.kernel.org>);
+	Fri, 6 Oct 2006 17:54:15 -0400
+Received: from int-mx1.corp.redhat.com (int-mx1.corp.redhat.com [172.16.52.254])
+	by mx1.redhat.com (8.12.11.20060308/8.12.11) with ESMTP id k96LsDIM000365;
+	Fri, 6 Oct 2006 17:54:13 -0400
+Received: from nwo.kernelslacker.org (vpn-248-1.boston.redhat.com [10.13.248.1])
+	by int-mx1.corp.redhat.com (8.12.11.20060308/8.12.11) with ESMTP id k96LsDii032028;
+	Fri, 6 Oct 2006 17:54:13 -0400
+Received: from nwo.kernelslacker.org (localhost.localdomain [127.0.0.1])
+	by nwo.kernelslacker.org (8.13.8/8.13.7) with ESMTP id k96LsDhX015441;
+	Fri, 6 Oct 2006 17:54:13 -0400
+Received: (from davej@localhost)
+	by nwo.kernelslacker.org (8.13.8/8.13.8/Submit) id k96LsC6F015440;
+	Fri, 6 Oct 2006 17:54:12 -0400
+X-Authentication-Warning: nwo.kernelslacker.org: davej set sender to davej@redhat.com using -f
+Date:	Fri, 6 Oct 2006 17:54:12 -0400
+From:	Dave Jones <davej@redhat.com>
+To:	ak@suse.de
+Cc:	Linux Kernel <linux-kernel@vger.kernel.org>
+Subject: Compress stack unwinder output
+Message-ID: <20061006215412.GB15420@redhat.com>
+Mail-Followup-To: Dave Jones <davej@redhat.com>, ak@suse.de,
+	Linux Kernel <linux-kernel@vger.kernel.org>
+Mime-Version: 1.0
+Content-Type: text/plain; charset=us-ascii
+Content-Disposition: inline
+User-Agent: Mutt/1.4.2.2i
+Sender:	linux-kernel-owner@vger.kernel.org
+Precedence: bulk
+X-Mailing-List:	linux-kernel@vger.kernel.org
+Status: RO
+Content-Length: 2942
+Lines: 75
+
+The unwinder has some extra newlines, which eat up loads of screen
+space when it spews. (See https://bugzilla.redhat.com/bugzilla/attachment.cgi?id=137900
+for a nasty example).
+
+warning_symbol-> and warning-> already printk a newline, so don't add one
+in the strings passed to them.
+
+Signed-off-by: Dave Jones <davej@redhat.com>
+
+--- linux-2.6.18.noarch/arch/x86_64/kernel/traps.c~	2006-10-06 17:42:47.000000000 -0400
++++ linux-2.6.18.noarch/arch/x86_64/kernel/traps.c	2006-10-06 17:47:23.000000000 -0400
+@@ -289,21 +289,21 @@ void dump_trace(struct task_struct *tsk,
+ 		}
+ 		if (unw_ret > 0) {
+ 			if (call_trace == 1 && !arch_unw_user_mode(&info)) {
+-				ops->warning_symbol(data, "DWARF2 unwinder stuck at %s\n",
++				ops->warning_symbol(data, "DWARF2 unwinder stuck at %s",
+ 					     UNW_PC(&info));
+ 				if ((long)UNW_SP(&info) < 0) {
+-					ops->warning(data, "Leftover inexact backtrace:\n");
++					ops->warning(data, "Leftover inexact backtrace:");
+ 					stack = (unsigned long *)UNW_SP(&info);
+ 					if (!stack)
+ 						return;
+ 				} else
+-					ops->warning(data, "Full inexact backtrace again:\n");
++					ops->warning(data, "Full inexact backtrace again:");
+ 			} else if (call_trace >= 1)
+ 				return;
+ 			else
+-				ops->warning(data, "Full inexact backtrace again:\n");
++				ops->warning(data, "Full inexact backtrace again:");
+ 		} else
+-			ops->warning(data, "Inexact backtrace:\n");
++			ops->warning(data, "Inexact backtrace:");
+ 	}
+ 	if (!stack) {
+ 		unsigned long dummy;
+--- linux-2.6.18.noarch/arch/i386/kernel/traps.c~	2006-10-06 17:47:28.000000000 -0400
++++ linux-2.6.18.noarch/arch/i386/kernel/traps.c	2006-10-06 17:47:45.000000000 -0400
+@@ -194,22 +194,22 @@ void dump_trace(struct task_struct *task
+ 		}
+ 		if (unw_ret > 0) {
+ 			if (call_trace == 1 && !arch_unw_user_mode(&info)) {
+-				ops->warning_symbol(data, "DWARF2 unwinder stuck at %s\n",
++				ops->warning_symbol(data, "DWARF2 unwinder stuck at %s",
+ 					     UNW_PC(&info));
+ 				if (UNW_SP(&info) >= PAGE_OFFSET) {
+-					ops->warning(data, "Leftover inexact backtrace:\n");
++					ops->warning(data, "Leftover inexact backtrace:");
+ 					stack = (void *)UNW_SP(&info);
+ 					if (!stack)
+ 						return;
+ 					ebp = UNW_FP(&info);
+ 				} else
+-					ops->warning(data, "Full inexact backtrace again:\n");
++					ops->warning(data, "Full inexact backtrace again:");
+ 			} else if (call_trace >= 1)
+ 				return;
+ 			else
+-				ops->warning(data, "Full inexact backtrace again:\n");
++				ops->warning(data, "Full inexact backtrace again:");
+ 		} else
+-			ops->warning(data, "Inexact backtrace:\n");
++			ops->warning(data, "Inexact backtrace:");
+ 	}
+ 	if (!stack) {
+ 		unsigned long dummy;
+-- 
+http://www.codemonkey.org.uk
+-
+To unsubscribe from this list: send the line "unsubscribe linux-kernel" in
+the body of a message to majordomo@vger.kernel.org
+More majordomo info at  http://vger.kernel.org/majordomo-info.html
+Please read the FAQ at  http://www.tux.org/lkml/
+

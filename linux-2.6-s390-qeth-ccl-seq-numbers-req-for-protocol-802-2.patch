@@ -1,0 +1,59 @@
+From: Hans-Joachim Picht <hpicht@redhat.com>
+Date: Thu, 24 Apr 2008 17:33:53 +0200
+Subject: [s390] qeth: ccl-seq. numbers req for protocol 802.2
+Message-id: 20080424153353.GA7903@redhat.com
+O-Subject: Re: [RHEL5 U3 PATCH 4/7] s390 - qeth: CCL-seq. numbers required for protocol 802.2 only
+Bugzilla: 440227
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+
+Description
+============
+We see a slow CCL response time, because non-802.2 packets
+are not delivered to NDH for CCL, but CCL detects
+missing sequence numbers, which cause serious
+performance problem with CCL.
+
+The problem is fixed assigning sequence numbers to 802.2 packets only
+
+Bugzilla
+=========
+
+BZ 440227
+https://bugzilla.redhat.com/show_bug.cgi?id=440227
+
+Upstream status of the patch:
+=============================
+
+This patch was posted upstream:
+http://marc.info/?l=linux-s390&m=120716475603359&w=2
+I'll reply to this message as soon as we have a git commit id
+
+Test status:
+============
+Kernel with patch was built and successfully tested
+
+diff --git a/drivers/s390/net/qeth_main.c b/drivers/s390/net/qeth_main.c
+index e6b9411..ca72fe0 100644
+--- a/drivers/s390/net/qeth_main.c
++++ b/drivers/s390/net/qeth_main.c
+@@ -2558,7 +2558,8 @@ qeth_layer2_rebuild_skb(struct qeth_card *card, struct sk_buff *skb,
+ 		skb_pull(skb, VLAN_HLEN);
+ 	}
+ #endif
+-	*((__u32 *)skb->cb) = ++card->seqno.pkt_seqno;
++	if (skb->protocol == htons(ETH_P_802_2))
++		*((__u32 *)skb->cb) = ++card->seqno.pkt_seqno;
+ 	return vlan_id;
+ }
+ 
+@@ -2644,7 +2645,8 @@ qeth_process_inbound_buffer(struct qeth_card *card,
+ 				skb->ip_summed = CHECKSUM_UNNECESSARY;
+ 			else
+ 				skb->ip_summed = CHECKSUM_NONE;
+-			*((__u32 *)skb->cb) = ++card->seqno.pkt_seqno;
++			if (skb->protocol == htons(ETH_P_802_2))
++				*((__u32 *)skb->cb) = ++card->seqno.pkt_seqno;
+ 		} else if (hdr->hdr.l3.id == QETH_HEADER_TYPE_LAYER3)
+ 			vlan_tag = qeth_rebuild_skb(card, skb, hdr);
+ 		else if (hdr->hdr.osn.id == QETH_HEADER_TYPE_OSN) {

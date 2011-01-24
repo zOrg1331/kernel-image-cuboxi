@@ -1,0 +1,63 @@
+From: Bob Picco <bpicco@redhat.com>
+Date: Sun, 22 Aug 2010 19:57:40 -0400
+Subject: [net] vxge: align tmemory only if misaligned
+Message-id: <20100822195740.24928.85368.sendpatchset@bob-desktop>
+Patchwork-id: 27762
+O-Subject: [RHEL5.7 PATCH 3/7] vxge: Align the memory only if it is misaligned.
+Bugzilla: 580413
+RH-Acked-by: David S. Miller <davem@redhat.com>
+RH-Acked-by: Michal Schmidt <mschmidt@redhat.com>
+RH-Acked-by: Andy Gospodarek <gospo@redhat.com>
+
+>From 47231f7fb49bed800dd806b4c32f881005d84de8 Mon Sep 17 00:00:00 2001
+From: Sreenivasa Honnur <Sreenivasa.Honnur@neterion.com>
+Date: Sun, 28 Mar 2010 22:09:47 +0000
+Subject: [PATCH 3/7] vxge: Align the memory only if it is misaligned.
+
+- Align the memory only if it is misaligned.
+
+Signed-off-by: Sreenivasa Honnur <sreenivasa.honnur@neterion.com>
+Signed-off-by: Ramkrishna Vepa <ram.vepa@neterion.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+
+diff --git a/drivers/net/vxge/vxge-config.h b/drivers/net/vxge/vxge-config.h
+index 67cb084..11d5f5f 100644
+--- a/drivers/net/vxge/vxge-config.h
++++ b/drivers/net/vxge/vxge-config.h
+@@ -1915,20 +1915,32 @@ static inline void *vxge_os_dma_malloc(struct pci_dev *pdev,
+ 	gfp_t flags;
+ 	void *vaddr;
+ 	unsigned long misaligned = 0;
++	int realloc_flag = 0;
+ 	*p_dma_acch = *p_dmah = NULL;
+ 
+ 	if (in_interrupt())
+ 		flags = GFP_ATOMIC | GFP_DMA;
+ 	else
+ 		flags = GFP_KERNEL | GFP_DMA;
+-
+-	size += VXGE_CACHE_LINE_SIZE;
+-
++realloc:
+ 	vaddr = kmalloc((size), flags);
+ 	if (vaddr == NULL)
+ 		return vaddr;
+-	misaligned = (unsigned long)VXGE_ALIGN(*((u64 *)&vaddr),
++	misaligned = (unsigned long)VXGE_ALIGN((unsigned long)vaddr,
+ 				VXGE_CACHE_LINE_SIZE);
++	if (realloc_flag)
++		goto out;
++
++	if (misaligned) {
++		/* misaligned, free current one and try allocating
++		 * size + VXGE_CACHE_LINE_SIZE memory
++		 */
++		kfree((void *) vaddr);
++		size += VXGE_CACHE_LINE_SIZE;
++		realloc_flag = 1;
++		goto realloc;
++	}
++out:
+ 	*(unsigned long *)p_dma_acch = misaligned;
+ 	vaddr = (void *)((u8 *)vaddr + misaligned);
+ 	return vaddr;

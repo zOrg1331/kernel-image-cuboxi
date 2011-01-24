@@ -29,6 +29,8 @@
  * ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
  * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  * SOFTWARE.
+ *
+ * $Id: mthca_profile.c 1349 2004-12-16 21:09:43Z roland $
  */
 
 #include <linux/module.h>
@@ -61,7 +63,7 @@ enum {
 	MTHCA_NUM_PDS = 1 << 15
 };
 
-s64 mthca_make_profile(struct mthca_dev *dev,
+u64 mthca_make_profile(struct mthca_dev *dev,
 		       struct mthca_profile *request,
 		       struct mthca_dev_lim *dev_lim,
 		       struct mthca_init_hca_param *init_hca)
@@ -75,7 +77,7 @@ s64 mthca_make_profile(struct mthca_dev *dev,
 	};
 
 	u64 mem_base, mem_avail;
-	s64 total_size = 0;
+	u64 total_size = 0;
 	struct mthca_resource *profile;
 	struct mthca_resource tmp;
 	int i, j;
@@ -94,7 +96,7 @@ s64 mthca_make_profile(struct mthca_dev *dev,
 	profile[MTHCA_RES_RDB].size  = MTHCA_RDB_ENTRY_SIZE;
 	profile[MTHCA_RES_MCG].size  = MTHCA_MGM_ENTRY_SIZE;
 	profile[MTHCA_RES_MPT].size  = dev_lim->mpt_entry_sz;
-	profile[MTHCA_RES_MTT].size  = dev->limits.mtt_seg_size;
+	profile[MTHCA_RES_MTT].size  = MTHCA_MTT_SEG_SIZE;
 	profile[MTHCA_RES_UAR].size  = dev_lim->uar_scratch_entry_sz;
 	profile[MTHCA_RES_UDAV].size = MTHCA_AV_SIZE;
 	profile[MTHCA_RES_UARC].size = request->uarc_size;
@@ -232,7 +234,7 @@ s64 mthca_make_profile(struct mthca_dev *dev,
 			dev->limits.num_mtt_segs = profile[i].num;
 			dev->mr_table.mtt_base   = profile[i].start;
 			init_hca->mtt_base       = profile[i].start;
-			init_hca->mtt_seg_sz     = ffs(dev->limits.mtt_seg_size) - 7;
+			init_hca->mtt_seg_sz     = ffs(MTHCA_MTT_SEG_SIZE) - 7;
 			break;
 		case MTHCA_RES_UAR:
 			dev->limits.num_uars       = profile[i].num;
@@ -275,7 +277,7 @@ s64 mthca_make_profile(struct mthca_dev *dev,
 	 * out of the MR pool. They don't use additional memory, but
 	 * we assign them as part of the HCA profile anyway.
 	 */
-	if (mthca_is_memfree(dev) || BITS_PER_LONG == 64)
+	if (mthca_is_memfree(dev))
 		dev->limits.fmr_reserved_mtts = 0;
 	else
 		dev->limits.fmr_reserved_mtts = request->fmr_reserved_mtts;

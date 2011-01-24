@@ -1,19 +1,20 @@
 #ifndef _LINUX_TYPES_H
 #define _LINUX_TYPES_H
 
-#include <asm/types.h>
-
-#ifndef __ASSEMBLY__
 #ifdef	__KERNEL__
 
+#define BITS_TO_LONGS(bits) \
+	(((bits)+BITS_PER_LONG-1)/BITS_PER_LONG)
 #define DECLARE_BITMAP(name,bits) \
 	unsigned long name[BITS_TO_LONGS(bits)]
 
+#define BITS_PER_BYTE 8
 #endif
 
 #include <linux/posix_types.h>
+#include <asm/types.h>
 
-#ifdef __KERNEL__
+#ifndef __KERNEL_STRICT_NAMES
 
 typedef __u32 __kernel_dev_t;
 
@@ -31,14 +32,11 @@ typedef __kernel_timer_t	timer_t;
 typedef __kernel_clockid_t	clockid_t;
 typedef __kernel_mqd_t		mqd_t;
 
-typedef _Bool			bool;
-
+#ifdef __KERNEL__
 typedef __kernel_uid32_t	uid_t;
 typedef __kernel_gid32_t	gid_t;
 typedef __kernel_uid16_t        uid16_t;
 typedef __kernel_gid16_t        gid16_t;
-
-typedef unsigned long		uintptr_t;
 
 #ifdef CONFIG_UID16
 /* This is defined by include/asm-{arch}/posix_types.h */
@@ -46,7 +44,15 @@ typedef __kernel_old_uid_t	old_uid_t;
 typedef __kernel_old_gid_t	old_gid_t;
 #endif /* CONFIG_UID16 */
 
-#if defined(__GNUC__)
+/* libc5 includes this file to define uid_t, thus uid_t can never change
+ * when it is included by non-kernel code
+ */
+#else
+typedef __kernel_uid_t		uid_t;
+typedef __kernel_gid_t		gid_t;
+#endif /* __KERNEL__ */
+
+#if defined(__GNUC__) && !defined(__STRICT_ANSI__)
 typedef __kernel_loff_t		loff_t;
 #endif
 
@@ -112,30 +118,25 @@ typedef		__u8		uint8_t;
 typedef		__u16		uint16_t;
 typedef		__u32		uint32_t;
 
-#if defined(__GNUC__)
+#if defined(__GNUC__) && !defined(__STRICT_ANSI__)
 typedef		__u64		uint64_t;
 typedef		__u64		u_int64_t;
 typedef		__s64		int64_t;
 #endif
 
 /* this is a special 64bit data type that is 8-byte aligned */
-#define aligned_u64 __u64 __attribute__((aligned(8)))
-#define aligned_be64 __be64 __attribute__((aligned(8)))
-#define aligned_le64 __le64 __attribute__((aligned(8)))
+#define aligned_u64 unsigned long long __attribute__((aligned(8)))
 
-/**
+/*
  * The type used for indexing onto a disc or disc partition.
- *
- * Linux always considers sectors to be 512 bytes long independently
- * of the devices real block size.
- *
- * blkcnt_t is the type of the inode's block count.
+ * If required, asm/types.h can override it and define
+ * HAVE_SECTOR_T
  */
-#ifdef CONFIG_LBDAF
-typedef u64 sector_t;
-typedef u64 blkcnt_t;
-#else
+#ifndef HAVE_SECTOR_T
 typedef unsigned long sector_t;
+#endif
+
+#ifndef HAVE_BLKCNT_T
 typedef unsigned long blkcnt_t;
 #endif
 
@@ -147,7 +148,7 @@ typedef unsigned long blkcnt_t;
 #define pgoff_t unsigned long
 #endif
 
-#endif /* __KERNEL__ */
+#endif /* __KERNEL_STRICT_NAMES */
 
 /*
  * Below are truly Linux-specific types that should never collide with
@@ -169,33 +170,21 @@ typedef __u16 __bitwise __le16;
 typedef __u16 __bitwise __be16;
 typedef __u32 __bitwise __le32;
 typedef __u32 __bitwise __be32;
+#if defined(__GNUC__) && !defined(__STRICT_ANSI__)
 typedef __u64 __bitwise __le64;
 typedef __u64 __bitwise __be64;
-
-typedef __u16 __bitwise __sum16;
-typedef __u32 __bitwise __wsum;
+#endif
 
 #ifdef __KERNEL__
 typedef unsigned __bitwise__ gfp_t;
-typedef unsigned __bitwise__ fmode_t;
 
-#ifdef CONFIG_PHYS_ADDR_T_64BIT
-typedef u64 phys_addr_t;
+#ifdef CONFIG_RESOURCES_64BIT
+typedef u64 resource_size_t;
 #else
-typedef u32 phys_addr_t;
+typedef u32 resource_size_t;
 #endif
 
-typedef phys_addr_t resource_size_t;
-
-typedef struct {
-	volatile int counter;
-} atomic_t;
-
-#ifdef CONFIG_64BIT
-typedef struct {
-	volatile long counter;
-} atomic64_t;
-#endif
+#endif	/* __KERNEL__ */
 
 struct ustat {
 	__kernel_daddr_t	f_tfree;
@@ -204,6 +193,4 @@ struct ustat {
 	char			f_fpack[6];
 };
 
-#endif	/* __KERNEL__ */
-#endif /*  __ASSEMBLY__ */
 #endif /* _LINUX_TYPES_H */

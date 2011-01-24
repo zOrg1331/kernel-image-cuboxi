@@ -2,7 +2,7 @@
  * madgemc.h: Header for the madgemc tms380tr module
  *
  * Authors:
- * - Adam Fritzler
+ * - Adam Fritzler <mid@auk.cx>
  */
 
 #ifndef __LINUX_MADGEMC_H

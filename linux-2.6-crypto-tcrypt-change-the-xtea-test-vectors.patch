@@ -1,0 +1,45 @@
+From: Herbert Xu <herbert@gondor.apana.org.au>
+Date: Wed, 27 Aug 2008 10:18:41 +1000
+Subject: [CRYPTO] tcrypt: Change the XTEA test vectors
+Message-id: E1KY8kD-0002IE-00@gondolin.me.apana.org.au
+O-Subject: [PATCH 19/19] [CRYPTO] tcrypt: Change the XTEA test vectors
+Bugzilla: 446522
+
+RHEL5 bugzilla #446522
+
+[CRYPTO] tcrypt: Change the XTEA test vectors
+
+The third test vector of ECB-XTEA-ENC fails for me all other
+are fine. I could not find a RFC or something else where they
+are defined. The test vector has not been modified since git
+started recording histrory. The implementation is very close
+(not to say equal) to what is available as Public Domain (they
+recommend 64 rounds and the in kernel uses 32). Therefore I
+belive that there is typo somewhere and tcrypt reported always
+*fail* instead of *okey*.
+This patch replaces input + result of the third test vector with
+result + input from the third decryption vector. The key is the
+same, the other three test vectors are also the reverse.
+
+Signed-off-by: Sebastian Siewior <sebastian@breakpoint.cc>
+Signed-off-by: Herbert Xu <herbert@gondor.apana.org.au>
+
+diff --git a/crypto/testmgr.h b/crypto/testmgr.h
+index ccaed7a..c072794 100644
+--- a/crypto/testmgr.h
++++ b/crypto/testmgr.h
+@@ -3467,11 +3467,11 @@ static struct cipher_testvec xtea_enc_tv_template[] = {
+ 		.key	= "\x09\x65\x43\x11\x66\x44\x39\x25"
+ 			  "\x51\x3a\x16\x10\x0a\x08\x12\x6e",
+ 		.klen	= 16,
+-		.input	= "\x3e\xce\xae\x22\x60\x56\xa8\x9d"
++		.input	= "\x6c\x6f\x6e\x67\x65\x72\x5f\x74"
+ 			  "\x65\x73\x74\x5f\x76\x65\x63\x74",
+ 		.ilen	= 16,
+-		.result	= "\xe2\x04\xdb\xf2\x89\x85\x9e\xea"
+-			  "\x61\x35\xaa\xed\xb5\xcb\x71\x2c",
++		.result	= "\x3e\xce\xae\x22\x60\x56\xa8\x9d"
++			  "\x77\x4d\xd4\xb4\x87\x24\xe3\x9a",
+ 		.rlen	= 16,
+ 	}, {
+ 		.key	= "\x4d\x76\x32\x17\x05\x3f\x75\x2c"

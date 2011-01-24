@@ -1,0 +1,374 @@
+From: John W. Linville <linville@redhat.com>
+Date: Tue, 18 Dec 2007 17:41:33 -0500
+Subject: [net] infrastructure updates to mac80211/iwl4965
+Message-id: 20071218224133.GD11328@redhat.com
+O-Subject: [RHEL5.2 PATCH 1/4] infrastructure updates to support mac80211/iwl4965
+Bugzilla: 252981 253015 253027 256001
+
+This patch adds some infrastructure enabling the cfg80211, mac80211, and
+iwlwifi update patches which follow.  It aids the following bugzillas:
+
+BZ252981
+BZ253015
+BZ253027
+BZ253067
+BZ256001
+
+Lot of testing by me on Dell m4300 laptop equipped w/ iwl4965 hardware.
+I also tested with a large swatch of my suite of mac80211-supported
+cardbus and usb devices.
+
+Acked-by: "David S. Miller" <davem@redhat.com>
+
+diff --git a/drivers/block/DAC960.h b/drivers/block/DAC960.h
+index a82f37f..f9217c3 100644
+--- a/drivers/block/DAC960.h
++++ b/drivers/block/DAC960.h
+@@ -71,7 +71,7 @@
+   Define a Boolean data type.
+ */
+ 
+-typedef enum { false, true } __attribute__ ((packed)) boolean;
++typedef bool boolean;
+ 
+ 
+ /*
+diff --git a/drivers/media/video/cpia2/cpia2.h b/drivers/media/video/cpia2/cpia2.h
+index c5ecb2b..479f295 100644
+--- a/drivers/media/video/cpia2/cpia2.h
++++ b/drivers/media/video/cpia2/cpia2.h
+@@ -47,14 +47,6 @@
+ #define CPIA2_MIN_VER   0
+ #define CPIA2_PATCH_VER	0
+ 
+-/***
+- * Image defines
+- ***/
+-#ifndef true
+-#define true 1
+-#define false 0
+-#endif
+-
+ /*  Misc constants */
+ #define ALLOW_CORRUPT 0		/* Causes collater to discard checksum */
+ 
+diff --git a/drivers/net/e1000e/e1000_compat.h b/drivers/net/e1000e/e1000_compat.h
+index 4c86985..84808b9 100644
+--- a/drivers/net/e1000e/e1000_compat.h
++++ b/drivers/net/e1000e/e1000_compat.h
+@@ -3,8 +3,6 @@
+ 
+ #include <linux/if_vlan.h>
+ 
+-typedef unsigned int bool;
+-
+ #define ETH_FCS_LEN               4
+ 
+ static inline struct net_device *vlan_group_get_device(struct vlan_group *vg,
+diff --git a/drivers/net/igb/igb_compat.h b/drivers/net/igb/igb_compat.h
+index fd76a80..2dbbcbd 100644
+--- a/drivers/net/igb/igb_compat.h
++++ b/drivers/net/igb/igb_compat.h
+@@ -3,8 +3,6 @@
+ 
+ #include <linux/if_vlan.h>
+ 
+-typedef unsigned int bool;
+-
+ #define ETH_FCS_LEN               4
+ 
+ static inline struct net_device *vlan_group_get_device(struct vlan_group *vg,
+diff --git a/include/linux/kernel.h b/include/linux/kernel.h
+index a528f1a..cdaefa3 100644
+--- a/include/linux/kernel.h
++++ b/include/linux/kernel.h
+@@ -206,6 +206,21 @@ extern enum system_states {
+ 
+ extern void dump_stack(void);
+ 
++enum {
++	DUMP_PREFIX_NONE,
++	DUMP_PREFIX_ADDRESS,
++	DUMP_PREFIX_OFFSET
++};
++extern void hex_dump_to_buffer(const void *buf, size_t len,
++				int rowsize, int groupsize,
++				char *linebuf, size_t linebuflen, bool ascii);
++extern void print_hex_dump(const char *level, const char *prefix_str,
++				int prefix_type, int rowsize, int groupsize,
++				const void *buf, size_t len, bool ascii);
++extern void print_hex_dump_bytes(const char *prefix_str, int prefix_type,
++			const void *buf, size_t len);
++#define hex_asc(x)	"0123456789abcdef"[x]
++
+ #ifdef DEBUG
+ /* If you are writing a driver, please use dev_dbg instead */
+ #define pr_debug(fmt,arg...) \
+diff --git a/include/linux/log2.h b/include/linux/log2.h
+index d02e1a5..99922be 100644
+--- a/include/linux/log2.h
++++ b/include/linux/log2.h
+@@ -44,6 +44,17 @@ int __ilog2_u64(u64 n)
+ #endif
+ 
+ /*
++ *  Determine whether some value is a power of two, where zero is
++ * *not* considered a power of two.
++ */
++
++static inline __attribute__((const))
++bool is_power_of_2(unsigned long n)
++{
++	return (n != 0 && ((n & (n - 1)) == 0));
++}
++
++/*
+  * round up to nearest power of two
+  */
+ static inline __attribute__((const))
+diff --git a/include/linux/stddef.h b/include/linux/stddef.h
+index ea65dfb..a88f9af 100644
+--- a/include/linux/stddef.h
++++ b/include/linux/stddef.h
+@@ -11,6 +11,12 @@
+ #endif
+ 
+ #ifdef __KERNEL__
++
++enum {
++	false   = 0,
++	true    = 1
++};
++
+ #undef offsetof
+ #ifdef __compiler_offsetof
+ #define offsetof(TYPE,MEMBER) __compiler_offsetof(TYPE,MEMBER)
+diff --git a/include/linux/types.h b/include/linux/types.h
+index 3f23566..406d4ae 100644
+--- a/include/linux/types.h
++++ b/include/linux/types.h
+@@ -33,6 +33,8 @@ typedef __kernel_clockid_t	clockid_t;
+ typedef __kernel_mqd_t		mqd_t;
+ 
+ #ifdef __KERNEL__
++typedef _Bool			bool;
++
+ typedef __kernel_uid32_t	uid_t;
+ typedef __kernel_gid32_t	gid_t;
+ typedef __kernel_uid16_t        uid16_t;
+diff --git a/lib/Makefile b/lib/Makefile
+index 575ee6c..09891f6 100644
+--- a/lib/Makefile
++++ b/lib/Makefile
+@@ -12,7 +12,7 @@ lib-$(CONFIG_SMP) += cpumask.o
+ 
+ lib-y	+= kobject.o kref.o kobject_uevent.o klist.o
+ 
+-obj-y += sort.o parser.o halfmd4.o debug_locks.o
++obj-y += sort.o parser.o halfmd4.o debug_locks.o hexdump.o
+ 
+ ifeq ($(CONFIG_DEBUG_KOBJECT),y)
+ CFLAGS_kobject.o += -DDEBUG
+diff --git a/lib/hexdump.c b/lib/hexdump.c
+new file mode 100644
+index 0000000..bd5edae
+--- /dev/null
++++ b/lib/hexdump.c
+@@ -0,0 +1,197 @@
++/*
++ * lib/hexdump.c
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License version 2 as
++ * published by the Free Software Foundation. See README and COPYING for
++ * more details.
++ */
++
++#include <linux/types.h>
++#include <linux/ctype.h>
++#include <linux/kernel.h>
++#include <linux/module.h>
++
++/**
++ * hex_dump_to_buffer - convert a blob of data to "hex ASCII" in memory
++ * @buf: data blob to dump
++ * @len: number of bytes in the @buf
++ * @rowsize: number of bytes to print per line; must be 16 or 32
++ * @groupsize: number of bytes to print at a time (1, 2, 4, 8; default = 1)
++ * @linebuf: where to put the converted data
++ * @linebuflen: total size of @linebuf, including space for terminating NUL
++ * @ascii: include ASCII after the hex output
++ *
++ * hex_dump_to_buffer() works on one "line" of output at a time, i.e.,
++ * 16 or 32 bytes of input data converted to hex + ASCII output.
++ *
++ * Given a buffer of u8 data, hex_dump_to_buffer() converts the input data
++ * to a hex + ASCII dump at the supplied memory location.
++ * The converted output is always NUL-terminated.
++ *
++ * E.g.:
++ *   hex_dump_to_buffer(frame->data, frame->len, 16, 1,
++ *			linebuf, sizeof(linebuf), 1);
++ *
++ * example output buffer:
++ * 40 41 42 43 44 45 46 47 48 49 4a 4b 4c 4d 4e 4f  @ABCDEFGHIJKLMNO
++ */
++void hex_dump_to_buffer(const void *buf, size_t len, int rowsize,
++			int groupsize, char *linebuf, size_t linebuflen,
++			bool ascii)
++{
++	const u8 *ptr = buf;
++	u8 ch;
++	int j, lx = 0;
++	int ascii_column;
++
++	if (rowsize != 16 && rowsize != 32)
++		rowsize = 16;
++
++	if (!len)
++		goto nil;
++	if (len > rowsize)		/* limit to one line at a time */
++		len = rowsize;
++	if ((len % groupsize) != 0)	/* no mixed size output */
++		groupsize = 1;
++
++	switch (groupsize) {
++	case 8: {
++		const u64 *ptr8 = buf;
++		int ngroups = len / groupsize;
++
++		for (j = 0; j < ngroups; j++)
++			lx += scnprintf(linebuf + lx, linebuflen - lx,
++				"%16.16llx ", (unsigned long long)*(ptr8 + j));
++		ascii_column = 17 * ngroups + 2;
++		break;
++	}
++
++	case 4: {
++		const u32 *ptr4 = buf;
++		int ngroups = len / groupsize;
++
++		for (j = 0; j < ngroups; j++)
++			lx += scnprintf(linebuf + lx, linebuflen - lx,
++				"%8.8x ", *(ptr4 + j));
++		ascii_column = 9 * ngroups + 2;
++		break;
++	}
++
++	case 2: {
++		const u16 *ptr2 = buf;
++		int ngroups = len / groupsize;
++
++		for (j = 0; j < ngroups; j++)
++			lx += scnprintf(linebuf + lx, linebuflen - lx,
++				"%4.4x ", *(ptr2 + j));
++		ascii_column = 5 * ngroups + 2;
++		break;
++	}
++
++	default:
++		for (j = 0; (j < rowsize) && (j < len) && (lx + 4) < linebuflen;
++		     j++) {
++			ch = ptr[j];
++			linebuf[lx++] = hex_asc(ch >> 4);
++			linebuf[lx++] = hex_asc(ch & 0x0f);
++			linebuf[lx++] = ' ';
++		}
++		ascii_column = 3 * rowsize + 2;
++		break;
++	}
++	if (!ascii)
++		goto nil;
++
++	while (lx < (linebuflen - 1) && lx < (ascii_column - 1))
++		linebuf[lx++] = ' ';
++	for (j = 0; (j < rowsize) && (j < len) && (lx + 2) < linebuflen; j++)
++		linebuf[lx++] = isprint(ptr[j]) ? ptr[j] : '.';
++nil:
++	linebuf[lx++] = '\0';
++}
++EXPORT_SYMBOL(hex_dump_to_buffer);
++
++/**
++ * print_hex_dump - print a text hex dump to syslog for a binary blob of data
++ * @level: kernel log level (e.g. KERN_DEBUG)
++ * @prefix_str: string to prefix each line with;
++ *  caller supplies trailing spaces for alignment if desired
++ * @prefix_type: controls whether prefix of an offset, address, or none
++ *  is printed (%DUMP_PREFIX_OFFSET, %DUMP_PREFIX_ADDRESS, %DUMP_PREFIX_NONE)
++ * @rowsize: number of bytes to print per line; must be 16 or 32
++ * @groupsize: number of bytes to print at a time (1, 2, 4, 8; default = 1)
++ * @buf: data blob to dump
++ * @len: number of bytes in the @buf
++ * @ascii: include ASCII after the hex output
++ *
++ * Given a buffer of u8 data, print_hex_dump() prints a hex + ASCII dump
++ * to the kernel log at the specified kernel log level, with an optional
++ * leading prefix.
++ *
++ * print_hex_dump() works on one "line" of output at a time, i.e.,
++ * 16 or 32 bytes of input data converted to hex + ASCII output.
++ * print_hex_dump() iterates over the entire input @buf, breaking it into
++ * "line size" chunks to format and print.
++ *
++ * E.g.:
++ *   print_hex_dump(KERN_DEBUG, "raw data: ", DUMP_PREFIX_ADDRESS,
++ *		16, 1, frame->data, frame->len, 1);
++ *
++ * Example output using %DUMP_PREFIX_OFFSET and 1-byte mode:
++ * 0009ab42: 40 41 42 43 44 45 46 47 48 49 4a 4b 4c 4d 4e 4f  @ABCDEFGHIJKLMNO
++ * Example output using %DUMP_PREFIX_ADDRESS and 4-byte mode:
++ * ffffffff88089af0: 73727170 77767574 7b7a7978 7f7e7d7c  pqrstuvwxyz{|}~.
++ */
++void print_hex_dump(const char *level, const char *prefix_str, int prefix_type,
++			int rowsize, int groupsize,
++			const void *buf, size_t len, bool ascii)
++{
++	const u8 *ptr = buf;
++	int i, linelen, remaining = len;
++	unsigned char linebuf[200];
++
++	if (rowsize != 16 && rowsize != 32)
++		rowsize = 16;
++
++	for (i = 0; i < len; i += rowsize) {
++		linelen = min(remaining, rowsize);
++		remaining -= rowsize;
++		hex_dump_to_buffer(ptr + i, linelen, rowsize, groupsize,
++				linebuf, sizeof(linebuf), ascii);
++
++		switch (prefix_type) {
++		case DUMP_PREFIX_ADDRESS:
++			printk("%s%s%*p: %s\n", level, prefix_str,
++				(int)(2 * sizeof(void *)), ptr + i, linebuf);
++			break;
++		case DUMP_PREFIX_OFFSET:
++			printk("%s%s%.8x: %s\n", level, prefix_str, i, linebuf);
++			break;
++		default:
++			printk("%s%s%s\n", level, prefix_str, linebuf);
++			break;
++		}
++	}
++}
++EXPORT_SYMBOL(print_hex_dump);
++
++/**
++ * print_hex_dump_bytes - shorthand form of print_hex_dump() with default params
++ * @prefix_str: string to prefix each line with;
++ *  caller supplies trailing spaces for alignment if desired
++ * @prefix_type: controls whether prefix of an offset, address, or none
++ *  is printed (%DUMP_PREFIX_OFFSET, %DUMP_PREFIX_ADDRESS, %DUMP_PREFIX_NONE)
++ * @buf: data blob to dump
++ * @len: number of bytes in the @buf
++ *
++ * Calls print_hex_dump(), with log level of KERN_DEBUG,
++ * rowsize of 16, groupsize of 1, and ASCII output included.
++ */
++void print_hex_dump_bytes(const char *prefix_str, int prefix_type,
++			const void *buf, size_t len)
++{
++	print_hex_dump(KERN_DEBUG, prefix_str, prefix_type, 16, 1,
++			buf, len, 1);
++}
++EXPORT_SYMBOL(print_hex_dump_bytes);

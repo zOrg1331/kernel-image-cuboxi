@@ -40,32 +40,26 @@ static struct mca_bus *mca_root_busses[MAX_MCA_BUSSES];
 
 struct mca_device_info {
 	short pos_id;		/* the 2 byte pos id for this card */
-	char name[50];
+	char name[DEVICE_NAME_SIZE];
 };
 
 static int mca_bus_match (struct device *dev, struct device_driver *drv)
 {
 	struct mca_device *mca_dev = to_mca_device (dev);
 	struct mca_driver *mca_drv = to_mca_driver (drv);
-	const unsigned short *mca_ids = mca_drv->id_table;
-	int i = 0;
+	const short *mca_ids = mca_drv->id_table;
+	int i;
 
-	if (mca_ids) {
-		for(i = 0; mca_ids[i]; i++) {
-			if (mca_ids[i] == mca_dev->pos_id) {
-				mca_dev->index = i;
-				return 1;
-			}
+	if (!mca_ids)
+		return 0;
+
+	for(i = 0; mca_ids[i]; i++) {
+		if (mca_ids[i] == mca_dev->pos_id) {
+			mca_dev->index = i;
+			return 1;
 		}
 	}
-	/* If the integrated id is present, treat it as though it were an
-	 * additional id in the id_table (it can't be because by definition,
-	 * integrated id's overflow a short */
-	if (mca_drv->integrated_id && mca_dev->pos_id ==
-	    mca_drv->integrated_id) {
-		mca_dev->index = i;
-		return 1;
-	}
+
 	return 0;
 }
 
@@ -106,32 +100,21 @@ static DEVICE_ATTR(pos, S_IRUGO, mca_show_pos, NULL);
 int __init mca_register_device(int bus, struct mca_device *mca_dev)
 {
 	struct mca_bus *mca_bus = mca_root_busses[bus];
-	int rc;
 
 	mca_dev->dev.parent = &mca_bus->dev;
 	mca_dev->dev.bus = &mca_bus_type;
-	dev_set_name(&mca_dev->dev, "%02d:%02X", bus, mca_dev->slot);
+	sprintf (mca_dev->dev.bus_id, "%02d:%02X", bus, mca_dev->slot);
 	mca_dev->dma_mask = mca_bus->default_dma_mask;
 	mca_dev->dev.dma_mask = &mca_dev->dma_mask;
 	mca_dev->dev.coherent_dma_mask = mca_dev->dma_mask;
 
-	rc = device_register(&mca_dev->dev);
-	if (rc)
-		goto err_out;
+	if (device_register(&mca_dev->dev))
+		return 0;
 
-	rc = device_create_file(&mca_dev->dev, &dev_attr_id);
-	if (rc) goto err_out_devreg;
-	rc = device_create_file(&mca_dev->dev, &dev_attr_pos);
-	if (rc) goto err_out_id;
+	device_create_file(&mca_dev->dev, &dev_attr_id);
+	device_create_file(&mca_dev->dev, &dev_attr_pos);
 
 	return 1;
-
-err_out_id:
-	device_remove_file(&mca_dev->dev, &dev_attr_id);
-err_out_devreg:
-	device_unregister(&mca_dev->dev);
-err_out:
-	return 0;
 }
 
 /* */
@@ -147,16 +130,13 @@ struct mca_bus * __devinit mca_attach_bus(int bus)
 		return NULL;
 	}
 
-	mca_bus = kzalloc(sizeof(struct mca_bus), GFP_KERNEL);
+	mca_bus = kmalloc(sizeof(struct mca_bus), GFP_KERNEL);
 	if (!mca_bus)
 		return NULL;
-
-	dev_set_name(&mca_bus->dev, "mca%d", bus);
+	memset(mca_bus, 0, sizeof(struct mca_bus));
+	sprintf(mca_bus->dev.bus_id,"mca%d",bus);
 	sprintf(mca_bus->name,"Host %s MCA Bridge", bus ? "Secondary" : "Primary");
-	if (device_register(&mca_bus->dev)) {
-		kfree(mca_bus);
-		return NULL;
-	}
+	device_register(&mca_bus->dev);
 
 	mca_root_busses[bus] = mca_bus;
 

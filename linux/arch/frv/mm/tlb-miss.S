@@ -13,9 +13,10 @@
 #include <linux/linkage.h>
 #include <asm/page.h>
 #include <asm/pgtable.h>
+#include <asm/highmem.h>
 #include <asm/spr-regs.h>
 
-	.section	.text.tlbmiss
+	.section	.text
 	.balign		4
 
 	.globl		__entry_insn_mmu_miss

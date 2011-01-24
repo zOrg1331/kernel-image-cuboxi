@@ -1,0 +1,35 @@
+From: Wendy Cheng <wcheng@redhat.com>
+Subject: Re: [RHEL5.1 PATCH] 03/03 NFS fix - gfs2 filldir issue
+Date: Thu, 12 Apr 2007 01:17:16 -0400
+Bugzilla: 229395
+Message-Id: <461DC0DC.20102@redhat.com>
+Changelog: [gfs2] inconsistent inode number lookups
+
+
+Wendy Cheng wrote:
+>Bugzilla 229395
+>
+>Inconsistency in GFS2 lookup code using different types of inode numbers. 
+
+-- Wendy
+
+Index: linux-2.6.18.noarch/fs/gfs2/inode.c
+===================================================================
+--- linux-2.6.18.noarch.orig/fs/gfs2/inode.c
++++ linux-2.6.18.noarch/fs/gfs2/inode.c
+@@ -89,13 +89,13 @@ static int iget_set(struct inode *inode,
+ 
+ struct inode *gfs2_ilookup(struct super_block *sb, struct gfs2_inum_host *inum)
+ {
+-	return ilookup5(sb, (unsigned long)inum->no_formal_ino,
++	return ilookup5(sb, (unsigned long)inum->no_addr,
+ 			iget_test, inum);
+ }
+ 
+ static struct inode *gfs2_iget(struct super_block *sb, struct gfs2_inum_host *inum)
+ {
+-	return iget5_locked(sb, (unsigned long)inum->no_formal_ino,
++	return iget5_locked(sb, (unsigned long)inum->no_addr,
+ 		     iget_test, iget_set, inum);
+ }
+ 

@@ -11,14 +11,13 @@
 
 #include <linux/module.h>
 #include <linux/poll.h>
+#include <linux/smp_lock.h>
 #ifdef CONFIG_PROC_FS
 #include <linux/proc_fs.h>
 #else
 #include <linux/fs.h>
 #endif
-#include <linux/sched.h>
 #include <linux/isdnif.h>
-#include <net/net_namespace.h>
 #include "isdn_divert.h"
 
 
@@ -46,7 +45,7 @@ put_info_buffer(char *cp)
 		return;
 	if (!*cp)
 		return;
-	if (!(ib = kmalloc(sizeof(struct divert_info) + strlen(cp), GFP_ATOMIC)))
+	if (!(ib = (struct divert_info *) kmalloc(sizeof(struct divert_info) + strlen(cp), GFP_ATOMIC)))
 		 return;	/* no memory */
 	strcpy(ib->info_start, cp);	/* set output string */
 	ib->next = NULL;
@@ -71,8 +70,6 @@ put_info_buffer(char *cp)
 	spin_unlock_irqrestore( &divert_info_lock, flags );
 	wake_up_interruptible(&(rd_queue));
 }				/* put_info_buffer */
-
-#ifdef CONFIG_PROC_FS
 
 /**********************************/
 /* deflection device read routine */
@@ -257,7 +254,9 @@ isdn_divert_ioctl(struct inode *inode, struct file *file,
 	return copy_to_user((void __user *)arg, &dioctl, sizeof(dioctl)) ? -EFAULT : 0;
 }				/* isdn_divert_ioctl */
 
-static const struct file_operations isdn_fops =
+
+#ifdef CONFIG_PROC_FS
+static struct file_operations isdn_fops =
 {
 	.owner          = THIS_MODULE,
 	.llseek         = no_llseek,
@@ -286,15 +285,16 @@ divert_dev_init(void)
 	init_waitqueue_head(&rd_queue);
 
 #ifdef CONFIG_PROC_FS
-	isdn_proc_entry = proc_mkdir("isdn", init_net.proc_net);
+	isdn_proc_entry = proc_mkdir("net/isdn", NULL);
 	if (!isdn_proc_entry)
 		return (-1);
-	isdn_divert_entry = proc_create("divert", S_IFREG | S_IRUGO,
-					isdn_proc_entry, &isdn_fops);
+	isdn_divert_entry = create_proc_entry("divert", S_IFREG | S_IRUGO, isdn_proc_entry);
 	if (!isdn_divert_entry) {
-		remove_proc_entry("isdn", init_net.proc_net);
+		remove_proc_entry("net/isdn", NULL);
 		return (-1);
 	}
+	isdn_divert_entry->proc_fops = &isdn_fops; 
+	isdn_divert_entry->owner = THIS_MODULE; 
 #endif	/* CONFIG_PROC_FS */
 
 	return (0);
@@ -310,7 +310,7 @@ divert_dev_deinit(void)
 
 #ifdef CONFIG_PROC_FS
 	remove_proc_entry("divert", isdn_proc_entry);
-	remove_proc_entry("isdn", init_net.proc_net);
+	remove_proc_entry("net/isdn", NULL);
 #endif	/* CONFIG_PROC_FS */
 
 	return (0);

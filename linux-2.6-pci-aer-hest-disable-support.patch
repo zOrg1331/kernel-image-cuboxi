@@ -1,0 +1,85 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Date: Wed, 16 Dec 2009 18:42:21 -0500
+Subject: : PCI AER HEST Disable Support
+Message-id: <20091216183822.16974.89492.sendpatchset@prarit.bos.redhat.com>
+Patchwork-id: 22005
+O-Subject: [RHEL5 2/2]: PCI AER HEST Disable Support
+Bugzilla: 547762
+
+commit f23c689ef61083774cefedb4445130bf0de459e7
+Author: Prarit Bhargava <prarit@redhat.com>
+Date:   Wed Dec 16 13:12:56 2009 -0500
+
+    PCI AER HEST Disable Support
+
+    Add an boot option to disable ACPI HEST.
+
+    Successfully tested by me:
+
+    With HEST on,
+
+    aer 0000:00:01.0:pcie01: PCIe errors handled by platform firmware.
+    aer 0000:00:02.0:pcie01: PCIe errors handled by platform firmware.
+    aer 0000:00:03.0:pcie01: PCIe errors handled by platform firmware.
+    aer 0000:00:05.0:pcie01: PCIe errors handled by platform firmware.
+    aer 0000:00:07.0:pcie01: PCIe errors handled by platform firmware.
+    aer 0000:00:09.0:pcie01: PCIe errors handled by platform firmware.
+
+    With HEST off,
+
+    ACPI HEST support disabled
+
+    .
+    .
+    .
+
+    aer 0000:00:01.0:pcie01: service driver aer loaded
+    aer 0000:00:02.0:pcie01: service driver aer loaded
+    aer 0000:00:03.0:pcie01: service driver aer loaded
+    aer 0000:00:05.0:pcie01: service driver aer loaded
+    aer 0000:00:07.0:pcie01: service driver aer loaded
+    aer 0000:00:09.0:pcie01: service driver aer loaded
+
+    Resolves BZ 547762.
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/acpi/hest.c b/drivers/acpi/hest.c
+index e3dfee7..5556b34 100644
+--- a/drivers/acpi/hest.c
++++ b/drivers/acpi/hest.c
+@@ -3,6 +3,8 @@
+ 
+ #define PREFIX "ACPI: "
+ 
++static int acpi_hest_enable = 1;
++
+ static inline unsigned long parse_acpi_hest_ia_machine_check(struct acpi_hest_ia_machine_check *p)
+ {
+ 	return sizeof(*p) +
+@@ -123,6 +125,10 @@ int acpi_hest_firmware_first_pci(struct pci_dev *pci)
+ {
+ 	acpi_status status = AE_NOT_FOUND;
+ 	struct acpi_table_header *hest = NULL;
++
++	if (!acpi_hest_enable)
++		return 0;
++
+ 	status = acpi_get_firmware_table("HEST", 1, ACPI_LOGICAL_ADDRESSING,
+ 					 (struct acpi_table_header **) &hest);
+ 
+@@ -134,3 +140,14 @@ int acpi_hest_firmware_first_pci(struct pci_dev *pci)
+ 	return 0;
+ }
+ EXPORT_SYMBOL_GPL(acpi_hest_firmware_first_pci);
++
++static int __init acpi_hest(char *str)
++{
++	if (!strcmp(str, "off")) {
++		printk("ACPI HEST support disabled\n");
++		acpi_hest_enable = 0;
++	}
++
++	return 0;
++}
++__setup("acpi_hest=", acpi_hest);

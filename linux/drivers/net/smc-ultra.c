@@ -111,7 +111,7 @@ static struct isapnp_device_id ultra_device_ids[] __initdata = {
 MODULE_DEVICE_TABLE(isapnp, ultra_device_ids);
 #endif
 
-
+
 #define START_PG		0x00	/* First page of TX buffer */
 
 #define ULTRA_CMDREG	0		/* Offset to ASIC command register. */
@@ -122,12 +122,12 @@ MODULE_DEVICE_TABLE(isapnp, ultra_device_ids);
 #define ULTRA_NIC_OFFSET  16	/* NIC register offset from the base_addr. */
 #define ULTRA_IO_EXTENT 32
 #define EN0_ERWCNT		0x08	/* Early receive warning count. */
-
+
 #ifdef CONFIG_NET_POLL_CONTROLLER
 static void ultra_poll(struct net_device *dev)
 {
 	disable_irq(dev->irq);
-	ei_interrupt(dev->irq, dev);
+	ei_interrupt(dev->irq, dev, NULL);
 	enable_irq(dev->irq);
 }
 #endif
@@ -142,6 +142,11 @@ static int __init do_ultra_probe(struct net_device *dev)
 	int base_addr = dev->base_addr;
 	int irq = dev->irq;
 
+	SET_MODULE_OWNER(dev);
+
+#ifdef CONFIG_NET_POLL_CONTROLLER
+	dev->poll_controller = &ultra_poll;
+#endif
 	if (base_addr > 0x1ff)		/* Check a single specified location. */
 		return ultra_probe1(dev, base_addr);
 	else if (base_addr != 0)	/* Don't probe at all. */
@@ -184,22 +189,6 @@ out:
 }
 #endif
 
-static const struct net_device_ops ultra_netdev_ops = {
-	.ndo_open		= ultra_open,
-	.ndo_stop		= ultra_close_card,
-
-	.ndo_start_xmit		= ei_start_xmit,
-	.ndo_tx_timeout		= ei_tx_timeout,
-	.ndo_get_stats		= ei_get_stats,
-	.ndo_set_multicast_list = ei_set_multicast_list,
-	.ndo_validate_addr	= eth_validate_addr,
-	.ndo_set_mac_address 	= eth_mac_addr,
-	.ndo_change_mtu		= eth_change_mtu,
-#ifdef CONFIG_NET_POLL_CONTROLLER
-	.ndo_poll_controller 	= ultra_poll,
-#endif
-};
-
 static int __init ultra_probe1(struct net_device *dev, int ioaddr)
 {
 	int i, retval;
@@ -237,11 +226,10 @@ static int __init ultra_probe1(struct net_device *dev, int ioaddr)
 
 	model_name = (idreg & 0xF0) == 0x20 ? "SMC Ultra" : "SMC EtherEZ";
 
-	for (i = 0; i < 6; i++)
-		dev->dev_addr[i] = inb(ioaddr + 8 + i);
+	printk("%s: %s at %#3x,", dev->name, model_name, ioaddr);
 
-	printk("%s: %s at %#3x, %pM", dev->name, model_name,
-	       ioaddr, dev->dev_addr);
+	for (i = 0; i < 6; i++)
+		printk(" %2.2X", dev->dev_addr[i] = inb(ioaddr + 8 + i));
 
 	/* Switch from the station address to the alternate register set and
 	   read the useful registers there. */
@@ -313,8 +301,11 @@ static int __init ultra_probe1(struct net_device *dev, int ioaddr)
 		ei_status.get_8390_hdr = &ultra_get_8390_hdr;
 	}
 	ei_status.reset_8390 = &ultra_reset_8390;
-
-	dev->netdev_ops = &ultra_netdev_ops;
+	dev->open = &ultra_open;
+	dev->stop = &ultra_close_card;
+#ifdef CONFIG_NET_POLL_CONTROLLER
+	dev->poll_controller = ei_poll;
+#endif
 	NS8390_init(dev, 0);
 
 	retval = register_netdev(dev);
@@ -463,7 +454,8 @@ ultra_block_input(struct net_device *dev, int count, struct sk_buff *skb, int ri
 		count -= semi_count;
 		memcpy_fromio(skb->data + semi_count, ei_status.mem + TX_PAGES * 256, count);
 	} else {
-		memcpy_fromio(skb->data, xfer_start, count);
+		/* Packet is in one chunk -- we can copy + cksum. */
+		eth_io_copy_and_sum(skb, xfer_start, count, 0);
 	}
 
 	outb(0x00, dev->base_addr - ULTRA_NIC_OFFSET);	/* Disable memory. */
@@ -544,7 +536,7 @@ ultra_close_card(struct net_device *dev)
 	return 0;
 }
 
-
+
 #ifdef MODULE
 #define MAX_ULTRA_CARDS	4	/* Max number of Ultra cards per module */
 static struct net_device *dev_ultra[MAX_ULTRA_CARDS];
@@ -601,7 +593,7 @@ static void cleanup_card(struct net_device *dev)
 	iounmap(ei_status.mem);
 }
 
-void __exit
+void
 cleanup_module(void)
 {
 	int this_dev;

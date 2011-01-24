@@ -4,19 +4,19 @@
  * (C) Copyright 1999 Roman Weissgaerber <weissg@vienna.at>
  * (C) Copyright 2000-2002 David Brownell <dbrownell@users.sourceforge.net>
  * (C) Copyright 2002 Hewlett-Packard Company
- *
+ * 
  * SA1111 Bus Glue
  *
  * Written by Christopher Hoover <ch@hpl.hp.com>
- * Based on fragments of previous driver by Russell King et al.
+ * Based on fragments of previous driver by Rusell King et al.
  *
  * This file is licenced under the GPL.
  */
-
-#include <mach/hardware.h>
+ 
+#include <asm/hardware.h>
 #include <asm/mach-types.h>
-#include <mach/assabet.h>
-#include <mach/badge4.h>
+#include <asm/arch/assabet.h>
+#include <asm/arch/badge4.h>
 #include <asm/hardware/sa1111.h>
 
 #ifndef CONFIG_SA1111
@@ -31,7 +31,7 @@ static void sa1111_start_hc(struct sa1111_dev *dev)
 {
 	unsigned int usb_rst = 0;
 
-	printk(KERN_DEBUG __FILE__
+	printk(KERN_DEBUG __FILE__ 
 	       ": starting SA-1111 OHCI USB Controller\n");
 
 #ifdef CONFIG_SA1100_BADGE4
@@ -65,7 +65,7 @@ static void sa1111_start_hc(struct sa1111_dev *dev)
 static void sa1111_stop_hc(struct sa1111_dev *dev)
 {
 	unsigned int usb_rst;
-	printk(KERN_DEBUG __FILE__
+	printk(KERN_DEBUG __FILE__ 
 	       ": stopping SA-1111 OHCI USB Controller\n");
 
 	/*
@@ -212,6 +212,10 @@ static const struct hc_driver ohci_sa1111_hc_driver = {
 	 * basic lifecycle operations
 	 */
 	.start =		ohci_sa1111_start,
+#ifdef	CONFIG_PM
+	/* suspend:		ohci_sa1111_suspend,  -- tbd */
+	/* resume:		ohci_sa1111_resume,   -- tbd */
+#endif
 	.stop =			ohci_stop,
 
 	/*
@@ -268,3 +272,19 @@ static struct sa1111_driver ohci_hcd_sa1111_driver = {
 	.remove		= ohci_hcd_sa1111_drv_remove,
 };
 
+static int __init ohci_hcd_sa1111_init (void)
+{
+	dbg (DRIVER_INFO " (SA-1111)");
+	dbg ("block sizes: ed %d td %d",
+		sizeof (struct ed), sizeof (struct td));
+
+	return sa1111_driver_register(&ohci_hcd_sa1111_driver);
+}
+
+static void __exit ohci_hcd_sa1111_cleanup (void)
+{
+	sa1111_driver_unregister(&ohci_hcd_sa1111_driver);
+}
+
+module_init (ohci_hcd_sa1111_init);
+module_exit (ohci_hcd_sa1111_cleanup);

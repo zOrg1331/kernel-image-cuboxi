@@ -1,0 +1,134 @@
+From: Rob Evers <revers@redhat.com>
+Date: Wed, 22 Sep 2010 23:08:34 -0400
+Subject: [scsi] lpfc: fix ioctl crash in lpfc_nlp_put
+Message-id: <20100922230309.26763.77590.sendpatchset@localhost.localdomain>
+Patchwork-id: 28349
+O-Subject: [RHEL5.6 PATCH] lpfc: lpfc ioctl crash in lpfc_nlp_put()
+Bugzilla: 625841
+
+https://bugzilla.redhat.com/show_bug.cgi?id=625841
+
+Correct updated patch for addressing NDLP refcount issue.
+Patch provided by Emulex.
+
+Doesn't apply upstream as it is an ioctl issue.
+
+Tested on site where problem was occurring.  Compile tested by me.
+
+https://brewweb.devel.redhat.com/taskinfo?taskID=2776046 still in progress,
+built everything except ppc64 which is currently pending.
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/scsi/lpfc/lpfc_ioctl.c b/drivers/scsi/lpfc/lpfc_ioctl.c
+index 6202fd0..209f808 100644
+--- a/drivers/scsi/lpfc/lpfc_ioctl.c
++++ b/drivers/scsi/lpfc/lpfc_ioctl.c
+@@ -210,7 +210,6 @@ lpfc_ioctl_hba_rnid(struct lpfc_hba * phba,
+ 	memset((void *) pcmd, 0, sizeof (RNID));
+ 	((RNID *) pcmd)->Format = 0;
+ 	((RNID *) pcmd)->Format = RNID_TOPOLOGY_DISC;
+-	cmdiocbq->context1 = NULL;
+ 	cmdiocbq->context2 = NULL;
+ 	cmdiocbq->iocb_flag |= LPFC_IO_LIBDFC;
+ 
+@@ -380,6 +379,11 @@ lpfc_ioctl_send_els(struct lpfc_hba * phba,
+ 			}
+ 			lpfc_nlp_init(phba->pport, pndl, destID.d_id);
+ 			lpfc_nlp_set_state(phba->pport, pndl, NLP_STE_NPR_NODE);
++			/*
++			 * Indicate to free the application allocated memory
++			 * for ndlp after it's use.
++			 */
++			NLP_SET_FREE_REQ(pndl);
+ 		} else {
+ 			pndl = lpfc_enable_node(phba->pport, pndl,
+ 						NLP_STE_NPR_NODE);
+@@ -389,7 +393,11 @@ lpfc_ioctl_send_els(struct lpfc_hba * phba,
+ 			}
+ 		}
+ 	} else {
+-		lpfc_nlp_get(pndl);
++		pndl = lpfc_nlp_get(pndl);
++		if (!pndl) {
++			lpfc_sli_release_iocbq(phba, rspiocbq);
++			return ENODEV;
++		}
+ 		rpi = pndl->nlp_rpi;
+ 	}
+ 
+@@ -629,8 +637,11 @@ lpfc_ioctl_send_mgmt_cmd(struct lpfc_hba * phba,
+ 		/* Do additional get to pndl found so that at the end of the
+ 		 * function we can do unditional lpfc_nlp_put on it.
+ 		 */
+-		if (pndl && NLP_CHK_NODE_ACT(pndl))
+-			lpfc_nlp_get(pndl);
++		pndl = lpfc_nlp_get(pndl);
++		if (!pndl) {
++			rc = ENODEV;
++			goto send_mgmt_cmd_exit;
++		}
+ 	} else {
+ 		finddid = (uint32_t)(unsigned long)cip->lpfc_arg3;
+ 		pndl = lpfc_findnode_did(phba->pport, finddid);
+@@ -648,13 +659,31 @@ lpfc_ioctl_send_mgmt_cmd(struct lpfc_hba * phba,
+ 							finddid);
+ 					lpfc_nlp_set_state(phba->pport,
+ 						pndl, NLP_STE_PLOGI_ISSUE);
+-					/* Indicate free ioctl allocated
+-					 * memory for ndlp after it's done
++					/* Hold the pndl to the end of this
++					 * function.
++					 */
++					pndl = lpfc_nlp_get(pndl);
++					if (!pndl) {
++						rc = ENODEV;
++						goto send_mgmt_cmd_exit;
++					}
++					/* Indicate to free the application
++					 * allocated memory for ndlp after
++					 * it's use.
+ 					 */
+ 					NLP_SET_FREE_REQ(pndl);
+-				} else
+-					lpfc_enable_node(phba->pport,
++				} else {
++					pndl = lpfc_enable_node(phba->pport,
+ 						pndl, NLP_STE_PLOGI_ISSUE);
++					/* Hold the pndl to the end of this
++					 * function.
++					 */
++					pndl = lpfc_nlp_get(pndl);
++					if (!pndl) {
++						rc = ENODEV;
++						goto send_mgmt_cmd_exit;
++					}
++				}
+ 
+ 				if (lpfc_issue_els_plogi(phba->pport,
+ 							 pndl->nlp_DID, 0)) {
+@@ -678,16 +707,14 @@ lpfc_ioctl_send_mgmt_cmd(struct lpfc_hba * phba,
+ 				rc = ENODEV;
+ 				goto send_mgmt_cmd_exit;
+ 			}
+-		} else
+-			/* Do additional get to pndl found so at the end of
+-			 * the function we can do unconditional lpfc_nlp_put.
+-			 */
+-			lpfc_nlp_get(pndl);
+-	}
+-
+-	if (!pndl || !NLP_CHK_NODE_ACT(pndl)) {
+-		rc = ENODEV;
+-		goto send_mgmt_cmd_exit;
++		} else {
++			/* Hold the pndl to the end of this function. */
++			pndl = lpfc_nlp_get(pndl);
++			if (!pndl) {
++				rc = ENODEV;
++				goto send_mgmt_cmd_exit;
++			}
++		}
+ 	}
+ 
+ 	if (pndl->nlp_flag & NLP_ELS_SND_MASK) {

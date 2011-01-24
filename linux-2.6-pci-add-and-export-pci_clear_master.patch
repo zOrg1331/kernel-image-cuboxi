@@ -1,0 +1,108 @@
+From: Michal Schmidt <mschmidt@redhat.com>
+Date: Mon, 30 Nov 2009 18:27:17 -0500
+Subject: [pci] add and export pci_clear_master
+Message-id: <20091130182717.11132.75038.stgit@localhost.localdomain>
+Patchwork-id: 21545
+O-Subject: [RHEL5.5 PATCH 1/5] pci: add and export pci_clear_master()
+Bugzilla: 448856
+RH-Acked-by: David S. Miller <davem@redhat.com>
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+RH-Acked-by: John Linville <linville@redhat.com>
+
+needed for:
+https://bugzilla.redhat.com/show_bug.cgi?id=448856
+
+Add pci_clear_master() as an opposite to pci_set_master().
+It disables bus mastering. The sfc driver needs it for online device reset.
+
+Upstream status:
+Present in 2.6.29:
+    commit 6a479079c07211bf348ac8a79754f26bea258f26
+    Author: Ben Hutchings <bhutchings@solarflare.com>
+    PCI: Add pci_clear_master() as opposite of pci_set_master()
+
+KABI:
+This exports a new symbol which is the same as in upstream:
+    void pci_clear_master(struct pci_dev *dev)
+    EXPORT_SYMBOL(pci_clear_master);
+
+diff --git a/drivers/pci/pci.c b/drivers/pci/pci.c
+index 01dbf5e..3ced3f8 100644
+--- a/drivers/pci/pci.c
++++ b/drivers/pci/pci.c
+@@ -1182,6 +1182,22 @@ int pci_request_regions(struct pci_dev *pdev, const char *res_name)
+ 	return pci_request_selected_regions(pdev, ((1 << 6) - 1), res_name);
+ }
+ 
++static void __pci_set_master(struct pci_dev *dev, bool enable)
++{
++	u16 old_cmd, cmd;
++
++	pci_read_config_word(dev, PCI_COMMAND, &old_cmd);
++	if (enable)
++		cmd = old_cmd | PCI_COMMAND_MASTER;
++	else
++		cmd = old_cmd & ~PCI_COMMAND_MASTER;
++	if (cmd != old_cmd) {
++		pr_debug("PCI: %s bus mastering for device %s\n",
++			enable ? "Enabling" : "Disabling", pci_name(dev));
++		pci_write_config_word(dev, PCI_COMMAND, cmd);
++	}
++	dev->is_busmaster = enable;
++}
+ /**
+  * pci_set_master - enables bus-mastering for device dev
+  * @dev: the PCI device to enable
+@@ -1189,21 +1205,21 @@ int pci_request_regions(struct pci_dev *pdev, const char *res_name)
+  * Enables bus-mastering on the device and calls pcibios_set_master()
+  * to do the needed arch specific settings.
+  */
+-void
+-pci_set_master(struct pci_dev *dev)
++void pci_set_master(struct pci_dev *dev)
+ {
+-	u16 cmd;
+-
+-	pci_read_config_word(dev, PCI_COMMAND, &cmd);
+-	if (! (cmd & PCI_COMMAND_MASTER)) {
+-		pr_debug("PCI: Enabling bus mastering for device %s\n", pci_name(dev));
+-		cmd |= PCI_COMMAND_MASTER;
+-		pci_write_config_word(dev, PCI_COMMAND, cmd);
+-	}
+-	dev->is_busmaster = 1;
++	__pci_set_master(dev, true);
+ 	pcibios_set_master(dev);
+ }
+ 
++/**
++ * pci_clear_master - disables bus-mastering for device dev
++ * @dev: the PCI device to disable
++ */
++void pci_clear_master(struct pci_dev *dev)
++{
++	__pci_set_master(dev, false);
++}
++
+ #ifndef HAVE_ARCH_PCI_MWI
+ /* This can be overridden by arch code. */
+ u8 pci_cache_line_size = L1_CACHE_BYTES >> 2;
+@@ -1807,6 +1823,7 @@ EXPORT_SYMBOL(pci_request_region);
+ EXPORT_SYMBOL(pci_release_selected_regions);
+ EXPORT_SYMBOL(pci_request_selected_regions);
+ EXPORT_SYMBOL(pci_set_master);
++EXPORT_SYMBOL(pci_clear_master);
+ EXPORT_SYMBOL(pci_set_mwi);
+ EXPORT_SYMBOL(pci_try_set_mwi);
+ EXPORT_SYMBOL(pci_clear_mwi);
+diff --git a/include/linux/pci.h b/include/linux/pci.h
+index 7a7f154..452803a 100644
+--- a/include/linux/pci.h
++++ b/include/linux/pci.h
+@@ -597,6 +597,7 @@ int pci_enable_device_io(struct pci_dev *dev);
+ int pci_enable_device_mem(struct pci_dev *dev);
+ void pci_disable_device(struct pci_dev *dev);
+ void pci_set_master(struct pci_dev *dev);
++void pci_clear_master(struct pci_dev *dev);
+ int pci_set_pcie_reset_state(struct pci_dev *dev, enum pcie_reset_state state);
+ #define HAVE_PCI_SET_MWI
+ int pci_set_mwi(struct pci_dev *dev);

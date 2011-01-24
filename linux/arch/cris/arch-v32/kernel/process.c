@@ -12,12 +12,16 @@
 #include <linux/err.h>
 #include <linux/fs.h>
 #include <linux/slab.h>
-#include <hwregs/reg_rdwr.h>
-#include <hwregs/reg_map.h>
-#include <hwregs/timer_defs.h>
-#include <hwregs/intr_vect_defs.h>
+#include <asm/arch/hwregs/reg_rdwr.h>
+#include <asm/arch/hwregs/reg_map.h>
+#include <asm/arch/hwregs/timer_defs.h>
+#include <asm/arch/hwregs/intr_vect_defs.h>
 
 extern void stop_watchdog(void);
+
+#ifdef CONFIG_ETRAX_GPIO
+extern void etrax_gpio_wake_up_check(void); /* Defined in drivers/gpio.c. */
+#endif
 
 extern int cris_hlt_counter;
 
@@ -78,7 +82,7 @@ hard_reset_now(void)
 	wd_ctrl.cmd = regk_timer_start;
 
         arch_enable_nmi();
-	REG_WR(timer, regi_timer0, rw_wd_ctrl, wd_ctrl);
+	REG_WR(timer, regi_timer, rw_wd_ctrl, wd_ctrl);
 }
 #endif
 
@@ -131,7 +135,7 @@ kernel_thread(int (*fn)(void *), void * arg, unsigned long flags)
 extern asmlinkage void ret_from_fork(void);
 
 int
-copy_thread(unsigned long clone_flags, unsigned long usp,
+copy_thread(int nr, unsigned long clone_flags, unsigned long usp,
 	unsigned long unused,
 	struct task_struct *p, struct pt_regs *regs)
 {
@@ -158,7 +162,7 @@ copy_thread(unsigned long clone_flags, unsigned long usp,
 	/* Put the switch stack right below the pt_regs. */
 	swstack = ((struct switch_stack *) childregs) - 1;
 
-	/* Parameter to ret_from_sys_call. 0 is don't restart the syscall. */
+	/* Paramater to ret_from_sys_call. 0 is don't restart the syscall. */
 	swstack->r9 = 0;
 
 	/*

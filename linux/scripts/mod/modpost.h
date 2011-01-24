@@ -17,8 +17,7 @@
 #define Elf_Shdr    Elf32_Shdr
 #define Elf_Sym     Elf32_Sym
 #define Elf_Addr    Elf32_Addr
-#define Elf_Sword   Elf64_Sword
-#define Elf_Section Elf32_Half
+#define Elf_Section Elf32_Section
 #define ELF_ST_BIND ELF32_ST_BIND
 #define ELF_ST_TYPE ELF32_ST_TYPE
 
@@ -32,8 +31,7 @@
 #define Elf_Shdr    Elf64_Shdr
 #define Elf_Sym     Elf64_Sym
 #define Elf_Addr    Elf64_Addr
-#define Elf_Sword   Elf64_Sxword
-#define Elf_Section Elf64_Half
+#define Elf_Section Elf64_Section
 #define ELF_ST_BIND ELF64_ST_BIND
 #define ELF_ST_TYPE ELF64_ST_TYPE
 
@@ -61,9 +59,6 @@ typedef union
 
 #define ELF64_MIPS_R_SYM(i) \
   ((__extension__ (_Elf64_Mips_R_Info_union)(i)).r_info_fields.r_sym)
-
-#define ELF64_MIPS_R_TYPE(i) \
-  ((__extension__ (_Elf64_Mips_R_Info_union)(i)).r_info_fields.r_type1)
 
 #if KERNEL_ELFDATA != HOST_ELFDATA
 
@@ -112,8 +107,6 @@ struct module {
 	int has_init;
 	int has_cleanup;
 	struct buffer dev_table_buf;
-	char **markers;
-	size_t nmarkers;
 	char	     srcversion[25];
 };
 
@@ -128,14 +121,12 @@ struct elf_info {
 	Elf_Section  export_gpl_sec;
 	Elf_Section  export_unused_gpl_sec;
 	Elf_Section  export_gpl_future_sec;
-	Elf_Section  markers_strings_sec;
 	const char   *strtab;
 	char	     *modinfo;
 	unsigned int modinfo_len;
 };
 
 /* file2alias.c */
-extern unsigned int cross_build;
 void handle_moddevtable(struct module *mod, struct elf_info *info,
 			Elf_Sym *sym, const char *symname);
 void add_moddevtable(struct buffer *buf, struct module *mod);
@@ -154,4 +145,3 @@ void release_file(void *file, unsigned long size);
 
 void fatal(const char *fmt, ...);
 void warn(const char *fmt, ...);
-void merror(const char *fmt, ...);

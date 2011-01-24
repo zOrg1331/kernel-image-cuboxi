@@ -24,13 +24,15 @@
 #ifndef _DVBVIDEO_H_
 #define _DVBVIDEO_H_
 
-#include <linux/types.h>
-#ifdef __KERNEL__
 #include <linux/compiler.h>
+
+#ifdef __KERNEL__
+#include <linux/types.h>
 #else
 #include <stdint.h>
 #include <time.h>
 #endif
+
 
 typedef enum {
 	VIDEO_FORMAT_4_3,     /* Select 4:3 format */
@@ -78,70 +80,14 @@ typedef enum {
 } video_play_state_t;
 
 
-/* Decoder commands */
-#define VIDEO_CMD_PLAY        (0)
-#define VIDEO_CMD_STOP        (1)
-#define VIDEO_CMD_FREEZE      (2)
-#define VIDEO_CMD_CONTINUE    (3)
-
-/* Flags for VIDEO_CMD_FREEZE */
-#define VIDEO_CMD_FREEZE_TO_BLACK     	(1 << 0)
-
-/* Flags for VIDEO_CMD_STOP */
-#define VIDEO_CMD_STOP_TO_BLACK      	(1 << 0)
-#define VIDEO_CMD_STOP_IMMEDIATELY     	(1 << 1)
-
-/* Play input formats: */
-/* The decoder has no special format requirements */
-#define VIDEO_PLAY_FMT_NONE         (0)
-/* The decoder requires full GOPs */
-#define VIDEO_PLAY_FMT_GOP          (1)
-
-/* The structure must be zeroed before use by the application
-   This ensures it can be extended safely in the future. */
-struct video_command {
-	__u32 cmd;
-	__u32 flags;
-	union {
-		struct {
-			__u64 pts;
-		} stop;
-
-		struct {
-			/* 0 or 1000 specifies normal speed,
-			   1 specifies forward single stepping,
-			   -1 specifies backward single stepping,
-			   >1: playback at speed/1000 of the normal speed,
-			   <-1: reverse playback at (-speed/1000) of the normal speed. */
-			__s32 speed;
-			__u32 format;
-		} play;
-
-		struct {
-			__u32 data[16];
-		} raw;
-	};
-};
-
-/* FIELD_UNKNOWN can be used if the hardware does not know whether
-   the Vsync is for an odd, even or progressive (i.e. non-interlaced)
-   field. */
-#define VIDEO_VSYNC_FIELD_UNKNOWN  	(0)
-#define VIDEO_VSYNC_FIELD_ODD 		(1)
-#define VIDEO_VSYNC_FIELD_EVEN		(2)
-#define VIDEO_VSYNC_FIELD_PROGRESSIVE	(3)
-
 struct video_event {
-	__s32 type;
+	int32_t type;
 #define VIDEO_EVENT_SIZE_CHANGED	1
 #define VIDEO_EVENT_FRAME_RATE_CHANGED	2
-#define VIDEO_EVENT_DECODER_STOPPED 	3
-#define VIDEO_EVENT_VSYNC 		4
-	__kernel_time_t timestamp;
+	time_t timestamp;
 	union {
 		video_size_t size;
 		unsigned int frame_rate;	/* in frames per 1000sec */
-		unsigned char vsync_field;	/* unknown/odd/even/progressive */
 	} u;
 };
 
@@ -157,25 +103,25 @@ struct video_status {
 
 struct video_still_picture {
 	char __user *iFrame;        /* pointer to a single iframe in memory */
-	__s32 size;
+	int32_t size;
 };
 
 
 typedef
 struct video_highlight {
 	int     active;      /*    1=show highlight, 0=hide highlight */
-	__u8    contrast1;   /*    7- 4  Pattern pixel contrast */
+	uint8_t contrast1;   /*    7- 4  Pattern pixel contrast */
 			     /*    3- 0  Background pixel contrast */
-	__u8    contrast2;   /*    7- 4  Emphasis pixel-2 contrast */
+	uint8_t contrast2;   /*    7- 4  Emphasis pixel-2 contrast */
 			     /*    3- 0  Emphasis pixel-1 contrast */
-	__u8    color1;      /*    7- 4  Pattern pixel color */
+	uint8_t color1;      /*    7- 4  Pattern pixel color */
 			     /*    3- 0  Background pixel color */
-	__u8    color2;      /*    7- 4  Emphasis pixel-2 color */
+	uint8_t color2;      /*    7- 4  Emphasis pixel-2 color */
 			     /*    3- 0  Emphasis pixel-1 color */
-	__u32    ypos;       /*   23-22  auto action mode */
+	uint32_t ypos;       /*   23-22  auto action mode */
 			     /*   21-12  start y */
 			     /*    9- 0  end y */
-	__u32    xpos;       /*   23-22  button color number */
+	uint32_t xpos;       /*   23-22  button color number */
 			     /*   21-12  start x */
 			     /*    9- 0  end x */
 } video_highlight_t;
@@ -189,17 +135,17 @@ typedef struct video_spu {
 
 typedef struct video_spu_palette {      /* SPU Palette information */
 	int length;
-	__u8 __user *palette;
+	uint8_t __user *palette;
 } video_spu_palette_t;
 
 
 typedef struct video_navi_pack {
 	int length;          /* 0 ... 1024 */
-	__u8 data[1024];
+	uint8_t data[1024];
 } video_navi_pack_t;
 
 
-typedef __u16 video_attributes_t;
+typedef uint16_t video_attributes_t;
 /*   bits: descr. */
 /*   15-14 Video compression mode (0=MPEG-1, 1=MPEG-2) */
 /*   13-12 TV system (0=525/60, 1=625/50) */
@@ -266,11 +212,5 @@ typedef __u16 video_attributes_t;
  * extracted by the PES parser.
  */
 #define VIDEO_GET_PTS              _IOR('o', 57, __u64)
-
-/* Read the number of displayed frames since the decoder was started */
-#define VIDEO_GET_FRAME_COUNT  	   _IOR('o', 58, __u64)
-
-#define VIDEO_COMMAND     	   _IOWR('o', 59, struct video_command)
-#define VIDEO_TRY_COMMAND 	   _IOWR('o', 60, struct video_command)
 
 #endif /*_DVBVIDEO_H_*/

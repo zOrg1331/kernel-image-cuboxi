@@ -1,0 +1,42 @@
+From: Gerd Hoffmann <kraxel@redhat.com>
+Subject: [RHEL-5.1 patch] xen: fix kexec/highmem failure
+Date: Fri, 22 Jun 2007 14:44:47 +0200
+Bugzilla: 245585
+Message-Id: <467BC43F.6030802@redhat.com>
+Changelog: [xen] fix kexec/highmem failure
+
+
+  Hi,
+
+As reported by Stephen kexec/xen machines may oops in case highmem is 
+present, i.e. on 32bit machines with more than of 1GB memory (sct: is 
+there a bug for that?).
+
+This patch fixes it by disabling highmem allocations in the xen case. 
+It is one of multiple possible ways to fix it.  It's not yet fixed 
+upstream.  
+
+cheers,
+  Gerd
+
+---
+ kernel/kexec.c |    4 ++++
+ 1 file changed, 4 insertions(+)
+
+Index: linux-2.6.18.noarch/kernel/kexec.c
+===================================================================
+--- linux-2.6.18.noarch.orig/kernel/kexec.c
++++ linux-2.6.18.noarch/kernel/kexec.c
+@@ -803,7 +803,11 @@ static int kimage_load_normal_segment(st
+ 		char *ptr;
+ 		size_t uchunk, mchunk;
+ 
++#ifdef CONFIG_XEN
++		page = kimage_alloc_page(image, GFP_USER, maddr);
++#else
+ 		page = kimage_alloc_page(image, GFP_HIGHUSER, maddr);
++#endif
+ 		if (page == 0) {
+ 			result  = -ENOMEM;
+ 			goto out;
+

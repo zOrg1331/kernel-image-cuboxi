@@ -1,0 +1,60 @@
+From: Hans-Joachim Picht <hpicht@redhat.com>
+Date: Thu, 3 Apr 2008 15:37:01 +0200
+Subject: [s390] zfcp: handling of boxed port after physical close
+Message-id: 20080403133701.GD10542@redhat.com
+O-Subject: [RHEL5 U3 PATCH 2/7] s390 - zfcp: Fix handling for boxed port after physical close
+Bugzilla: 434801
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+
+Description
+============
+
+When a FSF physical close returns the status boxed, this means that
+another system already closed the port. For our system this is the
+same status as in the good path, we have to send the normal close. So,
+set the status for the boxed response to the same as for the good
+status.
+
+Bugzilla
+=========
+
+BZ  434801
+https://bugzilla.redhat.com/show_bug.cgi?id=434801
+
+Upstream status of the patch:
+=============================
+
+Patch has been posted upstream and is included in scsi-misc as git commit
+68d669b6c64429150b71932b5044005b0591a992
+
+Test status:
+============
+Kernel with patch was built and successfully tested
+
+Please ACK.
+
+With best regards,
+
+Hans
+
+ drivers/s390/scsi/zfcp_fsf.c |    7 +++++++
+ 1 files changed, 7 insertions(+), 0 deletions(-)
+
+diff --git a/drivers/s390/scsi/zfcp_fsf.c b/drivers/s390/scsi/zfcp_fsf.c
+index 0999c8f..e26f607 100644
+--- a/drivers/s390/scsi/zfcp_fsf.c
++++ b/drivers/s390/scsi/zfcp_fsf.c
+@@ -2867,6 +2867,13 @@ zfcp_fsf_close_physical_port_handler(struct zfcp_fsf_req *fsf_req)
+ 		zfcp_erp_port_boxed(port);
+ 		fsf_req->status |= ZFCP_STATUS_FSFREQ_ERROR |
+ 			ZFCP_STATUS_FSFREQ_RETRY;
++
++		/* can't use generic zfcp_erp_modify_port_status because
++		 * ZFCP_STATUS_COMMON_OPEN must not be reset for the port */
++		atomic_clear_mask(ZFCP_STATUS_PORT_PHYS_OPEN, &port->status);
++		list_for_each_entry(unit, &port->unit_list_head, list)
++			atomic_clear_mask(ZFCP_STATUS_COMMON_OPEN,
++					  &unit->status);
+ 		break;
+ 
+ 	case FSF_ADAPTER_STATUS_AVAILABLE:

@@ -1,0 +1,658 @@
+From: ddugger@redhat.com <ddugger@redhat.com>
+Date: Mon, 23 Mar 2009 10:23:20 -0600
+Subject: [xen] VT-d2: support interrupt remapping
+Message-id: 200903231623.n2NGNK9j022105@sobek.n0ano.com
+O-Subject: [RHEL5.4 PATCH 13/21 V2] VT-d2: support interrupt remapping
+Bugzilla: 484227
+RH-Acked-by: Chris Lalancette <clalance@redhat.com>
+RH-Acked-by: Gerd Hoffmann <kraxel@redhat.com>
+RH-Acked-by: Chris Lalancette <clalance@redhat.com>
+
+implement interrupt remapping which is a VT-d2 feature.
+
+remap interrupt for assigned device if such HW is detected on VT-d
+platforms.
+
+This patch only adds support interrupt remapping for IOAPIC.
+Interrupt remapping for MSI/MSI-x comes later in this patch series.
+
+Upstream Status: Accepted (CS 17014, 17099)
+
+BZ: 484227
+
+Signed-off-by: Weidong Han <weidong.han@intel.com>
+Signed-off-by: Gerd Hoffman <kraxel@redhat.com>
+Signed-off-by: Don Dugger <donald.d.dugger@intel.com>
+
+diff --git a/drivers/passthrough/vtd/Makefile b/drivers/passthrough/vtd/Makefile
+index c508028..9b2795e 100644
+--- a/drivers/passthrough/vtd/Makefile
++++ b/drivers/passthrough/vtd/Makefile
+@@ -5,3 +5,4 @@ obj-y += iommu.o
+ obj-y += dmar.o
+ obj-y += utils.o
+ obj-y += qinval.o
++obj-y += intremap.o
+diff --git a/drivers/passthrough/vtd/dmar.c b/drivers/passthrough/vtd/dmar.c
+index 740a7e7..62c65d1 100644
+--- a/drivers/passthrough/vtd/dmar.c
++++ b/drivers/passthrough/vtd/dmar.c
+@@ -164,6 +164,36 @@ struct acpi_atsr_unit * acpi_find_matched_atsr_unit(u8 bus, u8 devfn)
+     return found ? found : include_all;
+ }
+ 
++static int acpi_ioapic_device_match(
++    struct list_head *ioapic_list, unsigned int apic_id)
++{
++    struct acpi_ioapic_unit *ioapic;
++    list_for_each_entry( ioapic, ioapic_list, list ) {
++        if (ioapic->apic_id == apic_id)
++            return 1;
++    }
++    return 0;
++}
++
++struct acpi_drhd_unit * ioapic_to_drhd(unsigned int apic_id)
++{
++    struct acpi_drhd_unit *drhd;
++    list_for_each_entry( drhd, &acpi_drhd_units, list )
++        if ( acpi_ioapic_device_match(&drhd->ioapic_list, apic_id) )
++            return drhd;
++    return NULL;
++}
++
++struct iommu * ioapic_to_iommu(unsigned int apic_id)
++{
++    struct acpi_drhd_unit *drhd;
++
++    list_for_each_entry( drhd, &acpi_drhd_units, list )
++        if ( acpi_ioapic_device_match(&drhd->ioapic_list, apic_id) )
++            return drhd->iommu;
++    return NULL;
++}
++
+ /*
+  * Count number of devices in device scope.  Do not include PCI sub
+  * hierarchies.
+diff --git a/drivers/passthrough/vtd/extern.h b/drivers/passthrough/vtd/extern.h
+index 35090a6..924cdeb 100644
+--- a/drivers/passthrough/vtd/extern.h
++++ b/drivers/passthrough/vtd/extern.h
+@@ -41,4 +41,8 @@ int invalidate_sync(struct iommu *iommu);
+ int iommu_flush_iec_global(struct iommu *iommu);
+ int iommu_flush_iec_index(struct iommu *iommu, u8 im, u16 iidx);
+ 
++int intremap_setup(struct iommu *iommu);
++struct iommu * ioapic_to_iommu(unsigned int apic_id);
++struct acpi_drhd_unit * ioapic_to_drhd(unsigned int apic_id);
++
+ #endif // _VTD_EXTERN_H_
+diff --git a/drivers/passthrough/vtd/intremap.c b/drivers/passthrough/vtd/intremap.c
+new file mode 100644
+index 0000000..9407600
+--- /dev/null
++++ b/drivers/passthrough/vtd/intremap.c
+@@ -0,0 +1,390 @@
++/*
++ * Copyright (c) 2006, Intel Corporation.
++ *
++ * This program is free software; you can redistribute it and/or modify it
++ * under the terms and conditions of the GNU General Public License,
++ * version 2, as published by the Free Software Foundation.
++ *
++ * This program is distributed in the hope it will be useful, but WITHOUT
++ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
++ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
++ * more details.
++ *
++ * You should have received a copy of the GNU General Public License along with
++ * this program; if not, write to the Free Software Foundation, Inc., 59 Temple
++ * Place - Suite 330, Boston, MA 02111-1307 USA.
++ *
++ * Copyright (C) Allen Kay <allen.m.kay@intel.com>
++ * Copyright (C) Xiaohui Xin <xiaohui.xin@intel.com>
++ */
++
++#include <xen/irq.h>
++#include <xen/sched.h>
++#include <xen/iommu.h>
++#include <asm/hvm/iommu.h>
++#include <xen/time.h>
++#include <xen/pci.h>
++#include <xen/pci_regs.h>
++#include "iommu.h"
++#include "dmar.h"
++#include "vtd.h"
++#include "extern.h"
++
++#ifndef dest_SMI
++#define dest_SMI -1
++#endif
++
++u16 apicid_to_bdf(int apic_id)
++{
++    struct acpi_drhd_unit *drhd = ioapic_to_drhd(apic_id);
++    struct acpi_ioapic_unit *acpi_ioapic_unit;
++
++    list_for_each_entry ( acpi_ioapic_unit, &drhd->ioapic_list, list )
++        if ( acpi_ioapic_unit->apic_id == apic_id )
++            return acpi_ioapic_unit->ioapic.info;
++
++    dprintk(XENLOG_ERR VTDPREFIX, "Didn't find the bdf for the apic_id!\n");
++    return 0;
++}
++
++static int remap_entry_to_ioapic_rte(
++    struct iommu *iommu, struct IO_xAPIC_route_entry *old_rte)
++{
++    struct iremap_entry *iremap_entry = NULL, *iremap_entries;
++    struct IO_APIC_route_remap_entry *remap_rte;
++    int index = 0;
++    unsigned long flags;
++    struct ir_ctrl *ir_ctrl = iommu_ir_ctrl(iommu);
++
++    if ( ir_ctrl == NULL )
++    {
++        dprintk(XENLOG_ERR VTDPREFIX,
++                "remap_entry_to_ioapic_rte: ir_ctl is not ready\n");
++        return -EFAULT;
++    }
++
++    remap_rte = (struct IO_APIC_route_remap_entry *) old_rte;
++    index = (remap_rte->index_15 << 15) | remap_rte->index_0_14;
++
++    if ( index > ir_ctrl->iremap_index )
++    {
++        dprintk(XENLOG_ERR VTDPREFIX,
++                "%s: index (%d) is larger than remap table entry size (%d)!\n",
++                __func__, index, ir_ctrl->iremap_index);
++        return -EFAULT;
++    }
++
++    spin_lock_irqsave(&ir_ctrl->iremap_lock, flags);
++
++    iremap_entries =
++        (struct iremap_entry *)map_vtd_domain_page(ir_ctrl->iremap_maddr);
++    iremap_entry = &iremap_entries[index];
++
++    old_rte->vector = iremap_entry->lo.vector;
++    old_rte->delivery_mode = iremap_entry->lo.dlm;
++    old_rte->dest_mode = iremap_entry->lo.dm;
++    old_rte->trigger = iremap_entry->lo.tm;
++    old_rte->__reserved_2 = 0;
++    old_rte->dest.logical.__reserved_1 = 0;
++    old_rte->dest.logical.logical_dest = iremap_entry->lo.dst >> 8;
++
++    unmap_vtd_domain_page(iremap_entries);
++    spin_unlock_irqrestore(&ir_ctrl->iremap_lock, flags);
++    return 0;
++}
++
++static int ioapic_rte_to_remap_entry(struct iommu *iommu,
++    int apic_id, struct IO_xAPIC_route_entry *old_rte,
++    unsigned int rte_upper, unsigned int value)
++{
++    struct iremap_entry *iremap_entry = NULL, *iremap_entries;
++    struct iremap_entry new_ire;
++    struct IO_APIC_route_remap_entry *remap_rte;
++    struct IO_xAPIC_route_entry new_rte;
++    int index;
++    unsigned long flags;
++    struct ir_ctrl *ir_ctrl = iommu_ir_ctrl(iommu);
++
++    remap_rte = (struct IO_APIC_route_remap_entry *) old_rte;
++    spin_lock_irqsave(&ir_ctrl->iremap_lock, flags);
++
++    if ( remap_rte->format == 0 )
++    {
++        ir_ctrl->iremap_index++;
++        index = ir_ctrl->iremap_index;
++    }
++    else
++        index = (remap_rte->index_15 << 15) | remap_rte->index_0_14;
++
++    if ( index > IREMAP_ENTRY_NR - 1 )
++    {
++        dprintk(XENLOG_ERR VTDPREFIX,
++                "%s: intremap index (%d) is larger than"
++                " the maximum index (%ld)!\n",
++                __func__, index, IREMAP_ENTRY_NR - 1);
++        spin_unlock_irqrestore(&ir_ctrl->iremap_lock, flags);
++        return -EFAULT;
++    }
++
++    iremap_entries =
++        (struct iremap_entry *)map_vtd_domain_page(ir_ctrl->iremap_maddr);
++    iremap_entry = &iremap_entries[index];
++
++    memcpy(&new_ire, iremap_entry, sizeof(struct iremap_entry));
++
++    if ( rte_upper )
++    {
++#if defined(__i386__) || defined(__x86_64__)
++        new_ire.lo.dst = (value >> 24) << 8;
++#else /* __ia64__ */
++        new_ire.lo.dst = value >> 16;
++#endif
++    }
++    else
++    {
++        *(((u32 *)&new_rte) + 0) = value;
++        new_ire.lo.fpd = 0;
++        new_ire.lo.dm = new_rte.dest_mode;
++        new_ire.lo.rh = 0;
++        new_ire.lo.tm = new_rte.trigger;
++        new_ire.lo.dlm = new_rte.delivery_mode;
++        new_ire.lo.avail = 0;
++        new_ire.lo.res_1 = 0;
++        new_ire.lo.vector = new_rte.vector;
++        new_ire.lo.res_2 = 0;
++        new_ire.hi.sid = apicid_to_bdf(apic_id);
++
++        new_ire.hi.sq = 0;    /* comparing all 16-bit of SID */
++        new_ire.hi.svt = 1;   /* requestor ID verification SID/SQ */
++        new_ire.hi.res_1 = 0;
++        new_ire.lo.p = 1;     /* finally, set present bit */
++
++        /* now construct new ioapic rte entry */
++        remap_rte->vector = new_rte.vector;
++        remap_rte->delivery_mode = 0;    /* has to be 0 for remap format */
++        remap_rte->index_15 = (index >> 15) & 0x1;
++        remap_rte->index_0_14 = index & 0x7fff;
++
++        remap_rte->delivery_status = new_rte.delivery_status;
++        remap_rte->polarity = new_rte.polarity;
++        remap_rte->irr = new_rte.irr;
++        remap_rte->trigger = new_rte.trigger;
++        remap_rte->mask = new_rte.mask;
++        remap_rte->reserved = 0;
++        remap_rte->format = 1;    /* indicate remap format */
++    }
++
++    memcpy(iremap_entry, &new_ire, sizeof(struct iremap_entry));
++    iommu_flush_cache_entry(iremap_entry);
++    iommu_flush_iec_index(iommu, 0, index);
++    invalidate_sync(iommu);
++
++    unmap_vtd_domain_page(iremap_entries);
++    spin_unlock_irqrestore(&ir_ctrl->iremap_lock, flags);
++    return 0;
++}
++
++unsigned int io_apic_read_remap_rte(
++    unsigned int apic, unsigned int reg)
++{
++    struct IO_xAPIC_route_entry old_rte = { 0 };
++    struct IO_APIC_route_remap_entry *remap_rte;
++    int rte_upper = (reg & 1) ? 1 : 0;
++    struct iommu *iommu = ioapic_to_iommu(IO_APIC_ID(apic));
++    struct ir_ctrl *ir_ctrl = iommu_ir_ctrl(iommu);
++
++    if ( !iommu || !ir_ctrl || ir_ctrl->iremap_maddr == 0 ||
++         ir_ctrl->iremap_index == -1 )
++    {
++        *IO_APIC_BASE(apic) = reg;
++        return *(IO_APIC_BASE(apic)+4);
++    }
++
++    if ( rte_upper )
++        reg--;
++
++    /* read lower and upper 32-bits of rte entry */
++    *IO_APIC_BASE(apic) = reg;
++    *(((u32 *)&old_rte) + 0) = *(IO_APIC_BASE(apic)+4);
++    *IO_APIC_BASE(apic) = reg + 1;
++    *(((u32 *)&old_rte) + 1) = *(IO_APIC_BASE(apic)+4);
++
++    remap_rte = (struct IO_APIC_route_remap_entry *) &old_rte;
++
++    if ( (remap_rte->format == 0) || (old_rte.delivery_mode == dest_SMI) )
++    {
++        *IO_APIC_BASE(apic) = rte_upper ? (reg + 1) : reg;
++        return *(IO_APIC_BASE(apic)+4);
++    }
++
++    if ( remap_entry_to_ioapic_rte(iommu, &old_rte) )
++    {
++        *IO_APIC_BASE(apic) = rte_upper ? (reg + 1) : reg;
++        return *(IO_APIC_BASE(apic)+4);
++    }
++
++    if ( rte_upper )
++        return (*(((u32 *)&old_rte) + 1));
++    else
++        return (*(((u32 *)&old_rte) + 0));
++}
++
++void io_apic_write_remap_rte(
++    unsigned int apic, unsigned int reg, unsigned int value)
++{
++    struct IO_xAPIC_route_entry old_rte = { 0 };
++    struct IO_APIC_route_remap_entry *remap_rte;
++    unsigned int rte_upper = (reg & 1) ? 1 : 0;
++    struct iommu *iommu = ioapic_to_iommu(IO_APIC_ID(apic));
++    struct ir_ctrl *ir_ctrl = iommu_ir_ctrl(iommu);
++    int saved_mask;
++
++    if ( !iommu || !ir_ctrl || ir_ctrl->iremap_maddr == 0 )
++    {
++        *IO_APIC_BASE(apic) = reg;
++        *(IO_APIC_BASE(apic)+4) = value;
++        return;
++    }
++
++    if ( rte_upper )
++        reg--;
++
++    /* read both lower and upper 32-bits of rte entry */
++    *IO_APIC_BASE(apic) = reg;
++    *(((u32 *)&old_rte) + 0) = *(IO_APIC_BASE(apic)+4);
++    *IO_APIC_BASE(apic) = reg + 1;
++    *(((u32 *)&old_rte) + 1) = *(IO_APIC_BASE(apic)+4);
++
++    remap_rte = (struct IO_APIC_route_remap_entry *) &old_rte;
++
++    if ( old_rte.delivery_mode == dest_SMI )
++    {
++        /* Some BIOS does not zero out reserve fields in IOAPIC
++         * RTE's.  clear_IO_APIC() zeroes out all RTE's except for RTE
++         * with MSI delivery type.  This is a problem when the host
++         * OS converts SMI delivery type to some other type but leaving
++         * the reserved field uninitialized.  This can cause interrupt
++         * remapping table out of bound error if "format" field is 1
++         * and the "index" field has a value that that is larger than 
++         * the maximum index of interrupt remapping table.
++         */
++        if ( remap_rte->format == 1 )
++        {
++            remap_rte->format = 0;
++            *IO_APIC_BASE(apic) = reg;
++            *(IO_APIC_BASE(apic)+4) = *(((u32 *)&old_rte)+0);
++            *IO_APIC_BASE(apic) = reg + 1;
++            *(IO_APIC_BASE(apic)+4) = *(((u32 *)&old_rte)+1);
++        }
++
++        *IO_APIC_BASE(apic) = rte_upper ? (reg + 1) : reg;
++        *(IO_APIC_BASE(apic)+4) = value;
++        return;
++    }
++
++    /* mask the interrupt while we change the intremap table */
++    saved_mask = remap_rte->mask;
++    remap_rte->mask = 1;
++    *IO_APIC_BASE(apic) = reg;
++    *(IO_APIC_BASE(apic)+4) = *(((int *)&old_rte)+0);
++    remap_rte->mask = saved_mask;
++
++    if ( ioapic_rte_to_remap_entry(iommu, IO_APIC_ID(apic),
++                                   &old_rte, rte_upper, value) )
++    {
++        *IO_APIC_BASE(apic) = rte_upper ? (reg + 1) : reg;
++        *(IO_APIC_BASE(apic)+4) = value;
++        return;
++    }
++
++    /* write new entry to ioapic */
++    *IO_APIC_BASE(apic) = reg;
++    *(IO_APIC_BASE(apic)+4) = *(((u32 *)&old_rte)+0);
++    *IO_APIC_BASE(apic) = reg + 1;
++    *(IO_APIC_BASE(apic)+4) = *(((u32 *)&old_rte)+1);
++}
++
++int intremap_setup(struct iommu *iommu)
++{
++    struct ir_ctrl *ir_ctrl;
++    s_time_t start_time;
++
++    if ( !ecap_intr_remap(iommu->ecap) )
++        return -ENODEV;
++
++    ir_ctrl = iommu_ir_ctrl(iommu);
++    if ( ir_ctrl->iremap_maddr == 0 )
++    {
++        ir_ctrl->iremap_maddr = alloc_pgtable_maddr(NULL);
++        if ( ir_ctrl->iremap_maddr == 0 )
++        {
++            dprintk(XENLOG_WARNING VTDPREFIX,
++                    "Cannot allocate memory for ir_ctrl->iremap_maddr\n");
++            return -ENOMEM;
++        }
++        ir_ctrl->iremap_index = -1;
++    }
++
++#if defined(ENABLED_EXTENDED_INTERRUPT_SUPPORT)
++    /* set extended interrupt mode bit */
++    ir_ctrl->iremap_maddr |=
++            ecap_ext_intr(iommu->ecap) ? (1 << IRTA_REG_EIME_SHIFT) : 0;
++#endif
++    /* set size of the interrupt remapping table */
++    ir_ctrl->iremap_maddr |= IRTA_REG_TABLE_SIZE;
++    dmar_writeq(iommu->reg, DMAR_IRTA_REG, ir_ctrl->iremap_maddr);
++
++    /* set SIRTP */
++    iommu->gcmd |= DMA_GCMD_SIRTP;
++    dmar_writel(iommu->reg, DMAR_GCMD_REG, iommu->gcmd);
++
++    /* Make sure hardware complete it */
++    start_time = NOW();
++    while ( !(dmar_readl(iommu->reg, DMAR_GSTS_REG) & DMA_GSTS_SIRTPS) )
++    {
++        if ( NOW() > (start_time + DMAR_OPERATION_TIMEOUT) )
++        {
++            dprintk(XENLOG_ERR VTDPREFIX,
++                    "Cannot set SIRTP field for interrupt remapping\n");
++            return -ENODEV;
++        }
++        cpu_relax();
++    }
++
++    /* enable comaptiblity format interrupt pass through */
++    iommu->gcmd |= DMA_GCMD_CFI;
++    dmar_writel(iommu->reg, DMAR_GCMD_REG, iommu->gcmd);
++
++    start_time = NOW();
++    while ( !(dmar_readl(iommu->reg, DMAR_GSTS_REG) & DMA_GSTS_CFIS) )
++    {
++        if ( NOW() > (start_time + DMAR_OPERATION_TIMEOUT) )
++        {
++            dprintk(XENLOG_ERR VTDPREFIX,
++                    "Cannot set CFI field for interrupt remapping\n");
++            return -ENODEV;
++        }
++        cpu_relax();
++    }
++
++    /* enable interrupt remapping hardware */
++    iommu->gcmd |= DMA_GCMD_IRE;
++    dmar_writel(iommu->reg, DMAR_GCMD_REG, iommu->gcmd);
++
++    start_time = NOW();
++    while ( !(dmar_readl(iommu->reg, DMAR_GSTS_REG) & DMA_GSTS_IRES) )
++    {
++        if ( NOW() > (start_time + DMAR_OPERATION_TIMEOUT) )
++        {
++            dprintk(XENLOG_ERR VTDPREFIX,
++                    "Cannot set IRE field for interrupt remapping\n");
++            return -ENODEV;
++        }
++        cpu_relax();
++    }
++
++    /* After set SIRTP, we should do globally invalidate the IEC */
++    iommu_flush_iec_global(iommu);
++
++    return 0;
++}
+diff --git a/drivers/passthrough/vtd/iommu.c b/drivers/passthrough/vtd/iommu.c
+index e297195..1d89c1b 100644
+--- a/drivers/passthrough/vtd/iommu.c
++++ b/drivers/passthrough/vtd/iommu.c
+@@ -86,6 +86,7 @@ static struct intel_iommu *alloc_intel_iommu(void)
+ 
+     spin_lock_init(&intel->qi_ctrl.qinval_lock);
+     spin_lock_init(&intel->qi_ctrl.qinval_poll_lock);
++    spin_lock_init(&intel->ir_ctrl.iremap_lock);
+ 
+     return intel;
+ }
+@@ -100,6 +101,11 @@ struct qi_ctrl *iommu_qi_ctrl(struct iommu *iommu)
+     return iommu ? &iommu->intel->qi_ctrl : NULL;
+ }
+ 
++struct ir_ctrl *iommu_ir_ctrl(struct iommu *iommu)
++{
++    return iommu ? &iommu->intel->ir_ctrl : NULL;
++}
++
+ struct iommu_flush *iommu_get_flush(struct iommu *iommu)
+ {
+     return iommu ? &iommu->intel->flush : NULL;
+@@ -1681,6 +1687,14 @@ static int init_vtd_hw(void)
+                     "Queued Invalidation hardware not found\n");
+     }
+ 
++    for_each_drhd_unit ( drhd )
++    {
++        iommu = drhd->iommu;
++        if ( intremap_setup(iommu) != 0 )
++            dprintk(XENLOG_INFO VTDPREFIX,
++                    "Interrupt Remapping hardware not found\n");
++    }
++
+     return 0;
+ }
+ 
+diff --git a/drivers/passthrough/vtd/iommu.h b/drivers/passthrough/vtd/iommu.h
+index 5a7d69f..63bb446 100644
+--- a/drivers/passthrough/vtd/iommu.h
++++ b/drivers/passthrough/vtd/iommu.h
+@@ -383,6 +383,45 @@ struct poll_info {
+ #define IEC_GLOBAL_INVL         0
+ #define IEC_INDEX_INVL          1
+ 
++/* interrupt remap entry */
++struct iremap_entry {
++  union {
++    u64 lo_val;
++    struct {
++        u64 p       : 1,
++            fpd     : 1,
++            dm      : 1,
++            rh      : 1,
++            tm      : 1,
++            dlm     : 3,
++            avail   : 4,
++            res_1   : 4,
++            vector  : 8,
++            res_2   : 8,
++            dst     : 32;
++    }lo;
++  };
++  union {
++    u64 hi_val;
++    struct {
++        u64 sid     : 16,
++            sq      : 2,
++            svt     : 2,
++            res_1   : 44;
++    }hi;
++  };
++};
++#define IREMAP_ENTRY_NR (PAGE_SIZE_4K/sizeof(struct iremap_entry))
++#define iremap_present(v) ((v).lo & 1)
++#define iremap_fault_disable(v) (((v).lo >> 1) & 1)
++
++#define iremap_set_present(v) do {(v).lo |= 1;} while(0)
++#define iremap_clear_present(v) do {(v).lo &= ~1;} while(0)
++
++#define IRTA_REG_EIME_SHIFT     11
++#define IRTA_REG_TABLE_SIZE     7    // 4k page = 256 * 16 byte entries
++                                     // 2^^(IRTA_REG_TABLE_SIZE + 1) = 256
++                                     // IRTA_REG_TABLE_SIZE = 7
+ 
+ #define VTD_PAGE_TABLE_LEVEL_3  3
+ #define VTD_PAGE_TABLE_LEVEL_4  4
+@@ -409,9 +448,16 @@ struct qi_ctrl {
+     volatile u32 qinval_poll_status;     /* used by poll methord to sync */
+ };
+ 
++struct ir_ctrl {
++    u64 iremap_maddr;            /* interrupt remap table machine address */
++    int iremap_index;            /* interrupt remap index */
++    spinlock_t iremap_lock;      /* lock for irq remappping table */
++};
++
+ struct intel_iommu {
+     struct iommu_flush flush;
+     struct qi_ctrl qi_ctrl;
++    struct ir_ctrl ir_ctrl;
+ };
+ 
+ #endif
+diff --git a/include/asm-x86/io_apic.h b/include/asm-x86/io_apic.h
+index e8e102a..3a2a0d4 100644
+--- a/include/asm-x86/io_apic.h
++++ b/include/asm-x86/io_apic.h
+@@ -6,6 +6,7 @@
+ #include <asm/mpspec.h>
+ #include <asm/apicdef.h>
+ #include <asm/fixmap.h>
++#include <xen/iommu.h>
+ 
+ /*
+  * Intel IO-APIC support for SMP and UP systems.
+@@ -19,6 +20,8 @@
+ 		((volatile int *)(__fix_to_virt(FIX_IO_APIC_BASE_0 + idx) \
+ 		+ (mp_ioapics[idx].mpc_apicaddr & ~PAGE_MASK)))
+ 
++#define IO_APIC_ID(idx) (mp_ioapics[idx].mpc_apicid)
++
+ /*
+  * The structure of the IO-APIC:
+  */
+@@ -122,14 +125,23 @@ extern struct mpc_config_intsrc mp_irqs[MAX_IRQ_SOURCES];
+ /* non-0 if default (table-less) MP configuration */
+ extern int mpc_default_type;
+ 
++/* Only need to remap ioapic RTE (reg: 10~3Fh) */
++#define ioapic_reg_remapped(reg) (iommu_enabled && ((reg) >= 0x10))
++
+ static inline unsigned int io_apic_read(unsigned int apic, unsigned int reg)
+ {
++    if (ioapic_reg_remapped(reg))
++        return io_apic_read_remap_rte(apic, reg);
++
+ 	*IO_APIC_BASE(apic) = reg;
+ 	return *(IO_APIC_BASE(apic)+4);
+ }
+ 
+ static inline void io_apic_write(unsigned int apic, unsigned int reg, unsigned int value)
+ {
++    if (ioapic_reg_remapped(reg))
++        return io_apic_write_remap_rte(apic, reg, value);
++
+ 	*IO_APIC_BASE(apic) = reg;
+ 	*(IO_APIC_BASE(apic)+4) = value;
+ }
+@@ -147,6 +159,9 @@ extern int sis_apic_bug;
+ #endif
+ static inline void io_apic_modify(unsigned int apic, unsigned int reg, unsigned int value)
+ {
++    if (ioapic_reg_remapped(reg))
++        return io_apic_write_remap_rte(apic, reg, value);
++
+ 	if (sis_apic_bug)
+ 		*IO_APIC_BASE(apic) = reg;
+ 	*(IO_APIC_BASE(apic)+4) = value;
+diff --git a/include/xen/iommu.h b/include/xen/iommu.h
+index 0be9909..e9aa08d 100644
+--- a/include/xen/iommu.h
++++ b/include/xen/iommu.h
+@@ -80,6 +80,7 @@ void io_apic_write_remap_rte(unsigned int apic,
+ 
+ struct iommu_flush *iommu_get_flush(struct iommu *iommu);
+ struct qi_ctrl *iommu_qi_ctrl(struct iommu *iommu);
++struct ir_ctrl *iommu_ir_ctrl(struct iommu *iommu);
+ void hvm_dpci_isairq_eoi(struct domain *d, unsigned int isairq);
+ struct hvm_irq_dpci *domain_get_irq_dpci(struct domain *domain);
+ int domain_set_irq_dpci(struct domain *domain, struct hvm_irq_dpci *dpci);

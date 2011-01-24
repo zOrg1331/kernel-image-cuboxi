@@ -1,0 +1,54 @@
+From: Rob Evers <revers@redhat.com>
+Date: Mon, 4 Jan 2010 22:52:18 -0500
+Subject: [scsi] lpfc: Fix hbq buff adds to receive queue
+Message-id: <20100104225225.24386.86307.sendpatchset@localhost.localdomain>
+Patchwork-id: 22302
+O-Subject: [RHEL5.5 PATCH 10/18] Fixed hbq buff adds to receive queue.
+Bugzilla: 549763
+RH-Acked-by: Tomas Henzl <thenzl@redhat.com>
+RH-Acked-by: Mike Christie <mchristi@redhat.com>
+
+https://bugzilla.redhat.com/show_bug.cgi?id=549763
+
+Fixed hbq buff adds to receive queue.
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/scsi/lpfc/lpfc_sli.c b/drivers/scsi/lpfc/lpfc_sli.c
+index 07033e9..647e352 100644
+--- a/drivers/scsi/lpfc/lpfc_sli.c
++++ b/drivers/scsi/lpfc/lpfc_sli.c
+@@ -1356,13 +1356,13 @@ lpfc_sli_hbq_to_firmware_s4(struct lpfc_hba *phba, uint32_t hbqno,
+ /* HBQ for ELS and CT traffic. */
+ static struct lpfc_hbq_init lpfc_els_hbq = {
+ 	.rn = 1,
+-	.entry_count = 200,
++	.entry_count = 256,
+ 	.mask_count = 0,
+ 	.profile = 0,
+ 	.ring_mask = (1 << LPFC_ELS_RING),
+ 	.buffer_count = 0,
+-	.init_count = 40,
+-	.add_count = 40,
++	.init_count = 256,
++	.add_count = 0,
+ };
+ 
+ static struct lpfc_hbq_init lpfc_extra_hbq = {
+@@ -11494,14 +11494,9 @@ lpfc_sli4_handle_received_buffer(struct lpfc_hba *phba,
+ 		return;
+ 	}
+ 	/* If not last frame in sequence continue processing frames. */
+-	if (!lpfc_seq_complete(seq_dmabuf)) {
+-		/*
+-		 * When saving off frames post a new one and mark this
+-		 * frame to be freed when it is finished.
+-		 **/
+-		lpfc_sli_hbqbuf_fill_hbqs(phba, LPFC_ELS_HBQ, 1);
++	if (!lpfc_seq_complete(seq_dmabuf))
+ 		return;
+-	}
++
+ 	/* Send the complete sequence to the upper layer protocol */
+ 	lpfc_sli4_send_seq_to_ulp(vport, seq_dmabuf);
+ }

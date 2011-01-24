@@ -14,7 +14,6 @@
 #include <linux/sched.h>
 #include <linux/pci.h>
 #include <linux/ioport.h>
-#include <linux/timex.h>
 #include <linux/init.h>
 
 #include <asm/ptrace.h>
@@ -66,7 +65,7 @@ ruffian_init_irq(void)
 	common_init_isa_dma();
 }
 
-#define RUFFIAN_LATCH	DIV_ROUND_CLOSEST(PIT_TICK_RATE, HZ)
+#define RUFFIAN_LATCH	((PIT_TICK_RATE + HZ / 2) / HZ)
 
 static void __init
 ruffian_init_rtc(void)
@@ -161,7 +160,7 @@ ruffian_swizzle(struct pci_dev *dev, u8 *pinp)
 				slot = PCI_SLOT(dev->devfn) + 10;
 				break;
 			}
-			pin = pci_swizzle_interrupt_pin(dev, pin);
+			pin = bridge_swizzle(pin, PCI_SLOT(dev->devfn));
 
 			/* Move up the chain of bridges.  */
 			dev = dev->bus->self;

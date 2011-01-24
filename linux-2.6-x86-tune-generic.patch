@@ -1,0 +1,11 @@
+--- linux-2.6.15/arch/i386/Makefile.cpu~	2006-01-09 11:39:04.000000000 -0500
++++ linux-2.6.15/arch/i386/Makefile.cpu	2006-01-09 11:39:36.000000000 -0500
+@@ -15,7 +15,7 @@ cflags-$(CONFIG_M486)		+= -march=i486
+ cflags-$(CONFIG_M586)		+= -march=i586
+ cflags-$(CONFIG_M586TSC)	+= -march=i586
+ cflags-$(CONFIG_M586MMX)	+= -march=pentium-mmx
+-cflags-$(CONFIG_M686)		+= -march=i686
++cflags-$(CONFIG_M686)		+= -march=i686 $(call tune,generic)
+ cflags-$(CONFIG_MPENTIUMII)	+= -march=i686 $(call tune,pentium2)
+ cflags-$(CONFIG_MPENTIUMIII)	+= -march=i686 $(call tune,pentium3)
+ cflags-$(CONFIG_MPENTIUMM)	+= -march=i686 $(call tune,pentium3)

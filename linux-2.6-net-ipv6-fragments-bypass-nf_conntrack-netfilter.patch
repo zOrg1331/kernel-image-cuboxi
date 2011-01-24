@@ -1,0 +1,43 @@
+From: Thomas Graf <tgraf@redhat.com>
+Subject: [RHEL5.0 BZ234288]: CVE-2007-1497 IPv6 fragments bypass in nf_conntrack netfilter code
+Date: Thu, 3 May 2007 14:03:14 +0200
+Bugzilla: 234288
+Message-Id: <20070503120314.GB4398@lsx.localdomain>
+Changelog: [net] IPv6 fragments bypass in nf_conntrack netfilter code
+
+
+Fixes IPv6 fragments bypass issue in the conntracking code. The
+patch has been merged into the stable tree already. Please ACK.
+
+commit 868f0120e0f93d070ea7f3e969c09dbab8ad7bc7
+Author: Patrick McHardy <kaber@trash.net>
+
+    nf_conntrack: fix incorrect classification of IPv6 fragments as ESTABLISHED
+    
+    [NETFILTER]: nf_conntrack: fix incorrect classification of IPv6 fragments as ESTABLISHED
+    
+    The individual fragments of a packet reassembled by conntrack have the
+    conntrack reference from the reassembled packet attached, but nfctinfo
+    is not copied. This leaves it initialized to 0, which unfortunately is
+    the value of IP_CT_ESTABLISHED.
+    
+    The result is that all IPv6 fragments are tracked as ESTABLISHED,
+    allowing them to bypass a usual ruleset which accepts ESTABLISHED
+    packets early.
+    
+    Signed-off-by: Patrick McHardy <kaber@trash.net>
+    Signed-off-by: Greg Kroah-Hartman <gregkh@suse.de>
+
+Index: linux-2.6.18.noarch/net/ipv6/netfilter/nf_conntrack_l3proto_ipv6.c
+===================================================================
+--- linux-2.6.18.noarch.orig/net/ipv6/netfilter/nf_conntrack_l3proto_ipv6.c	2006-09-20 05:42:06.000000000 +0200
++++ linux-2.6.18.noarch/net/ipv6/netfilter/nf_conntrack_l3proto_ipv6.c	2007-05-02 22:26:11.000000000 +0200
+@@ -264,6 +264,7 @@ static unsigned int ipv6_conntrack_in(un
+ 		}
+ 		nf_conntrack_get(reasm->nfct);
+ 		(*pskb)->nfct = reasm->nfct;
++		(*pskb)->nfctinfo = reasm->nfctinfo;
+ 		return NF_ACCEPT;
+ 	}
+ 
+

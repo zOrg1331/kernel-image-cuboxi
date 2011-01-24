@@ -18,27 +18,32 @@
  * You should have received a copy of the GNU General Public License
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+ *
+ * Modifications:
+ *     08-Jan-2003 BJD  Moved from central IRQ code
+ *     21-Aug-2005 BJD  Fixed missing code and compile errors
 */
 
 
 #include <linux/init.h>
 #include <linux/module.h>
 #include <linux/ioport.h>
+#include <linux/ptrace.h>
 #include <linux/sysdev.h>
-#include <linux/io.h>
 
 #include <asm/mach-types.h>
 
-#include <mach/hardware.h>
+#include <asm/hardware.h>
 #include <asm/irq.h>
+#include <asm/io.h>
 
 #include <asm/mach/irq.h>
 
-#include <mach/regs-irq.h>
-#include <mach/bast-map.h>
-#include <mach/bast-irq.h>
+#include <asm/arch/regs-irq.h>
+#include <asm/arch/bast-map.h>
+#include <asm/arch/bast-irq.h>
 
-#include <plat/irq.h>
+#include "irq.h"
 
 #if 0
 #include <asm/debug-ll.h>
@@ -87,7 +92,7 @@ bast_pc104_mask(unsigned int irqno)
 static void
 bast_pc104_maskack(unsigned int irqno)
 {
-	struct irq_desc *desc = irq_desc + IRQ_ISA;
+	struct irqdesc *desc = irq_desc + IRQ_ISA;
 
 	bast_pc104_mask(irqno);
 	desc->chip->ack(IRQ_ISA);
@@ -103,7 +108,7 @@ bast_pc104_unmask(unsigned int irqno)
 	__raw_writeb(temp, BAST_VA_PC104_IRQMASK);
 }
 
-static struct irq_chip  bast_pc104_chip = {
+static struct irqchip  bast_pc104_chip = {
 	.mask	     = bast_pc104_mask,
 	.unmask	     = bast_pc104_unmask,
 	.ack	     = bast_pc104_maskack
@@ -111,7 +116,8 @@ static struct irq_chip  bast_pc104_chip = {
 
 static void
 bast_irq_pc104_demux(unsigned int irq,
-		     struct irq_desc *desc)
+		     struct irqdesc *desc,
+		     struct pt_regs *regs)
 {
 	unsigned int stat;
 	unsigned int irqno;
@@ -130,7 +136,8 @@ bast_irq_pc104_demux(unsigned int irq,
 		for (i = 0; stat != 0; i++, stat >>= 1) {
 			if (stat & 1) {
 				irqno = bast_pc104_irqs[i];
-				generic_handle_irq(irqno);
+				desc = irq_desc + irqno;
+				desc_handle_irq(irqno, desc, regs);
 			}
 		}
 	}
@@ -155,7 +162,7 @@ static __init int bast_irq_init(void)
 			unsigned int irqno = bast_pc104_irqs[i];
 
 			set_irq_chip(irqno, &bast_pc104_chip);
-			set_irq_handler(irqno, handle_level_irq);
+			set_irq_handler(irqno, do_level_IRQ);
 			set_irq_flags(irqno, IRQF_VALID);
 		}
 	}

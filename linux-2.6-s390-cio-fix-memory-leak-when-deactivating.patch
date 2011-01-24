@@ -1,0 +1,48 @@
+From: Hans-Joachim Picht <hpicht@redhat.com>
+Date: Tue, 30 Oct 2007 17:02:15 +0100
+Subject: [s390] cio: fix memory leak when deactivating
+Message-id: 20071030160215.GC6604@redhat.com
+O-Subject: [RHEL5.2 PATCH 3/5] s390 cio: Memory leak when continuously activate & deactivate of Channel Path Measurement Data.
+Bugzilla: 213272
+
+Problem:
+=========
+
+We run into a memory leak when continuously activating & deactivating
+channel path  measurement data. This also happens when cpus and zfcp
+are set online &  offline
+Pages were allocated but not freed when the measurement ends.
+
+Bugzilla
+=========
+
+BZ 213272
+https://bugzilla.redhat.com/show_bug.cgi?id=213272
+
+Upstream status of the patch:
+=============================
+Fix included in git as commit 8c4941c53b14e5a08ed2f270e9f087b410a9abcc
+
+Test status:
+============
+Kernel with patch was built and successfully tested
+
+Please ACK.
+
+With best regards,
+
+Hans
+
+diff --git a/drivers/s390/cio/chsc.c b/drivers/s390/cio/chsc.c
+index b941d4a..9b58c5d 100644
+--- a/drivers/s390/cio/chsc.c
++++ b/drivers/s390/cio/chsc.c
+@@ -1134,7 +1134,7 @@ chsc_secm(struct channel_subsystem *css, int enable)
+ 		} else
+ 			chsc_remove_cmg_attr(css);
+ 	}
+-	if (enable && !css->cm_enabled) {
++	if (!css->cm_enabled) {
+ 		free_page((unsigned long)css->cub_addr1);
+ 		free_page((unsigned long)css->cub_addr2);
+ 	}

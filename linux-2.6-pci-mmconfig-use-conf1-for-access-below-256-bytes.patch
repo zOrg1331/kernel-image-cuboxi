@@ -1,0 +1,263 @@
+From: Tony Camuso <tcamuso@redhat.com>
+Date: Fri, 6 Jun 2008 14:02:18 -0400
+Subject: [pci] mmconfig: use conf1 for access below 256 bytes
+Message-id: 48497BAA.8020502@redhat.com
+O-Subject: [RHEL5.3 PATCH 3/3] PCI MMCONFIG: Always use conf1 to access config space below 256 bytes
+Bugzilla: 441615 251493
+RH-Acked-by: Alan Cox <alan@redhat.com>
+
+commit b369611677d61a1a592c6f8c599d7dd8c485064f
+Author: Tony Camuso <tony.camuso@hp.com>
+Date:   Tue Jun 3 14:51:04 2008 -0400
+
+     PCI always use conf1 to access config space below 256 bytes
+
+     This patch eliminates all known mmconfig problems by using the
+     conf1 mechanism to access PCI config space below 256 bytes.
+
+     Upstream commit: a0ca9909609470ad779b9b9cc68ce96e975afff7
+
+  arch/i386/pci/mmconfig.c   |   57 +++++++-------------------------------------
+  arch/i386/pci/pci.h        |    8 ------
+  arch/x86_64/pci/mmconfig.c |   51 +++++++-------------------------------
+  3 files changed, 19 insertions(+), 97 deletions(-)
+
+     Signed-off-by: Tony Camuso <tcamuso@redhat.com>
+
+diff --git a/arch/i386/pci/mmconfig.c b/arch/i386/pci/mmconfig.c
+index 4542946..1d4a73d 100644
+--- a/arch/i386/pci/mmconfig.c
++++ b/arch/i386/pci/mmconfig.c
+@@ -25,8 +25,6 @@
+ /* The base address of the last MMCONFIG device accessed */
+ static u32 mmcfg_last_accessed_device;
+ 
+-static DECLARE_BITMAP(fallback_slots, MAX_CHECK_BUS*32);
+-
+ /*
+  * Functions for accessing PCI configuration space with MMCONFIG accesses
+  */
+@@ -35,10 +33,6 @@ static u32 get_base_addr(unsigned int seg, int bus, unsigned devfn)
+ 	int cfg_num = -1;
+ 	struct acpi_table_mcfg_config *cfg;
+ 
+-	if (seg == 0 && bus < MAX_CHECK_BUS &&
+-	    test_bit(PCI_SLOT(devfn) + 32*bus, fallback_slots))
+-		return 0;
+-
+ 	while (1) {
+ 		++cfg_num;
+ 		if (cfg_num >= pci_mmcfg_config_num) {
+@@ -81,13 +75,16 @@ static int pci_mmcfg_read(unsigned int seg, unsigned int bus,
+ 	u32 base;
+ 
+ 	if ((bus > 255) || (devfn > 255) || (reg > 4095)) {
+-		*value = -1;
++err:		*value = -1;
+ 		return -EINVAL;
+ 	}
+ 
++	if (reg < 256)
++		return pci_conf1_read(seg,bus,devfn,reg,len,value);
++
+ 	base = get_base_addr(seg, bus, devfn);
+ 	if (!base)
+-		return pci_conf1_read(seg,bus,devfn,reg,len,value);
++		goto err;
+ 
+ 	spin_lock_irqsave(&pci_config_lock, flags);
+ 
+@@ -119,9 +116,12 @@ static int pci_mmcfg_write(unsigned int seg, unsigned int bus,
+ 	if ((bus > 255) || (devfn > 255) || (reg > 4095)) 
+ 		return -EINVAL;
+ 
++	if (reg < 256)
++		return pci_conf1_write(seg,bus,devfn,reg,len,value);
++
+ 	base = get_base_addr(seg, bus, devfn);
+ 	if (!base)
+-		return pci_conf1_write(seg,bus,devfn,reg,len,value);
++		return -EINVAL;
+ 
+ 	spin_lock_irqsave(&pci_config_lock, flags);
+ 
+@@ -149,46 +149,8 @@ static struct pci_raw_ops pci_mmcfg = {
+ 	.write =	pci_mmcfg_write,
+ };
+ 
+-/* K8 systems have some devices (typically in the builtin northbridge)
+-   that are only accessible using type1
+-   Normally this can be expressed in the MCFG by not listing them
+-   and assigning suitable _SEGs, but this isn't implemented in some BIOS.
+-   Instead try to discover all devices on bus 0 that are unreachable using MM
+-   and fallback for them. */
+-static __init void unreachable_devices(void)
+-{
+-	int i, k;
+-	unsigned long flags;
+-
+-	for (k = 0; k < MAX_CHECK_BUS; k++) {
+-		for (i = 0; i < 32; i++) {
+-			u32 val1;
+-			u32 addr;
+-
+-			pci_conf1_read(0, k, PCI_DEVFN(i, 0), 0, 4, &val1);
+-			if (val1 == 0xffffffff)
+-				continue;
+-
+-			/* Locking probably not needed, but safer */
+-			spin_lock_irqsave(&pci_config_lock, flags);
+-			addr = get_base_addr(0, k, PCI_DEVFN(i, 0));
+-			if (addr != 0)
+-				pci_exp_set_dev_base(addr, k, PCI_DEVFN(i, 0));
+-			if (addr == 0 ||
+-			    readl((u32 __iomem *)mmcfg_virt_addr) != val1) {
+-				set_bit(i + 32*k, fallback_slots);
+-				printk(KERN_NOTICE
+-			"PCI: No mmconfig possible on %x:%x\n", k, i);
+-			}
+-			spin_unlock_irqrestore(&pci_config_lock, flags);
+-		}
+-	}
+-}
+-
+ void __init pci_mmcfg_init(void)
+ {
+-	dmi_check_system(nommconf_dmi_table);
+-
+ 	if ((pci_probe & PCI_PROBE_MMCONF) == 0)
+ 		return;
+ 
+@@ -211,5 +173,4 @@ void __init pci_mmcfg_init(void)
+ 	raw_pci_ops = &pci_mmcfg;
+ 	pci_probe = pci_probe & ~PCI_PROBE_MASK;
+ 	pci_probe = pci_probe | PCI_PROBE_MMCONF | PCI_USING_MMCONF;
+-	unreachable_devices();
+ }
+diff --git a/arch/i386/pci/pci.h b/arch/i386/pci/pci.h
+index 301a7a5..932f39e 100644
+--- a/arch/i386/pci/pci.h
++++ b/arch/i386/pci/pci.h
+@@ -30,14 +30,6 @@
+ #define PCI_USING_MMCONF	0x20000
+ #define PCI_NOASSIGN_ROMS	0x40000
+ 
+-/*
+- * The first 16 buses are checked for MMCONF compliance. A bitmap is
+- * created and checked on every pci config access to these buses in
+- * systems having MMCONF as the system-wide default pci config access
+- * mechanism.
+- */
+-#define MAX_CHECK_BUS 16
+-
+ extern unsigned int pci_probe;
+ extern unsigned long pirq_table_addr;
+ 
+diff --git a/arch/x86_64/pci/mmconfig.c b/arch/x86_64/pci/mmconfig.c
+index 4987502..ec40acb 100644
+--- a/arch/x86_64/pci/mmconfig.c
++++ b/arch/x86_64/pci/mmconfig.c
+@@ -18,8 +18,6 @@
+ #define MMCONFIG_APER_MIN	(2 * 1024*1024)
+ #define MMCONFIG_APER_MAX	(256 * 1024*1024)
+ 
+-static DECLARE_BITMAP(fallback_slots, 32*MAX_CHECK_BUS);
+-
+ /* Static virtual mapping of the MMCONFIG aperture */
+ struct mmcfg_virt {
+ 	struct acpi_table_mcfg_config *cfg;
+@@ -60,9 +58,7 @@ static char __iomem *get_virt(unsigned int seg, unsigned bus)
+ static char __iomem *pci_dev_base(unsigned int seg, unsigned int bus, unsigned int devfn)
+ {
+ 	char __iomem *addr;
+-	if (seg == 0 && bus < MAX_CHECK_BUS &&
+-		test_bit(32*bus + PCI_SLOT(devfn), fallback_slots))
+-		return NULL;
++
+ 	addr = get_virt(seg, bus);
+ 	if (!addr)
+ 		return NULL;
+@@ -76,13 +72,16 @@ static int pci_mmcfg_read(unsigned int seg, unsigned int bus,
+ 
+ 	/* Why do we have this when nobody checks it. How about a BUG()!? -AK */
+ 	if (unlikely((bus > 255) || (devfn > 255) || (reg > 4095))) {
+-		*value = -1;
++err:		*value = -1;
+ 		return -EINVAL;
+ 	}
+ 
++	if (reg < 256)
++		return pci_conf1_read(seg,bus,devfn,reg,len,value);
++
+ 	addr = pci_dev_base(seg, bus, devfn);
+ 	if (!addr)
+-		return pci_conf1_read(seg,bus,devfn,reg,len,value);
++		goto err;
+ 
+ 	switch (len) {
+ 	case 1:
+@@ -108,9 +107,12 @@ static int pci_mmcfg_write(unsigned int seg, unsigned int bus,
+ 	if (unlikely((bus > 255) || (devfn > 255) || (reg > 4095)))
+ 		return -EINVAL;
+ 
++	if (reg < 256)
++		return pci_conf1_write(seg,bus,devfn,reg,len,value);
++
+ 	addr = pci_dev_base(seg, bus, devfn);
+ 	if (!addr)
+-		return pci_conf1_write(seg,bus,devfn,reg,len,value);
++		return -EINVAL;
+ 
+ 	switch (len) {
+ 	case 1:
+@@ -132,41 +134,10 @@ static struct pci_raw_ops pci_mmcfg = {
+ 	.write =	pci_mmcfg_write,
+ };
+ 
+-/* K8 systems have some devices (typically in the builtin northbridge)
+-   that are only accessible using type1
+-   Normally this can be expressed in the MCFG by not listing them
+-   and assigning suitable _SEGs, but this isn't implemented in some BIOS.
+-   Instead try to discover all devices on bus 0 that are unreachable using MM
+-   and fallback for them. */
+-static __init void unreachable_devices(void)
+-{
+-	int i, k;
+-	/* Use the max bus number from ACPI here? */
+-	for (k = 0; k < MAX_CHECK_BUS; k++) {
+-		for (i = 0; i < 32; i++) {
+-			u32 val1;
+-			char __iomem *addr;
+-
+-			pci_conf1_read(0, k, PCI_DEVFN(i,0), 0, 4, &val1);
+-			if (val1 == 0xffffffff)
+-				continue;
+-			addr = pci_dev_base(0, k, PCI_DEVFN(i, 0));
+-			if (addr == NULL|| readl(addr) != val1) {
+-				set_bit(i + 32*k, fallback_slots);
+-				printk(KERN_NOTICE
+-				"PCI: No mmconfig possible on device %x:%x\n",
+-					k, i);
+-			}
+-		}
+-	}
+-}
+-
+ void __init pci_mmcfg_init(void)
+ {
+ 	int i;
+ 
+-	dmi_check_system(nommconf_dmi_table);
+-
+ 	if ((pci_probe & PCI_PROBE_MMCONF) == 0)
+ 		return;
+ 
+@@ -203,8 +174,6 @@ void __init pci_mmcfg_init(void)
+ 		printk(KERN_INFO "PCI: Using MMCONFIG at %x\n", pci_mmcfg_config[i].base_address);
+ 	}
+ 
+-	unreachable_devices();
+-
+ 	raw_pci_ops = &pci_mmcfg;
+ 	pci_probe = pci_probe & ~PCI_PROBE_MASK;
+ 	pci_probe = pci_probe | PCI_PROBE_MMCONF | PCI_USING_MMCONF;

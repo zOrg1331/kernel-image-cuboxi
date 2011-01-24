@@ -1,0 +1,62 @@
+From: "Janice M. Girouard" <jgirouar@redhat.com>
+Subject: [RHEL 5.0 PPC PATCH] RHBZ# 216972: LTC29004-RHEL5 illegal instruction  errors during install on P6
+Date: Tue, 28 Nov 2006 09:27:42 -0500 (Eastern Standard Time)
+Bugzilla: 216972
+Message-Id: <Pine.WNT.4.64.0611280925300.4760@IBM-3MTQI3AXJFW>
+Changelog: power6: illegal instruction errors during install
+
+
+
+RHBZ#:
+------
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=216972
+
+Description:
+------------
+RHEL5 Milestone 8 (1027 build) contains power6-optimized glibc libraries 
+which fail in compatibility/architected mode, the default mode for LPARS 
+on power6. These libraries result in illegal instruction errors in 64-bit 
+applications.
+
+When booting a Power6 in compat mode, the DFP bit must be set in the 
+client architecture call, or else firmware will downgrade the compliance to 
+P5 compat mode, thus removing VMX and DFP instructions.
+
+RHEL Version Found:
+-------------------
+RHLE5 Milestone 8.
+
+Upstream Status:
+----------------
+This is already in the powerpc.git tree.   See:
+http://ozlabs.org/pipermail/linuxppc-dev/2006-November/028535.html
+
+Test Status:
+------------
+Tested by Jake Moilanen at IBM and builds cleanly against 
+kernel-2.6.18-1.2747.el5.
+
+
+Proposed Patch:
+----------------
+Index: latest/arch/powerpc/kernel/prom_init.c
+===================================================================
+--- latest.orig/arch/powerpc/kernel/prom_init.c
++++ latest/arch/powerpc/kernel/prom_init.c
+@@ -627,6 +627,7 @@ static void __init early_cmdline_parse(v
+ /* Option vector 3: processor options supported */
+ #define OV3_FP			0x80	/* floating point */
+ #define OV3_VMX			0x40	/* VMX/Altivec */
++#define OV3_DFP			0x20	/* decimal floating point */
+ 
+ /* Option vector 5: PAPR/OF options supported */
+ #define OV5_LPAR		0x80	/* logical partitioning supported */
+@@ -668,7 +669,7 @@ static unsigned char ibm_architecture_ve
+ 	/* option vector 3: processor options supported */
+ 	3 - 2,				/* length */
+ 	0,				/* don't ignore, don't halt */
+-	OV3_FP | OV3_VMX,
++	OV3_FP | OV3_VMX | OV3_DFP,
+ 
+ 	/* option vector 4: IBM PAPR implementation */
+ 	2 - 2,				/* length */

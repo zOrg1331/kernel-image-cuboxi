@@ -45,7 +45,7 @@ static const char version[] =
 #define AC_NIC_BASE	0x00
 #define AC_SA_PROM	0x16			/* The station address PROM. */
 #define AC_ADDR0	0x00			/* Prefix station address values. */
-#define AC_ADDR1	0x40
+#define AC_ADDR1	0x40			
 #define AC_ADDR2	0x90
 #define AC_ID_PORT	0xC80
 #define AC_EISA_ID	0x0110d305
@@ -89,7 +89,7 @@ static void ac_get_8390_hdr(struct net_device *dev, struct e8390_pkt_hdr *hdr,
 					int ring_page);
 
 static int ac_close_card(struct net_device *dev);
-
+
 
 /*	Probe for the AC3200.
 
@@ -102,6 +102,8 @@ static int __init do_ac3200_probe(struct net_device *dev)
 	unsigned short ioaddr = dev->base_addr;
 	int irq = dev->irq;
 	int mem_start = dev->mem_start;
+
+	SET_MODULE_OWNER(dev);
 
 	if (ioaddr > 0x1ff)		/* Check a single specified location. */
 		return ac_probe1(ioaddr, dev);
@@ -143,22 +145,6 @@ out:
 }
 #endif
 
-static const struct net_device_ops ac_netdev_ops = {
-	.ndo_open		= ac_open,
-	.ndo_stop 		= ac_close_card,
-
-	.ndo_start_xmit		= ei_start_xmit,
-	.ndo_tx_timeout		= ei_tx_timeout,
-	.ndo_get_stats		= ei_get_stats,
-	.ndo_set_multicast_list = ei_set_multicast_list,
-	.ndo_validate_addr	= eth_validate_addr,
-	.ndo_set_mac_address 	= eth_mac_addr,
-	.ndo_change_mtu		= eth_change_mtu,
-#ifdef CONFIG_NET_POLL_CONTROLLER
-	.ndo_poll_controller	= ei_poll,
-#endif
-};
-
 static int __init ac_probe1(int ioaddr, struct net_device *dev)
 {
 	int i, retval;
@@ -183,11 +169,10 @@ static int __init ac_probe1(int ioaddr, struct net_device *dev)
 		   inb(ioaddr + AC_ID_PORT + 2), inb(ioaddr + AC_ID_PORT + 3));
 #endif
 
-	for (i = 0; i < 6; i++)
-		dev->dev_addr[i] = inb(ioaddr + AC_SA_PROM + i);
+	printk("AC3200 in EISA slot %d, node", ioaddr/0x1000);
+	for(i = 0; i < 6; i++)
+		printk(" %02x", dev->dev_addr[i] = inb(ioaddr + AC_SA_PROM + i));
 
-	printk(KERN_DEBUG "AC3200 in EISA slot %d, node %pM",
-	       ioaddr/0x1000, dev->dev_addr);
 #if 0
 	/* Check the vendor ID/prefix. Redundant after checking the EISA ID */
 	if (inb(ioaddr + AC_SA_PROM + 0) != AC_ADDR0
@@ -232,7 +217,7 @@ static int __init ac_probe1(int ioaddr, struct net_device *dev)
 	dev->if_port = inb(ioaddr + AC_CONFIG) >> 6;
 	dev->mem_start = config2mem(inb(ioaddr + AC_CONFIG));
 
-	printk("%s: AC3200 at %#3x with %dkB memory at physical address %#lx.\n",
+	printk("%s: AC3200 at %#3x with %dkB memory at physical address %#lx.\n", 
 			dev->name, ioaddr, AC_STOP_PG/4, dev->mem_start);
 
 	/*
@@ -269,7 +254,11 @@ static int __init ac_probe1(int ioaddr, struct net_device *dev)
 	ei_status.block_output = &ac_block_output;
 	ei_status.get_8390_hdr = &ac_get_8390_hdr;
 
-	dev->netdev_ops = &ac_netdev_ops;
+	dev->open = &ac_open;
+	dev->stop = &ac_close_card;
+#ifdef CONFIG_NET_POLL_CONTROLLER
+	dev->poll_controller = ei_poll;
+#endif
 	NS8390_init(dev, 0);
 
 	retval = register_netdev(dev);
@@ -338,7 +327,8 @@ static void ac_block_input(struct net_device *dev, int count, struct sk_buff *sk
 		memcpy_fromio(skb->data + semi_count,
 				ei_status.mem + TX_PAGES*256, count);
 	} else {
-		memcpy_fromio(skb->data, start, count);
+		/* Packet is in one chunk -- we can copy + cksum. */
+		eth_io_copy_and_sum(skb, start, count, 0);
 	}
 }
 
@@ -380,7 +370,7 @@ MODULE_PARM_DESC(mem, "Memory base address(es)");
 MODULE_DESCRIPTION("Ansel AC3200 EISA ethernet driver");
 MODULE_LICENSE("GPL");
 
-static int __init ac3200_module_init(void)
+int __init init_module(void)
 {
 	struct net_device *dev;
 	int this_dev, found = 0;
@@ -415,7 +405,8 @@ static void cleanup_card(struct net_device *dev)
 	iounmap(ei_status.mem);
 }
 
-static void __exit ac3200_module_exit(void)
+void
+cleanup_module(void)
 {
 	int this_dev;
 
@@ -428,6 +419,4 @@ static void __exit ac3200_module_exit(void)
 		}
 	}
 }
-module_init(ac3200_module_init);
-module_exit(ac3200_module_exit);
 #endif /* MODULE */

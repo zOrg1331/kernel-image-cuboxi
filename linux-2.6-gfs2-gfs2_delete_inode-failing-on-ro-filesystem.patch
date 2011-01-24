@@ -1,0 +1,81 @@
+From: Abhijith Das <adas@redhat.com>
+Date: Mon, 14 Sep 2009 21:37:59 -0400
+Subject: [gfs2] gfs2_delete_inode failing on RO filesystem
+Message-id: 17271795.123701252978679486.JavaMail.root@zmail05.collab.prod.int.phx2.redhat.com
+O-Subject: [RHEL5.5 PATCH][GFS2] - Bug 501359 - 1916556 - GFS2 gfs2_delete_inode failing on RO filesystem
+Bugzilla: 501359
+RH-Acked-by: Steven Whitehouse <swhiteho@redhat.com>
+
+This patch fixes two things:
+- prevent the warning messages from being seen when the ro node fails to close an unlinked file, and make the rw node more aggressive about reclaiming free space from unlinked inodes.
+- removes dentries when their reference count becomes 0 and the inode is deleted by a remote node. When all dentries are removed, the in memory inode gets removed so that the on disk inode is freed.
+
+Signed-off-by: Wengang Wang <wen.gang.wang@oracle.com>
+Signed-off-by: Steven Whitehouse <swhiteho@redhat.com>
+Signed-off-by: Abhijith Das <adas@redhat.com>
+
+diff --git a/fs/gfs2/ops_dentry.c b/fs/gfs2/ops_dentry.c
+index e2cad04..8f9243d 100644
+--- a/fs/gfs2/ops_dentry.c
++++ b/fs/gfs2/ops_dentry.c
+@@ -109,8 +109,26 @@ static int gfs2_dhash(struct dentry *dentry, struct qstr *str)
+ 	return 0;
+ }
+ 
++static int gfs2_dentry_delete(struct dentry *dentry)
++{
++	struct gfs2_inode *ginode;
++
++	if (!dentry->d_inode)
++		return 0;
++
++	ginode = GFS2_I(dentry->d_inode);
++	if (!ginode->i_iopen_gh.gh_gl)
++		return 0;
++
++	if (test_bit(GLF_DEMOTE, &ginode->i_iopen_gh.gh_gl->gl_flags))
++		return 1;
++
++	return 0;
++}
++
+ struct dentry_operations gfs2_dops = {
+ 	.d_revalidate = gfs2_drevalidate,
+ 	.d_hash = gfs2_dhash,
++	.d_delete = gfs2_dentry_delete,
+ };
+ 
+diff --git a/fs/gfs2/ops_super.c b/fs/gfs2/ops_super.c
+index 1cc9769..15d62e4 100644
+--- a/fs/gfs2/ops_super.c
++++ b/fs/gfs2/ops_super.c
+@@ -549,7 +549,7 @@ out_unlock:
+ 		gfs2_glock_dq(&ip->i_iopen_gh);
+ 	gfs2_holder_uninit(&ip->i_iopen_gh);
+ 	gfs2_glock_dq_uninit(&gh);
+-	if (error && error != GLR_TRYFAILED)
++	if (error && error != GLR_TRYFAILED && error != -EROFS)
+ 		fs_warn(sdp, "gfs2_delete_inode: %d\n", error);
+ out:
+ 	truncate_inode_pages(&inode->i_data, 0);
+diff --git a/fs/gfs2/rgrp.c b/fs/gfs2/rgrp.c
+index d868f7c..830bc21 100644
+--- a/fs/gfs2/rgrp.c
++++ b/fs/gfs2/rgrp.c
+@@ -568,7 +568,6 @@ static int read_rindex_entry(struct gfs2_inode *ip,
+ 
+ 	rgd->rd_gl->gl_object = rgd;
+ 	rgd->rd_flags &= ~GFS2_RDF_UPTODATE;
+-	rgd->rd_flags |= GFS2_RDF_CHECK;
+ 	return error;
+ }
+ 
+@@ -764,7 +763,7 @@ int gfs2_rgrp_bh_get(struct gfs2_rgrpd *rgd)
+ 
+ 	if (!(rgd->rd_flags & GFS2_RDF_UPTODATE)) {
+ 		gfs2_rgrp_in(rgd, (rgd->rd_bits[0].bi_bh)->b_data);
+-		rgd->rd_flags |= GFS2_RDF_UPTODATE;
++		rgd->rd_flags |= (GFS2_RDF_UPTODATE | GFS2_RDF_CHECK);
+ 	}
+ 
+ 	spin_lock(&sdp->sd_rindex_spin);

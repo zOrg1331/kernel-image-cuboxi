@@ -1,0 +1,59 @@
+From: David Milburn <dmilburn@redhat.com>
+Date: Thu, 19 Feb 2009 13:55:32 -0600
+Subject: [ata] libata: iterate padded atapi scatterlist
+Message-id: 20090219195532.GA5774@dhcp-210.hsv.redhat.com
+O-Subject: [RHEL5.4 PATCH] libata: iterate padded atapi scatterlist
+Bugzilla: 446086
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+
+This patch is from Charlotte Richardson at Stratus, it
+resolves BZ 446086 and BZ 468624.
+
+System may crash when burning DVD using k3b/growisofs.
+When transferring data to ATAPI device __atapi_pio_bytes
+system will crash here:
+
+        page = sg_page(sg);
+        offset = sg->offset + qc->cursg_ofs;
+
+        /* get the current page and offset */
+        page = nth_page(page, (offset >> PAGE_SHIFT)); <===CRASH
+
+The problem is that qc->cursg has been set without regard
+to the possibility the atapi command has been padded,
+so if that is the case qc->cursg should be pointing to pad_sgent.
+I have reproduced this on RHEL5.2 (2.6.18-92.1.17.el5) and
+RHEL5.3 (2.6.18-131.el5), upstream no longer uses private
+sg iterator to handle padding sg, I was not able to reproduce
+the problem on linux-2.6.28.3.
+
+Please review and ACK.
+
+Thanks,
+David
+
+ drivers/ata/libata-sff.c |    4 ++--
+ 1 files changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/ata/libata-sff.c b/drivers/ata/libata-sff.c
+index b532257..afb816a 100644
+--- a/drivers/ata/libata-sff.c
++++ b/drivers/ata/libata-sff.c
+@@ -807,7 +807,7 @@ static void ata_pio_sector(struct ata_queued_cmd *qc)
+ 	qc->cursg_ofs += qc->sect_size;
+ 
+ 	if (qc->cursg_ofs == qc->cursg->length) {
+-		qc->cursg = sg_next(qc->cursg);
++		qc->cursg = ata_qc_next_sg(qc->cursg, qc);
+ 		qc->cursg_ofs = 0;
+ 	}
+ }
+@@ -944,7 +944,7 @@ next_sg:
+ 	qc->cursg_ofs += count;
+ 
+ 	if (qc->cursg_ofs == sg->length) {
+-		qc->cursg = sg_next(qc->cursg);
++		qc->cursg = ata_qc_next_sg(qc->cursg, qc);
+ 		qc->cursg_ofs = 0;
+ 	}
+ 

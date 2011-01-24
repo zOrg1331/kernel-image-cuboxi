@@ -21,6 +21,7 @@
 #include <linux/ptrace.h>
 #include <linux/mman.h>
 #include <linux/smp.h>
+#include <linux/smp_lock.h>
 #include <linux/interrupt.h>
 #include <linux/module.h>
 
@@ -107,7 +108,7 @@ do_page_fault(unsigned long address, unsigned long mmcsr,
 
 	/* If we're in an interrupt context, or have no user context,
 	   we must not take the fault.  */
-	if (!mm || in_atomic())
+	if (!mm || in_interrupt())
 		goto no_context;
 
 #ifdef CONFIG_ALPHA_LARGE_VMALLOC
@@ -146,19 +147,23 @@ do_page_fault(unsigned long address, unsigned long mmcsr,
 	/* If for any reason at all we couldn't handle the fault,
 	   make sure we exit gracefully rather than endlessly redo
 	   the fault.  */
-	fault = handle_mm_fault(mm, vma, address, cause > 0 ? FAULT_FLAG_WRITE : 0);
+	fault = handle_mm_fault(mm, vma, address, cause > 0);
 	up_read(&mm->mmap_sem);
-	if (unlikely(fault & VM_FAULT_ERROR)) {
-		if (fault & VM_FAULT_OOM)
-			goto out_of_memory;
-		else if (fault & VM_FAULT_SIGBUS)
-			goto do_sigbus;
+
+	switch (fault) {
+	      case VM_FAULT_MINOR:
+		current->min_flt++;
+		break;
+	      case VM_FAULT_MAJOR:
+		current->maj_flt++;
+		break;
+	      case VM_FAULT_SIGBUS:
+		goto do_sigbus;
+	      case VM_FAULT_OOM:
+		goto out_of_memory;
+	      default:
 		BUG();
 	}
-	if (fault & VM_FAULT_MAJOR)
-		current->maj_flt++;
-	else
-		current->min_flt++;
 	return;
 
 	/* Something tried to access memory that isn't in our memory map.
@@ -188,16 +193,16 @@ do_page_fault(unsigned long address, unsigned long mmcsr,
 	/* We ran out of memory, or some other thing happened to us that
 	   made us unable to handle the page fault gracefully.  */
  out_of_memory:
-	if (is_global_init(current)) {
+	if (current->pid == 1) {
 		yield();
 		down_read(&mm->mmap_sem);
 		goto survive;
 	}
 	printk(KERN_ALERT "VM: killing process %s(%d)\n",
-	       current->comm, task_pid_nr(current));
+	       current->comm, current->pid);
 	if (!user_mode(regs))
 		goto no_context;
-	do_group_exit(SIGKILL);
+	do_exit(SIGKILL);
 
  do_sigbus:
 	/* Send a sigbus, regardless of whether we were in kernel

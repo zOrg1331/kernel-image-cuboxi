@@ -1,0 +1,62 @@
+From: Aron Griffis <agriffis@redhat.com>
+Date: Fri, 14 Sep 2007 01:53:35 -0400
+Subject: [ia64] remove stack hard limit
+Message-id: 20070914055334.GY5505@redhat.com
+O-Subject: [RHEL5.1 PATCH] BZ 251043 remove ia64 stack hard limit
+Bugzilla: 251043
+
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=251043
+
+Description
+-----------
+Remove stack hard limit on ia64.  This is the direct application of an
+upstream commit from May 2007.
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=d826393cdebe340b3716002bfb1298ab19b57e83
+
+RHTS test rh-tests-kernel-misc-ktst_msg presently fails on ia64 xen
+guests.  Kei Tokunaga provides a complete analysis of the reason in BZ
+251043.  In a nutshell, we haven't seen this before because nobody
+runs ia64 bare metal with only 500M memory, but this configuration can
+occur in a xen guest.  The combination of limited memory with this
+historical hard limit causes the test failure.
+
+Test Status
+-----------
+I've boot-tested 2.6.18-47 plus this patch on rx6600, both bare metal
+and xen.  ulimit -Hs shows the default stack limit is now unlimited.
+
+I have not yet run the RHTS test in question using this kernel because
+I don't know the system.  (I think I need to do a brew build then
+schedule the job via http://rhts.lab.boston.redhat.com/ but I haven't
+ever done either of these before, so I could use some coaching or
+a howto pointer)
+
+I'll send a followup with the RHTS results when I have them.
+
+Proposed Patch
+--------------
+Please review and ACK for RHEL5.1, pending RHTS results.
+I'm posting immediately since this is presently a RHEL5.1 blocker.
+
+linux-2.6-ia64-remove-stack-hard-limit.patch
+
+Acked-by: Jarod Wilson <jwilson@redhat.com>
+---
+ include/asm-ia64/resource.h |    1 -
+ 1 files changed, 0 insertions(+), 1 deletions(-)
+
+diff --git a/include/asm-ia64/resource.h b/include/asm-ia64/resource.h
+index 77b1eee..ba2272a 100644
+--- a/include/asm-ia64/resource.h
++++ b/include/asm-ia64/resource.h
+@@ -2,7 +2,6 @@
+ #define _ASM_IA64_RESOURCE_H
+ 
+ #include <asm/ustack.h>
+-#define _STK_LIM_MAX	DEFAULT_USER_STACK_SIZE
+ #include <asm-generic/resource.h>
+ 
+ #endif /* _ASM_IA64_RESOURCE_H */
+-- 
+1.5.3.5.645.gbb47
+

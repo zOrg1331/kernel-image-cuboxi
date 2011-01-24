@@ -1,0 +1,68 @@
+From: Bill Burns <bburns@redhat.com>
+Date: Tue, 8 Jan 2008 11:23:57 -0500
+Subject: [xen] x86: vTPR support and upper address fix
+Message-id: 4783A39D.9070801@redhat.com
+O-Subject: Re: [RHEL5.2 PATCH 1/1] Intel vt-x2 features
+Bugzilla: 252236
+
+This is a one patch replacement for the previous
+request. The previous request bundled two vt-d features
+(vTPR * vNMI) into one. This only adresses vTPR.
+
+Resolves BZ 252236
+
+Upstream in Xen unstable cset: 15198
+
+This is the minimal patch for vTPR support. Basic vTPR
+support is already in the Xen 3.1.2 Hypervisor, but there
+is a bug where the upper portion of the address in PAE
+mode is not properly set. This patch addresses that issue
+and nothing else.
+
+15198 http://xenbits.xensource.com/xen-unstable.hg?rev/b182bd560e47
+
+Brew builds cleanly (see #1097369). Basic testing for
+regressions. No issues found.
+
+Please review and ACK,
+Thanks,
+ Bill
+
+# HG changeset patch
+# User kfraser@localhost.localdomain
+# Date 1180624151 -3600
+# Node ID b182bd560e47ba3497211603a840ffb3afa13dc8
+# Parent  2d3034d0b36b380da7f5769638a21f55c0fda0d7
+VMX: Only write top-half of machine addresses into VMCS fields in PAE mode.
+Signed-off-by: Keir Fraser <keir@xensource.com>
+>From unstable change set 15198
+
+Acked-by: Chris Lalancette <clalance@redhat.com>
+Acked-by: Don Dutile <ddutile@redhat.com>
+Acked-by: "Stephen C. Tweedie" <sct@redhat.com>
+
+diff --git a/arch/x86/hvm/vmx/vmcs.c b/arch/x86/hvm/vmx/vmcs.c
+index 9f186d2..08bcc54 100644
+--- a/arch/x86/hvm/vmx/vmcs.c
++++ b/arch/x86/hvm/vmx/vmcs.c
+@@ -459,6 +459,10 @@ static void construct_vmcs(struct vcpu *v)
+     {
+         __vmwrite(VIRTUAL_APIC_PAGE_ADDR,
+                     page_to_maddr(vcpu_vlapic(v)->regs_page));
++#if defined (CONFIG_X86_PAE)
++        __vmwrite(VIRTUAL_APIC_PAGE_ADDR_HIGH,
++                    page_to_maddr(vcpu_vlapic(v)->regs_page) >> 32);
++#endif
+         __vmwrite(TPR_THRESHOLD, 0);
+ 
+         vcpu_vlapic(v)->mmap_vtpr_enabled = 1;
+@@ -545,6 +549,9 @@ void vmx_do_resume(struct vcpu *v)
+             domain_crash_synchronous();
+         }
+         __vmwrite(APIC_ACCESS_ADDR, page_to_maddr(pg));
++#if defined (CONFIG_X86_PAE)
++        __vmwrite(APIC_ACCESS_ADDR_HIGH, page_to_maddr(pg) >> 32);
++#endif
+     }
+ 
+     debug_state = v->domain->debugger_attached;

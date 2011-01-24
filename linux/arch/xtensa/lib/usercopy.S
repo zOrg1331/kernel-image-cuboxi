@@ -5,10 +5,10 @@
  *
  *  DO NOT COMBINE this function with <arch/xtensa/lib/hal/memcopy.S>.
  *  It needs to remain separate and distinct.  The hal files are part
- *  of the Xtensa link-time HAL, and those files may differ per
+ *  of the the Xtensa link-time HAL, and those files may differ per
  *  processor configuration.  Patching the kernel for another
  *  processor configuration includes replacing the hal files, and we
- *  could lose the special functionality for accessing user-space
+ *  could loose the special functionality for accessing user-space
  *  memory during such a patch.  We sacrifice a little code space here
  *  in favor to simplify code maintenance.
  *
@@ -53,7 +53,7 @@
  *	a11/ original length
  */
 
-#include <variant/core.h>
+#include <xtensa/coreasm.h>
 
 #ifdef __XTENSA_EB__
 #define ALIGN(R, W0, W1) src	R, W0, W1

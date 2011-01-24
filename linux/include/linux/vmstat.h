@@ -3,65 +3,9 @@
 
 #include <linux/types.h>
 #include <linux/percpu.h>
-#include <linux/mm.h>
+#include <linux/config.h>
 #include <linux/mmzone.h>
 #include <asm/atomic.h>
-
-#ifdef CONFIG_ZONE_DMA
-#define DMA_ZONE(xx) xx##_DMA,
-#else
-#define DMA_ZONE(xx)
-#endif
-
-#ifdef CONFIG_ZONE_DMA32
-#define DMA32_ZONE(xx) xx##_DMA32,
-#else
-#define DMA32_ZONE(xx)
-#endif
-
-#ifdef CONFIG_HIGHMEM
-#define HIGHMEM_ZONE(xx) , xx##_HIGH
-#else
-#define HIGHMEM_ZONE(xx)
-#endif
-
-
-#define FOR_ALL_ZONES(xx) DMA_ZONE(xx) DMA32_ZONE(xx) xx##_NORMAL HIGHMEM_ZONE(xx) , xx##_MOVABLE
-
-enum vm_event_item { PGPGIN, PGPGOUT, PSWPIN, PSWPOUT,
-		FOR_ALL_ZONES(PGALLOC),
-		PGFREE, PGACTIVATE, PGDEACTIVATE,
-		PGFAULT, PGMAJFAULT,
-		FOR_ALL_ZONES(PGREFILL),
-		FOR_ALL_ZONES(PGSTEAL),
-		FOR_ALL_ZONES(PGSCAN_KSWAPD),
-		FOR_ALL_ZONES(PGSCAN_DIRECT),
-#ifdef CONFIG_NUMA
-		PGSCAN_ZONE_RECLAIM_FAILED,
-#endif
-		PGINODESTEAL, SLABS_SCANNED, KSWAPD_STEAL, KSWAPD_INODESTEAL,
-		KSWAPD_LOW_WMARK_HIT_QUICKLY, KSWAPD_HIGH_WMARK_HIT_QUICKLY,
-		KSWAPD_SKIP_CONGESTION_WAIT,
-		PAGEOUTRUN, ALLOCSTALL, PGROTATED,
-#ifdef CONFIG_COMPACTION
-		COMPACTBLOCKS, COMPACTPAGES, COMPACTPAGEFAILED,
-		COMPACTSTALL, COMPACTFAIL, COMPACTSUCCESS,
-#endif
-#ifdef CONFIG_HUGETLB_PAGE
-		HTLB_BUDDY_PGALLOC, HTLB_BUDDY_PGALLOC_FAIL,
-#endif
-		UNEVICTABLE_PGCULLED,	/* culled to noreclaim list */
-		UNEVICTABLE_PGSCANNED,	/* scanned for reclaimability */
-		UNEVICTABLE_PGRESCUED,	/* rescued from noreclaim list */
-		UNEVICTABLE_PGMLOCKED,
-		UNEVICTABLE_PGMUNLOCKED,
-		UNEVICTABLE_PGCLEARED,	/* on COW, page truncate */
-		UNEVICTABLE_PGSTRANDED,	/* unable to isolate on unlock */
-		UNEVICTABLE_MLOCKFREED,
-		NR_VM_EVENT_ITEMS
-};
-
-extern int sysctl_stat_interval;
 
 #ifdef CONFIG_VM_EVENT_COUNTERS
 /*
@@ -73,6 +17,21 @@ extern int sysctl_stat_interval;
  * Counters are handled completely inline. On many platforms the code
  * generated will simply be the increment of a global address.
  */
+
+#define FOR_ALL_ZONES(x) x##_DMA, x##_DMA32, x##_NORMAL, x##_HIGH
+
+enum vm_event_item { PGPGIN, PGPGOUT, PSWPIN, PSWPOUT,
+		FOR_ALL_ZONES(PGALLOC),
+		PGFREE, PGACTIVATE, PGDEACTIVATE,
+		PGFAULT, PGMAJFAULT,
+		FOR_ALL_ZONES(PGREFILL),
+		FOR_ALL_ZONES(PGSTEAL),
+		FOR_ALL_ZONES(PGSCAN_KSWAPD),
+		FOR_ALL_ZONES(PGSCAN_DIRECT),
+		PGINODESTEAL, SLABS_SCANNED, KSWAPD_STEAL, KSWAPD_INODESTEAL,
+		PAGEOUTRUN, ALLOCSTALL, PGROTATED,
+		NR_VM_EVENT_ITEMS
+};
 
 struct vm_event_state {
 	unsigned long event[NR_VM_EVENT_ITEMS];
@@ -103,41 +62,22 @@ static inline void count_vm_events(enum vm_event_item item, long delta)
 }
 
 extern void all_vm_events(unsigned long *);
-#ifdef CONFIG_HOTPLUG
 extern void vm_events_fold_cpu(int cpu);
-#else
-static inline void vm_events_fold_cpu(int cpu)
-{
-}
-#endif
 
 #else
 
 /* Disable counters */
-static inline void count_vm_event(enum vm_event_item item)
-{
-}
-static inline void count_vm_events(enum vm_event_item item, long delta)
-{
-}
-static inline void __count_vm_event(enum vm_event_item item)
-{
-}
-static inline void __count_vm_events(enum vm_event_item item, long delta)
-{
-}
-static inline void all_vm_events(unsigned long *ret)
-{
-}
-static inline void vm_events_fold_cpu(int cpu)
-{
-}
+#define get_cpu_vm_events(e)	0L
+#define count_vm_event(e)	do { } while (0)
+#define count_vm_events(e,d)	do { } while (0)
+#define __count_vm_event(e)	do { } while (0)
+#define __count_vm_events(e,d)	do { } while (0)
+#define vm_events_fold_cpu(x)	do { } while (0)
 
 #endif /* CONFIG_VM_EVENT_COUNTERS */
 
 #define __count_zone_vm_events(item, zone, delta) \
-		__count_vm_events(item##_NORMAL - ZONE_NORMAL + \
-		zone_idx(zone), delta)
+			__count_vm_events(item##_DMA + zone_idx(zone), delta)
 
 /*
  * Zone based page accounting with per cpu differentials.
@@ -172,9 +112,6 @@ static inline unsigned long zone_page_state(struct zone *zone,
 	return x;
 }
 
-extern unsigned long global_reclaimable_pages(void);
-extern unsigned long zone_reclaimable_pages(struct zone *zone);
-
 #ifdef CONFIG_NUMA
 /*
  * Determine the per node value of a stat item. This function
@@ -187,20 +124,19 @@ static inline unsigned long node_page_state(int node,
 	struct zone *zones = NODE_DATA(node)->node_zones;
 
 	return
-#ifdef CONFIG_ZONE_DMA
-		zone_page_state(&zones[ZONE_DMA], item) +
-#endif
-#ifdef CONFIG_ZONE_DMA32
+#ifndef CONFIG_DMA_IS_NORMAL
+#if !defined(CONFIG_DMA_IS_DMA32) && BITS_PER_LONG >= 64
 		zone_page_state(&zones[ZONE_DMA32], item) +
+#endif
+		zone_page_state(&zones[ZONE_NORMAL], item) +
 #endif
 #ifdef CONFIG_HIGHMEM
 		zone_page_state(&zones[ZONE_HIGHMEM], item) +
 #endif
-		zone_page_state(&zones[ZONE_NORMAL], item) +
-		zone_page_state(&zones[ZONE_MOVABLE], item);
+		zone_page_state(&zones[ZONE_DMA], item);
 }
 
-extern void zone_statistics(struct zone *, struct zone *);
+extern void zone_statistics(struct zonelist *, struct zone *);
 
 #else
 
@@ -208,6 +144,11 @@ extern void zone_statistics(struct zone *, struct zone *);
 #define zone_statistics(_zl,_z) do { } while (0)
 
 #endif /* CONFIG_NUMA */
+
+#define __add_zone_page_state(__z, __i, __d)	\
+		__mod_zone_page_state(__z, __i, __d)
+#define __sub_zone_page_state(__z, __i, __d)	\
+		__mod_zone_page_state(__z, __i,-(__d))
 
 #define add_zone_page_state(__z, __i, __d) mod_zone_page_state(__z, __i, __d)
 #define sub_zone_page_state(__z, __i, __d) mod_zone_page_state(__z, __i, -(__d))
@@ -229,11 +170,10 @@ void inc_zone_page_state(struct page *, enum zone_stat_item);
 void dec_zone_page_state(struct page *, enum zone_stat_item);
 
 extern void inc_zone_state(struct zone *, enum zone_stat_item);
-extern void __inc_zone_state(struct zone *, enum zone_stat_item);
-extern void dec_zone_state(struct zone *, enum zone_stat_item);
-extern void __dec_zone_state(struct zone *, enum zone_stat_item);
 
 void refresh_cpu_vm_stats(int);
+void refresh_vm_stats(void);
+
 #else /* CONFIG_SMP */
 
 /*
@@ -258,16 +198,11 @@ static inline void __inc_zone_page_state(struct page *page,
 	__inc_zone_state(page_zone(page), item);
 }
 
-static inline void __dec_zone_state(struct zone *zone, enum zone_stat_item item)
-{
-	atomic_long_dec(&zone->vm_stat[item]);
-	atomic_long_dec(&vm_stat[item]);
-}
-
 static inline void __dec_zone_page_state(struct page *page,
 			enum zone_stat_item item)
 {
-	__dec_zone_state(page_zone(page), item);
+	atomic_long_dec(&page_zone(page)->vm_stat[item]);
+	atomic_long_dec(&vm_stat[item]);
 }
 
 /*
@@ -279,6 +214,7 @@ static inline void __dec_zone_page_state(struct page *page,
 #define mod_zone_page_state __mod_zone_page_state
 
 static inline void refresh_cpu_vm_stats(int cpu) { }
+static inline void refresh_vm_stats(void) { }
 #endif
 
 #endif /* _LINUX_VMSTAT_H */

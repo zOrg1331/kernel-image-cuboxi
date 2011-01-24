@@ -1,0 +1,62 @@
+From: Chad Dupuis <cdupuis@redhat.com>
+Date: Fri, 6 Aug 2010 14:22:45 -0400
+Subject: [net] qlge: change cpu_to_be16 to htons for udp checksum
+Message-id: <20100806141932.2774.40880.sendpatchset@localhost.localdomain>
+Patchwork-id: 27447
+O-Subject: [RHEL 5.6 PATCH 5/10] qlge: Changing cpu_to_be16 to htons for udp
+	checksum.
+Bugzilla: 567402
+
+Bugzilla
+========
+
+567402
+
+Upstream Status
+===============
+
+net-2.6 commit id e0cdfa47e94135613dc22664e0384110489c9fe2
+
+Description
+===========
+
+>From 2cc8898b7e00f08e2703b0505daa5c970c15135d Mon Sep 17 00:00:00 2001
+From: Jitendra Kalsaria <jitendra.kalsaria@qlogic.com>
+Date: Wed, 4 Aug 2010 16:42:17 -0700
+Subject: [PATCH 5/8] qlge: Changing cpu_to_be16 to htons for udp checksum.
+
+Signed-off-by: Jitendra Kalsaria <jitendra.kalsaria@qlogic.com>
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/net/qlge/qlge_main.c b/drivers/net/qlge/qlge_main.c
+index a7cf9f6..6da69f0 100644
+--- a/drivers/net/qlge/qlge_main.c
++++ b/drivers/net/qlge/qlge_main.c
+@@ -1595,11 +1595,10 @@ static void ql_process_mac_rx_page(struct ql_adapter *qdev,
+ 				(ib_mac_rsp->flags3 & IB_MAC_IOCB_RSP_V4)) {
+ 			/* Unfragmented ipv4 UDP frame. */
+ 			struct iphdr *iph = (struct iphdr *) skb->data;
+-			if (!(iph->frag_off &
+-				cpu_to_be16(IP_MF|IP_OFFSET))) {
++			if (!(iph->frag_off & htons(IP_MF|IP_OFFSET))) {
+ 				skb->ip_summed = CHECKSUM_UNNECESSARY;
+ 				QPRINTK_DBG(qdev, RX_STATUS, DEBUG,
+-						"TCP checksum done!\n");
++						"UDP checksum done!\n");
+ 			}
+ 		}
+ 	}
+@@ -1704,11 +1703,10 @@ static void ql_process_mac_rx_skb(struct ql_adapter *qdev,
+ 				(ib_mac_rsp->flags3 & IB_MAC_IOCB_RSP_V4)) {
+ 			/* Unfragmented ipv4 UDP frame. */
+ 			struct iphdr *iph = (struct iphdr *) skb->data;
+-			if (!(iph->frag_off &
+-				cpu_to_be16(IP_MF|IP_OFFSET))) {
++			if (!(iph->frag_off & htons(IP_MF|IP_OFFSET))) {
+ 				skb->ip_summed = CHECKSUM_UNNECESSARY;
+ 				QPRINTK_DBG(qdev, RX_STATUS, DEBUG,
+-						"TCP checksum done!\n");
++						"UDP checksum done!\n");
+ 			}
+ 		}
+ 	}

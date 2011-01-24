@@ -24,6 +24,7 @@
  */
 #include <linux/module.h>
 #include <linux/kernel.h>
+#include <linux/sched.h>
 #include <linux/errno.h>
 #include <linux/string.h>
 #include <linux/timer.h>
@@ -150,7 +151,7 @@ static int aafbcon_set_font(struct display *disp, int width, int height)
 {
 	struct aafb_info *info = (struct aafb_info *)disp->fb_info;
 	struct aafb_cursor *c = &info->cursor;
-	u8 fgc = ~attr_bgcol_ec(disp, disp->conp, &info->info);
+	u8 fgc = ~attr_bgcol_ec(disp, disp->conp);
 
 	if (width > 64 || height > 64 || width < 0 || height < 0)
 		return -EINVAL;

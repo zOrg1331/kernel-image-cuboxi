@@ -1,0 +1,64 @@
+From: Tomas Henzl <thenzl@redhat.com>
+Date: Tue, 17 Aug 2010 15:03:22 -0400
+Subject: [scsi] fix bugs in scsi_vpd_inquiry
+Message-id: <20100817150322.6769.33564.sendpatchset@localhost.localdomain>
+Patchwork-id: 27660
+O-Subject: [RHEL5.6 PATCH2/5] scsi: fix bugs in scsi_vpd_inquiry()
+Bugzilla: 599420
+RH-Acked-by: Stanislaw Gruszka <sgruszka@redhat.com>
+
+Universally, SCSI functions assume the lengths fed in are those of the buffer
+to DMA data to, not the lengths of the data minus the header.
+scsi_vpd_inquiry() assumed the latter and got it wrong, so fix up all the
+functions to use the correct assumption (and fix a bug where INQUIRY in SCSI-2
+dcannot go over 255).
+
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=95a3639e275fb7aec5c9a2116c88a2cdd23e0b8b
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/scsi/scsi.c b/drivers/scsi/scsi.c
+index de47479..3a7a9fe 100644
+--- a/drivers/scsi/scsi.c
++++ b/drivers/scsi/scsi.c
+@@ -835,7 +835,7 @@ static int scsi_vpd_inquiry(struct scsi_device *sdev, unsigned char *buffer,
+ 	 * all the existing users tried this hard.
+ 	 */
+ 	result = scsi_execute_req(sdev, cmd, DMA_FROM_DEVICE, buffer,
+-				  len + 4, NULL, 30 * HZ, 3);
++				  len, NULL, 30 * HZ, 3);
+ 	if (result)
+ 		return result;
+ 
+@@ -862,13 +862,14 @@ unsigned char *scsi_get_vpd_page(struct scsi_device *sdev, u8 page)
+ {
+ 	int i, result;
+ 	unsigned int len;
+-	unsigned char *buf = kmalloc(259, GFP_KERNEL);
++	const unsigned int init_vpd_len = 255;
++	unsigned char *buf = kmalloc(init_vpd_len, GFP_KERNEL);
+ 
+ 	if (!buf)
+ 		return NULL;
+ 
+ 	/* Ask for all the pages supported by this device */
+-	result = scsi_vpd_inquiry(sdev, buf, 0, 255);
++	result = scsi_vpd_inquiry(sdev, buf, 0, init_vpd_len);
+ 	if (result)
+ 		goto fail;
+ 
+@@ -891,12 +892,12 @@ unsigned char *scsi_get_vpd_page(struct scsi_device *sdev, u8 page)
+ 	 * Some pages are longer than 255 bytes.  The actual length of
+ 	 * the page is returned in the header.
+ 	 */
+-	len = (buf[2] << 8) | buf[3];
+-	if (len <= 255)
++	len = ((buf[2] << 8) | buf[3]) + 4;
++	if (len <= init_vpd_len)
+ 		return buf;
+ 
+ 	kfree(buf);
+-	buf = kmalloc(len + 4, GFP_KERNEL);
++	buf = kmalloc(len, GFP_KERNEL);
+ 	result = scsi_vpd_inquiry(sdev, buf, page, len);
+ 	if (result)
+ 		goto fail;

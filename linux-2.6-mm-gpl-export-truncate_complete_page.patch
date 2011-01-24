@@ -1,0 +1,49 @@
+From: Eric Sandeen <sandeen@redhat.com>
+Subject: [PATCH RHEL5] Update - Add >1< non-upstream GPL export for Lustre
+Date: Fri, 08 Dec 2006 10:33:55 -0600
+Bugzilla: 216545
+Message-Id: <457993F3.6080306@redhat.com>
+Changelog: GPL export truncate_complete_page
+
+
+BZ 216545
+
+Thanks,
+-Eric
+
+---
+
+Index: linux-2.6.18-1.2732.el5/include/linux/mm.h
+===================================================================
+--- linux-2.6.18-1.2732.el5.orig/include/linux/mm.h
++++ linux-2.6.18-1.2732.el5/include/linux/mm.h
+@@ -1004,6 +1004,8 @@ extern unsigned long do_brk(unsigned lon
+ 
+ /* filemap.c */
+ extern unsigned long page_unuse(struct page *);
++extern void truncate_complete_page(struct address_space *mapping,
++				   struct page *page);
+ extern void truncate_inode_pages(struct address_space *, loff_t);
+ extern void truncate_inode_pages_range(struct address_space *,
+ 				       loff_t lstart, loff_t lend);
+Index: linux-2.6.18-1.2732.el5/mm/truncate.c
+===================================================================
+--- linux-2.6.18-1.2732.el5.orig/mm/truncate.c
++++ linux-2.6.18-1.2732.el5/mm/truncate.c
+@@ -33,7 +33,7 @@ static inline void truncate_partial_page
+  * its lock, b) when a concurrent invalidate_inode_pages got there first and
+  * c) when tmpfs swizzles a page between a tmpfs inode and swapper_space.
+  */
+-static void
++void
+ truncate_complete_page(struct address_space *mapping, struct page *page)
+ {
+ 	if (page->mapping != mapping)
+@@ -48,6 +48,7 @@ truncate_complete_page(struct address_sp
+ 	remove_from_page_cache(page);
+ 	page_cache_release(page);	/* pagecache ref */
+ }
++EXPORT_SYMBOL_GPL(truncate_complete_page);
+ 
+ /*
+  * This is for invalidate_inode_pages().  That function can be called at

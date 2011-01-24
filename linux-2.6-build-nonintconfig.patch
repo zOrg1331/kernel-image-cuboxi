@@ -1,0 +1,140 @@
+diff -urNp --exclude-from=/home/davej/.exclude linux-600/scripts/kconfig/conf.c linux-800/scripts/kconfig/conf.c
+--- linux-600/scripts/kconfig/conf.c
++++ linux-800/scripts/kconfig/conf.c
+@@ -20,6 +20,7 @@ enum {
+ 	ask_all,
+ 	ask_new,
+ 	ask_silent,
++	dont_ask,
+ 	set_default,
+ 	set_yes,
+ 	set_mod,
+@@ -37,6 +37,8 @@ static struct menu *rootEntry;
+ 
+ static char nohelp_text[] = N_("Sorry, no help available for this option yet.\n");
+ 
++static int return_value = 0;
++
+ static void strip(char *str)
+ {
+ 	char *p = str;
+@@ -93,6 +96,12 @@ static void conf_askvalue(struct symbol 
+ 		fflush(stdout);
+ 		fgets(line, 128, stdin);
+ 		return;
++	case dont_ask:
++		if (!sym_has_value(sym)) {
++			fprintf(stderr,"CONFIG_%s\n",sym->name);
++			return_value++;
++		}
++		return;
+ 	case set_default:
+ 		printf("%s\n", def);
+ 		return;
+@@ -337,6 +346,10 @@ static int conf_choice(struct menu *menu
+ 			printf("?");
+ 		printf("]: ");
+ 		switch (input_mode) {
++		case dont_ask:
++			cnt = def;
++			printf("%d\n", cnt);
++			break;
+ 		case ask_new:
+ 		case ask_silent:
+ 			if (!is_new) {
+@@ -472,7 +485,10 @@ static void check_conf(struct menu *menu
+ 			if (!conf_cnt++)
+ 				printf("*\n* Restart config...\n*\n");
+ 			rootEntry = menu_get_parent_menu(menu);
+-			conf(rootEntry);
++			if (input_mode == dont_ask)
++				fprintf(stderr,"CONFIG_%s\n",sym->name);
++			else
++				conf(rootEntry);
+ 		}
+ 		if (sym_is_choice(sym) && sym_get_tristate_value(sym) != mod)
+ 			return;
+@@ -493,6 +509,9 @@ int main(int ac, char **av)
+ 		case 'o':
+ 			input_mode = ask_new;
+ 			break;
++		case 'b':
++			input_mode = dont_ask;
++			break;
+ 		case 's':
+ 			input_mode = ask_silent;
+ 			valid_stdin = isatty(0) && isatty(1) && isatty(2);
+@@ -557,6 +576,7 @@ int main(int ac, char **av)
+ 		}
+ 	case ask_all:
+ 	case ask_new:
++	case dont_ask:
+ 		conf_read(NULL);
+ 		break;
+ 	default:
+@@ -632,7 +632,7 @@ int main(int ac, char **av)
+ 	do {
+ 		conf_cnt = 0;
+ 		check_conf(&rootmenu);
+-	} while (conf_cnt);
++	} while ((conf_cnt) && (input_mode != dont_ask));
+ 	if (conf_write(NULL)) {
+ 		fprintf(stderr, _("\n*** Error during writing of the kernel configuration.\n\n"));
+ 		return 1;
+@@ -643,5 +643,5 @@ skip_check:
+ 		return 1;
+ 	}
+ 
+-	return 0;
++	return return_value;
+ }
+--- linux-2.6.16.noarch/scripts/kconfig/Makefile~	2006-03-25 15:55:18.000000000 -0500
++++ linux-2.6.16.noarch/scripts/kconfig/Makefile	2006-03-25 15:55:47.000000000 -0500
+@@ -23,6 +23,9 @@ oldconfig: $(obj)/conf
+ silentoldconfig: $(obj)/conf
+ 	$< -s arch/$(ARCH)/Kconfig
+ 
++nonint_oldconfig: scripts/kconfig/conf
++	./scripts/kconfig/conf -b arch/$(ARCH)/Kconfig
++
+ update-po-config: $(obj)/kxgettext
+ 	xgettext --default-domain=linux \
+           --add-comments --keyword=_ --keyword=N_ \
+--- linux-2.6.14/scripts/kconfig/confdata.c~	2005-11-10 14:55:46.000000000 -0500
++++ linux-2.6.14/scripts/kconfig/confdata.c	2005-11-10 14:56:01.000000000 -0500
+@@ -161,7 +161,7 @@ load:
+ 			if (def == S_DEF_USER) {
+ 				sym = sym_find(line + 9);
+ 				if (!sym) {
+-					conf_warning("trying to assign nonexistent symbol %s", line + 9);
++					conf_warning("trying to assign nonexistent symbol %s", line + 9);
+ 					break;
+ 				}
+ 			} else {
+@@ -197,7 +197,7 @@ load:
+ 			if (def == S_DEF_USER) {
+ 				sym = sym_find(line + 7);
+ 				if (!sym) {
+-					conf_warning("trying to assign nonexistent symbol %s", line + 7);
++					conf_warning("trying to assign nonexistent symbol %s", line + 7);
+ 					break;
+ 				}
+ 			} else {
+--- linux-2.6.14/scripts/kconfig/confdata.c~	2005-11-15 23:51:37.000000000 -0500
++++ linux-2.6.14/scripts/kconfig/confdata.c	2005-11-15 23:52:50.000000000 -0500
+@@ -153,7 +153,6 @@ int conf_read_simple(const char *name)
+ 				break;
+ 			} else if (!(sym->flags & SYMBOL_NEW)) {
+ 				conf_warning("trying to reassign symbol %s", sym->name);
+-				break;
+ 			}
+ 			switch (sym->type) {
+ 			case S_BOOLEAN:
+@@ -183,7 +182,6 @@ int conf_read_simple(const char *name)
+ 				break;
+ 			} else if (!(sym->flags & SYMBOL_NEW)) {
+ 				conf_warning("trying to reassign symbol %s", sym->name);
+-				break;
+ 			}
+ 			switch (sym->type) {
+ 			case S_TRISTATE:

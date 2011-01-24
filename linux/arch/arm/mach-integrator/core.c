@@ -19,14 +19,12 @@
 #include <linux/termios.h>
 #include <linux/amba/bus.h>
 #include <linux/amba/serial.h>
-#include <linux/io.h>
 
-#include <asm/clkdev.h>
-#include <mach/clkdev.h>
-#include <mach/hardware.h>
+#include <asm/hardware.h>
 #include <asm/irq.h>
+#include <asm/io.h>
 #include <asm/hardware/arm_timer.h>
-#include <mach/cm.h>
+#include <asm/arch/cm.h>
 #include <asm/system.h>
 #include <asm/leds.h>
 #include <asm/mach/time.h>
@@ -37,7 +35,7 @@ static struct amba_pl010_data integrator_uart_data;
 
 static struct amba_device rtc_device = {
 	.dev		= {
-		.init_name = "mb:15",
+		.bus_id	= "mb:15",
 	},
 	.res		= {
 		.start	= INTEGRATOR_RTC_BASE,
@@ -50,7 +48,7 @@ static struct amba_device rtc_device = {
 
 static struct amba_device uart0_device = {
 	.dev		= {
-		.init_name = "mb:16",
+		.bus_id	= "mb:16",
 		.platform_data = &integrator_uart_data,
 	},
 	.res		= {
@@ -64,7 +62,7 @@ static struct amba_device uart0_device = {
 
 static struct amba_device uart1_device = {
 	.dev		= {
-		.init_name = "mb:17",
+		.bus_id	= "mb:17",
 		.platform_data = &integrator_uart_data,
 	},
 	.res		= {
@@ -78,7 +76,7 @@ static struct amba_device uart1_device = {
 
 static struct amba_device kmi0_device = {
 	.dev		= {
-		.init_name = "mb:18",
+		.bus_id	= "mb:18",
 	},
 	.res		= {
 		.start	= KMI0_BASE,
@@ -91,7 +89,7 @@ static struct amba_device kmi0_device = {
 
 static struct amba_device kmi1_device = {
 	.dev		= {
-		.init_name = "mb:19",
+		.bus_id	= "mb:19",
 	},
 	.res		= {
 		.start	= KMI1_BASE,
@@ -110,42 +108,9 @@ static struct amba_device *amba_devs[] __initdata = {
 	&kmi1_device,
 };
 
-/*
- * These are fixed clocks.
- */
-static struct clk clk24mhz = {
-	.rate	= 24000000,
-};
-
-static struct clk uartclk = {
-	.rate	= 14745600,
-};
-
-static struct clk_lookup lookups[] = {
-	{	/* UART0 */
-		.dev_id		= "mb:16",
-		.clk		= &uartclk,
-	}, {	/* UART1 */
-		.dev_id		= "mb:17",
-		.clk		= &uartclk,
-	}, {	/* KMI0 */
-		.dev_id		= "mb:18",
-		.clk		= &clk24mhz,
-	}, {	/* KMI1 */
-		.dev_id		= "mb:19",
-		.clk		= &clk24mhz,
-	}, {	/* MMCI - IntegratorCP */
-		.dev_id		= "mb:1c",
-		.clk		= &uartclk,
-	}
-};
-
 static int __init integrator_init(void)
 {
 	int i;
-
-	for (i = 0; i < ARRAY_SIZE(lookups); i++)
-		clkdev_add(&lookups[i]);
 
 	for (i = 0; i < ARRAY_SIZE(amba_devs); i++) {
 		struct amba_device *d = amba_devs[i];
@@ -283,21 +248,41 @@ unsigned long integrator_gettimeoffset(void)
  * IRQ handler for the timer
  */
 static irqreturn_t
-integrator_timer_interrupt(int irq, void *dev_id)
+integrator_timer_interrupt(int irq, void *dev_id, struct pt_regs *regs)
 {
+	write_seqlock(&xtime_lock);
+
 	/*
 	 * clear the interrupt
 	 */
 	writel(1, TIMER1_VA_BASE + TIMER_INTCLR);
 
-	timer_tick();
+	/*
+	 * the clock tick routines are only processed on the
+	 * primary CPU
+	 */
+	if (hard_smp_processor_id() == 0) {
+		timer_tick(regs);
+#ifdef CONFIG_SMP
+		smp_send_timer();
+#endif
+	}
+
+#ifdef CONFIG_SMP
+	/*
+	 * this is the ARM equivalent of the APIC timer interrupt
+	 */
+	update_process_times(user_mode(regs));
+#endif /* CONFIG_SMP */
+
+	write_sequnlock(&xtime_lock);
 
 	return IRQ_HANDLED;
 }
 
 static struct irqaction integrator_timer_irq = {
 	.name		= "Integrator Timer Tick",
-	.flags		= IRQF_DISABLED | IRQF_TIMER | IRQF_IRQPOLL,
+	.flags		= IRQF_DISABLED | IRQF_TIMER,
 	.handler	= integrator_timer_interrupt,
 };
 

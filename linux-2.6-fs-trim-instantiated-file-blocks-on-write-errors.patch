@@ -1,0 +1,129 @@
+From: Eric Sandeen <sandeen@redhat.com>
+Date: Mon, 14 Sep 2009 21:33:16 -0400
+Subject: [fs] trim instantiated file blocks on write errors
+Message-id: <4AAEB69C.1060203@redhat.com>
+Patchwork-id: 20867
+O-Subject: [PATCH RHEL5.5] Trim instantiated file blocks on write errors
+Bugzilla: 515529
+RH-Acked-by: Jeff Moyer <jmoyer@redhat.com>
+RH-Acked-by: Josef Bacik <josef@redhat.com>
+
+This is for Bug 515529 -
+ ENOSPC during fsstress leads to filesystem corruption on ext2, ext3, and ext4
+
+There are 2 issues; one in generic O_DIRECT code, and another
+unique to ext3.
+
+Backporting the following 2 upstream commits seems to fix the problem,
+both from my own testing and in testing by the reporter.
+
+Thanks,
+-Eric
+
+commit 0f64415d42760379753e6088787ce3fd3e069509
+Author: Dmitri Monakhov <dmonakhov@openvz.org>
+Date:   Tue Jan 6 14:40:04 2009 -0800
+
+    fs: truncate blocks outside i_size after O_DIRECT write error
+
+    In case of error extending write may have instantiated a few blocks
+    outside i_size.  We need to trim these blocks.  We have to do it
+    *regardless* to blocksize.  At least ext2, ext3 and reiserfs interpret
+    (i_size < biggest block) condition as error.  Fsck will complain about
+    wrong i_size.  Then fsck will fix the error by changing i_size according
+    to the biggest block.  This is bad because this blocks contain garbage
+    from previous write attempt.  And result in data corruption.
+
+    ####TESTCASE_BEGIN
+    $touch /mnt/test/BIG_FILE
+    ## at this moment /mnt/test/BIG_FILE size and blocks equal to zero
+    open("/mnt/test/BIG_FILE", O_WRONLY|O_CREAT|O_DIRECT, 0666) = 3
+    write(3, "aaaaaaaaaaaa"..., 104857600) = -1 ENOSPC (No space left on device)
+    ## size and block sould't be changed because write op failed.
+    $stat /mnt/test/BIG_FILE
+    File: `/mnt/test/BIG_FILE'
+    Size: 0 Blocks: 110896 IO Block: 1024 regular empty file
+    <<<<<<<<^^^^^^^^^^^^^^^^^^^^^^^^^^^^^file size is less than biggest block idx
+    Device: fe07h/65031d Inode: 14 Links: 1
+    Access: (0644/-rw-r--r--) Uid: ( 0/ root) Gid: ( 0/ root)
+    Access: 2007-01-24 20:03:38.000000000 +0300
+    Modify: 2007-01-24 20:03:38.000000000 +0300
+    Change: 2007-01-24 20:03:39.000000000 +0300
+
+    #fsck.ext3 -f /dev/VG/test
+    e2fsck 1.39 (29-May-2006)
+    Pass 1: Checking inodes, blocks, and sizes
+    Inode 14, i_size is 0, should be 56556544. Fix<y>? yes
+    Pass 2: Checking directory structure
+    ....
+    #####TESTCASE_ENDdiff --git a/fs/direct-io.c b/fs/direct-io.c
+    index af0558d..4e88bea 100644
+
+    [akpm@linux-foundation.org: use i_size_read()]
+    Signed-off-by: Dmitri Monakhov <dmonakhov@openvz.org>
+    Cc: Zach Brown <zach.brown@oracle.com>
+    Cc: Nick Piggin <npiggin@suse.de>
+    Cc: Badari Pulavarty <pbadari@us.ibm.com>
+    Cc: Chris Mason <chris.mason@oracle.com>
+    Cc: Dave Chinner <david@fromorbit.com>
+    Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+    Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+
+commit 5ec8b75e3a2a94860ee99b5456fe1a963c8680e5
+Author: Aneesh Kumar K.V <aneesh.kumar@linux.vnet.ibm.com>
+Date:   Sat Oct 18 20:28:00 2008 -0700
+
+    ext3: truncate block allocated on a failed ext3_write_begin
+
+    For blocksize < pagesize we need to remove blocks that got allocated in
+    block_write_begin() if we fail with ENOSPC for later blocks.
+    block_write_begin() internally does this if it allocated page locally.
+    This makes sure we don't have blocks outside inode.i_size during ENOSPC.
+
+    Signed-off-by: Aneesh Kumar K.V <aneesh.kumar@linux.vnet.ibm.com>
+    Signed-off-by: "Theodore Ts'o" <tytso@mit.edu>
+    Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+    Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+
+diff --git a/fs/direct-io.c b/fs/direct-io.c
+index 833e27a..9f53c68 100644
+--- a/fs/direct-io.c
++++ b/fs/direct-io.c
+@@ -1226,6 +1226,19 @@ __blockdev_direct_IO(int rw, struct kiocb *iocb, struct inode *inode,
+ 	retval = direct_io_worker(rw, iocb, inode, iov, offset,
+ 				nr_segs, blkbits, get_block, end_io, dio);
+ 
++	/*
++	 * In case of error extending write may have instantiated a few
++	 * blocks outside i_size. Trim these off again for DIO_LOCKING.
++	 * NOTE: DIO_NO_LOCK/DIO_OWN_LOCK callers have to handle this by
++	 * it's own meaner.
++	 */
++	if (unlikely(retval < 0 && (rw & WRITE))) {
++		loff_t isize = i_size_read(inode);
++
++		if (end > isize && dio_lock_type == DIO_LOCKING)
++			vmtruncate(inode, isize);
++	}
++
+ 	if (rw == READ && dio_lock_type == DIO_LOCKING)
+ 		release_i_mutex = 0;
+ 
+diff --git a/fs/ext3/inode.c b/fs/ext3/inode.c
+index 3300b27..fac9413 100644
+--- a/fs/ext3/inode.c
++++ b/fs/ext3/inode.c
+@@ -1188,6 +1188,13 @@ write_begin_failed:
+ 		ext3_journal_stop(handle);
+ 		unlock_page(page);
+ 		page_cache_release(page);
++		/*
++		 * block_write_begin may have instantiated a few blocks
++		 * outside i_size.  Trim these off again. Don't need
++		 * i_size_read because we hold i_mutex.
++		 */
++		if (pos + len > inode->i_size)
++			vmtruncate(inode, inode->i_size);
+ 	}
+ 	if (ret == -ENOSPC && ext3_should_retry_alloc(inode->i_sb, &retries))
+ 		goto retry;

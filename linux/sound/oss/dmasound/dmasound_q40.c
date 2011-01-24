@@ -48,8 +48,8 @@ static int Q40SetFormat(int format);
 static int Q40SetVolume(int volume);
 static void Q40PlayNextFrame(int index);
 static void Q40Play(void);
-static irqreturn_t Q40StereoInterrupt(int irq, void *dummy);
-static irqreturn_t Q40MonoInterrupt(int irq, void *dummy);
+static irqreturn_t Q40StereoInterrupt(int irq, void *dummy, struct pt_regs *fp);
+static irqreturn_t Q40MonoInterrupt(int irq, void *dummy, struct pt_regs *fp);
 static void Q40Interrupt(void);
 
 
@@ -371,9 +371,8 @@ static void Q40Free(void *ptr, unsigned int size)
 static int __init Q40IrqInit(void)
 {
 	/* Register interrupt handler. */
-	if (request_irq(Q40_IRQ_SAMPLE, Q40StereoInterrupt, 0,
-		    "DMA sound", Q40Interrupt))
-		return 0;
+	request_irq(Q40_IRQ_SAMPLE, Q40StereoInterrupt, 0,
+		    "DMA sound", Q40Interrupt);
 
 	return(1);
 }
@@ -402,7 +401,6 @@ static void Q40PlayNextFrame(int index)
 	u_char *start;
 	u_long size;
 	u_char speed;
-	int error;
 
 	/* used by Q40Play() if all doubts whether there really is something
 	 * to be played are already wiped out.
@@ -421,13 +419,11 @@ static void Q40PlayNextFrame(int index)
 	master_outb( 0,SAMPLE_ENABLE_REG);
 	free_irq(Q40_IRQ_SAMPLE, Q40Interrupt);
 	if (dmasound.soft.stereo)
-		error = request_irq(Q40_IRQ_SAMPLE, Q40StereoInterrupt, 0,
-				    "Q40 sound", Q40Interrupt);
+	  	request_irq(Q40_IRQ_SAMPLE, Q40StereoInterrupt, 0,
+		    "Q40 sound", Q40Interrupt);
 	  else
-		error = request_irq(Q40_IRQ_SAMPLE, Q40MonoInterrupt, 0,
-				    "Q40 sound", Q40Interrupt);
-	if (error && printk_ratelimit())
-		pr_err("Couldn't register sound interrupt\n");
+	        request_irq(Q40_IRQ_SAMPLE, Q40MonoInterrupt, 0,
+		    "Q40 sound", Q40Interrupt);
 
 	master_outb( speed, SAMPLE_RATE_REG);
 	master_outb( 1,SAMPLE_CLEAR_REG);
@@ -455,7 +451,7 @@ static void Q40Play(void)
 	spin_unlock_irqrestore(&dmasound.lock, flags);
 }
 
-static irqreturn_t Q40StereoInterrupt(int irq, void *dummy)
+static irqreturn_t Q40StereoInterrupt(int irq, void *dummy, struct pt_regs *fp)
 {
 	spin_lock(&dmasound.lock);
         if (q40_sc>1){
@@ -467,7 +463,7 @@ static irqreturn_t Q40StereoInterrupt(int irq, void *dummy)
 	spin_unlock(&dmasound.lock);
 	return IRQ_HANDLED;
 }
-static irqreturn_t Q40MonoInterrupt(int irq, void *dummy)
+static irqreturn_t Q40MonoInterrupt(int irq, void *dummy, struct pt_regs *fp)
 {
 	spin_lock(&dmasound.lock);
         if (q40_sc>0){
@@ -615,7 +611,7 @@ static MACHINE machQ40 = {
 /*** Config & Setup **********************************************************/
 
 
-static int __init dmasound_q40_init(void)
+int __init dmasound_q40_init(void)
 {
 	if (MACH_IS_Q40) {
 	    dmasound.mach = machQ40;

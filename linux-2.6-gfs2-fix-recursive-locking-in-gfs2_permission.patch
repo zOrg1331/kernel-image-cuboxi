@@ -1,0 +1,76 @@
+From: Steven Whitehouse <swhiteho@redhat.com>
+Subject: [RHEL5] [GFS2] Fix recursive locking in gfs2_permission
+Date: Thu, 07 Dec 2006 11:45:23 +0000
+Bugzilla: 218478
+Message-Id: <1165491923.3752.839.camel@quoit.chygwyn.com>
+Changelog: GFS2: Fix recursive locking in gfs2_permission
+
+
+Hi,
+
+The following patch fixes bz #218478, the bz referred to below is the one
+for Fedora. This patch (well almost this patch I had to change one line by
+hand to get it to apply to RHEL5 after extracting it from git) is in the
+upstream git tree and about to be applied to Linus' kernel,
+
+Steve.
+
+>From 300c7d75f3a5e8edd3e390ccd56b808f3fb14e33 Mon Sep 17 00:00:00 2001
+
+Since gfs2_permission may be called either from the VFS (in which case
+we need to obtain a shared glock) or from GFS2 (in which case we already
+have a glock) we need to test to see whether or not a lock is required.
+The original test was buggy due to a potential race. This one should
+be safe.
+
+This fixes Red Hat bugzilla #217129
+
+Signed-off-by: Steven Whitehouse <swhiteho@redhat.com>
+---
+ fs/gfs2/ops_inode.c |   19 +++++++++++++------
+ 1 files changed, 13 insertions(+), 6 deletions(-)
+
+diff --git a/fs/gfs2/ops_inode.c b/fs/gfs2/ops_inode.c
+index b247f25..fd9fee2 100644
+--- a/fs/gfs2/ops_inode.c
++++ b/fs/gfs2/ops_inode.c
+@@ -835,6 +835,10 @@ static void *gfs2_follow_link(struct den
+  * @mask:
+  * @nd: passed from Linux VFS, ignored by us
+  *
++ * This may be called from the VFS directly, or from within GFS2 with the
++ * inode locked, so we look to see if the glock is already locked and only
++ * lock the glock if its not already been done.
++ *
+  * Returns: errno
+  */
+ 
+@@ -843,15 +847,18 @@ static int gfs2_permission(struct inode 
+ 	struct gfs2_inode *ip = GFS2_I(inode);
+ 	struct gfs2_holder i_gh;
+ 	int error;
++	int unlock = 0;
+ 
+-	if (ip->i_vn == ip->i_gl->gl_vn)
+-		return generic_permission(inode, mask, gfs2_check_acl);
++	if (gfs2_glock_is_locked_by_me(ip->i_gl) == 0) {
++		error = gfs2_glock_nq_init(ip->i_gl, LM_ST_SHARED, LM_FLAG_ANY, &i_gh);
++		if (error)
++			return error;
++		unlock = 1;
++	}
+ 
+-	error = gfs2_glock_nq_init(ip->i_gl, LM_ST_SHARED, LM_FLAG_ANY, &i_gh);
+-	if (!error) {
+-		error = generic_permission(inode, mask, gfs2_check_acl_locked);
++	error = generic_permission(inode, mask, gfs2_check_acl_locked);
++	if (unlock)
+ 		gfs2_glock_dq_uninit(&i_gh);
+-	}
+ 
+ 	return error;
+ }
+-- 
+1.4.1
+
+

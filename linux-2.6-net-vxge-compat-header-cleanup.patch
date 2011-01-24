@@ -1,0 +1,660 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Date: Wed, 30 Jun 2010 14:40:23 -0400
+Subject: [net] vxge: compat header cleanup
+Message-id: <4C2B5757.1010708@redhat.com>
+Patchwork-id: 26641
+O-Subject: Re: [RHEL5 PATCH 18/27] compat.h cleanup: vxge driver changes
+Bugzilla: 546740
+RH-Acked-by: Michal Schmidt <mschmidt@redhat.com>
+RH-Acked-by: Andy Gospodarek <gospo@redhat.com>
+
+Clean up vxge driver's use of compat headers.
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/net/vxge/vxge-compat.h b/drivers/net/vxge/vxge-compat.h
+deleted file mode 100644
+index 47588b4..0000000
+--- a/drivers/net/vxge/vxge-compat.h
++++ /dev/null
+@@ -1,217 +0,0 @@
+-#ifndef __VXGE_COMPAT_H
+-#define __VXGE_COMPAT_H
+-
+-#include <linux/if_vlan.h>
+-
+-#define ETH_FCS_LEN	4	/* Octets in the FCS */
+-
+-static inline int vxge_pci_dma_mapping_error(struct pci_dev *pdev,
+-					     dma_addr_t dma_addr)
+-{
+-	return pci_dma_mapping_error(dma_addr);
+-}
+-#define pci_dma_mapping_error(pdev, dma_addr) vxge_pci_dma_mapping_error(pdev, dma_addr)
+-
+-/*
+- * VLAN group compat functions
+- */
+-
+-static inline void vlan_group_set_device(struct vlan_group *vg,
+-					 u16 vid,
+-					 struct net_device *dev)
+-{
+-	if (vg)
+-		vg->vlan_devices[vid] = dev;
+-}
+-
+-static inline struct net_device *vlan_group_get_device(struct vlan_group *vg,
+-						       u16 vid)
+-{
+-	return vg ? vg->vlan_devices[vid] : NULL;
+-}
+-
+-/*
+- * Multiqueue function wrappers for single-queue devices
+- */
+-
+-static inline struct net_device *alloc_etherdev_mq(int sizeof_priv,
+-						   unsigned int queue_count)
+-{
+-	WARN_ON(queue_count != 1);
+-	return alloc_etherdev(sizeof_priv);
+-}
+-
+-struct netdev_queue; /* not instantiated anywhere */
+-
+-static inline void netif_tx_stop_all_queues(struct net_device *dev)
+-{
+-	netif_stop_queue(dev);
+-}
+-
+-static inline void netif_tx_stop_queue(struct netdev_queue *txq)
+-{
+-	netif_stop_queue((struct net_device *)txq);
+-}
+-
+-static inline void netif_tx_start_all_queues(struct net_device *dev)
+-{
+-	netif_start_queue(dev);
+-}
+-
+-static inline void netif_tx_wake_all_queues(struct net_device *dev)
+-{
+-	netif_wake_queue(dev);
+-}
+-
+-static inline void netif_tx_wake_queue(struct netdev_queue *txq)
+-{
+-	netif_wake_queue((struct net_device *)txq);
+-}
+-
+-static inline int netif_tx_queue_stopped(const struct netdev_queue *txq)
+-{
+-	return netif_queue_stopped((struct net_device *)txq);
+-}
+-
+-static inline struct netdev_queue *netdev_get_tx_queue(struct net_device *dev,
+-						       int n)
+-{
+-	WARN_ON(n != 0);
+-	return (struct netdev_queue*)dev;
+-}
+-
+-static inline void skb_record_rx_queue(struct sk_buff *skb, u16 rx_queue)
+-{
+-}
+-
+-/*
+- * Partial new NAPI to old NAPI mapping
+- * napi->dev is the dummy net_device for the old NAPI.
+- */
+-
+-static inline void napi_enable(struct napi_struct *napi)
+-{
+-	netif_poll_enable(napi->dev);
+-}
+-
+-static inline void napi_disable(struct napi_struct *napi)
+-{
+-	netif_poll_disable(napi->dev);
+-}
+-
+-static inline void napi_schedule(struct napi_struct *napi)
+-{
+-	netif_rx_schedule(napi->dev);
+-}
+-
+-/* Unlike upstream netif_napi_add(), ours may fail with -ENOMEM */
+-static inline int vxge_netif_napi_add(void *nd_priv,
+-	struct napi_struct *napi, int (*poll)(struct net_device *, int *),
+-	int weight)
+-{
+-	struct net_device *nd;
+-
+-	nd = alloc_netdev(0, "", ether_setup);
+-	if (!nd)
+-		return -ENOMEM;
+-
+-	nd->priv = nd_priv;
+-	nd->weight = weight;
+-	nd->poll = poll;
+-	set_bit(__LINK_STATE_START, &nd->state);
+-	napi->dev = nd;
+-	return 0;
+-}
+-
+-static inline void netif_napi_del(struct napi_struct *napi)
+-{
+-	free_netdev(napi->dev);
+-	napi->dev = NULL;
+-}
+-
+-static inline int rhel_napi_poll_wrapper(int (*poll)(struct napi_struct*, int),
+-	struct napi_struct *napi, struct net_device *dummy_dev, int *budget)
+-{
+-	int to_do = min(*budget, dummy_dev->quota);
+-	int pkts_processed;
+-
+-	pkts_processed = poll(napi, to_do);
+-
+-	*budget -= pkts_processed;
+-	dummy_dev->quota -= pkts_processed;
+-
+-	return (pkts_processed >= to_do);
+-}
+-
+-/*
+- * These are only used with TX_MULTIQ_STEERING,
+- * and so should never be called in RHEL5.
+- */
+-
+-static inline u16 skb_get_queue_mapping(const struct sk_buff *skb)
+-{
+-	WARN_ON(1);
+-	return 0;
+-}
+-
+-static inline int netif_subqueue_stopped(const struct net_device *dev,
+-					 struct sk_buff *skb)
+-{
+-	WARN_ON(1);
+-	return netif_queue_stopped(dev);
+-}
+-
+-typedef int netdev_tx_t;
+-
+-/*
+- * net_device_ops copied from upstream, but only the members actually
+- * used by the vxge driver.
+- */
+-struct net_device_ops {
+-	int			(*ndo_open)(struct net_device *dev);
+-	int			(*ndo_stop)(struct net_device *dev);
+-	netdev_tx_t		(*ndo_start_xmit) (struct sk_buff *skb,
+-						   struct net_device *dev);
+-	void			(*ndo_set_multicast_list)(struct net_device *dev);
+-	int			(*ndo_set_mac_address)(struct net_device *dev,
+-						       void *addr);
+-	int			(*ndo_validate_addr)(struct net_device *dev);
+-	int			(*ndo_do_ioctl)(struct net_device *dev,
+-					        struct ifreq *ifr, int cmd);
+-	int			(*ndo_change_mtu)(struct net_device *dev,
+-						  int new_mtu);
+-	void			(*ndo_tx_timeout) (struct net_device *dev);
+-	struct net_device_stats* (*ndo_get_stats)(struct net_device *dev);
+-
+-	void			(*ndo_vlan_rx_register)(struct net_device *dev,
+-						        struct vlan_group *grp);
+-	void			(*ndo_vlan_rx_add_vid)(struct net_device *dev,
+-						       unsigned short vid);
+-#ifdef CONFIG_NET_POLL_CONTROLLER
+-	void                    (*ndo_poll_controller)(struct net_device *dev);
+-#endif
+-};
+-
+-#define eth_validate_addr NULL
+-
+-static inline void vxge_set_netdev_ops(struct net_device *ndev,
+-	const struct net_device_ops *ndo)
+-{
+-	ndev->open               = ndo->ndo_open;
+-	ndev->stop               = ndo->ndo_stop;
+-	ndev->hard_start_xmit    = ndo->ndo_start_xmit;
+-	ndev->set_multicast_list = ndo->ndo_set_multicast_list;
+-	ndev->set_mac_address    = ndo->ndo_set_mac_address;
+-	BUG_ON(ndo->ndo_validate_addr != eth_validate_addr);
+-	ndev->do_ioctl           = ndo->ndo_do_ioctl;
+-	ndev->change_mtu         = ndo->ndo_change_mtu;
+-	ndev->tx_timeout         = ndo->ndo_tx_timeout;
+-	ndev->get_stats          = ndo->ndo_get_stats;
+-	ndev->vlan_rx_register   = ndo->ndo_vlan_rx_register;
+-	ndev->vlan_rx_add_vid    = ndo->ndo_vlan_rx_add_vid;
+-#ifdef CONFIG_NET_POLL_CONTROLLER
+-	ndev->poll_controller    = ndo->ndo_poll_controller;
+-#endif
+-}
+-
+-#endif /* __VXGE_COMPAT_H */
+diff --git a/drivers/net/vxge/vxge-config.c b/drivers/net/vxge/vxge-config.c
+index a8662e3..93b0462 100644
+--- a/drivers/net/vxge/vxge-config.c
++++ b/drivers/net/vxge/vxge-config.c
+@@ -19,7 +19,6 @@
+ 
+ #include "vxge-traffic.h"
+ #include "vxge-config.h"
+-#include "vxge-compat.h"
+ 
+ /*
+  * __vxge_hw_channel_allocate - Allocate memory for channel
+@@ -4719,9 +4718,7 @@ __vxge_hw_blockpool_create(struct __vxge_hw_device *hldev,
+ 		dma_addr = pci_map_single(hldev->pdev, memblock,
+ 				VXGE_HW_BLOCK_SIZE, PCI_DMA_BIDIRECTIONAL);
+ 
+-		if (unlikely(pci_dma_mapping_error(hldev->pdev,
+-				dma_addr))) {
+-
++		if (unlikely(pci_dma_mapping_error(dma_addr))) {
+ 			vxge_os_dma_free(hldev->pdev, memblock, &acc_handle);
+ 			__vxge_hw_blockpool_destroy(blockpool);
+ 			status = VXGE_HW_ERR_OUT_OF_MEMORY;
+@@ -4885,8 +4882,7 @@ void vxge_hw_blockpool_block_add(
+ 	dma_addr = pci_map_single(devh->pdev, block_addr, length,
+ 				PCI_DMA_BIDIRECTIONAL);
+ 
+-	if (unlikely(pci_dma_mapping_error(devh->pdev, dma_addr))) {
+-
++	if (unlikely(pci_dma_mapping_error(dma_addr))) {
+ 		vxge_os_dma_free(devh->pdev, block_addr, &acc_handle);
+ 		blockpool->req_out--;
+ 		status = VXGE_HW_FAIL;
+@@ -4955,8 +4951,7 @@ __vxge_hw_blockpool_malloc(struct __vxge_hw_device *devh, u32 size,
+ 		dma_object->addr = pci_map_single(devh->pdev, memblock, size,
+ 					PCI_DMA_BIDIRECTIONAL);
+ 
+-		if (unlikely(pci_dma_mapping_error(devh->pdev,
+-				dma_object->addr))) {
++		if (unlikely(pci_dma_mapping_error(dma_object->addr))) {
+ 			vxge_os_dma_free(devh->pdev, memblock,
+ 				&dma_object->acc_handle);
+ 			status = VXGE_HW_ERR_OUT_OF_MEMORY;
+diff --git a/drivers/net/vxge/vxge-config.h b/drivers/net/vxge/vxge-config.h
+index 4d9d9a9..67cb084 100644
+--- a/drivers/net/vxge/vxge-config.h
++++ b/drivers/net/vxge/vxge-config.h
+@@ -2118,26 +2118,6 @@ __vxge_hw_device_register_poll(
+ 	void __iomem	*reg,
+ 	u64 mask, u32 max_millis);
+ 
+-#ifndef readq
+-static inline u64 readq(void __iomem *addr)
+-{
+-	u64 ret = 0;
+-	ret = readl(addr + 4);
+-	ret <<= 32;
+-	ret |= readl(addr);
+-
+-	return ret;
+-}
+-#endif
+-
+-#ifndef writeq
+-static inline void writeq(u64 val, void __iomem *addr)
+-{
+-	writel((u32) (val), addr);
+-	writel((u32) (val >> 32), (addr + 4));
+-}
+-#endif
+-
+ static inline void __vxge_hw_pio_mem_write32_upper(u32 val, void __iomem *addr)
+ {
+ 	writel(val, addr + 4);
+diff --git a/drivers/net/vxge/vxge-main.c b/drivers/net/vxge/vxge-main.c
+index 78ec87f..dd42c53 100644
+--- a/drivers/net/vxge/vxge-main.c
++++ b/drivers/net/vxge/vxge-main.c
+@@ -50,7 +50,6 @@
+ #include <linux/delay.h>
+ #include "vxge-main.h"
+ #include "vxge-reg.h"
+-#include "vxge-compat.h"
+ 
+ MODULE_LICENSE("Dual BSD/GPL");
+ MODULE_DESCRIPTION("Neterion's X3100 Series 10GbE PCIe I/O"
+@@ -147,22 +146,17 @@ void vxge_stop_all_tx_queue(struct vxgedev *vdev)
+ 		for (i = 0; i < vdev->no_of_vpath; i++)
+ 			vdev->vpaths[i].fifo.queue_state = VPATH_QUEUE_STOP;
+ 	}
+-	netif_tx_stop_all_queues(dev);
++	netif_stop_queue(dev);
+ }
+ 
+ void vxge_stop_tx_queue(struct vxge_fifo *fifo)
+ {
+ 	struct net_device *dev = fifo->ndev;
+ 
+-	struct netdev_queue *txq = NULL;
+-	if (fifo->tx_steering_type == TX_MULTIQ_STEERING)
+-		txq = netdev_get_tx_queue(dev, fifo->driver_id);
+-	else {
+-		txq = netdev_get_tx_queue(dev, 0);
++	if (fifo->tx_steering_type != TX_MULTIQ_STEERING)
+ 		fifo->queue_state = VPATH_QUEUE_STOP;
+-	}
+ 
+-	netif_tx_stop_queue(txq);
++	netif_stop_queue(dev);
+ }
+ 
+ void vxge_start_all_tx_queue(struct vxgedev *vdev)
+@@ -174,7 +168,7 @@ void vxge_start_all_tx_queue(struct vxgedev *vdev)
+ 		for (i = 0; i < vdev->no_of_vpath; i++)
+ 			vdev->vpaths[i].fifo.queue_state = VPATH_QUEUE_START;
+ 	}
+-	netif_tx_start_all_queues(dev);
++	netif_start_queue(dev);
+ }
+ 
+ static void vxge_wake_all_tx_queue(struct vxgedev *vdev)
+@@ -186,25 +180,21 @@ static void vxge_wake_all_tx_queue(struct vxgedev *vdev)
+ 		for (i = 0; i < vdev->no_of_vpath; i++)
+ 			vdev->vpaths[i].fifo.queue_state = VPATH_QUEUE_START;
+ 	}
+-	netif_tx_wake_all_queues(dev);
++	netif_wake_queue(dev);
+ }
+ 
+ void vxge_wake_tx_queue(struct vxge_fifo *fifo, struct sk_buff *skb)
+ {
+ 	struct net_device *dev = fifo->ndev;
+ 
+-	int vpath_no = fifo->driver_id;
+-	struct netdev_queue *txq = NULL;
+ 	if (fifo->tx_steering_type == TX_MULTIQ_STEERING) {
+-		txq = netdev_get_tx_queue(dev, vpath_no);
+-		if (netif_tx_queue_stopped(txq))
+-			netif_tx_wake_queue(txq);
++		if (netif_queue_stopped(dev))
++			netif_wake_queue(dev);
+ 	} else {
+-		txq = netdev_get_tx_queue(dev, 0);
+ 		if (fifo->queue_state == VPATH_QUEUE_STOP)
+-			if (netif_tx_queue_stopped(txq)) {
++			if (netif_queue_stopped(dev)) {
+ 				fifo->queue_state = VPATH_QUEUE_START;
+-				netif_tx_wake_queue(txq);
++				netif_wake_queue(dev);
+ 			}
+ 	}
+ }
+@@ -368,7 +358,6 @@ vxge_rx_complete(struct vxge_ring *ring, struct sk_buff *skb, u16 vlan,
+ 
+ 	vxge_debug_entryexit(VXGE_TRACE, "%s: %s:%d",
+ 			ring->ndev->name, __func__, __LINE__);
+-	skb_record_rx_queue(skb, ring->driver_id);
+ 	skb->protocol = eth_type_trans(skb, ring->ndev);
+ 	skb->dev = ring->ndev;
+ 
+@@ -819,7 +808,7 @@ static int vxge_learn_mac(struct vxgedev *vdev, u8 *mac_header)
+  * NOTE: when device cant queue the pkt, just the trans_start variable will
+  * not be upadted.
+ */
+-static netdev_tx_t
++static int
+ vxge_xmit(struct sk_buff *skb, struct net_device *dev)
+ {
+ 	struct vxge_fifo *fifo = NULL;
+@@ -890,7 +879,7 @@ vxge_xmit(struct sk_buff *skb, struct net_device *dev)
+ 	}
+ 
+ 	if (vdev->config.tx_steering_type == TX_MULTIQ_STEERING) {
+-		if (netif_subqueue_stopped(dev, skb)) {
++		if (netif_queue_stopped(dev)) {
+ 			spin_unlock_irqrestore(&fifo->tx_lock, flags);
+ 			return NETDEV_TX_BUSY;
+ 		}
+@@ -939,7 +928,7 @@ vxge_xmit(struct sk_buff *skb, struct net_device *dev)
+ 	dma_pointer = pci_map_single(fifo->pdev, skb->data, first_frg_len,
+ 				PCI_DMA_TODEVICE);
+ 
+-	if (unlikely(pci_dma_mapping_error(fifo->pdev, dma_pointer))) {
++	if (unlikely(pci_dma_mapping_error(dma_pointer))) {
+ 		vxge_hw_fifo_txdl_free(fifo_hw, dtr);
+ 		vxge_stop_tx_queue(fifo);
+ 		fifo->stats.pci_map_fail++;
+@@ -971,7 +960,7 @@ vxge_xmit(struct sk_buff *skb, struct net_device *dev)
+ 				frag->page_offset, frag->size,
+ 				PCI_DMA_TODEVICE);
+ 
+-		if (unlikely(pci_dma_mapping_error(fifo->pdev, dma_pointer)))
++		if (unlikely(pci_dma_mapping_error(dma_pointer)))
+ 			goto _exit0;
+ 		vxge_debug_tx(VXGE_TRACE,
+ 			"%s: %s:%d frag = %d dma_pointer = 0x%llx",
+@@ -1746,14 +1735,28 @@ static int vxge_poll_inta(struct napi_struct *napi, int budget)
+ 	return pkts_processed;
+ }
+ 
+-static int vxge_poll_msix_rhel(struct net_device *dummy_dev, int *budget)
++static inline int rhel_napi_poll_wrapper(int (*poll)(struct napi_struct*, int),
++	struct napi_struct *napi, struct net_device *dummy_dev, int *budget)
++{
++	int to_do = min(*budget, dummy_dev->quota);
++	int pkts_processed;
++
++	pkts_processed = poll(napi, to_do);
++
++	*budget -= pkts_processed;
++	dummy_dev->quota -= pkts_processed;
++
++	return (pkts_processed >= to_do);
++}
++
++static int rhel_vxge_poll_msix(struct net_device *dummy_dev, int *budget)
+ {
+ 	struct vxge_ring *ring = dummy_dev->priv;
+ 	return rhel_napi_poll_wrapper(vxge_poll_msix, &ring->napi, dummy_dev,
+ 				      budget);
+ }
+ 
+-static int vxge_poll_inta_rhel(struct net_device *dummy_dev, int *budget)
++static int rhel_vxge_poll_inta(struct net_device *dummy_dev, int *budget)
+ {
+ 	struct vxgedev *vdev = dummy_dev->priv;
+ 	return rhel_napi_poll_wrapper(vxge_poll_inta, &vdev->napi, dummy_dev,
+@@ -2202,7 +2205,7 @@ static irqreturn_t vxge_isr_napi(int irq, void *dev_id, struct pt_regs *regs)
+ 			(64 - VXGE_HW_MAX_VIRTUAL_PATHS))) {
+ 
+ 			vxge_hw_device_clear_tx_rx(hldev);
+-			napi_schedule(&vdev->napi);
++			netif_rx_schedule(vdev->napi.dev);
+ 			vxge_debug_intr(VXGE_TRACE,
+ 				"%s:%d  Exiting...", __func__, __LINE__);
+ 			return IRQ_HANDLED;
+@@ -2242,7 +2245,7 @@ vxge_rx_msix_napi_handle(int irq, void *dev_id, struct pt_regs *regs)
+ 	vxge_hw_channel_msix_mask((struct __vxge_hw_channel *)ring->handle,
+ 					ring->rx_vector_no);
+ 
+-	napi_schedule(&ring->napi);
++	netif_rx_schedule(ring->napi.dev);
+ 	return IRQ_HANDLED;
+ }
+ 
+@@ -2653,7 +2656,22 @@ static void vxge_poll_vp_lockup(unsigned long data)
+ 	mod_timer(&vdev->vp_lockup_timer, jiffies + HZ / 1000);
+ }
+ 
+-static void vxge_napi_del_all(struct vxgedev *vdev);
++static void vxge_napi_del_all(struct vxgedev *vdev)
++{
++	int i;
++	if (vdev->config.intr_type != MSI_X) {
++		free_netdev(vdev->napi.dev);
++		vdev->napi.dev = NULL;
++	} else {
++		for (i = 0; i < vdev->no_of_vpath; i++) {
++			if (!vdev->vpaths[i].ring.napi.dev)
++				break;
++			free_netdev(vdev->vpaths[i].ring.napi.dev);
++			vdev->vpaths[i].ring.napi.dev = NULL;
++		}
++	}
++	return;
++}
+ 
+ /**
+  * vxge_open
+@@ -2674,6 +2692,7 @@ vxge_open(struct net_device *dev)
+ 	int ret = 0;
+ 	int i;
+ 	u64 val64, function_mode;
++	struct net_device *napi_nd;
+ 	vxge_debug_entryexit(VXGE_TRACE,
+ 		"%s: %s:%d", dev->name, __func__, __LINE__);
+ 
+@@ -2706,22 +2725,34 @@ vxge_open(struct net_device *dev)
+ 
+ 
+ 	if (vdev->config.intr_type != MSI_X) {
+-		ret = vxge_netif_napi_add(vdev, &vdev->napi,
+-			vxge_poll_inta_rhel, vdev->config.napi_weight);
+-		if (ret)
++		napi_nd = alloc_netdev(0, "", ether_setup);
++		if (!napi_nd) {
++			ret = -ENOMEM;
+ 			goto out2;
+-		napi_enable(&vdev->napi);
++		}
++
++		napi_nd->priv = vdev;
++		napi_nd->weight = vdev->config.napi_weight;
++		napi_nd->poll = rhel_vxge_poll_inta;
++		set_bit(__LINK_STATE_START, &napi_nd->state);
++		vdev->napi.dev = napi_nd;
++		netif_poll_enable(napi_nd);
+ 		for (i = 0; i < vdev->no_of_vpath; i++)
+ 			vdev->vpaths[i].ring.napi_p = &vdev->napi;
+ 	} else {
+ 		for (i = 0; i < vdev->no_of_vpath; i++) {
+-			ret = vxge_netif_napi_add(&vdev->vpaths[i].ring,
+-				&vdev->vpaths[i].ring.napi,
+-				vxge_poll_msix_rhel,
+-				vdev->config.napi_weight);
+-			if (ret)
++			napi_nd = alloc_netdev(0, "", ether_setup);
++			if (!napi_nd) {
++				ret = -ENOMEM;
+ 				goto out3;
+-			napi_enable(&vdev->vpaths[i].ring.napi);
++			}
++
++			napi_nd->priv = &vdev->vpaths[i].ring;
++			napi_nd->weight = vdev->config.napi_weight;
++			napi_nd->poll = rhel_vxge_poll_msix;
++			set_bit(__LINK_STATE_START, &napi_nd->state);
++			vdev->vpaths[i].ring.napi.dev = napi_nd;
++			netif_poll_enable(napi_nd);
+ 			vdev->vpaths[i].ring.napi_p =
+ 				&vdev->vpaths[i].ring.napi;
+ 		}
+@@ -2841,12 +2872,12 @@ vxge_open(struct net_device *dev)
+ out3:
+ 	/* Disable napi */
+ 	if (vdev->config.intr_type != MSI_X)
+-		napi_disable(&vdev->napi);
++		netif_poll_disable(vdev->napi.dev);
+ 	else {
+ 		for (i = 0; i < vdev->no_of_vpath; i++) {
+ 			if (!vdev->vpaths[i].ring.napi.dev)
+ 				break;
+-			napi_disable(&vdev->vpaths[i].ring.napi);
++			netif_poll_disable(vdev->vpaths[i].ring.napi.dev);
+ 		}
+ 	}
+ 	vxge_napi_del_all(vdev);
+@@ -2875,21 +2906,6 @@ void vxge_free_mac_add_list(struct vxge_vpath *vpath)
+ 	}
+ }
+ 
+-static void vxge_napi_del_all(struct vxgedev *vdev)
+-{
+-	int i;
+-	if (vdev->config.intr_type != MSI_X)
+-		netif_napi_del(&vdev->napi);
+-	else {
+-		for (i = 0; i < vdev->no_of_vpath; i++) {
+-			if (!vdev->vpaths[i].ring.napi.dev)
+-				break;
+-			netif_napi_del(&vdev->vpaths[i].ring.napi);
+-		}
+-	}
+-	return;
+-}
+-
+ int do_vxge_close(struct net_device *dev, int do_io)
+ {
+ 	enum vxge_hw_status status;
+@@ -2957,10 +2973,10 @@ int do_vxge_close(struct net_device *dev, int do_io)
+ 
+ 	/* Disable napi */
+ 	if (vdev->config.intr_type != MSI_X)
+-		napi_disable(&vdev->napi);
++		netif_poll_disable(vdev->napi.dev);
+ 	else {
+ 		for (i = 0; i < vdev->no_of_vpath; i++)
+-			napi_disable(&vdev->vpaths[i].ring.napi);
++			netif_poll_disable(vdev->vpaths[i].ring.napi.dev);
+ 	}
+ 
+ 	netif_carrier_off(vdev->ndev);
+@@ -3213,27 +3229,6 @@ vxge_vlan_rx_add_vid(struct net_device *dev, unsigned short vid)
+ 	}
+ }
+ 
+-static const struct net_device_ops vxge_netdev_ops = {
+-	.ndo_open               = vxge_open,
+-	.ndo_stop               = vxge_close,
+-	.ndo_get_stats          = vxge_get_stats,
+-	.ndo_start_xmit         = vxge_xmit,
+-	.ndo_validate_addr      = eth_validate_addr,
+-	.ndo_set_multicast_list = vxge_set_multicast,
+-
+-	.ndo_do_ioctl           = vxge_ioctl,
+-
+-	.ndo_set_mac_address    = vxge_set_mac_addr,
+-	.ndo_change_mtu         = vxge_change_mtu,
+-	.ndo_vlan_rx_register   = vxge_vlan_rx_register,
+-	.ndo_vlan_rx_add_vid	= vxge_vlan_rx_add_vid,
+-
+-	.ndo_tx_timeout         = vxge_tx_watchdog,
+-#ifdef CONFIG_NET_POLL_CONTROLLER
+-	.ndo_poll_controller    = vxge_netpoll,
+-#endif
+-};
+-
+ int __devinit vxge_device_register(struct __vxge_hw_device *hldev,
+ 				   struct vxge_config *config,
+ 				   int high_dma, int no_of_vpath,
+@@ -3281,8 +3276,20 @@ int __devinit vxge_device_register(struct __vxge_hw_device *hldev,
+ 	ndev->irq = vdev->pdev->irq;
+ 	ndev->base_addr = (unsigned long) hldev->bar0;
+ 
+-	vxge_set_netdev_ops(ndev, &vxge_netdev_ops);
+-
++	ndev->open = vxge_open;
++	ndev->stop = vxge_close;
++	ndev->hard_start_xmit = vxge_xmit;
++	ndev->set_mac_address = vxge_set_mac_addr;
++	ndev->get_stats = vxge_get_stats;
++	ndev->set_multicast_list = vxge_set_multicast;
++	ndev->change_mtu = vxge_change_mtu;
++	ndev->vlan_rx_register = vxge_vlan_rx_register;
++	ndev->vlan_rx_add_vid = vxge_vlan_rx_add_vid;
++	ndev->tx_timeout = vxge_tx_watchdog;
++	ndev->do_ioctl = vxge_ioctl;
++#ifdef CONFIG_NET_POLL_CONTROLLER
++	ndev->poll_controller = vxge_netpoll;
++#endif
+ 	ndev->watchdog_timeo = VXGE_LL_WATCH_DOG_TIMEOUT;
+ 
+ 	initialize_ethtool_ops(ndev);

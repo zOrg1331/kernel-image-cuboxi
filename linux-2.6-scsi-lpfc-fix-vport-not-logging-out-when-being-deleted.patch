@@ -1,0 +1,44 @@
+From: Rob Evers <revers@redhat.com>
+Date: Mon, 4 Jan 2010 22:51:21 -0500
+Subject: [scsi] lpfc: Fix vport not logging out when being deleted
+Message-id: <20100104225127.24386.97161.sendpatchset@localhost.localdomain>
+Patchwork-id: 22293
+O-Subject: [RHEL5.5 PATCH 1/18] Fix vport not logging out when being deleted
+	(CR: 96339)
+Bugzilla: 549763
+RH-Acked-by: Tomas Henzl <thenzl@redhat.com>
+RH-Acked-by: Mike Christie <mchristi@redhat.com>
+
+https://bugzilla.redhat.com/show_bug.cgi?id=549763
+
+Fix vport not logging out when being deleted (CR: 96339)
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/scsi/lpfc/lpfc_els.c b/drivers/scsi/lpfc/lpfc_els.c
+index 0eeba2f..0e15ded 100644
+--- a/drivers/scsi/lpfc/lpfc_els.c
++++ b/drivers/scsi/lpfc/lpfc_els.c
+@@ -6398,8 +6398,8 @@ lpfc_cmpl_reg_new_vport(struct lpfc_hba *phba, LPFC_MBOXQ_t *pmb)
+ 				lpfc_initial_fdisc(vport);
+ 			break;
+ 		}
+-
+ 	} else {
++		vport->vpi_state |= LPFC_VPI_REGISTERED;
+ 		if (vport == phba->pport)
+ 			if (phba->sli_rev < LPFC_SLI_REV4)
+ 				lpfc_issue_fabric_reglogin(vport);
+diff --git a/drivers/scsi/lpfc/lpfc_vport.c b/drivers/scsi/lpfc/lpfc_vport.c
+index 3c64769..ae5f4da 100644
+--- a/drivers/scsi/lpfc/lpfc_vport.c
++++ b/drivers/scsi/lpfc/lpfc_vport.c
+@@ -675,7 +675,7 @@ lpfc_vport_delete(struct Scsi_Host *shost)
+ 			}
+ 			spin_unlock_irq(&phba->ndlp_lock);
+ 		}
+-		if (vport->vpi_state != LPFC_VPI_REGISTERED)
++		if (!(vport->vpi_state & LPFC_VPI_REGISTERED))
+ 			goto skip_logo;
+ 		vport->unreg_vpi_cmpl = VPORT_INVAL;
+ 		timeout = msecs_to_jiffies(phba->fc_ratov * 2000);

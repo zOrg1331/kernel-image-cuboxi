@@ -1,0 +1,56 @@
+From: Jan Glauber <jglauber@redhat.com>
+Date: Thu, 27 Mar 2008 17:26:05 +0100
+Subject: [s390] FCP/SCSI write IO stagnates
+Message-id: 1206635165.32695.7.camel@localhost.localdomain
+O-Subject: [RHEL5.2 PATCH] s390: FCP/SCSI write IO stagnates
+Bugzilla: 437099
+
+Description:
+============
+
+Description: qdio / zfcp: slow database write IO to FCP/SCSI disk
+Symptom:     Database write IO to FCP/SCSI disk getting caught steady.
+             Running on LPAR database load times increase by more
+             than factor 10x compared to ECKD disks.
+Problem:     qdio tries to avoid adapter interrupts by exploiting
+             a certain kind of polling state. When leaving this
+             state, qdio may overlook an arrived buffer in a certain
+             scenario. This scenario occurs only for zfcp-usage, not
+             for qeth-usage.
+Solution:    make sure qdio takes notice of additionally arriving.
+             buffers in any cases.
+
+Bugzilla
+=========
+BZ 437099
+https://bugzilla.redhat.com/show_bug.cgi?id=437099
+
+Upstream status of the patch:
+=============================
+git commit: e5fa443ea05f71b5253818890c6d32174cbab36f
+
+Test status:
+============
+Tested by IBM to resolve the performance issue.
+
+Please ack,
+
+Jan
+
+jglauber@redhat.com
+jang@de.ibm.com
+
+diff --git a/drivers/s390/cio/qdio.c b/drivers/s390/cio/qdio.c
+index af13e3e..9b95742 100644
+--- a/drivers/s390/cio/qdio.c
++++ b/drivers/s390/cio/qdio.c
+@@ -1207,9 +1207,6 @@ tiqdio_is_inbound_q_done(struct qdio_q *q)
+ 
+ 	if (!no_used)
+ 		return 1;
+-	if (!q->siga_sync && !irq->is_qebsm)
+-		/* we'll check for more primed buffers in qeth_stop_polling */
+-		return 0;
+ 	if (irq->is_qebsm) {
+ 		count = 1;
+ 		start_buf = q->first_to_check;

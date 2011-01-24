@@ -176,30 +176,26 @@ cpu_set_irq_affinity(unsigned int irq, cpumask_t affinity)
 	}
 }
 
-static int
-dp264_set_affinity(unsigned int irq, const struct cpumask *affinity)
+static void
+dp264_set_affinity(unsigned int irq, cpumask_t affinity)
 { 
 	spin_lock(&dp264_irq_lock);
-	cpu_set_irq_affinity(irq, *affinity);
+	cpu_set_irq_affinity(irq, affinity);
 	tsunami_update_irq_hw(cached_irq_mask);
 	spin_unlock(&dp264_irq_lock);
-
-	return 0;
 }
 
-static int
-clipper_set_affinity(unsigned int irq, const struct cpumask *affinity)
+static void
+clipper_set_affinity(unsigned int irq, cpumask_t affinity)
 { 
 	spin_lock(&dp264_irq_lock);
-	cpu_set_irq_affinity(irq - 16, *affinity);
+	cpu_set_irq_affinity(irq - 16, affinity);
 	tsunami_update_irq_hw(cached_irq_mask);
 	spin_unlock(&dp264_irq_lock);
-
-	return 0;
 }
 
-static struct irq_chip dp264_irq_type = {
-	.name		= "DP264",
+static struct hw_interrupt_type dp264_irq_type = {
+	.typename	= "DP264",
 	.startup	= dp264_startup_irq,
 	.shutdown	= dp264_disable_irq,
 	.enable		= dp264_enable_irq,
@@ -209,8 +205,8 @@ static struct irq_chip dp264_irq_type = {
 	.set_affinity	= dp264_set_affinity,
 };
 
-static struct irq_chip clipper_irq_type = {
-	.name		= "CLIPPER",
+static struct hw_interrupt_type clipper_irq_type = {
+	.typename	= "CLIPPER",
 	.startup	= clipper_startup_irq,
 	.shutdown	= clipper_disable_irq,
 	.enable		= clipper_enable_irq,
@@ -221,7 +217,7 @@ static struct irq_chip clipper_irq_type = {
 };
 
 static void
-dp264_device_interrupt(unsigned long vector)
+dp264_device_interrupt(unsigned long vector, struct pt_regs * regs)
 {
 #if 1
 	printk("dp264_device_interrupt: NOT IMPLEMENTED YET!! \n");
@@ -240,9 +236,9 @@ dp264_device_interrupt(unsigned long vector)
 		i = ffz(~pld);
 		pld &= pld - 1; /* clear least bit set */
 		if (i == 55)
-			isa_device_interrupt(vector);
+			isa_device_interrupt(vector, regs);
 		else
-			handle_irq(16 + i);
+			handle_irq(16 + i, 16 + i, regs);
 #if 0
 		TSUNAMI_cchip->dir0.csr = 1UL << i; mb();
 		tmp = TSUNAMI_cchip->dir0.csr;
@@ -252,7 +248,7 @@ dp264_device_interrupt(unsigned long vector)
 }
 
 static void 
-dp264_srm_device_interrupt(unsigned long vector)
+dp264_srm_device_interrupt(unsigned long vector, struct pt_regs * regs)
 {
 	int irq;
 
@@ -272,11 +268,11 @@ dp264_srm_device_interrupt(unsigned long vector)
 	if (irq >= 32)
 		irq -= 16;
 
-	handle_irq(irq);
+	handle_irq(irq, regs);
 }
 
 static void 
-clipper_srm_device_interrupt(unsigned long vector)
+clipper_srm_device_interrupt(unsigned long vector, struct pt_regs * regs)
 {
 	int irq;
 
@@ -294,11 +290,11 @@ clipper_srm_device_interrupt(unsigned long vector)
 	 *
 	 * Eg IRQ 24 is DRIR bit 8, etc, etc
 	 */
-	handle_irq(irq);
+	handle_irq(irq, regs);
 }
 
 static void __init
-init_tsunami_irqs(struct irq_chip * ops, int imin, int imax)
+init_tsunami_irqs(struct hw_interrupt_type * ops, int imin, int imax)
 {
 	long i;
 	for (i = imin; i <= imax; ++i) {
@@ -485,7 +481,7 @@ monet_swizzle(struct pci_dev *dev, u8 *pinp)
 				slot = PCI_SLOT(dev->devfn);
 				break;
 			}
-			pin = pci_swizzle_interrupt_pin(dev, pin);
+			pin = bridge_swizzle(pin, PCI_SLOT(dev->devfn)) ;
 
 			/* Move up the chain of bridges.  */
 			dev = dev->bus->self;
@@ -547,7 +543,6 @@ dp264_init_pci(void)
 {
 	common_init_pci();
 	SMC669_Init(0);
-	locate_and_init_vga(NULL);
 }
 
 static void __init
@@ -556,14 +551,6 @@ monet_init_pci(void)
 	common_init_pci();
 	SMC669_Init(1);
 	es1888_init();
-	locate_and_init_vga(NULL);
-}
-
-static void __init
-clipper_init_pci(void)
-{
-	common_init_pci();
-	locate_and_init_vga(NULL);
 }
 
 static void __init
@@ -668,7 +655,7 @@ struct alpha_machine_vector clipper_mv __initmv = {
 	.init_arch		= tsunami_init_arch,
 	.init_irq		= clipper_init_irq,
 	.init_rtc		= common_init_rtc,
-	.init_pci		= clipper_init_pci,
+	.init_pci		= common_init_pci,
 	.kill_arch		= tsunami_kill_arch,
 	.pci_map_irq		= clipper_map_irq,
 	.pci_swizzle		= common_swizzle,

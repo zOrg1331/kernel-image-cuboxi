@@ -1,0 +1,66 @@
+From: Markus Armbruster <armbru@redhat.com>
+Date: Thu, 22 Nov 2007 09:31:09 +0100
+Subject: [xen] PVFB frontend can send bogus screen updates
+Message-id: 87sl2y1y2a.fsf@pike.pond.sub.org
+O-Subject: [PATCH RHEL-5.2] PVFB frontend can send bogus screen updates
+Bugzilla: 370341
+
+The PVFB frontend can send bogus screen updates, which crash the SDL
+backend.  This is the fix for the frontend, straight from upstream
+(http://xenbits.xensource.com/staging/linux-2.6.18-xen.hg).  Tested by
+me.
+
+Bug 370341: PVFB frontend can send bogus screen updates
+
+Please ACK.
+
+# HG changeset patch
+# User Keir Fraser <keir.fraser@citrix.com>
+# Date 1195232146 0
+# Node ID ca05cf1a9bdc2c7604b95fd085fa5abe067c969a
+# Parent  fced90d566f1158ba1c8593554571f77e25f7118
+pvfb: PVFB frontend can send bogus screen updates
+
+The PVFB frontend can get confused and send a screen update to the
+backend when the screen is actually clean.  Such an update asks for
+the impossible rectangle (x1, x2, y1, y2) = (INT_MAX, 0, INT_MAX, 0).
+Fix by setting the dirty flag in the obvious place: when the dirty
+rectangle is grown.
+
+Signed-off-by: Markus Armbruster <armbru@redhat.com>
+
+Acked-by: "Daniel P. Berrange" <berrange@redhat.com>
+Acked-by: Jarod Wilson <jwilson@redhat.com>
+
+diff --git a/drivers/xen/fbfront/xenfb.c b/drivers/xen/fbfront/xenfb.c
+index 9ab5588..9a9ebf8 100644
+--- a/drivers/xen/fbfront/xenfb.c
++++ b/drivers/xen/fbfront/xenfb.c
+@@ -137,6 +137,11 @@ static void xenfb_update_screen(struct xenfb_info *info)
+ 
+ 	mutex_unlock(&info->mm_lock);
+ 
++	if (x2 < x1 || y2 < y1) {
++		printk("xenfb_update_screen bogus rect %d %d %d %d\n",
++		       x1, x2, y1, y2);
++		WARN_ON(1);
++	}
+ 	xenfb_do_update(info, x1, y1, x2 - x1, y2 - y1);
+ }
+ 
+@@ -188,7 +193,6 @@ static int xenfb_setcolreg(unsigned regno, unsigned red, unsigned green,
+ static void xenfb_timer(unsigned long data)
+ {
+ 	struct xenfb_info *info = (struct xenfb_info *)data;
+-	info->dirty = 1;
+ 	wake_up(&info->wq);
+ }
+ 
+@@ -208,6 +212,7 @@ static void __xenfb_refresh(struct xenfb_info *info,
+ 		info->x1 = x1;
+ 	if (info->x2 < x2)
+ 		info->x2 = x2;
++	info->dirty = 1;
+ 
+ 	if (timer_pending(&info->refresh))
+ 		return;

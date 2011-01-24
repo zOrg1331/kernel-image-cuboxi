@@ -84,23 +84,18 @@ long __init pmac_time_init(void)
 	return delta;
 }
 
-#if defined(CONFIG_ADB_CUDA) || defined(CONFIG_ADB_PMU)
 static void to_rtc_time(unsigned long now, struct rtc_time *tm)
 {
 	to_tm(now, tm);
 	tm->tm_year -= 1900;
 	tm->tm_mon -= 1;
 }
-#endif
 
-#if defined(CONFIG_ADB_CUDA) || defined(CONFIG_ADB_PMU) || \
-    defined(CONFIG_PMAC_SMU)
 static unsigned long from_rtc_time(struct rtc_time *tm)
 {
 	return mktime(tm->tm_year+1900, tm->tm_mon+1, tm->tm_mday,
 		      tm->tm_hour, tm->tm_min, tm->tm_sec);
 }
-#endif
 
 #ifdef CONFIG_ADB_CUDA
 static unsigned long cuda_get_time(void)
@@ -265,15 +260,12 @@ int __init via_calibrate_decr(void)
 	struct resource rsrc;
 
 	vias = of_find_node_by_name(NULL, "via-cuda");
-	if (vias == NULL)
+	if (vias == 0)
 		vias = of_find_node_by_name(NULL, "via-pmu");
-	if (vias == NULL)
+	if (vias == 0)
 		vias = of_find_node_by_name(NULL, "via");
-	if (vias == NULL || of_address_to_resource(vias, 0, &rsrc)) {
-	        of_node_put(vias);
+	if (vias == 0 || of_address_to_resource(vias, 0, &rsrc))
 		return 0;
-	}
-	of_node_put(vias);
 	via = ioremap(rsrc.start, rsrc.end - rsrc.start + 1);
 	if (via == NULL) {
 		printk(KERN_ERR "Failed to map VIA for timer calibration !\n");
@@ -300,16 +292,54 @@ int __init via_calibrate_decr(void)
 	ppc_tb_freq = (dstart - dend) * 100 / 6;
 
 	iounmap(via);
-
+	
 	return 1;
 }
 #endif
+
+#ifdef CONFIG_PM
+/*
+ * Reset the time after a sleep.
+ */
+static int
+time_sleep_notify(struct pmu_sleep_notifier *self, int when)
+{
+	static unsigned long time_diff;
+	unsigned long flags;
+	unsigned long seq;
+	struct timespec tv;
+
+	switch (when) {
+	case PBOOK_SLEEP_NOW:
+		do {
+			seq = read_seqbegin_irqsave(&xtime_lock, flags);
+			time_diff = xtime.tv_sec - pmac_get_boot_time();
+		} while (read_seqretry_irqrestore(&xtime_lock, seq, flags));
+		break;
+	case PBOOK_WAKE:
+		tv.tv_sec = pmac_get_boot_time() + time_diff;
+		tv.tv_nsec = 0;
+		do_settimeofday(&tv);
+		break;
+	}
+	return PBOOK_SLEEP_OK;
+}
+
+static struct pmu_sleep_notifier time_sleep_notifier = {
+	time_sleep_notify, SLEEP_LEVEL_MISC,
+};
+#endif /* CONFIG_PM */
 
 /*
  * Query the OF and get the decr frequency.
  */
 void __init pmac_calibrate_decr(void)
 {
+#if defined(CONFIG_PM) && defined(CONFIG_ADB_PMU)
+	/* XXX why here? */
+	pmu_register_sleep_notifier(&time_sleep_notifier);
+#endif
+
 	generic_calibrate_decr();
 
 #ifdef CONFIG_PPC32

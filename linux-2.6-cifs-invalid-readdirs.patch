@@ -1,0 +1,31 @@
+Date: Fri, 20 Oct 2006 16:52:36 -0400
+From: Steve Dickson <SteveD@redhat.com>
+Subject: [RHEL5][PATCH] CIFS: invalids readdires
+
+When a directory with over 100 files is mounted
+using CIFS, an ls of that directory fails with an
+"Invalid argument" error.
+
+The attached patch is from bz211070 and was originally authored by
+the CIFS upstream maintainer... but I was able to reproduce this
+problem, so I too can verify the patch does indeed fix the problem.
+
+The bz is:
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=210608
+
+steved.
+
+--- linux-2.6.18.i686/fs/cifs/readdir.c.orig	2006-10-17 08:32:02.000000000 -0400
++++ linux-2.6.18.i686/fs/cifs/readdir.c	2006-10-20 16:14:24.000000000 -0400
+@@ -1055,6 +1055,10 @@ int cifs_readdir(struct file *file, void
+ 			we want to check for that here? */
+ 			rc = cifs_filldir(current_entry, file,
+ 					filldir, direntry, tmp_buf, max_len);
++			if(rc!=0) {
++				rc = 0;
++				break;
++			}
+ 			file->f_pos++;
+ 			if(file->f_pos == 
+ 				cifsFile->srch_inf.index_of_last_entry) {
+

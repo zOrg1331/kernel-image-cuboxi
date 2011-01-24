@@ -21,39 +21,31 @@
 #include <linux/platform_device.h>
 #include <linux/errno.h>
 #include <linux/workqueue.h>
-#include <linux/i2c.h>
 #include <linux/mtd/mtd.h>
 #include <linux/mtd/nand.h>
 #include <linux/mtd/partitions.h>
 #include <linux/input.h>
-#include <linux/spi/spi.h>
-#include <linux/i2c/tps65010.h>
 
 #include <asm/setup.h>
 #include <asm/page.h>
-#include <mach/hardware.h>
-#include <asm/gpio.h>
-
+#include <asm/hardware.h>
 #include <asm/mach-types.h>
 #include <asm/mach/arch.h>
 #include <asm/mach/flash.h>
 #include <asm/mach/map.h>
 
-#include <mach/irqs.h>
-#include <mach/mux.h>
-#include <mach/tc.h>
-#include <mach/nand.h>
-#include <mach/usb.h>
-#include <mach/keypad.h>
-#include <mach/dma.h>
-#include <mach/common.h>
+#include <asm/arch/gpio.h>
+#include <asm/arch/gpioexpander.h>
+#include <asm/arch/irqs.h>
+#include <asm/arch/mux.h>
+#include <asm/arch/tc.h>
+#include <asm/arch/irda.h>
+#include <asm/arch/usb.h>
+#include <asm/arch/keypad.h>
+#include <asm/arch/dma.h>
+#include <asm/arch/common.h>
 
-#include "board-h3.h"
-
-/* In OMAP1710 H3 the Ethernet is directly connected to CS1 */
-#define OMAP1710_ETHR_START		0x04000300
-
-#define H3_TS_GPIO	48
+extern int omap_gpio_init(void);
 
 static int h3_keymap[] = {
 	KEY(0, 0, KEY_LEFT),
@@ -182,7 +174,7 @@ static struct mtd_partition nand_partitions[] = {
 };
 
 /* dip switches control NAND chip access:  8 bit, 16 bit, or neither */
-static struct omap_nand_platform_data nand_data = {
+static struct nand_platform_data nand_data = {
 	.options	= NAND_SAMSUNG_LP_OPTIONS,
 	.parts		= nand_partitions,
 	.nr_parts	= ARRAY_SIZE(nand_partitions),
@@ -211,7 +203,7 @@ static struct resource smc91x_resources[] = {
 	[1] = {
 		.start	= OMAP_GPIO_IRQ(40),
 		.end	= OMAP_GPIO_IRQ(40),
-		.flags	= IORESOURCE_IRQ | IORESOURCE_IRQ_LOWEDGE,
+		.flags	= IORESOURCE_IRQ,
 	},
 };
 
@@ -255,13 +247,10 @@ static struct resource h3_kp_resources[] = {
 };
 
 static struct omap_kp_platform_data h3_kp_data = {
-	.rows		= 8,
-	.cols		= 8,
-	.keymap		= h3_keymap,
-	.keymapsize	= ARRAY_SIZE(h3_keymap),
-	.rep		= 1,
-	.delay		= 9,
-	.dbounce	= 1,
+	.rows	= 8,
+	.cols	= 8,
+	.keymap = h3_keymap,
+	.rep	= 1,
 };
 
 static struct platform_device h3_kp_device = {
@@ -274,20 +263,101 @@ static struct platform_device h3_kp_device = {
 	.resource	= h3_kp_resources,
 };
 
+
+/* Select between the IrDA and aGPS module
+ */
+static int h3_select_irda(struct device *dev, int state)
+{
+	unsigned char expa;
+	int err = 0;
+
+	if ((err = read_gpio_expa(&expa, 0x26))) {
+		printk(KERN_ERR "Error reading from I/O EXPANDER \n");
+		return err;
+	}
+
+	/* 'P6' enable/disable IRDA_TX and IRDA_RX */
+	if (state & IR_SEL) { /* IrDA */
+		if ((err = write_gpio_expa(expa | 0x40, 0x26))) {
+			printk(KERN_ERR "Error writing to I/O EXPANDER \n");
+			return err;
+		}
+	} else {
+		if ((err = write_gpio_expa(expa & ~0x40, 0x26))) {
+			printk(KERN_ERR "Error writing to I/O EXPANDER \n");
+			return err;
+		}
+	}
+	return err;
+}
+
+static void set_trans_mode(void *data)
+{
+	int *mode = data;
+	unsigned char expa;
+	int err = 0;
+
+	if ((err = read_gpio_expa(&expa, 0x27)) != 0) {
+		printk(KERN_ERR "Error reading from I/O expander\n");
+	}
+
+	expa &= ~0x03;
+
+	if (*mode & IR_SIRMODE) {
+		expa |= 0x01;
+	} else { /* MIR/FIR */
+		expa |= 0x03;
+	}
+
+	if ((err = write_gpio_expa(expa, 0x27)) != 0) {
+		printk(KERN_ERR "Error writing to I/O expander\n");
+	}
+}
+
+static int h3_transceiver_mode(struct device *dev, int mode)
+{
+	struct omap_irda_config *irda_config = dev->platform_data;
+
+	cancel_delayed_work(&irda_config->gpio_expa);
+	PREPARE_WORK(&irda_config->gpio_expa, set_trans_mode, &mode);
+	schedule_work(&irda_config->gpio_expa);
+
+	return 0;
+}
+
+static struct omap_irda_config h3_irda_data = {
+	.transceiver_cap	= IR_SIRMODE | IR_MIRMODE | IR_FIRMODE,
+	.transceiver_mode	= h3_transceiver_mode,
+	.select_irda	 	= h3_select_irda,
+	.rx_channel		= OMAP_DMA_UART3_RX,
+	.tx_channel		= OMAP_DMA_UART3_TX,
+	.dest_start		= UART3_THR,
+	.src_start		= UART3_RHR,
+	.tx_trigger		= 0,
+	.rx_trigger		= 0,
+};
+
+static struct resource h3_irda_resources[] = {
+	[0] = {
+		.start	= INT_UART3,
+		.end	= INT_UART3,
+		.flags	= IORESOURCE_IRQ,
+	},
+};
+
+static struct platform_device h3_irda_device = {
+	.name		= "omapirda",
+	.id		= 0,
+	.dev		= {
+		.platform_data	= &h3_irda_data,
+	},
+	.num_resources	= ARRAY_SIZE(h3_irda_resources),
+	.resource	= h3_irda_resources,
+};
+
 static struct platform_device h3_lcd_device = {
 	.name		= "lcd_h3",
 	.id		= -1,
-};
-
-static struct spi_board_info h3_spi_board_info[] __initdata = {
-	[0] = {
-		.modalias	= "tsc2101",
-		.bus_num	= 2,
-		.chip_select	= 0,
-		.irq		= OMAP_GPIO_IRQ(H3_TS_GPIO),
-		.max_speed_hz	= 16000000,
-		/* .platform_data	= &tsc_platform_data, */
-	},
 };
 
 static struct platform_device *devices[] __initdata = {
@@ -295,6 +365,7 @@ static struct platform_device *devices[] __initdata = {
 	&nand_device,
         &smc91x_device,
 	&intlat_device,
+	&h3_irda_device,
 	&h3_kp_device,
 	&h3_lcd_device,
 };
@@ -313,30 +384,34 @@ static struct omap_usb_config h3_usb_config __initdata = {
 	.pins[1]	= 3,
 };
 
+static struct omap_mmc_config h3_mmc_config __initdata = {
+	.mmc[0] = {
+		.enabled 	= 1,
+		.power_pin	= -1,   /* tps65010 GPIO4 */
+		.switch_pin	= OMAP_MPUIO(1),
+	},
+};
+
+static struct omap_uart_config h3_uart_config __initdata = {
+	.enabled_uarts = ((1 << 0) | (1 << 1) | (1 << 2)),
+};
+
 static struct omap_lcd_config h3_lcd_config __initdata = {
 	.ctrl_name	= "internal",
 };
 
-static struct omap_board_config_kernel h3_config[] __initdata = {
+static struct omap_board_config_kernel h3_config[] = {
+	{ OMAP_TAG_USB,		&h3_usb_config },
+	{ OMAP_TAG_MMC,		&h3_mmc_config },
+	{ OMAP_TAG_UART,	&h3_uart_config },
 	{ OMAP_TAG_LCD,		&h3_lcd_config },
-};
-
-static struct i2c_board_info __initdata h3_i2c_board_info[] = {
-       {
-		I2C_BOARD_INFO("tps65013", 0x48),
-               /* .irq         = OMAP_GPIO_IRQ(??), */
-       },
-	{
-		I2C_BOARD_INFO("isp1301_omap", 0x2d),
-		.irq		= OMAP_GPIO_IRQ(14),
-	},
 };
 
 #define H3_NAND_RB_GPIO_PIN	10
 
-static int nand_dev_ready(struct omap_nand_platform_data *data)
+static int nand_dev_ready(struct nand_platform_data *data)
 {
-	return gpio_get_value(H3_NAND_RB_GPIO_PIN);
+	return omap_get_gpio_datain(H3_NAND_RB_GPIO_PIN);
 }
 
 static void __init h3_init(void)
@@ -354,36 +429,29 @@ static void __init h3_init(void)
 
 	nand_resource.end = nand_resource.start = OMAP_CS2B_PHYS;
 	nand_resource.end += SZ_4K - 1;
-	if (gpio_request(H3_NAND_RB_GPIO_PIN, "NAND ready") < 0)
-		BUG();
-	nand_data.dev_ready = nand_dev_ready;
+	if (!(omap_request_gpio(H3_NAND_RB_GPIO_PIN)))
+		nand_data.dev_ready = nand_dev_ready;
 
 	/* GPIO10 Func_MUX_CTRL reg bit 29:27, Configure V2 to mode1 as GPIO */
 	/* GPIO10 pullup/down register, Enable pullup on GPIO10 */
 	omap_cfg_reg(V2_1710_GPIO10);
 
 	platform_add_devices(devices, ARRAY_SIZE(devices));
-	spi_register_board_info(h3_spi_board_info,
-				ARRAY_SIZE(h3_spi_board_info));
 	omap_board_config = h3_config;
 	omap_board_config_size = ARRAY_SIZE(h3_config);
 	omap_serial_init();
-	omap_register_i2c_bus(1, 100, h3_i2c_board_info,
-			      ARRAY_SIZE(h3_i2c_board_info));
-	omap_usb_init(&h3_usb_config);
-	h3_mmc_init();
 }
 
 static void __init h3_init_smc91x(void)
 {
 	omap_cfg_reg(W15_1710_GPIO40);
-	if (gpio_request(40, "SMC91x irq") < 0) {
+	if (omap_request_gpio(40) < 0) {
 		printk("Error requesting gpio 40 for smc91x irq\n");
 		return;
 	}
 }
 
-static void __init h3_init_irq(void)
+void h3_init_irq(void)
 {
 	omap1_init_common_hw();
 	omap_init_irq();

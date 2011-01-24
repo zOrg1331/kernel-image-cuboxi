@@ -6,6 +6,57 @@
 #include <linux/string.h>
 #include "power.h"
 
+
+/**
+ *	state - Control current power state of device
+ *
+ *	show() returns the current power state of the device. '0' indicates
+ *	the device is on. Other values (1-3) indicate the device is in a low
+ *	power state.
+ *
+ *	store() sets the current power state, which is an integer value
+ *	between 0-3. If the device is on ('0'), and the value written is
+ *	greater than 0, then the device is placed directly into the low-power
+ *	state (via its driver's ->suspend() method).
+ *	If the device is currently in a low-power state, and the value is 0,
+ *	the device is powered back on (via the ->resume() method).
+ *	If the device is in a low-power state, and a different low-power state
+ *	is requested, the device is first resumed, then suspended into the new
+ *	low-power state.
+ */
+
+static ssize_t state_show(struct device * dev, struct device_attribute *attr, char * buf)
+{
+	if (dev->power.power_state.event)
+		return sprintf(buf, "2\n");
+	else
+		return sprintf(buf, "0\n");
+}
+
+static ssize_t state_store(struct device * dev, struct device_attribute *attr, const char * buf, size_t n)
+{
+	pm_message_t state;
+	int error = -EINVAL;
+
+	state.event = PM_EVENT_SUSPEND;
+	/* Older apps expected to write "3" here - confused with PCI D3 */
+	if ((n == 1) && !strcmp(buf, "3"))
+		error = dpm_runtime_suspend(dev, state);
+
+	if ((n == 1) && !strcmp(buf, "2"))
+		error = dpm_runtime_suspend(dev, state);
+
+	if ((n == 1) && !strcmp(buf, "0")) {
+		dpm_runtime_resume(dev);
+		error = 0;
+	}
+
+	return error ? error : n;
+}
+
+static DEVICE_ATTR(state, 0644, state_show, state_store);
+
+
 /*
  *	wakeup - Report/change current wakeup option for device
  *
@@ -79,6 +130,7 @@ static DEVICE_ATTR(wakeup, 0644, wake_show, wake_store);
 
 
 static struct attribute * power_attrs[] = {
+	&dev_attr_state.attr,
 	&dev_attr_wakeup.attr,
 	NULL,
 };

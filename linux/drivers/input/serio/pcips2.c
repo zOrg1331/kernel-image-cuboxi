@@ -58,7 +58,7 @@ static int pcips2_write(struct serio *io, unsigned char val)
 	return 0;
 }
 
-static irqreturn_t pcips2_interrupt(int irq, void *devid)
+static irqreturn_t pcips2_interrupt(int irq, void *devid, struct pt_regs *regs)
 {
 	struct pcips2_data *ps2if = devid;
 	unsigned char status, scancode;
@@ -80,7 +80,7 @@ static irqreturn_t pcips2_interrupt(int irq, void *devid)
 		if (hweight8(scancode) & 1)
 			flag ^= SERIO_PARITY;
 
-		serio_interrupt(ps2if->io, scancode, flag);
+		serio_interrupt(ps2if->io, scancode, flag, regs);
 	} while (1);
 	return IRQ_RETVAL(handled);
 }
@@ -140,20 +140,22 @@ static int __devinit pcips2_probe(struct pci_dev *dev, const struct pci_device_i
 	if (ret)
 		goto disable;
 
-	ps2if = kzalloc(sizeof(struct pcips2_data), GFP_KERNEL);
-	serio = kzalloc(sizeof(struct serio), GFP_KERNEL);
+	ps2if = kmalloc(sizeof(struct pcips2_data), GFP_KERNEL);
+	serio = kmalloc(sizeof(struct serio), GFP_KERNEL);
 	if (!ps2if || !serio) {
 		ret = -ENOMEM;
 		goto release;
 	}
 
+	memset(ps2if, 0, sizeof(struct pcips2_data));
+	memset(serio, 0, sizeof(struct serio));
 
 	serio->id.type		= SERIO_8042;
 	serio->write		= pcips2_write;
 	serio->open		= pcips2_open;
 	serio->close		= pcips2_close;
 	strlcpy(serio->name, pci_name(dev), sizeof(serio->name));
-	strlcpy(serio->phys, dev_name(&dev->dev), sizeof(serio->phys));
+	strlcpy(serio->phys, dev->dev.bus_id, sizeof(serio->phys));
 	serio->port_data	= ps2if;
 	serio->dev.parent	= &dev->dev;
 	ps2if->io		= serio;

@@ -1,12 +1,11 @@
 /*
- * linux/arch/m68k/sun3/sun3dvma.c
+ * linux/arch/m68k/mm/sun3dvma.c
  *
  * Copyright (C) 2000 Sam Creasey
  *
  * Contains common routines for sun3/sun3x DVMA management.
  */
 
-#include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/mm.h>
 #include <linux/list.h>
@@ -29,7 +28,7 @@ static inline void dvma_unmap_iommu(unsigned long a, int b)
 extern void sun3_dvma_init(void);
 #endif
 
-static unsigned long iommu_use[IOMMU_TOTAL_ENTRIES];
+unsigned long iommu_use[IOMMU_TOTAL_ENTRIES];
 
 #define dvma_index(baddr) ((baddr - DVMA_START) >> DVMA_PAGE_SHIFT)
 
@@ -313,7 +312,6 @@ inline unsigned long dvma_map_align(unsigned long kaddr, int len, int align)
 	BUG();
 	return 0;
 }
-EXPORT_SYMBOL(dvma_map_align);
 
 void dvma_unmap(void *baddr)
 {
@@ -329,7 +327,7 @@ void dvma_unmap(void *baddr)
 	return;
 
 }
-EXPORT_SYMBOL(dvma_unmap);
+
 
 void *dvma_malloc_align(unsigned long len, unsigned long align)
 {
@@ -369,7 +367,6 @@ void *dvma_malloc_align(unsigned long len, unsigned long align)
 	return (void *)vaddr;
 
 }
-EXPORT_SYMBOL(dvma_malloc_align);
 
 void dvma_free(void *vaddr)
 {
@@ -377,4 +374,3 @@ void dvma_free(void *vaddr)
 	return;
 
 }
-EXPORT_SYMBOL(dvma_free);

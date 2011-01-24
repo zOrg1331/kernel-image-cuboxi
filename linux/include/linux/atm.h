@@ -16,11 +16,14 @@
  * documentation. Do not change them.
  */
 
+#ifdef __KERNEL__
+#include <linux/socket.h>
+#include <linux/types.h>
+#endif
 #include <linux/compiler.h>
 #include <linux/atmapi.h>
 #include <linux/atmsap.h>
 #include <linux/atmioc.h>
-#include <linux/types.h>
 
 
 /* general ATM constants */
@@ -209,7 +212,7 @@ struct sockaddr_atmsvc {
         char		pub[ATM_E164_LEN+1]; /* public address (E.164) */
     					/* unused addresses must be bzero'ed */
 	char		lij_type;	/* role in LIJ call; one of ATM_LIJ* */
-	__u32	lij_id;		/* LIJ call identifier */
+	uint32_t	lij_id;		/* LIJ call identifier */
     } sas_addr __ATM_API_ALIGN;		/* SVC address */
 };
 
@@ -231,21 +234,10 @@ static __inline__ int atmpvc_addr_in_use(struct sockaddr_atmpvc addr)
  */
 
 struct atmif_sioc {
-	int number;
-	int length;
-	void __user *arg;
+    int number;
+    int length;
+    void __user *arg;
 };
-
-#ifdef __KERNEL__
-#ifdef CONFIG_COMPAT
-#include <linux/compat.h>
-struct compat_atmif_sioc {
-	int number;
-	int length;
-	compat_uptr_t arg;
-};
-#endif
-#endif
 
 typedef unsigned short atm_backend_t;
 #endif

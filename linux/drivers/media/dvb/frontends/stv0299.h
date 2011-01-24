@@ -48,10 +48,10 @@
 #include <linux/dvb/frontend.h>
 #include "dvb_frontend.h"
 
-#define STV0299_LOCKOUTPUT_0  0
-#define STV0299_LOCKOUTPUT_1  1
-#define STV0299_LOCKOUTPUT_CF 2
-#define STV0299_LOCKOUTPUT_LK 3
+#define STV0229_LOCKOUTPUT_0  0
+#define STV0229_LOCKOUTPUT_1  1
+#define STV0229_LOCKOUTPUT_CF 2
+#define STV0229_LOCKOUTPUT_LK 3
 
 #define STV0299_VOLT13_OP0 0
 #define STV0299_VOLT13_OP1 1
@@ -82,37 +82,16 @@ struct stv0299_config
 	/* Is 13v controlled by OP0 or OP1? */
 	u8 volt13_op0_op1:1;
 
-	/* Turn-off OP0? */
-	u8 op0_off:1;
-
 	/* minimum delay before retuning */
 	int min_delay_ms;
 
 	/* Set the symbol rate */
-	int (*set_symbol_rate)(struct dvb_frontend *fe, u32 srate, u32 ratio);
-
-	/* Set device param to start dma */
-	int (*set_ts_params)(struct dvb_frontend *fe, int is_punctured);
+	int (*set_symbol_rate)(struct dvb_frontend* fe, u32 srate, u32 ratio);
 };
 
-#if defined(CONFIG_DVB_STV0299) || (defined(CONFIG_DVB_STV0299_MODULE) && defined(MODULE))
-extern struct dvb_frontend *stv0299_attach(const struct stv0299_config *config,
-					   struct i2c_adapter *i2c);
-#else
-static inline struct dvb_frontend *stv0299_attach(const struct stv0299_config *config,
-					   struct i2c_adapter *i2c)
-{
-	printk(KERN_WARNING "%s: driver disabled by Kconfig\n", __func__);
-	return NULL;
-}
-#endif // CONFIG_DVB_STV0299
+extern int stv0299_writereg (struct dvb_frontend* fe, u8 reg, u8 data);
 
-static inline int stv0299_writereg(struct dvb_frontend *fe, u8 reg, u8 val) {
-	int r = 0;
-	u8 buf[] = {reg, val};
-	if (fe->ops.write)
-		r = fe->ops.write(fe, buf, 2);
-	return r;
-}
+extern struct dvb_frontend* stv0299_attach(const struct stv0299_config* config,
+					   struct i2c_adapter* i2c);
 
 #endif // STV0299_H

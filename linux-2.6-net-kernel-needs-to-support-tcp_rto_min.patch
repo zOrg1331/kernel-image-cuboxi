@@ -1,0 +1,91 @@
+From: Anton Arapov <aarapov@redhat.com>
+Date: Tue, 25 Sep 2007 10:36:03 +0200
+Subject: [net] kernel needs to support TCP_RTO_MIN
+Message-id: h8d4w7m9ak.fsf@pepelac.englab.brq.redhat.com
+O-Subject: [RHEL5.2 PATCH] BZ303011: kernel needs to support TCP_RTO_MIN
+Bugzilla: 303011
+
+BZ#303011:
+  https://bugzilla.redhat.com/show_bug.cgi?id=303011
+
+Description:
+  Customer application for KDDI requires a kernel parameter
+TCP_RTO_MIN to either be tunable (such as it is for HP-UX, Solaris,
+etc.) or set to = 3000 milli-seconds to enable the customers
+application to restart a transmission in accordance to wireless
+transmission (aka cell phone transmission rates).
+  Version-Release number of selected component (if applicable):
+RHEL-4U5 (hotfix)or patch.  Customer is also planning to roll to RHEL
+5 over time so this fix must exist there as well, but that is less
+pressing.
+  With the value hardcoded = 200 milli-seconds, it is not possible to
+have the application align properly with mobile phone TCPIP data traffic.
+  This problem has potentially a 28 million dollar impact! =)
+
+Upstream status:
+  commit# 05bb1fad1cde025a864a90cfeb98dcbefe78a44a
+  - Cell phone networks do link layer retransmissions and other things
+    that cause unnecessary timeout retransmits.  So allow the minimum
+    RTO to be inflated per-route to deal with this.
+  commit# 5c127c58ae9bf196d787815b1bd6b0aec5aee816
+  - (fix)  'dst' can be NULL in tcp_rto_min()
+
+Test status:
+  Patch has been tested for compilation, boot, and has been tested by
+modified iproute user-space tool.
+
+==
+
+Acked-by: "David S. Miller" <davem@redhat.com>
+Acked-by: Alan Cox <alan@redhat.com>
+
+diff --git a/include/linux/rtnetlink.h b/include/linux/rtnetlink.h
+index 41b8df5..b3f3c6b 100644
+--- a/include/linux/rtnetlink.h
++++ b/include/linux/rtnetlink.h
+@@ -350,6 +350,8 @@ enum
+ #define RTAX_INITCWND RTAX_INITCWND
+ 	RTAX_FEATURES,
+ #define RTAX_FEATURES RTAX_FEATURES
++	RTAX_RTO_MIN,
++#define RTAX_RTO_MIN RTAX_RTO_MIN
+ 	__RTAX_MAX
+ };
+ 
+diff --git a/net/ipv4/tcp_input.c b/net/ipv4/tcp_input.c
+index aaeed37..684fc4d 100644
+--- a/net/ipv4/tcp_input.c
++++ b/net/ipv4/tcp_input.c
+@@ -544,6 +544,16 @@ static void tcp_event_data_recv(struct sock *sk, struct tcp_sock *tp, struct sk_
+ 		tcp_grow_window(sk, tp, skb);
+ }
+ 
++static u32 tcp_rto_min(struct sock *sk)
++{
++	struct dst_entry *dst = __sk_dst_get(sk);
++	u32 rto_min = TCP_RTO_MIN;
++	
++	if (dst && dst_metric_locked(dst, RTAX_RTO_MIN))
++		rto_min = dst->metrics[RTAX_RTO_MIN-1];
++	return rto_min;
++}
++
+ /* Called to compute a smoothed rtt estimate. The data fed to this
+  * routine either comes from timestamps, or from segments that were
+  * known _not_ to have been retransmitted [see Karn/Partridge
+@@ -605,13 +615,13 @@ static void tcp_rtt_estimator(struct sock *sk, const __u32 mrtt)
+ 			if (tp->mdev_max < tp->rttvar)
+ 				tp->rttvar -= (tp->rttvar-tp->mdev_max)>>2;
+ 			tp->rtt_seq = tp->snd_nxt;
+-			tp->mdev_max = TCP_RTO_MIN;
++			tp->mdev_max = tcp_rto_min(sk);
+ 		}
+ 	} else {
+ 		/* no previous measure. */
+ 		tp->srtt = m<<3;	/* take the measured time to be rtt */
+ 		tp->mdev = m<<1;	/* make sure rto = 3*rtt */
+-		tp->mdev_max = tp->rttvar = max(tp->mdev, TCP_RTO_MIN);
++		tp->mdev_max = tp->rttvar = max(tp->mdev, tcp_rto_min(sk));
+ 		tp->rtt_seq = tp->snd_nxt;
+ 	}
+ }

@@ -44,15 +44,9 @@ enum {
 #define PR_RES 0x80
 
 struct sbni_csr1 {
-#ifdef __LITTLE_ENDIAN_BITFIELD
-	u8 rxl	: 5;
-	u8 rate	: 2;
-	u8 	: 1;
-#else
-	u8 	: 1;
-	u8 rate	: 2;
-	u8 rxl	: 5;
-#endif
+	unsigned rxl	: 5;
+	unsigned rate	: 2;
+	unsigned 	: 1;
 };
 
 /* fields in frame header */

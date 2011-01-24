@@ -108,7 +108,6 @@ in the event that chatty debug messages are desired - jjs 12/30/98 */
 #define IBMTR_DEBUG_MESSAGES 0
 
 #include <linux/module.h>
-#include <linux/sched.h>
 
 #ifdef PCMCIA		/* required for ibmtr_cs.c to build */
 #undef MODULE		/* yes, really */
@@ -116,6 +115,9 @@ in the event that chatty debug messages are desired - jjs 12/30/98 */
 #else
 #define ENABLE_PAGING 1		
 #endif
+
+#define FALSE 0
+#define TRUE (!FALSE)
 
 /* changes the output format of driver initialization */
 #define TR_VERBOSE	0
@@ -184,6 +186,7 @@ static char __devinit *adapter_def(char type)
 #define TRC_INITV 0x02		/*  verbose init trace points     */
 static unsigned char ibmtr_debug_trace = 0;
 
+static int 	ibmtr_probe(struct net_device *dev);
 static int	ibmtr_probe1(struct net_device *dev, int ioaddr);
 static unsigned char get_sram_size(struct tok_info *adapt_info);
 static int 	trdev_init(struct net_device *dev);
@@ -192,16 +195,16 @@ static int 	tok_init_card(struct net_device *dev);
 static void	tok_open_adapter(unsigned long dev_addr);
 static void 	open_sap(unsigned char type, struct net_device *dev);
 static void 	tok_set_multicast_list(struct net_device *dev);
-static netdev_tx_t tok_send_packet(struct sk_buff *skb,
-					 struct net_device *dev);
+static int 	tok_send_packet(struct sk_buff *skb, struct net_device *dev);
 static int 	tok_close(struct net_device *dev);
-static irqreturn_t tok_interrupt(int irq, void *dev_id);
+static irqreturn_t tok_interrupt(int irq, void *dev_id, struct pt_regs *regs);
 static void 	initial_tok_int(struct net_device *dev);
 static void 	tr_tx(struct net_device *dev);
 static void 	tr_rx(struct net_device *dev);
 static void	ibmtr_reset_timer(struct timer_list*tmr,struct net_device *dev);
 static void	tok_rerun(unsigned long dev_addr);
 static void	ibmtr_readlog(struct net_device *dev);
+static struct 	net_device_stats *tok_get_stats(struct net_device *dev);
 static int	ibmtr_change_mtu(struct net_device *dev, int mtu);
 static void	find_turbo_adapters(int *iolist);
 
@@ -325,11 +328,22 @@ static void ibmtr_cleanup_card(struct net_device *dev)
 	release_region(dev->base_addr, IBMTR_IO_EXTENT);
 
 	{ 
-		struct tok_info *ti = netdev_priv(dev);
+		struct tok_info *ti = (struct tok_info *) dev->priv;
 		iounmap(ti->mmio);
 		iounmap(ti->sram_virt);
 	}
 #endif		
+}
+
+int ibmtr_probe_card(struct net_device *dev)
+{
+	int err = ibmtr_probe(dev);
+	if (!err) {
+		err = register_netdev(dev);
+		if (err)
+			ibmtr_cleanup_card(dev);
+	}
+	return err;
 }
 
 /****************************************************************************
@@ -344,7 +358,7 @@ static void ibmtr_cleanup_card(struct net_device *dev)
  *	which references it.
  ****************************************************************************/
 
-static int __devinit ibmtr_probe(struct net_device *dev)
+static int ibmtr_probe(struct net_device *dev)
 {
 	int i;
 	int base_addr = dev->base_addr;
@@ -364,17 +378,6 @@ static int __devinit ibmtr_probe(struct net_device *dev)
 	return -ENODEV;
 }
 
-int __devinit ibmtr_probe_card(struct net_device *dev)
-{
-	int err = ibmtr_probe(dev);
-	if (!err) {
-		err = register_netdev(dev);
-		if (err)
-			ibmtr_cleanup_card(dev);
-	}
-	return err;
-}
-
 /*****************************************************************************/
 
 static int __devinit ibmtr_probe1(struct net_device *dev, int PIOaddr)
@@ -382,7 +385,7 @@ static int __devinit ibmtr_probe1(struct net_device *dev, int PIOaddr)
 
 	unsigned char segment, intr=0, irq=0, i, j, cardpresent=NOTOK, temp=0;
 	void __iomem * t_mmio = NULL;
-	struct tok_info *ti = netdev_priv(dev);
+	struct tok_info *ti = dev->priv;
 	void __iomem *cd_chanid;
 	unsigned char *tchanid, ctemp;
 #ifndef PCMCIA
@@ -703,7 +706,9 @@ static int __devinit ibmtr_probe1(struct net_device *dev, int PIOaddr)
 		channel_def[cardpresent - 1], adapter_def(ti->adapter_type));
 	DPRINTK("using irq %d, PIOaddr %hx, %dK shared RAM.\n",
 			irq, PIOaddr, ti->mapped_ram_size / 2);
-	DPRINTK("Hardware address : %pM\n", dev->dev_addr);
+	DPRINTK("Hardware address : %02X:%02X:%02X:%02X:%02X:%02X\n",
+		dev->dev_addr[0], dev->dev_addr[1], dev->dev_addr[2],
+		dev->dev_addr[3], dev->dev_addr[4], dev->dev_addr[5]);
 	if (ti->page_mask)
 		DPRINTK("Shared RAM paging enabled. "
 			"Page size: %uK Shared Ram size %dK\n",
@@ -817,21 +822,18 @@ static unsigned char __devinit get_sram_size(struct tok_info *adapt_info)
 
 /*****************************************************************************/
 
-static const struct net_device_ops trdev_netdev_ops = {
-	.ndo_open		= tok_open,
-	.ndo_stop		= tok_close,
-	.ndo_start_xmit		= tok_send_packet,
-	.ndo_set_multicast_list = tok_set_multicast_list,
-	.ndo_change_mtu		= ibmtr_change_mtu,
-};
-
 static int __devinit trdev_init(struct net_device *dev)
 {
-	struct tok_info *ti = netdev_priv(dev);
+	struct tok_info *ti = (struct tok_info *) dev->priv;
 
 	SET_PAGE(ti->srb_page);
         ti->open_failure = NO    ;
-	dev->netdev_ops = &trdev_netdev_ops;
+	dev->open = tok_open;
+	dev->stop = tok_close;
+	dev->hard_start_xmit = tok_send_packet;
+	dev->get_stats = tok_get_stats;
+	dev->set_multicast_list = tok_set_multicast_list;
+	dev->change_mtu = ibmtr_change_mtu;
 
 	return 0;
 }
@@ -845,7 +847,7 @@ static int tok_init_card(struct net_device *dev)
 	unsigned long i;
 
 	PIOaddr = dev->base_addr;
-	ti = netdev_priv(dev);
+	ti = (struct tok_info *) dev->priv;
 	/* Special processing for first interrupt after reset */
 	ti->do_tok_int = FIRST_INT;
 	/* Reset adapter */
@@ -867,7 +869,7 @@ static int tok_init_card(struct net_device *dev)
 /*****************************************************************************/
 static int tok_open(struct net_device *dev)
 {
-	struct tok_info *ti = netdev_priv(dev);
+	struct tok_info *ti = (struct tok_info *) dev->priv;
 	int i;
 
 	/*the case we were left in a failure state during a previous open */
@@ -926,7 +928,7 @@ static void tok_open_adapter(unsigned long dev_addr)
 	struct tok_info *ti;
 	int i;
 
-	ti = netdev_priv(dev);
+	ti = (struct tok_info *) dev->priv;
 	SET_PAGE(ti->init_srb_page); 
 	writeb(~SRB_RESP_INT, ti->mmio + ACA_OFFSET + ACA_RESET + ISRP_ODD);
 	for (i = 0; i < sizeof(struct dir_open_adapter); i++)
@@ -961,7 +963,7 @@ static void tok_open_adapter(unsigned long dev_addr)
 static void open_sap(unsigned char type, struct net_device *dev)
 {
 	int i;
-	struct tok_info *ti = netdev_priv(dev);
+	struct tok_info *ti = (struct tok_info *) dev->priv;
 
 	SET_PAGE(ti->srb_page);
 	for (i = 0; i < sizeof(struct dlc_open_sap); i++)
@@ -985,7 +987,7 @@ static void open_sap(unsigned char type, struct net_device *dev)
 
 static void tok_set_multicast_list(struct net_device *dev)
 {
-	struct tok_info *ti = netdev_priv(dev);
+	struct tok_info *ti = (struct tok_info *) dev->priv;
 	struct dev_mc_list *mclist;
 	unsigned char address[4];
 
@@ -1024,12 +1026,11 @@ static void tok_set_multicast_list(struct net_device *dev)
 
 #define STATION_ID_OFST 4
 
-static netdev_tx_t tok_send_packet(struct sk_buff *skb,
-					 struct net_device *dev)
+static int tok_send_packet(struct sk_buff *skb, struct net_device *dev)
 {
 	struct tok_info *ti;
 	unsigned long flags;
-	ti = netdev_priv(dev);
+	ti = (struct tok_info *) dev->priv;
 
         netif_stop_queue(dev);
 
@@ -1044,14 +1045,14 @@ static netdev_tx_t tok_send_packet(struct sk_buff *skb,
 	writeb(CMD_IN_SRB, ti->mmio + ACA_OFFSET + ACA_SET + ISRA_ODD);
 	spin_unlock_irqrestore(&(ti->lock), flags);
 	dev->trans_start = jiffies;
-	return NETDEV_TX_OK;
+	return 0;
 }
 
 /*****************************************************************************/
 
 static int tok_close(struct net_device *dev)
 {
-	struct tok_info *ti = netdev_priv(dev);
+	struct tok_info *ti = (struct tok_info *) dev->priv;
 
 	/* Important for PCMCIA hot unplug, otherwise, we'll pull the card, */
 	/* unloading the module from memory, and then if a timer pops, ouch */
@@ -1094,7 +1095,7 @@ static void __iomem *map_address(struct tok_info *ti, unsigned index, __u8 *page
 
 static void dir_open_adapter (struct net_device *dev)
 {
-        struct tok_info *ti = netdev_priv(dev);
+        struct tok_info *ti = (struct tok_info *) dev->priv;
         unsigned char ret_code;
         __u16 err;
 
@@ -1144,16 +1145,9 @@ static void dir_open_adapter (struct net_device *dev)
                 } else {
 			char **prphase = printphase;
 			char **prerror = printerror;
-			int pnr = err / 16 - 1;
-			int enr = err % 16 - 1;
 			DPRINTK("TR Adapter misc open failure, error code = ");
-			if (pnr < 0 || pnr >= ARRAY_SIZE(printphase) ||
-					enr < 0 ||
-					enr >= ARRAY_SIZE(printerror))
-				printk("0x%x, invalid Phase/Error.", err);
-			else
-				printk("0x%x, Phase: %s, Error: %s\n", err,
-						prphase[pnr], prerror[enr]);
+			printk("0x%x, Phase: %s, Error: %s\n",
+				err, prphase[err/16 -1], prerror[err%16 -1]);
 			printk(" retrying after %ds delay...\n",
 					TR_RETRY_INTERVAL/HZ);
                 }
@@ -1172,7 +1166,7 @@ static void dir_open_adapter (struct net_device *dev)
 
 /******************************************************************************/
 
-static irqreturn_t tok_interrupt(int irq, void *dev_id)
+static irqreturn_t tok_interrupt(int irq, void *dev_id, struct pt_regs *regs)
 {
 	unsigned char status;
 	/*  unsigned char status_even ; */
@@ -1184,9 +1178,9 @@ static irqreturn_t tok_interrupt(int irq, void *dev_id)
 
 	dev = dev_id;
 #if TR_VERBOSE
-	DPRINTK("Int from tok_driver, dev : %p irq%d\n", dev,irq);
+	DPRINTK("Int from tok_driver, dev : %p irq%d regs=%p\n", dev,irq,regs);
 #endif
-	ti = netdev_priv(dev);
+	ti = (struct tok_info *) dev->priv;
 	if (ti->sram_phys & 1)
 		return IRQ_NONE;         /* PCMCIA card extraction flag */
 	spin_lock(&(ti->lock));
@@ -1472,7 +1466,7 @@ static irqreturn_t tok_interrupt(int irq, void *dev_id)
 					"%02X\n",
 					(int)retcode, (int)readb(ti->ssb + 6));
 			else
-				dev->stats.tx_packets++;
+				ti->tr_stats.tx_packets++;
 			break;
 		case XMIT_XID_CMD:
 			DPRINTK("xmit xid ret_code: %02X\n",
@@ -1505,7 +1499,7 @@ static void initial_tok_int(struct net_device *dev)
 	struct tok_info *ti;
         unsigned char init_status; /*BMS 12/2000*/
 
-	ti = netdev_priv(dev);
+	ti = (struct tok_info *) dev->priv;
 
 	ti->do_tok_int = NOT_FIRST;
 
@@ -1549,7 +1543,7 @@ static void initial_tok_int(struct net_device *dev)
 	ti->ring_speed = init_status & 0x01 ? 16 : 4;
 	DPRINTK("Initial interrupt : %d Mbps, shared RAM base %08x.\n",
 				ti->ring_speed, (unsigned int)dev->mem_start);
-	ti->auto_speedsave = (readb(ti->init_srb+INIT_STATUS_2_OFST) & 4) != 0;
+	ti->auto_speedsave=readb(ti->init_srb+INIT_STATUS_2_OFST)&4?TRUE:FALSE;
 
         if (ti->open_mode == MANUAL)	wake_up(&ti->wait_for_reset);
 	else				tok_open_adapter((unsigned long)dev);
@@ -1567,7 +1561,7 @@ static void initial_tok_int(struct net_device *dev)
 
 static void tr_tx(struct net_device *dev)
 {
-	struct tok_info *ti = netdev_priv(dev);
+	struct tok_info *ti = (struct tok_info *) dev->priv;
 	struct trh_hdr *trhdr = (struct trh_hdr *) ti->current_skb->data;
 	unsigned int hdr_len;
 	__u32 dhb=0,dhb_base;
@@ -1658,7 +1652,7 @@ static void tr_tx(struct net_device *dev)
 		break;
 	}
 	writeb(RESP_IN_ASB, ti->mmio + ACA_OFFSET + ACA_SET + ISRA_ODD);
-	dev->stats.tx_bytes += ti->current_skb->len;
+	ti->tr_stats.tx_bytes += ti->current_skb->len;
 	dev_kfree_skb_irq(ti->current_skb);
 	ti->current_skb = NULL;
 	netif_wake_queue(dev);
@@ -1681,7 +1675,7 @@ static void tr_tx(struct net_device *dev)
 
 static void tr_rx(struct net_device *dev)
 {
-	struct tok_info *ti = netdev_priv(dev);
+	struct tok_info *ti = (struct tok_info *) dev->priv;
 	__u32 rbuffer;
 	void __iomem *rbuf, *rbufdata, *llc;
 	__u8 rbuffer_page = 0;
@@ -1734,7 +1728,7 @@ static void tr_rx(struct net_device *dev)
 	if (readb(llc + offsetof(struct trllc, llc)) != UI_CMD) {
 		SET_PAGE(ti->asb_page);
 		writeb(DATA_LOST, ti->asb + RETCODE_OFST);
-		dev->stats.rx_dropped++;
+		ti->tr_stats.rx_dropped++;
 		writeb(RESP_IN_ASB, ti->mmio + ACA_OFFSET + ACA_SET + ISRA_ODD);
 		return;
 	}
@@ -1749,18 +1743,18 @@ static void tr_rx(struct net_device *dev)
 	if (!IPv4_p) {
 
 		void __iomem *trhhdr = rbuf + offsetof(struct rec_buf, data);
-		u8 saddr[6];
-		u8 daddr[6];
-		int i;
-		for (i = 0 ; i < 6 ; i++)
-			saddr[i] = readb(trhhdr + SADDR_OFST + i);
-		for (i = 0 ; i < 6 ; i++)
-			daddr[i] = readb(trhhdr + DADDR_OFST + i);
+
 		DPRINTK("Probably non-IP frame received.\n");
 		DPRINTK("ssap: %02X dsap: %02X "
-			"saddr: %pM daddr: %pM\n",
+			"saddr: %02X:%02X:%02X:%02X:%02X:%02X "
+			"daddr: %02X:%02X:%02X:%02X:%02X:%02X\n",
 			readb(llc + SSAP_OFST), readb(llc + DSAP_OFST),
-			saddr, daddr);
+			readb(trhhdr+SADDR_OFST), readb(trhhdr+ SADDR_OFST+1),
+			readb(trhhdr+SADDR_OFST+2), readb(trhhdr+SADDR_OFST+3),
+			readb(trhhdr+SADDR_OFST+4), readb(trhhdr+SADDR_OFST+5),
+			readb(trhhdr+DADDR_OFST), readb(trhhdr+DADDR_OFST + 1),
+			readb(trhhdr+DADDR_OFST+2), readb(trhhdr+DADDR_OFST+3),
+			readb(trhhdr+DADDR_OFST+4), readb(trhhdr+DADDR_OFST+5));
 	}
 #endif
 
@@ -1769,7 +1763,7 @@ static void tr_rx(struct net_device *dev)
 
 	if (!(skb = dev_alloc_skb(skb_size))) {
 		DPRINTK("out of memory. frame dropped.\n");
-		dev->stats.rx_dropped++;
+		ti->tr_stats.rx_dropped++;
 		SET_PAGE(ti->asb_page);
 		writeb(DATA_LOST, ti->asb + offsetof(struct asb_rec, ret_code));
 		writeb(RESP_IN_ASB, ti->mmio + ACA_OFFSET + ACA_SET + ISRA_ODD);
@@ -1778,6 +1772,7 @@ static void tr_rx(struct net_device *dev)
 	/*BMS again, if she comes in with few but leaves with many */
 	skb_reserve(skb, sizeof(struct trh_hdr) - lan_hdr_len);
 	skb_put(skb, length);
+	skb->dev = dev;
 	data = skb->data;
 	rbuffer_len = ntohs(readw(rbuf + offsetof(struct rec_buf, buf_len)));
 	rbufdata = rbuf + offsetof(struct rec_buf, data);
@@ -1825,15 +1820,16 @@ static void tr_rx(struct net_device *dev)
 
 	writeb(RESP_IN_ASB, ti->mmio + ACA_OFFSET + ACA_SET + ISRA_ODD);
 
-	dev->stats.rx_bytes += skb->len;
-	dev->stats.rx_packets++;
+	ti->tr_stats.rx_bytes += skb->len;
+	ti->tr_stats.rx_packets++;
 
 	skb->protocol = tr_type_trans(skb, dev);
 	if (IPv4_p) {
 		skb->csum = chksum;
-		skb->ip_summed = CHECKSUM_COMPLETE;
+		skb->ip_summed = 1;
 	}
 	netif_rx(skb);
+	dev->last_rx = jiffies;
 }				/*tr_rx */
 
 /*****************************************************************************/
@@ -1849,10 +1845,10 @@ static void ibmtr_reset_timer(struct timer_list *tmr, struct net_device *dev)
 
 /*****************************************************************************/
 
-static void tok_rerun(unsigned long dev_addr)
-{
+void tok_rerun(unsigned long dev_addr){
+
 	struct net_device *dev = (struct net_device *)dev_addr;
-	struct tok_info *ti = netdev_priv(dev);
+	struct tok_info *ti = (struct tok_info *) dev->priv;
 
 	if ( ti->open_action == RESTART){
 		ti->do_tok_int = FIRST_INT;
@@ -1874,7 +1870,7 @@ static void ibmtr_readlog(struct net_device *dev)
 {
 	struct tok_info *ti;
 
-	ti = netdev_priv(dev);
+	ti = (struct tok_info *) dev->priv;
 
 	ti->readlog_pending = 0;
 	SET_PAGE(ti->srb_page);
@@ -1888,9 +1884,24 @@ static void ibmtr_readlog(struct net_device *dev)
 
 /*****************************************************************************/
 
+/* tok_get_stats():  Basically a scaffold routine which will return
+   the address of the tr_statistics structure associated with
+   this device -- the tr.... structure is an ethnet look-alike
+   so at least for this iteration may suffice.   */
+
+static struct net_device_stats *tok_get_stats(struct net_device *dev)
+{
+
+	struct tok_info *toki;
+	toki = (struct tok_info *) dev->priv;
+	return (struct net_device_stats *) &toki->tr_stats;
+}
+
+/*****************************************************************************/
+
 static int ibmtr_change_mtu(struct net_device *dev, int mtu)
 {
-	struct tok_info *ti = netdev_priv(dev);
+	struct tok_info *ti = (struct tok_info *) dev->priv;
 
 	if (ti->ring_speed == 16 && mtu > ti->maxmtu16)
 		return -EINVAL;
@@ -1922,7 +1933,7 @@ static int __init ibmtr_init(void)
 
 	find_turbo_adapters(io);
 
-	for (i = 0; i < IBMTR_MAX_ADAPTERS && io[i]; i++) {
+	for (i = 0; io[i] && (i < IBMTR_MAX_ADAPTERS); i++) {
 		struct net_device *dev;
 		irq[i] = 0;
 		mem[i] = 0;

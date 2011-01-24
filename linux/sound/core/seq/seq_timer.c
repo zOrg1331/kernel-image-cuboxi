@@ -1,7 +1,7 @@
 /*
  *   ALSA sequencer Timer
  *   Copyright (c) 1998-1999 by Frank van de Pol <fvdpol@coil.demon.nl>
- *                              Jaroslav Kysela <perex@perex.cz>
+ *                              Jaroslav Kysela <perex@suse.cz>
  *
  *
  *   This program is free software; you can redistribute it and/or modify
@@ -20,11 +20,19 @@
  *
  */
 
+#include <sound/driver.h>
 #include <sound/core.h>
 #include <linux/slab.h>
 #include "seq_timer.h"
 #include "seq_queue.h"
 #include "seq_info.h"
+
+extern int seq_default_timer_class;
+extern int seq_default_timer_sclass;
+extern int seq_default_timer_card;
+extern int seq_default_timer_device;
+extern int seq_default_timer_subdevice;
+extern int seq_default_timer_resolution;
 
 /* allowed sequencer timer frequencies, in Hz */
 #define MIN_FREQUENCY		10
@@ -173,8 +181,7 @@ int snd_seq_timer_set_tempo(struct snd_seq_timer * tmr, int tempo)
 {
 	unsigned long flags;
 
-	if (snd_BUG_ON(!tmr))
-		return -EINVAL;
+	snd_assert(tmr, return -EINVAL);
 	if (tempo <= 0)
 		return -EINVAL;
 	spin_lock_irqsave(&tmr->lock, flags);
@@ -191,8 +198,7 @@ int snd_seq_timer_set_ppq(struct snd_seq_timer * tmr, int ppq)
 {
 	unsigned long flags;
 
-	if (snd_BUG_ON(!tmr))
-		return -EINVAL;
+	snd_assert(tmr, return -EINVAL);
 	if (ppq <= 0)
 		return -EINVAL;
 	spin_lock_irqsave(&tmr->lock, flags);
@@ -216,8 +222,7 @@ int snd_seq_timer_set_position_tick(struct snd_seq_timer *tmr,
 {
 	unsigned long flags;
 
-	if (snd_BUG_ON(!tmr))
-		return -EINVAL;
+	snd_assert(tmr, return -EINVAL);
 
 	spin_lock_irqsave(&tmr->lock, flags);
 	tmr->tick.cur_tick = position;
@@ -232,8 +237,7 @@ int snd_seq_timer_set_position_time(struct snd_seq_timer *tmr,
 {
 	unsigned long flags;
 
-	if (snd_BUG_ON(!tmr))
-		return -EINVAL;
+	snd_assert(tmr, return -EINVAL);
 
 	snd_seq_sanity_real_time(&position);
 	spin_lock_irqsave(&tmr->lock, flags);
@@ -248,8 +252,7 @@ int snd_seq_timer_set_skew(struct snd_seq_timer *tmr, unsigned int skew,
 {
 	unsigned long flags;
 
-	if (snd_BUG_ON(!tmr))
-		return -EINVAL;
+	snd_assert(tmr, return -EINVAL);
 
 	/* FIXME */
 	if (base != SKEW_BASE) {
@@ -270,8 +273,7 @@ int snd_seq_timer_open(struct snd_seq_queue *q)
 	int err;
 
 	tmr = q->timer;
-	if (snd_BUG_ON(!tmr))
-		return -EINVAL;
+	snd_assert(tmr != NULL, return -EINVAL);
 	if (tmr->timeri)
 		return -EBUSY;
 	sprintf(str, "sequencer queue %i", q->queue);
@@ -308,8 +310,7 @@ int snd_seq_timer_close(struct snd_seq_queue *q)
 	struct snd_seq_timer *tmr;
 	
 	tmr = q->timer;
-	if (snd_BUG_ON(!tmr))
-		return -EINVAL;
+	snd_assert(tmr != NULL, return -EINVAL);
 	if (tmr->timeri) {
 		snd_timer_stop(tmr->timeri);
 		snd_timer_close(tmr->timeri);
@@ -335,8 +336,7 @@ static int initialize_timer(struct snd_seq_timer *tmr)
 	unsigned long freq;
 
 	t = tmr->timeri->timer;
-	if (snd_BUG_ON(!t))
-		return -EINVAL;
+	snd_assert(t, return -EINVAL);
 
 	freq = tmr->preferred_resolution;
 	if (!freq)

@@ -1,0 +1,43 @@
+From: Tomas Henzl <thenzl@redhat.com>
+Date: Sun, 29 Aug 2010 15:49:20 -0400
+Subject: [block] cciss: Use helper functions to access drive_data
+Message-id: <1283097002-3341-22-git-send-email-thenzl@redhat.com>
+Patchwork-id: 27866
+O-Subject: [RHEL6 PATCH 21/63] cciss: Use helper functions to access drive_data
+	field
+Bugzilla: 568830
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+
+Use dev_*_drvdata helper functions to access struct device drive_data field.
+
+diff --git a/drivers/block/cciss.c b/drivers/block/cciss.c
+index 3b90741..862d1ca 100644
+--- a/drivers/block/cciss.c
++++ b/drivers/block/cciss.c
+@@ -461,9 +461,9 @@ static void __devinit cciss_procinit(int i)
+ #define to_hba(n) container_of(n, struct ctlr_info, dev)
+ /*
+  * If ctlr_info.dev was not a pointer, we could use container_of()
+- * here also instead of overloading dev->driver_data.
++ * here also instead of dev->driver_data.
+  */
+-#define to_drv(n) ((n)->driver_data)
++#define to_drv(n) (dev_get_drvdata(n))
+ 
+ static ssize_t dev_show_unique_id(struct device *dev,
+ 				  struct device_attribute *attr,
+@@ -622,12 +622,9 @@ static int cciss_create_ld_sysfs_entry(struct ctlr_info *h,
+ 
+ 	/*
+ 	 * Stuff backpointer to drv into dev->driver_data, so we can
+-	 * get back to the device in sysfs routines.  Note that we are
+-	 * overloading driver_data. If this pointer is needed in the
+-	 * future for sysfs driver stuff, we need to find another
+-	 * method.
++	 * get back to the device in sysfs routines.
+ 	 */
+-	drv->dev->driver_data = drv;
++	dev_set_drvdata(drv->dev, drv);
+ 
+ 	device_initialize(drv->dev);
+ 	(*drv->dev).bus = &cciss_bus_type;

@@ -58,7 +58,7 @@
  */
 
 struct tipc_media_addr {
-	__be32  type;			/* bearer type (network byte order) */
+	__u32  type;			/* bearer type (network byte order) */
 	union {
 		__u8   eth_addr[6];	/* 48 bit Ethernet addr (byte array) */ 
 #if 0
@@ -99,9 +99,6 @@ struct tipc_bearer {
 	char name[TIPC_MAX_BEARER_NAME];
 };
 
-/*
- * TIPC routines available to supported media types
- */
 
 int  tipc_register_media(u32 media_type,
 			 char *media_name, 
@@ -126,12 +123,6 @@ void tipc_continue(struct tipc_bearer *tb_ptr);
 int tipc_enable_bearer(const char *bearer_name, u32 bcast_scope, u32 priority);
 int tipc_disable_bearer(const char *name);
 
-/*
- * Routines made available to TIPC by supported media types
- */
-
-int  tipc_eth_media_start(void);
-void tipc_eth_media_stop(void);
 
 #endif
 

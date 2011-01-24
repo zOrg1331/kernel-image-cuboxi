@@ -1,0 +1,109 @@
+From: Flavio Leitner <fleitner@redhat.com>
+Date: Wed, 7 Oct 2009 16:21:49 -0300
+Subject: [net] bnx2: apply BROKEN_STATS workaround to 5706/5708
+Message-id: 20091007192149.GA2096@redhat.com
+O-Subject: [RHEL5.5 patch] Apply BROKEN_STATS workaround to 5706 and 5708.
+Bugzilla: 527748
+RH-Acked-by: John Feeney <jfeeney@redhat.com>
+RH-Acked-by: Jiri Pirko <jpirko@redhat.com>
+RH-Acked-by: David Miller <davem@redhat.com>
+
+RHBZ#: https://bugzilla.redhat.com/show_bug.cgi?id=527748
+
+Description:
+=============
+The network utilization graphics in ganglia report shows peaks
+of petabytes, when the network interface is just Gigabit eth.
+
+Broadcom developer (Michael Chan) confirmed that NIC BCM5706 and
+BCM5708 are very similar in design so BCM5706 could suffer the same
+problem described below:
+
+The statistics block DMA on 5708 can be messed up occasionally on the
+average of about once per hour.  If the user is reading the counters
+within one second after the corruption, the counters will be all
+messed up.  One second later, the counters will be ok again until the
+next corruption occurs.
+
+The workaround is to disable the periodic statistics DMA.  Instead,
+we manually trigger the DMA once a second in bnx2_timer().  This
+manual trigger of the DMA avoids the problem.
+
+Upstream:
+==========
+Applied on net-next-2.6:
+http://git.kernel.org/?p=linux/kernel/git/davem/net-next-2.6.git;a=commit;h=61d9e3fa7eacabfb7879e3da91709f1a5420c507
+
+commit 61d9e3fa7eacabfb7879e3da91709f1a5420c507
+Author: Michael Chan <mchan@broadcom.com>
+Date:   Fri Aug 21 16:20:46 2009 +0000
+
+    bnx2: Apply BROKEN_STATS workaround to 5706 and 5708.
+
+    Add flag to expand the workaround to both chips.
+
+    Signed-off-by: Michael Chan <mchan@broadcom.com>
+    Signed-off-by: David S. Miller <davem@davemloft.net>
+
+Test Build at:
+===============
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=2018178
+
+Proposed Patch:
+================
+
+It's a simple backport of the above upstream patch.
+
+Signed-off-by: Flavio Leitner <fleitner@redhat.com>
+
+diff --git a/drivers/net/bnx2.c b/drivers/net/bnx2.c
+index 9ca4bcb..e870bfb 100644
+--- a/drivers/net/bnx2.c
++++ b/drivers/net/bnx2.c
+@@ -4901,7 +4901,7 @@ bnx2_init_chip(struct bnx2 *bp)
+ 	REG_WR(bp, BNX2_HC_CMD_TICKS,
+ 	       (bp->cmd_ticks_int << 16) | bp->cmd_ticks);
+ 
+-	if (CHIP_NUM(bp) == CHIP_NUM_5708)
++	if (bp->flags & BNX2_FLAG_BROKEN_STATS)
+ 		REG_WR(bp, BNX2_HC_STATS_TICKS, 0);
+ 	else
+ 		REG_WR(bp, BNX2_HC_STATS_TICKS, bp->stats_ticks);
+@@ -6038,7 +6038,7 @@ bnx2_timer(unsigned long data)
+ 		bnx2_reg_rd_ind(bp, BNX2_FW_RX_DROP_COUNT);
+ 
+ 	/* workaround occasional corrupted counters */
+-	if (CHIP_NUM(bp) == CHIP_NUM_5708 && bp->stats_ticks)
++	if ((bp->flags & BNX2_FLAG_BROKEN_STATS) && bp->stats_ticks)
+ 		REG_WR(bp, BNX2_HC_COMMAND, bp->hc_cmd |
+ 					    BNX2_HC_COMMAND_STATS_NOW);
+ 
+@@ -6980,7 +6980,7 @@ bnx2_set_coalesce(struct net_device *dev, struct ethtool_coalesce *coal)
+ 		0xff;
+ 
+ 	bp->stats_ticks = coal->stats_block_coalesce_usecs;
+-	if (CHIP_NUM(bp) == CHIP_NUM_5708) {
++	if (bp->flags & BNX2_FLAG_BROKEN_STATS) {
+ 		if (bp->stats_ticks != 0 && bp->stats_ticks != USEC_PER_SEC)
+ 			bp->stats_ticks = USEC_PER_SEC;
+ 	}
+@@ -7761,6 +7761,7 @@ bnx2_init_board(struct pci_dev *pdev, struct net_device *dev)
+ 			rc = -EIO;
+ 			goto err_out_unmap;
+ 		}
++		bp->flags |= BNX2_FLAG_BROKEN_STATS;
+ 	}
+ 
+ 	if (CHIP_NUM(bp) == CHIP_NUM_5709 && CHIP_REV(bp) != CHIP_REV_Ax) {
+diff --git a/drivers/net/bnx2.h b/drivers/net/bnx2.h
+index 2650627..4109b4c 100644
+--- a/drivers/net/bnx2.h
++++ b/drivers/net/bnx2.h
+@@ -6708,6 +6708,7 @@ struct bnx2 {
+ 					 BNX2_FLAG_USING_MSIX)
+ #define BNX2_FLAG_JUMBO_BROKEN		0x00000800
+ #define BNX2_FLAG_CAN_KEEP_VLAN		0x00001000
++#define BNX2_FLAG_BROKEN_STATS		0x00002000
+ 
+ 	struct bnx2_napi	bnx2_napi[BNX2_MAX_MSIX_VEC];
+ 

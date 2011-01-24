@@ -1,0 +1,40 @@
+From: Andy Gospodarek <gospo@redhat.com>
+Date: Thu, 2 Sep 2010 03:34:10 -0400
+Subject: [net] ixgbe: actually support self_test ethtool command
+Message-id: <1283398450-18218-1-git-send-email-gospo@redhat.com>
+Patchwork-id: 28009
+O-Subject: [PATCH RHEL5.6 1/2] ixgbe: actually support self_test ethtool command
+Bugzilla: 593862
+RH-Acked-by: Dean Nelson <dnelson@redhat.com>
+RH-Acked-by: David S. Miller <davem@redhat.com>
+RH-Acked-by: Stefan Assmann <sassmann@redhat.com>
+
+During the initial backport process, it appears the following bits were
+never added.  Adding them allows ethtool self-test operations to run.
+
+This will resolve RHBZ 593862.
+
+diff --git a/drivers/net/ixgbe/ixgbe_ethtool.c b/drivers/net/ixgbe/ixgbe_ethtool.c
+index 9423fa6..90343e6 100644
+--- a/drivers/net/ixgbe/ixgbe_ethtool.c
++++ b/drivers/net/ixgbe/ixgbe_ethtool.c
+@@ -1792,6 +1792,11 @@ out:
+ 	return *data;
+ }
+ 
++static int ixgbe_diag_test_count(struct net_device *netdev)
++{
++	return IXGBE_TEST_LEN;
++}
++
+ static void ixgbe_diag_test(struct net_device *netdev,
+                             struct ethtool_test *eth_test, u64 *data)
+ {
+@@ -2141,6 +2146,7 @@ static struct ethtool_ops ixgbe_ethtool_ops = {
+ 	.get_tso                = ethtool_op_get_tso,
+ 	.set_tso                = ixgbe_set_tso,
+ 	.self_test              = ixgbe_diag_test,
++	.self_test_count        = ixgbe_diag_test_count,
+ 	.get_strings            = ixgbe_get_strings,
+ 	.phys_id                = ixgbe_phys_id,
+ 	.get_stats_count        = ixgbe_get_stats_count,

@@ -1,19 +1,14 @@
 /*
- *  arch/s390/hypfs/hypfs_diag.c
+ *  fs/hypfs/hypfs_diag.c
  *    Hypervisor filesystem for Linux on s390. Diag 204 and 224
  *    implementation.
  *
- *    Copyright IBM Corp. 2006, 2008
+ *    Copyright (C) IBM Corp. 2006
  *    Author(s): Michael Holzheu <holzheu@de.ibm.com>
  */
 
-#define KMSG_COMPONENT "hypfs"
-#define pr_fmt(fmt) KMSG_COMPONENT ": " fmt
-
 #include <linux/types.h>
 #include <linux/errno.h>
-#include <linux/gfp.h>
-#include <linux/slab.h>
 #include <linux/string.h>
 #include <linux/vmalloc.h>
 #include <asm/ebcdic.h>
@@ -338,14 +333,22 @@ static int diag204(unsigned long subcode, unsigned long size, void *addr)
 	register unsigned long _subcode asm("0") = subcode;
 	register unsigned long _size asm("1") = size;
 
-	asm volatile(
-		"	diag	%2,%0,0x204\n"
-		"0:\n"
-		EX_TABLE(0b,0b)
-		: "+d" (_subcode), "+d" (_size) : "d" (addr) : "memory");
+	asm volatile ("   diag    %2,%0,0x204\n"
+		      "0: \n" ".section __ex_table,\"a\"\n"
+#ifndef __s390x__
+		      "    .align 4\n"
+		      "    .long  0b,0b\n"
+#else
+		      "    .align 8\n"
+		      "    .quad  0b,0b\n"
+#endif
+		      ".previous":"+d" (_subcode), "+d"(_size)
+		      :"d"(addr)
+		      :"memory");
 	if (_subcode)
 		return -1;
-	return _size;
+	else
+		return _size;
 }
 
 /*
@@ -384,7 +387,7 @@ static void *diag204_alloc_vbuf(int pages)
 static void *diag204_alloc_rbuf(void)
 {
 	diag204_buf = (void*)__get_free_pages(GFP_KERNEL,0);
-	if (!diag204_buf)
+	if (diag204_buf)
 		return ERR_PTR(-ENOMEM);
 	diag204_buf_pages = 1;
 	return diag204_buf;
@@ -400,8 +403,7 @@ static void *diag204_get_buffer(enum diag204_format fmt, int *pages)
 		*pages = 1;
 		return diag204_alloc_rbuf();
 	} else {/* INFO_EXT */
-		*pages = diag204((unsigned long)SUBC_RSI |
-				 (unsigned long)INFO_EXT, 0, NULL);
+		*pages = diag204(SUBC_RSI | INFO_EXT, 0, NULL);
 		if (*pages <= 0)
 			return ERR_PTR(-ENOSYS);
 		else
@@ -430,15 +432,13 @@ static int diag204_probe(void)
 
 	buf = diag204_get_buffer(INFO_EXT, &pages);
 	if (!IS_ERR(buf)) {
-		if (diag204((unsigned long)SUBC_STIB7 |
-			    (unsigned long)INFO_EXT, pages, buf) >= 0) {
+		if (diag204(SUBC_STIB7 | INFO_EXT, pages, buf) >= 0) {
 			diag204_store_sc = SUBC_STIB7;
 			diag204_info_type = INFO_EXT;
 			goto out;
 		}
-		if (diag204((unsigned long)SUBC_STIB6 |
-			    (unsigned long)INFO_EXT, pages, buf) >= 0) {
-			diag204_store_sc = SUBC_STIB6;
+		if (diag204(SUBC_STIB6 | INFO_EXT, pages, buf) >= 0) {
+			diag204_store_sc = SUBC_STIB7;
 			diag204_info_type = INFO_EXT;
 			goto out;
 		}
@@ -452,8 +452,7 @@ static int diag204_probe(void)
 		rc = PTR_ERR(buf);
 		goto fail_alloc;
 	}
-	if (diag204((unsigned long)SUBC_STIB4 |
-		    (unsigned long)INFO_SIMPLE, pages, buf) >= 0) {
+	if (diag204(SUBC_STIB4 | INFO_SIMPLE, pages, buf) >= 0) {
 		diag204_store_sc = SUBC_STIB4;
 		diag204_info_type = INFO_SIMPLE;
 		goto out;
@@ -477,8 +476,7 @@ static void *diag204_store(void)
 	buf = diag204_get_buffer(diag204_info_type, &pages);
 	if (IS_ERR(buf))
 		goto out;
-	if (diag204((unsigned long)diag204_store_sc |
-		    (unsigned long)diag204_info_type, pages, buf) < 0)
+	if (diag204(diag204_store_sc | diag204_info_type, pages, buf) < 0)
 		return ERR_PTR(-ENOSYS);
 out:
 	return buf;
@@ -486,17 +484,10 @@ out:
 
 /* Diagnose 224 functions */
 
-static int diag224(void *ptr)
+static void diag224(void *ptr)
 {
-	int rc = -ENOTSUPP;
-
-	asm volatile(
-		"	diag	%1,%2,0x224\n"
-		"0:	lhi	%0,0x0\n"
-		"1:\n"
-		EX_TABLE(0b,1b)
-		: "+d" (rc) :"d" (0), "d" (ptr) : "memory");
-	return rc;
+	asm volatile("   diag    %0,%1,0x224\n"
+		     : :"d" (0), "d"(ptr) : "memory");
 }
 
 static int diag224_get_name_table(void)
@@ -505,10 +496,7 @@ static int diag224_get_name_table(void)
 	diag224_cpu_names = kmalloc(PAGE_SIZE, GFP_KERNEL | GFP_DMA);
 	if (!diag224_cpu_names)
 		return -ENOMEM;
-	if (diag224(diag224_cpu_names)) {
-		kfree(diag224_cpu_names);
-		return -ENOTSUPP;
-	}
+	diag224(diag224_cpu_names);
 	EBCASC(diag224_cpu_names + 16, (*diag224_cpu_names + 1) * 16);
 	return 0;
 }
@@ -532,19 +520,18 @@ __init int hypfs_diag_init(void)
 	int rc;
 
 	if (diag204_probe()) {
-		pr_err("The hardware system does not support hypfs\n");
+		printk(KERN_ERR "hypfs: diag 204 not working.");
 		return -ENODATA;
 	}
 	rc = diag224_get_name_table();
 	if (rc) {
-		diag204_free_buffer();
-		pr_err("The hardware system does not provide all "
-		       "functions required by hypfs\n");
+		diag224_delete_name_table();
+		printk(KERN_ERR "hypfs: could not get name table.\n");
 	}
 	return rc;
 }
 
-void hypfs_diag_exit(void)
+__exit void hypfs_diag_exit(void)
 {
 	diag224_delete_name_table();
 	diag204_free_buffer();

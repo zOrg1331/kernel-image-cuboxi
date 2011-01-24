@@ -16,61 +16,68 @@
 
 static inline void ipip_ecn_decapsulate(struct sk_buff *skb)
 {
-	struct iphdr *inner_iph = ipip_hdr(skb);
+	struct iphdr *outer_iph = skb->nh.iph;
+	struct iphdr *inner_iph = skb->h.ipiph;
 
-	if (INET_ECN_is_ce(XFRM_MODE_SKB_CB(skb)->tos))
+	if (INET_ECN_is_ce(outer_iph->tos))
 		IP_ECN_set_ce(inner_iph);
 }
 
 /* Add encapsulation header.
  *
- * The top IP header will be constructed per RFC 2401.
+ * The top IP header will be constructed per RFC 2401.  The following fields
+ * in it shall be filled in by x->type->output:
+ *      tot_len
+ *      check
+ *
+ * On exit, skb->h will be set to the start of the payload to be processed
+ * by x->type->output and skb->nh will be set to the top IP header.
  */
-static int xfrm4_mode_tunnel_output(struct xfrm_state *x, struct sk_buff *skb)
+static int xfrm4_tunnel_output(struct sk_buff *skb)
 {
-	struct dst_entry *dst = skb_dst(skb);
-	struct iphdr *top_iph;
+	struct dst_entry *dst = skb->dst;
+	struct xfrm_state *x = dst->xfrm;
+	struct iphdr *iph, *top_iph;
 	int flags;
 
-	skb_set_network_header(skb, -x->props.header_len);
-	skb->mac_header = skb->network_header +
-			  offsetof(struct iphdr, protocol);
-	skb->transport_header = skb->network_header + sizeof(*top_iph);
-	top_iph = ip_hdr(skb);
+	iph = skb->nh.iph;
+	skb->h.ipiph = iph;
+
+	skb->nh.raw = skb_push(skb, x->props.header_len);
+	top_iph = skb->nh.iph;
 
 	top_iph->ihl = 5;
 	top_iph->version = 4;
 
-	top_iph->protocol = xfrm_af2proto(skb_dst(skb)->ops->family);
-
 	/* DS disclosed */
-	top_iph->tos = INET_ECN_encapsulate(XFRM_MODE_SKB_CB(skb)->tos,
-					    XFRM_MODE_SKB_CB(skb)->tos);
+	top_iph->tos = INET_ECN_encapsulate(iph->tos, iph->tos);
 
 	flags = x->props.flags;
 	if (flags & XFRM_STATE_NOECN)
 		IP_ECN_clear(top_iph);
 
 	top_iph->frag_off = (flags & XFRM_STATE_NOPMTUDISC) ?
-		0 : (XFRM_MODE_SKB_CB(skb)->frag_off & htons(IP_DF));
-	ip_select_ident(top_iph, dst->child, NULL);
+		0 : (iph->frag_off & htons(IP_DF));
+	if (!top_iph->frag_off)
+		__ip_select_ident(top_iph, dst->child, 0);
 
 	top_iph->ttl = dst_metric(dst->child, RTAX_HOPLIMIT);
 
 	top_iph->saddr = x->props.saddr.a4;
 	top_iph->daddr = x->id.daddr.a4;
+	top_iph->protocol = IPPROTO_IPIP;
 
+	memset(&(IPCB(skb)->opt), 0, sizeof(struct ip_options));
 	return 0;
 }
 
-static int xfrm4_mode_tunnel_input(struct xfrm_state *x, struct sk_buff *skb)
+static int xfrm4_tunnel_input(struct xfrm_state *x, struct sk_buff *skb)
 {
-	const unsigned char *old_mac;
+	struct iphdr *iph = skb->nh.iph;
 	int err = -EINVAL;
 
-	if (XFRM_MODE_SKB_CB(skb)->protocol != IPPROTO_IPIP)
+	if (iph->protocol != IPPROTO_IPIP)
 		goto out;
-
 	if (!pskb_may_pull(skb, sizeof(struct iphdr)))
 		goto out;
 
@@ -79,14 +86,12 @@ static int xfrm4_mode_tunnel_input(struct xfrm_state *x, struct sk_buff *skb)
 		goto out;
 
 	if (x->props.flags & XFRM_STATE_DECAP_DSCP)
-		ipv4_copy_dscp(XFRM_MODE_SKB_CB(skb)->tos, ipip_hdr(skb));
+		ipv4_copy_dscp(iph, skb->h.ipiph);
 	if (!(x->props.flags & XFRM_STATE_NOECN))
 		ipip_ecn_decapsulate(skb);
-
-	old_mac = skb_mac_header(skb);
-	skb_set_mac_header(skb, -skb->mac_len);
-	memmove(skb_mac_header(skb), old_mac, skb->mac_len);
-	skb_reset_network_header(skb);
+	skb->mac.raw = memmove(skb->data - skb->mac_len,
+			       skb->mac.raw, skb->mac_len);
+	skb->nh.raw = skb->data;
 	err = 0;
 
 out:
@@ -94,21 +99,18 @@ out:
 }
 
 static struct xfrm_mode xfrm4_tunnel_mode = {
-	.input2 = xfrm4_mode_tunnel_input,
-	.input = xfrm_prepare_input,
-	.output2 = xfrm4_mode_tunnel_output,
-	.output = xfrm4_prepare_output,
+	.input = xfrm4_tunnel_input,
+	.output = xfrm4_tunnel_output,
 	.owner = THIS_MODULE,
 	.encap = XFRM_MODE_TUNNEL,
-	.flags = XFRM_MODE_FLAG_TUNNEL,
 };
 
-static int __init xfrm4_mode_tunnel_init(void)
+static int __init xfrm4_tunnel_init(void)
 {
 	return xfrm_register_mode(&xfrm4_tunnel_mode, AF_INET);
 }
 
-static void __exit xfrm4_mode_tunnel_exit(void)
+static void __exit xfrm4_tunnel_exit(void)
 {
 	int err;
 
@@ -116,7 +118,7 @@ static void __exit xfrm4_mode_tunnel_exit(void)
 	BUG_ON(err);
 }
 
-module_init(xfrm4_mode_tunnel_init);
-module_exit(xfrm4_mode_tunnel_exit);
+module_init(xfrm4_tunnel_init);
+module_exit(xfrm4_tunnel_exit);
 MODULE_LICENSE("GPL");
 MODULE_ALIAS_XFRM_MODE(AF_INET, XFRM_MODE_TUNNEL);

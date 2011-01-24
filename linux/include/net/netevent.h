@@ -12,7 +12,7 @@
  */
 #ifdef __KERNEL__
 
-struct dst_entry;
+#include <net/dst.h>
 
 struct netevent_redirect {
 	struct dst_entry *old;

@@ -1,0 +1,79 @@
+From: Vitaly Mayatskikh <vmayatsk@redhat.com>
+Date: Wed, 1 Apr 2009 16:29:02 +0200
+Subject: [misc] waitpid reports stopped process more than once
+Message-id: 87zlf0cus1.wl%vmayatsk@redhat.com
+O-Subject: Re: [RHEL-5.4 patch] bz481199 waitpid() reports stopped process more than once
+Bugzilla: 481199
+RH-Acked-by: Oleg Nesterov <oleg@redhat.com>
+
+Description:
+============
+ptrace_do_wait() reports stopped task every time tracer calls wait().
+
+Simple reproducer:
+
+int main(void)
+{
+        int pid, status;
+
+        pid = fork();
+        if (!pid) {
+                ptrace(PTRACE_TRACEME, 0, 0, 0);
+                return kill(getpid(), SIGSTOP);
+        }
+
+        wait(&status);
+        printf("status: %04X\n", status);
+
+        ptrace(PTRACE_SYSCALL, pid, 0, SIGSTOP);
+
+        wait(&status);
+        printf("status: %04X\n", status);
+
+        wait(&status);
+        printf("status: %04X\n", status);
+
+        return 0;
+}
+
+output:
+
+    status: 137F
+    status: 137F
+    status: 007F
+
+It should blocks in the second wait() (last wait() in the code).
+
+Upstream status:
+================
+Upstream has different code base, but has the same behavior (reports
+SIGSTOPPED once)
+
+Test status:
+============
+Tested with Oleg's reproducer. Wait() returns SIGSTOPPED only once and
+then blocks.
+
+Ok, lets leave the time window when exit_code is visible in state 0. I
+have no idea how to fix it easy, and complex solution with sighand
+locking will definitely break something else.
+
+diff --git a/kernel/ptrace.c b/kernel/ptrace.c
+index 84e2488..c21c32a 100644
+--- a/kernel/ptrace.c
++++ b/kernel/ptrace.c
+@@ -1427,9 +1427,11 @@ ptrace_do_wait(struct task_struct *tsk,
+ 		 * races the same wait that vanilla do_wait (exit.c) is:
+ 		 * wait_chldexit is woken after p->state is set to TASK_STOPPED.
+ 		 */
+-		if (p->state == TASK_STOPPED)
+-			goto found;
+-
++		if (exit_code != 0) {
++			if (p->state == TASK_STOPPED)
++				goto found;
++			xchg(&p->exit_code, exit_code);
++		}
+ 		// XXX should handle WCONTINUED
+ 
+ 		pr_debug("%d ptrace_do_wait leaving %d state %lu code %x\n",

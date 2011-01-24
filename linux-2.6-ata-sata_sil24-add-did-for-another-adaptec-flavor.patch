@@ -1,0 +1,43 @@
+From: David Milburn <dmilburn@redhat.com>
+Date: Tue, 2 Nov 2010 18:02:10 -0400
+Subject: [ata] sata_sil24: add DID for another adaptec flavor
+Message-id: <20101102180210.GA8283@dellxps.hsv.redhat.com>
+Patchwork-id: 29004
+O-Subject: [RHEL5.7 PATCH] BZ 640586 sata_sil24: add DID for another adaptec
+	flavor
+Bugzilla: 640586
+RH-Acked-by: Stanislaw Gruszka <sgruszka@redhat.com>
+RH-Acked-by: Dean Nelson <dnelson@redhat.com>
+
+Add controller Device ID, upstream commit:
+
+commit 464b3286b4aa459059c6fda85ba55185fd21d9fc
+Author: Tejun Heo <tj@kernel.org>
+Date:   Wed Jul 2 17:50:23 2008 +0900
+
+    sata_sil24: add DID for another adaptec flavor
+
+    There's another DID used for Adaptec card.  Add it.
+
+    Reported by Travis Read.
+
+This resolves BZ640586, test kernel has been verified by
+reporter, please review and ACK.
+
+Thanks,
+David
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/ata/sata_sil24.c b/drivers/ata/sata_sil24.c
+index e95c2bc..d8fb39b 100644
+--- a/drivers/ata/sata_sil24.c
++++ b/drivers/ata/sata_sil24.c
+@@ -370,6 +370,7 @@ static const struct pci_device_id sil24_pci_tbl[] = {
+ 	{ PCI_VDEVICE(INTEL, 0x3124), BID_SIL3124 },
+ 	{ PCI_VDEVICE(CMD, 0x3132), BID_SIL3132 },
+ 	{ PCI_VDEVICE(CMD, 0x0242), BID_SIL3132 },
++	{ PCI_VDEVICE(CMD, 0x0244), BID_SIL3132 },
+ 	{ PCI_VDEVICE(CMD, 0x3131), BID_SIL3131 },
+ 	{ PCI_VDEVICE(CMD, 0x3531), BID_SIL3131 },
+ 

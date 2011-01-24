@@ -1,0 +1,23 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Subject: [RHEL5.1 PATCH]: Re-add missing kmalloc for cciss driver
+Date: Tue, 24 Jul 2007 14:03:53 -0400
+Bugzilla: 249104
+Message-Id: <20070724180353.29695.14761.sendpatchset@prarit.boston.redhat.com>
+Changelog: [scsi] cciss: Re-add missing kmalloc
+
+
+Successfully compiled and tested by me.
+
+Resolves BZ 249104.
+
+--- linux-2.6.18.ia64/drivers/block/cciss.c.orig	2007-07-24 13:42:28.000000000 -0400
++++ linux-2.6.18.ia64/drivers/block/cciss.c	2007-07-24 13:42:34.000000000 -0400
+@@ -2019,6 +2019,7 @@ static int cciss_revalidate(struct gendi
+ 	if (!FOUND)
+ 		return 1;
+ 
++	inq_buff = kmalloc(sizeof(InquiryData_struct), GFP_KERNEL);
+ 	if (inq_buff == NULL) {
+ 		printk(KERN_WARNING "cciss: out of memory\n");
+ 		return 1;
+

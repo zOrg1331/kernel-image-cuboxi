@@ -1,0 +1,41 @@
+From: Rob Evers <revers@redhat.com>
+Date: Wed, 30 Sep 2009 17:11:27 -0400
+Subject: [scsi] scsi_dh_rdac: return correct mode select cmd info
+Message-id: 20090930210525.22936.39334.sendpatchset@localhost.localdomain
+O-Subject: [LSI 5.5 feat 4/7] scsi_dh_rdac: Fix for returning correct mode select cmd return info
+Bugzilla: 524335
+
+https://bugzilla.redhat.com/show_bug.cgi?id=524335
+
+>From patchwork Fri Aug 28 14:18:39 2009
+Content-Type: text/plain; charset="utf-8"
+MIME-Version: 1.0
+Content-Transfer-Encoding: 7bit
+Subject: [RESUBMIT] scsi_dh_rdac: Fix for returning correct mode select cmd
+	return info
+Date: Fri, 28 Aug 2009 14:18:39 -0000
+From: Moger, Babu <Babu.Moger@lsi.com>
+X-Patchwork-Id: 44509
+
+The function mode_select_handle_sense returns SCSI_DH_OK even when there
+is a sense code which is incorrect. Removing it so that it returns SCSI_DH_IO
+when there is sense that is not handled by this function.
+
+Signed-off-by: Babu Moger <babu.moger@lsi.com>
+Reviewed-by: Vijay Chauhan <vijay.chauhan@lsi.com>
+Reviewed-by: Bob Stankey <Robert.stankey@lsi.com>
+Reviewed-by: Chandra Seetharaman <sekharan@us.ibm.com>
+
+diff --git a/drivers/scsi/device_handler/scsi_dh_rdac.c b/drivers/scsi/device_handler/scsi_dh_rdac.c
+index 823ad33..107e675 100644
+--- a/drivers/scsi/device_handler/scsi_dh_rdac.c
++++ b/drivers/scsi/device_handler/scsi_dh_rdac.c
+@@ -458,8 +458,6 @@ static int mode_select_handle_sense(struct scsi_device *sdev,
+ 	if (!ret)
+ 		goto done;
+ 
+-	err = SCSI_DH_OK;
+-
+ 	switch (sense_hdr.sense_key) {
+ 	case NO_SENSE:
+ 	case ABORTED_COMMAND:

@@ -1,7 +1,7 @@
 /*
  *  init.c, Common initialization routines for NEC VR4100 series.
  *
- *  Copyright (C) 2003-2008  Yoichi Yuasa <yuasa@linux-mips.org>
+ *  Copyright (C) 2003-2005  Yoichi Yuasa <yoichi_yuasa@tripeaks.co.jp>
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -36,11 +36,9 @@ static void __init iomem_resource_init(void)
 	iomem_resource.end = IO_MEM_RESOURCE_END;
 }
 
-void __init plat_time_init(void)
+static void __init setup_timer_frequency(void)
 {
 	unsigned long tclock;
-
-	vr41xx_calculate_clock_frequency();
 
 	tclock = vr41xx_get_tclock_frequency();
 	if (current_cpu_data.processor_id == PRID_VR4131_REV2_0 ||
@@ -50,11 +48,22 @@ void __init plat_time_init(void)
 		mips_hpt_frequency = tclock / 4;
 }
 
+void __init plat_timer_setup(struct irqaction *irq)
+{
+	setup_irq(TIMER_IRQ, irq);
+}
+
+static void __init timer_init(void)
+{
+	board_time_init = setup_timer_frequency;
+}
+
 void __init plat_mem_setup(void)
 {
-	iomem_resource_init();
+	vr41xx_calculate_clock_frequency();
 
-	vr41xx_siu_setup();
+	timer_init();
+	iomem_resource_init();
 }
 
 void __init prom_init(void)
@@ -72,6 +81,7 @@ void __init prom_init(void)
 	}
 }
 
-void __init prom_free_prom_memory(void)
+unsigned long __init prom_free_prom_memory (void)
 {
+	return 0UL;
 }

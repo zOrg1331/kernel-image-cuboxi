@@ -1,0 +1,92 @@
+From: AMEET M. PARANJAPE <aparanja@redhat.com>
+Date: Fri, 24 Oct 2008 15:45:39 -0400
+Subject: [ppc64] ptcal has to be disabled to use kexec on QS21
+Message-id: 20081024194520.27751.78159.sendpatchset@squad5-lp1.lab.bos.redhat.com
+O-Subject: [PATCH 1/2 RHEL5.3 BZ462744] ptcal has to be disabled to use kexec on QS21
+Bugzilla: 462744
+
+RHBZ#:
+======
+https://bugzilla.redhat.com/show_bug.cgi?id=462744
+
+Description:
+===========
+When kexec is disabled, the crash_shutdown_{un,}register functions are not
+available in the kernel. This provides dummy inline functions for those so that
+the callers don't have to worry about it.
+
+RHEL Version Found:
+================
+RHEL 5.2
+
+kABI Status:
+============
+No symbols were harmed.
+
+Brew:
+=====
+Built on all platforms.
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1540066
+
+Upstream Status:
+================
+http://kernel.org/pub/linux/kernel/people/akpm/patches/2.6/2.6.26-rc8/2.6.26-rc8-mm1/broken-out/linux-next.patch
+
+commit aee10c6145199f872bc51f811b115a4b686b2426
+Author: Arnd Bergmann <arnd@arndb.de>
+Date:   Thu Jun 12 19:14:34 2008 +1000
+
+    powerpc: Provide dummy crash_shutdown_register
+
+    Signed-off-by: Arnd Bergmann <arnd@arndb.de>
+    Signed-off-by: Paul Mackerras <paulus@samba.org>
+
+Test Status:
+============
+Without the patch the QS21 shows a "cpu internal fault" and reboots.  With this
+patch the message is not seen.
+===============================================================
+Ameet Paranjape 978-392-3903 ext 23903
+IBM on-site partner
+
+Proposed Patch:
+===============
+
+diff --git a/include/asm-powerpc/kexec.h b/include/asm-powerpc/kexec.h
+index a6178dd..ad17fe0 100644
+--- a/include/asm-powerpc/kexec.h
++++ b/include/asm-powerpc/kexec.h
+@@ -34,6 +34,8 @@
+ #ifndef __ASSEMBLY__
+ #include <linux/cpumask.h>
+ 
++typedef void (*crash_shutdown_t)(void);
++
+ #ifdef CONFIG_KEXEC
+ 
+ #ifdef __powerpc64__
+@@ -125,7 +127,6 @@ struct pt_regs;
+ extern void default_machine_kexec(struct kimage *image);
+ extern int default_machine_kexec_prepare(struct kimage *image);
+ extern void default_machine_crash_shutdown(struct pt_regs *regs);
+-typedef void (*crash_shutdown_t)(void);
+ extern int crash_shutdown_register(crash_shutdown_t handler);
+ extern int crash_shutdown_unregister(crash_shutdown_t handler);
+ 
+@@ -145,6 +146,16 @@ static inline int overlaps_crashkernel(unsigned long start, unsigned long size)
+ 
+ static inline void reserve_crashkernel(void) { ; }
+ 
++static inline int crash_shutdown_register(crash_shutdown_t handler)
++{
++	return 0;
++}
++
++static inline int crash_shutdown_unregister(crash_shutdown_t handler)
++{
++	return 0;
++}
++
+ #endif /* CONFIG_KEXEC */
+ #endif /* ! __ASSEMBLY__ */
+ #endif /* __KERNEL__ */

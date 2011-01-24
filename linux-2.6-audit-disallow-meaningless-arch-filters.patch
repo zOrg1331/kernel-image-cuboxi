@@ -1,0 +1,48 @@
+Date: Fri, 29 Sep 2006 11:38:08 -0400
+From: Eric Paris <eparis@redhat.com>
+Subject: [RHEL5 PATCH] Disallow meaningless arch audit filters, BZ 206427
+
+This is BZ 206427
+
+Since the kernel represents archs as numbers in the audit system it does
+not complain when using > or < to compare them.  An example would be it
+will gladly determine if i686 > x86_64.  Since such comparisons don't
+make any sense the following patch will limit arch rules to use = or !=
+and will return -EINVAL for any rule which attempts to use > or <
+
+This patch has been sent upstream and I expect it to make 2.6.19.  A
+simple test case is to do use the following command
+
+auditctl -a entry,always -F 'arch>i686' -S chmod
+
+on the unpatched kernel this will be taken just fine, with this patch
+this filter will be rejected.
+
+-Eric
+
+--- linux-2.6.18.i686/kernel/auditfilter.c.audit.arch	2006-09-28 16:44:11.000000000 -0400
++++ linux-2.6.18.i686/kernel/auditfilter.c	2006-09-28 17:38:34.000000000 -0400
+@@ -411,7 +411,6 @@ static struct audit_entry *audit_rule_to
+ 		case AUDIT_FSGID:
+ 		case AUDIT_LOGINUID:
+ 		case AUDIT_PERS:
+-		case AUDIT_ARCH:
+ 		case AUDIT_MSGTYPE:
+ 		case AUDIT_PPID:
+ 		case AUDIT_DEVMAJOR:
+@@ -423,6 +422,14 @@ static struct audit_entry *audit_rule_to
+ 		case AUDIT_ARG2:
+ 		case AUDIT_ARG3:
+ 			break;
++		/* arch is only allowed to be = or != */
++		case AUDIT_ARCH:
++			if ((f->op != AUDIT_NOT_EQUAL) && (f->op != AUDIT_EQUAL) 
++					&& (f->op != AUDIT_NEGATE) && (f->op)) {
++				err = -EINVAL;
++				goto exit_free;
++			}
++			break;
+ 		case AUDIT_PERM:
+ 			if (f->val & ~15)
+ 				goto exit_free;
+

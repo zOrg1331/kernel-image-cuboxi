@@ -15,7 +15,7 @@
  * 			Save more value for the resume function! Support
  * 			Bitsy/Assabet/Freebird board
  *
- * 2001-08-29:	Nicolas Pitre <nico@fluxnic.net>
+ * 2001-08-29:	Nicolas Pitre <nico@cam.org>
  * 			Cleaned up, pushed platform dependent stuff
  * 			in the platform specific files.
  *
@@ -27,7 +27,7 @@
 #include <linux/errno.h>
 #include <linux/time.h>
 
-#include <mach/hardware.h>
+#include <asm/hardware.h>
 #include <asm/memory.h>
 #include <asm/system.h>
 #include <asm/mach/time.h>
@@ -43,19 +43,29 @@ extern void sa1100_cpu_resume(void);
  * More ones like CP and general purpose register values are preserved
  * on the stack and then the stack pointer is stored last in sleep.S.
  */
-enum {	SLEEP_SAVE_GPDR, SLEEP_SAVE_GAFR,
+enum {	SLEEP_SAVE_SP = 0,
+
+	SLEEP_SAVE_GPDR, SLEEP_SAVE_GAFR,
 	SLEEP_SAVE_PPDR, SLEEP_SAVE_PPSR, SLEEP_SAVE_PPAR, SLEEP_SAVE_PSDR,
 
 	SLEEP_SAVE_Ser1SDCR0,
 
-	SLEEP_SAVE_COUNT
+	SLEEP_SAVE_SIZE
 };
 
 
 static int sa11x0_pm_enter(suspend_state_t state)
 {
-	unsigned long gpio, sleep_save[SLEEP_SAVE_COUNT];
+	unsigned long gpio, sleep_save[SLEEP_SAVE_SIZE];
+	struct timespec delta, rtc;
 
+	if (state != PM_SUSPEND_MEM)
+		return -EINVAL;
+
+	/* preserve current time */
+	rtc.tv_sec = RCNR;
+	rtc.tv_nsec = 0;
+	save_time_delta(&delta, &rtc);
 	gpio = GPLR;
 
 	/* save vital registers */
@@ -112,6 +122,10 @@ static int sa11x0_pm_enter(suspend_state_t state)
 	 */
 	PSSR = PSSR_PH;
 
+	/* restore current time */
+	rtc.tv_sec = RCNR;
+	restore_time_delta(&delta, &rtc);
+
 	return 0;
 }
 
@@ -120,14 +134,17 @@ unsigned long sleep_phys_sp(void *sp)
 	return virt_to_phys(sp);
 }
 
-static struct platform_suspend_ops sa11x0_pm_ops = {
+/*
+ * Set to PM_DISK_FIRMWARE so we can quickly veto suspend-to-disk.
+ */
+static struct pm_ops sa11x0_pm_ops = {
+	.pm_disk_mode	= PM_DISK_FIRMWARE,
 	.enter		= sa11x0_pm_enter,
-	.valid		= suspend_valid_only_mem,
 };
 
 static int __init sa11x0_pm_init(void)
 {
-	suspend_set_ops(&sa11x0_pm_ops);
+	pm_set_ops(&sa11x0_pm_ops);
 	return 0;
 }
 

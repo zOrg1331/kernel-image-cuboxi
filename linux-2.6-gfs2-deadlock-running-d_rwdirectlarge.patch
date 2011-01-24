@@ -1,0 +1,83 @@
+From: Steven Whitehouse <swhiteho@redhat.com>
+Subject: [RHEL 5.1] [GFS2] bz #236069, GFS2: deadlock running 	d_rwdirectlarge
+Date: Thu, 10 May 2007 11:00:28 +0100
+Bugzilla: 236069
+Message-Id: <1178791228.7476.32.camel@quoit>
+Changelog: [GFS2] deadlock running d_rwdirectlarge
+
+
+Hi,
+
+This patch fixes bz #236069. It is NOT upstream. The upstream fix for
+this particular bug is in the shape of Nick Piggin's patch series
+relating to new address space operations. This is not a suitable fix for
+RHEL because it would require extensive modification of the VFS and all
+the other filesystems write paths which seems to be a rather high risk
+operation for the potential gain.
+
+Instead this patch provides a fix for GFS2 which is the only filesystem
+which is affected by this particular bug.
+
+It has been tested with QE's test suite (which reliably reproduces the
+bug) and the bug no longer happens with this patch applied.
+
+Steve.
+
+-------------------------------------------------------------------------
+
+--- linux-rhel-base/fs/gfs2/ops_address.c	2007-05-10 10:36:31.000000000 +0100
++++ linux-2.6.18.noarch/fs/gfs2/ops_address.c	2007-05-10 10:41:39.000000000 +0100
+@@ -324,6 +324,24 @@
+ 	goto out;
+ }
+ 
++static int gfs2_write_lock_start(struct gfs2_inode *ip, struct page *page)
++{
++	struct gfs2_holder *gh = &ip->i_gh;
++	int ret = 0;
++	if (!gfs2_glock_is_locked_by_me(ip->i_gl)) {
++		gfs2_holder_init(ip->i_gl, LM_ST_EXCLUSIVE, GL_ATIME, gh);
++		unlock_page(page);
++		ret = gfs2_glock_nq_atime(gh);
++		if (unlikely(ret)) {
++			gfs2_holder_uninit(gh);
++			return ret;
++		}
++		ret = AOP_TRUNCATED_PAGE;
++		yield();
++	}
++	return ret;
++}
++
+ /**
+  * gfs2_prepare_write - Prepare to write a page to a file
+  * @file: The file to write to
+@@ -348,16 +366,9 @@
+ 	unsigned int write_len = to - from;
+ 
+ 
+-	gfs2_holder_init(ip->i_gl, LM_ST_EXCLUSIVE, GL_ATIME|LM_FLAG_TRY_1CB, &ip->i_gh);
+-	error = gfs2_glock_nq_m_atime(1, &ip->i_gh);
+-	if (unlikely(error)) {
+-		if (error == GLR_TRYFAILED) {
+-			unlock_page(page);
+-			error = AOP_TRUNCATED_PAGE;
+-			yield();
+-		}
+-		goto out_uninit;
+-	}
++	error = gfs2_write_lock_start(ip, page);
++	if (error)
++		return error;
+ 
+ 	gfs2_write_calc_reserv(ip, write_len, &data_blocks, &ind_blocks);
+ 
+@@ -419,7 +430,6 @@
+ 		}
+ out_unlock:
+ 		gfs2_glock_dq_m(1, &ip->i_gh);
+-out_uninit:
+ 		gfs2_holder_uninit(&ip->i_gh);
+ 	}
+ 
+

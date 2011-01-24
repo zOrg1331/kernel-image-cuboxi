@@ -1,0 +1,105 @@
+From: AMEET M. PARANJAPE <aparanja@redhat.com>
+Date: Thu, 30 Oct 2008 09:52:31 -0500
+Subject: [openib] ppc64: fix using SDP on 64K page systems
+Message-id: 4909CA2F.4030308@REDHAT.COM
+O-Subject: Re: [PATCH RHEL5.3 BZ468872] Running applications over SDP causing system crash when configured for 64K pages
+Bugzilla: 468872
+RH-Acked-by: David Howells <dhowells@redhat.com>
+RH-Acked-by: David Howells <dhowells@redhat.com>
+RH-Acked-by: Doug Ledford <dledford@redhat.com>
+
+RHBZ#:
+======
+https://bugzilla.redhat.com/show_bug.cgi?id=468872
+
+Description:
+===========
+When 64K pages are in use, the skb_frag size can become larger than the skb_frag
+can address. An skb_frag's max size is 64K-1.  This patch defines
+SDP_MAX_PAYLOAD as 64K - SDP_HEADER_SIZE.  The patch changes sdp_post_recv()
+and sdp_sendmsg() to use the smaller of PAGE_SIZE or SDP_MAX_PAYLOAD as it
+segment size.
+
+The OFED packages are available here:
+http://www.openfabrics.org/
+
+RHEL Version Found:
+================
+RHEL 5.2 and 5.3 alpha
+
+kABI Status:
+============
+No symbols were harmed.
+
+Brew:
+=====
+Built on all platforms.
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1544100
+
+Upstream Status:
+================
+The patch has been checked into the ofed Sockets Direct Protocol (SDP)
+matainer's git and will be in 1.4 release:
+https://bugs.openfabrics.org/show_bug.cgi?id=1300
+
+Test Status:
+============
+Without this patch running netperf suite over Sockets Direct Protocol (SDP)
+induces a system crash when 64k pages are in use. This crash is not seen
+with
+this patch.
+
+===============================================================
+Ameet Paranjape 978-392-3903 ext 23903
+IBM on-site partner
+
+Proposed Patch:
+===============
+
+diff --git a/drivers/infiniband/ulp/sdp/sdp.h b/drivers/infiniband/ulp/sdp/sdp.h
+index 24f5caf..57a95ce 100644
+--- a/drivers/infiniband/ulp/sdp/sdp.h
++++ b/drivers/infiniband/ulp/sdp/sdp.h
+@@ -50,6 +50,7 @@ extern int sdp_data_debug_level;
+ #define SDP_MAX_SEND_SKB_FRAGS (PAGE_SIZE > 0x8000 ? 1 : 0x8000 / PAGE_SIZE)
+ #define SDP_HEAD_SIZE (PAGE_SIZE / 2 + sizeof(struct sdp_bsdh))
+ #define SDP_NUM_WC 4
++#define SDP_MAX_PAYLOAD ((1 << 16) - SDP_HEAD_SIZE)
+ 
+ #define SDP_MIN_ZCOPY_THRESH    1024
+ #define SDP_MAX_ZCOPY_THRESH 1048576
+diff --git a/drivers/infiniband/ulp/sdp/sdp_bcopy.c b/drivers/infiniband/ulp/sdp/sdp_bcopy.c
+index 1aeb264..845935b 100644
+--- a/drivers/infiniband/ulp/sdp/sdp_bcopy.c
++++ b/drivers/infiniband/ulp/sdp/sdp_bcopy.c
+@@ -288,11 +288,11 @@ static void sdp_post_recv(struct sdp_sock *ssk)
+ 		frag = &skb_shinfo(skb)->frags[i];
+ 		frag->page                = page;
+ 		frag->page_offset         = 0;
+-		frag->size                = PAGE_SIZE;
++		frag->size                =  min(PAGE_SIZE, SDP_MAX_PAYLOAD);
+ 		++skb_shinfo(skb)->nr_frags;
+-		skb->len += PAGE_SIZE;
+-		skb->data_len += PAGE_SIZE;
+-		skb->truesize += PAGE_SIZE;
++		skb->len += frag->size;
++		skb->data_len += frag->size;
++		skb->truesize += frag->size;
+ 	}
+ 
+         rx_req = ssk->rx_ring + (id & (SDP_RX_SIZE - 1));
+diff --git a/drivers/infiniband/ulp/sdp/sdp_main.c b/drivers/infiniband/ulp/sdp/sdp_main.c
+index c46fd60..0ac9954 100644
+--- a/drivers/infiniband/ulp/sdp/sdp_main.c
++++ b/drivers/infiniband/ulp/sdp/sdp_main.c
+@@ -1620,6 +1620,10 @@ int sdp_sendmsg(struct kiocb *iocb, struct sock *sk, struct msghdr *msg,
+ 
+ 		iov++;
+ 
++		/* Limiting the size_goal is required when using 64K pages*/
++		if (size_goal > SDP_MAX_PAYLOAD)
++			size_goal = SDP_MAX_PAYLOAD;
++
+ 		bz = sdp_bz_setup(ssk, from, seglen, size_goal);
+ 
+ 		while (seglen > 0) {

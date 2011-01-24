@@ -1,0 +1,230 @@
+From: Geoff Gustafson <grgustaf@redhat.com>
+Date: Wed, 5 Dec 2007 19:03:09 -0500
+Subject: [x86] cpuinfo: list dynamic acceleration technology
+Message-id: 20071206000309.GA29597@samurai.boston.redhat.com
+O-Subject: Re: [RHEL5.2 PATCH] intel dynamic acceleration technology (bz 252229)
+Bugzilla: 252229
+
+This feature does something like overclocking one core when there's only one
+CPU-intensive task and the other core is running slowly enough that the overall
+"thermal envelope" of the chip is not exceeded in so doing. It's pretty much
+automatic, although there is some OS control of the feature that we deem too
+invasive for an update release.
+
+This patch just lets you know the feature is present, by displaying the "ida"
+feature flag in /proc/cpuinfo. When it went in upstream, the community wanted
+a new capability section created for it, but that would increase the size of
+cpu_data and boot_cpu_data and break kABI. I've made as much as possible match
+the upstream patch.
+
+AFAIK there's no big reason why the RHEL kernel has to use the same bit as
+upstream. Please consider that and correct me if I'm wrong. One (the?) impact
+to this implementation is "ida" will show up at a different place in the list.
+It can still be consistent through the life of RHEL5 though.
+
+Tested this version on i386 build and it works too. Just that one change.
+
+Please ACK.
+
+- Geoff
+
+Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+diff --git a/arch/i386/kernel/cpu/Makefile b/arch/i386/kernel/cpu/Makefile
+index 753f1d7..9a56914 100644
+--- a/arch/i386/kernel/cpu/Makefile
++++ b/arch/i386/kernel/cpu/Makefile
+@@ -8,7 +8,7 @@ obj-y	+=	amd.o
+ obj-y	+=	cyrix.o
+ obj-y	+=	centaur.o
+ obj-y	+=	transmeta.o
+-obj-y	+=	intel.o intel_cacheinfo.o
++obj-y	+=	intel.o intel_cacheinfo.o addon_cpuid_features.o
+ obj-y	+=	rise.o
+ obj-y	+=	nexgen.o
+ obj-y	+=	umc.o
+diff --git a/arch/i386/kernel/cpu/addon_cpuid_features.c b/arch/i386/kernel/cpu/addon_cpuid_features.c
+new file mode 100644
+index 0000000..39c41cc
+--- /dev/null
++++ b/arch/i386/kernel/cpu/addon_cpuid_features.c
+@@ -0,0 +1,51 @@
++
++/*
++ *	Routines to indentify additional cpu features that are scattered in
++ *	cpuid space.
++ */
++
++#include <linux/cpu.h>
++#include <linux/init.h>
++
++#include <asm/processor.h>
++
++struct cpuid_bit {
++	u16 feature;
++	u8 reg;
++	u8 bit;
++	u32 level;
++};
++
++enum cpuid_regs {
++	CR_EAX = 0,
++	CR_ECX,
++	CR_EDX,
++	CR_EBX
++};
++
++void __cpuinit init_scattered_cpuid_features(struct cpuinfo_x86 *c)
++{
++	u32 max_level;
++	u32 regs[4];
++	const struct cpuid_bit *cb;
++
++	static const struct cpuid_bit cpuid_bits[] = {
++		{ X86_FEATURE_IDA, CR_EAX, 1, 0x00000006 },
++		{ 0, 0, 0, 0 }
++	};
++
++	for (cb = cpuid_bits; cb->feature; cb++) {
++
++		/* Verify that the level is valid */
++		max_level = cpuid_eax(cb->level & 0xffff0000);
++		if (max_level < cb->level ||
++		    max_level > (cb->level | 0xffff))
++			continue;
++
++		cpuid(cb->level, &regs[CR_EAX], &regs[CR_EBX],
++			&regs[CR_ECX], &regs[CR_EDX]);
++
++		if (regs[cb->reg] & (1 << cb->bit))
++			set_bit(cb->feature, c->x86_capability);
++	}
++}
+diff --git a/arch/i386/kernel/cpu/common.c b/arch/i386/kernel/cpu/common.c
+index 7dda85f..f279008 100644
+--- a/arch/i386/kernel/cpu/common.c
++++ b/arch/i386/kernel/cpu/common.c
+@@ -314,6 +314,8 @@ void __cpuinit generic_identify(struct cpuinfo_x86 * c)
+ 			if ( xlvl >= 0x80000004 )
+ 				get_model_name(c); /* Default name */
+ 		}
++
++		init_scattered_cpuid_features(c);
+ 	}
+ 
+ 	early_intel_workaround(c);
+diff --git a/arch/i386/kernel/cpu/proc.c b/arch/i386/kernel/cpu/proc.c
+index 89e79f2..01a4f4e 100644
+--- a/arch/i386/kernel/cpu/proc.c
++++ b/arch/i386/kernel/cpu/proc.c
+@@ -41,7 +41,7 @@ static int show_cpuinfo(struct seq_file *m, void *v)
+ 		"cxmmx", "k6_mtrr", "cyrix_arr", "centaur_mcr",
+ 		NULL, NULL, NULL, NULL,
+ 		"constant_tsc", "up", NULL, NULL, NULL, NULL, NULL, NULL,
+-		NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
++		"ida", NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+ 		NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+ 
+ 		/* Intel-defined (#2) */
+diff --git a/arch/x86_64/kernel/Makefile b/arch/x86_64/kernel/Makefile
+index db4e737..f6b0cf5 100644
+--- a/arch/x86_64/kernel/Makefile
++++ b/arch/x86_64/kernel/Makefile
+@@ -44,6 +44,7 @@ obj-$(CONFIG_MODULES)		+= module.o
+ 
+ obj-y				+= topology.o
+ obj-y				+= intel_cacheinfo.o
++obj-y				+= addon_cpuid_features.o
+ 
+ CFLAGS_vsyscall.o		:= $(PROFILING) -g0
+ 
+@@ -53,6 +54,7 @@ cpuid-$(subst m,y,$(CONFIG_X86_CPUID))  += ../../i386/kernel/cpuid.o
+ topology-y                     += ../../i386/kernel/topology.o
+ microcode-$(subst m,y,$(CONFIG_MICROCODE))  += ../../i386/kernel/microcode.o
+ intel_cacheinfo-y		+= ../../i386/kernel/cpu/intel_cacheinfo.o
++addon_cpuid_features-y		+= ../../i386/kernel/cpu/addon_cpuid_features.o
+ quirks-y			+= ../../i386/kernel/quirks.o
+ i8237-y				+= ../../i386/kernel/i8237.o
+ msr-$(subst m,y,$(CONFIG_X86_MSR))  += ../../i386/kernel/msr.o
+diff --git a/arch/x86_64/kernel/setup.c b/arch/x86_64/kernel/setup.c
+index 7b8f1ea..5597749 100644
+--- a/arch/x86_64/kernel/setup.c
++++ b/arch/x86_64/kernel/setup.c
+@@ -1137,6 +1137,8 @@ void __cpuinit identify_cpu(struct cpuinfo_x86 *c)
+ 			c->x86_capability[2] = cpuid_edx(0x80860001);
+ 	}
+ 
++	init_scattered_cpuid_features(c);
++
+ 	c->apicid = phys_pkg_id(0);
+ 
+ 	/*
+@@ -1243,7 +1245,7 @@ static int show_cpuinfo(struct seq_file *m, void *v)
+ 		"cxmmx", NULL, "cyrix_arr", "centaur_mcr", NULL,
+ 		"constant_tsc", NULL, NULL,
+ 		"up", NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+-		NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
++		"ida", NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+ 		NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL,
+ 
+ 		/* Intel-defined (#2) */
+diff --git a/include/asm-i386/cpufeature.h b/include/asm-i386/cpufeature.h
+index d314ebb..dfd126f 100644
+--- a/include/asm-i386/cpufeature.h
++++ b/include/asm-i386/cpufeature.h
+@@ -73,6 +73,7 @@
+ #define X86_FEATURE_UP		(3*32+ 9) /* smp kernel running on up */
+ #define X86_FEATURE_FXSAVE_LEAK (3*32+10) /* FXSAVE leaks FOP/FIP/FOP */
+ #define X86_FEATURE_ARCH_PERFMON (3*32+11) /* Intel Architectural PerfMon */
++#define X86_FEATURE_IDA		(3*32+16) /* Intel Dynamic Acceleration */
+ 
+ /* Intel-defined CPU features, CPUID level 0x00000001 (ecx), word 4 */
+ #define X86_FEATURE_XMM3	(4*32+ 0) /* Streaming SIMD Extensions-3 */
+diff --git a/include/asm-i386/processor.h b/include/asm-i386/processor.h
+index 964fd1e..c108225 100644
+--- a/include/asm-i386/processor.h
++++ b/include/asm-i386/processor.h
+@@ -113,6 +113,7 @@ extern char ignore_fpu_irq;
+ 
+ extern void identify_cpu(struct cpuinfo_x86 *);
+ extern void print_cpu_info(struct cpuinfo_x86 *);
++extern void init_scattered_cpuid_features(struct cpuinfo_x86 *c);
+ extern unsigned int init_intel_cacheinfo(struct cpuinfo_x86 *c);
+ extern unsigned short num_cache_leaves;
+ 
+diff --git a/include/asm-x86_64/cpufeature.h b/include/asm-x86_64/cpufeature.h
+index ee792fa..6ac3053 100644
+--- a/include/asm-x86_64/cpufeature.h
++++ b/include/asm-x86_64/cpufeature.h
+@@ -68,6 +68,7 @@
+ #define X86_FEATURE_FXSAVE_LEAK (3*32+7)  /* FIP/FOP/FDP leaks through FXSAVE */
+ #define X86_FEATURE_UP		(3*32+8) /* SMP kernel running on UP */
+ #define X86_FEATURE_ARCH_PERFMON (3*32+9) /* Intel Architectural PerfMon */
++#define X86_FEATURE_IDA		(3*32+16) /* Intel Dynamic Acceleration */
+ 
+ /* Intel-defined CPU features, CPUID level 0x00000001 (ecx), word 4 */
+ #define X86_FEATURE_XMM3	(4*32+ 0) /* Streaming SIMD Extensions-3 */
+@@ -89,6 +90,11 @@
+ #define X86_FEATURE_LAHF_LM	(6*32+ 0) /* LAHF/SAHF in long mode */
+ #define X86_FEATURE_CMP_LEGACY	(6*32+ 1) /* If yes HyperThreading not valid */
+ 
++/*
++ * Auxiliary flags: Linux defined - For features scattered in various
++ * CPUID levels like 0x6, 0xA etc
++ */
++
+ #define cpu_has(c, bit)                test_bit(bit, (c)->x86_capability)
+ #define boot_cpu_has(bit)      test_bit(bit, boot_cpu_data.x86_capability)
+ 
+diff --git a/include/asm-x86_64/processor.h b/include/asm-x86_64/processor.h
+index de9c314..2dd19a7 100644
+--- a/include/asm-x86_64/processor.h
++++ b/include/asm-x86_64/processor.h
+@@ -99,6 +99,7 @@ extern char ignore_irq13;
+ 
+ extern void identify_cpu(struct cpuinfo_x86 *);
+ extern void print_cpu_info(struct cpuinfo_x86 *);
++extern void init_scattered_cpuid_features(struct cpuinfo_x86 *c);
+ extern unsigned int init_intel_cacheinfo(struct cpuinfo_x86 *c);
+ extern unsigned short num_cache_leaves;
+ 

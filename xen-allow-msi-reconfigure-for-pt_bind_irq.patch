@@ -1,0 +1,69 @@
+From: ddugger@redhat.com <ddugger@redhat.com>
+Date: Wed, 24 Jun 2009 17:16:21 -0600
+Subject: [xen] allow msi reconfigure for pt_bind_irq
+Message-id: 200906242316.n5ONGL5w027924@sobek.n0ano.com
+O-Subject: [RHEL 5.4 PATCH] BZ 507970: xen: allow msi reconfigure for pt_bind_irq
+Bugzilla: 507970
+RH-Acked-by: Don Dutile <ddutile@redhat.com>
+RH-Acked-by: Justin M. Forbes <jforbes@redhat.com>
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+
+backporting xen-unstable c.s. 19548
+
+	changeset:   19548:3e64dfebabd7
+	user:        Keir Fraser <keir.fraser@citrix.com>
+	date:        Wed Apr 15 15:38:57 2009 +0100
+	files:       xen/drivers/passthrough/io.c
+	description:
+	passthrough: allow pt_bind_irq for msi update
+
+	Extend pt_bind_irq to handle the update of msi guest
+	vector and flag.
+
+	Unbind and rebind using separate hypercalls may not be viable
+	sometime.
+	For example, the guest may update MSI address/data on fly without
+	disabling it first (e.g. change delivery/destination), implement these
+	updates in such a way may result in interrupt loss.
+
+	Signed-off-by: Qing He <qing.he@intel.com>
+
+Upstream Status: Accepted
+
+Brew build: http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1861081
+
+Signed-off-by: Qing He <qing.he@intel.com>
+Signed-off-by: Don Dugger <donald.d.dugger@intel.com>
+
+diff --git a/drivers/passthrough/io.c b/drivers/passthrough/io.c
+index a627b99..f62421b 100644
+--- a/drivers/passthrough/io.c
++++ b/drivers/passthrough/io.c
+@@ -110,12 +110,22 @@ int pt_irq_create_bind_vtd(
+                 return rc;
+             }
+         }
+-        else if (hvm_irq_dpci->mirq[pirq].gmsi.gvec != pt_irq_bind->u.msi.gvec
+-                ||hvm_irq_dpci->msi_gvec_pirq[pt_irq_bind->u.msi.gvec] != pirq)
+-
++        else
+         {
+-            spin_unlock(&d->event_lock);
+-            return -EBUSY;
++            uint32_t old_gvec;
++
++            if ( !test_bit(_HVM_IRQ_DPCI_MSI, &hvm_irq_dpci->mirq[pirq].flags) )
++            {
++	            spin_unlock(&d->event_lock);
++        	    return -EBUSY;
++            }
++
++            /* if pirq is already mapped as vmsi, update the guest data/addr */
++            old_gvec = hvm_irq_dpci->mirq[pirq].gmsi.gvec;
++            hvm_irq_dpci->msi_gvec_pirq[old_gvec] = 0;
++            hvm_irq_dpci->mirq[pirq].gmsi.gvec = pt_irq_bind->u.msi.gvec;
++            hvm_irq_dpci->mirq[pirq].gmsi.gflags = pt_irq_bind->u.msi.gflags;
++            hvm_irq_dpci->msi_gvec_pirq[pt_irq_bind->u.msi.gvec] = pirq;
+         }
+     }
+     else

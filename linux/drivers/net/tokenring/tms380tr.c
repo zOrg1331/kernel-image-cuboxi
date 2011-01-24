@@ -30,7 +30,7 @@
  *  Maintainer(s):
  *    JS	Jay Schulist		jschlst@samba.org
  *    CG	Christoph Goos		cgoos@syskonnect.de
- *    AF	Adam Fritzler
+ *    AF	Adam Fritzler		mid@auk.cx
  *    MLP       Mike Phillips           phillim@amtrak.com
  *    JF	Jochen Friedrich	jochen@scram.de
  *     
@@ -144,8 +144,8 @@ static void 	tms380tr_exec_sifcmd(struct net_device *dev, unsigned int WriteValu
 /* "G" */
 static struct net_device_stats *tms380tr_get_stats(struct net_device *dev);
 /* "H" */
-static netdev_tx_t tms380tr_hardware_send_packet(struct sk_buff *skb,
-						       struct net_device *dev);
+static int 	tms380tr_hardware_send_packet(struct sk_buff *skb,
+			struct net_device *dev);
 /* "I" */
 static int 	tms380tr_init_adapter(struct net_device *dev);
 static void 	tms380tr_init_ipb(struct net_local *tp);
@@ -165,8 +165,7 @@ static int 	tms380tr_reset_adapter(struct net_device *dev);
 static void 	tms380tr_reset_interrupt(struct net_device *dev);
 static void 	tms380tr_ring_status_irq(struct net_device *dev);
 /* "S" */
-static netdev_tx_t tms380tr_send_packet(struct sk_buff *skb,
-					      struct net_device *dev);
+static int 	tms380tr_send_packet(struct sk_buff *skb, struct net_device *dev);
 static void 	tms380tr_set_multicast_list(struct net_device *dev);
 static int	tms380tr_set_mac_address(struct net_device *dev, void *addr);
 /* "T" */
@@ -181,14 +180,10 @@ void	 	tms380tr_wait(unsigned long time);
 static void 	tms380tr_write_rpl_status(RPL *rpl, unsigned int Status);
 static void 	tms380tr_write_tpl_status(TPL *tpl, unsigned int Status);
 
-#define SIFREADB(reg) \
-	(((struct net_local *)netdev_priv(dev))->sifreadb(dev, reg))
-#define SIFWRITEB(val, reg) \
-	(((struct net_local *)netdev_priv(dev))->sifwriteb(dev, val, reg))
-#define SIFREADW(reg) \
-	(((struct net_local *)netdev_priv(dev))->sifreadw(dev, reg))
-#define SIFWRITEW(val, reg) \
-	(((struct net_local *)netdev_priv(dev))->sifwritew(dev, val, reg))
+#define SIFREADB(reg) (((struct net_local *)dev->priv)->sifreadb(dev, reg))
+#define SIFWRITEB(val, reg) (((struct net_local *)dev->priv)->sifwriteb(dev, val, reg))
+#define SIFREADW(reg) (((struct net_local *)dev->priv)->sifreadw(dev, reg))
+#define SIFWRITEW(val, reg) (((struct net_local *)dev->priv)->sifwritew(dev, val, reg))
 
 
 
@@ -600,23 +595,21 @@ static void tms380tr_timeout(struct net_device *dev)
 /*
  * Gets skb from system, queues it and checks if it can be sent
  */
-static netdev_tx_t tms380tr_send_packet(struct sk_buff *skb,
-					      struct net_device *dev)
+static int tms380tr_send_packet(struct sk_buff *skb, struct net_device *dev)
 {
 	struct net_local *tp = netdev_priv(dev);
-	netdev_tx_t rc;
+	int err;
 
-	rc = tms380tr_hardware_send_packet(skb, dev);
+	err = tms380tr_hardware_send_packet(skb, dev);
 	if(tp->TplFree->NextTPLPtr->BusyFlag)
 		netif_stop_queue(dev);
-	return rc;
+	return (err);
 }
 
 /*
  * Move frames into adapter tx queue
  */
-static netdev_tx_t tms380tr_hardware_send_packet(struct sk_buff *skb,
-						       struct net_device *dev)
+static int tms380tr_hardware_send_packet(struct sk_buff *skb, struct net_device *dev)
 {
 	TPL *tpl;
 	short length;
@@ -636,7 +629,7 @@ static netdev_tx_t tms380tr_hardware_send_packet(struct sk_buff *skb,
 		if (tms380tr_debug > 0)
 			printk(KERN_DEBUG "%s: No free TPL\n", dev->name);
 		spin_unlock_irqrestore(&tp->lock, flags);
-		return NETDEV_TX_BUSY;
+		return 1;
 	}
 
 	dmabuf = 0;
@@ -651,7 +644,7 @@ static netdev_tx_t tms380tr_hardware_send_packet(struct sk_buff *skb,
 		dmabuf  = 0;
 		i 	= tp->TplFree->TPLIndex;
 		buf 	= tp->LocalTxBuffers[i];
-		skb_copy_from_linear_data(skb, buf, length);
+		memcpy(buf, skb->data, length);
 		newbuf 	= ((char *)buf - (char *)tp) + tp->dmabuffer;
 	}
 	else {
@@ -685,7 +678,7 @@ static netdev_tx_t tms380tr_hardware_send_packet(struct sk_buff *skb,
 	tms380tr_exec_sifcmd(dev, CMD_TX_VALID);
 	spin_unlock_irqrestore(&tp->lock, flags);
 
-	return NETDEV_TX_OK;
+	return 0;
 }
 
 /*
@@ -751,12 +744,17 @@ static void tms380tr_timer_chk(unsigned long data)
 /*
  * The typical workload of the driver: Handle the network interface interrupts.
  */
-irqreturn_t tms380tr_interrupt(int irq, void *dev_id)
+irqreturn_t tms380tr_interrupt(int irq, void *dev_id, struct pt_regs *regs)
 {
 	struct net_device *dev = dev_id;
 	struct net_local *tp;
 	unsigned short irq_type;
 	int handled = 0;
+
+	if(dev == NULL) {
+		printk(KERN_INFO "%s: irq %d for unknown device.\n", dev->name, irq);
+		return IRQ_NONE;
+	}
 
 	tp = netdev_priv(dev);
 
@@ -2131,7 +2129,7 @@ static void tms380tr_rcv_status_irq(struct net_device *dev)
 		/* Get the frame size (Byte swap for Intel).
 		 * Do this early (see workaround comment below)
 		 */
-		Length = be16_to_cpu(rpl->FrameSize);
+		Length = be16_to_cpu((unsigned short)rpl->FrameSize);
 
 		/* Check if the Frame_Start, Frame_End and
 		 * Frame_Complete bits are set.
@@ -2147,7 +2145,7 @@ static void tms380tr_rcv_status_irq(struct net_device *dev)
 			 * Length2 is there because there have also been
 			 * cases where the FrameSize was partially written
 			 */
-			Length2 = be16_to_cpu(rpl->FrameSize);
+			Length2 = be16_to_cpu((unsigned short)rpl->FrameSize);
 
 			if(Length == 0 || Length != Length2)
 			{
@@ -2175,6 +2173,7 @@ static void tms380tr_rcv_status_irq(struct net_device *dev)
 				}
 				else
 				{
+					skb->dev	= dev;
 					skb_put(skb, tp->MaxPacketSize);
 					rpl->SkbStat 	= SKB_DATA_COPY;
 					ReceiveDataPtr 	= rpl->MData;
@@ -2185,14 +2184,14 @@ static void tms380tr_rcv_status_irq(struct net_device *dev)
 				|| rpl->SkbStat == SKB_DMA_DIRECT))
 			{
 				if(rpl->SkbStat == SKB_DATA_COPY)
-					skb_copy_to_linear_data(skb, ReceiveDataPtr,
-						       Length);
+					memcpy(skb->data, ReceiveDataPtr, Length);
 
 				/* Deliver frame to system */
 				rpl->Skb = NULL;
 				skb_trim(skb,Length);
 				skb->protocol = tr_type_trans(skb,dev);
 				netif_rx(skb);
+				dev->last_rx = jiffies;
 			}
 		}
 		else	/* Invalid frame */
@@ -2333,22 +2332,11 @@ void tmsdev_term(struct net_device *dev)
 		DMA_BIDIRECTIONAL);
 }
 
-const struct net_device_ops tms380tr_netdev_ops = {
-	.ndo_open		= tms380tr_open,
-	.ndo_stop		= tms380tr_close,
-	.ndo_start_xmit		= tms380tr_send_packet,
-	.ndo_tx_timeout		= tms380tr_timeout,
-	.ndo_get_stats		= tms380tr_get_stats,
-	.ndo_set_multicast_list = tms380tr_set_multicast_list,
-	.ndo_set_mac_address	= tms380tr_set_mac_address,
-};
-EXPORT_SYMBOL(tms380tr_netdev_ops);
-
 int tmsdev_init(struct net_device *dev, struct device *pdev)
 {
 	struct net_local *tms_local;
 
-	memset(netdev_priv(dev), 0, sizeof(struct net_local));
+	memset(dev->priv, 0, sizeof(struct net_local));
 	tms_local = netdev_priv(dev);
 	init_waitqueue_head(&tms_local->wait_for_tok_int);
 	if (pdev->dma_mask)
@@ -2367,8 +2355,16 @@ int tmsdev_init(struct net_device *dev, struct device *pdev)
 		return -ENOMEM;
 	}
 	
-	dev->netdev_ops		= &tms380tr_netdev_ops;
+	/* These can be overridden by the card driver if needed */
+	dev->open		= tms380tr_open;
+	dev->stop		= tms380tr_close;
+	dev->do_ioctl		= NULL; 
+	dev->hard_start_xmit	= tms380tr_send_packet;
+	dev->tx_timeout		= tms380tr_timeout;
 	dev->watchdog_timeo	= HZ;
+	dev->get_stats		= tms380tr_get_stats;
+	dev->set_multicast_list = &tms380tr_set_multicast_list;
+	dev->set_mac_address	= tms380tr_set_mac_address;
 
 	return 0;
 }

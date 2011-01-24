@@ -13,9 +13,9 @@
  * 2001/08/13	Correct size of extended floats (float_fsz) from 16 to 10 bytes.
  * 2001/01/17	Add support emulation of unaligned kernel accesses.
  */
-#include <linux/jiffies.h>
 #include <linux/kernel.h>
 #include <linux/sched.h>
+#include <linux/smp_lock.h>
 #include <linux/tty.h>
 
 #include <asm/intrinsics.h>
@@ -24,12 +24,12 @@
 #include <asm/uaccess.h>
 #include <asm/unaligned.h>
 
-extern int die_if_kernel(char *str, struct pt_regs *regs, long err);
+extern void die_if_kernel(char *str, struct pt_regs *regs, long err);
 
 #undef DEBUG_UNALIGNED_TRAP
 
 #ifdef DEBUG_UNALIGNED_TRAP
-# define DPRINT(a...)	do { printk("%s %u: ", __func__, __LINE__); printk (a); } while (0)
+# define DPRINT(a...)	do { printk("%s %u: ", __FUNCTION__, __LINE__); printk (a); } while (0)
 # define DDUMP(str,vp,len)	dump(str, vp, len)
 
 static void
@@ -59,7 +59,7 @@ dump (const char *str, void *vp, size_t len)
  *  (i.e. don't allow attacker to fill up logs with unaligned accesses).
  */
 int no_unaligned_warning;
-int unaligned_dump_stack;
+static int noprint_warning;
 
 /*
  * For M-unit:
@@ -675,10 +675,9 @@ emulate_load_updates (update_t type, load_store_t ld, struct pt_regs *regs, unsi
 	 * just in case.
 	 */
 	if (ld.x6_op == 1 || ld.x6_op == 3) {
-		printk(KERN_ERR "%s: register update on speculative load, error\n", __func__);
-		if (die_if_kernel("unaligned reference on speculative load with register update\n",
-				  regs, 30))
-			return;
+		printk(KERN_ERR "%s: register update on speculative load, error\n", __FUNCTION__);
+		die_if_kernel("unaligned reference on speculative load with register update\n",
+			      regs, 30);
 	}
 
 
@@ -1105,7 +1104,7 @@ emulate_load_floatpair (unsigned long ifa, load_store_t ld, struct pt_regs *regs
 		 */
 		if (ld.x6_op == 1 || ld.x6_op == 3)
 			printk(KERN_ERR "%s: register update on speculative load pair, error\n",
-			       __func__);
+			       __FUNCTION__);
 
 		setreg(ld.r3, ifa, 0, regs);
 	}
@@ -1291,7 +1290,7 @@ within_logging_rate_limit (void)
 {
 	static unsigned long count, last_time;
 
-	if (time_after(jiffies, last_time + 5 * HZ))
+	if (jiffies - last_time > 5*HZ)
 		count = 0;
 	if (count < 5) {
 		last_time = jiffies;
@@ -1319,8 +1318,7 @@ ia64_handle_unaligned (unsigned long ifa, struct pt_regs *regs)
 
 	if (ia64_psr(regs)->be) {
 		/* we don't support big-endian accesses */
-		if (die_if_kernel("big-endian unaligned accesses are not supported", regs, 0))
-			return;
+		die_if_kernel("big-endian unaligned accesses are not supported", regs, 0);
 		goto force_sigbus;
 	}
 
@@ -1343,8 +1341,7 @@ ia64_handle_unaligned (unsigned long ifa, struct pt_regs *regs)
 			size_t len;
 
 			len = sprintf(buf, "%s(%d): unaligned access to 0x%016lx, "
-				      "ip=0x%016lx\n\r", current->comm,
-				      task_pid_nr(current),
+				      "ip=0x%016lx\n\r", current->comm, current->pid,
 				      ifa, regs->cr_iip + ipsr->ri);
 			/*
 			 * Don't call tty_write_message() if we're in the kernel; we might
@@ -1356,8 +1353,9 @@ ia64_handle_unaligned (unsigned long ifa, struct pt_regs *regs)
 			/* watch for command names containing %s */
 			printk(KERN_WARNING "%s", buf);
 		} else {
-			if (no_unaligned_warning) {
-				printk_once(KERN_WARNING "%s(%d) encountered an "
+			if (no_unaligned_warning && !noprint_warning) {
+				noprint_warning = 1;
+				printk(KERN_WARNING "%s(%d) encountered an "
 				       "unaligned exception which required\n"
 				       "kernel assistance, which degrades "
 				       "the performance of the application.\n"
@@ -1366,16 +1364,13 @@ ia64_handle_unaligned (unsigned long ifa, struct pt_regs *regs)
 				       "administrator\n"
 				       "echo 0 > /proc/sys/kernel/ignore-"
 				       "unaligned-usertrap to re-enable\n",
-				       current->comm, task_pid_nr(current));
+				       current->comm, current->pid);
 			}
 		}
 	} else {
-		if (within_logging_rate_limit()) {
+		if (within_logging_rate_limit())
 			printk(KERN_WARNING "kernel unaligned access to 0x%016lx, ip=0x%016lx\n",
 			       ifa, regs->cr_iip + ipsr->ri);
-			if (unaligned_dump_stack)
-				dump_stack();
-		}
 		set_fs(KERNEL_DS);
 	}
 
@@ -1493,17 +1488,14 @@ ia64_handle_unaligned (unsigned long ifa, struct pt_regs *regs)
 	      case LDFA_OP:
 	      case LDFCCLR_OP:
 	      case LDFCNC_OP:
-		if (u.insn.x)
-			ret = emulate_load_floatpair(ifa, u.insn, regs);
-		else
-			ret = emulate_load_float(ifa, u.insn, regs);
-		break;
-
 	      case LDF_IMM_OP:
 	      case LDFA_IMM_OP:
 	      case LDFCCLR_IMM_OP:
 	      case LDFCNC_IMM_OP:
-		ret = emulate_load_float(ifa, u.insn, regs);
+		if (u.insn.x)
+			ret = emulate_load_floatpair(ifa, u.insn, regs);
+		else
+			ret = emulate_load_float(ifa, u.insn, regs);
 		break;
 
 	      case STF_OP:
@@ -1539,8 +1531,7 @@ ia64_handle_unaligned (unsigned long ifa, struct pt_regs *regs)
 			ia64_handle_exception(regs, eh);
 			goto done;
 		}
-		if (die_if_kernel("error during unaligned kernel access\n", regs, ret))
-			return;
+		die_if_kernel("error during unaligned kernel access\n", regs, ret);
 		/* NOT_REACHED */
 	}
   force_sigbus:

@@ -87,14 +87,14 @@ MODULE_LICENSE("GPL");
 static void rx(struct net_device *dev, int bufnum,
 	       struct archdr *pkthdr, int length)
 {
-	struct arcnet_local *lp = netdev_priv(dev);
+	struct arcnet_local *lp = dev->priv;
 	struct sk_buff *skb;
 	struct archdr *pkt = pkthdr;
 	int ofs;
 
 	BUGMSG(D_DURING, "it's a raw packet (length=%d)\n", length);
 
-	if (length > MTU)
+	if (length >= MinTU)
 		ofs = 512 - length;
 	else
 		ofs = 256 - length;
@@ -102,7 +102,7 @@ static void rx(struct net_device *dev, int bufnum,
 	skb = alloc_skb(length + ARC_HDR_SIZE, GFP_ATOMIC);
 	if (skb == NULL) {
 		BUGMSG(D_NORMAL, "Memory squeeze, dropping packet.\n");
-		dev->stats.rx_dropped++;
+		lp->stats.rx_dropped++;
 		return;
 	}
 	skb_put(skb, length + ARC_HDR_SIZE);
@@ -110,7 +110,7 @@ static void rx(struct net_device *dev, int bufnum,
 
 	pkt = (struct archdr *) skb->data;
 
-	skb_reset_mac_header(skb);
+	skb->mac.raw = skb->data;
 	skb_pull(skb, ARC_HDR_SIZE);
 
 	/* up to sizeof(pkt->soft) has already been copied from the card */
@@ -122,8 +122,10 @@ static void rx(struct net_device *dev, int bufnum,
 
 	BUGLVL(D_SKB) arcnet_dump_skb(dev, skb, "rx");
 
-	skb->protocol = cpu_to_be16(ETH_P_ARCNET);
+	skb->protocol = __constant_htons(ETH_P_ARCNET);
+;
 	netif_rx(skb);
+	dev->last_rx = jiffies;
 }
 
 
@@ -166,7 +168,7 @@ static int build_header(struct sk_buff *skb, struct net_device *dev,
 static int prepare_tx(struct net_device *dev, struct archdr *pkt, int length,
 		      int bufnum)
 {
-	struct arcnet_local *lp = netdev_priv(dev);
+	struct arcnet_local *lp = dev->priv;
 	struct arc_hardware *hard = &pkt->hard;
 	int ofs;
 
@@ -181,7 +183,7 @@ static int prepare_tx(struct net_device *dev, struct archdr *pkt, int length,
 		       length, XMTU);
 		length = XMTU;
 	}
-	if (length >= MinTU) {
+	if (length > MinTU) {
 		hard->offset[0] = 0;
 		hard->offset[1] = ofs = 512 - length;
 	} else if (length > MTU) {

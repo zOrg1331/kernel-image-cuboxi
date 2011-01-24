@@ -1,0 +1,107 @@
+Date: Thu, 26 Oct 2006 11:14:13 -0400
+From: Steve Dickson <SteveD@redhat.com>
+Subject: [RHEL5] [PATCH] NFSv4: fs_locations support
+
+A month after RHEL5 was branched from upstream,
+patches were submitted and commit to the mainstream
+kernel that introduce File System Replication and
+Migration support for NFS version 4.
+
+File System Replication and Migration is a feature
+in V4 that allows server to tell clients that the
+file (or file system) they are asking has just
+moved to another server. Such a feature will help
+with load balancing and/or resource relocation.
+
+This is something I'm pretty confident our competitors
+will have in upcoming releases, so we really need a
+way to get this in RHEL5.
+
+Being that its so late in the release cycle, adding
+the entire feature may not make sense. So I'm proposing
+that we only added the kABI footprint which will allow us
+to added the feature in an update release as well as let
+the code "bake" a bit longer in upstream.
+
+So the attached patch only has the header file changes.
+
+The entire patch can be found at:
+http://people.redhat.com/steved/bz212352/linux-2.6.18-nfs4-fsloc.patch
+
+The upstream patch series can be found in:
+http://people.redhat.com/steved/bz212352/
+
+The bz is:
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=212352
+
+steved.
+
+
+--- linux-2.6.18.i686/include/linux/nfsd/nfsd.h.orig	2006-10-24 14:12:17.000000000 -0400
++++ linux-2.6.18.i686/include/linux/nfsd/nfsd.h	2006-10-24 15:29:51.000000000 -0400
+@@ -210,6 +210,7 @@ void		nfsd_lockd_shutdown(void);
+ #define	nfserr_clid_inuse	__constant_htonl(NFSERR_CLID_INUSE)
+ #define	nfserr_stale_clientid	__constant_htonl(NFSERR_STALE_CLIENTID)
+ #define	nfserr_resource		__constant_htonl(NFSERR_RESOURCE)
++#define	nfserr_moved		__constant_htonl(NFSERR_MOVED)
+ #define	nfserr_nofilehandle	__constant_htonl(NFSERR_NOFILEHANDLE)
+ #define	nfserr_minor_vers_mismatch	__constant_htonl(NFSERR_MINOR_VERS_MISMATCH)
+ #define nfserr_share_denied	__constant_htonl(NFSERR_SHARE_DENIED)
+@@ -286,7 +287,6 @@ static inline int is_fsid(struct svc_fh 
+ /*
+  * The following attributes are currently not supported by the NFSv4 server:
+  *    ARCHIVE       (deprecated anyway)
+- *    FS_LOCATIONS  (will be supported eventually)
+  *    HIDDEN        (unlikely to be supported any time soon)
+  *    MIMETYPE      (unlikely to be supported any time soon)
+  *    QUOTA_*       (will be supported in a forthcoming patch)
+@@ -302,7 +302,7 @@ static inline int is_fsid(struct svc_fh 
+  | FATTR4_WORD0_ACLSUPPORT      | FATTR4_WORD0_CANSETTIME   | FATTR4_WORD0_CASE_INSENSITIVE \
+  | FATTR4_WORD0_CASE_PRESERVING | FATTR4_WORD0_CHOWN_RESTRICTED                             \
+  | FATTR4_WORD0_FILEHANDLE      | FATTR4_WORD0_FILEID       | FATTR4_WORD0_FILES_AVAIL      \
+- | FATTR4_WORD0_FILES_FREE      | FATTR4_WORD0_FILES_TOTAL  | FATTR4_WORD0_HOMOGENEOUS      \
++ | FATTR4_WORD0_FILES_FREE      | FATTR4_WORD0_FILES_TOTAL  | FATTR4_WORD0_FS_LOCATIONS | FATTR4_WORD0_HOMOGENEOUS      \
+  | FATTR4_WORD0_MAXFILESIZE     | FATTR4_WORD0_MAXLINK      | FATTR4_WORD0_MAXNAME          \
+  | FATTR4_WORD0_MAXREAD         | FATTR4_WORD0_MAXWRITE     | FATTR4_WORD0_ACL)
+ 
+--- linux-2.6.18.i686/include/linux/nfsd/export.h.orig	2006-10-24 14:12:17.000000000 -0400
++++ linux-2.6.18.i686/include/linux/nfsd/export.h	2006-10-24 15:31:13.000000000 -0400
+@@ -45,15 +45,36 @@
+ 
+ #ifdef __KERNEL__
+ 
++/*
++ * FS Locations
++ */
++
++#define MAX_FS_LOCATIONS	128
++
++struct nfsd4_fs_location {
++	char *hosts; /* colon separated list of hosts */
++	char *path;  /* slash separated list of path components */
++};
++
++struct nfsd4_fs_locations {
++	uint32_t locations_count;
++	struct nfsd4_fs_location *locations;
++/* If we're not actually serving this data ourselves (only providing a
++ * list of replicas that do serve it) then we set "migrated": */
++	int migrated;
++};
++
+ struct svc_export {
+ 	struct cache_head	h;
+ 	struct auth_domain *	ex_client;
+ 	int			ex_flags;
+ 	struct vfsmount *	ex_mnt;
+ 	struct dentry *		ex_dentry;
++	char *			ex_path;
+ 	uid_t			ex_anon_uid;
+ 	gid_t			ex_anon_gid;
+ 	int			ex_fsid;
++	struct nfsd4_fs_locations ex_fslocs;
+ };
+ 
+ /* an "export key" (expkey) maps a filehandlefragement to an
+
+

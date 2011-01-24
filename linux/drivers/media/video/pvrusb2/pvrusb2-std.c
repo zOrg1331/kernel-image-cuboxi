@@ -1,5 +1,6 @@
 /*
  *
+ *  $Id$
  *
  *  Copyright (C) 2005 Mike Isely <isely@pobox.com>
  *
@@ -49,10 +50,6 @@ struct std_name {
 	 V4L2_STD_NTSC_M_KR| \
 	 V4L2_STD_NTSC_443)
 
-#define CSTD_ATSC \
-	(V4L2_STD_ATSC_8_VSB| \
-	 V4L2_STD_ATSC_16_VSB)
-
 #define CSTD_SECAM \
 	(V4L2_STD_SECAM_B| \
 	 V4L2_STD_SECAM_D| \
@@ -78,18 +75,17 @@ struct std_name {
 #define TSTD_Nc  (V4L2_STD_PAL_Nc)
 #define TSTD_60  (V4L2_STD_PAL_60)
 
-#define CSTD_ALL (CSTD_PAL|CSTD_NTSC|CSTD_ATSC|CSTD_SECAM)
+#define CSTD_ALL (CSTD_PAL|CSTD_NTSC|CSTD_SECAM)
 
 /* Mapping of standard bits to color system */
-static const struct std_name std_groups[] = {
+const static struct std_name std_groups[] = {
 	{"PAL",CSTD_PAL},
 	{"NTSC",CSTD_NTSC},
 	{"SECAM",CSTD_SECAM},
-	{"ATSC",CSTD_ATSC},
 };
 
 /* Mapping of standard bits to modulation system */
-static const struct std_name std_items[] = {
+const static struct std_name std_items[] = {
 	{"B",TSTD_B},
 	{"B1",TSTD_B1},
 	{"D",TSTD_D},
@@ -108,8 +104,6 @@ static const struct std_name std_items[] = {
 	{"N",TSTD_N},
 	{"Nc",TSTD_Nc},
 	{"60",TSTD_60},
-	{"8VSB",V4L2_STD_ATSC_8_VSB},
-	{"16VSB",V4L2_STD_ATSC_16_VSB},
 };
 
 
@@ -147,8 +141,10 @@ int pvr2_std_str_to_id(v4l2_std_id *idPtr,const char *bufPtr,
 			cnt = 0;
 			while ((cnt < bufSize) && (bufPtr[cnt] != '-')) cnt++;
 			if (cnt >= bufSize) return 0; // No more characters
-			sp = find_std_name(std_groups, ARRAY_SIZE(std_groups),
-					   bufPtr,cnt);
+			sp = find_std_name(
+				std_groups,
+				sizeof(std_groups)/sizeof(std_groups[0]),
+				bufPtr,cnt);
 			if (!sp) return 0; // Illegal color system name
 			cnt++;
 			bufPtr += cnt;
@@ -167,7 +163,8 @@ int pvr2_std_str_to_id(v4l2_std_id *idPtr,const char *bufPtr,
 			if (ch == '/') break;
 			cnt++;
 		}
-		sp = find_std_name(std_items, ARRAY_SIZE(std_items),
+		sp = find_std_name(std_items,
+				   sizeof(std_items)/sizeof(std_items[0]),
 				   bufPtr,cnt);
 		if (!sp) return 0; // Illegal modulation system ID
 		t = sp->id & cmsk;
@@ -192,10 +189,14 @@ unsigned int pvr2_std_id_to_str(char *bufPtr, unsigned int bufSize,
 	unsigned int c1,c2;
 	cfl = 0;
 	c1 = 0;
-	for (idx1 = 0; idx1 < ARRAY_SIZE(std_groups); idx1++) {
+	for (idx1 = 0;
+	     idx1 < sizeof(std_groups)/sizeof(std_groups[0]);
+	     idx1++) {
 		gp = std_groups + idx1;
 		gfl = 0;
-		for (idx2 = 0; idx2 < ARRAY_SIZE(std_items); idx2++) {
+		for (idx2 = 0;
+		     idx2 < sizeof(std_items)/sizeof(std_items[0]);
+		     idx2++) {
 			ip = std_items + idx2;
 			if (!(gp->id & ip->id & id)) continue;
 			if (!gfl) {
@@ -278,7 +279,7 @@ static struct v4l2_standard generic_standards[] = {
 	}
 };
 
-#define generic_standards_cnt ARRAY_SIZE(generic_standards)
+#define generic_standards_cnt (sizeof(generic_standards)/sizeof(generic_standards[0]))
 
 static struct v4l2_standard *match_std(v4l2_std_id id)
 {
@@ -304,7 +305,7 @@ static int pvr2_std_fill(struct v4l2_standard *std,v4l2_std_id id)
 	std->id = id;
 	bcnt = pvr2_std_id_to_str(std->name,sizeof(std->name)-1,id);
 	std->name[bcnt] = 0;
-	pvr2_trace(PVR2_TRACE_STD,"Set up standard idx=%u name=%s",
+	pvr2_trace(PVR2_TRACE_INIT,"Set up standard idx=%u name=%s",
 		   std->index,std->name);
 	return !0;
 }
@@ -326,11 +327,11 @@ struct v4l2_standard *pvr2_std_create_enum(unsigned int *countptr,
 	v4l2_std_id idmsk,cmsk,fmsk;
 	struct v4l2_standard *stddefs;
 
-	if (pvrusb2_debug & PVR2_TRACE_STD) {
-		char buf[100];
+	if (pvrusb2_debug & PVR2_TRACE_INIT) {
+		char buf[50];
 		bcnt = pvr2_std_id_to_str(buf,sizeof(buf),id);
 		pvr2_trace(
-			PVR2_TRACE_STD,"Mapping standards mask=0x%x (%.*s)",
+			PVR2_TRACE_INIT,"Mapping standards mask=0x%x (%.*s)",
 			(int)id,bcnt,buf);
 	}
 
@@ -347,15 +348,12 @@ struct v4l2_standard *pvr2_std_create_enum(unsigned int *countptr,
 		fmsk |= idmsk;
 	}
 
-	for (idx2 = 0; idx2 < ARRAY_SIZE(std_mixes); idx2++) {
+	for (idx2 = 0; idx2 < sizeof(std_mixes)/sizeof(std_mixes[0]); idx2++) {
 		if ((id & std_mixes[idx2]) == std_mixes[idx2]) std_cnt++;
 	}
 
-	/* Don't complain about ATSC standard values */
-	fmsk &= ~CSTD_ATSC;
-
 	if (fmsk) {
-		char buf[100];
+		char buf[50];
 		bcnt = pvr2_std_id_to_str(buf,sizeof(buf),fmsk);
 		pvr2_trace(
 			PVR2_TRACE_ERROR_LEGS,
@@ -364,19 +362,20 @@ struct v4l2_standard *pvr2_std_create_enum(unsigned int *countptr,
 			bcnt,buf);
 	}
 
-	pvr2_trace(PVR2_TRACE_STD,"Setting up %u unique standard(s)",
+	pvr2_trace(PVR2_TRACE_INIT,"Setting up %u unique standard(s)",
 		   std_cnt);
 	if (!std_cnt) return NULL; // paranoia
 
-	stddefs = kzalloc(sizeof(struct v4l2_standard) * std_cnt,
+	stddefs = kmalloc(sizeof(struct v4l2_standard) * std_cnt,
 			  GFP_KERNEL);
+	memset(stddefs,0,sizeof(struct v4l2_standard) * std_cnt);
 	for (idx = 0; idx < std_cnt; idx++) stddefs[idx].index = idx;
 
 	idx = 0;
 
 	/* Enumerate potential special cases */
-	for (idx2 = 0; (idx2 < ARRAY_SIZE(std_mixes)) && (idx < std_cnt);
-	     idx2++) {
+	for (idx2 = 0; ((idx2 < sizeof(std_mixes)/sizeof(std_mixes[0])) &&
+			(idx < std_cnt)); idx2++) {
 		if (!(id & std_mixes[idx2])) continue;
 		if (pvr2_std_fill(stddefs+idx,std_mixes[idx2])) idx++;
 	}

@@ -1,0 +1,952 @@
+From: Jeff Garzik <jgarzik@redhat.com>
+Subject: [PATCH RHEL5] critical libata fixes
+Date: Tue, 18 Sep 2007 23:28:18 -0400
+Bugzilla: 260281
+Message-Id: <20070919032818.GE30593@devserv.devel.redhat.com>
+Changelog: [sata] libata probing fixes and other cleanups
+
+
+This imports several critical fixes from the 2.6.22 release kernel,
+several of which are needed for proper probing, fixing BZ# 260281
+
+* more reliable ATA reset
+* SET FEATURES - XFER MODE polling
+* certain ATA commands require a device revalidation
+* ahci: don't create port map from out-of-date capabilities list
+* HPA fixes
+* several ATAPI DMA fixes
+* additional blacklist entries
+* check BMDMA address for zero, and disable DMA if so
+* SiS fixes
+* limit inic to LBA28 due to problems
+* fix SG_IO interface handling to be somewhat sane for PIO-multi
+
+ drivers/ata/ahci.c              |    2 
+ drivers/ata/libata-core.c       |  116 ++++------
+ drivers/ata/libata-eh.c         |    7 
+ drivers/ata/libata-scsi.c       |   83 ++++---
+ drivers/ata/libata-sff.c        |   42 ++-
+ drivers/ata/pata_pcmcia.c       |    2 
+ drivers/ata/pata_pdc202xx_old.c |    4 
+ drivers/ata/pata_sis.c          |   46 +++
+ drivers/ata/pata_via.c          |   12 -
+ drivers/ata/sata_inic162x.c     |    7 
+ drivers/ata/sata_promise.c      |    9 
+ drivers/ata/sata_sis.c          |   39 +--
+ drivers/ata/sis.h               |    2 
+ include/linux/ata.h             |    3 
+ include/linux/libata.h          |   13 -
+ 16 files changed, 234 insertions(+), 155 deletions(-)
+
+diff -urN linux-2.6.18.i686/drivers/ata/ahci.c /home/jgarzik/tmp/linux-2.6.22/drivers/ata/ahci.c
+--- linux-2.6.18.i686/drivers/ata/ahci.c	2007-09-18 04:40:12.000000000 -0400
++++ /home/jgarzik/tmp/linux-2.6.22/drivers/ata/ahci.c	2007-07-08 19:32:17.000000000 -0400
+@@ -506,7 +527,7 @@
+ 
+ 	/* fixup zero port_map */
+ 	if (!port_map) {
+-		port_map = (1 << ahci_nr_ports(hpriv->cap)) - 1;
++		port_map = (1 << ahci_nr_ports(cap)) - 1;
+ 		dev_printk(KERN_WARNING, &pdev->dev,
+ 			   "PORTS_IMPL is zero, forcing 0x%x\n", port_map);
+ 
+diff -urN linux-2.6.18.i686/drivers/ata/libata-core.c /home/jgarzik/tmp/linux-2.6.22/drivers/ata/libata-core.c
+--- linux-2.6.18.i686/drivers/ata/libata-core.c	2007-09-18 04:40:12.000000000 -0400
++++ /home/jgarzik/tmp/linux-2.6.22/drivers/ata/libata-core.c	2007-07-08 19:32:17.000000000 -0400
+@@ -600,8 +600,9 @@
+ 
+ void ata_dev_disable(struct ata_device *dev)
+ {
+-	if (ata_dev_enabled(dev) && ata_msg_drv(dev->ap)) {
+-		ata_dev_printk(dev, KERN_WARNING, "disabled\n");
++	if (ata_dev_enabled(dev)) {
++		if (ata_msg_drv(dev->ap))
++			ata_dev_printk(dev, KERN_WARNING, "disabled\n");
+ 		ata_down_xfermask_limit(dev, ATA_DNXFER_FORCE_PIO0 |
+ 					     ATA_DNXFER_QUIET);
+ 		dev->class++;
+@@ -983,11 +984,6 @@
+ 	else
+ 		hpa_sectors = ata_read_native_max_address(dev);
+ 
+-	/* if no hpa, both should be equal */
+-	ata_dev_printk(dev, KERN_INFO, "%s 1: sectors = %lld, "
+-				"hpa_sectors = %lld\n",
+-		__FUNCTION__, (long long)sectors, (long long)hpa_sectors);
+-
+ 	if (hpa_sectors > sectors) {
+ 		ata_dev_printk(dev, KERN_INFO,
+ 			"Host Protected Area detected:\n"
+@@ -1009,7 +1005,11 @@
+ 				return hpa_sectors;
+ 			}
+ 		}
+-	}
++	} else if (hpa_sectors < sectors)
++		ata_dev_printk(dev, KERN_WARNING, "%s 1: hpa sectors (%lld) "
++			       "is smaller than sectors (%lld)\n", __FUNCTION__,
++			       (long long)hpa_sectors, (long long)sectors);
++
+ 	return sectors;
+ }
+ 
+@@ -1730,7 +1727,7 @@
+ 
+ 	/* sanity check */
+ 	rc = -EINVAL;
+-	reason = "device reports illegal type";
++	reason = "device reports invalid type";
+ 
+ 	if (class == ATA_DEV_ATA) {
+ 		if (!ata_id_is_ata(id) && !ata_id_is_cfa(id))
+@@ -2047,10 +2046,6 @@
+ 		dev->max_sectors = min_t(unsigned int, ATA_MAX_SECTORS_128,
+ 					 dev->max_sectors);
+ 
+-	/* limit ATAPI DMA to R/W commands only */
+-	if (ata_device_blacklisted(dev) & ATA_HORKAGE_DMA_RW_ONLY)
+-		dev->horkage |= ATA_HORKAGE_DMA_RW_ONLY;
+-
+ 	if (ap->ops->dev_config)
+ 		ap->ops->dev_config(dev);
+ 
+@@ -3062,22 +3057,28 @@
+ 		}
+ 	}
+ 
+-	/* if device 1 was found in ata_devchk, wait for
+-	 * register access, then wait for BSY to clear
++	/* if device 1 was found in ata_devchk, wait for register
++	 * access briefly, then wait for BSY to clear.
+ 	 */
+-	while (dev1) {
+-		u8 nsect, lbal;
++	if (dev1) {
++		int i;
+ 
+ 		ap->ops->dev_select(ap, 1);
+-		nsect = ioread8(ioaddr->nsect_addr);
+-		lbal = ioread8(ioaddr->lbal_addr);
+-		if ((nsect == 1) && (lbal == 1))
+-			break;
+-		if (time_after(jiffies, deadline))
+-			return -EBUSY;
+-		msleep(50);	/* give drive a breather */
+-	}
+-	if (dev1) {
++
++		/* Wait for register access.  Some ATAPI devices fail
++		 * to set nsect/lbal after reset, so don't waste too
++		 * much time on it.  We're gonna wait for !BSY anyway.
++		 */
++		for (i = 0; i < 2; i++) {
++			u8 nsect, lbal;
++
++			nsect = ioread8(ioaddr->nsect_addr);
++			lbal = ioread8(ioaddr->lbal_addr);
++			if ((nsect == 1) && (lbal == 1))
++				break;
++			msleep(50);	/* give drive a breather */
++		}
++
+ 		rc = ata_wait_ready(ap, deadline);
+ 		if (rc) {
+ 			if (rc != -ENODEV)
+@@ -3772,10 +3773,10 @@
+ 	{ "_NEC DV5800A", 	NULL,		ATA_HORKAGE_NODMA },
+ 	{ "SAMSUNG CD-ROM SN-124","N001",	ATA_HORKAGE_NODMA },
+ 	{ "Seagate STT20000A", NULL,		ATA_HORKAGE_NODMA },
++	{ "IOMEGA  ZIP 250       ATAPI", NULL,	ATA_HORKAGE_NODMA }, /* temporary fix */
+ 
+ 	/* Weird ATAPI devices */
+-	{ "TORiSAN DVD-ROM DRD-N216", NULL,	ATA_HORKAGE_MAX_SEC_128 |
+-						ATA_HORKAGE_DMA_RW_ONLY },
++	{ "TORiSAN DVD-ROM DRD-N216", NULL,	ATA_HORKAGE_MAX_SEC_128 },
+ 
+ 	/* Devices we expect to fail diagnostics */
+ 
+@@ -3796,6 +3795,11 @@
+ 	{ "HTS541060G9SA00",    "MB3OC60D",     ATA_HORKAGE_NONCQ, },
+ 	{ "HTS541080G9SA00",    "MB4OC60D",     ATA_HORKAGE_NONCQ, },
+ 	{ "HTS541010G9SA00",    "MBZOC60D",     ATA_HORKAGE_NONCQ, },
++	/* Drives which do spurious command completion */
++	{ "HTS541680J9SA00",	"SB2IC7EP",	ATA_HORKAGE_NONCQ, },
++	{ "HTS541612J9SA00",	"SBDIC7JP",	ATA_HORKAGE_NONCQ, },
++	{ "Hitachi HTS541616J9SA00", "SB4OC70P", ATA_HORKAGE_NONCQ, },
++	{ "WDC WD740ADFD-00NLR1", NULL,		ATA_HORKAGE_NONCQ, },
+ 
+ 	/* Devices with NCQ limits */
+ 
+@@ -3938,10 +3942,13 @@
+ 	/* set up set-features taskfile */
+ 	DPRINTK("set features - xfer mode\n");
+ 
++	/* Some controllers and ATAPI devices show flaky interrupt
++	 * behavior after setting xfer mode.  Use polling instead.
++	 */
+ 	ata_tf_init(dev, &tf);
+ 	tf.command = ATA_CMD_SET_FEATURES;
+ 	tf.feature = SETFEATURES_XFER;
+-	tf.flags |= ATA_TFLAG_ISADDR | ATA_TFLAG_DEVICE;
++	tf.flags |= ATA_TFLAG_ISADDR | ATA_TFLAG_DEVICE | ATA_TFLAG_POLLING;
+ 	tf.protocol = ATA_PROT_NODATA;
+ 	tf.nsect = dev->xfer_mode;
+ 
+@@ -4098,6 +4105,7 @@
+ 	if (idx)
+ 		ap->prd[idx - 1].flags_len |= cpu_to_le32(ATA_PRD_EOT);
+ }
++
+ /**
+  *	ata_check_atapi_dma - Check whether ATAPI DMA can be supported
+  *	@qc: Metadata associated with taskfile to check
+@@ -4115,33 +4123,19 @@
+ int ata_check_atapi_dma(struct ata_queued_cmd *qc)
+ {
+ 	struct ata_port *ap = qc->ap;
+-	int rc = 0; /* Assume ATAPI DMA is OK by default */
+ 
+-	/* some drives can only do ATAPI DMA on read/write */
+-	if (unlikely(qc->dev->horkage & ATA_HORKAGE_DMA_RW_ONLY)) {
+-		struct scsi_cmnd *cmd = qc->scsicmd;
+-		u8 *scsicmd = cmd->cmnd;
+-
+-		switch (scsicmd[0]) {
+-		case READ_10:
+-		case WRITE_10:
+-		case READ_12:
+-		case WRITE_12:
+-		case READ_6:
+-		case WRITE_6:
+-			/* atapi dma maybe ok */
+-			break;
+-		default:
+-			/* turn off atapi dma */
+-			return 1;
+-		}
+-	}
++	/* Don't allow DMA if it isn't multiple of 16 bytes.  Quite a
++	 * few ATAPI devices choke on such DMA requests.
++	 */
++	if (unlikely(qc->nbytes & 15))
++		return 1;
+ 
+ 	if (ap->ops->check_atapi_dma)
+-		rc = ap->ops->check_atapi_dma(qc);
++		return ap->ops->check_atapi_dma(qc);
+ 
+-	return rc;
++	return 0;
+ }
++
+ /**
+  *	ata_qc_prep - Prepare taskfile for submission
+  *	@qc: Metadata associated with taskfile to be prepared
+@@ -4788,8 +4782,6 @@
+ 		} else
+ 			ata_qc_complete(qc);
+ 	}
+-
+-	ata_altstatus(ap); /* flush */
+ }
+ 
+ /**
+@@ -5418,14 +5411,6 @@
+ 		}
+ 	}
+ 
+-	/* Some controllers show flaky interrupt behavior after
+-	 * setting xfer mode.  Use polling instead.
+-	 */
+-	if (unlikely(qc->tf.command == ATA_CMD_SET_FEATURES &&
+-		     qc->tf.feature == SETFEATURES_XFER) &&
+-	    (ap->flags & ATA_FLAG_SETXFER_POLLING))
+-		qc->tf.flags |= ATA_TFLAG_POLLING;
+-
+ 	/* select the device */
+ 	ata_dev_select(ap, qc->dev->devno, 1, 0);
+ 
+@@ -6322,7 +6307,8 @@
+ 		/* init sata_spd_limit to the current value */
+ 		if (sata_scr_read(ap, SCR_CONTROL, &scontrol) == 0) {
+ 			int spd = (scontrol >> 4) & 0xf;
+-			ap->hw_sata_spd_limit &= (1 << spd) - 1;
++			if (spd)
++				ap->hw_sata_spd_limit &= (1 << spd) - 1;
+ 		}
+ 		ap->sata_spd_limit = ap->hw_sata_spd_limit;
+ 
+@@ -6437,6 +6423,9 @@
+ 	if (rc)
+ 		return rc;
+ 
++	/* Used to print device info at probe */
++	host->irq = irq;
++
+ 	rc = ata_host_register(host, sht);
+ 	/* if failed, just free the IRQ and leave ports alone */
+ 	if (rc)
+@@ -6827,6 +6816,7 @@
+ EXPORT_SYMBOL_GPL(ata_altstatus);
+ EXPORT_SYMBOL_GPL(ata_exec_command);
+ EXPORT_SYMBOL_GPL(ata_port_start);
++EXPORT_SYMBOL_GPL(ata_sff_port_start);
+ EXPORT_SYMBOL_GPL(ata_interrupt);
+ EXPORT_SYMBOL_GPL(ata_do_set_mode);
+ EXPORT_SYMBOL_GPL(ata_data_xfer);
+diff -urN linux-2.6.18.i686/drivers/ata/libata-eh.c /home/jgarzik/tmp/linux-2.6.22/drivers/ata/libata-eh.c
+--- linux-2.6.18.i686/drivers/ata/libata-eh.c	2007-09-18 04:40:10.000000000 -0400
++++ /home/jgarzik/tmp/linux-2.6.22/drivers/ata/libata-eh.c	2007-07-08 19:32:17.000000000 -0400
+@@ -336,6 +336,7 @@
+ 			}
+ 			ata_port_printk(ap, KERN_ERR, "EH pending after %d "
+ 					"tries, giving up\n", ATA_EH_MAX_REPEAT);
++			ap->pflags &= ~ATA_PFLAG_EH_PENDING;
+ 		}
+ 
+ 		/* this run is complete, make sure EH info is clear */
+@@ -1616,7 +1617,7 @@
+ 	unsigned long deadline;
+ 	unsigned int action;
+ 	ata_reset_fn_t reset;
+-	int i, did_followup_srst, rc;
++	int i, rc;
+ 
+ 	/* about to reset */
+ 	ata_eh_about_to_do(ap, NULL, ehc->i.action & ATA_EH_RESET_MASK);
+@@ -1665,8 +1666,6 @@
+ 
+ 	/* did prereset() screw up?  if so, fix up to avoid oopsing */
+ 	if (!reset) {
+-		ata_port_printk(ap, KERN_ERR, "BUG: prereset() requested "
+-				"invalid reset type\n");
+ 		if (softreset)
+ 			reset = softreset;
+ 		else
+@@ -1689,11 +1688,9 @@
+ 
+ 	rc = ata_do_reset(ap, reset, classes, deadline);
+ 
+-	did_followup_srst = 0;
+ 	if (reset == hardreset &&
+ 	    ata_eh_followup_srst_needed(rc, classify, classes)) {
+ 		/* okay, let's do follow-up softreset */
+-		did_followup_srst = 1;
+ 		reset = softreset;
+ 
+ 		if (!reset) {
+diff -urN linux-2.6.18.i686/drivers/ata/libata-scsi.c /home/jgarzik/tmp/linux-2.6.22/drivers/ata/libata-scsi.c
+--- linux-2.6.18.i686/drivers/ata/libata-scsi.c	2007-09-18 04:40:10.000000000 -0400
++++ /home/jgarzik/tmp/linux-2.6.22/drivers/ata/libata-scsi.c	2007-07-08 19:32:17.000000000 -0400
+@@ -1363,12 +1363,22 @@
+ 	 * schedule EH_REVALIDATE operation to update the IDENTIFY DEVICE
+ 	 * cache
+ 	 */
+-	if (ap->ops->error_handler &&
+-	    !need_sense && (qc->tf.command == ATA_CMD_SET_FEATURES) &&
+-	    ((qc->tf.feature == SETFEATURES_WC_ON) ||
+-	     (qc->tf.feature == SETFEATURES_WC_OFF))) {
+-		ap->eh_info.action |= ATA_EH_REVALIDATE;
+-		ata_port_schedule_eh(ap);
++	if (ap->ops->error_handler && !need_sense) {
++		switch (qc->tf.command) {
++		case ATA_CMD_SET_FEATURES:
++			if ((qc->tf.feature == SETFEATURES_WC_ON) ||
++			    (qc->tf.feature == SETFEATURES_WC_OFF)) {
++				ap->eh_info.action |= ATA_EH_REVALIDATE;
++				ata_port_schedule_eh(ap);
++			}
++			break;
++
++		case ATA_CMD_INIT_DEV_PARAMS: /* CHS translation changed */
++		case ATA_CMD_SET_MULTI: /* multi_count changed */
++			ap->eh_info.action |= ATA_EH_REVALIDATE;
++			ata_port_schedule_eh(ap);
++			break;
++		}
+ 	}
+ 
+ 	/* For ATA pass thru (SAT) commands, generate a sense block if
+@@ -2374,11 +2384,6 @@
+ 	int using_pio = (dev->flags & ATA_DFLAG_PIO);
+ 	int nodata = (scmd->sc_data_direction == DMA_NONE);
+ 
+-	if (!using_pio)
+-		/* Check whether ATAPI DMA is safe */
+-		if (ata_check_atapi_dma(qc))
+-			using_pio = 1;
+-
+ 	memset(qc->cdb, 0, dev->cdb_len);
+ 	memcpy(qc->cdb, scmd->cmnd, scmd->cmd_len);
+ 
+@@ -2391,19 +2396,22 @@
+ 	}
+ 
+ 	qc->tf.command = ATA_CMD_PACKET;
++	qc->nbytes = scmd->request_bufflen;
++
++	/* check whether ATAPI DMA is safe */
++	if (!using_pio && ata_check_atapi_dma(qc))
++		using_pio = 1;
+ 
+-	/* no data, or PIO data xfer */
+ 	if (using_pio || nodata) {
++		/* no data, or PIO data xfer */
+ 		if (nodata)
+ 			qc->tf.protocol = ATA_PROT_ATAPI_NODATA;
+ 		else
+ 			qc->tf.protocol = ATA_PROT_ATAPI;
+ 		qc->tf.lbam = (8 * 1024) & 0xff;
+ 		qc->tf.lbah = (8 * 1024) >> 8;
+-	}
+-
+-	/* DMA data xfer */
+-	else {
++	} else {
++		/* DMA data xfer */
+ 		qc->tf.protocol = ATA_PROT_ATAPI_DMA;
+ 		qc->tf.feature |= ATAPI_PKT_DMA;
+ 
+@@ -2412,8 +2420,6 @@
+ 			qc->tf.feature |= ATAPI_DMADIR;
+ 	}
+ 
+-	qc->nbytes = scmd->request_bufflen;
+-
+ 	return 0;
+ }
+ 
+@@ -2506,22 +2512,21 @@
+ 			return ATA_PROT_NODATA;
+ 
+ 		case 6:		/* DMA */
++		case 10:	/* UDMA Data-in */
++		case 11:	/* UDMA Data-Out */
+ 			return ATA_PROT_DMA;
+ 
+ 		case 4:		/* PIO Data-in */
+ 		case 5:		/* PIO Data-out */
+ 			return ATA_PROT_PIO;
+ 
+-		case 10:	/* Device Reset */
+ 		case 0:		/* Hard Reset */
+ 		case 1:		/* SRST */
+-		case 2:		/* Bus Idle */
+-		case 7:		/* Packet */
+-		case 8:		/* DMA Queued */
+-		case 9:		/* Device Diagnostic */
+-		case 11:	/* UDMA Data-in */
+-		case 12:	/* UDMA Data-Out */
+-		case 13:	/* FPDMA */
++		case 8:		/* Device Diagnostic */
++		case 9:		/* Device Reset */
++		case 7:		/* DMA Queued */
++		case 12:	/* FPDMA */
++		case 15:	/* Return Response Info */
+ 		default:	/* Reserved */
+ 			break;
+ 	}
+@@ -2600,12 +2601,26 @@
+ 		tf->device = cdb[8];
+ 		tf->command = cdb[9];
+ 	}
+-	/*
+-	 * If slave is possible, enforce correct master/slave bit
+-	*/
+-	if (qc->ap->flags & ATA_FLAG_SLAVE_POSS)
+-		tf->device = qc->dev->devno ?
+-			tf->device | ATA_DEV1 : tf->device & ~ATA_DEV1;
++
++	/* enforce correct master/slave bit */
++	tf->device = dev->devno ?
++		tf->device | ATA_DEV1 : tf->device & ~ATA_DEV1;
++
++	/* sanity check for pio multi commands */
++	if ((cdb[1] & 0xe0) && !is_multi_taskfile(tf))
++		goto invalid_fld;
++
++	if (is_multi_taskfile(tf)) {
++		unsigned int multi_count = 1 << (cdb[1] >> 5);
++
++		/* compare the passed through multi_count
++		 * with the cached multi_count of libata
++		 */
++		if (multi_count != dev->multi_count)
++			ata_dev_printk(dev, KERN_WARNING,
++				       "invalid multi_count %u ignored\n",
++				       multi_count);
++	}	
+ 
+ 	/* READ/WRITE LONG use a non-standard sect_size */
+ 	qc->sect_size = ATA_SECT_SIZE;
+diff -urN linux-2.6.18.i686/drivers/ata/libata-sff.c /home/jgarzik/tmp/linux-2.6.22/drivers/ata/libata-sff.c
+--- linux-2.6.18.i686/drivers/ata/libata-sff.c	2007-09-18 04:40:12.000000000 -0400
++++ /home/jgarzik/tmp/linux-2.6.22/drivers/ata/libata-sff.c	2007-07-08 19:32:17.000000000 -0400
+@@ -80,25 +80,25 @@
+ u8 ata_irq_ack(struct ata_port *ap, unsigned int chk_drq)
+ {
+ 	unsigned int bits = chk_drq ? ATA_BUSY | ATA_DRQ : ATA_BUSY;
+-	u8 host_stat, post_stat, status;
++	u8 host_stat = 0, post_stat = 0, status;
+ 
+ 	status = ata_busy_wait(ap, bits, 1000);
+ 	if (status & bits)
+ 		if (ata_msg_err(ap))
+ 			printk(KERN_ERR "abnormal status 0x%X\n", status);
+ 
+-	/* get controller status; clear intr, err bits */
+-	host_stat = ioread8(ap->ioaddr.bmdma_addr + ATA_DMA_STATUS);
+-	iowrite8(host_stat | ATA_DMA_INTR | ATA_DMA_ERR,
+-		 ap->ioaddr.bmdma_addr + ATA_DMA_STATUS);
+-
+-	post_stat = ioread8(ap->ioaddr.bmdma_addr + ATA_DMA_STATUS);
++	if (ap->ioaddr.bmdma_addr) {
++		/* get controller status; clear intr, err bits */
++		host_stat = ioread8(ap->ioaddr.bmdma_addr + ATA_DMA_STATUS);
++		iowrite8(host_stat | ATA_DMA_INTR | ATA_DMA_ERR,
++			 ap->ioaddr.bmdma_addr + ATA_DMA_STATUS);
+ 
++		post_stat = ioread8(ap->ioaddr.bmdma_addr + ATA_DMA_STATUS);
++	}
+ 	if (ata_msg_intr(ap))
+ 		printk(KERN_INFO "%s: irq ack: host_stat 0x%X, new host_stat 0x%X, drv_stat 0x%X\n",
+ 			__FUNCTION__,
+ 			host_stat, post_stat, status);
+-
+ 	return status;
+ }
+ 
+@@ -516,6 +516,27 @@
+ 		ata_bmdma_stop(qc);
+ }
+ 
++/**
++ *	ata_sff_port_start - Set port up for dma.
++ *	@ap: Port to initialize
++ *
++ *	Called just after data structures for each port are
++ *	initialized.  Allocates space for PRD table if the device
++ *	is DMA capable SFF.
++ *
++ *	May be used as the port_start() entry in ata_port_operations.
++ *
++ *	LOCKING:
++ *	Inherited from caller.
++ */
++
++int ata_sff_port_start(struct ata_port *ap)
++{
++	if (ap->ioaddr.bmdma_addr)
++		return ata_port_start(ap);
++	return 0;
++}
++
+ #ifdef CONFIG_PCI
+ 
+ static int ata_resources_present(struct pci_dev *pdev, int port)
+@@ -1060,10 +1065,11 @@
+ 	if (rc)
+ 		goto err_out;
+ 
+-	if (!legacy_mode)
++	if (!legacy_mode) {
+ 		rc = devm_request_irq(dev, pdev->irq, pi->port_ops->irq_handler,
+ 				      IRQF_SHARED, DRV_NAME, host);
+-	else {
++		host->irq = pdev->irq;
++	} else {
+ 		irq_handler_t handler[2] = { host->ops->irq_handler,
+ 					     host->ops->irq_handler };
+ 		unsigned int irq_flags[2] = { IRQF_SHARED, IRQF_SHARED };
+diff -urN linux-2.6.18.i686/drivers/ata/pata_pcmcia.c /home/jgarzik/tmp/linux-2.6.22/drivers/ata/pata_pcmcia.c
+--- linux-2.6.18.i686/drivers/ata/pata_pcmcia.c	2007-09-18 04:40:10.000000000 -0400
++++ /home/jgarzik/tmp/linux-2.6.22/drivers/ata/pata_pcmcia.c	2007-07-08 19:32:17.000000000 -0400
+@@ -129,7 +129,7 @@
+ 	.irq_on		= ata_irq_on,
+ 	.irq_ack	= ata_irq_ack,
+ 
+-	.port_start	= ata_port_start,
++	.port_start	= ata_sff_port_start,
+ };
+ 
+ #define CS_CHECK(fn, ret) \
+diff -urN linux-2.6.18.i686/drivers/ata/pata_pdc202xx_old.c /home/jgarzik/tmp/linux-2.6.22/drivers/ata/pata_pdc202xx_old.c
+--- linux-2.6.18.i686/drivers/ata/pata_pdc202xx_old.c	2007-09-18 04:40:10.000000000 -0400
++++ /home/jgarzik/tmp/linux-2.6.22/drivers/ata/pata_pdc202xx_old.c	2007-07-08 19:32:17.000000000 -0400
+@@ -31,8 +31,8 @@
+ 
+ 	pci_read_config_word(pdev, 0x50, &cis);
+ 	if (cis & (1 << (10 + ap->port_no)))
+-		return ATA_CBL_PATA80;
+-	return ATA_CBL_PATA40;
++		return ATA_CBL_PATA40;
++	return ATA_CBL_PATA80;
+ }
+ 
+ /**
+diff -urN linux-2.6.18.i686/drivers/ata/pata_sis.c /home/jgarzik/tmp/linux-2.6.22/drivers/ata/pata_sis.c
+--- linux-2.6.18.i686/drivers/ata/pata_sis.c	2007-09-18 04:40:10.000000000 -0400
++++ /home/jgarzik/tmp/linux-2.6.22/drivers/ata/pata_sis.c	2007-07-08 19:32:17.000000000 -0400
+@@ -560,6 +560,40 @@
+ 	.port_start		= ata_port_start,
+ };
+ 
++static const struct ata_port_operations sis_133_for_sata_ops = {
++	.port_disable		= ata_port_disable,
++	.set_piomode		= sis_133_set_piomode,
++	.set_dmamode		= sis_133_set_dmamode,
++	.mode_filter		= ata_pci_default_filter,
++
++	.tf_load		= ata_tf_load,
++	.tf_read		= ata_tf_read,
++	.check_status		= ata_check_status,
++	.exec_command		= ata_exec_command,
++	.dev_select		= ata_std_dev_select,
++
++	.freeze			= ata_bmdma_freeze,
++	.thaw			= ata_bmdma_thaw,
++	.error_handler		= ata_bmdma_error_handler,
++	.post_internal_cmd	= ata_bmdma_post_internal_cmd,
++	.cable_detect		= sis_133_cable_detect,
++
++	.bmdma_setup		= ata_bmdma_setup,
++	.bmdma_start		= ata_bmdma_start,
++	.bmdma_stop		= ata_bmdma_stop,
++	.bmdma_status		= ata_bmdma_status,
++	.qc_prep		= ata_qc_prep,
++	.qc_issue		= ata_qc_issue_prot,
++	.data_xfer		= ata_data_xfer,
++
++	.irq_handler		= ata_interrupt,
++	.irq_clear		= ata_bmdma_irq_clear,
++	.irq_on			= ata_irq_on,
++	.irq_ack		= ata_irq_ack,
++
++	.port_start		= ata_port_start,
++};
++
+ static const struct ata_port_operations sis_133_early_ops = {
+ 	.port_disable		= ata_port_disable,
+ 	.set_piomode		= sis_100_set_piomode,
+@@ -733,13 +767,20 @@
+ 	.pio_mask	= 0x1f,	/* pio0-4 */
+ 	.port_ops	= &sis_66_ops,
+ };
+-const struct ata_port_info sis_info133 = {
++static const struct ata_port_info sis_info133 = {
+ 	.sht		= &sis_sht,
+ 	.flags		= ATA_FLAG_SLAVE_POSS | ATA_FLAG_SRST,
+ 	.pio_mask	= 0x1f,	/* pio0-4 */
+ 	.udma_mask	= ATA_UDMA6,
+ 	.port_ops	= &sis_133_ops,
+ };
++const struct ata_port_info sis_info133_for_sata = {
++	.sht		= &sis_sht,
++	.flags		= ATA_FLAG_SLAVE_POSS | ATA_FLAG_SRST,
++	.pio_mask	= 0x1f,	/* pio0-4 */
++	.udma_mask	= ATA_UDMA6,
++	.port_ops	= &sis_133_for_sata_ops,
++};
+ static const struct ata_port_info sis_info133_early = {
+ 	.sht		= &sis_sht,
+ 	.flags		= ATA_FLAG_SLAVE_POSS | ATA_FLAG_SRST,
+@@ -749,7 +790,7 @@
+ };
+ 
+ /* Privately shared with the SiS180 SATA driver, not for use elsewhere */
+-EXPORT_SYMBOL_GPL(sis_info133);
++EXPORT_SYMBOL_GPL(sis_info133_for_sata);
+ 
+ static void sis_fixup(struct pci_dev *pdev, struct sis_chipset *sis)
+ {
+@@ -975,6 +1016,7 @@
+ static const struct pci_device_id sis_pci_tbl[] = {
+ 	{ PCI_VDEVICE(SI, 0x5513), },	/* SiS 5513 */
+ 	{ PCI_VDEVICE(SI, 0x5518), },	/* SiS 5518 */
++	{ PCI_VDEVICE(SI, 0x1180), },	/* SiS 1180 */
+ 
+ 	{ }
+ };
+diff -urN linux-2.6.18.i686/drivers/ata/pata_via.c /home/jgarzik/tmp/linux-2.6.22/drivers/ata/pata_via.c
+--- linux-2.6.18.i686/drivers/ata/pata_via.c	2007-09-18 04:40:10.000000000 -0400
++++ /home/jgarzik/tmp/linux-2.6.22/drivers/ata/pata_via.c	2007-07-08 19:32:17.000000000 -0400
+@@ -452,7 +452,7 @@
+ 	/* Early VIA without UDMA support */
+ 	static const struct ata_port_info via_mwdma_info = {
+ 		.sht = &via_sht,
+-		.flags = ATA_FLAG_SLAVE_POSS | ATA_FLAG_SETXFER_POLLING,
++		.flags = ATA_FLAG_SLAVE_POSS,
+ 		.pio_mask = 0x1f,
+ 		.mwdma_mask = 0x07,
+ 		.port_ops = &via_port_ops
+@@ -460,7 +460,7 @@
+ 	/* Ditto with IRQ masking required */
+ 	static const struct ata_port_info via_mwdma_info_borked = {
+ 		.sht = &via_sht,
+-		.flags = ATA_FLAG_SLAVE_POSS | ATA_FLAG_SETXFER_POLLING,
++		.flags = ATA_FLAG_SLAVE_POSS,
+ 		.pio_mask = 0x1f,
+ 		.mwdma_mask = 0x07,
+ 		.port_ops = &via_port_ops_noirq,
+@@ -468,7 +468,7 @@
+ 	/* VIA UDMA 33 devices (and borked 66) */
+ 	static const struct ata_port_info via_udma33_info = {
+ 		.sht = &via_sht,
+-		.flags = ATA_FLAG_SLAVE_POSS | ATA_FLAG_SETXFER_POLLING,
++		.flags = ATA_FLAG_SLAVE_POSS,
+ 		.pio_mask = 0x1f,
+ 		.mwdma_mask = 0x07,
+ 		.udma_mask = 0x7,
+@@ -477,7 +477,7 @@
+ 	/* VIA UDMA 66 devices */
+ 	static const struct ata_port_info via_udma66_info = {
+ 		.sht = &via_sht,
+-		.flags = ATA_FLAG_SLAVE_POSS | ATA_FLAG_SETXFER_POLLING,
++		.flags = ATA_FLAG_SLAVE_POSS,
+ 		.pio_mask = 0x1f,
+ 		.mwdma_mask = 0x07,
+ 		.udma_mask = 0x1f,
+@@ -486,7 +486,7 @@
+ 	/* VIA UDMA 100 devices */
+ 	static const struct ata_port_info via_udma100_info = {
+ 		.sht = &via_sht,
+-		.flags = ATA_FLAG_SLAVE_POSS | ATA_FLAG_SETXFER_POLLING,
++		.flags = ATA_FLAG_SLAVE_POSS,
+ 		.pio_mask = 0x1f,
+ 		.mwdma_mask = 0x07,
+ 		.udma_mask = 0x3f,
+@@ -495,7 +495,7 @@
+ 	/* UDMA133 with bad AST (All current 133) */
+ 	static const struct ata_port_info via_udma133_info = {
+ 		.sht = &via_sht,
+-		.flags = ATA_FLAG_SLAVE_POSS | ATA_FLAG_SETXFER_POLLING,
++		.flags = ATA_FLAG_SLAVE_POSS,
+ 		.pio_mask = 0x1f,
+ 		.mwdma_mask = 0x07,
+ 		.udma_mask = 0x7f,	/* FIXME: should check north bridge */
+diff -urN linux-2.6.18.i686/drivers/ata/sata_inic162x.c /home/jgarzik/tmp/linux-2.6.22/drivers/ata/sata_inic162x.c
+--- linux-2.6.18.i686/drivers/ata/sata_inic162x.c	2007-09-18 04:40:10.000000000 -0400
++++ /home/jgarzik/tmp/linux-2.6.22/drivers/ata/sata_inic162x.c	2007-07-08 19:32:17.000000000 -0400
+@@ -496,6 +496,13 @@
+ 	/* inic can only handle upto LBA28 max sectors */
+ 	if (dev->max_sectors > ATA_MAX_SECTORS)
+ 		dev->max_sectors = ATA_MAX_SECTORS;
++
++	if (dev->n_sectors >= 1 << 28) {
++		ata_dev_printk(dev, KERN_ERR,
++	"ERROR: This driver doesn't support LBA48 yet and may cause\n"
++	"                data corruption on such devices.  Disabling.\n");
++		ata_dev_disable(dev);
++	}
+ }
+ 
+ static void init_port(struct ata_port *ap)
+diff -urN linux-2.6.18.i686/drivers/ata/sata_promise.c /home/jgarzik/tmp/linux-2.6.22/drivers/ata/sata_promise.c
+--- linux-2.6.18.i686/drivers/ata/sata_promise.c	2007-09-18 04:40:10.000000000 -0400
++++ /home/jgarzik/tmp/linux-2.6.22/drivers/ata/sata_promise.c	2007-07-08 19:32:17.000000000 -0400
+@@ -784,9 +784,12 @@
+ 		if (qc->dev->flags & ATA_DFLAG_CDB_INTR)
+ 			break;
+ 		/*FALLTHROUGH*/
++	case ATA_PROT_NODATA:
++		if (qc->tf.flags & ATA_TFLAG_POLLING)
++			break;
++		/*FALLTHROUGH*/
+ 	case ATA_PROT_ATAPI_DMA:
+ 	case ATA_PROT_DMA:
+-	case ATA_PROT_NODATA:
+ 		pdc_packet_start(qc);
+ 		return 0;
+ 
+@@ -800,7 +803,7 @@
+ static void pdc_tf_load_mmio(struct ata_port *ap, const struct ata_taskfile *tf)
+ {
+ 	WARN_ON (tf->protocol == ATA_PROT_DMA ||
+-		 tf->protocol == ATA_PROT_NODATA);
++		 tf->protocol == ATA_PROT_ATAPI_DMA);
+ 	ata_tf_load(ap, tf);
+ }
+ 
+@@ -808,7 +811,7 @@
+ static void pdc_exec_command_mmio(struct ata_port *ap, const struct ata_taskfile *tf)
+ {
+ 	WARN_ON (tf->protocol == ATA_PROT_DMA ||
+-		 tf->protocol == ATA_PROT_NODATA);
++		 tf->protocol == ATA_PROT_ATAPI_DMA);
+ 	ata_exec_command(ap, tf);
+ }
+ 
+diff -urN linux-2.6.18.i686/drivers/ata/sata_sis.c /home/jgarzik/tmp/linux-2.6.22/drivers/ata/sata_sis.c
+--- linux-2.6.18.i686/drivers/ata/sata_sis.c	2007-09-18 04:40:10.000000000 -0400
++++ /home/jgarzik/tmp/linux-2.6.22/drivers/ata/sata_sis.c	2007-07-08 19:32:17.000000000 -0400
+@@ -72,8 +72,8 @@
+ 	{ PCI_VDEVICE(SI, 0x0181), sis_180 },		/* SiS 964/180 */
+ 	{ PCI_VDEVICE(SI, 0x0182), sis_180 },		/* SiS 965/965L */
+ 	{ PCI_VDEVICE(SI, 0x0183), sis_180 },		/* SiS 965/965L */
+-	{ PCI_VDEVICE(SI, 0x1182), sis_180 },		/* SiS 966/966L */
+-	{ PCI_VDEVICE(SI, 0x1183), sis_180 },		/* SiS 966/966L */
++	{ PCI_VDEVICE(SI, 0x1182), sis_180 },		/* SiS 966/680 */
++	{ PCI_VDEVICE(SI, 0x1183), sis_180 },		/* SiS 966/966L/968/680 */
+ 
+ 	{ }	/* terminate list */
+ };
+@@ -161,7 +161,6 @@
+ 			case 0x0182:
+ 			case 0x0183:
+ 			case 0x1182:
+-			case 0x1183:
+ 				addr += SIS182_SATA1_OFS;
+ 				break;
+ 		}
+@@ -183,8 +182,8 @@
+ 
+ 	pci_read_config_dword(pdev, cfg_addr, &val);
+ 
+-	if ((pdev->device == 0x0182) || (pdev->device == 0x0183) || (pdev->device == 0x1182) ||
+-	    (pdev->device == 0x1183) || (pmr & SIS_PMR_COMBINED))
++	if ((pdev->device == 0x0182) || (pdev->device == 0x0183) ||
++	    (pdev->device == 0x1182) || (pmr & SIS_PMR_COMBINED))
+ 		pci_read_config_dword(pdev, cfg_addr+0x10, &val2);
+ 
+ 	return (val|val2) &  0xfffffffb; /* avoid problems with powerdowned ports */
+@@ -203,8 +202,8 @@
+ 
+ 	pci_write_config_dword(pdev, cfg_addr, val);
+ 
+-	if ((pdev->device == 0x0182) || (pdev->device == 0x0183) || (pdev->device == 0x1182) ||
+-	    (pdev->device == 0x1183) || (pmr & SIS_PMR_COMBINED))
++	if ((pdev->device == 0x0182) || (pdev->device == 0x0183) ||
++	    (pdev->device == 0x1182) || (pmr & SIS_PMR_COMBINED))
+ 		pci_write_config_dword(pdev, cfg_addr+0x10, val);
+ }
+ 
+@@ -224,8 +223,8 @@
+ 
+ 	val = ioread32(ap->ioaddr.scr_addr + (sc_reg * 4));
+ 
+-	if ((pdev->device == 0x0182) || (pdev->device == 0x0183) || (pdev->device == 0x1182) ||
+-	    (pdev->device == 0x1183) || (pmr & SIS_PMR_COMBINED))
++	if ((pdev->device == 0x0182) || (pdev->device == 0x0183) ||
++	    (pdev->device == 0x1182) || (pmr & SIS_PMR_COMBINED))
+ 		val2 = ioread32(ap->ioaddr.scr_addr + (sc_reg * 4) + 0x10);
+ 
+ 	return (val | val2) &  0xfffffffb;
+@@ -245,8 +244,8 @@
+ 		sis_scr_cfg_write(ap, sc_reg, val);
+ 	else {
+ 		iowrite32(val, ap->ioaddr.scr_addr + (sc_reg * 4));
+-		if ((pdev->device == 0x0182) || (pdev->device == 0x0183) || (pdev->device == 0x1182) ||
+-		    (pdev->device == 0x1183) || (pmr & SIS_PMR_COMBINED))
++		if ((pdev->device == 0x0182) || (pdev->device == 0x0183) ||
++		    (pdev->device == 0x1182) || (pmr & SIS_PMR_COMBINED))
+ 			iowrite32(val, ap->ioaddr.scr_addr + (sc_reg * 4)+0x10);
+ 	}
+ }
+@@ -293,11 +292,11 @@
+ 		/* The PATA-handling is provided by pata_sis */
+ 		switch (pmr & 0x30) {
+ 		case 0x10:
+-			ppi[1] = &sis_info133;
++			ppi[1] = &sis_info133_for_sata;
+ 			break;
+ 
+ 		case 0x30:
+-			ppi[0] = &sis_info133;
++			ppi[0] = &sis_info133_for_sata;
+ 			break;
+ 		}
+ 		if ((pmr & SIS_PMR_COMBINED) == 0) {
+@@ -324,14 +323,14 @@
+ 		break;
+ 
+ 	case 0x1182:
++		dev_printk(KERN_INFO, &pdev->dev, "Detected SiS 1182/966/680 SATA controller\n");
++		pi.flags |= ATA_FLAG_SLAVE_POSS;
++		break;
++
+ 	case 0x1183:
+-		pci_read_config_dword(pdev, 0x64, &val);
+-		if (val & 0x10000000) {
+-			dev_printk(KERN_INFO, &pdev->dev, "Detected SiS 1182/1183/966L SATA controller\n");
+-		} else {
+-			dev_printk(KERN_INFO, &pdev->dev, "Detected SiS 1182/1183/966 SATA controller\n");
+-			pi.flags |= ATA_FLAG_SLAVE_POSS;
+-		}
++		dev_printk(KERN_INFO, &pdev->dev, "Detected SiS 1183/966/966L/968/680 controller in PATA mode\n");
++		ppi[0] = &sis_info133_for_sata;
++		ppi[1] = &sis_info133_for_sata;
+ 		break;
+ 	}
+ 
+diff -urN linux-2.6.18.i686/drivers/ata/sis.h /home/jgarzik/tmp/linux-2.6.22/drivers/ata/sis.h
+--- linux-2.6.18.i686/drivers/ata/sis.h	2007-09-18 04:40:10.000000000 -0400
++++ /home/jgarzik/tmp/linux-2.6.22/drivers/ata/sis.h	2007-07-08 19:32:17.000000000 -0400
+@@ -2,4 +2,4 @@
+ struct ata_port_info;
+ 
+ /* pata_sis.c */
+-extern const struct ata_port_info sis_info133;
++extern const struct ata_port_info sis_info133_for_sata;
+--- linux-2.6.18.i686/include/linux/ata.h	2007-09-18 04:40:10.000000000 -0400
++++ /home/jgarzik/tmp/linux-2.6.22/include/linux/ata.h	2007-07-08 19:32:17.000000000 -0400
+@@ -151,6 +151,7 @@
+ 	ATA_CMD_WRITE_MULTI_EXT	= 0x39,
+ 	ATA_CMD_WRITE_MULTI_FUA_EXT = 0xCE,
+ 	ATA_CMD_SET_FEATURES	= 0xEF,
++	ATA_CMD_SET_MULTI	= 0xC6,
+ 	ATA_CMD_PACKET		= 0xA0,
+ 	ATA_CMD_VERIFY		= 0x40,
+ 	ATA_CMD_VERIFY_EXT	= 0x42,
+@@ -249,7 +250,7 @@
+ 	/* ATA taskfile protocols */
+ 	ATA_PROT_UNKNOWN,	/* unknown/invalid */
+ 	ATA_PROT_NODATA,	/* no data */
+-	ATA_PROT_PIO,		/* PIO single sector */
++	ATA_PROT_PIO,		/* PIO data xfer */
+ 	ATA_PROT_DMA,		/* DMA */
+ 	ATA_PROT_NCQ,		/* NCQ */
+ 	ATA_PROT_ATAPI,		/* packet command, PIO data xfer*/
+--- linux-2.6.18.i686/include/linux/libata.h	2007-09-18 04:40:10.000000000 -0400
++++ /home/jgarzik/tmp/linux-2.6.22/include/linux/libata.h	2007-07-08 19:32:17.000000000 -0400
+@@ -172,7 +171,6 @@
+ 	ATA_FLAG_SKIP_D2H_BSY	= (1 << 12), /* can't wait for the first D2H
+ 					      * Register FIS clearing BSY */
+ 	ATA_FLAG_DEBUGMSG	= (1 << 13),
+-	ATA_FLAG_SETXFER_POLLING= (1 << 14), /* use polling for SETXFER */
+ 	ATA_FLAG_IGN_SIMPLEX	= (1 << 15), /* ignore SIMPLEX */
+ 	ATA_FLAG_NO_IORDY	= (1 << 16), /* controller lacks iordy */
+ 	ATA_FLAG_ACPI_SATA	= (1 << 17), /* need native SATA ACPI layout */
+@@ -300,7 +298,6 @@
+ 	ATA_HORKAGE_NODMA	= (1 << 1),	/* DMA problems */
+ 	ATA_HORKAGE_NONCQ	= (1 << 2),	/* Don't use NCQ */
+ 	ATA_HORKAGE_MAX_SEC_128	= (1 << 3),	/* Limit max sects to 128 */
+-	ATA_HORKAGE_DMA_RW_ONLY	= (1 << 4),	/* ATAPI DMA for RW only */
+ };
+ 
+ enum hsm_task_states {
+@@ -755,7 +752,8 @@
+ extern u8 ata_altstatus(struct ata_port *ap);
+ extern void ata_exec_command(struct ata_port *ap, const struct ata_taskfile *tf);
+ extern int ata_port_start (struct ata_port *ap);
+-extern irqreturn_t ata_interrupt (int irq, void *dev_instance, struct pt_regs *pt_regs);
++extern int ata_sff_port_start (struct ata_port *ap);
++extern irqreturn_t ata_interrupt (int irq, void *dev_instance, struct pt_regs *pt_regs);
+ extern void ata_data_xfer(struct ata_device *adev, unsigned char *buf,
+ 			  unsigned int buflen, int write_data);
+ extern void ata_data_xfer_noirq(struct ata_device *adev, unsigned char *buf,
+@@ -1089,11 +1087,9 @@
+ {
+ 	u8 status = ata_busy_wait(ap, ATA_BUSY | ATA_DRQ, 1000);
+ 
+-	if (status != 0xff && (status & (ATA_BUSY | ATA_DRQ))) {
+-		if (ata_msg_warn(ap))
+-			printk(KERN_WARNING "ATA: abnormal status 0x%X on port 0x%p\n",
+-				status, ap->ioaddr.status_addr);
+-	}
++	if (status != 0xff && (status & (ATA_BUSY | ATA_DRQ)))
++		DPRINTK("ATA: abnormal status 0x%X on port 0x%p\n",
++			status, ap->ioaddr.status_addr);
+ 
+ 	return status;
+ }
+

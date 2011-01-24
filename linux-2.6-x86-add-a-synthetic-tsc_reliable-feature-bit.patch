@@ -1,0 +1,44 @@
+From: Chris Lalancette <clalance@redhat.com>
+Date: Fri, 20 Mar 2009 10:22:19 +0100
+Subject: [x86] add a synthetic TSC_RELIABLE feature bit
+Message-id: 49C3604B.1070103@redhat.com
+O-Subject: [RHEL5.4 PATCH 4/14]: x86: add a synthetic TSC_RELIABLE feature bit
+Bugzilla: 463573
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+RH-Acked-by: Brian Maly <bmaly@redhat.com>
+RH-Acked-by: Justin M. Forbes <jforbes@redhat.com>
+
+Impact: None, bit reservation only
+
+Add a synthetic TSC_RELIABLE feature bit which will be used to mark
+TSC as reliable so that we could skip all the runtime checks for
+TSC stablity, which have false positives in virtual environment.
+
+upstream commit b2bcc7b299f37037b4a78dc1538e5d6508ae8110
+
+Fixes BZ 463573
+
+diff --git a/include/asm-i386/cpufeature.h b/include/asm-i386/cpufeature.h
+index f42c0b2..15efcc7 100644
+--- a/include/asm-i386/cpufeature.h
++++ b/include/asm-i386/cpufeature.h
+@@ -74,6 +74,7 @@
+ #define X86_FEATURE_FXSAVE_LEAK (3*32+10) /* FXSAVE leaks FOP/FIP/FOP */
+ #define X86_FEATURE_ARCH_PERFMON (3*32+11) /* Intel Architectural PerfMon */
+ #define X86_FEATURE_IDA		(3*32+16) /* Intel Dynamic Acceleration */
++#define X86_FEATURE_TSC_RELIABLE (3*32+23) /* TSC is known to be reliable */
+ #define X86_FEATURE_NONSTOP_TSC (3*32+24) /* TSC does not stop in C states */
+ 
+ /* Intel-defined CPU features, CPUID level 0x00000001 (ecx), word 4 */
+diff --git a/include/asm-x86_64/cpufeature.h b/include/asm-x86_64/cpufeature.h
+index 4bc8331..36d06f1 100644
+--- a/include/asm-x86_64/cpufeature.h
++++ b/include/asm-x86_64/cpufeature.h
+@@ -71,6 +71,7 @@
+ #define X86_FEATURE_IDA		(3*32+16) /* Intel Dynamic Acceleration */
+ #define X86_FEATURE_MFENCE_RDTSC (3*32+17) /* Mfence synchronizes RDTSC */
+ #define X86_FEATURE_LFENCE_RDTSC (3*32+18) /* Lfence synchronizes RDTSC */
++#define X86_FEATURE_TSC_RELIABLE (3*32+23) /* TSC is known to be reliable */
+ #define X86_FEATURE_NONSTOP_TSC (3*32+24) /* TSC does not stop in C states */
+ 
+ /* Intel-defined CPU features, CPUID level 0x00000001 (ecx), word 4 */

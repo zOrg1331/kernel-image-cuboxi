@@ -18,22 +18,15 @@
 #include <linux/sunrpc/types.h>
 #include <linux/sunrpc/sched.h>
 #include <linux/sunrpc/stats.h>
-#include <linux/sunrpc/svc_xprt.h>
+#include <linux/sunrpc/xprt.h>
 
 /*
  * Declare the debug flags here
  */
 unsigned int	rpc_debug;
-EXPORT_SYMBOL_GPL(rpc_debug);
-
 unsigned int	nfs_debug;
-EXPORT_SYMBOL_GPL(nfs_debug);
-
 unsigned int	nfsd_debug;
-EXPORT_SYMBOL_GPL(nfsd_debug);
-
 unsigned int	nlm_debug;
-EXPORT_SYMBOL_GPL(nlm_debug);
 
 #ifdef RPC_DEBUG
 
@@ -43,8 +36,14 @@ static ctl_table		sunrpc_table[];
 void
 rpc_register_sysctl(void)
 {
-	if (!sunrpc_table_header)
-		sunrpc_table_header = register_sysctl_table(sunrpc_table);
+	if (!sunrpc_table_header) {
+		sunrpc_table_header = register_sysctl_table(sunrpc_table, 1);
+#ifdef CONFIG_PROC_FS
+		if (sunrpc_table[0].de)
+			sunrpc_table[0].de->owner = THIS_MODULE;
+#endif
+	}
+			
 }
 
 void
@@ -56,22 +55,8 @@ rpc_unregister_sysctl(void)
 	}
 }
 
-static int proc_do_xprt(ctl_table *table, int write,
-			void __user *buffer, size_t *lenp, loff_t *ppos)
-{
-	char tmpbuf[256];
-	size_t len;
-
-	if ((*ppos && !write) || !*lenp) {
-		*lenp = 0;
-		return 0;
-	}
-	len = svc_print_xprts(tmpbuf, sizeof(tmpbuf));
-	return simple_read_from_buffer(buffer, *lenp, ppos, tmpbuf, len);
-}
-
 static int
-proc_dodebug(ctl_table *table, int write,
+proc_dodebug(ctl_table *table, int write, struct file *file,
 				void __user *buffer, size_t *lenp, loff_t *ppos)
 {
 	char		tmpbuf[20], c, *s;
@@ -109,8 +94,9 @@ proc_dodebug(ctl_table *table, int write,
 			left--, s++;
 		*(unsigned int *) table->data = value;
 		/* Display the RPC tasks on writing to rpc_debug */
-		if (strcmp(table->procname, "rpc_debug") == 0)
+		if (table->ctl_name == CTL_RPCDEBUG) {
 			rpc_show_tasks();
+		}
 	} else {
 		if (!access_ok(VERIFY_WRITE, buffer, left))
 			return -EFAULT;
@@ -133,40 +119,87 @@ done:
 }
 
 
+static unsigned int min_slot_table_size = RPC_MIN_SLOT_TABLE;
+static unsigned int max_slot_table_size = RPC_MAX_SLOT_TABLE;
+static unsigned int xprt_min_resvport_limit = RPC_MIN_RESVPORT;
+static unsigned int xprt_max_resvport_limit = RPC_MAX_RESVPORT;
+
 static ctl_table debug_table[] = {
 	{
+		.ctl_name	= CTL_RPCDEBUG,
 		.procname	= "rpc_debug",
 		.data		= &rpc_debug,
 		.maxlen		= sizeof(int),
 		.mode		= 0644,
 		.proc_handler	= &proc_dodebug
-	},
+	}, 
 	{
+		.ctl_name	= CTL_NFSDEBUG,
 		.procname	= "nfs_debug",
 		.data		= &nfs_debug,
 		.maxlen		= sizeof(int),
 		.mode		= 0644,
 		.proc_handler	= &proc_dodebug
-	},
+	}, 
 	{
+		.ctl_name	= CTL_NFSDDEBUG,
 		.procname	= "nfsd_debug",
 		.data		= &nfsd_debug,
 		.maxlen		= sizeof(int),
 		.mode		= 0644,
 		.proc_handler	= &proc_dodebug
-	},
+	}, 
 	{
+		.ctl_name	= CTL_NLMDEBUG,
 		.procname	= "nlm_debug",
 		.data		= &nlm_debug,
 		.maxlen		= sizeof(int),
 		.mode		= 0644,
 		.proc_handler	= &proc_dodebug
+	}, 
+	{
+		.ctl_name	= CTL_SLOTTABLE_UDP,
+		.procname	= "udp_slot_table_entries",
+		.data		= &xprt_udp_slot_table_entries,
+		.maxlen		= sizeof(unsigned int),
+		.mode		= 0644,
+		.proc_handler	= &proc_dointvec_minmax,
+		.strategy	= &sysctl_intvec,
+		.extra1		= &min_slot_table_size,
+		.extra2		= &max_slot_table_size
 	},
 	{
-		.procname	= "transports",
-		.maxlen		= 256,
-		.mode		= 0444,
-		.proc_handler	= &proc_do_xprt,
+		.ctl_name	= CTL_SLOTTABLE_TCP,
+		.procname	= "tcp_slot_table_entries",
+		.data		= &xprt_tcp_slot_table_entries,
+		.maxlen		= sizeof(unsigned int),
+		.mode		= 0644,
+		.proc_handler	= &proc_dointvec_minmax,
+		.strategy	= &sysctl_intvec,
+		.extra1		= &min_slot_table_size,
+		.extra2		= &max_slot_table_size
+	},
+	{
+		.ctl_name	= CTL_MIN_RESVPORT,
+		.procname	= "min_resvport",
+		.data		= &xprt_min_resvport,
+		.maxlen		= sizeof(unsigned int),
+		.mode		= 0644,
+		.proc_handler	= &proc_dointvec_minmax,
+		.strategy	= &sysctl_intvec,
+		.extra1		= &xprt_min_resvport_limit,
+		.extra2		= &xprt_max_resvport_limit
+	},
+	{
+		.ctl_name	= CTL_MAX_RESVPORT,
+		.procname	= "max_resvport",
+		.data		= &xprt_max_resvport,
+		.maxlen		= sizeof(unsigned int),
+		.mode		= 0644,
+		.proc_handler	= &proc_dointvec_minmax,
+		.strategy	= &sysctl_intvec,
+		.extra1		= &xprt_min_resvport_limit,
+		.extra2		= &xprt_max_resvport_limit
 	},
 	{ .ctl_name = 0 }
 };

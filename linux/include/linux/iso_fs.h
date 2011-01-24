@@ -2,8 +2,6 @@
 #define _ISOFS_FS_H
 
 #include <linux/types.h>
-#include <linux/magic.h>
-
 /*
  * The isofs filesystem constants/structures
  */
@@ -162,4 +160,6 @@ struct iso_directory_record {
 #define ISOFS_BUFFER_SIZE(INODE) ((INODE)->i_sb->s_blocksize)
 #define ISOFS_BUFFER_BITS(INODE) ((INODE)->i_sb->s_blocksize_bits)
 
-#endif /* _ISOFS_FS_H */
+#define ISOFS_SUPER_MAGIC 0x9660
+
+#endif

@@ -1,0 +1,83 @@
+From: Eric Paris <eparis@redhat.com>
+Date: Mon, 16 Jun 2008 14:41:32 -0400
+Subject: [audit] send EOE audit record at end of syslog events
+Message-id: 1213641692.3029.65.camel@localhost.localdomain
+O-Subject: [RHEL5.3 PATCH] Audit: send EOE audit record at end of syslog events
+Bugzilla: 428275
+RH-Acked-by: James Morris <jmorris@redhat.com>
+RH-Acked-by: Alexander Viro <aviro@redhat.com>
+
+BZ 428275
+
+This patch adds an end of event record type. It will be sent by the kernel as
+the last record when a multi-record event is triggered. This will aid realtime
+analysis programs since they will now reliably know they have the last record
+to complete an event. The audit daemon filters this and will not write it to
+disk.
+
+Signed-off-by: Steve Grubb <sgrubb redhat com>
+Signed-off-by: Eric Paris <eparis@redhat.com>
+
+ include/linux/audit.h |    2 ++
+ kernel/audit.c        |   13 ++++++++-----
+ kernel/auditsc.c      |    5 +++++
+ 3 files changed, 15 insertions(+), 5 deletions(-)
+
+diff --git a/include/linux/audit.h b/include/linux/audit.h
+index 517b73d..e61a65c 100644
+--- a/include/linux/audit.h
++++ b/include/linux/audit.h
+@@ -93,6 +93,8 @@
+ #define AUDIT_MQ_GETSETATTR	1315	/* POSIX MQ get/set attribute record type */
+ #define AUDIT_KERNEL_OTHER	1316	/* For use by 3rd party modules */
+ #define AUDIT_OBJ_PID		1318	/* signal target */
++#define AUDIT_TTY		1319	/* Input on an administrative TTY */
++#define AUDIT_EOE		1320	/* End of multi-record event */
+ 
+ #define AUDIT_AVC		1400	/* SE Linux avc denial or grant */
+ #define AUDIT_SELINUX_ERR	1401	/* Internal SE Linux Errors */
+diff --git a/kernel/audit.c b/kernel/audit.c
+index a03f189..bd4c730 100644
+--- a/kernel/audit.c
++++ b/kernel/audit.c
+@@ -1395,16 +1395,19 @@ void audit_log_end(struct audit_buffer *ab)
+ 	if (!audit_rate_check()) {
+ 		audit_log_lost("rate limit exceeded");
+ 	} else {
++		struct nlmsghdr *nlh = (struct nlmsghdr *)ab->skb->data;
+ 		if (audit_pid) {
+-			struct nlmsghdr *nlh = (struct nlmsghdr *)ab->skb->data;
+ 			nlh->nlmsg_len = ab->skb->len - NLMSG_SPACE(0);
+ 			skb_queue_tail(&audit_skb_queue, ab->skb);
+ 			ab->skb = NULL;
+ 			wake_up_interruptible(&kauditd_wait);
+-		} else if (printk_ratelimit())
+-			printk(KERN_NOTICE "%s\n", ab->skb->data + NLMSG_SPACE(0));
+-		else
+-			audit_log_lost("printk limit exceeded\n");
++		} else if (nlh->nlmsg_type != AUDIT_EOE) {
++			if (printk_ratelimit())
++				printk(KERN_NOTICE "type=%d %s\n", nlh->nlmsg_type,
++					ab->skb->data + NLMSG_SPACE(0));
++			else
++				audit_log_lost("printk limit exceeded\n");
++		}
+ 	}
+ 	audit_buffer_free(ab);
+ }
+diff --git a/kernel/auditsc.c b/kernel/auditsc.c
+index 006d508..071877c 100644
+--- a/kernel/auditsc.c
++++ b/kernel/auditsc.c
+@@ -1330,6 +1330,11 @@ static void audit_log_exit(struct audit_context *context, struct task_struct *ts
+ 
+ 		audit_log_end(ab);
+ 	}
++
++	/* Send end of event record to help user space know we are finished */
++	ab = audit_log_start(context, GFP_KERNEL, AUDIT_EOE);
++	if (ab)
++		audit_log_end(ab);
+ 	if (call_panic)
+ 		audit_panic("error converting sid to string");
+ }

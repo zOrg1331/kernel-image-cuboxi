@@ -14,12 +14,8 @@
 #ifndef _LINUX_EVENTPOLL_H
 #define _LINUX_EVENTPOLL_H
 
-/* For O_CLOEXEC */
-#include <linux/fcntl.h>
 #include <linux/types.h>
 
-/* Flags for epoll_create1.  */
-#define EPOLL_CLOEXEC O_CLOEXEC
 
 /* Valid opcodes to issue to sys_epoll_ctl() */
 #define EPOLL_CTL_ADD 1
@@ -35,8 +31,6 @@
 /* 
  * On x86-64 make the 64bit structure have the same alignment as the
  * 32bit structure. This makes 32bit emulation easier.
- *
- * UML/x86_64 needs the same packing as x86_64
  */
 #ifdef __x86_64__
 #define EPOLL_PACKED __attribute__((packed))
@@ -61,6 +55,7 @@ struct file;
 static inline void eventpoll_init_file(struct file *file)
 {
 	INIT_LIST_HEAD(&file->f_ep_links);
+	spin_lock_init(&file->f_ep_lock);
 }
 
 

@@ -1,0 +1,42 @@
+From: Sachin Prabhu <sprabhu@redhat.com>
+Date: Fri, 19 Mar 2010 12:48:00 -0400
+Subject: [sunrpc] fix AUTH_SYS using sec=sys export option
+Message-id: <1371928205.530801269002880205.JavaMail.root@zmail06.collab.prod.int.phx2.redhat.com>
+Patchwork-id: 23644
+O-Subject: [RHEL5 PATCH] BZ#573652 - AUTH_SYS cannot be requested using the
+	'sec=sys' export option
+Bugzilla: 573652
+RH-Acked-by: Jeff Layton <jlayton@redhat.com>
+RH-Acked-by: Jarod Wilson <jarod@redhat.com>
+
+The NFS server rejects all calls made using AUTH_SYS security flavour when AUTH_SYS is explicitly requested using the option sec=sys as an exports option for that share.
+
+This is caused by a bug in the patch for bz 253019 when went into RHEL 5.2 and is thus a regression. The rqstp->rq_flavor is incorrectly set to the wrong security flavour.The patch fixes this bug and matches the behaviour of the relevant code to that of upstream.
+
+The reproducer is available in bz 573652.
+
+Signed-off-by: Sachin Prabhu <sprabhu@redhat.com>
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/net/sunrpc/svcauth_unix.c b/net/sunrpc/svcauth_unix.c
+index e687093..f368abd 100644
+--- a/net/sunrpc/svcauth_unix.c
++++ b/net/sunrpc/svcauth_unix.c
+@@ -447,7 +447,7 @@ svcauth_null_accept(struct svc_rqst *rqstp, u32 *authp)
+ 	svc_putu32(resv, RPC_AUTH_NULL);
+ 	svc_putu32(resv, 0);
+ 
+-	rqstp->rq_flavor = RPC_AUTH_UNIX;
++	rqstp->rq_flavor = RPC_AUTH_NULL;
+ 	return SVC_OK;
+ }
+ 
+@@ -518,7 +518,7 @@ svcauth_unix_accept(struct svc_rqst *rqstp, u32 *authp)
+ 	svc_putu32(resv, RPC_AUTH_NULL);
+ 	svc_putu32(resv, 0);
+ 
+-	rqstp->rq_flavor = RPC_AUTH_NULL;
++	rqstp->rq_flavor = RPC_AUTH_UNIX;
+ 	return SVC_OK;
+ 
+ badcred:

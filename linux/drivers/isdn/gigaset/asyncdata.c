@@ -15,7 +15,8 @@
 
 #include "gigaset.h"
 #include <linux/crc-ccitt.h>
-#include <linux/bitrev.h>
+
+//#define GIG_M10x_STUFF_VOICE_DATA
 
 /* check if byte must be stuffed/escaped
  * I'm not sure which data should be encoded.
@@ -145,17 +146,19 @@ static inline int hdlc_loop(unsigned char c, unsigned char *src, int numbytes,
 			}
 byte_stuff:
 			c ^= PPP_TRANS;
+#ifdef CONFIG_GIGASET_DEBUG
 			if (unlikely(!muststuff(c)))
 				gig_dbg(DEBUG_HDLC, "byte stuffed: 0x%02x", c);
+#endif
 		} else if (unlikely(c == PPP_FLAG)) {
 			if (unlikely(inputstate & INS_skip_frame)) {
-#ifdef CONFIG_GIGASET_DEBUG
 				if (!(inputstate & INS_have_data)) { /* 7E 7E */
+#ifdef CONFIG_GIGASET_DEBUG
 					++bcs->emptycount;
+#endif
 				} else
 					gig_dbg(DEBUG_HDLC,
 					    "7e----------------------------");
-#endif
 
 				/* end of frame */
 				error = 1;
@@ -174,8 +177,9 @@ byte_stuff:
 
 				if (unlikely(fcs != PPP_GOODFCS)) {
 					dev_err(cs->dev,
-				"Checksum failed, %u bytes corrupted!\n",
-						skb->len);
+					    "Packet checksum at %lu failed, "
+					    "packet is corrupted (%u bytes)!\n",
+					    bcs->rcvbytes, skb->len);
 					compskb = NULL;
 					gigaset_rcv_error(compskb, cs, bcs);
 					error = 1;
@@ -221,9 +225,11 @@ byte_stuff:
 			}
 
 			break;
+#ifdef CONFIG_GIGASET_DEBUG
 		} else if (unlikely(muststuff(c))) {
 			/* Should not happen. Possible after ZDLE=1<CR><LF>. */
 			gig_dbg(DEBUG_HDLC, "not byte stuffed: 0x%02x", c);
+#endif
 		}
 
 		/* add character */
@@ -296,7 +302,7 @@ static inline int iraw_loop(unsigned char c, unsigned char *src, int numbytes,
 				inputstate |= INS_skip_frame;
 				break;
 			}
-			*__skb_put(skb, 1) = bitrev8(c);
+			*__skb_put(skb, 1) = gigaset_invtab[c];
 		}
 
 		if (unlikely(!numbytes))
@@ -334,14 +340,7 @@ static inline int iraw_loop(unsigned char c, unsigned char *src, int numbytes,
 	return startbytes - numbytes;
 }
 
-/**
- * gigaset_m10x_input() - process a block of data received from the device
- * @inbuf:	received data and device descriptor structure.
- *
- * Called by hardware module {ser,usb}_gigaset with a block of received
- * bytes. Separates the bytes received over the serial data channel into
- * user data and command replies (locked/unlocked) according to the
- * current state of the interface.
+/* process a block of data received from the device
  */
 void gigaset_m10x_input(struct inbuf_t *inbuf)
 {
@@ -350,8 +349,8 @@ void gigaset_m10x_input(struct inbuf_t *inbuf)
 	unsigned char *src, c;
 	int procbytes;
 
-	head = inbuf->head;
-	tail = inbuf->tail;
+	head = atomic_read(&inbuf->head);
+	tail = atomic_read(&inbuf->tail);
 	gig_dbg(DEBUG_INTR, "buffer state: %u -> %u", head, tail);
 
 	if (head != tail) {
@@ -361,7 +360,7 @@ void gigaset_m10x_input(struct inbuf_t *inbuf)
 		gig_dbg(DEBUG_INTR, "processing %u bytes", numbytes);
 
 		while (numbytes) {
-			if (cs->mstate == MS_LOCKED) {
+			if (atomic_read(&cs->mstate) == MS_LOCKED) {
 				procbytes = lock_loop(src, numbytes, inbuf);
 				src += procbytes;
 				numbytes -= procbytes;
@@ -394,16 +393,20 @@ void gigaset_m10x_input(struct inbuf_t *inbuf)
 					inbuf->inputstate &= ~INS_DLE_char;
 					switch (c) {
 					case 'X': /*begin of command*/
+#ifdef CONFIG_GIGASET_DEBUG
 						if (inbuf->inputstate & INS_command)
-							dev_warn(cs->dev,
+							dev_err(cs->dev,
 					"received <DLE> 'X' in command mode\n");
+#endif
 						inbuf->inputstate |=
 							INS_command | INS_DLE_command;
 						break;
 					case '.': /*end of command*/
+#ifdef CONFIG_GIGASET_DEBUG
 						if (!(inbuf->inputstate & INS_command))
-							dev_warn(cs->dev,
+							dev_err(cs->dev,
 					"received <DLE> '.' in hdlc mode\n");
+#endif
 						inbuf->inputstate &= cs->dle ?
 							~(INS_DLE_command|INS_command)
 							: ~INS_DLE_command;
@@ -432,10 +435,9 @@ nextbyte:
 		}
 
 		gig_dbg(DEBUG_INTR, "setting head to %u", head);
-		inbuf->head = head;
+		atomic_set(&inbuf->head, head);
 	}
 }
-EXPORT_SYMBOL_GPL(gigaset_m10x_input);
 
 
 /* == data output ========================================================== */
@@ -541,7 +543,7 @@ static struct sk_buff *iraw_encode(struct sk_buff *skb, int head, int tail)
 	cp = skb->data;
 	len = skb->len;
 	while (len--) {
-		c = bitrev8(*cp++);
+		c = gigaset_invtab[*cp++];
 		if (c == DLE_FLAG)
 			*(skb_put(iraw_skb, 1)) = c;
 		*(skb_put(iraw_skb, 1)) = c;
@@ -550,17 +552,16 @@ static struct sk_buff *iraw_encode(struct sk_buff *skb, int head, int tail)
 	return iraw_skb;
 }
 
-/**
- * gigaset_m10x_send_skb() - queue an skb for sending
- * @bcs:	B channel descriptor structure.
- * @skb:	data to send.
- *
- * Called by i4l.c to encode and queue an skb for sending, and start
- * transmission if necessary.
- *
+/* gigaset_send_skb
+ * called by common.c to queue an skb for sending
+ * and start transmission if necessary
+ * parameters:
+ *	B Channel control structure
+ *	skb
  * Return value:
- *	number of bytes accepted for sending (skb->len) if ok,
- *	error code < 0 (eg. -ENOMEM) on error
+ *	number of bytes accepted for sending
+ *	(skb->len if ok, 0 if out of buffer space)
+ *	or error code (< 0, eg. -EINVAL)
  */
 int gigaset_m10x_send_skb(struct bc_state *bcs, struct sk_buff *skb)
 {
@@ -572,8 +573,7 @@ int gigaset_m10x_send_skb(struct bc_state *bcs, struct sk_buff *skb)
 	else
 		skb = iraw_encode(skb, HW_HDR_LEN, 0);
 	if (!skb) {
-		dev_err(bcs->cs->dev,
-			"unable to allocate memory for encoding!\n");
+		err("unable to allocate memory for encoding!\n");
 		return -ENOMEM;
 	}
 
@@ -585,4 +585,3 @@ int gigaset_m10x_send_skb(struct bc_state *bcs, struct sk_buff *skb)
 
 	return len;	/* ok so far */
 }
-EXPORT_SYMBOL_GPL(gigaset_m10x_send_skb);

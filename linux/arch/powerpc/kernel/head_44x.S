@@ -28,11 +28,12 @@
  * option) any later version.
  */
 
-#include <linux/init.h>
 #include <asm/processor.h>
 #include <asm/page.h>
 #include <asm/mmu.h>
 #include <asm/pgtable.h>
+#include <asm/ibm4xx.h>
+#include <asm/ibm44x.h>
 #include <asm/cputable.h>
 #include <asm/thread_info.h>
 #include <asm/ppc_asm.h>
@@ -51,9 +52,9 @@
  *   r7 - End of kernel command line string
  *
  */
-	__HEAD
-_ENTRY(_stext);
-_ENTRY(_start);
+	.text
+_GLOBAL(_stext)
+_GLOBAL(_start)
 	/*
 	 * Reserve a word at a fixed location to store the address
 	 * of abatron_pteptrs
@@ -68,17 +69,6 @@ _ENTRY(_start);
 	mr	r28,r6
 	mr	r27,r7
 	li	r24,0		/* CPU number */
-
-/*
- * In case the firmware didn't do it, we apply some workarounds
- * that are good for all 440 core variants here
- */
-	mfspr	r3,SPRN_CCR0
-	rlwinm	r3,r3,0,0,27	/* disable icache prefetch */
-	isync
-	mtspr	SPRN_CCR0,r3
-	isync
-	sync
 
 /*
  * Set up the initial MMU state
@@ -132,8 +122,8 @@ skpinv:	addi	r4,r4,1				/* Increment */
  * Configure and load pinned entry into TLB slot 63.
  */
 
-	lis	r3,PAGE_OFFSET@h
-	ori	r3,r3,PAGE_OFFSET@l
+	lis	r3,KERNELBASE@h		/* Load the kernel virtual address */
+	ori	r3,r3,KERNELBASE@l
 
 	/* Kernel is at the base of RAM */
 	li r4, 0			/* Load the kernel physical address */
@@ -184,28 +174,36 @@ skpinv:	addi	r4,r4,1				/* Increment */
 	isync
 
 4:
-#ifdef CONFIG_PPC_EARLY_DEBUG_44x
-	/* Add UART mapping for early debug. */
-
+#ifdef CONFIG_SERIAL_TEXT_DEBUG
+	/*
+	 * Add temporary UART mapping for early debug.
+	 * We can map UART registers wherever we want as long as they don't
+	 * interfere with other system mappings (e.g. with pinned entries).
+	 * For an example of how we handle this - see ocotea.h.       --ebs
+	 */
  	/* pageid fields */
-	lis	r3,PPC44x_EARLY_DEBUG_VIRTADDR@h
-	ori	r3,r3,PPC44x_TLB_VALID|PPC44x_TLB_TS|PPC44x_TLB_64K
+	lis	r3,UART0_IO_BASE@h
+	ori	r3,r3,PPC44x_TLB_VALID | PPC44x_TLB_4K
 
 	/* xlat fields */
-	lis	r4,CONFIG_PPC_EARLY_DEBUG_44x_PHYSLOW@h
-	ori	r4,r4,CONFIG_PPC_EARLY_DEBUG_44x_PHYSHIGH
+	lis	r4,UART0_PHYS_IO_BASE@h		/* RPN depends on SoC */
+#ifndef CONFIG_440EP
+	ori	r4,r4,0x0001		/* ERPN is 1 for second 4GB page */
+#endif
 
 	/* attrib fields */
-	li	r5,(PPC44x_TLB_SW|PPC44x_TLB_SR|PPC44x_TLB_I|PPC44x_TLB_G)
-        li      r0,62                    /* TLB slot 0 */
+	li	r5,0
+	ori	r5,r5,(PPC44x_TLB_SW | PPC44x_TLB_SR | PPC44x_TLB_I | PPC44x_TLB_G)
 
-	tlbwe	r3,r0,PPC44x_TLB_PAGEID
-	tlbwe	r4,r0,PPC44x_TLB_XLAT
-	tlbwe	r5,r0,PPC44x_TLB_ATTRIB
+        li      r0,0                    /* TLB slot 0 */
+
+	tlbwe	r3,r0,PPC44x_TLB_PAGEID	/* Load the pageid fields */
+	tlbwe	r4,r0,PPC44x_TLB_XLAT	/* Load the translation fields */
+	tlbwe	r5,r0,PPC44x_TLB_ATTRIB	/* Load the attrib/access fields */
 
 	/* Force context change */
 	isync
-#endif /* CONFIG_PPC_EARLY_DEBUG_44x */
+#endif /* CONFIG_SERIAL_TEXT_DEBUG */
 
 	/* Establish the interrupt vector offsets */
 	SET_IVOR(0,  CriticalInput);
@@ -223,11 +221,21 @@ skpinv:	addi	r4,r4,1				/* Increment */
 	SET_IVOR(12, WatchdogTimer);
 	SET_IVOR(13, DataTLBError);
 	SET_IVOR(14, InstructionTLBError);
-	SET_IVOR(15, DebugCrit);
+	SET_IVOR(15, Debug);
 
 	/* Establish the interrupt vector base */
 	lis	r4,interrupt_base@h	/* IVPR only uses the high 16-bits */
 	mtspr	SPRN_IVPR,r4
+
+#ifdef CONFIG_440EP
+	/* Clear DAPUIB flag in CCR0 (enable APU between CPU and FPU) */
+	mfspr	r2,SPRN_CCR0
+	lis	r3,0xffef
+	ori	r3,r3,0xffff
+	and	r2,r2,r3
+	mtspr	SPRN_CCR0,r2
+	isync
+#endif
 
 	/*
 	 * This is where the main kernel code starts.
@@ -239,7 +247,7 @@ skpinv:	addi	r4,r4,1				/* Increment */
 
 	/* ptr to current thread */
 	addi	r4,r2,THREAD	/* init task's THREAD */
-	mtspr	SPRN_SPRG_THREAD,r4
+	mtspr	SPRN_SPRG3,r4
 
 	/* stack */
 	lis	r1,init_thread_union@h
@@ -301,13 +309,121 @@ interrupt_base:
 	CRITICAL_EXCEPTION(0x0100, CriticalInput, unknown_exception)
 
 	/* Machine Check Interrupt */
+#ifdef CONFIG_440A
+	MCHECK_EXCEPTION(0x0200, MachineCheck, machine_check_exception)
+#else
 	CRITICAL_EXCEPTION(0x0200, MachineCheck, machine_check_exception)
-	MCHECK_EXCEPTION(0x0210, MachineCheckA, machine_check_exception)
+#endif
 
 	/* Data Storage Interrupt */
-	DATA_STORAGE_EXCEPTION
+	START_EXCEPTION(DataStorage)
+	mtspr	SPRN_SPRG0, r10		/* Save some working registers */
+	mtspr	SPRN_SPRG1, r11
+	mtspr	SPRN_SPRG4W, r12
+	mtspr	SPRN_SPRG5W, r13
+	mfcr	r11
+	mtspr	SPRN_SPRG7W, r11
 
-		/* Instruction Storage Interrupt */
+	/*
+	 * Check if it was a store fault, if not then bail
+	 * because a user tried to access a kernel or
+	 * read-protected page.  Otherwise, get the
+	 * offending address and handle it.
+	 */
+	mfspr	r10, SPRN_ESR
+	andis.	r10, r10, ESR_ST@h
+	beq	2f
+
+	mfspr	r10, SPRN_DEAR		/* Get faulting address */
+
+	/* If we are faulting a kernel address, we have to use the
+	 * kernel page tables.
+	 */
+	lis	r11, TASK_SIZE@h
+	cmplw	r10, r11
+	blt+	3f
+	lis	r11, swapper_pg_dir@h
+	ori	r11, r11, swapper_pg_dir@l
+
+	mfspr   r12,SPRN_MMUCR
+	rlwinm	r12,r12,0,0,23		/* Clear TID */
+
+	b	4f
+
+	/* Get the PGD for the current thread */
+3:
+	mfspr	r11,SPRN_SPRG3
+	lwz	r11,PGDIR(r11)
+
+	/* Load PID into MMUCR TID */
+	mfspr	r12,SPRN_MMUCR		/* Get MMUCR */
+	mfspr   r13,SPRN_PID		/* Get PID */
+	rlwimi	r12,r13,0,24,31		/* Set TID */
+
+4:
+	mtspr   SPRN_MMUCR,r12
+
+	rlwinm  r12, r10, 13, 19, 29    /* Compute pgdir/pmd offset */
+	lwzx    r11, r12, r11           /* Get pgd/pmd entry */
+	rlwinm. r12, r11, 0, 0, 20      /* Extract pt base address */
+	beq     2f                      /* Bail if no table */
+
+	rlwimi  r12, r10, 23, 20, 28    /* Compute pte address */
+	lwz     r11, 4(r12)             /* Get pte entry */
+
+	andi.	r13, r11, _PAGE_RW	/* Is it writeable? */
+	beq	2f			/* Bail if not */
+
+	/* Update 'changed'.
+	*/
+	ori	r11, r11, _PAGE_DIRTY|_PAGE_ACCESSED|_PAGE_HWWRITE
+	stw	r11, 4(r12)		/* Update Linux page table */
+
+	li	r13, PPC44x_TLB_SR@l	/* Set SR */
+	rlwimi	r13, r11, 29, 29, 29	/* SX = _PAGE_HWEXEC */
+	rlwimi	r13, r11, 0, 30, 30	/* SW = _PAGE_RW */
+	rlwimi	r13, r11, 29, 28, 28	/* UR = _PAGE_USER */
+	rlwimi	r12, r11, 31, 26, 26	/* (_PAGE_USER>>1)->r12 */
+	rlwimi	r12, r11, 29, 30, 30	/* (_PAGE_USER>>3)->r12 */
+	and	r12, r12, r11		/* HWEXEC/RW & USER */
+	rlwimi	r13, r12, 0, 26, 26	/* UX = HWEXEC & USER */
+	rlwimi	r13, r12, 3, 27, 27	/* UW = RW & USER */
+
+	rlwimi	r11,r13,0,26,31		/* Insert static perms */
+
+	rlwinm	r11,r11,0,20,15		/* Clear U0-U3 */
+
+	/* find the TLB index that caused the fault.  It has to be here. */
+	tlbsx	r10, 0, r10
+
+	tlbwe	r11, r10, PPC44x_TLB_ATTRIB	/* Write ATTRIB */
+
+	/* Done...restore registers and get out of here.
+	*/
+	mfspr	r11, SPRN_SPRG7R
+	mtcr	r11
+	mfspr	r13, SPRN_SPRG5R
+	mfspr	r12, SPRN_SPRG4R
+
+	mfspr	r11, SPRN_SPRG1
+	mfspr	r10, SPRN_SPRG0
+	rfi			/* Force context change */
+
+2:
+	/*
+	 * The bailout.  Restore registers to pre-exception conditions
+	 * and call the heavyweights to help us out.
+	 */
+	mfspr	r11, SPRN_SPRG7R
+	mtcr	r11
+	mfspr	r13, SPRN_SPRG5R
+	mfspr	r12, SPRN_SPRG4R
+
+	mfspr	r11, SPRN_SPRG1
+	mfspr	r10, SPRN_SPRG0
+	b	data_access
+
+	/* Instruction Storage Interrupt */
 	INSTRUCTION_STORAGE_EXCEPTION
 
 	/* External Input Interrupt */
@@ -325,6 +441,7 @@ interrupt_base:
 #else
 	EXCEPTION(0x2010, FloatingPointUnavailable, unknown_exception, EXC_XFER_EE)
 #endif
+
 	/* System Call Interrupt */
 	START_EXCEPTION(SystemCall)
 	NORMAL_EXCEPTION_PROLOG
@@ -350,18 +467,18 @@ interrupt_base:
 
 	/* Data TLB Error Interrupt */
 	START_EXCEPTION(DataTLBError)
-	mtspr	SPRN_SPRG_WSCRATCH0, r10		/* Save some working registers */
-	mtspr	SPRN_SPRG_WSCRATCH1, r11
-	mtspr	SPRN_SPRG_WSCRATCH2, r12
-	mtspr	SPRN_SPRG_WSCRATCH3, r13
+	mtspr	SPRN_SPRG0, r10		/* Save some working registers */
+	mtspr	SPRN_SPRG1, r11
+	mtspr	SPRN_SPRG4W, r12
+	mtspr	SPRN_SPRG5W, r13
 	mfcr	r11
-	mtspr	SPRN_SPRG_WSCRATCH4, r11
+	mtspr	SPRN_SPRG7W, r11
 	mfspr	r10, SPRN_DEAR		/* Get faulting address */
 
 	/* If we are faulting a kernel address, we have to use the
 	 * kernel page tables.
 	 */
-	lis	r11, PAGE_OFFSET@h
+	lis	r11, TASK_SIZE@h
 	cmplw	r10, r11
 	blt+	3f
 	lis	r11, swapper_pg_dir@h
@@ -374,7 +491,7 @@ interrupt_base:
 
 	/* Get the PGD for the current thread */
 3:
-	mfspr	r11,SPRN_SPRG_THREAD
+	mfspr	r11,SPRN_SPRG3
 	lwz	r11,PGDIR(r11)
 
 	/* Load PID into MMUCR TID */
@@ -385,59 +502,18 @@ interrupt_base:
 4:
 	mtspr	SPRN_MMUCR,r12
 
-	/* Mask of required permission bits. Note that while we
-	 * do copy ESR:ST to _PAGE_RW position as trying to write
-	 * to an RO page is pretty common, we don't do it with
-	 * _PAGE_DIRTY. We could do it, but it's a fairly rare
-	 * event so I'd rather take the overhead when it happens
-	 * rather than adding an instruction here. We should measure
-	 * whether the whole thing is worth it in the first place
-	 * as we could avoid loading SPRN_ESR completely in the first
-	 * place...
-	 *
-	 * TODO: Is it worth doing that mfspr & rlwimi in the first
-	 *       place or can we save a couple of instructions here ?
-	 */
-	mfspr	r12,SPRN_ESR
-	li	r13,_PAGE_PRESENT|_PAGE_ACCESSED
-	rlwimi	r13,r12,10,30,30
-
-	/* Load the PTE */
-	/* Compute pgdir/pmd offset */
-	rlwinm  r12, r10, PPC44x_PGD_OFF_SHIFT, PPC44x_PGD_OFF_MASK_BIT, 29
+	rlwinm 	r12, r10, 13, 19, 29	/* Compute pgdir/pmd offset */
 	lwzx	r11, r12, r11		/* Get pgd/pmd entry */
 	rlwinm.	r12, r11, 0, 0, 20	/* Extract pt base address */
 	beq	2f			/* Bail if no table */
 
-	/* Compute pte address */
-	rlwimi  r12, r10, PPC44x_PTE_ADD_SHIFT, PPC44x_PTE_ADD_MASK_BIT, 28
-	lwz	r11, 0(r12)		/* Get high word of pte entry */
-	lwz	r12, 4(r12)		/* Get low word of pte entry */
+	rlwimi	r12, r10, 23, 20, 28	/* Compute pte address */
+	lwz	r11, 4(r12)		/* Get pte entry */
+	andi.	r13, r11, _PAGE_PRESENT	/* Is the page present? */
+	beq	2f			/* Bail if not present */
 
-	lis	r10,tlb_44x_index@ha
-
-	andc.	r13,r13,r12		/* Check permission */
-
-	/* Load the next available TLB index */
-	lwz	r13,tlb_44x_index@l(r10)
-
-	bne	2f			/* Bail if permission mismach */
-
-	/* Increment, rollover, and store TLB index */
-	addi	r13,r13,1
-
-	/* Compare with watermark (instruction gets patched) */
-	.globl tlb_44x_patch_hwater_D
-tlb_44x_patch_hwater_D:
-	cmpwi	0,r13,1			/* reserve entries */
-	ble	5f
-	li	r13,0
-5:
-	/* Store the next available TLB index */
-	stw	r13,tlb_44x_index@l(r10)
-
-	/* Re-load the faulting address */
-	mfspr	r10,SPRN_DEAR
+	ori	r11, r11, _PAGE_ACCESSED
+	stw	r11, 4(r12)
 
 	 /* Jump to common tlb load */
 	b	finish_tlb_load
@@ -446,13 +522,13 @@ tlb_44x_patch_hwater_D:
 	/* The bailout.  Restore registers to pre-exception conditions
 	 * and call the heavyweights to help us out.
 	 */
-	mfspr	r11, SPRN_SPRG_RSCRATCH4
+	mfspr	r11, SPRN_SPRG7R
 	mtcr	r11
-	mfspr	r13, SPRN_SPRG_RSCRATCH3
-	mfspr	r12, SPRN_SPRG_RSCRATCH2
-	mfspr	r11, SPRN_SPRG_RSCRATCH1
-	mfspr	r10, SPRN_SPRG_RSCRATCH0
-	b	DataStorage
+	mfspr	r13, SPRN_SPRG5R
+	mfspr	r12, SPRN_SPRG4R
+	mfspr	r11, SPRN_SPRG1
+	mfspr	r10, SPRN_SPRG0
+	b	data_access
 
 	/* Instruction TLB Error Interrupt */
 	/*
@@ -461,18 +537,18 @@ tlb_44x_patch_hwater_D:
 	 * to a different point.
 	 */
 	START_EXCEPTION(InstructionTLBError)
-	mtspr	SPRN_SPRG_WSCRATCH0, r10 /* Save some working registers */
-	mtspr	SPRN_SPRG_WSCRATCH1, r11
-	mtspr	SPRN_SPRG_WSCRATCH2, r12
-	mtspr	SPRN_SPRG_WSCRATCH3, r13
+	mtspr	SPRN_SPRG0, r10		/* Save some working registers */
+	mtspr	SPRN_SPRG1, r11
+	mtspr	SPRN_SPRG4W, r12
+	mtspr	SPRN_SPRG5W, r13
 	mfcr	r11
-	mtspr	SPRN_SPRG_WSCRATCH4, r11
+	mtspr	SPRN_SPRG7W, r11
 	mfspr	r10, SPRN_SRR0		/* Get faulting address */
 
 	/* If we are faulting a kernel address, we have to use the
 	 * kernel page tables.
 	 */
-	lis	r11, PAGE_OFFSET@h
+	lis	r11, TASK_SIZE@h
 	cmplw	r10, r11
 	blt+	3f
 	lis	r11, swapper_pg_dir@h
@@ -485,7 +561,7 @@ tlb_44x_patch_hwater_D:
 
 	/* Get the PGD for the current thread */
 3:
-	mfspr	r11,SPRN_SPRG_THREAD
+	mfspr	r11,SPRN_SPRG3
 	lwz	r11,PGDIR(r11)
 
 	/* Load PID into MMUCR TID */
@@ -496,44 +572,18 @@ tlb_44x_patch_hwater_D:
 4:
 	mtspr	SPRN_MMUCR,r12
 
-	/* Make up the required permissions */
-	li	r13,_PAGE_PRESENT | _PAGE_ACCESSED | _PAGE_EXEC
-
-	/* Compute pgdir/pmd offset */
-	rlwinm 	r12, r10, PPC44x_PGD_OFF_SHIFT, PPC44x_PGD_OFF_MASK_BIT, 29
+	rlwinm	r12, r10, 13, 19, 29	/* Compute pgdir/pmd offset */
 	lwzx	r11, r12, r11		/* Get pgd/pmd entry */
 	rlwinm.	r12, r11, 0, 0, 20	/* Extract pt base address */
 	beq	2f			/* Bail if no table */
 
-	/* Compute pte address */
-	rlwimi	r12, r10, PPC44x_PTE_ADD_SHIFT, PPC44x_PTE_ADD_MASK_BIT, 28
-	lwz	r11, 0(r12)		/* Get high word of pte entry */
-	lwz	r12, 4(r12)		/* Get low word of pte entry */
+	rlwimi	r12, r10, 23, 20, 28	/* Compute pte address */
+	lwz	r11, 4(r12)		/* Get pte entry */
+	andi.	r13, r11, _PAGE_PRESENT	/* Is the page present? */
+	beq	2f			/* Bail if not present */
 
-	lis	r10,tlb_44x_index@ha
-
-	andc.	r13,r13,r12		/* Check permission */
-
-	/* Load the next available TLB index */
-	lwz	r13,tlb_44x_index@l(r10)
-
-	bne	2f			/* Bail if permission mismach */
-
-	/* Increment, rollover, and store TLB index */
-	addi	r13,r13,1
-
-	/* Compare with watermark (instruction gets patched) */
-	.globl tlb_44x_patch_hwater_I
-tlb_44x_patch_hwater_I:
-	cmpwi	0,r13,1			/* reserve entries */
-	ble	5f
-	li	r13,0
-5:
-	/* Store the next available TLB index */
-	stw	r13,tlb_44x_index@l(r10)
-
-	/* Re-load the faulting address */
-	mfspr	r10,SPRN_SRR0
+	ori	r11, r11, _PAGE_ACCESSED
+	stw	r11, 4(r12)
 
 	/* Jump to common TLB load point */
 	b	finish_tlb_load
@@ -542,77 +592,106 @@ tlb_44x_patch_hwater_I:
 	/* The bailout.  Restore registers to pre-exception conditions
 	 * and call the heavyweights to help us out.
 	 */
-	mfspr	r11, SPRN_SPRG_RSCRATCH4
+	mfspr	r11, SPRN_SPRG7R
 	mtcr	r11
-	mfspr	r13, SPRN_SPRG_RSCRATCH3
-	mfspr	r12, SPRN_SPRG_RSCRATCH2
-	mfspr	r11, SPRN_SPRG_RSCRATCH1
-	mfspr	r10, SPRN_SPRG_RSCRATCH0
+	mfspr	r13, SPRN_SPRG5R
+	mfspr	r12, SPRN_SPRG4R
+	mfspr	r11, SPRN_SPRG1
+	mfspr	r10, SPRN_SPRG0
 	b	InstructionStorage
 
 	/* Debug Interrupt */
-	DEBUG_CRIT_EXCEPTION
+	DEBUG_EXCEPTION
 
 /*
  * Local functions
-  */
+ */
+	/*
+	 * Data TLB exceptions will bail out to this point
+	 * if they can't resolve the lightweight TLB fault.
+	 */
+data_access:
+	NORMAL_EXCEPTION_PROLOG
+	mfspr	r5,SPRN_ESR		/* Grab the ESR, save it, pass arg3 */
+	stw	r5,_ESR(r11)
+	mfspr	r4,SPRN_DEAR		/* Grab the DEAR, save it, pass arg2 */
+	EXC_XFER_EE_LITE(0x0300, handle_page_fault)
 
 /*
 
  * Both the instruction and data TLB miss get to this
  * point to load the TLB.
  * 	r10 - EA of fault
- * 	r11 - PTE high word value
- *	r12 - PTE low word value
- *	r13 - TLB index
+ * 	r11 - available to use
+ *	r12 - Pointer to the 64-bit PTE
+ *	r13 - available to use
  *	MMUCR - loaded with proper value when we get here
  *	Upon exit, we reload everything and RFI.
  */
 finish_tlb_load:
-	/* Combine RPN & ERPN an write WS 0 */
-	rlwimi	r11,r12,0,0,31-PAGE_SHIFT
-	tlbwe	r11,r13,PPC44x_TLB_XLAT
+	/*
+	 * We set execute, because we don't have the granularity to
+	 * properly set this at the page level (Linux problem).
+	 * If shared is set, we cause a zero PID->TID load.
+	 * Many of these bits are software only.  Bits we don't set
+	 * here we (properly should) assume have the appropriate value.
+	 */
+
+	/* Load the next available TLB index */
+	lis	r13, tlb_44x_index@ha
+	lwz	r13, tlb_44x_index@l(r13)
+	/* Load the TLB high watermark */
+	lis	r11, tlb_44x_hwater@ha
+	lwz	r11, tlb_44x_hwater@l(r11)
+
+	/* Increment, rollover, and store TLB index */
+	addi	r13, r13, 1
+	cmpw	0, r13, r11			/* reserve entries */
+	ble	7f
+	li	r13, 0
+7:
+	/* Store the next available TLB index */
+	lis	r11, tlb_44x_index@ha
+	stw	r13, tlb_44x_index@l(r11)
+
+	lwz	r11, 0(r12)			/* Get MS word of PTE */
+	lwz	r12, 4(r12)			/* Get LS word of PTE */
+	rlwimi	r11, r12, 0, 0 , 19		/* Insert RPN */
+	tlbwe	r11, r13, PPC44x_TLB_XLAT	/* Write XLAT */
 
 	/*
-	 * Create WS1. This is the faulting address (EPN),
+	 * Create PAGEID. This is the faulting address,
 	 * page size, and valid flag.
 	 */
-	li	r11,PPC44x_TLB_VALID | PPC44x_TLBE_SIZE
-	/* Insert valid and page size */
-	rlwimi	r10,r11,0,PPC44x_PTE_ADD_MASK_BIT,31
-	tlbwe	r10,r13,PPC44x_TLB_PAGEID	/* Write PAGEID */
+	li	r11, PPC44x_TLB_VALID | PPC44x_TLB_4K
+	rlwimi	r10, r11, 0, 20, 31		/* Insert valid and page size */
+	tlbwe	r10, r13, PPC44x_TLB_PAGEID	/* Write PAGEID */
 
-	/* And WS 2 */
-	li	r10,0xf85			/* Mask to apply from PTE */
-	rlwimi	r10,r12,29,30,30		/* DIRTY -> SW position */
-	and	r11,r12,r10			/* Mask PTE bits to keep */
-	andi.	r10,r12,_PAGE_USER		/* User page ? */
-	beq	1f				/* nope, leave U bits empty */
-	rlwimi	r11,r11,3,26,28			/* yes, copy S bits to U */
-1:	tlbwe	r11,r13,PPC44x_TLB_ATTRIB	/* Write ATTRIB */
+	li	r10, PPC44x_TLB_SR@l		/* Set SR */
+	rlwimi	r10, r12, 0, 30, 30		/* Set SW = _PAGE_RW */
+	rlwimi	r10, r12, 29, 29, 29		/* SX = _PAGE_HWEXEC */
+	rlwimi	r10, r12, 29, 28, 28		/* UR = _PAGE_USER */
+	rlwimi	r11, r12, 31, 26, 26		/* (_PAGE_USER>>1)->r12 */
+	and	r11, r12, r11			/* HWEXEC & USER */
+	rlwimi	r10, r11, 0, 26, 26		/* UX = HWEXEC & USER */
+
+	rlwimi	r12, r10, 0, 26, 31		/* Insert static perms */
+	rlwinm	r12, r12, 0, 20, 15		/* Clear U0-U3 */
+	tlbwe	r12, r13, PPC44x_TLB_ATTRIB	/* Write ATTRIB */
 
 	/* Done...restore registers and get out of here.
 	*/
-	mfspr	r11, SPRN_SPRG_RSCRATCH4
+	mfspr	r11, SPRN_SPRG7R
 	mtcr	r11
-	mfspr	r13, SPRN_SPRG_RSCRATCH3
-	mfspr	r12, SPRN_SPRG_RSCRATCH2
-	mfspr	r11, SPRN_SPRG_RSCRATCH1
-	mfspr	r10, SPRN_SPRG_RSCRATCH0
+	mfspr	r13, SPRN_SPRG5R
+	mfspr	r12, SPRN_SPRG4R
+	mfspr	r11, SPRN_SPRG1
+	mfspr	r10, SPRN_SPRG0
 	rfi					/* Force context change */
 
 /*
  * Global functions
  */
-
-/*
- * Adjust the machine check IVOR on 440A cores
- */
-_GLOBAL(__fixup_440A_mcheck)
-	li	r3,MachineCheckA@l
-	mtspr	SPRN_IVOR1,r3
-	sync
-	blr
 
 /*
  * extern void giveup_altivec(struct task_struct *prev)
@@ -631,6 +710,16 @@ _GLOBAL(giveup_altivec)
 _GLOBAL(giveup_fpu)
 	blr
 #endif
+
+/*
+ * extern void abort(void)
+ *
+ * At present, this routine just applies a system reset.
+ */
+_GLOBAL(abort)
+        mfspr   r13,SPRN_DBCR0
+        oris    r13,r13,DBCR0_RST_SYSTEM@h
+        mtspr   SPRN_DBCR0,r13
 
 _GLOBAL(set_context)
 
@@ -651,19 +740,36 @@ _GLOBAL(set_context)
  * goes at the beginning of the data segment, which is page-aligned.
  */
 	.data
-	.align	PAGE_SHIFT
+	.align	12
 	.globl	sdata
 sdata:
 	.globl	empty_zero_page
 empty_zero_page:
-	.space	PAGE_SIZE
+	.space	4096
 
 /*
  * To support >32-bit physical addresses, we use an 8KB pgdir.
  */
 	.globl	swapper_pg_dir
 swapper_pg_dir:
-	.space	PGD_TABLE_SIZE
+	.space	8192
+
+/* Reserved 4k for the critical exception stack & 4k for the machine
+ * check stack per CPU for kernel mode exceptions */
+	.section .bss
+        .align 12
+exception_stack_bottom:
+	.space	BOOKE_EXCEPTION_STACK_SIZE
+	.globl	exception_stack_top
+exception_stack_top:
+
+/*
+ * This space gets a copy of optional info passed to us by the bootstrap
+ * which is used to pass parameters into the kernel like root=/dev/sda1, etc.
+ */
+	.globl	cmd_line
+cmd_line:
+	.space	512
 
 /*
  * Room for two PTE pointers, usually the kernel and current user pointers

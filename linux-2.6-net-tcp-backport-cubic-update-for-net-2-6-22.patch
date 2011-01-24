@@ -1,0 +1,62 @@
+From: Thomas Graf <tgraf@redhat.com>
+Date: Fri, 23 Jul 2010 15:33:13 -0400
+Subject: [net] tcp: backport cubic update for net-2.6.22
+Message-id: <20100723153313.GG14925@lsx.localdomain>
+Patchwork-id: 27065
+O-Subject: [RHEL5.6 PATCH 5/14] tcp: cubic update for net-2.6.22
+Bugzilla: 612709
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+RH-Acked-by: David S. Miller <davem@redhat.com>
+
+commit e1c3e7ab6de9711d2e0e9daf369c6638582eb7e7
+Author: Stephen Hemminger <shemminger@linux-foundation.org>
+Date:   Sat Mar 24 21:34:38 2007 -0700
+
+    [TCP]: cubic update for net-2.6.22
+
+    The following update received from Injong updates TCP cubic to the latest
+    version. I am running more complete tests and will have results after 4/1.
+
+    According to Injong: the new version improves on its scalability,
+    fairness and stability.  So in all properties, we confirmed it shows better
+    performance.
+
+    NCSU results (for 2.6.18 and 2.6.20) available:
+    	http://netsrv.csc.ncsu.edu/wiki/index.php/TCP_Testing
+
+    This version is described in a new Internet draft for CUBIC.
+    	http://www.ietf.org/internet-drafts/draft-rhee-tcp-cubic-00.txt
+
+    Signed-off-by: Stephen Hemminger <shemminger@linux-foundation.org>
+    Signed-off-by: David S. Miller <davem@davemloft.net>
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/net/ipv4/tcp_cubic.c b/net/ipv4/tcp_cubic.c
+index 7ae00ae..7492234 100644
+--- a/net/ipv4/tcp_cubic.c
++++ b/net/ipv4/tcp_cubic.c
+@@ -1,5 +1,5 @@
+ /*
+- * TCP CUBIC: Binary Increase Congestion control for TCP v2.0
++ * TCP CUBIC: Binary Increase Congestion control for TCP v2.1
+  *
+  * This is from the implementation of CUBIC TCP in
+  * Injong Rhee, Lisong Xu.
+@@ -215,7 +215,9 @@ static inline void bictcp_update(struct bictcp *ca, u32 cwnd)
+ 	if (ca->delay_min > 0) {
+ 		/* max increment = Smax * rtt / 0.1  */
+ 		min_cnt = (cwnd * HZ * 8)/(10 * max_increment * ca->delay_min);
+-		if (ca->cnt < min_cnt)
++
++		/* use concave growth when the target is above the origin */
++		if (ca->cnt < min_cnt && t >= ca->bic_K)
+ 			ca->cnt = min_cnt;
+ 	}
+ 
+@@ -401,4 +403,4 @@ module_exit(cubictcp_unregister);
+ MODULE_AUTHOR("Sangtae Ha, Stephen Hemminger");
+ MODULE_LICENSE("GPL");
+ MODULE_DESCRIPTION("CUBIC TCP");
+-MODULE_VERSION("2.0");
++MODULE_VERSION("2.1");

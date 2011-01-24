@@ -1,0 +1,42 @@
+Date: Wed, 11 Oct 2006 16:22:15 -0500
+From: David Smith <dsmith@redhat.com>
+Subject: Re: [RHEL4.5/RHEL5 IA64 PATCH] Fixup ia64 kprobes fault
+
+Don Zickus wrote:
+>On Wed, Oct 11, 2006 at 10:54:38AM -0500, David Smith wrote:
+>>If the user-specified kprobe handler causes the page fault when 
+>>accessing user space address, fixup this fault since do_page_fault() 
+>>should not continue as the kprobe handler are run with preemption disabled.
+>>
+>>This patch is present upstream in 2.6.19-rc1 (see 
+>><http://kernel.org/git/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=fd32cb3a9c9f9399421408e8734cd8a6d9d1a09f>)
+>>
+>Can you create the patch one directory up so a patch -p1 works.  Thanks.
+
+Here you go.
+
+-- 
+David Smith
+dsmith@redhat.com
+Red Hat, Inc.
+http://www.redhat.com
+256.217.0141 (direct)
+256.837.0057 (fax)
+
+--- linux/arch/ia64/kernel/kprobes.c-orig	2006-10-10 13:31:17.000000000 -0500
++++ linux/arch/ia64/kernel/kprobes.c	2006-10-10 13:32:19.000000000 -0500
+@@ -762,6 +762,13 @@ static int kprobes_fault_handler(struct 
+ 			return 1;
+ 
+ 		/*
++		 * In case the user-specified fault handler returned
++		 * zero, try to fix up.
++		 */
++		if (ia64_done_with_exception(regs))
++			return 1;
++
++		/*
+ 		 * Let ia64_do_page_fault() fix it.
+ 		 */
+ 		break;
+

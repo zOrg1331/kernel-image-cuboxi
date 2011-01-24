@@ -1,0 +1,181 @@
+From: Kimball Murray <kmurray@redhat.com>
+Date: Fri, 22 Jun 2007 11:24:13 -0400
+Subject: [mm] xen: memory tracking cleanups
+Message-id: 20070622152128.10093.86634.sendpatchset@dhcp83-86.boston.redhat.com
+O-Subject: [RHEL5 U1 Patch 1/1 (revised)] memory tracking patch only partially applied to Xen kernel (BZ-242514)
+Bugzilla: 242514
+
+This is the revised memory tracking patch that fixes the x86_64 regression
+caused by its predecessor.  The previous patch changed pte_mkclean to use
+pte_val instead of __pte_val.  Under Xen, this is a big problem because the
+Xen version of pte_val behaves differently depending on whether the input
+pte refers to a USER or KERNEL page.  With this error, pte_mkclean was not
+only clearing the dirty bit(s), but also changing the address bits, resulting
+in general chaos.
+
+The new patch uses __pte_val inside of pte_mkclean.  I have heard back from
+all the disgruntled test folks who had to witness this fiasco, and every
+one has reported that the revised patch fixes the regression, as well as my
+own testing.
+
+For those that have reviewed the previous patch, and only want to look at
+what changed between the two patches, here is the diff:
+
+------------------------------------------------------------
+
+Acked-by: Rik van Riel <riel@redhat.com>
+
+diff --git a/arch/x86_64/mm/track.c b/arch/x86_64/mm/track.c
+index 1566f85..fb606d7 100644
+--- a/arch/x86_64/mm/track.c
++++ b/arch/x86_64/mm/track.c
+@@ -48,6 +48,10 @@ void do_mm_track_pte(void * val)
+ 	if (pfn >= mm_tracking_struct.bitcnt)
+ 		return;
+ 
++#ifdef CONFIG_XEN
++	pfn = pfn_to_mfn(pfn);
++#endif
++
+ 	if (!test_and_set_bit(pfn, mm_tracking_struct.vector))
+ 		atomic_inc(&mm_tracking_struct.count);
+ }
+@@ -92,6 +96,10 @@ static inline void track_as_pte(void *val) {
+ 	if (pfn >= mm_tracking_struct.bitcnt)
+ 		return;
+ 
++#ifdef CONFIG_XEN
++	pfn = pfn_to_mfn(pfn);
++#endif
++
+ 	if (!test_and_set_bit(pfn, mm_tracking_struct.vector))
+ 		atomic_inc(&mm_tracking_struct.count);
+ }
+@@ -117,6 +125,10 @@ void do_mm_track_phys(void *val)
+ 	if (pfn >= mm_tracking_struct.bitcnt)
+ 		return;
+ 
++#ifdef CONFIG_XEN
++	pfn = pfn_to_mfn(pfn);
++#endif
++
+ 	if (!test_and_set_bit(pfn, mm_tracking_struct.vector))
+ 		atomic_inc(&mm_tracking_struct.count);
+ }
+diff --git a/include/asm-x86_64/mach-xen/asm/pgtable.h b/include/asm-x86_64/mach-xen/asm/pgtable.h
+index a104104..e6eddf9 100644
+--- a/include/asm-x86_64/mach-xen/asm/pgtable.h
++++ b/include/asm-x86_64/mach-xen/asm/pgtable.h
+@@ -14,6 +14,7 @@
+ #include <linux/threads.h>
+ #include <linux/sched.h>
+ #include <asm/pda.h>
++#include <asm/mm_track.h>
+ #ifdef CONFIG_XEN
+ #include <asm/hypervisor.h>
+ 
+@@ -98,19 +99,29 @@ extern unsigned long empty_zero_page[PAGE_SIZE/sizeof(unsigned long)];
+ #define pgd_none(x)	(!pgd_val(x))
+ #define pud_none(x)	(!pud_val(x))
+ 
+-#define set_pte_batched(pteptr, pteval) \
+-	queue_l1_entry_update(pteptr, (pteval))
+-
+ extern inline int pud_present(pud_t pud)	{ return !pud_none(pud); }
+ 
+ static inline void set_pte(pte_t *dst, pte_t val)
+ {
++	mm_track_pte(dst);
+ 	*dst = val;
+ }
+ 
+-#define set_pmd(pmdptr, pmdval) xen_l2_entry_update(pmdptr, (pmdval))
+-#define set_pud(pudptr, pudval) xen_l3_entry_update(pudptr, (pudval))
+-#define set_pgd(pgdptr, pgdval) xen_l4_entry_update(pgdptr, (pgdval))
++static inline void set_pmd(pmd_t *pmdptr, pmd_t pmdval)
++{
++	mm_track_pmd(pmdptr);
++	xen_l2_entry_update(pmdptr, (pmdval));
++}
++static inline void set_pud(pud_t *pudptr, pud_t pudval)
++{
++	mm_track_pud(pudptr);
++	xen_l3_entry_update(pudptr, (pudval));	
++}
++static inline void set_pgd(pgd_t *pgdptr, pgd_t pgdval)
++{
++	mm_track_pgd(pgdptr);
++	xen_l4_entry_update(pgdptr, (pgdval));	
++}
+ 
+ static inline void pud_clear (pud_t * pud)
+ {
+@@ -137,7 +148,11 @@ static inline void pgd_clear (pgd_t * pgd)
+  * each domain will have separate page tables, with their own versions of
+  * accessed & dirty state.
+  */
+-#define ptep_get_and_clear(mm,addr,xp)	__pte_ma(xchg(&(xp)->pte, 0))
++static inline pte_t ptep_get_and_clear(struct mm_struct *mm, unsigned long addr, pte_t *xp)
++{
++	mm_track_pte(xp);
++	return __pte_ma(xchg(&(xp)->pte, 0));
++}
+ 
+ #if 0
+ static inline pte_t ptep_get_and_clear(struct mm_struct *mm, unsigned long addr, pte_t *xp)
+@@ -156,6 +171,7 @@ static inline pte_t ptep_get_and_clear_full(struct mm_struct *mm, unsigned long
+ 	pte_t pte;
+ 	if (full) {
+ 		pte = *ptep;
++		mm_track_pte(ptep);
+ 		*ptep = __pte(0);
+ 	} else {
+ 		pte = ptep_get_and_clear(mm, addr, ptep);
+@@ -195,6 +211,7 @@ static inline pte_t ptep_get_and_clear_full(struct mm_struct *mm, unsigned long
+ #define _PAGE_BIT_DIRTY		6
+ #define _PAGE_BIT_PSE		7	/* 4 MB (or 2MB) page */
+ #define _PAGE_BIT_GLOBAL	8	/* Global TLB entry PPro+ */
++#define _PAGE_BIT_SOFTDIRTY	9	/* save dirty state when hdw dirty bit cleared */
+ #define _PAGE_BIT_NX           63       /* No execute: only valid after cpuid check */
+ 
+ #define _PAGE_PRESENT	0x001
+@@ -207,6 +224,7 @@ static inline pte_t ptep_get_and_clear_full(struct mm_struct *mm, unsigned long
+ #define _PAGE_PSE	0x080	/* 2MB page */
+ #define _PAGE_FILE	0x040	/* nonlinear file mapping, saved PTE; unset:swap */
+ #define _PAGE_GLOBAL	0x100	/* Global TLB entry */
++#define _PAGE_SOFTDIRTY	0x200
+ 
+ #define _PAGE_PROTNONE	0x080	/* If not present */
+ #define _PAGE_NX        (_AC(1,UL)<<_PAGE_BIT_NX)
+@@ -214,7 +232,7 @@ static inline pte_t ptep_get_and_clear_full(struct mm_struct *mm, unsigned long
+ #define _PAGE_TABLE	(_PAGE_PRESENT | _PAGE_RW | _PAGE_USER | _PAGE_ACCESSED | _PAGE_DIRTY)
+ #define _KERNPG_TABLE	(_PAGE_PRESENT | _PAGE_RW | _PAGE_ACCESSED | _PAGE_DIRTY)
+ 
+-#define _PAGE_CHG_MASK	(PTE_MASK | _PAGE_ACCESSED | _PAGE_DIRTY)
++#define _PAGE_CHG_MASK	(PTE_MASK | _PAGE_ACCESSED | _PAGE_DIRTY | _PAGE_SOFTDIRTY)
+ 
+ #define PAGE_NONE	__pgprot(_PAGE_PROTNONE | _PAGE_ACCESSED)
+ #define PAGE_SHARED	__pgprot(_PAGE_PRESENT | _PAGE_RW | _PAGE_USER | _PAGE_ACCESSED | _PAGE_NX)
+@@ -329,7 +347,7 @@ static inline pte_t pfn_pte(unsigned long page_nr, pgprot_t pgprot)
+ static inline int pte_user(pte_t pte)		{ return __pte_val(pte) & _PAGE_USER; }
+ static inline int pte_read(pte_t pte)		{ return __pte_val(pte) & _PAGE_USER; }
+ static inline int pte_exec(pte_t pte)		{ return __pte_val(pte) & _PAGE_USER; }
+-static inline int pte_dirty(pte_t pte)		{ return __pte_val(pte) & _PAGE_DIRTY; }
++static inline int pte_dirty(pte_t pte)		{ return __pte_val(pte) & (_PAGE_DIRTY | _PAGE_SOFTDIRTY); }
+ static inline int pte_young(pte_t pte)		{ return __pte_val(pte) & _PAGE_ACCESSED; }
+ static inline int pte_write(pte_t pte)		{ return __pte_val(pte) & _PAGE_RW; }
+ static inline int pte_file(pte_t pte)		{ return __pte_val(pte) & _PAGE_FILE; }
+@@ -337,7 +355,12 @@ static inline int pte_huge(pte_t pte)		{ return __pte_val(pte) & _PAGE_PSE; }
+ 
+ static inline pte_t pte_rdprotect(pte_t pte)	{ __pte_val(pte) &= ~_PAGE_USER; return pte; }
+ static inline pte_t pte_exprotect(pte_t pte)	{ __pte_val(pte) &= ~_PAGE_USER; return pte; }
+-static inline pte_t pte_mkclean(pte_t pte)	{ __pte_val(pte) &= ~_PAGE_DIRTY; return pte; }
++static inline pte_t pte_mkclean(pte_t pte)
++{
++	mm_track_pte(&pte);
++	__pte_val(pte) &= ~(_PAGE_SOFTDIRTY|_PAGE_DIRTY);
++	return pte;
++}
+ static inline pte_t pte_mkold(pte_t pte)	{ __pte_val(pte) &= ~_PAGE_ACCESSED; return pte; }
+ static inline pte_t pte_wrprotect(pte_t pte)	{ __pte_val(pte) &= ~_PAGE_RW; return pte; }
+ static inline pte_t pte_mkread(pte_t pte)	{ __pte_val(pte) |= _PAGE_USER; return pte; }

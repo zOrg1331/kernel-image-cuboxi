@@ -28,9 +28,9 @@
 #include <linux/linkage.h>
 #include <linux/init.h>
 #include <asm/assembler.h>
-#include <asm/hwcap.h>
 #include <asm/pgtable-hwdef.h>
 #include <asm/pgtable.h>
+#include <asm/procinfo.h>
 #include <asm/page.h>
 #include <asm/ptrace.h>
 #include "proc-macros.S"
@@ -344,18 +344,40 @@ ENTRY(cpu_arm920_switch_mm)
 	mov	pc, lr
 
 /*
- * cpu_arm920_set_pte(ptep, pte, ext)
+ * cpu_arm920_set_pte(ptep, pte)
  *
  * Set a PTE and flush it out
  */
 	.align	5
-ENTRY(cpu_arm920_set_pte_ext)
+ENTRY(cpu_arm920_set_pte)
 #ifdef CONFIG_MMU
-	armv3_set_pte_ext
+	str	r1, [r0], #-2048		@ linux version
+
+	eor	r1, r1, #L_PTE_PRESENT | L_PTE_YOUNG | L_PTE_WRITE | L_PTE_DIRTY
+
+	bic	r2, r1, #PTE_SMALL_AP_MASK
+	bic	r2, r2, #PTE_TYPE_MASK
+	orr	r2, r2, #PTE_TYPE_SMALL
+
+	tst	r1, #L_PTE_USER			@ User?
+	orrne	r2, r2, #PTE_SMALL_AP_URO_SRW
+
+	tst	r1, #L_PTE_WRITE | L_PTE_DIRTY	@ Write and Dirty?
+	orreq	r2, r2, #PTE_SMALL_AP_UNO_SRW
+
+	tst	r1, #L_PTE_PRESENT | L_PTE_YOUNG	@ Present and Young?
+	movne	r2, #0
+
+#ifdef CONFIG_CPU_DCACHE_WRITETHROUGH
+	eor	r3, r2, #0x0a			@ C & small page?
+	tst	r3, #0x0b
+	biceq	r2, r2, #4
+#endif
+	str	r2, [r0]			@ hardware version
 	mov	r0, r0
 	mcr	p15, 0, r0, c7, c10, 1		@ clean D entry
 	mcr	p15, 0, r0, c7, c10, 4		@ drain WB
-#endif
+#endif /* CONFIG_MMU */
 	mov	pc, lr
 
 	__INIT
@@ -395,14 +417,13 @@ arm920_crval:
 	.type	arm920_processor_functions, #object
 arm920_processor_functions:
 	.word	v4t_early_abort
-	.word	legacy_pabort
 	.word	cpu_arm920_proc_init
 	.word	cpu_arm920_proc_fin
 	.word	cpu_arm920_reset
 	.word   cpu_arm920_do_idle
 	.word	cpu_arm920_dcache_clean_area
 	.word	cpu_arm920_switch_mm
-	.word	cpu_arm920_set_pte_ext
+	.word	cpu_arm920_set_pte
 	.size	arm920_processor_functions, . - arm920_processor_functions
 
 	.section ".rodata"

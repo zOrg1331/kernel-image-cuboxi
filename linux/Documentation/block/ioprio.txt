@@ -6,10 +6,10 @@ Intro
 -----
 
 With the introduction of cfq v3 (aka cfq-ts or time sliced cfq), basic io
-priorities are supported for reads on files.  This enables users to io nice
-processes or process groups, similar to what has been possible with cpu
-scheduling for ages.  This document mainly details the current possibilities
-with cfq; other io schedulers do not support io priorities thus far.
+priorities is supported for reads on files. This enables users to io nice
+processes or process groups, similar to what has been possible to cpu
+scheduling for ages. This document mainly details the current possibilites
+with cfq, other io schedulers do not support io priorities so far.
 
 Scheduling classes
 ------------------
@@ -86,15 +86,8 @@ extern int sys_ioprio_get(int, int);
 #error "Unsupported arch"
 #endif
 
-static inline int ioprio_set(int which, int who, int ioprio)
-{
-	return syscall(__NR_ioprio_set, which, who, ioprio);
-}
-
-static inline int ioprio_get(int which, int who)
-{
-	return syscall(__NR_ioprio_get, which, who);
-}
+_syscall3(int, ioprio_set, int, which, int, who, int, ioprio);
+_syscall2(int, ioprio_get, int, which, int, who);
 
 enum {
 	IOPRIO_CLASS_NONE,
@@ -180,4 +173,4 @@ int main(int argc, char *argv[])
 ---> snip ionice.c tool <---
 
 
-March 11 2005, Jens Axboe <jens.axboe@oracle.com>
+March 11 2005, Jens Axboe <axboe@suse.de>

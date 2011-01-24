@@ -1,25 +1,25 @@
-/*
- * Copyright (C) 2007 Jeff Dike (jdike@{addtoit,linux.intel}.com)
- * Licensed under the GPL.
- */
-
-#include <linux/if_arp.h>
-#include <linux/init.h>
-#include <linux/netdevice.h>
+#include "linux/config.h"
+#include "linux/kernel.h"
+#include "linux/stddef.h"
+#include "linux/init.h"
+#include "linux/netdevice.h"
+#include "linux/if_arp.h"
 #include "net_kern.h"
+#include "net_user.h"
+#include "kern.h"
 #include "slip.h"
 
 struct slip_init {
 	char *gate_addr;
 };
 
-static void slip_init(struct net_device *dev, void *data)
+void slip_init(struct net_device *dev, void *data)
 {
 	struct uml_net_private *private;
 	struct slip_data *spri;
 	struct slip_init *init = data;
 
-	private = netdev_priv(dev);
+	private = dev->priv;
 	spri = (struct slip_data *) private->user;
 
 	memset(spri->name, 0, sizeof(spri->name));
@@ -30,8 +30,11 @@ static void slip_init(struct net_device *dev, void *data)
 
 	slip_proto_init(&spri->slip);
 
+	dev->init = NULL;
+	dev->header_cache_update = NULL;
+	dev->hard_header_cache = NULL;
+	dev->hard_header = NULL;
 	dev->hard_header_len = 0;
-	dev->header_ops = NULL;
 	dev->addr_len = 0;
 	dev->type = ARPHRD_SLIP;
 	dev->tx_queue_len = 256;
@@ -41,22 +44,24 @@ static void slip_init(struct net_device *dev, void *data)
 
 static unsigned short slip_protocol(struct sk_buff *skbuff)
 {
-	return htons(ETH_P_IP);
+	return(htons(ETH_P_IP));
 }
 
-static int slip_read(int fd, struct sk_buff *skb, struct uml_net_private *lp)
+static int slip_read(int fd, struct sk_buff **skb, 
+		       struct uml_net_private *lp)
 {
-	return slip_user_read(fd, skb_mac_header(skb), skb->dev->mtu,
-			      (struct slip_data *) &lp->user);
+	return(slip_user_read(fd, (*skb)->mac.raw, (*skb)->dev->mtu, 
+			      (struct slip_data *) &lp->user));
 }
 
-static int slip_write(int fd, struct sk_buff *skb, struct uml_net_private *lp)
+static int slip_write(int fd, struct sk_buff **skb,
+		      struct uml_net_private *lp)
 {
-	return slip_user_write(fd, skb->data, skb->len,
-			       (struct slip_data *) &lp->user);
+	return(slip_user_write(fd, (*skb)->data, (*skb)->len, 
+			       (struct slip_data *) &lp->user));
 }
 
-static const struct net_kern_info slip_kern_info = {
+struct net_kern_info slip_kern_info = {
 	.init			= slip_init,
 	.protocol		= slip_protocol,
 	.read			= slip_read,
@@ -67,11 +72,12 @@ static int slip_setup(char *str, char **mac_out, void *data)
 {
 	struct slip_init *init = data;
 
-	*init = ((struct slip_init) { .gate_addr = NULL });
+	*init = ((struct slip_init)
+		{ .gate_addr 		= NULL });
 
-	if (str[0] != '\0')
+	if(str[0] != '\0') 
 		init->gate_addr = str;
-	return 1;
+	return(1);
 }
 
 static struct transport slip_transport = {
@@ -90,4 +96,4 @@ static int register_slip(void)
 	return 0;
 }
 
-late_initcall(register_slip);
+__initcall(register_slip);

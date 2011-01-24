@@ -1,0 +1,207 @@
+From: Hans-Joachim Picht <hpicht@redhat.com>
+Date: Thu, 12 Mar 2009 15:24:16 +0100
+Subject: [s390] kernel: extra kernel parameters via VMPARM
+Message-id: 20090312142416.GI5103@redhat.com
+O-Subject: [RHEL5 U4 PATCH 8/20] FEAT: s390 - kernel: Extra kernel parameters via VMPARM
+Bugzilla: 475530
+
+Description
+============
+
+This feature allows the user to append or replace kernel
+parameters using PARM option of the IPL command.
+Parameters can be set with the IPL command on the CP/CMS
+commandline or via the new "parm" sysfs attribute
+for the ccw and nss reipl types.
+
+Bugzilla
+=========
+
+BZ 475530
+https://bugzilla.redhat.com/show_bug.cgi?id=475530
+
+Upstream status of the patch:
+=============================
+
+The patch is upstream as of git commit
+a0443fbb467af5e5930b9b059b52190605f70059
+
+Test status:
+============
+
+The patch has been tested by the IBM test department.
+
+Please ACK.
+
+With best regards,
+
+	--Hans
+
+diff --git a/arch/s390/kernel/ipl.c b/arch/s390/kernel/ipl.c
+index 9278e87..c6dfba1 100644
+--- a/arch/s390/kernel/ipl.c
++++ b/arch/s390/kernel/ipl.c
+@@ -15,6 +15,7 @@
+ #include <linux/reboot.h>
+ #include <linux/ctype.h>
+ #include <linux/fs.h>
++#include <linux/stringify.h>
+ #include <asm/ipl.h>
+ #include <asm/smp.h>
+ #include <asm/setup.h>
+@@ -22,6 +23,7 @@
+ #include <asm/cio.h>
+ #include <asm/ebcdic.h>
+ #include <asm/setup.h>
++#include <asm/lowcore.h>
+ 
+ #define IPL_PARM_BLOCK_VERSION 0
+ 
+@@ -158,6 +160,43 @@ static enum dump_method dump_method = DUMP_METHOD_NONE;
+ static struct ipl_parameter_block *dump_block_fcp;
+ static struct ipl_parameter_block *dump_block_ccw;
+ 
++/*
++ * diag308_early() - Set program new psw and call DIAG308
++ *
++ * This function provides calls diag308 using its own exception handling.
++ * Use this function if the lowcore has not yet been initialized.
++ * NOTE: The first parameter must be the address, the second the subcode.
++ */
++int __init diag308_early(void *addr, unsigned long subcode);
++asm(
++	"	.section .init.text,\"ax\",@progbits\n"
++	"	.align	4\n"
++	"	.type	diag308_early, @function\n"
++	"diag308_early:\n"
++	"	basr	%r5,0\n"
++	"0:\n"
++	"	la	%r1,1f-0b(%r5)\n"
++#ifdef CONFIG_64BIT
++	"	mvc	" __stringify(__LC_PGM_NEW_PSW) "(8),.Lpcmsk-0b(%r5)\n"
++	"	stg	%r1," __stringify(__LC_PGM_NEW_PSW) "+8\n"
++#else
++	"	mvc	" __stringify(__LC_PGM_NEW_PSW) "(4),.Lpcmsk-0b(%r5)\n"
++	"	st	%r1," __stringify(__LC_PGM_NEW_PSW) "+4\n"
++#endif
++	"	diag	%r2,%r3,0x308\n"
++	"	la	%r2,0(%r3)\n"	/* store diag rc (%r3) in %r2 */
++	"	br	%r14\n"
++	"1:	la	%r2,0\n"
++	"	br	%r14\n"
++	".Lpcmsk:\n"
++#ifdef CONFIG_64BIT
++	"	.quad	0x0000000180000000\n"
++#else
++	"	.long	0x00080000\n"
++#endif
++	"	.size	diag308_early, .-diag308_early\n"
++	"	.previous\n");
++
+ int diag308(unsigned long subcode, void *addr)
+ {
+ 	register unsigned long _addr asm("0") = (unsigned long) addr;
+@@ -1692,7 +1731,7 @@ void __init ipl_update_parameters(void)
+ {
+ 	int rc;
+ 
+-	rc = diag308(DIAG308_STORE, &ipl_block);
++	rc = diag308_early(&ipl_block, DIAG308_STORE);
+ 	if ((rc == DIAG308_RC_OK) || (rc == DIAG308_RC_NOCONFIG))
+ 		diag308_set_works = 1;
+ }
+diff --git a/arch/s390/kernel/setup.c b/arch/s390/kernel/setup.c
+index 36ff345..febfa6f 100644
+--- a/arch/s390/kernel/setup.c
++++ b/arch/s390/kernel/setup.c
+@@ -275,21 +275,40 @@ static void __init conmode_default(void)
+ 	}
+ }
+ 
++/* Set up boot command line */
++static char __initdata s390_command_line[COMMAND_LINE_SIZE];
++
++static void __init setup_boot_command_line(void)
++{
++	char *parm = NULL;
++
++	/* copy arch command line */
++	strlcpy(s390_command_line, COMMAND_LINE, ARCH_COMMAND_LINE_SIZE);
++
++	/* append IPL PARM data to the boot command line */
++	if (MACHINE_IS_VM) {
++		parm = s390_command_line + strlen(s390_command_line);
++		*parm++ = ' ';
++		get_ipl_vmparm(parm);
++		if (parm[0] == '=')
++			memmove(s390_command_line, parm + 1, strlen(parm));
++	}
++}
++
+ #if defined(CONFIG_ZFCPDUMP) || defined(CONFIG_ZFCPDUMP_MODULE)
+ static void __init setup_zfcpdump(unsigned int console_devno)
+ {
+-	static char str[64];
++	static char str[41];
+ 
+ 	if (ipl_info.type != IPL_TYPE_FCP_DUMP)
+ 		return;
+ 	if (console_devno != -1)
+-		sprintf(str, "cio_ignore=all,!0.0.%04x,!0.0.%04x",
++		sprintf(str, " cio_ignore=all,!0.0.%04x,!0.0.%04x",
+ 			ipl_info.data.fcp.dev_id.devno, console_devno);
+ 	else
+-		sprintf(str, "cio_ignore=all,!0.0.%04x",
++		sprintf(str, " cio_ignore=all,!0.0.%04x",
+ 			ipl_info.data.fcp.dev_id.devno);
+-	strcat(COMMAND_LINE, " ");
+-	strcat(COMMAND_LINE, str);
++	strcat(s390_command_line, str);
+ 	console_loglevel = 2;
+ }
+ #else
+@@ -429,6 +448,8 @@ void __init startup_init(void)
+ 	clear_bss_section();
+ 	init_kernel_storage_key();
+ 	detect_machine_type();
++	ipl_update_parameters();
++	setup_boot_command_line();
+ 	create_kernel_nss();
+ }
+ 
+@@ -852,11 +873,9 @@ setup_arch(char **cmdline_p)
+ 	       "We are running native (64 bit mode)\n");
+ #endif /* CONFIG_64BIT */
+ 
+-	/* Save unparsed command line copy for /proc/cmdline */
+-	strlcpy(saved_command_line, COMMAND_LINE, COMMAND_LINE_SIZE);
+-
+-	*cmdline_p = COMMAND_LINE;
+-	*(*cmdline_p + COMMAND_LINE_SIZE - 1) = '\0';
++	/* save unparsed s390_command_line for /proc/cmdline */
++	memcpy(saved_command_line, s390_command_line, COMMAND_LINE_SIZE);
++	*cmdline_p = s390_command_line;
+ 
+         ROOT_DEV = Root_RAM0;
+ 
+diff --git a/include/asm-s390/setup.h b/include/asm-s390/setup.h
+index e061bb0..7449513 100644
+--- a/include/asm-s390/setup.h
++++ b/include/asm-s390/setup.h
+@@ -8,12 +8,15 @@
+ #ifndef _ASM_S390_SETUP_H
+ #define _ASM_S390_SETUP_H
+ 
++#define COMMAND_LINE_SIZE	1024
++
++#define ARCH_COMMAND_LINE_SIZE	896
++
+ #ifdef __KERNEL__
+ 
+ #include <asm/types.h>
+ 
+ #define PARMAREA		0x10400
+-#define COMMAND_LINE_SIZE 	896
+ #define RAMDISK_ORIGIN		0x800000
+ #define RAMDISK_SIZE		0x800000
+ #define MEMORY_CHUNKS		16	/* max 0x7fff */

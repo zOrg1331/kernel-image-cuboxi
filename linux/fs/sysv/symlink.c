@@ -14,7 +14,7 @@ static void *sysv_follow_link(struct dentry *dentry, struct nameidata *nd)
 	return NULL;
 }
 
-const struct inode_operations sysv_fast_symlink_inode_operations = {
+struct inode_operations sysv_fast_symlink_inode_operations = {
 	.readlink	= generic_readlink,
 	.follow_link	= sysv_follow_link,
 };

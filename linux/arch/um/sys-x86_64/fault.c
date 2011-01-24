@@ -4,25 +4,20 @@
  * Licensed under the GPL
  */
 
-#include "sysdep/ptrace.h"
+#include "user.h"
 
-/* These two are from asm-um/uaccess.h and linux/module.h, check them. */
-struct exception_table_entry
+int arch_fixup(unsigned long address, void *sc_ptr)
 {
-	unsigned long insn;
-	unsigned long fixup;
-};
-
-const struct exception_table_entry *search_exception_tables(unsigned long add);
-
-int arch_fixup(unsigned long address, struct uml_pt_regs *regs)
-{
-	const struct exception_table_entry *fixup;
-
-	fixup = search_exception_tables(address);
-	if (fixup != 0) {
-		UPT_IP(regs) = fixup->fixup;
-		return 1;
-	}
-	return 0;
+	/* XXX search_exception_tables() */
+	return(0);
 }
+
+/* Overrides for Emacs so that we follow Linus's tabbing style.
+ * Emacs will notice this stuff at the end of the file and automatically
+ * adjust the settings for this buffer only.  This must remain at the end
+ * of the file.
+ * ---------------------------------------------------------------------------
+ * Local variables:
+ * c-file-style: "linux"
+ * End:
+ */

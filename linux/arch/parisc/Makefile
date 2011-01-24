@@ -16,32 +16,32 @@
 # Modified for PA-RISC Linux by Paul Lahaie, Alex deVries, 
 # Mike Shaver, Helge Deller and Martin K. Petersen
 #
-
-KBUILD_DEFCONFIG := default_defconfig
-
 NM		= sh $(srctree)/arch/parisc/nm
 CHECKFLAGS	+= -D__hppa__=1
 
-MACHINE		:= $(shell uname -m)
-ifeq ($(MACHINE),parisc*)
-NATIVE		:= 1
-endif
-
 ifdef CONFIG_64BIT
+CROSS_COMPILE	:= $(shell if [ -x /usr/bin/hppa64-linux-gnu-gcc ]; then \
+			echo hppa64-linux-gnu-; else echo hppa64-linux-; fi)
 UTS_MACHINE	:= parisc64
 CHECKFLAGS	+= -D__LP64__=1 -m64
-WIDTH		:= 64
-CROSS_COMPILE	:= hppa64-linux-gnu-
-else # 32-bit
-WIDTH		:=
+else
+MACHINE := $(subst 64,,$(shell uname -m))
+ifneq ($(MACHINE),parisc)
+CROSS_COMPILE	:= hppa-linux-
+endif
 endif
 
-# attempt to help out folks who are cross-compiling
-ifeq ($(NATIVE),1)
-CROSS_COMPILE	:= hppa$(WIDTH)-linux-
-endif
+FINAL_LD=$(CROSS_COMPILE)ld --warn-common --warn-section-align 
 
 OBJCOPY_FLAGS =-O binary -R .note -R .comment -S
+
+GCC_VERSION     := $(call cc-version)
+ifneq ($(shell if [ -z $(GCC_VERSION) ] ; then echo "bad"; fi ;),)
+$(error Sorry, couldn't find ($(cc-version)).)
+endif
+ifneq ($(shell if [ $(GCC_VERSION) -lt 0303 ] ; then echo "bad"; fi ;),)
+$(error Sorry, your compiler is too old ($(GCC_VERSION)).  GCC v3.3 or above is required.)
+endif
 
 cflags-y	:= -pipe
 
@@ -56,9 +56,7 @@ cflags-y	+= -mdisable-fpregs
 
 # Without this, "ld -r" results in .text sections that are too big
 # (> 0x40000) for branches to reach stubs.
-ifndef CONFIG_FUNCTION_TRACER
-  cflags-y	+= -ffunction-sections
-endif
+cflags-y	+= -ffunction-sections
 
 # select which processor to optimise for
 cflags-$(CONFIG_PA7100)		+= -march=1.1 -mschedule=7100
@@ -69,7 +67,7 @@ cflags-$(CONFIG_PA8X00)		+= -march=2.0 -mschedule=8000
 
 head-y			:= arch/parisc/kernel/head.o 
 
-KBUILD_CFLAGS	+= $(cflags-y)
+CFLAGS	+= $(cflags-y)
 
 kernel-y			:= mm/ kernel/ math-emu/ kernel/init_task.o
 kernel-$(CONFIG_HPUX)		+= hpux/
@@ -79,31 +77,31 @@ libs-y	+= arch/parisc/lib/ `$(CC) -print-libgcc-file-name`
 
 drivers-$(CONFIG_OPROFILE)		+= arch/parisc/oprofile/
 
-PALO := $(shell if (which palo 2>&1); then : ; \
+PALO := $(shell if which palo; then : ; \
 	elif [ -x /sbin/palo ]; then echo /sbin/palo; \
 	fi)
 
-PALOCONF := $(shell if [ -f $(src)/palo.conf ]; then echo $(src)/palo.conf; \
-	else echo $(obj)/palo.conf; \
-	fi)
-
 palo: vmlinux
-	@if test ! -x "$(PALO)"; then \
+	@if [ -x $PALO ]; then \
 		echo 'ERROR: Please install palo first (apt-get install palo)';\
 		echo 'or build it from source and install it somewhere in your $$PATH';\
 		false; \
 	fi
-	@if test ! -f "$(PALOCONF)"; then \
-		cp $(src)/arch/parisc/defpalo.conf $(obj)/palo.conf; \
-		echo 'A generic palo config file ($(obj)/palo.conf) has been created for you.'; \
+	@if [ ! -f ./palo.conf ]; then \
+		cp arch/parisc/defpalo.conf palo.conf; \
+		echo 'A generic palo config file (./palo.conf) has been created for you.'; \
 		echo 'You should check it and re-run "make palo".'; \
 		echo 'WARNING: the "lifimage" file is now placed in this directory by default!'; \
 		false; \
 	fi
-	$(PALO) -f $(PALOCONF)
+	$(PALO) -f ./palo.conf
 
-# Shorthands for known targets not supported by parisc, use vmlinux as default
-Image zImage bzImage: vmlinux
+oldpalo: vmlinux
+	export TOPDIR=`pwd`; \
+	unset STRIP LDFLAGS CPP CPPFLAGS AFLAGS CFLAGS CC LD; cd ../palo && make lifimage
+
+# Shorthands for known targets not supported by parisc, use palo as default
+Image zImage bzImage: palo
 
 kernel_install: vmlinux
 	sh $(src)/arch/parisc/install.sh \
@@ -118,16 +116,7 @@ define archhelp
 	@echo  '* vmlinux	- Uncompressed kernel image (./vmlinux)'
 	@echo  '  palo		- Bootable image (./lifimage)'
 	@echo  '  install	- Install kernel using'
-	@echo  '		  (your) ~/bin/$(INSTALLKERNEL) or'
-	@echo  '		  (distribution) /sbin/$(INSTALLKERNEL) or'
+	@echo  '		  (your) ~/bin/installkernel or'
+	@echo  '		  (distribution) /sbin/installkernel or'
 	@echo  '		  copy to $$(INSTALL_PATH)'
 endef
-
-# we require gcc 3.3 or above to compile the kernel
-archprepare: checkbin
-checkbin:
-	@if test "$(call cc-version)" -lt "0303"; then \
-		echo -n "Sorry, GCC v3.3 or above is required to build " ; \
-		echo "the kernel." ; \
-		false ; \
-	fi

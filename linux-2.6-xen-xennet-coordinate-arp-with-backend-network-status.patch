@@ -1,0 +1,168 @@
+From: Herbert Xu <herbert.xu@redhat.com>
+Date: Thu, 14 Aug 2008 20:22:21 +1000
+Subject: [xen] xennet: coordinate ARP with backend network status
+Message-id: 20080814102221.GA1300@gondor.apana.org.au
+O-Subject: [RHEL5.3 PATCH] xennet: Coordinate gratuitous ARP with backend network status
+Bugzilla: 458934
+RH-Acked-by: Don Dutile <ddutile@redhat.com>
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+RH-Acked-by: David S. Miller <davem@redhat.com>
+
+Hi:
+
+RHEL5.3 BZ 458934
+
+xennet: Coordinate gratuitous ARP with backend network status
+
+This patch delays the sending of the gratuitous ARP packet in
+the Xen frontend network driver until the backend signals that
+its carrier status has been processed by the stack.
+
+The frontend part of the patch is not applicable in upstream
+Linux as there is no gratuitous ARP packet support there at all.
+While the backend upstream is dead as far as I know.  So this
+is RHEL5-specific.
+
+Both patches are needed to ensure the successful transmission
+of the gratuitous ARP packet which is necessary for Xen live
+migrations.
+
+Signed-off-by: Herbert Xu <herbert@gondor.apana.org.au>
+
+diff --git a/drivers/xen/netback/common.h b/drivers/xen/netback/common.h
+index 54a4095..75d82b1 100644
+--- a/drivers/xen/netback/common.h
++++ b/drivers/xen/netback/common.h
+@@ -98,6 +98,7 @@ typedef struct netif_st {
+ 	/* Miscellaneous private stuff. */
+ 	struct list_head list;  /* scheduling list */
+ 	atomic_t         refcnt;
++	struct xenbus_device *xendev;
+ 	struct net_device *dev;
+ 	struct net_device_stats stats;
+ 
+@@ -121,6 +122,7 @@ int netif_map(netif_t *netif, unsigned long tx_ring_ref,
+ 	} while (0)
+ 
+ void netif_xenbus_init(void);
++void netif_interfaces_init(void);
+ 
+ #define netif_schedulable(dev) (netif_running(dev) && netif_carrier_ok(dev))
+ 
+diff --git a/drivers/xen/netback/interface.c b/drivers/xen/netback/interface.c
+index 646c737..04f5796 100644
+--- a/drivers/xen/netback/interface.c
++++ b/drivers/xen/netback/interface.c
+@@ -33,6 +33,7 @@
+ #include "common.h"
+ #include <linux/ethtool.h>
+ #include <linux/rtnetlink.h>
++#include <xen/xenbus.h>
+ 
+ /*
+  * Module parameter 'queue_length':
+@@ -347,3 +348,31 @@ void netif_disconnect(netif_t *netif)
+ 
+ 	free_netdev(netif->dev);
+ }
++
++
++static int
++netdev_notify(struct notifier_block *this, unsigned long event, void *ptr)
++{
++	struct net_device *dev = ptr;
++
++	/* Carrier up event and is it one of our devices? */
++	if (event == NETDEV_CHANGE && netif_carrier_ok(dev) &&
++	    dev->open == net_open) {
++		netif_t *netif = netdev_priv(dev);
++
++		xenbus_switch_state(netif->xendev, XenbusStateConnected);
++	}
++
++	return NOTIFY_DONE;
++}
++
++
++static struct notifier_block notifier_netdev = {
++	.notifier_call  = netdev_notify,
++};
++
++
++void netif_interfaces_init(void)
++{
++	(void)register_netdevice_notifier(&notifier_netdev);
++}
+diff --git a/drivers/xen/netback/netback.c b/drivers/xen/netback/netback.c
+index 67900c9..bf2c6e7 100644
+--- a/drivers/xen/netback/netback.c
++++ b/drivers/xen/netback/netback.c
+@@ -1504,6 +1504,7 @@ static int __init netback_init(void)
+ 	spin_lock_init(&net_schedule_list_lock);
+ 	INIT_LIST_HEAD(&net_schedule_list);
+ 
++	netif_interfaces_init();
+ 	netif_xenbus_init();
+ 
+ #ifdef NETBE_DEBUG_INTERRUPT
+diff --git a/drivers/xen/netback/xenbus.c b/drivers/xen/netback/xenbus.c
+index b81042d..d15ce95 100644
+--- a/drivers/xen/netback/xenbus.c
++++ b/drivers/xen/netback/xenbus.c
+@@ -186,6 +186,7 @@ static void backend_create_netif(struct backend_info *be)
+ 		return;
+ 	}
+ 
++	be->netif->xendev = dev;
+ 	kobject_uevent(&dev->dev.kobj, KOBJ_ONLINE);
+ }
+ 
+@@ -310,10 +311,6 @@ static void connect(struct backend_info *be)
+ 	int err;
+ 	struct xenbus_device *dev = be->dev;
+ 
+-	err = connect_rings(be);
+-	if (err)
+-		return;
+-
+ 	err = xen_net_read_mac(dev, be->netif->fe_dev_addr);
+ 	if (err) {
+ 		xenbus_dev_fatal(dev, err, "parsing %s/mac", dev->nodename);
+@@ -324,7 +321,9 @@ static void connect(struct backend_info *be)
+ 			  &be->netif->credit_usec);
+ 	be->netif->remaining_credit = be->netif->credit_bytes;
+ 
+-	xenbus_switch_state(dev, XenbusStateConnected);
++	err = connect_rings(be);
++	if (err)
++		return;
+ 
+ 	/* May not get a kick from the frontend, so start the tx_queue now. */
+ 	if (!netbk_can_queue(be->netif->dev))
+diff --git a/drivers/xen/netfront/netfront.c b/drivers/xen/netfront/netfront.c
+index 6310448..41d0178 100644
+--- a/drivers/xen/netfront/netfront.c
++++ b/drivers/xen/netfront/netfront.c
+@@ -542,18 +542,20 @@ static void backend_changed(struct xenbus_device *dev,
+ 	switch (backend_state) {
+ 	case XenbusStateInitialising:
+ 	case XenbusStateInitialised:
+-	case XenbusStateConnected:
+ 	case XenbusStateUnknown:
+ 	case XenbusStateClosed:
+ 		break;
+ 
++	case XenbusStateConnected:
++		(void)send_fake_arp(netdev);
++		break;
++
+ 	case XenbusStateInitWait:
+ 		if (network_connect(netdev) != 0) {
+ 			netif_free(np);
+ 			break;
+ 		}
+ 		xenbus_switch_state(dev, XenbusStateConnected);
+-		(void)send_fake_arp(netdev);
+ 		break;
+ 
+ 	case XenbusStateClosing:

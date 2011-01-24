@@ -1,0 +1,93 @@
+diff -urNp --exclude-from=/home/davej/.exclude linux-900/crypto/api.c linux-901/crypto/api.c
+--- linux-900/crypto/api.c
++++ linux-901/crypto/api.c
+@@ -117,12 +117,17 @@ static void crypto_exit_ops(struct crypt
+ 	}
+ }
+ 
+-struct crypto_tfm *crypto_alloc_tfm(const char *name, u32 flags)
++struct crypto_tfm *crypto_alloc_tfm2(const char *name, u32 flags,
++				     int nomodload)
+ {
+ 	struct crypto_tfm *tfm = NULL;
+ 	struct crypto_alg *alg;
+ 	unsigned int tfm_size;
+ 
+-	alg = crypto_alg_mod_lookup(name);
++	if (!nomodload)
++		alg = crypto_alg_mod_lookup(name);
++	else
++		alg = crypto_alg_lookup(name);
++
+ 	if (alg == NULL)
+ 		goto out;
+@@ -153,6 +160,11 @@ out:
+ 	return tfm;
+ }
+ 
++struct crypto_tfm *crypto_alloc_tfm(const char *name, u32 flags)
++{
++	return crypto_alloc_tfm2(name, flags, 0);
++}
++
+ void crypto_free_tfm(struct crypto_tfm *tfm)
+ {
+ 	struct crypto_alg *alg = tfm->__crt_alg;
+diff -urNp --exclude-from=/home/davej/.exclude linux-900/crypto/Kconfig linux-901/crypto/Kconfig
+--- linux-900/crypto/Kconfig
++++ linux-901/crypto/Kconfig
+@@ -287,6 +287,25 @@ config CRYPTO_TEST
+ 	help
+ 	  Quick & dirty crypto test module.
+ 
++config CRYPTO_SIGNATURE
++	bool "In-kernel signature checker (EXPERIMENTAL)"
++	depends on CRYPTO
++	help
++	  Signature checker (used for module sig checking).
++
++config CRYPTO_SIGNATURE_DSA
++	bool "Handle DSA signatures (EXPERIMENTAL)"
++	depends on CRYPTO_SIGNATURE
++	select CRYPTO_MPILIB
++	help
++	  DSA Signature checker.
++
++config CRYPTO_MPILIB
++	bool "Multiprecision maths library (EXPERIMENTAL)"
++	depends on CRYPTO
++	help
++	  Multiprecision maths library from GnuPG
++
+ source "drivers/crypto/Kconfig"
+ endmenu
+ 
+diff -urNp --exclude-from=/home/davej/.exclude linux-900/crypto/Makefile linux-901/crypto/Makefile
+--- linux-900/crypto/Makefile
++++ linux-901/crypto/Makefile
+@@ -32,3 +32,6 @@ obj-$(CONFIG_CRYPTO_MICHAEL_MIC) += mich
+ obj-$(CONFIG_CRYPTO_CRC32C) += crc32c.o
+ 
+ obj-$(CONFIG_CRYPTO_TEST) += tcrypt.o
++
++obj-$(CONFIG_CRYPTO_SIGNATURE) += signature/
++obj-$(CONFIG_CRYPTO_MPILIB) += mpi/
+diff -urNp --exclude-from=/home/davej/.exclude linux-900/include/linux/crypto.h linux-901/include/linux/crypto.h
+--- linux-900/include/linux/crypto.h
++++ linux-901/include/linux/crypto.h
+@@ -213,10 +213,14 @@ struct crypto_tfm {
+  * will then attempt to load a module of the same name or alias.  A refcount
+  * is grabbed on the algorithm which is then associated with the new transform.
+  *
++ * crypto_alloc_tfm2() is similar, but allows module loading to be suppressed.
++ *
+  * crypto_free_tfm() frees up the transform and any associated resources,
+  * then drops the refcount on the associated algorithm.
+  */
+ struct crypto_tfm *crypto_alloc_tfm(const char *alg_name, u32 tfm_flags);
++struct crypto_tfm *crypto_alloc_tfm2(const char *alg_name, u32 tfm_flags,
++				     int nomodload);
+ void crypto_free_tfm(struct crypto_tfm *tfm);
+ 
+ /*
+

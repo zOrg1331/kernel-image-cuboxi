@@ -1,0 +1,68 @@
+From: Hans-Joachim Picht <hpicht@redhat.com>
+Date: Tue, 1 Jul 2008 15:13:26 +0200
+Subject: [s390] tape: race condition in tape block device driver
+Message-id: 20080701131326.GE20922@redhat.com
+O-Subject: [RHEL5 U3 PATCH 5/6] s390 - tape: Fix race condition in tape block device driver
+Bugzilla: 451277
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+
+Description
+============
+
+Due to  a incorrect function call sequence it can happen that a tape block
+request is finished before the request is taken from the block request queue.
+
+The following sequence leads to that condition:
+
+* tapeblock_start_request() -> start CCW program
+* Request finishes -> IO interrupt
+* tapeblock_end_request()
+* end_that_request_last()
+
+If blkdev_dequeue_request() has not been called before end_that_request_last(),
+a kernel bug is triggered in end_that_request_last() because the request is
+still queued. To solve that problem blkdev_dequeue_request() has to be called
+before starting the CCW program.
+
+Bugzilla
+=========
+
+BZ 451277
+https://bugzilla.redhat.com/show_bug.cgi?id=451277
+
+Upstream status of the patch:
+=============================
+
+Patch is contained in linux-2.6 as git commit
+f71ad62a264a89cb1952df0c92b167005de8d1b0
+
+Test status:
+============
+
+The patch has been tested and fixes the problem.
+The fix has been verified by the IBM test department.
+
+Please ACK.
+
+With best regards,
+
+	-Hans
+
+diff --git a/drivers/s390/char/tape_block.c b/drivers/s390/char/tape_block.c
+index 3225fcd..63121a4 100644
+--- a/drivers/s390/char/tape_block.c
++++ b/drivers/s390/char/tape_block.c
+@@ -177,11 +177,11 @@ tapeblock_requeue(void *data) {
+ 			tapeblock_end_request(req, 0);
+ 			continue;
+ 		}
++		blkdev_dequeue_request(req);
++		nr_queued++;
+ 		spin_unlock_irq(&device->blk_data.request_queue_lock);
+ 		rc = tapeblock_start_request(device, req);
+ 		spin_lock_irq(&device->blk_data.request_queue_lock);
+-		blkdev_dequeue_request(req);
+-		nr_queued++;
+ 	}
+ 	spin_unlock_irq(&device->blk_data.request_queue_lock);
+ 	atomic_set(&device->blk_data.requeue_scheduled, 0);

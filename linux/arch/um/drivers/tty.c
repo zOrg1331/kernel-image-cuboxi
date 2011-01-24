@@ -1,16 +1,16 @@
 /*
- * Copyright (C) 2001 - 2007 Jeff Dike (jdike@{linux.intel,addtoit}.com)
+ * Copyright (C) 2001 Jeff Dike (jdike@karaya.com)
  * Licensed under the GPL
  */
 
-#include <errno.h>
-#include <fcntl.h>
+#include <stdio.h>
 #include <termios.h>
+#include <errno.h>
+#include <unistd.h>
 #include "chan_user.h"
-#include "kern_constants.h"
-#include "os.h"
-#include "um_malloc.h"
+#include "user_util.h"
 #include "user.h"
+#include "os.h"
 
 struct tty_chan {
 	char *dev;
@@ -18,19 +18,19 @@ struct tty_chan {
 	struct termios tt;
 };
 
-static void *tty_chan_init(char *str, int device, const struct chan_opts *opts)
+static void *tty_chan_init(char *str, int device, struct chan_opts *opts)
 {
 	struct tty_chan *data;
 
-	if (*str != ':') {
-		printk(UM_KERN_ERR "tty_init : channel type 'tty' must specify "
+	if(*str != ':'){
+		printk("tty_init : channel type 'tty' must specify "
 		       "a device\n");
 		return NULL;
 	}
 	str++;
 
-	data = uml_kmalloc(sizeof(*data), UM_GFP_KERNEL);
-	if (data == NULL)
+	data = um_kmalloc(sizeof(*data));
+	if(data == NULL)
 		return NULL;
 	*data = ((struct tty_chan) { .dev 	= str,
 				     .raw 	= opts->raw });
@@ -42,26 +42,19 @@ static int tty_open(int input, int output, int primary, void *d,
 		    char **dev_out)
 {
 	struct tty_chan *data = d;
-	int fd, err, mode = 0;
+	int fd, err;
 
-	if (input && output)
-		mode = O_RDWR;
-	else if (input)
-		mode = O_RDONLY;
-	else if (output)
-		mode = O_WRONLY;
+	fd = os_open_file(data->dev, of_set_rw(OPENFLAGS(), input, output), 0);
+	if(fd < 0)
+		return fd;
 
-	fd = open(data->dev, mode);
-	if (fd < 0)
-		return -errno;
-
-	if (data->raw) {
+	if(data->raw){
 		CATCH_EINTR(err = tcgetattr(fd, &data->tt));
-		if (err)
+		if(err)
 			return err;
 
 		err = raw(fd);
-		if (err)
+		if(err)
 			return err;
 	}
 
@@ -69,7 +62,7 @@ static int tty_open(int input, int output, int primary, void *d,
 	return fd;
 }
 
-const struct chan_ops tty_ops = {
+struct chan_ops tty_ops = {
 	.type		= "tty",
 	.init		= tty_chan_init,
 	.open		= tty_open,

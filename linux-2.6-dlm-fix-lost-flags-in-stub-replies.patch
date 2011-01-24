@@ -1,0 +1,48 @@
+From: David Teigland <teigland@redhat.com>
+Subject: [RHEL5 PATCH] dlm: fix lost flags in stub replies
+Date: Mon, 11 Dec 2006 16:49:14 -0600
+Bugzilla: 218525
+Message-Id: <20061211224914.GB21119@redhat.com>
+Changelog: dlm: fix lost flags in stub replies
+
+
+bz 218525
+
+When the dlm fakes an unlock/cancel reply from a failed node using a stub
+message struct, it wasn't setting the flags in the stub message.  So, in
+the process of receiving the fake message the lkb flags would be updated
+and cleared from the zero flags in the message.  The problem observed in
+tests was the loss of the USER flag which caused the dlm to think a user
+lock was a kernel lock and subsequently fail an assertion checking the
+validity of the ast/callback field.
+
+
+Index: linux-2.6.19-quilt/fs/dlm/lock.c
+===================================================================
+--- linux-2.6.19-quilt.orig/fs/dlm/lock.c	2006-12-08 09:37:50.000000000 -0600
++++ linux-2.6.19-quilt/fs/dlm/lock.c	2006-12-11 10:39:18.891555645 -0600
+@@ -3148,6 +3148,7 @@
+ 	if (middle_conversion(lkb)) {
+ 		hold_lkb(lkb);
+ 		ls->ls_stub_ms.m_result = -EINPROGRESS;
++		ls->ls_stub_ms.m_flags = lkb->lkb_flags;
+ 		_remove_from_waiters(lkb);
+ 		_receive_convert_reply(lkb, &ls->ls_stub_ms);
+ 
+@@ -3221,6 +3222,7 @@
+ 		case DLM_MSG_UNLOCK:
+ 			hold_lkb(lkb);
+ 			ls->ls_stub_ms.m_result = -DLM_EUNLOCK;
++			ls->ls_stub_ms.m_flags = lkb->lkb_flags;
+ 			_remove_from_waiters(lkb);
+ 			_receive_unlock_reply(lkb, &ls->ls_stub_ms);
+ 			dlm_put_lkb(lkb);
+@@ -3229,6 +3231,7 @@
+ 		case DLM_MSG_CANCEL:
+ 			hold_lkb(lkb);
+ 			ls->ls_stub_ms.m_result = -DLM_ECANCEL;
++			ls->ls_stub_ms.m_flags = lkb->lkb_flags;
+ 			_remove_from_waiters(lkb);
+ 			_receive_cancel_reply(lkb, &ls->ls_stub_ms);
+ 			dlm_put_lkb(lkb);
+

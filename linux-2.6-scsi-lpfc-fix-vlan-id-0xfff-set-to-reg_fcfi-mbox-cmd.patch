@@ -1,0 +1,29 @@
+From: Rob Evers <revers@redhat.com>
+Date: Tue, 5 Oct 2010 14:24:40 -0400
+Subject: [scsi] lpfc: fix VLAN ID 0xFFF set to reg_fcfi mbox cmd
+Message-id: <1286288695-20754-9-git-send-email-revers@redhat.com>
+Patchwork-id: 28601
+O-Subject: [RHEL5.6 PATCH 08/23] Fixed VLAN ID 0xFFF set to reg_fcfi mailbox
+	command on FCF empty FCF VLAN bitmap (CR: 104503)
+Bugzilla: 619917
+RH-Acked-by: Tomas Henzl <thenzl@redhat.com>
+
+Fixed VLAN ID 0xFFF set to reg_fcfi mailbox command on FCF empty FCF VLAN bitmap (CR: 104503)
+
+From: Rob Evers on behalf of Emulex <revers@redhat.com>
+
+https://bugzilla.redhat.com/show_bug.cgi?id=619917
+
+diff --git a/drivers/scsi/lpfc/lpfc_mbox.c b/drivers/scsi/lpfc/lpfc_mbox.c
+index 5c3064d..02da9a0 100644
+--- a/drivers/scsi/lpfc/lpfc_mbox.c
++++ b/drivers/scsi/lpfc/lpfc_mbox.c
+@@ -2066,7 +2066,7 @@ lpfc_reg_fcfi(struct lpfc_hba *phba, struct lpfcMboxq *mbox)
+ 	       phba->fcf.current_rec.fcf_indx);
+ 	/* reg_fcf addr mode is bit wise inverted value of fcf addr_mode */
+ 	bf_set(lpfc_reg_fcfi_mam, reg_fcfi, (~phba->fcf.addr_mode) & 0x3);
+-	if (phba->fcf.current_rec.vlan_id != 0xFFFF) {
++	if (phba->fcf.current_rec.vlan_id != LPFC_FCOE_NULL_VID) {
+ 		bf_set(lpfc_reg_fcfi_vv, reg_fcfi, 1);
+ 		bf_set(lpfc_reg_fcfi_vlan_tag, reg_fcfi,
+ 		       phba->fcf.current_rec.vlan_id);

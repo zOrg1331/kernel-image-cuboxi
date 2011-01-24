@@ -1,0 +1,153 @@
+From: Eric Sandeen <sandeen@redhat.com>
+Date: Tue, 19 May 2009 09:53:56 -0500
+Subject: [fs] ext4: corruption fixes
+Message-id: 4A12C804.9000700@redhat.com
+O-Subject: [PATCH RHEL5.4] ext4: corruption fixes
+Bugzilla: 501082
+RH-Acked-by: Josef Bacik <josef@redhat.com>
+RH-Acked-by: Edward Shishkin <edward@redhat.com>
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+
+This is for [Bug 501082] RHEL5.4 ext4: backport corruption fixes from .30
+
+A few last-minute fixes for ext4, all recently committed upstream:
+
+9c1ee184a30394e54165fa4c15923cabd952c106 ext4: Fix sub-block zeroing for writes into preallocated extents
+33b9817e2ae097c7b8d256e3510ac6c54fc6d9d0 ext4: Use a fake block number for delayed new buffer_head
+2a8964d63d50dd2d65d71d342bc7fb6ef4117614 ext4: Clear the unwritten buffer_head flag after the extent is initialized
+2ec0ae3acec47f628179ee95fe2c4da01b5e9fc4 ext4: Fix race in ext4_inode_info.i_cached_extent
+
+The main bugs fixed here are:
+
+1) a partial write into a preallocated block will expose garbage
+from in the unwritten portion of the block
+2) races between reading & setting the cached extent on the inode
+can lead to a corrupt cached extent, and subsequent fs corruption
+
+Thanks,
+-Eric
+
+diff --git a/fs/ext4/extents.c b/fs/ext4/extents.c
+index a90617c..fe1645d 100644
+--- a/fs/ext4/extents.c
++++ b/fs/ext4/extents.c
+@@ -1740,11 +1740,13 @@ ext4_ext_put_in_cache(struct inode *inode, ext4_lblk_t block,
+ {
+ 	struct ext4_ext_cache *cex;
+ 	BUG_ON(len == 0);
++	spin_lock(&EXT4_I(inode)->i_block_reservation_lock);
+ 	cex = &EXT4_I(inode)->i_cached_extent;
+ 	cex->ec_type = type;
+ 	cex->ec_block = block;
+ 	cex->ec_len = len;
+ 	cex->ec_start = start;
++	spin_unlock(&EXT4_I(inode)->i_block_reservation_lock);
+ }
+ 
+ /*
+@@ -1801,12 +1803,17 @@ ext4_ext_in_cache(struct inode *inode, ext4_lblk_t block,
+ 			struct ext4_extent *ex)
+ {
+ 	struct ext4_ext_cache *cex;
++	int ret = EXT4_EXT_CACHE_NO;
+ 
++	/* 
++	 * We borrow i_block_reservation_lock to protect i_cached_extent
++	 */
++	spin_lock(&EXT4_I(inode)->i_block_reservation_lock);
+ 	cex = &EXT4_I(inode)->i_cached_extent;
+ 
+ 	/* has cache valid data? */
+ 	if (cex->ec_type == EXT4_EXT_CACHE_NO)
+-		return EXT4_EXT_CACHE_NO;
++		goto errout;
+ 
+ 	BUG_ON(cex->ec_type != EXT4_EXT_CACHE_GAP &&
+ 			cex->ec_type != EXT4_EXT_CACHE_EXTENT);
+@@ -1817,11 +1824,11 @@ ext4_ext_in_cache(struct inode *inode, ext4_lblk_t block,
+ 		ext_debug("%u cached by %u:%u:%llu\n",
+ 				block,
+ 				cex->ec_block, cex->ec_len, cex->ec_start);
+-		return cex->ec_type;
++		ret = cex->ec_type;
+ 	}
+-
+-	/* not in cache */
+-	return EXT4_EXT_CACHE_NO;
++errout:
++	spin_unlock(&EXT4_I(inode)->i_block_reservation_lock);
++	return ret;
+ }
+ 
+ /*
+@@ -2778,6 +2785,8 @@ int ext4_ext_get_blocks(handle_t *handle, struct inode *inode,
+ 				if (allocated > max_blocks)
+ 					allocated = max_blocks;
+ 				set_buffer_unwritten(bh_result);
++				bh_result->b_bdev = inode->i_sb->s_bdev;
++				bh_result->b_blocknr = newblock;
+ 				goto out2;
+ 			}
+ 
+diff --git a/fs/ext4/inode.c b/fs/ext4/inode.c
+index 75546bd..34bcc08 100644
+--- a/fs/ext4/inode.c
++++ b/fs/ext4/inode.c
+@@ -1069,6 +1069,7 @@ int ext4_get_blocks_wrap(handle_t *handle, struct inode *inode, sector_t block,
+ 	int retval;
+ 
+ 	clear_buffer_mapped(bh);
++	clear_buffer_unwritten(bh);
+ 
+ 	/*
+ 	 * Try to see if we can get  the block without requesting
+@@ -1099,6 +1100,18 @@ int ext4_get_blocks_wrap(handle_t *handle, struct inode *inode, sector_t block,
+ 		return retval;
+ 
+ 	/*
++	 * When we call get_blocks without the create flag, the
++	 * BH_Unwritten flag could have gotten set if the blocks
++	 * requested were part of a uninitialized extent.  We need to
++	 * clear this flag now that we are committed to convert all or
++	 * part of the uninitialized extent to be an initialized
++	 * extent.  This is because we need to avoid the combination
++	 * of BH_Unwritten and BH_Mapped flags being simultaneously
++	 * set on the buffer_head.
++	 */
++	clear_buffer_unwritten(bh);
++
++	/*
+ 	 * New blocks allocate and/or writing to uninitialized extent
+ 	 * will possibly result in updating i_data, so we take
+ 	 * the write lock of i_data_sem, and call get_blocks()
+@@ -2215,6 +2228,10 @@ static int ext4_da_get_block_prep(struct inode *inode, sector_t iblock,
+ 				  struct buffer_head *bh_result, int create)
+ {
+ 	int ret = 0;
++	sector_t invalid_block = ~((sector_t) 0xffff);
++
++	if (invalid_block < ext4_blocks_count(EXT4_SB(inode->i_sb)->s_es))
++		invalid_block = ~0;
+ 
+ 	BUG_ON(create == 0);
+ 	BUG_ON(bh_result->b_size != inode->i_sb->s_blocksize);
+@@ -2236,11 +2253,18 @@ static int ext4_da_get_block_prep(struct inode *inode, sector_t iblock,
+ 			/* not enough space to reserve */
+ 			return ret;
+ 
+-		map_bh(bh_result, inode->i_sb, 0);
++		map_bh(bh_result, inode->i_sb, invalid_block);
+ 		set_buffer_new(bh_result);
+ 		set_buffer_delay(bh_result);
+ 	} else if (ret > 0) {
+ 		bh_result->b_size = (ret << inode->i_blkbits);
++		/*
++		 * With sub-block writes into unwritten extents
++		 * we also need to mark the buffer as new so that
++		 * the unwritten parts of the buffer gets correctly zeroed.
++		 */
++		if (buffer_unwritten(bh_result))
++			set_buffer_new(bh_result);
+ 		ret = 0;
+ 	}
+ 

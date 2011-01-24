@@ -1,0 +1,120 @@
+From: Stanislaw Gruszka <sgruszka@redhat.com>
+Date: Fri, 30 Apr 2010 08:26:46 -0400
+Subject: [net] bnx2x: Added GRO support
+Message-id: <1272616006-3012-2-git-send-email-sgruszka@redhat.com>
+Patchwork-id: 24704
+O-Subject: [RHEL5.6 PATCH 2/2] bnx2x: Added GRO support
+Bugzilla: 573114
+RH-Acked-by: David S. Miller <davem@redhat.com>
+
+BZ#573114
+
+From:
+Dmitry Kravkov <dmitry@broadcom.com>
+
+Description (from upstream commit):
+Adding GRO support on top of the HW LRO (TPA) support –
+there is no measurable performance drawback of adding GRO
+on top of it, and it allows better performance when LRO (TPA)
+is turned off for virtualization or bridging.
+
+Upstream:
+Patch is in net-next tree
+commit 4fd89b7af28292e190650b9b9bc4308658d81dd1
+Author: Dmitry Kravkov <dmitry@broadcom.com>
+Date:   Thu Apr 1 19:45:34 2010 -0700
+
+    bnx2x: Added GRO support
+
+Testing:
+Tested by me by doing ssh and ftp with different module and ethtool
+options. Additionally I run iperf on xen and patch shows perfomance
+improvements.
+
+diff --git a/drivers/net/bnx2x.h b/drivers/net/bnx2x.h
+index 9144aa2..e3f97ed 100644
+--- a/drivers/net/bnx2x.h
++++ b/drivers/net/bnx2x.h
+@@ -260,6 +260,7 @@ struct bnx2x_eth_q_stats {
+ struct bnx2x_fastpath {
+ 
+ 	struct net_device	dummy_netdev;
++	struct napi_struct	napi;
+ 
+ 	struct host_status_block *status_blk;
+ 	dma_addr_t		status_blk_mapping;
+diff --git a/drivers/net/bnx2x_main.c b/drivers/net/bnx2x_main.c
+index 2202ad3..b8b5266 100644
+--- a/drivers/net/bnx2x_main.c
++++ b/drivers/net/bnx2x_main.c
+@@ -56,7 +56,7 @@
+ #include "bnx2x_init_ops.h"
+ #include "bnx2x_dump.h"
+ 
+-#define DRV_MODULE_VERSION	"1.52.1-7"
++#define DRV_MODULE_VERSION	"1.52.1-8"
+ #define DRV_MODULE_RELDATE	"2010/02/28"
+ #define BNX2X_BC_VER		0x040200
+ 
+@@ -1434,12 +1434,13 @@ static void bnx2x_tpa_stop(struct bnx2x *bp, struct bnx2x_fastpath *fp,
+ #ifdef BCM_VLAN
+ 			if ((bp->vlgrp != NULL) && is_vlan_cqe &&
+ 			    (!is_not_hwaccel_vlan_cqe))
+-				vlan_hwaccel_receive_skb(skb, bp->vlgrp,
+-						le16_to_cpu(cqe->fast_path_cqe.
+-							    vlan_tag));
++				vlan_gro_receive(&fp->napi, bp->vlgrp,
++						 le16_to_cpu(cqe->fast_path_cqe.
++							     vlan_tag), skb);
++
+ 			else
+ #endif
+-				netif_receive_skb(skb);
++				napi_gro_receive(&fp->napi, skb);
+ 		} else {
+ 			DP(NETIF_MSG_RX_STATUS, "Failed to allocate new pages"
+ 			   " - dropping packet!\n");
+@@ -1691,11 +1692,11 @@ reuse_rx:
+ 		if ((bp->vlgrp != NULL) && (bp->flags & HW_VLAN_RX_FLAG) &&
+ 		    (le16_to_cpu(cqe->fast_path_cqe.pars_flags.flags) &
+ 		     PARSING_FLAGS_VLAN))
+-			vlan_hwaccel_receive_skb(skb, bp->vlgrp,
+-				le16_to_cpu(cqe->fast_path_cqe.vlan_tag));
++			vlan_gro_receive(&fp->napi, bp->vlgrp,
++				le16_to_cpu(cqe->fast_path_cqe.vlan_tag), skb);
+ 		else
+ #endif
+-			netif_receive_skb(skb);
++			napi_gro_receive(&fp->napi, skb);
+ 
+ 		bp->dev->last_rx = jiffies;
+ 
+@@ -7383,9 +7384,12 @@ static void bnx2x_alloc_napi(struct bnx2x *bp)
+ 	/* initialize net_device for each interrupt */
+ 	for_each_queue(bp, i) {
+ 		struct net_device *dummy_netdev = &bnx2x_fp(bp, i, dummy_netdev);
++		struct napi_struct *napi = &bnx2x_fp(bp, i, napi);
++
+ 		dummy_netdev->poll = bnx2x_poll;
+ 		dummy_netdev->priv = &bp->fp[i];
+ 		dummy_netdev->weight = 128;
++		napi->dev = bp->dev;
+ 		set_bit(__LINK_STATE_START, &dummy_netdev->state);
+ 	}
+ }
+@@ -8950,6 +8954,7 @@ static int __devinit bnx2x_init_bp(struct bnx2x *bp)
+ 	}
+ 	bp->multi_mode = multi_mode;
+ 
++	bp->dev->features |= NETIF_F_GRO;
+ 
+ 	/* Set TPA flags */
+ 	if (disable_tpa) {
+@@ -11000,6 +11005,7 @@ static int bnx2x_poll(struct net_device *dev, int *budget)
+ #ifdef BNX2X_STOP_ON_ERROR
+ poll_panic:
+ #endif
++		napi_gro_flush(&fp->napi);
+ 		netif_rx_complete(dev);
+ 
+ 		bnx2x_ack_sb(bp, fp->sb_id, USTORM_ID,

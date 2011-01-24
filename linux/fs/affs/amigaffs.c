@@ -170,27 +170,21 @@ affs_remove_link(struct dentry *dentry)
 		if (!link_bh)
 			goto done;
 
-		dir = affs_iget(sb, be32_to_cpu(AFFS_TAIL(sb, link_bh)->parent));
-		if (IS_ERR(dir)) {
-			retval = PTR_ERR(dir);
+		dir = iget(sb, be32_to_cpu(AFFS_TAIL(sb, link_bh)->parent));
+		if (!dir)
 			goto done;
-		}
 
 		affs_lock_dir(dir);
 		affs_fix_dcache(dentry, link_ino);
 		retval = affs_remove_hash(dir, link_bh);
-		if (retval) {
-			affs_unlock_dir(dir);
+		if (retval)
 			goto done;
-		}
 		mark_buffer_dirty_inode(link_bh, inode);
 
 		memcpy(AFFS_TAIL(sb, bh)->name, AFFS_TAIL(sb, link_bh)->name, 32);
 		retval = affs_insert_hash(dir, bh);
-		if (retval) {
-			affs_unlock_dir(dir);
+		if (retval)
 			goto done;
-		}
 		mark_buffer_dirty_inode(bh, inode);
 
 		affs_unlock_dir(dir);
@@ -451,7 +445,7 @@ affs_error(struct super_block *sb, const char *function, const char *fmt, ...)
 	va_list	 args;
 
 	va_start(args,fmt);
-	vsnprintf(ErrorBuffer,sizeof(ErrorBuffer),fmt,args);
+	vsprintf(ErrorBuffer,fmt,args);
 	va_end(args);
 
 	printk(KERN_CRIT "AFFS error (device %s): %s(): %s\n", sb->s_id,
@@ -467,7 +461,7 @@ affs_warning(struct super_block *sb, const char *function, const char *fmt, ...)
 	va_list	 args;
 
 	va_start(args,fmt);
-	vsnprintf(ErrorBuffer,sizeof(ErrorBuffer),fmt,args);
+	vsprintf(ErrorBuffer,fmt,args);
 	va_end(args);
 
 	printk(KERN_WARNING "AFFS warning (device %s): %s(): %s\n", sb->s_id,

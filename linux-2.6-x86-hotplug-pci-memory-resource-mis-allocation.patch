@@ -1,0 +1,400 @@
+From: Konrad Rzeszutek <konradr@redhat.com>
+Date: Fri, 26 Oct 2007 11:55:11 -0400
+Subject: [x86] hotplug: PCI memory resource mis-allocation
+Message-id: 20071026155511.GA21319@mars.boston.redhat.com
+O-Subject: [RHEL5 U2 PATCH] RHBZ 252260: PCI memory resource mis-allocation during ACPI PCI hotplug
+Bugzilla: 252260
+
+RHBZ#:
+------
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=252260
+
+Description:
+------------
+The four patches (rolled in one here) that follow resolve an
+issue where incorrect
+PCI memory and i/o ranges are being assigned to hotplugged
+PCI devices on some IBM systems.  The resource mis-allocation
+not only makes the hotplugged PCI device unuseable but it
+often makes the entire system unusable due to machine checks
+that are generated when the driver attempts to access
+the incorrect range.
+
+The hotplug capable PCI slots on the affected systems are not
+located under a standard P2P bridge but are instead located
+under PCI root bridges or subtractive decode P2P bridges.
+For example, the IBM x3850 contains 2 hotplug capable PCI-X
+slots and 4 hotplug capable PCIe slots with the PCI-X slots
+each located under a PCI root bridge and the PCIe slots each
+located under a subtractive decode P2P bridge.
+
+The current i386/x86_64 PCI resource allocation code does
+not use _CRS returned resource information.  No other resource
+information is available for slots that are not below a standard
+P2P bridge so incorrect ranges are allocated from an e820 hole.
+One of the following patches adds code that utilizes _CRS
+returned resource information.
+
+The BIOS on the affected systems also reduces the resources
+allotted to slots that are populated during boot in order to
+conserve available resources for multi-node configurations.
+After implementing the change to use _CRS we started running
+into problems allocating within the _CRS allotted ranges
+which identified need for the other three patches.
+
+RHEL Version Found:
+------------------
+RHEL5.0
+
+kABI Status:
+------------
+No kABI breakage.
+
+Brew:
+-----
+Built on all platforms.
+
+Upstream Status:
+----------------
+In 2.6.24-rc1
+
+Test Status:
+-------------
+Tested for regression on the affected platform as well as other
+models (earlier version of the hardware) with success. Test was
+hotplugging a 3COM NIC and a Qlogic iSCSI card repeadtly and
+confirming that the driver was functioning properly.
+
+Proposed Patch:
+---------------
+This patch is based on 2.6.18-51.el5
+
+diff --git a/Documentation/kernel-parameters.txt b/Documentation/kernel-parameters.txt
+index 4f239be..5c9ad06 100644
+--- a/Documentation/kernel-parameters.txt
++++ b/Documentation/kernel-parameters.txt
+@@ -1245,6 +1245,8 @@ running once the system is up.
+ 				IRQ routing is enabled.
+ 		noacpi		[IA-32] Do not use ACPI for IRQ routing
+ 				or for PCI scanning.
++		use_crs		[X86-32] Use _CRS for PCI resource
++				allocation.
+ 		routeirq	Do IRQ routing for all PCI devices.
+ 				This is normally done in pci_enable_device(),
+ 				so this option is a temporary workaround
+diff --git a/arch/i386/pci/acpi.c b/arch/i386/pci/acpi.c
+index b33aea8..1151a06 100644
+--- a/arch/i386/pci/acpi.c
++++ b/arch/i386/pci/acpi.c
+@@ -2,13 +2,191 @@
+ #include <linux/acpi.h>
+ #include <linux/init.h>
+ #include <linux/irq.h>
++#include <linux/dmi.h>
+ #include <asm/numa.h>
+ #include "pci.h"
+ 
++static int __devinit can_skip_ioresource_align(struct dmi_system_id *d)
++{
++	pci_probe |= PCI_CAN_SKIP_ISA_ALIGN;
++	printk(KERN_INFO "PCI: %s detected, can skip ISA alignment\n", d->ident);
++	return 0;
++}
++
++static struct dmi_system_id acpi_pciprobe_dmi_table[] = {
++/*
++ * Systems where PCI IO resource ISA alignment can be skipped
++ * when the ISA enable bit in the bridge control is not set
++ */
++	{
++		.callback = can_skip_ioresource_align,
++		.ident = "IBM System x3800",
++		.matches = {
++			DMI_MATCH(DMI_SYS_VENDOR, "IBM"),
++			DMI_MATCH(DMI_PRODUCT_NAME, "x3800"),
++		},
++	},
++	{
++		.callback = can_skip_ioresource_align,
++		.ident = "IBM System x3850",
++		.matches = {
++			DMI_MATCH(DMI_SYS_VENDOR, "IBM"),
++			DMI_MATCH(DMI_PRODUCT_NAME, "x3850"),
++		},
++	},
++	{
++		.callback = can_skip_ioresource_align,
++		.ident = "IBM System x3950",
++		.matches = {
++			DMI_MATCH(DMI_SYS_VENDOR, "IBM"),
++			DMI_MATCH(DMI_PRODUCT_NAME, "x3950"),
++		},
++	},
++	{}
++};
++
++struct pci_root_info {
++	char *name;
++	unsigned int res_num;
++	struct resource *res;
++	struct pci_bus *bus;
++	int busnum;
++};
++
++static acpi_status
++resource_to_addr(struct acpi_resource *resource,
++			struct acpi_resource_address64 *addr)
++{
++	acpi_status status;
++
++	status = acpi_resource_to_address64(resource, addr);
++	if (ACPI_SUCCESS(status) &&
++	    (addr->resource_type == ACPI_MEMORY_RANGE ||
++	    addr->resource_type == ACPI_IO_RANGE) &&
++	    addr->address_length > 0 &&
++	    addr->producer_consumer == ACPI_PRODUCER) {
++		return AE_OK;
++	}
++	return AE_ERROR;
++}
++
++static acpi_status
++count_resource(struct acpi_resource *acpi_res, void *data)
++{
++	struct pci_root_info *info = data;
++	struct acpi_resource_address64 addr;
++	acpi_status status;
++
++	status = resource_to_addr(acpi_res, &addr);
++	if (ACPI_SUCCESS(status))
++		info->res_num++;
++	return AE_OK;
++}
++
++static acpi_status
++setup_resource(struct acpi_resource *acpi_res, void *data)
++{
++	struct pci_root_info *info = data;
++	struct resource *res;
++	struct acpi_resource_address64 addr;
++	acpi_status status;
++	unsigned long flags;
++	struct resource *root;
++
++	status = resource_to_addr(acpi_res, &addr);
++	if (!ACPI_SUCCESS(status))
++		return AE_OK;
++
++	if (addr.resource_type == ACPI_MEMORY_RANGE) {
++		root = &iomem_resource;
++		flags = IORESOURCE_MEM;
++		if (addr.info.mem.caching == ACPI_PREFETCHABLE_MEMORY)
++			flags |= IORESOURCE_PREFETCH;
++	} else if (addr.resource_type == ACPI_IO_RANGE) {
++		root = &ioport_resource;
++		flags = IORESOURCE_IO;
++	} else
++		return AE_OK;
++
++	res = &info->res[info->res_num];
++	res->name = info->name;
++	res->flags = flags;
++	res->start = addr.minimum + addr.translation_offset;
++	res->end = res->start + addr.address_length - 1;
++	res->child = NULL;
++
++	if (insert_resource(root, res)) {
++		printk(KERN_ERR "PCI: Failed to allocate 0x%lx-0x%lx "
++			"from %s for %s\n", (unsigned long) res->start,
++			(unsigned long) res->end, root->name, info->name);
++	} else {
++		info->bus->resource[info->res_num] = res;
++		info->res_num++;
++	}
++	return AE_OK;
++}
++
++static void
++adjust_transparent_bridge_resources(struct pci_bus *bus)
++{
++	struct pci_dev *dev;
++
++	list_for_each_entry(dev, &bus->devices, bus_list) {
++		int i;
++		u16 class = dev->class >> 8;
++
++		if (class == PCI_CLASS_BRIDGE_PCI && dev->transparent) {
++			for(i = 3; i < PCI_BUS_NUM_RESOURCES; i++)
++				dev->subordinate->resource[i] =
++						dev->bus->resource[i - 3];
++		}
++	}
++}
++
++static void
++get_current_resources(struct acpi_device *device, int busnum,
++			struct pci_bus *bus)
++{
++	struct pci_root_info info;
++	size_t size;
++
++	info.bus = bus;
++	info.res_num = 0;
++	acpi_walk_resources(device->handle, METHOD_NAME__CRS, count_resource,
++				&info);
++	if (!info.res_num)
++		return;
++
++	size = sizeof(*info.res) * info.res_num;
++	info.res = kmalloc(size, GFP_KERNEL);
++	if (!info.res)
++		goto res_alloc_fail;
++
++	info.name = kmalloc(12, GFP_KERNEL);
++	if (!info.name)
++		goto name_alloc_fail;
++	sprintf(info.name, "PCI Bus #%02x", busnum);
++
++	info.res_num = 0;
++	acpi_walk_resources(device->handle, METHOD_NAME__CRS, setup_resource,
++				&info);
++	if (info.res_num)
++		adjust_transparent_bridge_resources(bus);
++
++	return;
++
++name_alloc_fail:
++	kfree(info.res);
++res_alloc_fail:
++	return;
++}
++
+ struct pci_bus * __devinit pci_acpi_scan_root(struct acpi_device *device, int domain, int busnum)
+ {
+ 	struct pci_bus *bus;
+ 
++	dmi_check_system(acpi_pciprobe_dmi_table);
++
+ 	if (domain != 0) {
+ 		printk(KERN_WARNING "PCI: Multiple domains not supported\n");
+ 		return NULL;
+@@ -25,6 +203,9 @@ struct pci_bus * __devinit pci_acpi_scan_root(struct acpi_device *device, int do
+ 		}
+ 	}
+ #endif
++
++	if (bus && (pci_probe & PCI_USE__CRS))
++		get_current_resources(device, busnum, bus);
+ 	
+ 	return bus;
+ }
+diff --git a/arch/i386/pci/common.c b/arch/i386/pci/common.c
+index 18fab0e..e4e418a 100644
+--- a/arch/i386/pci/common.c
++++ b/arch/i386/pci/common.c
+@@ -440,6 +440,9 @@ char * __devinit  pcibios_setup(char *str)
+ 	} else if (!strcmp(str, "assign-busses")) {
+ 		pci_probe |= PCI_ASSIGN_ALL_BUSSES;
+ 		return NULL;
++	} else if (!strcmp(str, "use_crs")) {
++		pci_probe |= PCI_USE__CRS;
++		return NULL;
+ 	} else if (!strcmp(str, "routeirq")) {
+ 		pci_routeirq = 1;
+ 		return NULL;
+diff --git a/arch/i386/pci/i386.c b/arch/i386/pci/i386.c
+index 10154a2..b4d0a0e 100644
+--- a/arch/i386/pci/i386.c
++++ b/arch/i386/pci/i386.c
+@@ -33,6 +33,15 @@
+ 
+ #include "pci.h"
+ 
++static int
++skip_isa_ioresource_align(struct pci_dev *dev) {
++
++	if ((pci_probe & PCI_CAN_SKIP_ISA_ALIGN) &&
++	    (dev->bus->bridge_ctl & PCI_BRIDGE_CTL_NO_ISA))
++		return 1;
++	return 0;
++}
++
+ /*
+  * We need to avoid collisions with `mirrored' VGA ports
+  * and other strange ISA hardware, so we always want the
+@@ -50,9 +59,13 @@ void
+ pcibios_align_resource(void *data, struct resource *res,
+ 			resource_size_t size, resource_size_t align)
+ {
++	struct pci_dev *dev = data;
++
+ 	if (res->flags & IORESOURCE_IO) {
+ 		resource_size_t start = res->start;
+ 
++		if (skip_isa_ioresource_align(dev))
++			return;
+ 		if (start & 0x300) {
+ 			start = (start + 0x3ff) & ~0x3ff;
+ 			res->start = start;
+diff --git a/arch/i386/pci/pci.h b/arch/i386/pci/pci.h
+index 2340c58..09ea717 100644
+--- a/arch/i386/pci/pci.h
++++ b/arch/i386/pci/pci.h
+@@ -25,6 +25,8 @@
+ #define PCI_ASSIGN_ROMS		0x1000
+ #define PCI_BIOS_IRQ_SCAN	0x2000
+ #define PCI_ASSIGN_ALL_BUSSES	0x4000
++#define PCI_CAN_SKIP_ISA_ALIGN	0x8000
++#define PCI_USE__CRS		0x10000
+ 
+ extern unsigned int pci_probe;
+ extern unsigned long pirq_table_addr;
+diff --git a/drivers/pci/probe.c b/drivers/pci/probe.c
+index db714a8..79cd2f8 100644
+--- a/drivers/pci/probe.c
++++ b/drivers/pci/probe.c
+@@ -235,8 +235,7 @@ static void pci_read_bases(struct pci_dev *dev, unsigned int howmany, int rom)
+ 			sz = pci_size(l, sz, (u32)PCI_ROM_ADDRESS_MASK);
+ 			if (sz) {
+ 				res->flags = (l & IORESOURCE_ROM_ENABLE) |
+-				  IORESOURCE_MEM | IORESOURCE_PREFETCH |
+-				  IORESOURCE_READONLY | IORESOURCE_CACHEABLE;
++				  IORESOURCE_MEM | IORESOURCE_READONLY;
+ 				res->start = l & PCI_ROM_ADDRESS_MASK;
+ 				res->end = res->start + (unsigned long) sz;
+ 			}
+@@ -491,7 +490,7 @@ int __devinit pci_scan_bridge(struct pci_bus *bus, struct pci_dev * dev, int max
+ 			goto out;
+ 		child->primary = buses & 0xFF;
+ 		child->subordinate = (buses >> 16) & 0xFF;
+-		child->bridge_ctl = bctl;
++		child->bridge_ctl = bctl ^ PCI_BRIDGE_CTL_NO_ISA;
+ 
+ 		cmax = pci_scan_child_bus(child);
+ 		if (cmax > max)
+@@ -544,7 +543,7 @@ int __devinit pci_scan_bridge(struct pci_bus *bus, struct pci_dev * dev, int max
+ 		pci_write_config_dword(dev, PCI_PRIMARY_BUS, buses);
+ 
+ 		if (!is_cardbus) {
+-			child->bridge_ctl = bctl | PCI_BRIDGE_CTL_NO_ISA;
++			child->bridge_ctl = bctl ^ PCI_BRIDGE_CTL_NO_ISA;
+ 			/*
+ 			 * Adjust subordinate busnr in parent buses.
+ 			 * We do this before scanning for children because
+diff --git a/drivers/pci/setup-bus.c b/drivers/pci/setup-bus.c
+index 8f7bcf5..0bba74c 100644
+--- a/drivers/pci/setup-bus.c
++++ b/drivers/pci/setup-bus.c
+@@ -487,7 +487,12 @@ pci_bus_size_bridges(struct pci_bus *bus)
+ 		break;
+ 
+ 	case PCI_CLASS_BRIDGE_PCI:
++		/* don't size subtractive decoding (transparent)
++		 * PCI-to-PCI bridges */
++		if (bus->self->transparent)
++			break;
+ 		pci_bridge_check_ranges(bus);
++		/* fall through */
+ 	default:
+ 		pbus_size_io(bus);
+ 		/* If the bridge supports prefetchable range, size it

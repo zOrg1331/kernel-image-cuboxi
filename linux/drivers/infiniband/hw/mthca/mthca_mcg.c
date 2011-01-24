@@ -28,8 +28,11 @@
  * ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
  * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  * SOFTWARE.
+ *
+ * $Id: mthca_mcg.c 1349 2004-12-16 21:09:43Z roland $
  */
 
+#include <linux/init.h>
 #include <linux/string.h>
 #include <linux/slab.h>
 
@@ -87,7 +90,17 @@ static int find_mgm(struct mthca_dev *dev,
 	}
 
 	if (0)
-		mthca_dbg(dev, "Hash for %pI6 is %04x\n", gid, *hash);
+		mthca_dbg(dev, "Hash for %04x:%04x:%04x:%04x:"
+			  "%04x:%04x:%04x:%04x is %04x\n",
+			  be16_to_cpu(((__be16 *) gid)[0]),
+			  be16_to_cpu(((__be16 *) gid)[1]),
+			  be16_to_cpu(((__be16 *) gid)[2]),
+			  be16_to_cpu(((__be16 *) gid)[3]),
+			  be16_to_cpu(((__be16 *) gid)[4]),
+			  be16_to_cpu(((__be16 *) gid)[5]),
+			  be16_to_cpu(((__be16 *) gid)[6]),
+			  be16_to_cpu(((__be16 *) gid)[7]),
+			  *hash);
 
 	*index = *hash;
 	*prev  = -1;
@@ -254,7 +267,16 @@ int mthca_multicast_detach(struct ib_qp *ibqp, union ib_gid *gid, u16 lid)
 		goto out;
 
 	if (index == -1) {
-		mthca_err(dev, "MGID %pI6 not found\n", gid->raw);
+		mthca_err(dev, "MGID %04x:%04x:%04x:%04x:%04x:%04x:%04x:%04x "
+			  "not found\n",
+			  be16_to_cpu(((__be16 *) gid->raw)[0]),
+			  be16_to_cpu(((__be16 *) gid->raw)[1]),
+			  be16_to_cpu(((__be16 *) gid->raw)[2]),
+			  be16_to_cpu(((__be16 *) gid->raw)[3]),
+			  be16_to_cpu(((__be16 *) gid->raw)[4]),
+			  be16_to_cpu(((__be16 *) gid->raw)[5]),
+			  be16_to_cpu(((__be16 *) gid->raw)[6]),
+			  be16_to_cpu(((__be16 *) gid->raw)[7]));
 		err = -EINVAL;
 		goto out;
 	}
@@ -349,7 +371,7 @@ int mthca_multicast_detach(struct ib_qp *ibqp, union ib_gid *gid, u16 lid)
 	return err;
 }
 
-int mthca_init_mcg_table(struct mthca_dev *dev)
+int __devinit mthca_init_mcg_table(struct mthca_dev *dev)
 {
 	int err;
 	int table_size = dev->limits.num_mgms + dev->limits.num_amgms;

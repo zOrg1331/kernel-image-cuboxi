@@ -1,0 +1,43 @@
+X-UIDL: 0e57c3e848fb23f0
+X-Mozilla-Status: 0001
+X-Mozilla-Status2: 00000000
+Received: from sw.ru ([192.168.3.106])
+	by relay.sw.ru (8.13.4/8.13.4) with SMTP id l6HK4H5h006936;
+	Wed, 18 Jul 2007 00:04:18 +0400 (MSD)
+Received: by sw.ru (nbSMTP-1.00) for uid 1008
+	dmonakhov@sw.ru; Wed, 18 Jul 2007 00:04:58 +0400 (MSD)
+Date: Wed, 18 Jul 2007 00:04:57 +0400
+From: Dmitry Monakhov <dmonakhov@sw.ru>
+To: vz@lists.sw.ru
+Cc: dev@sw.ru
+Subject: [PATCH] gfs: dread fix
+Message-ID: <20070717200457.GC11028@dnb.sw.ru>
+MIME-Version: 1.0
+Content-Type: text/plain; charset=us-ascii
+Content-Disposition: inline
+User-Agent: Mutt/1.5.15 (2007-04-06)
+
+Prevent possible NULL pointer dereference because gfs_dgetblk()
+may return NULL.
+---
+ fs/gfs/dio.c |    2 ++
+ 1 files changed, 2 insertions(+), 0 deletions(-)
+
+diff --git a/fs/gfs/dio.c b/fs/gfs/dio.c
+index 277b93e..bcf72c8 100644
+--- a/fs/gfs/dio.c
++++ b/fs/gfs/dio.c
+@@ -520,6 +520,8 @@ gfs_dread(struct gfs_glock *gl, uint64_t blkno,
+ 	int error;
+ 
+ 	*bhp = gfs_dgetblk(gl, blkno);
++	if (*bhp == NULL)
++		return -ENOBUFS;
+ 	error = gfs_dreread(gl->gl_sbd, *bhp, flags);
+ 	if (error)
+ 		brelse(*bhp);
+-- 
+1.5.2.2
+
+
+

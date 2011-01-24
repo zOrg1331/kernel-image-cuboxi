@@ -1,0 +1,88 @@
+From: Jeff Moyer <jmoyer@redhat.com>
+Date: Tue, 3 Nov 2009 11:36:43 -0500
+Subject: [block] cfq: change the meaning of the cfqq_coop flag
+Message-id: 1257266206-24003-10-git-send-email-jmoyer@redhat.com
+O-Subject: [PATCH 09/12] cfq: change the meaning of the cfqq_coop flag
+Bugzilla: 456181 448130 427709
+RH-Acked-by: Josef Bacik <josef@redhat.com>
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+RH-Acked-by: Vivek Goyal <vgoyal@redhat.com>
+
+commit b3b6d0408c953524f979468562e7e210d8634150
+Author: Jeff Moyer <jmoyer@redhat.com>
+Date:   Fri Oct 23 17:14:51 2009 -0400
+
+    cfq: change the meaning of the cfqq_coop flag
+
+    The flag used to indicate that a cfqq was allowed to jump ahead in the
+    scheduling order due to submitting a request close to the queue that
+    just executed.  Since closely cooperating queues are now merged, the flag
+    holds little meaning.  Change it to indicate that multiple queues were
+    merged.  This will later be used to allow the breaking up of merged queues
+    when they are no longer cooperating.
+
+    Signed-off-by: Jeff Moyer <jmoyer@redhat.com>
+    Signed-off-by: Jens Axboe <jens.axboe@oracle.com>
+
+diff --git a/block/cfq-iosched.c b/block/cfq-iosched.c
+index 9d38fd8..69c906f 100644
+--- a/block/cfq-iosched.c
++++ b/block/cfq-iosched.c
+@@ -1019,9 +1019,6 @@ static struct cfq_queue *cfq_set_active_queue(struct cfq_data *cfqd,
+ 			mod_timer(&cfqd->idle_class_timer, end);
+ 	}
+ 
+-	if (cfqq)
+-		cfq_clear_cfqq_coop(cfqq);
+-
+ set_queue:
+ 	__cfq_set_active_queue(cfqd, cfqq);
+ 	return cfqq;
+@@ -1079,8 +1076,7 @@ static struct cfq_queue *cfqq_close(struct cfq_data *cfqd,
+  * assumption.
+  */
+ static struct cfq_queue *cfq_close_cooperator(struct cfq_data *cfqd,
+-					      struct cfq_queue *cur_cfqq,
+-					      int probe)
++					      struct cfq_queue *cur_cfqq)
+ {
+ 	struct cfq_queue *cfqq;
+ 
+@@ -1099,11 +1095,6 @@ static struct cfq_queue *cfq_close_cooperator(struct cfq_data *cfqd,
+ 	if (!cfq_cfqq_sync(cfqq))
+ 		return NULL;
+ 
+-	if (cfq_cfqq_coop(cfqq))
+-		return NULL;
+-
+-	if (!probe)
+-		cfq_mark_cfqq_coop(cfqq);
+ 	return cfqq;
+ }
+ 
+@@ -1287,7 +1278,7 @@ static struct cfq_queue *cfq_select_queue(struct cfq_data *cfqd)
+ 	 * cooperators and put the close queue at the front of the service
+ 	 * tree.  If possible, merge the expiring queue with the new cfqq.
+ 	 */
+-	else if ((new_cfqq = cfq_close_cooperator(cfqd, cfqq, 0))) {
++	else if ((new_cfqq = cfq_close_cooperator(cfqd, cfqq))) {
+ 		if (!cfqq->new_cfqq)
+ 			cfq_setup_merge(cfqq, new_cfqq);
+ 		goto expire;
+@@ -2152,7 +2143,7 @@ static void cfq_completed_request(request_queue_t *q, struct request *rq)
+ 		if (time_after(now, cfqq->slice_end))
+ 			cfq_slice_expired(cfqd, 0);
+ 		else if (cfqq_empty &&
+-			 !cfq_close_cooperator(cfqd, cfqq, 1) && sync)
++			 !cfq_close_cooperator(cfqd, cfqq) && sync)
+ 			cfq_arm_slice_timer(cfqd, cfqq);
+ 	}
+ 
+@@ -2301,6 +2292,7 @@ cfq_merge_cfqqs(struct cfq_data *cfqd, struct cfq_io_context *cic,
+ 		struct cfq_queue *cfqq)
+ {
+ 	cic->cfqq[SYNC] = cfqq->new_cfqq;
++	cfq_mark_cfqq_coop(cfqq->new_cfqq);
+ 	cfq_put_queue(cfqq);
+ 	return cic->cfqq[SYNC];
+ }

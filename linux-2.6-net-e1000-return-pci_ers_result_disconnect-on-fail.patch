@@ -1,0 +1,36 @@
+From: Dean Nelson <dnelson@redhat.com>
+Date: Fri, 7 Aug 2009 20:21:07 -0400
+Subject: [net] e1000: return PCI_ERS_RESULT_DISCONNECT on fail
+Message-id: 20090808002106.4993.59976.send-patch@aqua
+O-Subject: [RHEL5.5 PATCH] e1000: return PCI_ERS_RESULT_DISCONNECT on permanent failure
+Bugzilla: 508389
+RH-Acked-by: Jiri Pirko <jpirko@redhat.com>
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+RH-Acked-by: Andy Gospodarek <gospo@redhat.com>
+
+PCI drivers that implement the struct pci_error_handlers' error_detected
+callback should return PCI_ERS_RESULT_DISCONNECT if the state passed in is
+pci_channel_io_perm_failure. This patch fixes the issue for e1000.
+
+This patch is a backport of an upstream commit.
+See http://git.kernel.org/linus/eab633021c26025b34f36f79f0311d3d99f40ceb
+
+Actual testing was done by IBM.
+See RHBZ comments #11 & #12.
+
+Resolves RHBZ 508389.
+
+diff --git a/drivers/net/e1000/e1000_main.c b/drivers/net/e1000/e1000_main.c
+index cb5b9bd..f6b473f 100644
+--- a/drivers/net/e1000/e1000_main.c
++++ b/drivers/net/e1000/e1000_main.c
+@@ -5319,6 +5319,9 @@ static pci_ers_result_t e1000_io_error_detected(struct pci_dev *pdev, pci_channe
+ 
+ 	netif_device_detach(netdev);
+ 
++	if (state == pci_channel_io_perm_failure)
++		return PCI_ERS_RESULT_DISCONNECT;
++
+ 	if (netif_running(netdev))
+ 		e1000_down(adapter);
+ 	pci_disable_device(pdev);

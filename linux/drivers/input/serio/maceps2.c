@@ -72,7 +72,8 @@ static int maceps2_write(struct serio *dev, unsigned char val)
 	return -1;
 }
 
-static irqreturn_t maceps2_interrupt(int irq, void *dev_id)
+static irqreturn_t maceps2_interrupt(int irq, void *dev_id,
+				     struct pt_regs *regs)
 {
 	struct serio *dev = dev_id;
 	struct mace_ps2port *port = ((struct maceps2_data *)dev->port_data)->port;
@@ -80,7 +81,7 @@ static irqreturn_t maceps2_interrupt(int irq, void *dev_id)
 
 	if (port->status & PS2_STATUS_RX_FULL) {
 		byte = port->rx;
-		serio_interrupt(dev, byte & 0xff, 0);
+		serio_interrupt(dev, byte & 0xff, 0, regs);
         }
 
 	return IRQ_HANDLED;

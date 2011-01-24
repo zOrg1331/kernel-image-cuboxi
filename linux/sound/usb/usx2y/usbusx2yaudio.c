@@ -31,6 +31,7 @@
  */
 
 
+#include <sound/driver.h>
 #include <linux/interrupt.h>
 #include <linux/usb.h>
 #include <sound/core.h>
@@ -296,17 +297,16 @@ static void usX2Y_error_urb_status(struct usX2Ydev *usX2Y,
 static void usX2Y_error_sequence(struct usX2Ydev *usX2Y,
 				 struct snd_usX2Y_substream *subs, struct urb *urb)
 {
-	snd_printk(KERN_ERR
-"Sequence Error!(hcd_frame=%i ep=%i%s;wait=%i,frame=%i).\n"
-"Most propably some urb of usb-frame %i is still missing.\n"
-"Cause could be too long delays in usb-hcd interrupt handling.\n",
+	snd_printk(KERN_ERR "Sequence Error!(hcd_frame=%i ep=%i%s;wait=%i,frame=%i).\n"
+		   KERN_ERR "Most propably some urb of usb-frame %i is still missing.\n"
+		   KERN_ERR "Cause could be too long delays in usb-hcd interrupt handling.\n",
 		   usb_get_current_frame_number(usX2Y->chip.dev),
 		   subs->endpoint, usb_pipein(urb->pipe) ? "in" : "out",
 		   usX2Y->wait_iso_frame, urb->start_frame, usX2Y->wait_iso_frame);
 	usX2Y_clients_stop(usX2Y);
 }
 
-static void i_usX2Y_urb_complete(struct urb *urb)
+static void i_usX2Y_urb_complete(struct urb *urb, struct pt_regs *regs)
 {
 	struct snd_usX2Y_substream *subs = urb->context;
 	struct usX2Ydev *usX2Y = subs->usX2Y;
@@ -322,7 +322,7 @@ static void i_usX2Y_urb_complete(struct urb *urb)
 		usX2Y_error_urb_status(usX2Y, subs, urb);
 		return;
 	}
-	if (likely((urb->start_frame & 0xFFFF) == (usX2Y->wait_iso_frame & 0xFFFF)))
+	if (likely((0xFFFF & urb->start_frame) == usX2Y->wait_iso_frame))
 		subs->completed_urb = urb;
 	else {
 		usX2Y_error_sequence(usX2Y, subs, urb);
@@ -335,9 +335,13 @@ static void i_usX2Y_urb_complete(struct urb *urb)
 		    atomic_read(&capsubs->state) >= state_PREPARED &&
 		    (playbacksubs->completed_urb ||
 		     atomic_read(&playbacksubs->state) < state_PREPARED)) {
-			if (!usX2Y_usbframe_complete(capsubs, playbacksubs, urb->start_frame))
-				usX2Y->wait_iso_frame += nr_of_packs();
-			else {
+			if (!usX2Y_usbframe_complete(capsubs, playbacksubs, urb->start_frame)) {
+				if (nr_of_packs() <= urb->start_frame &&
+				    urb->start_frame <= (2 * nr_of_packs() - 1))	// uhci and ohci
+					usX2Y->wait_iso_frame = urb->start_frame - nr_of_packs();
+				else
+					usX2Y->wait_iso_frame +=  nr_of_packs();
+			} else {
 				snd_printdd("\n");
 				usX2Y_clients_stop(usX2Y);
 			}
@@ -346,7 +350,7 @@ static void i_usX2Y_urb_complete(struct urb *urb)
 }
 
 static void usX2Y_urbs_set_complete(struct usX2Ydev * usX2Y,
-				    void (*complete)(struct urb *))
+				    void (*complete)(struct urb *, struct pt_regs *))
 {
 	int s, u;
 	for (s = 0; s < 4; s++) {
@@ -366,7 +370,7 @@ static void usX2Y_subs_startup_finish(struct usX2Ydev * usX2Y)
 	usX2Y->prepare_subs = NULL;
 }
 
-static void i_usX2Y_subs_startup(struct urb *urb)
+static void i_usX2Y_subs_startup(struct urb *urb, struct pt_regs *regs)
 {
 	struct snd_usX2Y_substream *subs = urb->context;
 	struct usX2Ydev *usX2Y = subs->usX2Y;
@@ -378,7 +382,7 @@ static void i_usX2Y_subs_startup(struct urb *urb)
 			wake_up(&usX2Y->prepare_wait_queue);
 		}
 
-	i_usX2Y_urb_complete(urb);
+	i_usX2Y_urb_complete(urb, regs);
 }
 
 static void usX2Y_subs_prepare(struct snd_usX2Y_substream *subs)
@@ -491,6 +495,7 @@ static int usX2Y_urbs_start(struct snd_usX2Y_substream *subs)
 		if (subs != NULL && atomic_read(&subs->state) >= state_PREPARED)
 			goto start;
 	}
+	usX2Y->wait_iso_frame = -1;
 
  start:
 	usX2Y_subs_startup(subs);
@@ -511,9 +516,10 @@ static int usX2Y_urbs_start(struct snd_usX2Y_substream *subs)
 				snd_printk (KERN_ERR "cannot submit datapipe for urb %d, err = %d\n", i, err);
 				err = -EPIPE;
 				goto cleanup;
-			} else
-				if (i == 0)
+			} else {
+				if (0 > usX2Y->wait_iso_frame)
 					usX2Y->wait_iso_frame = urb->start_frame;
+			}
 			urb->transfer_flags = 0;
 		} else {
 			atomic_set(&subs->state, state_STARTING1);
@@ -657,7 +663,7 @@ static struct s_c2 SetRate48000[] =
 };
 #define NOOF_SETRATE_URBS ARRAY_SIZE(SetRate48000)
 
-static void i_usX2Y_04Int(struct urb *urb)
+static void i_usX2Y_04Int(struct urb *urb, struct pt_regs *regs)
 {
 	struct usX2Ydev *usX2Y = urb->context;
 	
@@ -871,8 +877,7 @@ static struct snd_pcm_hardware snd_usX2Y_2c =
 {
 	.info =			(SNDRV_PCM_INFO_MMAP | SNDRV_PCM_INFO_INTERLEAVED |
 				 SNDRV_PCM_INFO_BLOCK_TRANSFER |
-				 SNDRV_PCM_INFO_MMAP_VALID |
-				 SNDRV_PCM_INFO_BATCH),
+				 SNDRV_PCM_INFO_MMAP_VALID),
 	.formats =                 SNDRV_PCM_FMTBIT_S16_LE | SNDRV_PCM_FMTBIT_S24_3LE,
 	.rates =                   SNDRV_PCM_RATE_44100 | SNDRV_PCM_RATE_48000,
 	.rate_min =                44100,
@@ -936,9 +941,10 @@ static struct snd_pcm_ops snd_usX2Y_pcm_ops =
  */
 static void usX2Y_audio_stream_free(struct snd_usX2Y_substream **usX2Y_substream)
 {
-	kfree(usX2Y_substream[SNDRV_PCM_STREAM_PLAYBACK]);
-	usX2Y_substream[SNDRV_PCM_STREAM_PLAYBACK] = NULL;
-
+	if (NULL != usX2Y_substream[SNDRV_PCM_STREAM_PLAYBACK]) {
+		kfree(usX2Y_substream[SNDRV_PCM_STREAM_PLAYBACK]);
+		usX2Y_substream[SNDRV_PCM_STREAM_PLAYBACK] = NULL;
+	}
 	kfree(usX2Y_substream[SNDRV_PCM_STREAM_CAPTURE]);
 	usX2Y_substream[SNDRV_PCM_STREAM_CAPTURE] = NULL;
 }

@@ -1,0 +1,66 @@
+From: Michal Schmidt <mschmidt@redhat.com>
+Date: Tue, 4 Sep 2007 13:52:22 +0200
+Subject: [misc] serial: assert DTR for serial console devices
+Message-id: 46DD46F6.1060108@redhat.com
+O-Subject: [RHEL5.2 PATCH] serial: assert DTR for serial console devices
+Bugzilla: 244728
+
+I originally submitted this patch for RHEL 5.1. The concensus was that
+the fix was correct, but there were concerns about the theoretical
+possibility of breaking previously working setups. It was proposed too
+early after upstream inclusion and too late for 5.1.
+
+Here it is again, this time for RHEL 5.2.
+
+BZ: https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=244728
+
+Description:
+Current kernels do not assert DTR before printing to serial ports during
+boot time. Some RS-232 devices require DTR to be asserted before they
+can be used. DTR is normally asserted in uart_startup() when the port is
+opened, but the kernel doesn't actually open serial console ports. Known
+affected devices are Sun's Dorado/Tucana and Gemini, and allegedly some
+other non-Sun RS232 devices too.
+
+Solution:
+Assert DTR when the port is added. The patch is from Yinghai Lu
+<Yinghai.Lu@Sun.COM>.
+
+Upstream status:
+The patch has been upstream since git commit 79492689... preceding Linux
+v2.6.23-rc1.
+
+Testing:
+The patch was tested by Sun. It fixed the issue on Dorado/Tucana and
+Gemini. It caused no problems on Galaxy 1/2/4 and Stinger.
+
+Thanks,
+Michal
+
+Acked-by: Prarit Bhargava <prarit@redhat.com>
+Acked-by: Chip Coldwell <coldwell@redhat.com>
+Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+---
+ drivers/serial/serial_core.c |    6 ++++++
+ 1 files changed, 6 insertions(+), 0 deletions(-)
+
+diff --git a/drivers/serial/serial_core.c b/drivers/serial/serial_core.c
+index c59dcb7..fef5991 100644
+--- a/drivers/serial/serial_core.c
++++ b/drivers/serial/serial_core.c
+@@ -1905,6 +1905,12 @@ uart_set_options(struct uart_port *port, struct console *co,
+ 	if (flow == 'r')
+ 		termios.c_cflag |= CRTSCTS;
+ 
++	/*
++	 * some uarts on other side don't support no flow control.
++	 * So we set * DTR in host uart to make them happy
++	 */
++	port->mctrl |= TIOCM_DTR;
++
+ 	port->ops->set_termios(port, &termios, NULL);
+ 	co->cflag = termios.c_cflag;
+ 
+-- 
+1.5.3.5.645.gbb47
+

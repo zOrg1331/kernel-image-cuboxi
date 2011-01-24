@@ -1,0 +1,65 @@
+From: Steven Whitehouse <swhiteho@redhat.com>
+Subject: [RHEL5] bz 218966 Readpages fix [1/4]
+Date: Fri, 15 Dec 2006 17:46:28 +0000
+Bugzilla: 218966
+Message-Id: <1166204788.3752.1252.camel@quoit.chygwyn.com>
+Changelog: gfs2: Readpages fix 
+
+
+Hi,
+
+This is the first of four patches to fix bz #218966. It also as a side
+effect (just this first patch) fixes bz #219131 (relating to CIFS, the
+remaining patch for this bug isn't required to fix the bug, but is a
+cleanup from upstream and its also not part of this patch series). This
+patch is already upstream and has been for some time. Its a one-liner
+change to read_pages() to ensure that all the pages which ->readpages()
+is called with are suitable disposed of in the case that ->readpages()
+fails to do it correctly itself. This is the only change in the patch
+series outside of GFS2's own code.
+
+Since most of the implementations of ->readpages() do correctly deal
+with this case, it becomes a no-op. In the upstream code, its now
+assumed that read_pages() will correctly dispose of any unused pages
+rather than leaving it to ->readpages().
+
+As a set all four patches are upstream (the final one is only in the
+-nmw GFS2 git tree, but the other three have been upstream for some time
+now) and we've verified that the truncate test mentioned in bz #218966
+is passed with these patches applied.
+
+Steve.
+
+
+X-Git-Tag: v2.6.19-rc5
+X-Git-Url: http://www.kernel.org/git/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=029e332ea717810172e965ec50f942755ad0c58a
+
+[PATCH] Cleanup read_pages()
+
+Current read_pages() assume ->readpages() frees the passed pages.
+
+This patch free the pages in ->read_pages(), if those were remaining in the
+pages_list.  So, readpages() just can ignore the remaining pages in
+pages_list.
+
+Signed-off-by: OGAWA Hirofumi <hirofumi@mail.parknet.co.jp>
+Cc: Steven French <sfrench@us.ibm.com>
+Cc: Miklos Szeredi <miklos@szeredi.hu>
+Cc: Steven Whitehouse <swhiteho@redhat.com>
+Cc: Trond Myklebust <trond.myklebust@fys.uio.no>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+Signed-off-by: Linus Torvalds <torvalds@osdl.org>
+---
+
+--- a/mm/readahead.c
++++ b/mm/readahead.c
+@@ -173,6 +173,8 @@ static int read_pages(struct address_spa
+ 
+ 	if (mapping->a_ops->readpages) {
+ 		ret = mapping->a_ops->readpages(filp, mapping, pages, nr_pages);
++		/* Clean up the remaining pages */
++		put_pages_list(pages);
+ 		goto out;
+ 	}
+ 
+

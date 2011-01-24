@@ -182,7 +182,6 @@ enum dlm_status dlmlock(struct dlm_ctxt *dlm,
 			struct dlm_lockstatus *lksb,
 			int flags,
 			const char *name,
-			int namelen,
 			dlm_astlockfunc_t *ast,
 			void *data,
 			dlm_bastlockfunc_t *bast);
@@ -193,12 +192,7 @@ enum dlm_status dlmunlock(struct dlm_ctxt *dlm,
 			  dlm_astunlockfunc_t *unlockast,
 			  void *data);
 
-struct dlm_protocol_version {
-	u8 pv_major;
-	u8 pv_minor;
-};
-struct dlm_ctxt * dlm_register_domain(const char *domain, u32 key,
-				      struct dlm_protocol_version *fs_proto);
+struct dlm_ctxt * dlm_register_domain(const char *domain, u32 key);
 
 void dlm_unregister_domain(struct dlm_ctxt *dlm);
 

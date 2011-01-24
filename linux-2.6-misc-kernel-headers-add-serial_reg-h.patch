@@ -1,0 +1,33 @@
+From: Don Zickus <dzickus@redhat.com>
+Date: Thu, 26 Feb 2009 11:19:20 -0500
+Subject: [misc] kernel-headers: add serial_reg.h
+Message-id: 20090226161920.GG3847@redhat.com
+O-Subject: [RHEL5.4 PATCH] kernel-headers: add serial_reg.h
+Bugzilla: 463538
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+RH-Acked-by: Jon Masters <jcm@redhat.com>
+RH-Acked-by: Jiri Pirko <jpirko@redhat.com>
+
+https://bugzilla.redhat.com/show_bug.cgi?id=463538
+
+This file was accidentally removed during our transition to kernel-headers
+for 5.0.  We have a customer who seems to need it and I don't see any harm
+adding it in.
+
+Backport of 41d202d80e829c0a489119ad63d7ece08a9786da.
+
+Cheers,
+Don
+
+diff --git a/include/linux/Kbuild b/include/linux/Kbuild
+index b507e6e..b1fd088 100644
+--- a/include/linux/Kbuild
++++ b/include/linux/Kbuild
+@@ -141,6 +141,7 @@ header-y += raw.h
+ header-y += resource.h
+ header-y += rose.h
+ header-y += sctp.h
++header-y += serial_reg.h
+ header-y += smbno.h
+ header-y += snmp.h
+ header-y += sockios.h

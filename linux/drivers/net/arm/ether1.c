@@ -33,9 +33,11 @@
 
 #include <linux/module.h>
 #include <linux/kernel.h>
+#include <linux/sched.h>
 #include <linux/types.h>
 #include <linux/fcntl.h>
 #include <linux/interrupt.h>
+#include <linux/ptrace.h>
 #include <linux/ioport.h>
 #include <linux/in.h>
 #include <linux/slab.h>
@@ -66,7 +68,7 @@ static unsigned int net_debug = NET_DEBUG;
 
 static int ether1_open(struct net_device *dev);
 static int ether1_sendpacket(struct sk_buff *skb, struct net_device *dev);
-static irqreturn_t ether1_interrupt(int irq, void *dev_id);
+static irqreturn_t ether1_interrupt(int irq, void *dev_id, struct pt_regs *regs);
 static int ether1_close(struct net_device *dev);
 static struct net_device_stats *ether1_getstats(struct net_device *dev);
 static void ether1_setmulticastlist(struct net_device *dev);
@@ -74,7 +76,7 @@ static void ether1_timeout(struct net_device *dev);
 
 /* ------------------------------------------------------------------------- */
 
-static char version[] __devinitdata = "ether1 ethernet driver (c) 2000 Russell King v1.07\n";
+static char version[] __initdata = "ether1 ethernet driver (c) 2000 Russell King v1.07\n";
 
 #define BUS_16 16
 #define BUS_8  8
@@ -252,7 +254,7 @@ ether1_readbuffer (struct net_device *dev, void *data, unsigned int start, unsig
 	} while (thislen);
 }
 
-static int __devinit
+static int __init
 ether1_ramtest(struct net_device *dev, unsigned char byte)
 {
 	unsigned char *buffer = kmalloc (BUFFER_SIZE, GFP_KERNEL);
@@ -306,7 +308,7 @@ ether1_reset (struct net_device *dev)
 	return BUS_16;
 }
 
-static int __devinit
+static int __init
 ether1_init_2(struct net_device *dev)
 {
 	int i;
@@ -748,7 +750,7 @@ ether1_sendpacket (struct sk_buff *skb, struct net_device *dev)
 		netif_stop_queue(dev);
 
  out:
-	return NETDEV_TX_OK;
+	return 0;
 }
 
 static void
@@ -874,6 +876,7 @@ ether1_recv_done (struct net_device *dev)
 			skb = dev_alloc_skb (length + 2);
 
 			if (skb) {
+				skb->dev = dev;
 				skb_reserve (skb, 2);
 
 				ether1_readbuffer (dev, skb_put (skb, length), rbd.rbd_bufl, length);
@@ -905,7 +908,7 @@ ether1_recv_done (struct net_device *dev)
 }
 
 static irqreturn_t
-ether1_interrupt (int irq, void *dev_id)
+ether1_interrupt (int irq, void *dev_id, struct pt_regs *regs)
 {
 	struct net_device *dev = (struct net_device *)dev_id;
 	int status;
@@ -983,25 +986,13 @@ ether1_setmulticastlist (struct net_device *dev)
 
 /* ------------------------------------------------------------------------- */
 
-static void __devinit ether1_banner(void)
+static void __init ether1_banner(void)
 {
 	static unsigned int version_printed = 0;
 
 	if (net_debug && version_printed++ == 0)
 		printk(KERN_INFO "%s", version);
 }
-
-static const struct net_device_ops ether1_netdev_ops = {
-	.ndo_open		= ether1_open,
-	.ndo_stop		= ether1_close,
-	.ndo_start_xmit		= ether1_sendpacket,
-	.ndo_get_stats		= ether1_getstats,
-	.ndo_set_multicast_list	= ether1_setmulticastlist,
-	.ndo_tx_timeout		= ether1_timeout,
-	.ndo_validate_addr	= eth_validate_addr,
-	.ndo_change_mtu		= eth_change_mtu,
-	.ndo_set_mac_address	= eth_mac_addr,
-};
 
 static int __devinit
 ether1_probe(struct expansion_card *ec, const struct ecard_id *id)
@@ -1021,10 +1012,12 @@ ether1_probe(struct expansion_card *ec, const struct ecard_id *id)
 		goto release;
 	}
 
+	SET_MODULE_OWNER(dev);
 	SET_NETDEV_DEV(dev, &ec->dev);
 
 	dev->irq = ec->irq;
-	priv(dev)->base = ecardm_iomap(ec, ECARD_RES_IOCFAST, 0, 0);
+	priv(dev)->base = ioremap(ecard_resource_start(ec, ECARD_RES_IOCFAST),
+				  ecard_resource_len(ec, ECARD_RES_IOCFAST));
 	if (!priv(dev)->base) {
 		ret = -ENOMEM;
 		goto free;
@@ -1043,20 +1036,30 @@ ether1_probe(struct expansion_card *ec, const struct ecard_id *id)
 		goto free;
 	}
 
-	dev->netdev_ops		= &ether1_netdev_ops;
+	dev->open		= ether1_open;
+	dev->stop		= ether1_close;
+	dev->hard_start_xmit    = ether1_sendpacket;
+	dev->get_stats		= ether1_getstats;
+	dev->set_multicast_list = ether1_setmulticastlist;
+	dev->tx_timeout		= ether1_timeout;
 	dev->watchdog_timeo	= 5 * HZ / 100;
 
 	ret = register_netdev(dev);
 	if (ret)
 		goto free;
 
-	printk(KERN_INFO "%s: ether1 in slot %d, %pM\n",
-		dev->name, ec->slot_no, dev->dev_addr);
+	printk(KERN_INFO "%s: ether1 in slot %d, ",
+		dev->name, ec->slot_no);
     
+	for (i = 0; i < 6; i++)
+		printk ("%2.2x%c", dev->dev_addr[i], i == 5 ? '\n' : ':');
+
 	ecard_set_drvdata(ec, dev);
 	return 0;
 
  free:
+	if (priv(dev)->base)
+		iounmap(priv(dev)->base);
 	free_netdev(dev);
  release:
 	ecard_release_resources(ec);
@@ -1071,6 +1074,7 @@ static void __devexit ether1_remove(struct expansion_card *ec)
 	ecard_set_drvdata(ec, NULL);	
 
 	unregister_netdev(dev);
+	iounmap(priv(dev)->base);
 	free_netdev(dev);
 	ecard_release_resources(ec);
 }

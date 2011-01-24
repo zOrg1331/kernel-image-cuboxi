@@ -1,0 +1,217 @@
+From: Rob Evers <revers@redhat.com>
+Date: Fri, 5 Feb 2010 16:42:49 -0500
+Subject: [scsi] scsi_dh: change scsidh_activate interface to async
+Message-id: <20100205164217.24469.23581.sendpatchset@localhost.localdomain>
+Patchwork-id: 23153
+O-Subject: [RHEL5.5 PATCH 1/2] scsi_dh: Change the scsidh_activate interface to
+	be asynchronous
+Bugzilla: 537514
+RH-Acked-by: Tomas Henzl <thenzl@redhat.com>
+
+https://bugzilla.redhat.com/show_bug.cgi?id=537514
+
+From: Chandra Seetharaman <sekharan@us.ibm.com>
+Date: Wed, 21 Oct 2009 16:22:46 +0000 (-0700)
+Subject: [SCSI] scsi_dh: Change the scsidh_activate interface to be asynchronous
+X-Git-Url: http://git.kernel.org/?p=linux%2Fkernel%2Fgit%2Fjejb%2Fscsi-misc-2.6.git;a=commitdiff_plain;h=d1c55de2d73e9cdc7b4839bf3b3dc2ca8c146605;hp=08d33e3de4d27f820724a12059360289fdd290d7
+
+[SCSI] scsi_dh: Change the scsidh_activate interface to be asynchronous
+
+Make scsi_dh_activate() function asynchronous, by taking in two additional
+parameters, one is the callback function and the other is the data to call
+the callback function with.
+
+Signed-off-by: Chandra Seetharaman <sekharan@us.ibm.com>
+Signed-off-by: James Bottomley <James.Bottomley@suse.de>
+
+diff --git a/drivers/md/dm-mpath.c b/drivers/md/dm-mpath.c
+index 5add1e2..d0494b9 100644
+--- a/drivers/md/dm-mpath.c
++++ b/drivers/md/dm-mpath.c
+@@ -1172,8 +1172,9 @@ void dm_pg_init_complete(struct path *path, unsigned err_flags)
+ 	spin_unlock_irqrestore(&m->lock, flags);
+ }
+ 
+-static void pg_init_done(struct path *path, int errors)
++static void pg_init_done(void *data, int errors)
+ {
++	struct path *path = data;
+ 	struct pgpath *pgpath = path_to_pgpath(path);
+ 	struct priority_group *pg = pgpath->pg;
+ 	struct multipath *m = pg->m;
+@@ -1245,11 +1246,10 @@ static void pg_init_done(struct path *path, int errors)
+ 
+ static void activate_path(void *data)
+ {
+-	int ret;
+ 	struct pgpath *pgpath = (struct pgpath *) data;
+ 
+-	ret = scsi_dh_activate(bdev_get_queue(pgpath->path.dev->bdev));
+-	pg_init_done(&pgpath->path, ret);
++	scsi_dh_activate(bdev_get_queue(pgpath->path.dev->bdev),
++				pg_init_done, &pgpath->path);
+ }
+ 
+ /*
+diff --git a/drivers/scsi/device_handler/scsi_dh.c b/drivers/scsi/device_handler/scsi_dh.c
+index 1db3b4a..c10f1c7 100644
+--- a/drivers/scsi/device_handler/scsi_dh.c
++++ b/drivers/scsi/device_handler/scsi_dh.c
+@@ -218,7 +218,7 @@ store_dh_state(struct device *dev, struct device_attribute *attr,
+ 			 * Activate a device handler
+ 			 */
+ 			if (scsi_dh->activate)
+-				err = scsi_dh->activate(sdev);
++				err = scsi_dh->activate(sdev, NULL, NULL);
+ 			else
+ 				err = 0;
+ 		}
+@@ -416,10 +416,17 @@ EXPORT_SYMBOL_GPL(scsi_unregister_device_handler);
+ /*
+  * scsi_dh_activate - activate the path associated with the scsi_device
+  *      corresponding to the given request queue.
+- * @q - Request queue that is associated with the scsi_device to be
+- *      activated.
++ *     Returns immediately without waiting for activation to be completed.
++ * @q    - Request queue that is associated with the scsi_device to be
++ *         activated.
++ * @fn   - Function to be called upon completion of the activation.
++ *         Function fn is called with data (below) and the error code.
++ *         Function fn may be called from the same calling context. So,
++ *         do not hold the lock in the caller which may be needed in fn.
++ * @data - data passed to the function fn upon completion.
++ *
+  */
+-int scsi_dh_activate(struct request_queue *q)
++int scsi_dh_activate(struct request_queue *q, activate_complete fn, void *fn_data)
+ {
+ 	int err = 0;
+ 	unsigned long flags;
+@@ -439,7 +446,7 @@ int scsi_dh_activate(struct request_queue *q)
+ 		return err;
+ 
+ 	if (scsi_dh->activate)
+-		err = scsi_dh->activate(sdev);
++		err = scsi_dh->activate(sdev, fn, fn_data);
+ 	put_device(&sdev->sdev_gendev);
+ 	return err;
+ }
+diff --git a/drivers/scsi/device_handler/scsi_dh_alua.c b/drivers/scsi/device_handler/scsi_dh_alua.c
+index 8ceec2a..1c16a40 100644
+--- a/drivers/scsi/device_handler/scsi_dh_alua.c
++++ b/drivers/scsi/device_handler/scsi_dh_alua.c
+@@ -654,7 +654,8 @@ out:
+  * based on a certain policy. But until we actually encounter them it
+  * should be okay.
+  */
+-static int alua_activate(struct scsi_device *sdev)
++static int alua_activate(struct scsi_device *sdev,
++			activate_complete fn, void *data)
+ {
+ 	struct alua_dh_data *h = get_alua_data(sdev);
+ 	int err = SCSI_DH_OK;
+@@ -669,7 +670,9 @@ static int alua_activate(struct scsi_device *sdev)
+ 		err = alua_stpg(sdev, TPGS_STATE_OPTIMIZED, h);
+ 
+ out:
+-	return err;
++	if (fn)
++		fn(data, err);
++	return 0;
+ }
+ 
+ /*
+diff --git a/drivers/scsi/device_handler/scsi_dh_emc.c b/drivers/scsi/device_handler/scsi_dh_emc.c
+index c4a7ffb..f7c3abe 100644
+--- a/drivers/scsi/device_handler/scsi_dh_emc.c
++++ b/drivers/scsi/device_handler/scsi_dh_emc.c
+@@ -531,7 +531,8 @@ retry:
+ 	return err;
+ }
+ 
+-static int clariion_activate(struct scsi_device *sdev)
++static int clariion_activate(struct scsi_device *sdev,
++				activate_complete fn, void *data)
+ {
+ 	struct clariion_dh_data *csdev = get_clariion_data(sdev);
+ 	int result;
+@@ -561,7 +562,9 @@ done:
+ 		    CLARIION_NAME, csdev->current_sp + 'A',
+ 		    csdev->port, lun_state[csdev->lun_state],
+ 		    csdev->default_sp + 'A');
+-	return result;
++	if (fn)
++		fn(data, result);
++	return 0;
+ }
+ 
+ /*
+diff --git a/drivers/scsi/device_handler/scsi_dh_rdac.c b/drivers/scsi/device_handler/scsi_dh_rdac.c
+index 5df8b1b..111a309 100644
+--- a/drivers/scsi/device_handler/scsi_dh_rdac.c
++++ b/drivers/scsi/device_handler/scsi_dh_rdac.c
+@@ -571,7 +571,8 @@ done:
+ 	return err;
+ }
+ 
+-static int rdac_activate(struct scsi_device *sdev)
++static int rdac_activate(struct scsi_device *sdev,
++			activate_complete fn, void *data)
+ {
+ 	struct rdac_dh_data *h = get_rdac_data(sdev);
+ 	int err = SCSI_DH_OK;
+@@ -583,7 +584,9 @@ static int rdac_activate(struct scsi_device *sdev)
+ 	if (h->lun_state == RDAC_LUN_UNOWNED)
+ 		err = send_mode_select(sdev, h);
+ done:
+-	return err;
++	if (fn)
++		fn(data, err);
++	return 0;
+ }
+ 
+ static int rdac_prep_fn(struct scsi_device *sdev, struct request *req)
+diff --git a/include/scsi/scsi_device.h b/include/scsi/scsi_device.h
+index fddaf3e..b8a74ae 100644
+--- a/include/scsi/scsi_device.h
++++ b/include/scsi/scsi_device.h
+@@ -177,6 +177,7 @@ struct scsi_device_dh_data {
+ 	unsigned long		sdev_data[0];
+ } __attribute__((aligned(sizeof(unsigned long))));
+ 
++typedef void (*activate_complete)(void *, int);
+ struct scsi_device_handler {
+ 	/* Used by the infrastructure */
+ 	struct list_head list; /* list of scsi_device_handlers */
+@@ -188,7 +189,7 @@ struct scsi_device_handler {
+ 	int (*check_sense)(struct scsi_device *, struct scsi_sense_hdr *);
+ 	int (*attach)(struct scsi_device *);
+ 	void (*detach)(struct scsi_device *);
+-	int (*activate)(struct scsi_device *);
++	int (*activate)(struct scsi_device *, activate_complete, void *);
+ 	int (*prep_fn)(struct scsi_device *, struct request *);
+ 	int (*set_params)(struct scsi_device *, const char *);
+ };
+diff --git a/include/scsi/scsi_dh.h b/include/scsi/scsi_dh.h
+index b3e7da5..2c12261 100644
+--- a/include/scsi/scsi_dh.h
++++ b/include/scsi/scsi_dh.h
+@@ -61,14 +61,16 @@ extern void store_scsi_dh_data(struct scsi_device *, struct scsi_dh_data *);
+ extern struct scsi_dh_data *retrieve_scsi_dh_data(struct scsi_device *);
+ 
+ #if defined(CONFIG_SCSI_DH) || defined(CONFIG_SCSI_DH_MODULE)
+-extern int scsi_dh_activate(struct request_queue *);
++extern int scsi_dh_activate(struct request_queue *, activate_complete, void *);
+ extern int scsi_dh_handler_exist(const char *);
+ extern int scsi_dh_attach(struct request_queue *, const char *);
+ extern void scsi_dh_detach(struct request_queue *);
+ extern int scsi_dh_set_params(struct request_queue *, const char *);
+ #else
+-static inline int scsi_dh_activate(struct request_queue *req)
++static inline int scsi_dh_activate(struct request_queue *req,
++					activate_complete fn, void *data)
+ {
++	fn(data, 0);
+ 	return 0;
+ }
+ static inline int scsi_dh_handler_exist(const char *name)

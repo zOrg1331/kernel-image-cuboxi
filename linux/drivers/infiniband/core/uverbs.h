@@ -32,6 +32,8 @@
  * ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
  * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  * SOFTWARE.
+ *
+ * $Id: uverbs.h 2559 2005-06-06 19:43:16Z roland $
  */
 
 #ifndef UVERBS_H
@@ -41,10 +43,8 @@
 #include <linux/idr.h>
 #include <linux/mutex.h>
 #include <linux/completion.h>
-#include <linux/cdev.h>
 
 #include <rdma/ib_verbs.h>
-#include <rdma/ib_umem.h>
 #include <rdma/ib_user_verbs.h>
 
 /*
@@ -70,20 +70,20 @@
 
 struct ib_uverbs_device {
 	struct kref				ref;
-	int					num_comp_vectors;
 	struct completion			comp;
-	struct device			       *dev;
-	struct ib_device		       *ib_dev;
 	int					devnum;
-	struct cdev			        cdev;
+	struct cdev			       *dev;
+	struct class_device		       *class_dev;
+	struct ib_device		       *ib_dev;
+	int					num_comp_vectors;
 };
 
 struct ib_uverbs_event_file {
 	struct kref				ref;
-	int					is_async;
+	struct file			       *file;
 	struct ib_uverbs_file		       *uverbs_file;
 	spinlock_t				lock;
-	int					is_closed;
+	int					is_async;
 	wait_queue_head_t			poll_wait;
 	struct fasync_struct		       *async_queue;
 	struct list_head			event_list;
@@ -147,6 +147,7 @@ void idr_remove_uobj(struct idr *idp, struct ib_uobject *uobj);
 
 struct file *ib_uverbs_alloc_event_file(struct ib_uverbs_file *uverbs_file,
 					int is_async, int *fd);
+void ib_uverbs_release_event_file(struct kref *ref);
 struct ib_uverbs_event_file *ib_uverbs_lookup_comp_file(int fd);
 
 void ib_uverbs_release_ucq(struct ib_uverbs_file *file,
@@ -161,6 +162,11 @@ void ib_uverbs_qp_event_handler(struct ib_event *event, void *context_ptr);
 void ib_uverbs_srq_event_handler(struct ib_event *event, void *context_ptr);
 void ib_uverbs_event_handler(struct ib_event_handler *handler,
 			     struct ib_event *event);
+
+int ib_umem_get(struct ib_device *dev, struct ib_umem *mem,
+		void *addr, size_t size, int write);
+void ib_umem_release(struct ib_device *dev, struct ib_umem *umem);
+void ib_umem_release_on_close(struct ib_device *dev, struct ib_umem *umem);
 
 #define IB_UVERBS_DECLARE_CMD(name)					\
 	ssize_t ib_uverbs_##name(struct ib_uverbs_file *file,		\
@@ -195,6 +201,5 @@ IB_UVERBS_DECLARE_CMD(create_srq);
 IB_UVERBS_DECLARE_CMD(modify_srq);
 IB_UVERBS_DECLARE_CMD(query_srq);
 IB_UVERBS_DECLARE_CMD(destroy_srq);
-IB_UVERBS_DECLARE_CMD(get_eth_l2_addr);
 
 #endif /* UVERBS_H */

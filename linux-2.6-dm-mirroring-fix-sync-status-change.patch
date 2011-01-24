@@ -1,0 +1,83 @@
+From: Jonathan Brassow <jbrassow@redhat.com>
+Subject: [RHEL5 PATCH 1 of 1] device-mapper mirroring - fix sync status 	change
+Date: Tue, 28 Nov 2006 15:20:39 -0600
+Bugzilla: 217582
+Message-Id: <1164748839.20059.12.camel@hydrogen.msp.redhat.com>
+Changelog: device-mapper mirroring - fix sync status change
+
+
+Bug #217582 (a dup of RHEL4 bug #217581)
+
+A previous patch designed to update the sync status of a mirror was to
+hasty.  The original idea was to make a machine immediately aware of a
+change from sync -> out-of-sync when dealing with cluster mirrors.
+However, the machines need to discover this on their own, otherwise they
+cannot tell if they can switch a primary device when it fails...
+
+ brassow
+
+We must only allow do_recovery to mark ms->in_sync as 1.  It is
+the job of the fault handling code (like __bio_mark_nosync) to
+mark ms->in_sync as 0, if necessary.
+
+If do_recovery handles this, it is possible for us not to be able
+to switch primary devices in the case of cluster mirroring.  The
+scenario is:
+
+0) Mirror is in-sync
+1) Node1 writes to disk, but write fails to the primary device
+2) Node1 increments the error count for that device
+3) Node1 checks ms->in_sync to see if it is safe to switch the
+   primary.  (We cannot switch the primary if other devices are
+   not in-sync.  This would lead to bad data being read.)
+4) Node1 switches the primary because the mirror is in-sync, then
+   marks the region out-of-sync and ms->in_sync = 0.
+5) Node2 writes and fails to the primary device
+6) Node2 increments the error count for that device
+7) Node2 checks ms->in_sync to see if it is safe to switch the
+   primary.  It isn't because do_recovery has stepped in and changed
+   ms->in_sync when it shouldn't have.
+Index: linux-2.6.18-rhel5/drivers/md/dm-raid1.c
+===================================================================
+--- linux-2.6.18-rhel5.orig/drivers/md/dm-raid1.c	2006-11-07 15:41:53.000000000 -0600
++++ linux-2.6.18-rhel5/drivers/md/dm-raid1.c	2006-11-07 16:05:11.000000000 -0600
+@@ -766,19 +766,14 @@ static void do_recovery(struct mirror_se
+ 	}
+ 
+ 	/*
+-	 * Update the in sync flag if necessary.
+-	 * Raise an event when the mirror becomes in-sync.
+-	 *
+-	 * After recovery completes, the mirror becomes in_sync.
+-	 * Only an I/O failure can then take it back out-of-sync.
++	 * Update the in sync flag.
+ 	 */
+-	if (log->type->get_sync_count(log) == ms->nr_regions) {
+-		if (!ms->in_sync) {
+-			dm_table_event(ms->ti->table);
+-			ms->in_sync = 1;
+-		}
+-	} else if (ms->in_sync)
+-		ms->in_sync = 0;
++	if (!ms->in_sync &&
++	    (log->type->get_sync_count(log) == ms->nr_regions)) {
++		/* the sync is complete */
++		dm_table_event(ms->ti->table);
++		ms->in_sync = 1;
++	}
+ }
+ 
+ /*-----------------------------------------------------------------
+@@ -1008,10 +1003,9 @@ static void __bio_mark_nosync(struct mir
+ 	region_t region = bio_to_region(rh, bio);
+ 	int recovering = 0;
+ 
+-	ms->in_sync = 0;
+-
+ 	/* We must inform the log that the sync count has changed. */
+ 	log->type->set_region_sync(log, region, 0);
++	ms->in_sync = 0;
+ 
+ 	read_lock(&rh->hash_lock);
+ 	reg = __rh_find(rh, region);
+

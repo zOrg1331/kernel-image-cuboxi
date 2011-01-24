@@ -536,7 +536,7 @@ static int rx_aal0(struct atm_vcc *vcc)
 		return 0;
 	}
 	skb_put(skb,length);
-	skb->tstamp = eni_vcc->timestamp;
+	skb_set_timestamp(skb, &eni_vcc->timestamp);
 	DPRINTK("got len %ld\n",length);
 	if (do_rx_dma(vcc,skb,1,length >> 2,length >> 2)) return 1;
 	eni_vcc->rxing++;
@@ -701,7 +701,7 @@ static void get_service(struct atm_dev *dev)
 			DPRINTK("Grr, servicing VCC %ld twice\n",vci);
 			continue;
 		}
-		ENI_VCC(vcc)->timestamp = ktime_get_real();
+		do_gettimeofday(&ENI_VCC(vcc)->timestamp);
 		ENI_VCC(vcc)->next = NULL;
 		if (vcc->qos.rxtp.traffic_class == ATM_CBR) {
 			if (eni_dev->fast)
@@ -912,6 +912,7 @@ static int start_rx(struct atm_dev *dev)
 		free_page((unsigned long) eni_dev->free_list);
 		return -ENOMEM;
 	}
+	memset(eni_dev->rx_map,0,PAGE_SIZE);
 	eni_dev->rx_mult = DEFAULT_RX_MULT;
 	eni_dev->fast = eni_dev->last_fast = NULL;
 	eni_dev->slow = eni_dev->last_slow = NULL;
@@ -1270,7 +1271,7 @@ static int comp_tx(struct eni_dev *eni_dev,int *pcr,int reserved,int *pre,
 			if (*pre < 3) (*pre)++; /* else fail later */
 			div = pre_div[*pre]*-*pcr;
 			DPRINTK("max div %d\n",div);
-			*res = DIV_ROUND_UP(TS_CLOCK, div)-1;
+			*res = (TS_CLOCK+div-1)/div-1;
 		}
 		if (*res < 0) *res = 0;
 		if (*res > MID_SEG_MAX_RATE) *res = MID_SEG_MAX_RATE;
@@ -1487,7 +1488,7 @@ static void bug_int(struct atm_dev *dev,unsigned long reason)
 }
 
 
-static irqreturn_t eni_int(int irq,void *dev_id)
+static irqreturn_t eni_int(int irq,void *dev_id,struct pt_regs *regs)
 {
 	struct atm_dev *dev;
 	struct eni_dev *eni_dev;
@@ -1704,6 +1705,7 @@ static int __devinit eni_do_init(struct atm_dev *dev)
 	struct pci_dev *pci_dev;
 	unsigned long real_base;
 	void __iomem *base;
+	unsigned char revision;
 	int error,i,last;
 
 	DPRINTK(">eni_init\n");
@@ -1714,6 +1716,12 @@ static int __devinit eni_do_init(struct atm_dev *dev)
 	pci_dev = eni_dev->pci_dev;
 	real_base = pci_resource_start(pci_dev, 0);
 	eni_dev->irq = pci_dev->irq;
+	error = pci_read_config_byte(pci_dev,PCI_REVISION_ID,&revision);
+	if (error) {
+		printk(KERN_ERR DEV_LABEL "(itf %d): init error 0x%02x\n",
+		    dev->number,error);
+		return -EINVAL;
+	}
 	if ((error = pci_write_config_word(pci_dev,PCI_COMMAND,
 	    PCI_COMMAND_MEMORY |
 	    (eni_dev->asic ? PCI_COMMAND_PARITY | PCI_COMMAND_SERR : 0)))) {
@@ -1722,7 +1730,7 @@ static int __devinit eni_do_init(struct atm_dev *dev)
 		return -EIO;
 	}
 	printk(KERN_NOTICE DEV_LABEL "(itf %d): rev.%d,base=0x%lx,irq=%d,",
-	    dev->number,pci_dev->revision,real_base,eni_dev->irq);
+	    dev->number,revision,real_base,eni_dev->irq);
 	if (!(base = ioremap_nocache(real_base,MAP_MAX_SIZE))) {
 		printk("\n");
 		printk(KERN_ERR DEV_LABEL "(itf %d): can't set up page "
@@ -1738,8 +1746,7 @@ static int __devinit eni_do_init(struct atm_dev *dev)
 			printk(KERN_ERR KERN_ERR DEV_LABEL "(itf %d): bad "
 			    "magic - expected 0x%x, got 0x%x\n",dev->number,
 			    ENI155_MAGIC,(unsigned) readl(&eprom->magic));
-			error = -EINVAL;
-			goto unmap;
+			return -EINVAL;
 		}
 	}
 	eni_dev->phy = base+PHY_BASE;
@@ -1766,27 +1773,17 @@ static int __devinit eni_do_init(struct atm_dev *dev)
 		printk(")\n");
 		printk(KERN_ERR DEV_LABEL "(itf %d): ERROR - wrong id 0x%x\n",
 		    dev->number,(unsigned) eni_in(MID_RES_ID_MCON));
-		error = -EINVAL;
-		goto unmap;
+		return -EINVAL;
 	}
 	error = eni_dev->asic ? get_esi_asic(dev) : get_esi_fpga(dev,base);
-	if (error)
-		goto unmap;
+	if (error) return error;
 	for (i = 0; i < ESI_LEN; i++)
 		printk("%s%02X",i ? "-" : "",dev->esi[i]);
 	printk(")\n");
 	printk(KERN_NOTICE DEV_LABEL "(itf %d): %s,%s\n",dev->number,
 	    eni_in(MID_RES_ID_MCON) & 0x200 ? "ASIC" : "FPGA",
 	    media_name[eni_in(MID_RES_ID_MCON) & DAUGTHER_ID]);
-
-	error = suni_init(dev);
-	if (error)
-		goto unmap;
-out:
-	return error;
-unmap:
-	iounmap(base);
-	goto out;
+	return suni_init(dev);
 }
 
 
@@ -1835,7 +1832,7 @@ static int __devinit eni_start(struct atm_dev *dev)
 	/* initialize memory management */
 	buffer_mem = eni_dev->mem - (buf - eni_dev->ram);
 	eni_dev->free_list_size = buffer_mem/MID_MIN_BUF_SIZE/2;
-	eni_dev->free_list = kmalloc(
+	eni_dev->free_list = (struct eni_free *) kmalloc(
 	    sizeof(struct eni_free)*(eni_dev->free_list_size+1),GFP_KERNEL);
 	if (!eni_dev->free_list) {
 		printk(KERN_ERR DEV_LABEL "(itf %d): couldn't get free page\n",
@@ -2031,7 +2028,7 @@ static int eni_getsockopt(struct atm_vcc *vcc,int level,int optname,
 
 
 static int eni_setsockopt(struct atm_vcc *vcc,int level,int optname,
-    void __user *optval,unsigned int optlen)
+    void __user *optval,int optlen)
 {
 	return -EINVAL;
 }
@@ -2235,7 +2232,7 @@ static int __devinit eni_init_one(struct pci_dev *pci_dev,
 		goto out0;
 	}
 
-	eni_dev = kmalloc(sizeof(struct eni_dev),GFP_KERNEL);
+	eni_dev = (struct eni_dev *) kmalloc(sizeof(struct eni_dev),GFP_KERNEL);
 	if (!eni_dev) goto out0;
 	if (!cpu_zeroes) {
 		cpu_zeroes = pci_alloc_consistent(pci_dev,ENI_ZEROES_SIZE,

@@ -12,11 +12,11 @@
 #include <linux/pci.h>
 #include <linux/kernel.h>
 #include <linux/stddef.h>
+#include <linux/sched.h>
 #include <linux/ioport.h>
 #include <linux/init.h>
 #include <linux/i2c.h>
 #include <linux/delay.h>
-#include <linux/acpi.h>
 #include <asm/io.h>
 
 MODULE_LICENSE("GPL");
@@ -72,13 +72,12 @@ static unsigned int amd_ec_wait_write(struct amd_smbus *smbus)
 {
 	int timeout = 500;
 
-	while ((inb(smbus->base + AMD_EC_SC) & AMD_EC_SC_IBF) && --timeout)
+	while (timeout-- && (inb(smbus->base + AMD_EC_SC) & AMD_EC_SC_IBF))
 		udelay(1);
 
 	if (!timeout) {
-		dev_warn(&smbus->dev->dev,
-			 "Timeout while waiting for IBF to clear\n");
-		return -ETIMEDOUT;
+		dev_warn(&smbus->dev->dev, "Timeout while waiting for IBF to clear\n");
+		return -1;
 	}
 
 	return 0;
@@ -88,59 +87,46 @@ static unsigned int amd_ec_wait_read(struct amd_smbus *smbus)
 {
 	int timeout = 500;
 
-	while ((~inb(smbus->base + AMD_EC_SC) & AMD_EC_SC_OBF) && --timeout)
+	while (timeout-- && (~inb(smbus->base + AMD_EC_SC) & AMD_EC_SC_OBF))
 		udelay(1);
 
 	if (!timeout) {
-		dev_warn(&smbus->dev->dev,
-			 "Timeout while waiting for OBF to set\n");
-		return -ETIMEDOUT;
+		dev_warn(&smbus->dev->dev, "Timeout while waiting for OBF to set\n");
+		return -1;
 	}
 
 	return 0;
 }
 
-static unsigned int amd_ec_read(struct amd_smbus *smbus, unsigned char address,
-		unsigned char *data)
+static unsigned int amd_ec_read(struct amd_smbus *smbus, unsigned char address, unsigned char *data)
 {
-	int status;
-
-	status = amd_ec_wait_write(smbus);
-	if (status)
-		return status;
+	if (amd_ec_wait_write(smbus))
+		return -1;
 	outb(AMD_EC_CMD_RD, smbus->base + AMD_EC_CMD);
 
-	status = amd_ec_wait_write(smbus);
-	if (status)
-		return status;
+	if (amd_ec_wait_write(smbus))
+		return -1;
 	outb(address, smbus->base + AMD_EC_DATA);
 
-	status = amd_ec_wait_read(smbus);
-	if (status)
-		return status;
+	if (amd_ec_wait_read(smbus))
+		return -1;
 	*data = inb(smbus->base + AMD_EC_DATA);
 
 	return 0;
 }
 
-static unsigned int amd_ec_write(struct amd_smbus *smbus, unsigned char address,
-		unsigned char data)
+static unsigned int amd_ec_write(struct amd_smbus *smbus, unsigned char address, unsigned char data)
 {
-	int status;
-
-	status = amd_ec_wait_write(smbus);
-	if (status)
-		return status;
+	if (amd_ec_wait_write(smbus))
+		return -1;
 	outb(AMD_EC_CMD_WR, smbus->base + AMD_EC_CMD);
 
-	status = amd_ec_wait_write(smbus);
-	if (status)
-		return status;
+	if (amd_ec_wait_write(smbus))
+		return -1;
 	outb(address, smbus->base + AMD_EC_DATA);
 
-	status = amd_ec_wait_write(smbus);
-	if (status)
-		return status;
+	if (amd_ec_wait_write(smbus))
+		return -1;
 	outb(data, smbus->base + AMD_EC_DATA);
 
 	return 0;
@@ -189,19 +175,18 @@ static unsigned int amd_ec_write(struct amd_smbus *smbus, unsigned char address,
 #define AMD_SMB_PRTCL_PEC		0x80
 
 
-static s32 amd8111_access(struct i2c_adapter * adap, u16 addr,
-		unsigned short flags, char read_write, u8 command, int size,
-		union i2c_smbus_data * data)
+static s32 amd8111_access(struct i2c_adapter * adap, u16 addr, unsigned short flags,
+		char read_write, u8 command, int size, union i2c_smbus_data * data)
 {
 	struct amd_smbus *smbus = adap->algo_data;
 	unsigned char protocol, len, pec, temp[2];
 	int i;
 
-	protocol = (read_write == I2C_SMBUS_READ) ? AMD_SMB_PRTCL_READ
-						  : AMD_SMB_PRTCL_WRITE;
+	protocol = (read_write == I2C_SMBUS_READ) ? AMD_SMB_PRTCL_READ : AMD_SMB_PRTCL_WRITE;
 	pec = (flags & I2C_CLIENT_PEC) ? AMD_SMB_PRTCL_PEC : 0;
 
 	switch (size) {
+
 		case I2C_SMBUS_QUICK:
 			protocol |= AMD_SMB_PRTCL_QUICK;
 			read_write = I2C_SMBUS_WRITE;
@@ -223,10 +208,8 @@ static s32 amd8111_access(struct i2c_adapter * adap, u16 addr,
 		case I2C_SMBUS_WORD_DATA:
 			amd_ec_write(smbus, AMD_SMB_CMD, command);
 			if (read_write == I2C_SMBUS_WRITE) {
-				amd_ec_write(smbus, AMD_SMB_DATA,
-					     data->word & 0xff);
-				amd_ec_write(smbus, AMD_SMB_DATA + 1,
-					     data->word >> 8);
+				amd_ec_write(smbus, AMD_SMB_DATA, data->word);
+				amd_ec_write(smbus, AMD_SMB_DATA + 1, data->word >> 8);
 			}
 			protocol |= AMD_SMB_PRTCL_WORD_DATA | pec;
 			break;
@@ -234,61 +217,50 @@ static s32 amd8111_access(struct i2c_adapter * adap, u16 addr,
 		case I2C_SMBUS_BLOCK_DATA:
 			amd_ec_write(smbus, AMD_SMB_CMD, command);
 			if (read_write == I2C_SMBUS_WRITE) {
-				len = min_t(u8, data->block[0],
-					    I2C_SMBUS_BLOCK_MAX);
+				len = min_t(u8, data->block[0], 32);
 				amd_ec_write(smbus, AMD_SMB_BCNT, len);
 				for (i = 0; i < len; i++)
-					amd_ec_write(smbus, AMD_SMB_DATA + i,
-						     data->block[i + 1]);
+					amd_ec_write(smbus, AMD_SMB_DATA + i, data->block[i + 1]);
 			}
 			protocol |= AMD_SMB_PRTCL_BLOCK_DATA | pec;
 			break;
 
 		case I2C_SMBUS_I2C_BLOCK_DATA:
-			len = min_t(u8, data->block[0],
-				    I2C_SMBUS_BLOCK_MAX);
+			len = min_t(u8, data->block[0], 32);
 			amd_ec_write(smbus, AMD_SMB_CMD, command);
 			amd_ec_write(smbus, AMD_SMB_BCNT, len);
 			if (read_write == I2C_SMBUS_WRITE)
 				for (i = 0; i < len; i++)
-					amd_ec_write(smbus, AMD_SMB_DATA + i,
-						     data->block[i + 1]);
+					amd_ec_write(smbus, AMD_SMB_DATA + i, data->block[i + 1]);
 			protocol |= AMD_SMB_PRTCL_I2C_BLOCK_DATA;
 			break;
 
 		case I2C_SMBUS_PROC_CALL:
 			amd_ec_write(smbus, AMD_SMB_CMD, command);
-			amd_ec_write(smbus, AMD_SMB_DATA, data->word & 0xff);
+			amd_ec_write(smbus, AMD_SMB_DATA, data->word);
 			amd_ec_write(smbus, AMD_SMB_DATA + 1, data->word >> 8);
 			protocol = AMD_SMB_PRTCL_PROC_CALL | pec;
 			read_write = I2C_SMBUS_READ;
 			break;
 
 		case I2C_SMBUS_BLOCK_PROC_CALL:
-			len = min_t(u8, data->block[0],
-				    I2C_SMBUS_BLOCK_MAX - 1);
+			len = min_t(u8, data->block[0], 31);
 			amd_ec_write(smbus, AMD_SMB_CMD, command);
 			amd_ec_write(smbus, AMD_SMB_BCNT, len);
 			for (i = 0; i < len; i++)
-				amd_ec_write(smbus, AMD_SMB_DATA + i,
-					     data->block[i + 1]);
+				amd_ec_write(smbus, AMD_SMB_DATA + i, data->block[i + 1]);
 			protocol = AMD_SMB_PRTCL_BLOCK_PROC_CALL | pec;
 			read_write = I2C_SMBUS_READ;
 			break;
 
 		default:
 			dev_warn(&adap->dev, "Unsupported transaction %d\n", size);
-			return -EOPNOTSUPP;
+			return -1;
 	}
 
 	amd_ec_write(smbus, AMD_SMB_ADDR, addr << 1);
 	amd_ec_write(smbus, AMD_SMB_PRTCL, protocol);
 
-	/* FIXME this discards status from ec_read(); so temp[0] will
-	 * hold stack garbage ... the rest of this routine will act
-	 * nonsensically.  Ignored ec_write() status might explain
-	 * some such failures...
-	 */
 	amd_ec_read(smbus, AMD_SMB_STS, temp + 0);
 
 	if (~temp[0] & AMD_SMB_STS_DONE) {
@@ -302,12 +274,13 @@ static s32 amd8111_access(struct i2c_adapter * adap, u16 addr,
 	}
 
 	if ((~temp[0] & AMD_SMB_STS_DONE) || (temp[0] & AMD_SMB_STS_STATUS))
-		return -EIO;
+		return -1;
 
 	if (read_write == I2C_SMBUS_WRITE)
 		return 0;
 
 	switch (size) {
+
 		case I2C_SMBUS_BYTE:
 		case I2C_SMBUS_BYTE_DATA:
 			amd_ec_read(smbus, AMD_SMB_DATA, &data->byte);
@@ -323,11 +296,10 @@ static s32 amd8111_access(struct i2c_adapter * adap, u16 addr,
 		case I2C_SMBUS_BLOCK_DATA:
 		case I2C_SMBUS_BLOCK_PROC_CALL:
 			amd_ec_read(smbus, AMD_SMB_BCNT, &len);
-			len = min_t(u8, len, I2C_SMBUS_BLOCK_MAX);
+			len = min_t(u8, len, 32);
 		case I2C_SMBUS_I2C_BLOCK_DATA:
 			for (i = 0; i < len; i++)
-				amd_ec_read(smbus, AMD_SMB_DATA + i,
-					    data->block + i + 1);
+				amd_ec_read(smbus, AMD_SMB_DATA + i, data->block + i + 1);
 			data->block[0] = len;
 			break;
 	}
@@ -338,14 +310,13 @@ static s32 amd8111_access(struct i2c_adapter * adap, u16 addr,
 
 static u32 amd8111_func(struct i2c_adapter *adapter)
 {
-	return	I2C_FUNC_SMBUS_QUICK | I2C_FUNC_SMBUS_BYTE |
-		I2C_FUNC_SMBUS_BYTE_DATA |
+	return	I2C_FUNC_SMBUS_QUICK | I2C_FUNC_SMBUS_BYTE | I2C_FUNC_SMBUS_BYTE_DATA |
 		I2C_FUNC_SMBUS_WORD_DATA | I2C_FUNC_SMBUS_BLOCK_DATA |
 		I2C_FUNC_SMBUS_PROC_CALL | I2C_FUNC_SMBUS_BLOCK_PROC_CALL |
-		I2C_FUNC_SMBUS_I2C_BLOCK | I2C_FUNC_SMBUS_PEC;
+		I2C_FUNC_SMBUS_I2C_BLOCK | I2C_FUNC_SMBUS_HWPEC_CALC;
 }
 
-static const struct i2c_algorithm smbus_algorithm = {
+static struct i2c_algorithm smbus_algorithm = {
 	.smbus_xfer = amd8111_access,
 	.functionality = amd8111_func,
 };
@@ -358,13 +329,12 @@ static struct pci_device_id amd8111_ids[] = {
 
 MODULE_DEVICE_TABLE (pci, amd8111_ids);
 
-static int __devinit amd8111_probe(struct pci_dev *dev,
-		const struct pci_device_id *id)
+static int __devinit amd8111_probe(struct pci_dev *dev, const struct pci_device_id *id)
 {
 	struct amd_smbus *smbus;
-	int error;
+	int error = -ENODEV;
 
-	if (!(pci_resource_flags(dev, 0) & IORESOURCE_IO))
+	if (~pci_resource_flags(dev, 0) & IORESOURCE_IO)
 		return -ENODEV;
 
 	smbus = kzalloc(sizeof(struct amd_smbus), GFP_KERNEL);
@@ -375,32 +345,24 @@ static int __devinit amd8111_probe(struct pci_dev *dev,
 	smbus->base = pci_resource_start(dev, 0);
 	smbus->size = pci_resource_len(dev, 0);
 
-	error = acpi_check_resource_conflict(&dev->resource[0]);
-	if (error) {
-		error = -ENODEV;
+	if (!request_region(smbus->base, smbus->size, amd8111_driver.name))
 		goto out_kfree;
-	}
-
-	if (!request_region(smbus->base, smbus->size, amd8111_driver.name)) {
-		error = -EBUSY;
-		goto out_kfree;
-	}
 
 	smbus->adapter.owner = THIS_MODULE;
-	snprintf(smbus->adapter.name, sizeof(smbus->adapter.name),
+	snprintf(smbus->adapter.name, I2C_NAME_SIZE,
 		"SMBus2 AMD8111 adapter at %04x", smbus->base);
-	smbus->adapter.class = I2C_CLASS_HWMON | I2C_CLASS_SPD;
+	smbus->adapter.class = I2C_CLASS_HWMON;
 	smbus->adapter.algo = &smbus_algorithm;
 	smbus->adapter.algo_data = smbus;
 
-	/* set up the sysfs linkage to our parent device */
+	/* set up the driverfs linkage to our parent device */
 	smbus->adapter.dev.parent = &dev->dev;
 
-	pci_write_config_dword(smbus->dev, AMD_PCI_MISC, 0);
 	error = i2c_add_adapter(&smbus->adapter);
 	if (error)
 		goto out_release_region;
 
+	pci_write_config_dword(smbus->dev, AMD_PCI_MISC, 0);
 	pci_set_drvdata(dev, smbus);
 	return 0;
 
@@ -408,8 +370,9 @@ static int __devinit amd8111_probe(struct pci_dev *dev,
 	release_region(smbus->base, smbus->size);
  out_kfree:
 	kfree(smbus);
-	return error;
+	return -1;
 }
+
 
 static void __devexit amd8111_remove(struct pci_dev *dev)
 {
@@ -431,6 +394,7 @@ static int __init i2c_amd8111_init(void)
 {
 	return pci_register_driver(&amd8111_driver);
 }
+
 
 static void __exit i2c_amd8111_exit(void)
 {

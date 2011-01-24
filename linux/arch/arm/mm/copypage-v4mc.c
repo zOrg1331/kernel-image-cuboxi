@@ -15,25 +15,24 @@
  */
 #include <linux/init.h>
 #include <linux/mm.h>
-#include <linux/highmem.h>
 
+#include <asm/page.h>
 #include <asm/pgtable.h>
 #include <asm/tlbflush.h>
-#include <asm/cacheflush.h>
-
-#include "mm.h"
 
 /*
  * 0xffff8000 to 0xffffffff is reserved for any ARM architecture
  * specific hacks for copying pages efficiently.
  */
 #define minicache_pgprot __pgprot(L_PTE_PRESENT | L_PTE_YOUNG | \
-				  L_PTE_MT_MINICACHE)
+				  L_PTE_CACHEABLE)
+
+#define TOP_PTE(x)	pte_offset_kernel(top_pmd, x)
 
 static DEFINE_SPINLOCK(minicache_lock);
 
 /*
- * ARMv4 mini-dcache optimised copy_user_highpage
+ * ARMv4 mini-dcache optimised copy_user_page
  *
  * We flush the destination cache lines just before we write the data into the
  * corresponding address.  Since the Dcache is read-allocate, this removes the
@@ -42,9 +41,9 @@ static DEFINE_SPINLOCK(minicache_lock);
  *
  * Note: We rely on all ARMv4 processors implementing the "invalidate D line"
  * instruction.  If your processor does not supply this, you have to write your
- * own copy_user_highpage that does the right thing.
+ * own copy_user_page that does the right thing.
  */
-static void __naked
+static void __attribute__((naked))
 mc_copy_user_page(void *from, void *to)
 {
 	asm volatile(
@@ -68,53 +67,45 @@ mc_copy_user_page(void *from, void *to)
 	: "r" (from), "r" (to), "I" (PAGE_SIZE / 64));
 }
 
-void v4_mc_copy_user_highpage(struct page *to, struct page *from,
-	unsigned long vaddr)
+void v4_mc_copy_user_page(void *kto, const void *kfrom, unsigned long vaddr)
 {
-	void *kto = kmap_atomic(to, KM_USER1);
-
-	if (test_and_clear_bit(PG_dcache_dirty, &from->flags))
-		__flush_dcache_page(page_mapping(from), from);
-
 	spin_lock(&minicache_lock);
 
-	set_pte_ext(TOP_PTE(0xffff8000), pfn_pte(page_to_pfn(from), minicache_pgprot), 0);
+	set_pte(TOP_PTE(0xffff8000), pfn_pte(__pa(kfrom) >> PAGE_SHIFT, minicache_pgprot));
 	flush_tlb_kernel_page(0xffff8000);
 
 	mc_copy_user_page((void *)0xffff8000, kto);
 
 	spin_unlock(&minicache_lock);
-
-	kunmap_atomic(kto, KM_USER1);
 }
 
 /*
  * ARMv4 optimised clear_user_page
  */
-void v4_mc_clear_user_highpage(struct page *page, unsigned long vaddr)
+void __attribute__((naked))
+v4_mc_clear_user_page(void *kaddr, unsigned long vaddr)
 {
-	void *ptr, *kaddr = kmap_atomic(page, KM_USER0);
-	asm volatile("\
-	mov	r1, %2				@ 1\n\
+	asm volatile(
+	"str	lr, [sp, #-4]!\n\
+	mov	r1, %0				@ 1\n\
 	mov	r2, #0				@ 1\n\
 	mov	r3, #0				@ 1\n\
 	mov	ip, #0				@ 1\n\
 	mov	lr, #0				@ 1\n\
-1:	mcr	p15, 0, %0, c7, c6, 1		@ 1   invalidate D line\n\
-	stmia	%0!, {r2, r3, ip, lr}		@ 4\n\
-	stmia	%0!, {r2, r3, ip, lr}		@ 4\n\
-	mcr	p15, 0, %0, c7, c6, 1		@ 1   invalidate D line\n\
-	stmia	%0!, {r2, r3, ip, lr}		@ 4\n\
-	stmia	%0!, {r2, r3, ip, lr}		@ 4\n\
+1:	mcr	p15, 0, r0, c7, c6, 1		@ 1   invalidate D line\n\
+	stmia	r0!, {r2, r3, ip, lr}		@ 4\n\
+	stmia	r0!, {r2, r3, ip, lr}		@ 4\n\
+	mcr	p15, 0, r0, c7, c6, 1		@ 1   invalidate D line\n\
+	stmia	r0!, {r2, r3, ip, lr}		@ 4\n\
+	stmia	r0!, {r2, r3, ip, lr}		@ 4\n\
 	subs	r1, r1, #1			@ 1\n\
-	bne	1b				@ 1"
-	: "=r" (ptr)
-	: "0" (kaddr), "I" (PAGE_SIZE / 64)
-	: "r1", "r2", "r3", "ip", "lr");
-	kunmap_atomic(kaddr, KM_USER0);
+	bne	1b				@ 1\n\
+	ldr	pc, [sp], #4"
+	:
+	: "I" (PAGE_SIZE / 64));
 }
 
 struct cpu_user_fns v4_mc_user_fns __initdata = {
-	.cpu_clear_user_highpage = v4_mc_clear_user_highpage,
-	.cpu_copy_user_highpage	= v4_mc_copy_user_highpage,
+	.cpu_clear_user_page	= v4_mc_clear_user_page, 
+	.cpu_copy_user_page	= v4_mc_copy_user_page,
 };

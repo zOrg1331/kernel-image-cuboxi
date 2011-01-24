@@ -1,0 +1,36 @@
+From: Rob Evers <revers@redhat.com>
+Date: Tue, 5 Oct 2010 14:24:43 -0400
+Subject: [scsi] lpfc: fix bug w/ndlp not activated post-cable swap
+Message-id: <1286288695-20754-12-git-send-email-revers@redhat.com>
+Patchwork-id: 28593
+O-Subject: [RHEL5.6 PATCH 11/23] Fix bug with cable swap and ndlp not becoming
+	active. (CR: 104706)
+Bugzilla: 619917
+RH-Acked-by: Tomas Henzl <thenzl@redhat.com>
+
+Fix bug with cable swap and ndlp not becoming active. (CR: 104706)
+
+From: Rob Evers on behalf of Emulex <revers@redhat.com>
+
+https://bugzilla.redhat.com/show_bug.cgi?id=619917
+
+diff --git a/drivers/scsi/lpfc/lpfc_els.c b/drivers/scsi/lpfc/lpfc_els.c
+index 8566686..1df2264 100644
+--- a/drivers/scsi/lpfc/lpfc_els.c
++++ b/drivers/scsi/lpfc/lpfc_els.c
+@@ -1425,6 +1425,15 @@ lpfc_plogi_confirm_nport(struct lpfc_hba *phba, uint32_t *prsp,
+ 		/* Two ndlps cannot have the same did */
+ 		ndlp->nlp_DID = keepDID;
+ 		lpfc_nlp_set_state(vport, ndlp, NLP_STE_NPR_NODE);
++		/* Since we are swapping the ndlp passed in with the new one
++		 * and the did has already been swapped, copy over the
++		 * state and names.
++		 */
++		memcpy(&new_ndlp->nlp_portname, &ndlp->nlp_portname,
++			sizeof(struct lpfc_name));
++		memcpy(&new_ndlp->nlp_nodename, &ndlp->nlp_nodename,
++			sizeof(struct lpfc_name));
++		new_ndlp->nlp_state = ndlp->nlp_state;
+ 	}
+ 	return new_ndlp;
+ }

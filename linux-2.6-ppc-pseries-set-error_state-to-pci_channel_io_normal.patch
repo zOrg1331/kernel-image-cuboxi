@@ -1,0 +1,68 @@
+From: AMEET M. PARANJAPE <aparanja@redhat.com>
+Date: Tue, 21 Apr 2009 15:04:15 -0400
+Subject: [ppc] pseries: set error_state to pci_channel_io_normal
+Message-id: 20090421190143.32727.47413.sendpatchset@squad5-lp1.lab.bos.redhat.com
+O-Subject: [PATCH RHEL5.3 BZ496872] powerpc/pseries: Set error_state to pci_channel_io_normal in eeh_report_reset()
+Bugzilla: 496872
+RH-Acked-by: David Howells <dhowells@redhat.com>
+
+RHBZ#:
+======
+https://bugzilla.redhat.com/show_bug.cgi?id=496872
+
+Description:
+===========
+While adding native EEH support to Emulex and Qlogic drivers, it was
+discovered that dev->error_state was set to pci_io_channel_normal too
+late in the recovery process. These drivers rely on error_state to
+determine if they can access the device in their slot_reset callback,
+thus error_state needs to be set to pci_io_channel_normal in
+eeh_report_reset().
+
+Moving forward we are trying to fix lpfc and qla2xxx driver patches which
+change the value of device error_state, a variable which is out the
+drivers scope of ownership.
+
+RHEL Version Found:
+================
+RHEL 5.3
+
+kABI Status:
+============
+No symbols were harmed.
+
+Brew:
+=====
+Built on all platforms.
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1769547
+
+Upstream Status:
+================
+http://git.kernel.org/?p=linux/kernel/git/sfr/linux-next.git;a=commit;h=c58dc575f3c8bdc69fb868ec51e1c80ee7cae5e7
+
+Test Status:
+============
+Today, this workaround is in the lfc and qla2xxx drivers so to test this, the
+patch was added to the kernel code and removed from the lpfc and qla2xxx
+drivers.  The device behaved just as it did before the change.
+
+===============================================================
+Ameet Paranjape 978-392-3903 ext 23903
+IBM on-site partner
+
+Proposed Patch:
+===============
+
+diff --git a/arch/powerpc/platforms/pseries/eeh_driver.c b/arch/powerpc/platforms/pseries/eeh_driver.c
+index e126d5d..6a9183a 100644
+--- a/arch/powerpc/platforms/pseries/eeh_driver.c
++++ b/arch/powerpc/platforms/pseries/eeh_driver.c
+@@ -104,6 +104,8 @@ static void eeh_enable_irq(struct pci_dev *dev)
+ {
+ 	struct device_node *dn = pci_device_to_OF_node(dev);
+ 
++	dev->error_state = pci_channel_io_normal;
++
+ 	if ((PCI_DN(dn)->eeh_mode) & EEH_MODE_IRQ_DISABLED) {
+ 		PCI_DN(dn)->eeh_mode &= ~EEH_MODE_IRQ_DISABLED;
+ 		enable_irq(dev->irq);

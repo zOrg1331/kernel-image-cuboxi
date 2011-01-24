@@ -1,0 +1,128 @@
+--- ./src/rx/LINUX/rx_knet.c.exec_env	2008-03-06 12:15:18.000000000 +0300
++++ ./src/rx/LINUX/rx_knet.c	2008-03-06 15:22:23.000000000 +0300
+@@ -26,12 +26,25 @@ RCSID
+ #endif
+ #include <asm/uaccess.h>
+ 
++/* Macros for execution context managing */
++#define to_ve0(ve, ub)		({		\
++		ve = set_exec_env(get_ve0());	\
++		ub = set_exec_ub(get_ub0());	\
++	})
++
++#define from_ve0(ve, ub)	({		\
++		(void)set_exec_env(ve);		\
++		(void)set_exec_ub(ub);		\
++	})
++
+ /* rxk_NewSocket
+  * open and bind RX socket
+  */
+ osi_socket *
+ rxk_NewSocketHost(afs_uint32 ahost, short aport)
+ {
++    struct ve_struct *ve;
++    struct user_beancounter *ub;
+     struct socket *sockp;
+     struct sockaddr_in myaddr;
+     int code;
+@@ -42,11 +55,13 @@ rxk_NewSocketHost(afs_uint32 ahost, shor
+     /* We need a better test for this. if you need it back, tell us
+      * how to detect it. 
+      */
++    to_ve0(ve, ub);
+ #ifdef LINUX_KERNEL_SOCK_CREATE_V
+     code = sock_create(AF_INET, SOCK_DGRAM, IPPROTO_UDP, &sockp, 0);
+ #else
+     code = sock_create(AF_INET, SOCK_DGRAM, IPPROTO_UDP, &sockp);
+ #endif
++    from_ve0(ve, ub);
+     if (code < 0)
+ 	return NULL;
+ 
+@@ -54,21 +69,28 @@ rxk_NewSocketHost(afs_uint32 ahost, shor
+     myaddr.sin_family = AF_INET;
+     myaddr.sin_addr.s_addr = ahost;
+     myaddr.sin_port = aport;
++
++    to_ve0(ve, ub);
+     code =
+ 	sockp->ops->bind(sockp, (struct sockaddr *)&myaddr, sizeof(myaddr));
++    from_ve0(ve, ub);
+ 
+     if (code < 0) {
+ #if defined(AFS_LINUX24_ENV)
+ 	printk("sock_release(rx_socket) FIXME\n");
+ #else
++	to_ve0(ve, ub);
+ 	sock_release(sockp);
++	from_ve0(ve, ub);
+ #endif
+ 	return NULL;
+     }
+ 
+     TO_USER_SPACE();
++    to_ve0(ve, ub);
+     sockp->ops->setsockopt(sockp, SOL_IP, IP_MTU_DISCOVER, (char *)&pmtu,
+                            sizeof(pmtu));
++    from_ve0(ve, ub);
+     TO_KERNEL_SPACE();
+     return (osi_socket *)sockp;
+ }
+@@ -98,6 +120,8 @@ int
+ osi_NetSend(osi_socket sop, struct sockaddr_in *to, struct iovec *iovec,
+ 	    int iovcnt, afs_int32 size, int istack)
+ {
++    struct ve_struct *ve;
++    struct user_beancounter *ub;
+     KERNEL_SPACE_DECL;
+     struct msghdr msg;
+     int code;
+@@ -111,7 +135,9 @@ osi_NetSend(osi_socket sop, struct socka
+     msg.msg_flags = 0;
+ 
+     TO_USER_SPACE();
++    to_ve0(ve, ub);
+     code = sock_sendmsg(sop, &msg, size);
++    from_ve0(ve, ub);
+     TO_KERNEL_SPACE();
+     return (code < 0) ? code : 0;
+ }
+@@ -142,6 +168,8 @@ int
+ osi_NetReceive(osi_socket so, struct sockaddr_in *from, struct iovec *iov,
+ 	       int iovcnt, int *lengthp)
+ {
++    struct ve_struct *ve;
++    struct user_beancounter *ub;
+     KERNEL_SPACE_DECL;
+     struct msghdr msg;
+     int code;
+@@ -160,7 +188,9 @@ osi_NetReceive(osi_socket so, struct soc
+     msg.msg_flags = 0;
+ 
+     TO_USER_SPACE();
++    to_ve0(ve, ub);
+     code = sock_recvmsg(sop, &msg, *lengthp, 0);
++    from_ve0(ve, ub);
+     TO_KERNEL_SPACE();
+ 
+     if (code < 0) {
+@@ -214,6 +244,8 @@ extern rwlock_t tasklist_lock __attribut
+ void
+ osi_StopListener(void)
+ {
++    struct ve_struct *ve;
++    struct user_beancounter *ub;
+     struct task_struct *listener;
+     extern int rxk_ListenerPid;
+ 
+@@ -247,7 +279,9 @@ osi_StopListener(void)
+ 	    break;
+ 	afs_osi_Sleep(&rxk_ListenerPid);
+     }
++    to_ve0(ve, ub);
+     sock_release(rx_socket);
++    from_ve0(ve, ub);
+     rx_socket = NULL;
+ }
+ 

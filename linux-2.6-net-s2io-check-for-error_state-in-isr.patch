@@ -1,0 +1,50 @@
+From: Scott Moser <smoser@redhat.com>
+Subject: Re: [PATCH RHEL5u1] bz276871 s2io card can't work on RHEL5.1-snap3
+Date: Mon, 17 Sep 2007 15:08:23 -0400 (EDT)
+Bugzilla: 276871
+Message-Id: <Pine.LNX.4.64.0709171507160.27130@squad5-lp1.lab.boston.redhat.com>
+Changelog: [net] s2io: check for error_state in ISR
+
+RHBZ#: 276871
+------
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=276871
+
+Description:
+------------
+When testing RHEL5u1 Snapshot 3, a bug was found in the s2io driver that
+resulted in failure of the card to work (ping fails).
+
+The change is adds a test to make sure error_state not 0 which is not
+defined in pci_channel_state.
+
+RHEL Version Found:
+-------------------
+2.6.18-41.el5
+
+Test Status:
+------------
+To ensure cross platform build, this patch has been built with brew
+applied to kernel-2.6.18-47.el5. The build is available at [1].
+
+This patch has been tested by Jim Huang of IBM.  With the patched kernel he
+was able to run network FVT and netperf test cases on the card.
+
+Proposed Patch:
+----------------
+Please review and ACK for RHEL5.1
+
+Index: b/drivers/net/s2io.c
+===================================================================
+--- a/drivers/net/s2io.c
++++ b/drivers/net/s2io.c
+@@ -4210,7 +4210,8 @@ static irqreturn_t s2io_isr(int irq, voi
+ 	struct config_param *config;
+ 
+ 	/* Pretend we handled any irq's from a disconnected card */
+-	if (sp->pdev->error_state != pci_channel_io_normal)
++	if ((sp->pdev->error_state != pci_channel_io_normal) &&
++	    (sp->pdev->error_state != 0))
+ 		return IRQ_NONE;
+ 
+ 	atomic_inc(&sp->isr_cnt);
+

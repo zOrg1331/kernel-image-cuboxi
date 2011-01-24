@@ -4,6 +4,7 @@
  * The system call table. 
  */
 
+#include <linux/config.h>			/* CONFIG_OSF4_COMPAT */
 #include <asm/unistd.h>
 
 	.data
@@ -17,7 +18,7 @@ sys_call_table:
 	.quad sys_write
 	.quad alpha_ni_syscall			/* 5 */
 	.quad sys_close
-	.quad sys_osf_wait4
+	.quad osf_wait4
 	.quad alpha_ni_syscall
 	.quad sys_link
 	.quad sys_unlink			/* 10 */
@@ -27,11 +28,11 @@ sys_call_table:
 	.quad sys_mknod
 	.quad sys_chmod				/* 15 */
 	.quad sys_chown
-	.quad sys_osf_brk
+	.quad osf_brk
 	.quad alpha_ni_syscall
 	.quad sys_lseek
 	.quad sys_getxpid			/* 20 */
-	.quad sys_osf_mount
+	.quad osf_mount
 	.quad sys_umount
 	.quad sys_setuid
 	.quad sys_getxuid
@@ -52,8 +53,8 @@ sys_call_table:
 	.quad sys_setpgid
 	.quad alpha_ni_syscall			/* 40 */
 	.quad sys_dup
-	.quad sys_alpha_pipe
-	.quad sys_osf_set_program_attributes
+	.quad sys_pipe
+	.quad osf_set_program_attributes
 	.quad alpha_ni_syscall
 	.quad sys_open				/* 45 */
 	.quad alpha_ni_syscall
@@ -81,7 +82,7 @@ sys_call_table:
 	.quad sys_newlstat
 	.quad alpha_ni_syscall
 	.quad alpha_ni_syscall			/* 70 */
-	.quad sys_osf_mmap
+	.quad osf_mmap
 	.quad alpha_ni_syscall
 	.quad sys_munmap
 	.quad sys_mprotect
@@ -94,17 +95,17 @@ sys_call_table:
 	.quad sys_setgroups			/* 80 */
 	.quad alpha_ni_syscall
 	.quad sys_setpgid
-	.quad sys_osf_setitimer
+	.quad osf_setitimer
 	.quad alpha_ni_syscall
 	.quad alpha_ni_syscall			/* 85 */
-	.quad sys_osf_getitimer
+	.quad osf_getitimer
 	.quad sys_gethostname
 	.quad sys_sethostname
 	.quad sys_getdtablesize
 	.quad sys_dup2				/* 90 */
 	.quad sys_newfstat
 	.quad sys_fcntl
-	.quad sys_osf_select
+	.quad osf_select
 	.quad sys_poll
 	.quad sys_fsync				/* 95 */
 	.quad sys_setpriority
@@ -123,22 +124,22 @@ sys_call_table:
 	.quad alpha_ni_syscall
 	.quad alpha_ni_syscall			/* 110 */
 	.quad sys_sigsuspend
-	.quad sys_osf_sigstack
+	.quad osf_sigstack
 	.quad sys_recvmsg
 	.quad sys_sendmsg
 	.quad alpha_ni_syscall			/* 115 */
-	.quad sys_osf_gettimeofday
-	.quad sys_osf_getrusage
+	.quad osf_gettimeofday
+	.quad osf_getrusage
 	.quad sys_getsockopt
 	.quad alpha_ni_syscall
 #ifdef CONFIG_OSF4_COMPAT
-	.quad sys_osf_readv			/* 120 */
-	.quad sys_osf_writev
+	.quad osf_readv				/* 120 */
+	.quad osf_writev
 #else
 	.quad sys_readv				/* 120 */
 	.quad sys_writev
 #endif
-	.quad sys_osf_settimeofday
+	.quad osf_settimeofday
 	.quad sys_fchown
 	.quad sys_fchmod
 	.quad sys_recvfrom			/* 125 */
@@ -154,7 +155,7 @@ sys_call_table:
 	.quad sys_socketpair			/* 135 */
 	.quad sys_mkdir
 	.quad sys_rmdir
-	.quad sys_osf_utimes
+	.quad osf_utimes
 	.quad alpha_ni_syscall
 	.quad alpha_ni_syscall			/* 140 */
 	.quad sys_getpeername
@@ -172,16 +173,16 @@ sys_call_table:
 	.quad alpha_ni_syscall
 	.quad alpha_ni_syscall
 	.quad alpha_ni_syscall			/* 155 */
-	.quad sys_osf_sigaction
+	.quad osf_sigaction
 	.quad alpha_ni_syscall
 	.quad alpha_ni_syscall
-	.quad sys_osf_getdirentries
-	.quad sys_osf_statfs			/* 160 */
-	.quad sys_osf_fstatfs
+	.quad osf_getdirentries
+	.quad osf_statfs			/* 160 */
+	.quad osf_fstatfs
 	.quad alpha_ni_syscall
 	.quad alpha_ni_syscall
 	.quad alpha_ni_syscall
-	.quad sys_osf_getdomainname		/* 165 */
+	.quad osf_getdomainname			/* 165 */
 	.quad sys_setdomainname
 	.quad alpha_ni_syscall
 	.quad alpha_ni_syscall
@@ -224,7 +225,7 @@ sys_call_table:
 	.quad sys_semctl
 	.quad sys_semget			/* 205 */
 	.quad sys_semop
-	.quad sys_osf_utsname
+	.quad osf_utsname
 	.quad sys_lchown
 	.quad sys_shmat
 	.quad sys_shmctl			/* 210 */
@@ -258,23 +259,23 @@ sys_call_table:
 	.quad alpha_ni_syscall
 	.quad alpha_ni_syscall
 	.quad alpha_ni_syscall			/* 240 */
-	.quad sys_osf_sysinfo
+	.quad osf_sysinfo
 	.quad alpha_ni_syscall
 	.quad alpha_ni_syscall
-	.quad sys_osf_proplist_syscall
+	.quad osf_proplist_syscall
 	.quad alpha_ni_syscall			/* 245 */
 	.quad alpha_ni_syscall
 	.quad alpha_ni_syscall
 	.quad alpha_ni_syscall
 	.quad alpha_ni_syscall
 	.quad alpha_ni_syscall			/* 250 */
-	.quad sys_osf_usleep_thread
+	.quad osf_usleep_thread
 	.quad alpha_ni_syscall
 	.quad alpha_ni_syscall
 	.quad sys_sysfs
 	.quad alpha_ni_syscall			/* 255 */
-	.quad sys_osf_getsysinfo
-	.quad sys_osf_setsysinfo
+	.quad osf_getsysinfo
+	.quad osf_setsysinfo
 	.quad alpha_ni_syscall
 	.quad alpha_ni_syscall
 	.quad alpha_ni_syscall			/* 260 */
@@ -465,39 +466,6 @@ sys_call_table:
 	.quad sys_inotify_init
 	.quad sys_inotify_add_watch		/* 445 */
 	.quad sys_inotify_rm_watch
-	.quad sys_fdatasync
-	.quad sys_kexec_load
-	.quad sys_migrate_pages
-	.quad sys_openat			/* 450 */
-	.quad sys_mkdirat
-	.quad sys_mknodat
-	.quad sys_fchownat
-	.quad sys_futimesat
-	.quad sys_fstatat64			/* 455 */
-	.quad sys_unlinkat
-	.quad sys_renameat
-	.quad sys_linkat
-	.quad sys_symlinkat
-	.quad sys_readlinkat			/* 460 */
-	.quad sys_fchmodat
-	.quad sys_faccessat
-	.quad sys_pselect6
-	.quad sys_ppoll
-	.quad sys_unshare			/* 465 */
-	.quad sys_set_robust_list
-	.quad sys_get_robust_list
-	.quad sys_splice
-	.quad sys_sync_file_range
-	.quad sys_tee				/* 470 */
-	.quad sys_vmsplice
-	.quad sys_move_pages
-	.quad sys_getcpu
-	.quad sys_epoll_pwait
-	.quad sys_utimensat			/* 475 */
-	.quad sys_signalfd
-	.quad sys_ni_syscall
-	.quad sys_eventfd
-	.quad sys_recvmmsg
 
 	.size sys_call_table, . - sys_call_table
 	.type sys_call_table, @object

@@ -1,0 +1,32 @@
+From: Michal Schmidt <mschmidt@redhat.com>
+Date: Wed, 27 May 2009 15:24:31 +0200
+Subject: [pci] add PCI Express link status register definitions
+Message-id: 20090527152431.3cb7bf2d@brian.englab.brq.redhat.com
+O-Subject: [RHEL5.4 PATCH 1/3] pci: add PCI Express link status register definitions
+Bugzilla: 453683
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+RH-Acked-by: Andy Gospodarek <gospo@redhat.com>
+
+BZ: https://bugzilla.redhat.com/show_bug.cgi?id=453683
+
+Add PCI_EXP_LNKSTA_* register definitions to pci_regs.h.
+Upstream since 2.6.29. A part of commit 322162a7.
+
+diff --git a/include/linux/pci_regs.h b/include/linux/pci_regs.h
+index ef0370b..2bbc5bb 100644
+--- a/include/linux/pci_regs.h
++++ b/include/linux/pci_regs.h
+@@ -396,6 +396,13 @@
+ #define PCI_EXP_LNKCTL		16	/* Link Control */
+ #define  PCI_EXP_LNKCTL_CLKREQ_EN 0x100	/* Enable clkreq */
+ #define PCI_EXP_LNKSTA		18	/* Link Status */
++#define  PCI_EXP_LNKSTA_CLS	0x000f	/* Current Link Speed */
++#define  PCI_EXP_LNKSTA_NLW	0x03f0	/* Nogotiated Link Width */
++#define  PCI_EXP_LNKSTA_LT	0x0800	/* Link Training */
++#define  PCI_EXP_LNKSTA_SLC	0x1000	/* Slot Clock Configuration */
++#define  PCI_EXP_LNKSTA_DLLLA	0x2000	/* Data Link Layer Link Active */
++#define  PCI_EXP_LNKSTA_LBMS	0x4000	/* Link Bandwidth Management Status */
++#define  PCI_EXP_LNKSTA_LABS	0x8000	/* Link Autonomous Bandwidth Status */
+ #define PCI_EXP_SLTCAP		20	/* Slot Capabilities */
+ #define PCI_EXP_SLTCTL		24	/* Slot Control */
+ #define PCI_EXP_SLTSTA		26	/* Slot Status */

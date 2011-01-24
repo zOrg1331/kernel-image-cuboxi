@@ -1,0 +1,53 @@
+From: Janice M. Girouard <jgirouar@redhat.com>
+Subject: RHEL 5.0 PPC PATCH] DLPAR virtual CPU removal failure - cppr bits
+Date: Mon, 18 Dec 2006 17:42:06 -0500 (Eastern Standard Time)
+Bugzilla: 218058
+Message-Id: <Pine.WNT.4.64.0612181739410.2100@IBM-3MTQI3AXJFW>
+Changelog: ppc64: DLPAR virtual CPU removal failure - cppr bits
+
+
+RHBZ#: 218058
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=218058
+
+Description:
+------------
+drslot tools do not correctly handle a RTAS failure.  The end result is that customers are unable to remove virtual CPU's. 
+
+Currently,the drslot tool returns "success" even when the RTAS call fails.  This leaves the HMC and the partition in one state, while phyp is in 
+another.  The tool should return a failure code, and the HMC will display the reason for the failure.  
+
+RHEL Version Found:
+-------------------
+RHEL 5.0 alpha
+
+Upstream Status:
+----------------
+This patch is not upstream.  The real fix for this bug more complicated and risky than what is suitable for acceptance at this stage in a release.  
+This patch has been informally approved by benh who will also be writing the larger (and much more complicated) fix that will be submitted 
+upstream.
+
+
+Test Status:
+------------
+This patch was tested by Nathan Fontenot of IBM.  This patch builds 
+cleanly against kernel-2.6.18-1.2839.el5.
+
+Proposed Patch:
+----------------
+Please review and ACK for RHEL 5.0
+
+--- linux-2.6.18.ppc64/arch/powerpc/platforms/pseries/.xics.c	2006-11-30 15:35:22.000000000 -0600
++++ linux-2.6.18.ppc64/arch/powerpc/platforms/pseries/xics.c	2006-11-30 15:35:51.000000000 -0600
+@@ -788,8 +788,10 @@ void xics_teardown_cpu(int secondary)
+ 	if (ipi == XICS_IRQ_SPURIOUS)
+ 		return;
+ 	desc = get_irq_desc(ipi);
+-	if (desc->chip && desc->chip->eoi)
++	if (desc->chip && desc->chip->eoi) {
+ 		desc->chip->eoi(ipi);
++		xics_set_cpu_priority(cpu, 0);
++	}
+ 
+ 	/*
+ 	 * Some machines need to have at least one cpu in the GIQ,
+

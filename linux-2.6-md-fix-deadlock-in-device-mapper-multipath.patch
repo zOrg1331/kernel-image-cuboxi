@@ -1,0 +1,112 @@
+From: Mikulas Patocka <mpatocka@redhat.com>
+Date: Wed, 2 Dec 2009 02:40:12 -0500
+Subject: [md] fix deadlock in device mapper multipath
+Message-id: <Pine.LNX.4.64.0912012135400.19328@hs20-bc2-1.build.redhat.com>
+Patchwork-id: 21639
+O-Subject: [RHEL5.5 PATCH] bz543270 Fix deadlock in device mapper multipath
+Bugzilla: 543270
+RH-Acked-by: Alasdair G Kergon <agk@redhat.com>
+
+Hi
+
+This patch fixes a deadlock in multipath, reported in CentOS 5.3 and in
+upstream.
+
+Upstream status: in Alasdair's tree at
+ftp://ftp.kernel.org/pub/linux/kernel/people/agk/patches/2.6/editing/dm-avoid-_hash_lock-deadlock.patch
+Will be included in next upstream kernel merge window.
+
+Testing: it is a race and it is not reproducible for me, so I only tested
+some basic lvm functionality after applying the patch. I think some people
+who reproduced the bug did testing of the patch in upstream.
+
+
+diff --git a/drivers/md/dm-ioctl.c b/drivers/md/dm-ioctl.c
+index e20d907..554df49 100644
+--- a/drivers/md/dm-ioctl.c
++++ b/drivers/md/dm-ioctl.c
+@@ -56,6 +56,11 @@ static void dm_hash_remove_all(int keep_open_devices);
+  */
+ static DECLARE_RWSEM(_hash_lock);
+ 
++/*
++ * Protects use of mdptr to obtain hash cell name and uuid from mapped device.
++ */
++static DEFINE_MUTEX(dm_hash_cells_mutex);
++
+ static void init_buckets(struct list_head *buckets)
+ {
+ 	unsigned int i;
+@@ -206,7 +211,9 @@ static int dm_hash_insert(const char *name, const char *uuid, struct mapped_devi
+ 		list_add(&cell->uuid_list, _uuid_buckets + hash_str(uuid));
+ 	}
+ 	dm_get(md);
++	mutex_lock(&dm_hash_cells_mutex);
+ 	dm_set_mdptr(md, cell);
++	mutex_unlock(&dm_hash_cells_mutex);
+ 	up_write(&_hash_lock);
+ 
+ 	return 0;
+@@ -224,7 +231,9 @@ static void __hash_remove(struct hash_cell *hc)
+ 	/* remove from the dev hash */
+ 	list_del(&hc->uuid_list);
+ 	list_del(&hc->name_list);
++	mutex_lock(&dm_hash_cells_mutex);
+ 	dm_set_mdptr(hc->md, NULL);
++	mutex_unlock(&dm_hash_cells_mutex);
+ 
+ 	table = dm_get_table(hc->md);
+ 	if (table) {
+@@ -321,7 +330,9 @@ static int dm_hash_rename(const char *old, const char *new)
+ 	 */
+ 	list_del(&hc->name_list);
+ 	old_name = hc->name;
++	mutex_lock(&dm_hash_cells_mutex);
+ 	hc->name = new_name;
++	mutex_unlock(&dm_hash_cells_mutex);
+ 	list_add(&hc->name_list, _name_buckets + hash_str(new_name));
+ 
+ 	/*
+@@ -1537,8 +1548,7 @@ int dm_copy_name_and_uuid(struct mapped_device *md, char *name, char *uuid)
+ 	if (!md)
+ 		return -ENXIO;
+ 
+-	dm_get(md);
+-	down_read(&_hash_lock);
++	mutex_lock(&dm_hash_cells_mutex);
+ 	hc = dm_get_mdptr(md);
+ 	if (!hc || hc->md != md) {
+ 		r = -ENXIO;
+@@ -1549,8 +1559,7 @@ int dm_copy_name_and_uuid(struct mapped_device *md, char *name, char *uuid)
+ 	strcpy(uuid, hc->uuid ? : "");
+ 
+ out:
+-	up_read(&_hash_lock);
+-	dm_put(md);
++	mutex_unlock(&dm_hash_cells_mutex);
+ 
+ 	return r;
+ }
+diff --git a/drivers/md/dm-uevent.c b/drivers/md/dm-uevent.c
+index b968194..f585f59 100644
+--- a/drivers/md/dm-uevent.c
++++ b/drivers/md/dm-uevent.c
+@@ -141,14 +141,13 @@ void dm_send_uevents(struct list_head *events, struct kobject *kobj)
+ 		list_del_init(&event->elist);
+ 
+ 		/*
+-		 * Need to call dm_copy_name_and_uuid from here for now.
+-		 * Context of previous var adds and locking used for
+-		 * hash_cell not compatable.
++		 * When a device is being removed this copy fails and we
++		 * discard these unsent events.
+ 		 */
+ 		if (dm_copy_name_and_uuid(event->md, event->name,
+ 					  event->uuid)) {
+-			DMERR("%s: dm_copy_name_and_uuid() failed",
+-			      __FUNCTION__);
++			DMINFO("%s: skipping sending uevent for lost device",
++			       __func__);
+ 			goto uevent_free;
+ 		}
+ 

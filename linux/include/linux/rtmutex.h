@@ -16,7 +16,7 @@
 #include <linux/plist.h>
 #include <linux/spinlock_types.h>
 
-/**
+/*
  * The rt_mutex structure
  *
  * @wait_lock:	spinlock to protect the structure
@@ -54,7 +54,7 @@ struct hrtimer_sleeper;
 #ifdef CONFIG_DEBUG_RT_MUTEXES
 # define __DEBUG_RT_MUTEX_INITIALIZER(mutexname) \
 	, .name = #mutexname, .file = __FILE__, .line = __LINE__
-# define rt_mutex_init(mutex)			__rt_mutex_init(mutex, __func__)
+# define rt_mutex_init(mutex)			__rt_mutex_init(mutex, __FUNCTION__)
  extern void rt_mutex_debug_task_free(struct task_struct *tsk);
 #else
 # define __DEBUG_RT_MUTEX_INITIALIZER(mutexname)
@@ -63,7 +63,7 @@ struct hrtimer_sleeper;
 #endif
 
 #define __RT_MUTEX_INITIALIZER(mutexname) \
-	{ .wait_lock = __SPIN_LOCK_UNLOCKED(mutexname.wait_lock) \
+	{ .wait_lock = SPIN_LOCK_UNLOCKED \
 	, .wait_list = PLIST_HEAD_INIT(mutexname.wait_list, mutexname.wait_lock) \
 	, .owner = NULL \
 	__DEBUG_RT_MUTEX_INITIALIZER(mutexname)}
@@ -71,7 +71,7 @@ struct hrtimer_sleeper;
 #define DEFINE_RT_MUTEX(mutexname) \
 	struct rt_mutex mutexname = __RT_MUTEX_INITIALIZER(mutexname)
 
-/**
+/***
  * rt_mutex_is_locked - is the mutex locked
  * @lock: the mutex to be queried
  *

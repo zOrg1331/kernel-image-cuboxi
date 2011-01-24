@@ -4,7 +4,7 @@
  * Authors:
  * Kylene Hall <kjhall@us.ibm.com>
  *
- * Maintained by: <tpmdd-devel@lists.sourceforge.net>
+ * Maintained by: <tpmdd_devel@lists.sourceforge.net>
  *
  * Device driver for TCG/TCPA TPM (trusted platform module).
  * Specifications at www.trustedcomputinggroup.org
@@ -23,9 +23,6 @@
  */
 
 #ifdef CONFIG_PPC64
-
-#include <asm/prom.h>
-
 #define atmel_getb(chip, offset) readb(chip->vendor->iobase + offset);
 #define atmel_putb(val, chip, offset) writeb(val, chip->vendor->iobase + offset)
 #define atmel_request_region request_mem_region
@@ -40,7 +37,7 @@ static void __iomem * atmel_get_base_addr(unsigned long *base, int *region_size)
 {
 	struct device_node *dn;
 	unsigned long address, size;
-	const unsigned int *reg;
+	unsigned int *reg;
 	int reglen;
 	int naddrc;
 	int nsizec;
@@ -50,14 +47,14 @@ static void __iomem * atmel_get_base_addr(unsigned long *base, int *region_size)
 	if (!dn)
 		return NULL;
 
-	if (!of_device_is_compatible(dn, "AT97SC3201")) {
+	if (!device_is_compatible(dn, "AT97SC3201")) {
 		of_node_put(dn);
 		return NULL;
 	}
 
-	reg = of_get_property(dn, "reg", &reglen);
-	naddrc = of_n_addr_cells(dn);
-	nsizec = of_n_size_cells(dn);
+	reg = (unsigned int *) get_property(dn, "reg", &reglen);
+	naddrc = prom_n_addr_cells(dn);
+	nsizec = prom_n_size_cells(dn);
 
 	of_node_put(dn);
 

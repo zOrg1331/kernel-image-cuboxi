@@ -1,0 +1,48 @@
+From: Jiri Olsa <jolsa@redhat.com>
+Date: Wed, 21 Jul 2010 13:01:43 -0400
+Subject: [net] fix accept_local handling for dev with no xattrs
+Message-id: <1279717303-3633-1-git-send-email-jolsa@redhat.com>
+Patchwork-id: 27004
+O-Subject: [PATCH RHEL5] BZ#601370 net: fix accept_local handling for devices
+	with no extended attributes
+Bugzilla: 601370
+RH-Acked-by: David S. Miller <davem@redhat.com>
+
+Bugzilla: 601370
+https://bugzilla.redhat.com/show_bug.cgi?id=601370
+
+Description:
+============
+The original patch has a bug when using macro IN_DEV_ACCEPT_LOCAL
+to check extended attributes for accept_local value.
+
+  commit f1007a397a4eb8b3f22d56dc50fd8144c7d058bb
+  [net] ipv4: add sysctl to accept packets w/local source
+
+As the device might not have the extented attributes defined,
+the code path could panic (eg for loopback device).
+
+Brew:
+=====
+https://brewweb.devel.redhat.com/taskinfo?taskID=2612178
+
+Tested:
+=======
+tested by customer
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/include/linux/inetdevice.h b/include/linux/inetdevice.h
+index 8ca236b..8075371 100644
+--- a/include/linux/inetdevice.h
++++ b/include/linux/inetdevice.h
+@@ -65,7 +65,8 @@ struct in_device
+ #define IN_DEV_RPFILTER(in_dev)		(ipv4_devconf.rp_filter && (in_dev)->cnf.rp_filter)
+ #define IN_DEV_SOURCE_ROUTE(in_dev)	(ipv4_devconf.accept_source_route && (in_dev)->cnf.accept_source_route)
+ #define IN_DEV_ACCEPT_LOCAL(in_dev)	(ipv4_devconf_ext.accept_local || \
+-					 dev_extended(in_dev->dev)->ipv4_devconf_ext.accept_local)
++					 dev_extended(in_dev->dev) ? \
++					 dev_extended(in_dev->dev)->ipv4_devconf_ext.accept_local : 0)
+ #define IN_DEV_BOOTP_RELAY(in_dev)	(ipv4_devconf.bootp_relay && (in_dev)->cnf.bootp_relay)
+ 
+ #define IN_DEV_LOG_MARTIANS(in_dev)	(ipv4_devconf.log_martians || (in_dev)->cnf.log_martians)

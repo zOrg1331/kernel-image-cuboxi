@@ -1,0 +1,45 @@
+From: Stefan Assmann <sassmann@redhat.com>
+Date: Wed, 23 Sep 2009 08:05:54 +0200
+Subject: [acpi] fix syntax in ACPI debug statement
+Message-id: 4AB9BAC2.9@redhat.com
+O-Subject: [RHEL 5.5 PATCH] fix syntax in ACPI debug statement
+Bugzilla: 524787
+RH-Acked-by: Stanislaw Gruszka <sgruszka@redhat.com>
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+Bugzilla:
+https://bugzilla.redhat.com/show_bug.cgi?id=524787
+
+Description:
+Compiling a kernel with CONFIG_ACPI_DEBUG=y enabled in .config
+reveals the following error
+
+  CC      drivers/acpi/processor_perflib.o
+drivers/acpi/processor_perflib.c: In function acpi_processor_get_psd:
+drivers/acpi/processor_perflib.c:622: error: expected ) before string constant
+drivers/acpi/processor_perflib.c:622: error: too few arguments to function acpi_ut_debug_print
+make[2]: *** [drivers/acpi/processor_perflib.o] Error 1
+make[1]: *** [drivers/acpi] Error 2
+make: *** [drivers] Error 2
+
+Turns out to be a syntax errors.
+
+Test Status:
+Tested-by: Stefan Assmann <sassmann@redhat.com>
+
+  Stefan
+
+diff --git a/drivers/acpi/processor_perflib.c b/drivers/acpi/processor_perflib.c
+index 84789ea..208d159 100644
+--- a/drivers/acpi/processor_perflib.c
++++ b/drivers/acpi/processor_perflib.c
+@@ -619,7 +619,7 @@ static int acpi_processor_get_psd(struct acpi_processor	*pr)
+ 	if (pdomain->coord_type != DOMAIN_COORD_TYPE_SW_ALL &&
+ 	    pdomain->coord_type != DOMAIN_COORD_TYPE_SW_ANY &&
+ 	    pdomain->coord_type != DOMAIN_COORD_TYPE_HW_ALL) {
+-		ACPI_DEBUG_PRINT((ACPI_DB_ERROR "Invalid _PSD:coord_type\n"));
++		ACPI_DEBUG_PRINT((ACPI_DB_ERROR, "Invalid _PSD:coord_type\n"));
+ 		result = -EFAULT;
+ 		goto end;
+ 	}

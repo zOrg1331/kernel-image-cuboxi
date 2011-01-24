@@ -1,5 +1,5 @@
 /*
- * sound/oss/sscape.c
+ * sound/sscape.c
  *
  * Low level driver for Ensoniq SoundScape
  *
@@ -39,7 +39,6 @@
 #include <linux/ioport.h>
 #include <linux/delay.h>
 #include <linux/proc_fs.h>
-#include <linux/mm.h>
 #include <linux/spinlock.h>
 
 #include "coproc.h"

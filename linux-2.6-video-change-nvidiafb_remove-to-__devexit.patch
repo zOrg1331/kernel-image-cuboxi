@@ -1,0 +1,39 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Subject: [RHEL5.1 PATCH]: Change nvidiafb_remove to __devexit
+Date: Fri, 9 Feb 2007 10:00:55 -0500
+Bugzilla: 227837
+Message-Id: <20070209150055.22284.68900.sendpatchset@prarit.boston.redhat.com>
+Changelog: [video] Change nvidiafb_remove to __devexit
+
+
+Change nvidiafb_remove to __devexit to fix MODPOST warnings:
+
+WARNING: drivers/video/nvidia/nvidiafb.o - Section mismatch: reference to
+.exit.text:nvidiafb_remove from .data.rel.local after 'nvidiafb_driver' (at
+offset 0x28)
+
+Now in -mm tree.
+
+Resolves BZ 227837.  Successfully tested by me.
+
+--- linux-2.6.19.ia64.orig/drivers/video/nvidia/nvidia.c	2007-02-07 09:56:37.000000000 -0500
++++ linux-2.6.19.ia64/drivers/video/nvidia/nvidia.c	2007-02-08 11:14:13.000000000 -0500
+@@ -1347,7 +1347,7 @@ err_out:
+ 	return -ENODEV;
+ }
+ 
+-static void __exit nvidiafb_remove(struct pci_dev *pd)
++static void __devexit nvidiafb_remove(struct pci_dev *pd)
+ {
+ 	struct fb_info *info = pci_get_drvdata(pd);
+ 	struct nvidia_par *par = info->par;
+@@ -1433,7 +1433,7 @@ static struct pci_driver nvidiafb_driver
+ 	.probe    = nvidiafb_probe,
+ 	.suspend  = nvidiafb_suspend,
+ 	.resume   = nvidiafb_resume,
+-	.remove   = __exit_p(nvidiafb_remove),
++	.remove   = __devexit_p(nvidiafb_remove),
+ };
+ 
+ /* ------------------------------------------------------------------------- *
+

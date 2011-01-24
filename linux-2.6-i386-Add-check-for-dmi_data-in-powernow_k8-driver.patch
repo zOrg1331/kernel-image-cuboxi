@@ -1,0 +1,52 @@
+From 091abe5d3909330bb46200e58239c92ca415df5e Mon Sep 17 00:00:00 2001
+From: Prarit Bhargava <prarit@redhat.com>
+Date: Thu, 3 Jul 2008 16:45:21 -0400
+Subject: [PATCH] [i386]: Add check for dmi_data in powernow_k8 driver
+
+Message-id: <20080529183241.25038.27371.sendpatchset@prarit.bos.redhat.com>
+O-Subject: [RHEL5 PATCH 1/2]: Add check for dmi_data in powernow_k8 driver
+Bugzilla: 443853
+
+
+dmi_data may be NULL.  Add a NULL value check.
+
+Resolves BZ 443853.
+
+Compile tested by me.  Testing ongoing by notting.
+
+Acked-by: Jeff Garzik <jgarzik@redhat.com>
+Acked-by: Brian Maly <bmaly@redhat.com>
+---
+ arch/i386/kernel/cpu/cpufreq/powernow-k8.c |    9 +--------
+ 1 files changed, 1 insertions(+), 8 deletions(-)
+
+diff --git a/arch/i386/kernel/cpu/cpufreq/powernow-k8.c b/arch/i386/kernel/cpu/cpufreq/powernow-k8.c
+index 56e0f7b..f2e17da 100644
+--- a/arch/i386/kernel/cpu/cpufreq/powernow-k8.c
++++ b/arch/i386/kernel/cpu/cpufreq/powernow-k8.c
+@@ -1421,13 +1421,6 @@ static int __cpuinit powernowk8_init(void)
+ 			supported_cpus++;
+ 	}
+ 
+-#ifdef CONFIG_XEN
+-	if (!is_initial_xendomain()) {
+-		/* Xen PV domU's can't possibly do powersaving; bail */
+-		return -EPERM;
+-	}
+-#endif
+-
+ 	/* AMD provides AGESA library modules for use in their BIOS. The
+ 	   default AGESA code creates the _PSD with the assumption the APICs
+ 	   are numbered per the BKDG HOWEVER, there is a callback
+@@ -1442,7 +1435,7 @@ static int __cpuinit powernowk8_init(void)
+ 	   this way. */
+ 	if (preregister_acpi_perf == 1 && cpu_family == CPU_OPTERON) {
+ 		char * dmi_data = dmi_get_system_info(DMI_BIOS_VENDOR);
+-		if (!strncmp(dmi_data, "Hewlett-Packard", 15)) {
++		if (dmi_data && !strncmp(dmi_data, "Hewlett-Packard", 15)) {
+ #ifdef CONFIG_XEN
+ 	   		/* Disable cpufreq for HP AMD Opteron systems */
+ 			printk("%s: This BIOS is %s .... disabling cpufreq "
+-- 
+1.5.5.1
+

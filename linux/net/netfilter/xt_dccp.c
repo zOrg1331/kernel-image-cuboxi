@@ -22,138 +22,148 @@
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Harald Welte <laforge@netfilter.org>");
-MODULE_DESCRIPTION("Xtables: DCCP protocol packet match");
+MODULE_DESCRIPTION("Match for DCCP protocol packets");
 MODULE_ALIAS("ipt_dccp");
-MODULE_ALIAS("ip6t_dccp");
 
 #define DCCHECK(cond, option, flag, invflag) (!((flag) & (option)) \
-				  || (!!((invflag) & (option)) ^ (cond)))
+		                  || (!!((invflag) & (option)) ^ (cond)))
 
 static unsigned char *dccp_optbuf;
 static DEFINE_SPINLOCK(dccp_buflock);
 
-static inline bool
+static inline int
 dccp_find_option(u_int8_t option,
 		 const struct sk_buff *skb,
 		 unsigned int protoff,
 		 const struct dccp_hdr *dh,
-		 bool *hotdrop)
+		 int *hotdrop)
 {
 	/* tcp.doff is only 4 bits, ie. max 15 * 4 bytes */
-	const unsigned char *op;
+	unsigned char *op;
 	unsigned int optoff = __dccp_hdr_len(dh);
 	unsigned int optlen = dh->dccph_doff*4 - __dccp_hdr_len(dh);
 	unsigned int i;
 
-	if (dh->dccph_doff * 4 < __dccp_hdr_len(dh))
-		goto invalid;
+	if (dh->dccph_doff * 4 < __dccp_hdr_len(dh)) {
+		*hotdrop = 1;
+		return 0;
+	}
 
 	if (!optlen)
-		return false;
+		return 0;
 
 	spin_lock_bh(&dccp_buflock);
 	op = skb_header_pointer(skb, protoff + optoff, optlen, dccp_optbuf);
 	if (op == NULL) {
 		/* If we don't have the whole header, drop packet. */
-		goto partial;
+		spin_unlock_bh(&dccp_buflock);
+		*hotdrop = 1;
+		return 0;
 	}
 
 	for (i = 0; i < optlen; ) {
 		if (op[i] == option) {
 			spin_unlock_bh(&dccp_buflock);
-			return true;
+			return 1;
 		}
 
-		if (op[i] < 2)
+		if (op[i] < 2) 
 			i++;
-		else
+		else 
 			i += op[i+1]?:1;
 	}
 
 	spin_unlock_bh(&dccp_buflock);
-	return false;
-
-partial:
-	spin_unlock_bh(&dccp_buflock);
-invalid:
-	*hotdrop = true;
-	return false;
+	return 0;
 }
 
 
-static inline bool
+static inline int
 match_types(const struct dccp_hdr *dh, u_int16_t typemask)
 {
-	return typemask & (1 << dh->dccph_type);
+	return (typemask & (1 << dh->dccph_type));
 }
 
-static inline bool
+static inline int
 match_option(u_int8_t option, const struct sk_buff *skb, unsigned int protoff,
-	     const struct dccp_hdr *dh, bool *hotdrop)
+	     const struct dccp_hdr *dh, int *hotdrop)
 {
 	return dccp_find_option(option, skb, protoff, dh, hotdrop);
 }
 
-static bool
-dccp_mt(const struct sk_buff *skb, const struct xt_match_param *par)
+static int
+match(const struct sk_buff *skb,
+      const struct net_device *in,
+      const struct net_device *out,
+      const struct xt_match *match,
+      const void *matchinfo,
+      int offset,
+      unsigned int protoff,
+      int *hotdrop)
 {
-	const struct xt_dccp_info *info = par->matchinfo;
-	const struct dccp_hdr *dh;
-	struct dccp_hdr _dh;
+	const struct xt_dccp_info *info = matchinfo;
+	struct dccp_hdr _dh, *dh;
 
-	if (par->fragoff != 0)
-		return false;
-
-	dh = skb_header_pointer(skb, par->thoff, sizeof(_dh), &_dh);
+	if (offset)
+		return 0;
+	
+	dh = skb_header_pointer(skb, protoff, sizeof(_dh), &_dh);
 	if (dh == NULL) {
-		*par->hotdrop = true;
-		return false;
-	}
+		*hotdrop = 1;
+		return 0;
+       	}
 
-	return  DCCHECK(ntohs(dh->dccph_sport) >= info->spts[0]
-			&& ntohs(dh->dccph_sport) <= info->spts[1],
-			XT_DCCP_SRC_PORTS, info->flags, info->invflags)
-		&& DCCHECK(ntohs(dh->dccph_dport) >= info->dpts[0]
-			&& ntohs(dh->dccph_dport) <= info->dpts[1],
+	return  DCCHECK(((ntohs(dh->dccph_sport) >= info->spts[0]) 
+			&& (ntohs(dh->dccph_sport) <= info->spts[1])), 
+		   	XT_DCCP_SRC_PORTS, info->flags, info->invflags)
+		&& DCCHECK(((ntohs(dh->dccph_dport) >= info->dpts[0]) 
+			&& (ntohs(dh->dccph_dport) <= info->dpts[1])), 
 			XT_DCCP_DEST_PORTS, info->flags, info->invflags)
 		&& DCCHECK(match_types(dh, info->typemask),
 			   XT_DCCP_TYPE, info->flags, info->invflags)
-		&& DCCHECK(match_option(info->option, skb, par->thoff, dh,
-					par->hotdrop),
+		&& DCCHECK(match_option(info->option, skb, protoff, dh,
+					hotdrop),
 			   XT_DCCP_OPTION, info->flags, info->invflags);
 }
 
-static bool dccp_mt_check(const struct xt_mtchk_param *par)
+static int
+checkentry(const char *tablename,
+	   const void *inf,
+	   const struct xt_match *match,
+	   void *matchinfo,
+	   unsigned int matchsize,
+	   unsigned int hook_mask)
 {
-	const struct xt_dccp_info *info = par->matchinfo;
+	const struct xt_dccp_info *info = matchinfo;
 
 	return !(info->flags & ~XT_DCCP_VALID_FLAGS)
 		&& !(info->invflags & ~XT_DCCP_VALID_FLAGS)
 		&& !(info->invflags & ~info->flags);
 }
 
-static struct xt_match dccp_mt_reg[] __read_mostly = {
-	{
-		.name 		= "dccp",
-		.family		= NFPROTO_IPV4,
-		.checkentry	= dccp_mt_check,
-		.match		= dccp_mt,
-		.matchsize	= sizeof(struct xt_dccp_info),
-		.proto		= IPPROTO_DCCP,
-		.me 		= THIS_MODULE,
-	},
-	{
-		.name 		= "dccp",
-		.family		= NFPROTO_IPV6,
-		.checkentry	= dccp_mt_check,
-		.match		= dccp_mt,
-		.matchsize	= sizeof(struct xt_dccp_info),
-		.proto		= IPPROTO_DCCP,
-		.me 		= THIS_MODULE,
-	},
+static struct xt_match dccp_match = 
+{ 
+	.name 		= "dccp",
+	.match		= match,
+	.matchsize	= sizeof(struct xt_dccp_info),
+	.proto		= IPPROTO_DCCP,
+	.checkentry	= checkentry,
+	.family		= AF_INET,
+	.me 		= THIS_MODULE,
+};
+static struct xt_match dccp6_match = 
+{ 
+	.name 		= "dccp",
+	.match		= match,
+	.matchsize	= sizeof(struct xt_dccp_info),
+	.proto		= IPPROTO_DCCP,
+	.checkentry	= checkentry,
+	.family		= AF_INET6,
+	.me 		= THIS_MODULE,
 };
 
-static int __init dccp_mt_init(void)
+
+static int __init xt_dccp_init(void)
 {
 	int ret;
 
@@ -163,21 +173,29 @@ static int __init dccp_mt_init(void)
 	dccp_optbuf = kmalloc(256 * 4, GFP_KERNEL);
 	if (!dccp_optbuf)
 		return -ENOMEM;
-	ret = xt_register_matches(dccp_mt_reg, ARRAY_SIZE(dccp_mt_reg));
+	ret = xt_register_match(&dccp_match);
 	if (ret)
 		goto out_kfree;
+	ret = xt_register_match(&dccp6_match);
+	if (ret)
+		goto out_unreg;
+
 	return ret;
 
+out_unreg:
+	xt_unregister_match(&dccp_match);
 out_kfree:
 	kfree(dccp_optbuf);
+
 	return ret;
 }
 
-static void __exit dccp_mt_exit(void)
+static void __exit xt_dccp_fini(void)
 {
-	xt_unregister_matches(dccp_mt_reg, ARRAY_SIZE(dccp_mt_reg));
+	xt_unregister_match(&dccp6_match);
+	xt_unregister_match(&dccp_match);
 	kfree(dccp_optbuf);
 }
 
-module_init(dccp_mt_init);
-module_exit(dccp_mt_exit);
+module_init(xt_dccp_init);
+module_exit(xt_dccp_fini);

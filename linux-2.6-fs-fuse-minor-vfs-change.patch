@@ -1,0 +1,58 @@
+From: Eric Sandeen <sandeen@redhat.com>
+Subject: [RHEL5 PATCH 1/2] FUSE: Minor vfs change
+Date: Wed, 06 Jun 2007 14:03:05 -0500
+Bugzilla: 193720
+Message-Id: <466704E9.7000300@redhat.com>
+Changelog: [fs] FUSE: Minor vfs change
+
+
+For Bug 193720: Enable FUSE
+
+This is a very minor change to the vfs for upstream fuse, 
+and should not affect anyone else.
+
+X-Git-Tag: v2.6.19-rc1~798
+X-Git-Url: http://git.kernel.org/?p=linux%2Fkernel%2Fgit%2Ftorvalds%2Flinux-2.6.git;a=commitdiff_plain;h=650a898342b3fa21c392c06a2b7010fa19823efa
+
+[PATCH] vfs: define new lookup flag for chdir
+
+In the "operation does permission checking" model used by fuse, chdir
+permission is not checked, since there's no chdir method.
+
+For this case set a lookup flag, which will be passed to ->permission(), so
+fuse can distinguish it from permission checks for other operations.
+
+Signed-off-by: Miklos Szeredi <miklos@szeredi.hu>
+Cc: Al Viro <viro@zeniv.linux.org.uk>
+Signed-off-by: Andrew Morton <akpm@osdl.org>
+Signed-off-by: Linus Torvalds <torvalds@osdl.org>
+---
+
+Index: linux-2.6.18-20.EL/fs/open.c
+===================================================================
+--- linux-2.6.18-20.EL.orig/fs/open.c
++++ linux-2.6.18-20.EL/fs/open.c
+@@ -546,7 +546,8 @@ asmlinkage long sys_chdir(const char __u
+ 	struct nameidata nd;
+ 	int error;
+ 
+-	error = __user_walk(filename, LOOKUP_FOLLOW|LOOKUP_DIRECTORY, &nd);
++	error = __user_walk(filename,
++			    LOOKUP_FOLLOW|LOOKUP_DIRECTORY|LOOKUP_CHDIR, &nd);
+ 	if (error)
+ 		goto out;
+ 
+Index: linux-2.6.18-20.EL/include/linux/namei.h
+===================================================================
+--- linux-2.6.18-20.EL.orig/include/linux/namei.h
++++ linux-2.6.18-20.EL/include/linux/namei.h
+@@ -56,6 +56,7 @@ enum {LAST_NORM, LAST_ROOT, LAST_DOT, LA
+ #define LOOKUP_OPEN		(0x0100)
+ #define LOOKUP_CREATE		(0x0200)
+ #define LOOKUP_ACCESS		(0x0400)
++#define LOOKUP_CHDIR		(0x0800)
+ 
+ extern int FASTCALL(__user_walk(const char __user *, unsigned, struct nameidata *));
+ extern int FASTCALL(__user_walk_fd(int dfd, const char __user *, unsigned, struct nameidata *));
+
+

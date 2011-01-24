@@ -1,0 +1,1767 @@
+--- linux-2.6.17.noarch/include/linux/config.h~	2006-08-09 19:46:50.000000000 -0400
++++ linux-2.6.17.noarch/include/linux/config.h	2006-08-09 19:47:16.000000000 -0400
+@@ -3,6 +3,7 @@
+ /* This file is no longer in use and kept only for backward compatibility.
+  * autoconf.h is now included via -imacros on the commandline
+  */
++#warning Including config.h is deprecated.
+ #include <linux/autoconf.h>
+ #if !defined (__KERNEL__) && !defined(__KERNGLUE__)
+ #error including kernel header in userspace; use the glibc headers instead!
+--- linux-2.6.17.noarch/include/asm-i386/tsc.h~	2006-08-10 16:10:24.000000000 -0400
++++ linux-2.6.17.noarch/include/asm-i386/tsc.h	2006-08-10 16:10:28.000000000 -0400
+@@ -6,7 +6,6 @@
+ #ifndef _ASM_i386_TSC_H
+ #define _ASM_i386_TSC_H
+ 
+-#include <linux/config.h>
+ #include <asm/processor.h>
+ 
+ /*
+--- linux-2.6.17.noarch/include/asm-i386/dwarf2.h~	2006-08-10 16:10:52.000000000 -0400
++++ linux-2.6.17.noarch/include/asm-i386/dwarf2.h	2006-08-10 16:10:56.000000000 -0400
+@@ -1,8 +1,6 @@
+ #ifndef _DWARF2_H
+ #define _DWARF2_H
+ 
+-#include <linux/config.h>
+-
+ #ifndef __ASSEMBLY__
+ #warning "asm/dwarf2.h should be only included in pure assembly files"
+ #endif
+--- linux-2.6/net/ipv4/netfilter/ip_conntrack_sip.c~	2006-08-09 22:18:48.000000000 -0400
++++ linux-2.6/net/ipv4/netfilter/ip_conntrack_sip.c	2006-08-09 22:18:53.000000000 -0400
+@@ -8,7 +8,6 @@
+  * published by the Free Software Foundation.
+  */
+ 
+-#include <linux/config.h>
+ #include <linux/module.h>
+ #include <linux/ctype.h>
+ #include <linux/skbuff.h>
+--- linux-2.6/net/ipv4/af_inet.c~	2006-08-09 22:18:58.000000000 -0400
++++ linux-2.6/net/ipv4/af_inet.c	2006-08-09 22:19:03.000000000 -0400
+@@ -67,7 +67,6 @@
+  *		2 of the License, or (at your option) any later version.
+  */
+ 
+-#include <linux/config.h>
+ #include <linux/err.h>
+ #include <linux/errno.h>
+ #include <linux/types.h>
+--- linux-2.6/net/ipv4/ipconfig.c~	2006-08-09 22:19:07.000000000 -0400
++++ linux-2.6/net/ipv4/ipconfig.c	2006-08-09 22:19:10.000000000 -0400
+@@ -31,7 +31,6 @@
+  *              --  Josef Siemes <jsiemes@web.de>, Aug 2002
+  */
+ 
+-#include <linux/config.h>
+ #include <linux/types.h>
+ #include <linux/string.h>
+ #include <linux/kernel.h>
+--- linux-2.6/net/ipv4/raw.c~	2006-08-09 22:19:14.000000000 -0400
++++ linux-2.6/net/ipv4/raw.c	2006-08-09 22:19:18.000000000 -0400
+@@ -38,8 +38,7 @@
+  *		as published by the Free Software Foundation; either version
+  *		2 of the License, or (at your option) any later version.
+  */
+- 
+-#include <linux/config.h> 
++
+ #include <linux/types.h>
+ #include <asm/atomic.h>
+ #include <asm/byteorder.h>
+--- linux-2.6/net/ipv4/tcp_veno.c~	2006-08-09 22:19:23.000000000 -0400
++++ linux-2.6/net/ipv4/tcp_veno.c	2006-08-09 22:19:26.000000000 -0400
+@@ -9,7 +9,6 @@
+  * 	See http://www.ntu.edu.sg/home5/ZHOU0022/papers/CPFu03a.pdf
+  */
+ 
+-#include <linux/config.h>
+ #include <linux/mm.h>
+ #include <linux/module.h>
+ #include <linux/skbuff.h>
+--- linux-2.6/net/ipv4/tcp_lp.c~	2006-08-09 22:19:31.000000000 -0400
++++ linux-2.6/net/ipv4/tcp_lp.c	2006-08-09 22:19:34.000000000 -0400
+@@ -31,7 +31,6 @@
+  * Version: $Id: tcp_lp.c,v 1.22 2006-05-02 18:18:19 hswong3i Exp $
+  */
+ 
+-#include <linux/config.h>
+ #include <linux/module.h>
+ #include <net/tcp.h>
+ 
+--- linux-2.6/net/core/wireless.c~	2006-08-09 22:19:44.000000000 -0400
++++ linux-2.6/net/core/wireless.c	2006-08-09 22:19:47.000000000 -0400
+@@ -72,7 +72,6 @@
+ 
+ /***************************** INCLUDES *****************************/
+ 
+-#include <linux/config.h>		/* Not needed ??? */
+ #include <linux/module.h>
+ #include <linux/types.h>		/* off_t */
+ #include <linux/netdevice.h>		/* struct ifreq, dev_get_by_name() */
+--- linux-2.6.17.noarch/include/linux/vmstat.h~	2006-08-10 19:43:49.000000000 -0400
++++ linux-2.6.17.noarch/include/linux/vmstat.h	2006-08-10 19:43:54.000000000 -0400
+@@ -3,7 +3,6 @@
+ 
+ #include <linux/types.h>
+ #include <linux/percpu.h>
+-#include <linux/config.h>
+ #include <linux/mmzone.h>
+ #include <asm/atomic.h>
+ 
+--- linux-2.6.17.noarch/include/linux/unwind.h~	2006-08-10 21:26:29.000000000 -0400
++++ linux-2.6.17.noarch/include/linux/unwind.h	2006-08-10 21:26:35.000000000 -0400
+@@ -12,8 +12,6 @@
+  * is not much point in implementing the full Dwarf2 unwind API.
+  */
+ 
+-#include <linux/config.h>
+-
+ struct module;
+ 
+ #ifdef CONFIG_STACK_UNWIND
+--- linux-2.6.17.noarch/include/net/netdma.h~	2006-08-10 21:27:41.000000000 -0400
++++ linux-2.6.17.noarch/include/net/netdma.h	2006-08-10 21:27:47.000000000 -0400
+@@ -20,7 +20,6 @@
+  */
+ #ifndef NETDMA_H
+ #define NETDMA_H
+-#include <linux/config.h>
+ #ifdef CONFIG_NET_DMA
+ #include <linux/dmaengine.h>
+ #include <linux/skbuff.h>
+--- linux-2.6.17.noarch/drivers/media/video/pvrusb2/pvrusb2-hdw-internal.h~	2006-08-10 21:28:38.000000000 -0400
++++ linux-2.6.17.noarch/drivers/media/video/pvrusb2/pvrusb2-hdw-internal.h	2006-08-10 21:28:40.000000000 -0400
+@@ -33,7 +33,6 @@
+ 
+ */
+ 
+-#include <linux/config.h>
+ #include <linux/videodev2.h>
+ #include <linux/i2c.h>
+ #include <linux/mutex.h>
+--- linux-2.6.17.noarch/drivers/scsi/scsi.h~	2006-08-10 21:29:08.000000000 -0400
++++ linux-2.6.17.noarch/drivers/scsi/scsi.h	2006-08-10 21:29:10.000000000 -0400
+@@ -20,8 +20,6 @@
+ #ifndef _SCSI_H
+ #define _SCSI_H
+ 
+-#include <linux/config.h>	    /* for CONFIG_SCSI_LOGGING */
+-
+ #include <scsi/scsi_cmnd.h>
+ #include <scsi/scsi_device.h>
+ #include <scsi/scsi_eh.h>
+--- linux-2.6.17.noarch/drivers/net/irda/mcs7780.c~	2006-08-10 21:35:23.000000000 -0400
++++ linux-2.6.17.noarch/drivers/net/irda/mcs7780.c	2006-08-10 21:35:25.000000000 -0400
+@@ -45,7 +45,6 @@
+ 
+ #include <linux/module.h>
+ #include <linux/moduleparam.h>
+-#include <linux/config.h>
+ #include <linux/kernel.h>
+ #include <linux/types.h>
+ #include <linux/errno.h>
+--- linux-2.6.17.noarch/drivers/net/irda/w83977af_ir.c~	2006-08-10 21:35:28.000000000 -0400
++++ linux-2.6.17.noarch/drivers/net/irda/w83977af_ir.c	2006-08-10 21:35:30.000000000 -0400
+@@ -40,7 +40,6 @@
+  ********************************************************************/
+ 
+ #include <linux/module.h>
+-#include <linux/config.h> 
+ #include <linux/kernel.h>
+ #include <linux/types.h>
+ #include <linux/skbuff.h>
+--- linux-2.6.17.noarch/drivers/net/smc911x.c~	2006-08-10 21:35:34.000000000 -0400
++++ linux-2.6.17.noarch/drivers/net/smc911x.c	2006-08-10 21:35:37.000000000 -0400
+@@ -55,8 +55,6 @@ static const char version[] =
+ 			 )
+ #endif
+ 
+-
+-#include <linux/config.h>
+ #include <linux/init.h>
+ #include <linux/module.h>
+ #include <linux/kernel.h>
+--- linux-2.6.17.noarch/drivers/net/netx-eth.c~	2006-08-10 21:35:41.000000000 -0400
++++ linux-2.6.17.noarch/drivers/net/netx-eth.c	2006-08-10 21:35:42.000000000 -0400
+@@ -17,7 +17,6 @@
+  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+  */
+ 
+-#include <linux/config.h>
+ #include <linux/init.h>
+ #include <linux/module.h>
+ #include <linux/kernel.h>
+--- linux-2.6.17.noarch/drivers/net/wan/cycx_main.c~	2006-08-10 21:35:45.000000000 -0400
++++ linux-2.6.17.noarch/drivers/net/wan/cycx_main.c	2006-08-10 21:35:48.000000000 -0400
+@@ -40,7 +40,6 @@
+ * 1998/08/08	acme		Initial version.
+ */
+ 
+-#include <linux/config.h>	/* OS configuration options */
+ #include <linux/stddef.h>	/* offsetof(), etc. */
+ #include <linux/errno.h>	/* return codes */
+ #include <linux/string.h>	/* inline memset(), etc. */
+--- linux-2.6.17.noarch/drivers/net/wan/sdla.c~	2006-08-10 21:35:51.000000000 -0400
++++ linux-2.6.17.noarch/drivers/net/wan/sdla.c	2006-08-10 21:35:53.000000000 -0400
+@@ -32,7 +32,6 @@
+  *		2 of the License, or (at your option) any later version.
+  */
+ 
+-#include <linux/config.h> /* for CONFIG_DLCI_MAX */
+ #include <linux/module.h>
+ #include <linux/kernel.h>
+ #include <linux/types.h>
+--- linux-2.6.17.noarch/drivers/net/wan/dlci.c~	2006-08-10 21:35:57.000000000 -0400
++++ linux-2.6.17.noarch/drivers/net/wan/dlci.c	2006-08-10 21:35:59.000000000 -0400
+@@ -28,7 +28,6 @@
+  *		2 of the License, or (at your option) any later version.
+  */
+ 
+-#include <linux/config.h> /* for CONFIG_DLCI_COUNT */
+ #include <linux/module.h>
+ #include <linux/kernel.h>
+ #include <linux/types.h>
+--- linux-2.6.17.noarch/drivers/net/phy/vitesse.c~	2006-08-10 21:36:02.000000000 -0400
++++ linux-2.6.17.noarch/drivers/net/phy/vitesse.c	2006-08-10 21:36:04.000000000 -0400
+@@ -12,7 +12,6 @@
+  *
+  */
+ 
+-#include <linux/config.h>
+ #include <linux/kernel.h>
+ #include <linux/module.h>
+ #include <linux/mii.h>
+--- linux-2.6.17.noarch/drivers/net/phy/smsc.c~	2006-08-10 21:36:07.000000000 -0400
++++ linux-2.6.17.noarch/drivers/net/phy/smsc.c	2006-08-10 21:36:08.000000000 -0400
+@@ -14,7 +14,6 @@
+  *
+  */
+ 
+-#include <linux/config.h>
+ #include <linux/kernel.h>
+ #include <linux/module.h>
+ #include <linux/mii.h>
+--- linux-2.6.17.noarch/drivers/net/hp100.c~	2006-08-10 21:36:12.000000000 -0400
++++ linux-2.6.17.noarch/drivers/net/hp100.c	2006-08-10 21:36:14.000000000 -0400
+@@ -111,7 +111,6 @@
+ #include <linux/etherdevice.h>
+ #include <linux/skbuff.h>
+ #include <linux/types.h>
+-#include <linux/config.h>	/* for CONFIG_PCI */
+ #include <linux/delay.h>
+ #include <linux/init.h>
+ #include <linux/bitops.h>
+--- linux-2.6.17.noarch/drivers/net/3c501.c~	2006-08-10 21:36:18.000000000 -0400
++++ linux-2.6.17.noarch/drivers/net/3c501.c	2006-08-10 21:36:20.000000000 -0400
+@@ -120,7 +120,6 @@ static const char version[] =
+ #include <linux/slab.h>
+ #include <linux/string.h>
+ #include <linux/errno.h>
+-#include <linux/config.h>	/* for CONFIG_IP_MULTICAST */
+ #include <linux/spinlock.h>
+ #include <linux/ethtool.h>
+ #include <linux/delay.h>
+--- linux-2.6.17.noarch/drivers/scsi/aic7xxx_old.c~	2006-08-10 21:37:46.000000000 -0400
++++ linux-2.6.17.noarch/drivers/scsi/aic7xxx_old.c	2006-08-10 21:37:49.000000000 -0400
+@@ -249,8 +249,6 @@
+ #include <linux/stat.h>
+ #include <linux/slab.h>        /* for kmalloc() */
+ 
+-#include <linux/config.h>        /* for CONFIG_PCI */
+-
+ #define AIC7XXX_C_VERSION  "5.2.6"
+ 
+ #define ALL_TARGETS -1
+--- linux-2.6.17.noarch/drivers/scsi/hptiop.c~	2006-08-10 21:37:53.000000000 -0400
++++ linux-2.6.17.noarch/drivers/scsi/hptiop.c	2006-08-10 21:37:54.000000000 -0400
+@@ -15,7 +15,6 @@
+  *
+  * For more information, visit http://www.highpoint-tech.com
+  */
+-#include <linux/config.h>
+ #include <linux/module.h>
+ #include <linux/types.h>
+ #include <linux/string.h>
+--- linux-2.6.17.noarch/drivers/scsi/dpt_i2o.c~	2006-08-10 21:37:58.000000000 -0400
++++ linux-2.6.17.noarch/drivers/scsi/dpt_i2o.c	2006-08-10 21:38:00.000000000 -0400
+@@ -46,7 +46,6 @@ MODULE_DESCRIPTION("Adaptec I2O RAID Dri
+ 
+ #include <linux/stat.h>
+ #include <linux/slab.h>		/* for kmalloc() */
+-#include <linux/config.h>	/* for CONFIG_PCI */
+ #include <linux/pci.h>		/* for PCI support */
+ #include <linux/proc_fs.h>
+ #include <linux/blkdev.h>
+--- linux-2.6.17.noarch/drivers/scsi/libata-eh.c~	2006-08-10 21:38:05.000000000 -0400
++++ linux-2.6.17.noarch/drivers/scsi/libata-eh.c	2006-08-10 21:38:07.000000000 -0400
+@@ -32,7 +32,6 @@
+  *
+  */
+ 
+-#include <linux/config.h>
+ #include <linux/kernel.h>
+ #include <scsi/scsi.h>
+ #include <scsi/scsi_host.h>
+
+diff -puN arch/alpha/kernel/setup.c~kill-include-linux-configh arch/alpha/kernel/setup.c
+--- a/arch/alpha/kernel/setup.c~kill-include-linux-configh
++++ a/arch/alpha/kernel/setup.c
+@@ -21,7 +21,6 @@
+ #include <linux/a.out.h>
+ #include <linux/screen_info.h>
+ #include <linux/delay.h>
+-#include <linux/config.h>	/* CONFIG_ALPHA_LCA etc */
+ #include <linux/mc146818rtc.h>
+ #include <linux/console.h>
+ #include <linux/cpu.h>
+diff -puN arch/alpha/kernel/systbls.S~kill-include-linux-configh arch/alpha/kernel/systbls.S
+--- a/arch/alpha/kernel/systbls.S~kill-include-linux-configh
++++ a/arch/alpha/kernel/systbls.S
+@@ -4,7 +4,6 @@
+  * The system call table. 
+  */
+ 
+-#include <linux/config.h>			/* CONFIG_OSF4_COMPAT */
+ #include <asm/unistd.h>
+ 
+ 	.data
+diff -puN arch/arm/kernel/crunch.c~kill-include-linux-configh arch/arm/kernel/crunch.c
+--- a/arch/arm/kernel/crunch.c~kill-include-linux-configh
++++ a/arch/arm/kernel/crunch.c
+@@ -10,7 +10,6 @@
+  */
+ 
+ #include <linux/module.h>
+-#include <linux/config.h>
+ #include <linux/types.h>
+ #include <linux/kernel.h>
+ #include <linux/signal.h>
+diff -puN arch/arm/kernel/iwmmxt-notifier.c~kill-include-linux-configh arch/arm/kernel/iwmmxt-notifier.c
+--- a/arch/arm/kernel/iwmmxt-notifier.c~kill-include-linux-configh
++++ a/arch/arm/kernel/iwmmxt-notifier.c
+@@ -15,7 +15,6 @@
+  */
+ 
+ #include <linux/module.h>
+-#include <linux/config.h>
+ #include <linux/types.h>
+ #include <linux/kernel.h>
+ #include <linux/signal.h>
+diff -puN arch/arm/mach-at91rm9200/board-1arm.c~kill-include-linux-configh arch/arm/mach-at91rm9200/board-1arm.c
+--- a/arch/arm/mach-at91rm9200/board-1arm.c~kill-include-linux-configh
++++ a/arch/arm/mach-at91rm9200/board-1arm.c
+@@ -18,7 +18,6 @@
+  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+  */
+ 
+-#include <linux/config.h>
+ #include <linux/types.h>
+ #include <linux/init.h>
+ #include <linux/mm.h>
+diff -puN arch/arm/mach-at91rm9200/board-carmeva.c~kill-include-linux-configh arch/arm/mach-at91rm9200/board-carmeva.c
+--- a/arch/arm/mach-at91rm9200/board-carmeva.c~kill-include-linux-configh
++++ a/arch/arm/mach-at91rm9200/board-carmeva.c
+@@ -19,7 +19,6 @@
+  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+  */
+ 
+-#include <linux/config.h>
+ #include <linux/types.h>
+ #include <linux/init.h>
+ #include <linux/mm.h>
+diff -puN arch/arm/mach-at91rm9200/board-eb9200.c~kill-include-linux-configh arch/arm/mach-at91rm9200/board-eb9200.c
+--- a/arch/arm/mach-at91rm9200/board-eb9200.c~kill-include-linux-configh
++++ a/arch/arm/mach-at91rm9200/board-eb9200.c
+@@ -19,7 +19,6 @@
+  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+  */
+ 
+-#include <linux/config.h>
+ #include <linux/types.h>
+ #include <linux/init.h>
+ #include <linux/mm.h>
+diff -puN arch/arm/mach-at91rm9200/board-kafa.c~kill-include-linux-configh arch/arm/mach-at91rm9200/board-kafa.c
+--- a/arch/arm/mach-at91rm9200/board-kafa.c~kill-include-linux-configh
++++ a/arch/arm/mach-at91rm9200/board-kafa.c
+@@ -18,7 +18,6 @@
+  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+  */
+ 
+-#include <linux/config.h>
+ #include <linux/types.h>
+ #include <linux/init.h>
+ #include <linux/mm.h>
+diff -puN arch/arm/mach-at91rm9200/board-kb9202.c~kill-include-linux-configh arch/arm/mach-at91rm9200/board-kb9202.c
+--- a/arch/arm/mach-at91rm9200/board-kb9202.c~kill-include-linux-configh
++++ a/arch/arm/mach-at91rm9200/board-kb9202.c
+@@ -19,7 +19,6 @@
+  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+  */
+ 
+-#include <linux/config.h>
+ #include <linux/types.h>
+ #include <linux/init.h>
+ #include <linux/mm.h>
+diff -puN arch/arm/mach-ep93xx/edb9302.c~kill-include-linux-configh arch/arm/mach-ep93xx/edb9302.c
+--- a/arch/arm/mach-ep93xx/edb9302.c~kill-include-linux-configh
++++ a/arch/arm/mach-ep93xx/edb9302.c
+@@ -10,7 +10,6 @@
+  * your option) any later version.
+  */
+ 
+-#include <linux/config.h>
+ #include <linux/kernel.h>
+ #include <linux/init.h>
+ #include <linux/mm.h>
+diff -puN arch/arm/mach-ep93xx/edb9315.c~kill-include-linux-configh arch/arm/mach-ep93xx/edb9315.c
+--- a/arch/arm/mach-ep93xx/edb9315.c~kill-include-linux-configh
++++ a/arch/arm/mach-ep93xx/edb9315.c
+@@ -10,7 +10,6 @@
+  * your option) any later version.
+  */
+ 
+-#include <linux/config.h>
+ #include <linux/kernel.h>
+ #include <linux/init.h>
+ #include <linux/mm.h>
+diff -puN arch/arm/mach-ep93xx/edb9315a.c~kill-include-linux-configh arch/arm/mach-ep93xx/edb9315a.c
+--- a/arch/arm/mach-ep93xx/edb9315a.c~kill-include-linux-configh
++++ a/arch/arm/mach-ep93xx/edb9315a.c
+@@ -10,7 +10,6 @@
+  * your option) any later version.
+  */
+ 
+-#include <linux/config.h>
+ #include <linux/kernel.h>
+ #include <linux/init.h>
+ #include <linux/mm.h>
+diff -puN arch/arm/mach-lh7a40x/clcd.c~kill-include-linux-configh arch/arm/mach-lh7a40x/clcd.c
+--- a/arch/arm/mach-lh7a40x/clcd.c~kill-include-linux-configh
++++ a/arch/arm/mach-lh7a40x/clcd.c
+@@ -8,7 +8,7 @@
+  *  version 2 as published by the Free Software Foundation.
+  *
+  */
+-#include <linux/config.h>
++
+ #include <linux/init.h>
+ #include <linux/device.h>
+ #include <linux/dma-mapping.h>
+diff -puN arch/arm/mach-lh7a40x/clocks.c~kill-include-linux-configh arch/arm/mach-lh7a40x/clocks.c
+--- a/arch/arm/mach-lh7a40x/clocks.c~kill-include-linux-configh
++++ a/arch/arm/mach-lh7a40x/clocks.c
+@@ -8,7 +8,6 @@
+  *
+  */
+ 
+-#include <linux/config.h>
+ #include <linux/cpufreq.h>
+ #include <asm/hardware.h>
+ #include <asm/arch/clocks.h>
+diff -puN arch/arm/mach-omap2/pm-domain.c~kill-include-linux-configh arch/arm/mach-omap2/pm-domain.c
+--- a/arch/arm/mach-omap2/pm-domain.c~kill-include-linux-configh
++++ a/arch/arm/mach-omap2/pm-domain.c
+@@ -15,7 +15,6 @@
+  * published by the Free Software Foundation.
+  */
+ 
+-#include <linux/config.h>
+ #include <linux/module.h>
+ #include <linux/init.h>
+ #include <linux/clk.h>
+diff -puN arch/arm/mach-pnx4008/gpio.c~kill-include-linux-configh arch/arm/mach-pnx4008/gpio.c
+--- a/arch/arm/mach-pnx4008/gpio.c~kill-include-linux-configh
++++ a/arch/arm/mach-pnx4008/gpio.c
+@@ -14,7 +14,6 @@
+  * or implied.
+  */
+ 
+-#include <linux/config.h>
+ #include <linux/types.h>
+ #include <linux/kernel.h>
+ #include <linux/module.h>
+diff -puN arch/arm/mach-pnx4008/sleep.S~kill-include-linux-configh arch/arm/mach-pnx4008/sleep.S
+--- a/arch/arm/mach-pnx4008/sleep.S~kill-include-linux-configh
++++ a/arch/arm/mach-pnx4008/sleep.S
+@@ -11,7 +11,6 @@
+  * or implied.
+  */
+ 
+-#include <linux/config.h>
+ #include <linux/linkage.h>
+ #include <asm/assembler.h>
+ #include <asm/hardware.h>
+diff -puN arch/arm/mach-pnx4008/time.c~kill-include-linux-configh arch/arm/mach-pnx4008/time.c
+--- a/arch/arm/mach-pnx4008/time.c~kill-include-linux-configh
++++ a/arch/arm/mach-pnx4008/time.c
+@@ -11,7 +11,6 @@
+  * or implied.
+  */
+ 
+-#include <linux/config.h>
+ #include <linux/kernel.h>
+ #include <linux/init.h>
+ #include <linux/delay.h>
+diff -puN arch/arm/mach-pxa/leds-trizeps4.c~kill-include-linux-configh arch/arm/mach-pxa/leds-trizeps4.c
+--- a/arch/arm/mach-pxa/leds-trizeps4.c~kill-include-linux-configh
++++ a/arch/arm/mach-pxa/leds-trizeps4.c
+@@ -10,7 +10,6 @@
+  * published by the Free Software Foundation.
+  */
+ 
+-#include <linux/config.h>
+ #include <linux/init.h>
+ 
+ #include <asm/hardware.h>
+diff -puN arch/arm26/lib/ecard.S~kill-include-linux-configh arch/arm26/lib/ecard.S
+--- a/arch/arm26/lib/ecard.S~kill-include-linux-configh
++++ a/arch/arm26/lib/ecard.S
+@@ -7,7 +7,6 @@
+  * it under the terms of the GNU General Public License version 2 as
+  * published by the Free Software Foundation.
+  */
+-#include <linux/config.h> /* for CONFIG_CPU_nn */
+ #include <linux/linkage.h>
+ #include <asm/assembler.h>
+ #include <asm/hardware.h>
+diff -puN arch/arm26/lib/io-acorn.S~kill-include-linux-configh arch/arm26/lib/io-acorn.S
+--- a/arch/arm26/lib/io-acorn.S~kill-include-linux-configh
++++ a/arch/arm26/lib/io-acorn.S
+@@ -7,7 +7,6 @@
+  * it under the terms of the GNU General Public License version 2 as
+  * published by the Free Software Foundation.
+  */
+-#include <linux/config.h> /* for CONFIG_CPU_nn */
+ #include <linux/linkage.h>
+ #include <asm/assembler.h>
+ #include <asm/hardware.h>
+diff -puN arch/frv/kernel/time.c~kill-include-linux-configh arch/frv/kernel/time.c
+--- a/arch/frv/kernel/time.c~kill-include-linux-configh
++++ a/arch/frv/kernel/time.c
+@@ -10,7 +10,6 @@
+  * 2 of the License, or (at your option) any later version.
+  */
+ 
+-#include <linux/config.h> /* CONFIG_HEARTBEAT */
+ #include <linux/module.h>
+ #include <linux/errno.h>
+ #include <linux/sched.h>
+diff -puN arch/h8300/kernel/time.c~kill-include-linux-configh arch/h8300/kernel/time.c
+--- a/arch/h8300/kernel/time.c~kill-include-linux-configh
++++ a/arch/h8300/kernel/time.c
+@@ -16,7 +16,6 @@
+  *		"A Kernel Model for Precision Timekeeping" by Dave Mills
+  */
+ 
+-#include <linux/config.h> /* CONFIG_HEARTBEAT */
+ #include <linux/errno.h>
+ #include <linux/module.h>
+ #include <linux/sched.h>
+diff -puN arch/m32r/mm/mmu.S~kill-include-linux-configh arch/m32r/mm/mmu.S
+--- a/arch/m32r/mm/mmu.S~kill-include-linux-configh
++++ a/arch/m32r/mm/mmu.S
+@@ -6,7 +6,6 @@
+ 
+ /* $Id: mmu.S,v 1.15 2004/03/16 02:56:27 takata Exp $ */
+ 
+-#include <linux/config.h>	/* CONFIG_MMU */
+ #include <linux/linkage.h>
+ #include <asm/assembler.h>
+ #include <asm/smp.h>
+diff -puN arch/m68k/kernel/time.c~kill-include-linux-configh arch/m68k/kernel/time.c
+--- a/arch/m68k/kernel/time.c~kill-include-linux-configh
++++ a/arch/m68k/kernel/time.c
+@@ -10,7 +10,6 @@
+  *		"A Kernel Model for Precision Timekeeping" by Dave Mills
+  */
+ 
+-#include <linux/config.h> /* CONFIG_HEARTBEAT */
+ #include <linux/errno.h>
+ #include <linux/module.h>
+ #include <linux/sched.h>
+diff -puN arch/m68knommu/platform/532x/config.c~kill-include-linux-configh arch/m68knommu/platform/532x/config.c
+--- a/arch/m68knommu/platform/532x/config.c~kill-include-linux-configh
++++ a/arch/m68knommu/platform/532x/config.c
+@@ -17,7 +17,6 @@
+ 
+ /***************************************************************************/
+ 
+-#include <linux/config.h>
+ #include <linux/kernel.h>
+ #include <linux/sched.h>
+ #include <linux/param.h>
+diff -puN arch/m68knommu/platform/68328/romvec.S~kill-include-linux-configh arch/m68knommu/platform/68328/romvec.S
+--- a/arch/m68knommu/platform/68328/romvec.S~kill-include-linux-configh
++++ a/arch/m68knommu/platform/68328/romvec.S
+@@ -10,8 +10,6 @@
+  * Copyright 2006 Greg Ungerer <gerg@snapgear.com>
+  */
+ 
+-#include <linux/config.h>
+-
+ .global _start
+ .global _buserr
+ .global trap
+diff -puN arch/parisc/kernel/head.S~kill-include-linux-configh arch/parisc/kernel/head.S
+--- a/arch/parisc/kernel/head.S~kill-include-linux-configh
++++ a/arch/parisc/kernel/head.S
+@@ -12,8 +12,6 @@
+  * Initial Version 04-23-1999 by Helge Deller <deller@gmx.de>
+  */
+ 
+-#include <linux/config.h>	/* for CONFIG_SMP */
+-
+ #include <asm/asm-offsets.h>
+ #include <asm/psw.h>
+ #include <asm/pdc.h>
+diff -puN arch/parisc/kernel/syscall.S~kill-include-linux-configh arch/parisc/kernel/syscall.S
+--- a/arch/parisc/kernel/syscall.S~kill-include-linux-configh
++++ a/arch/parisc/kernel/syscall.S
+@@ -6,7 +6,6 @@
+  * thanks to Philipp Rumpf, Mike Shaver and various others
+  * sorry about the wall, puffin..
+  */
+-#include <linux/config.h> /* for CONFIG_SMP */
+ 
+ #include <asm/asm-offsets.h>
+ #include <asm/unistd.h>
+diff -puN arch/powerpc/platforms/83xx/mpc834x_itx.c~kill-include-linux-configh arch/powerpc/platforms/83xx/mpc834x_itx.c
+--- a/arch/powerpc/platforms/83xx/mpc834x_itx.c~kill-include-linux-configh
++++ a/arch/powerpc/platforms/83xx/mpc834x_itx.c
+@@ -11,7 +11,6 @@
+  * option) any later version.
+  */
+ 
+-#include <linux/config.h>
+ #include <linux/stddef.h>
+ #include <linux/kernel.h>
+ #include <linux/init.h>
+diff -puN arch/powerpc/platforms/85xx/mpc85xx_cds.c~kill-include-linux-configh arch/powerpc/platforms/85xx/mpc85xx_cds.c
+--- a/arch/powerpc/platforms/85xx/mpc85xx_cds.c~kill-include-linux-configh
++++ a/arch/powerpc/platforms/85xx/mpc85xx_cds.c
+@@ -11,7 +11,6 @@
+  * option) any later version.
+  */
+ 
+-#include <linux/config.h>
+ #include <linux/stddef.h>
+ #include <linux/kernel.h>
+ #include <linux/init.h>
+diff -puN arch/powerpc/platforms/cell/cbe_regs.c~kill-include-linux-configh arch/powerpc/platforms/cell/cbe_regs.c
+--- a/arch/powerpc/platforms/cell/cbe_regs.c~kill-include-linux-configh
++++ a/arch/powerpc/platforms/cell/cbe_regs.c
+@@ -6,8 +6,6 @@
+  * (c) 2006 Benjamin Herrenschmidt <benh@kernel.crashing.org>, IBM Corp.
+  */
+ 
+-
+-#include <linux/config.h>
+ #include <linux/percpu.h>
+ #include <linux/types.h>
+ 
+diff -puN arch/powerpc/platforms/cell/ras.c~kill-include-linux-configh arch/powerpc/platforms/cell/ras.c
+--- a/arch/powerpc/platforms/cell/ras.c~kill-include-linux-configh
++++ a/arch/powerpc/platforms/cell/ras.c
+@@ -1,6 +1,5 @@
+ #define DEBUG
+ 
+-#include <linux/config.h>
+ #include <linux/types.h>
+ #include <linux/kernel.h>
+ #include <linux/smp.h>
+diff -puN arch/powerpc/platforms/embedded6xx/mpc7448_hpc2.c~kill-include-linux-configh arch/powerpc/platforms/embedded6xx/mpc7448_hpc2.c
+--- a/arch/powerpc/platforms/embedded6xx/mpc7448_hpc2.c~kill-include-linux-configh
++++ a/arch/powerpc/platforms/embedded6xx/mpc7448_hpc2.c
+@@ -18,7 +18,6 @@
+  * or implied.
+  */
+ 
+-#include <linux/config.h>
+ #include <linux/stddef.h>
+ #include <linux/kernel.h>
+ #include <linux/pci.h>
+diff -puN arch/powerpc/sysdev/tsi108_dev.c~kill-include-linux-configh arch/powerpc/sysdev/tsi108_dev.c
+--- a/arch/powerpc/sysdev/tsi108_dev.c~kill-include-linux-configh
++++ a/arch/powerpc/sysdev/tsi108_dev.c
+@@ -9,7 +9,6 @@
+  * option) any later version.
+  */
+ 
+-#include <linux/config.h>
+ #include <linux/stddef.h>
+ #include <linux/kernel.h>
+ #include <linux/init.h>
+diff -puN arch/ppc/amiga/time.c~kill-include-linux-configh arch/ppc/amiga/time.c
+--- a/arch/ppc/amiga/time.c~kill-include-linux-configh
++++ a/arch/ppc/amiga/time.c
+@@ -1,4 +1,3 @@
+-#include <linux/config.h> /* CONFIG_HEARTBEAT */
+ #include <linux/errno.h>
+ #include <linux/sched.h>
+ #include <linux/kernel.h>
+diff -puN arch/ppc/platforms/4xx/cpci405.h~kill-include-linux-configh arch/ppc/platforms/4xx/cpci405.h
+--- a/arch/ppc/platforms/4xx/cpci405.h~kill-include-linux-configh
++++ a/arch/ppc/platforms/4xx/cpci405.h
+@@ -13,7 +13,6 @@
+ #ifndef __CPCI405_H__
+ #define __CPCI405_H__
+ 
+-#include <linux/config.h>
+ #include <platforms/4xx/ibm405gp.h>
+ #include <asm/ppcboot.h>
+ 
+diff -puN arch/sparc/kernel/ioport.c~kill-include-linux-configh arch/sparc/kernel/ioport.c
+--- a/arch/sparc/kernel/ioport.c~kill-include-linux-configh
++++ a/arch/sparc/kernel/ioport.c
+@@ -25,7 +25,6 @@
+  * <zaitcev> Sounds reasonable
+  */
+ 
+-#include <linux/config.h>
+ #include <linux/module.h>
+ #include <linux/sched.h>
+ #include <linux/kernel.h>
+diff -puN arch/sparc/kernel/of_device.c~kill-include-linux-configh arch/sparc/kernel/of_device.c
+--- a/arch/sparc/kernel/of_device.c~kill-include-linux-configh
++++ a/arch/sparc/kernel/of_device.c
+@@ -1,4 +1,3 @@
+-#include <linux/config.h>
+ #include <linux/string.h>
+ #include <linux/kernel.h>
+ #include <linux/init.h>
+diff -puN arch/sparc64/kernel/auxio.c~kill-include-linux-configh arch/sparc64/kernel/auxio.c
+--- a/arch/sparc64/kernel/auxio.c~kill-include-linux-configh
++++ a/arch/sparc64/kernel/auxio.c
+@@ -5,7 +5,6 @@
+  * Refactoring for unified NCR/PCIO support 2002 Eric Brower (ebrower@usa.net)
+  */
+ 
+-#include <linux/config.h>
+ #include <linux/module.h>
+ #include <linux/kernel.h>
+ #include <linux/init.h>
+diff -puN arch/sparc64/kernel/of_device.c~kill-include-linux-configh arch/sparc64/kernel/of_device.c
+--- a/arch/sparc64/kernel/of_device.c~kill-include-linux-configh
++++ a/arch/sparc64/kernel/of_device.c
+@@ -1,4 +1,3 @@
+-#include <linux/config.h>
+ #include <linux/string.h>
+ #include <linux/kernel.h>
+ #include <linux/init.h>
+diff -puN arch/sparc64/kernel/prom.c~kill-include-linux-configh arch/sparc64/kernel/prom.c
+--- a/arch/sparc64/kernel/prom.c~kill-include-linux-configh
++++ a/arch/sparc64/kernel/prom.c
+@@ -15,7 +15,6 @@
+  *      2 of the License, or (at your option) any later version.
+  */
+ 
+-#include <linux/config.h>
+ #include <linux/kernel.h>
+ #include <linux/types.h>
+ #include <linux/string.h>
+diff -puN arch/um/drivers/hostaudio_kern.c~kill-include-linux-configh arch/um/drivers/hostaudio_kern.c
+--- a/arch/um/drivers/hostaudio_kern.c~kill-include-linux-configh
++++ a/arch/um/drivers/hostaudio_kern.c
+@@ -3,7 +3,6 @@
+  * Licensed under the GPL
+  */
+ 
+-#include "linux/config.h"
+ #include "linux/module.h"
+ #include "linux/init.h"
+ #include "linux/slab.h"
+diff -puN arch/um/drivers/net_kern.c~kill-include-linux-configh arch/um/drivers/net_kern.c
+--- a/arch/um/drivers/net_kern.c~kill-include-linux-configh
++++ a/arch/um/drivers/net_kern.c
+@@ -5,7 +5,6 @@
+  * Licensed under the GPL.
+  */
+ 
+-#include "linux/config.h"
+ #include "linux/kernel.h"
+ #include "linux/netdevice.h"
+ #include "linux/rtnetlink.h"
+diff -puN arch/um/drivers/slip_kern.c~kill-include-linux-configh arch/um/drivers/slip_kern.c
+--- a/arch/um/drivers/slip_kern.c~kill-include-linux-configh
++++ a/arch/um/drivers/slip_kern.c
+@@ -1,4 +1,3 @@
+-#include "linux/config.h"
+ #include "linux/kernel.h"
+ #include "linux/stddef.h"
+ #include "linux/init.h"
+diff -puN arch/um/drivers/ssl.c~kill-include-linux-configh arch/um/drivers/ssl.c
+--- a/arch/um/drivers/ssl.c~kill-include-linux-configh
++++ a/arch/um/drivers/ssl.c
+@@ -3,7 +3,6 @@
+  * Licensed under the GPL
+  */
+ 
+-#include "linux/config.h"
+ #include "linux/fs.h"
+ #include "linux/tty.h"
+ #include "linux/tty_driver.h"
+diff -puN arch/um/drivers/stdio_console.c~kill-include-linux-configh arch/um/drivers/stdio_console.c
+--- a/arch/um/drivers/stdio_console.c~kill-include-linux-configh
++++ a/arch/um/drivers/stdio_console.c
+@@ -3,7 +3,6 @@
+  * Licensed under the GPL
+  */
+ 
+-#include "linux/config.h"
+ #include "linux/posix_types.h"
+ #include "linux/tty.h"
+ #include "linux/tty_flip.h"
+diff -puN arch/um/drivers/ubd_kern.c~kill-include-linux-configh arch/um/drivers/ubd_kern.c
+--- a/arch/um/drivers/ubd_kern.c~kill-include-linux-configh
++++ a/arch/um/drivers/ubd_kern.c
+@@ -20,7 +20,6 @@
+ #define MAJOR_NR UBD_MAJOR
+ #define UBD_SHIFT 4
+ 
+-#include "linux/config.h"
+ #include "linux/module.h"
+ #include "linux/blkdev.h"
+ #include "linux/hdreg.h"
+diff -puN arch/um/include/mconsole_kern.h~kill-include-linux-configh arch/um/include/mconsole_kern.h
+--- a/arch/um/include/mconsole_kern.h~kill-include-linux-configh
++++ a/arch/um/include/mconsole_kern.h
+@@ -6,7 +6,6 @@
+ #ifndef __MCONSOLE_KERN_H__
+ #define __MCONSOLE_KERN_H__
+ 
+-#include "linux/config.h"
+ #include "linux/list.h"
+ #include "mconsole.h"
+ 
+diff -puN arch/um/include/mode_kern.h~kill-include-linux-configh arch/um/include/mode_kern.h
+--- a/arch/um/include/mode_kern.h~kill-include-linux-configh
++++ a/arch/um/include/mode_kern.h
+@@ -6,8 +6,6 @@
+ #ifndef __MODE_KERN_H__
+ #define __MODE_KERN_H__
+ 
+-#include "linux/config.h"
+-
+ #ifdef CONFIG_MODE_TT
+ #include "mode_kern_tt.h"
+ #endif
+diff -puN arch/um/include/skas/mmu-skas.h~kill-include-linux-configh arch/um/include/skas/mmu-skas.h
+--- a/arch/um/include/skas/mmu-skas.h~kill-include-linux-configh
++++ a/arch/um/include/skas/mmu-skas.h
+@@ -6,7 +6,6 @@
+ #ifndef __SKAS_MMU_H
+ #define __SKAS_MMU_H
+ 
+-#include "linux/config.h"
+ #include "mm_id.h"
+ #include "asm/ldt.h"
+ 
+diff -puN arch/um/include/sysdep-ppc/ptrace.h~kill-include-linux-configh arch/um/include/sysdep-ppc/ptrace.h
+--- a/arch/um/include/sysdep-ppc/ptrace.h~kill-include-linux-configh
++++ a/arch/um/include/sysdep-ppc/ptrace.h
+@@ -5,7 +5,6 @@
+ #ifndef __SYS_PTRACE_PPC_H
+ #define __SYS_PTRACE_PPC_H
+ 
+-#include "linux/config.h"
+ #include "linux/types.h"
+ 
+ /* the following taken from <asm-ppc/ptrace.h> */
+diff -puN arch/um/include/um_uaccess.h~kill-include-linux-configh arch/um/include/um_uaccess.h
+--- a/arch/um/include/um_uaccess.h~kill-include-linux-configh
++++ a/arch/um/include/um_uaccess.h
+@@ -6,7 +6,6 @@
+ #ifndef __ARCH_UM_UACCESS_H
+ #define __ARCH_UM_UACCESS_H
+ 
+-#include "linux/config.h"
+ #include "choose-mode.h"
+ 
+ #ifdef CONFIG_MODE_TT
+diff -puN arch/um/kernel/init_task.c~kill-include-linux-configh arch/um/kernel/init_task.c
+--- a/arch/um/kernel/init_task.c~kill-include-linux-configh
++++ a/arch/um/kernel/init_task.c
+@@ -3,7 +3,6 @@
+  * Licensed under the GPL
+  */
+ 
+-#include "linux/config.h"
+ #include "linux/mm.h"
+ #include "linux/module.h"
+ #include "linux/sched.h"
+diff -puN arch/um/kernel/irq.c~kill-include-linux-configh arch/um/kernel/irq.c
+--- a/arch/um/kernel/irq.c~kill-include-linux-configh
++++ a/arch/um/kernel/irq.c
+@@ -5,7 +5,6 @@
+  *	Copyright (C) 1992, 1998 Linus Torvalds, Ingo Molnar
+  */
+ 
+-#include "linux/config.h"
+ #include "linux/kernel.h"
+ #include "linux/module.h"
+ #include "linux/smp.h"
+diff -puN arch/um/kernel/ksyms.c~kill-include-linux-configh arch/um/kernel/ksyms.c
+--- a/arch/um/kernel/ksyms.c~kill-include-linux-configh
++++ a/arch/um/kernel/ksyms.c
+@@ -3,7 +3,6 @@
+  * Licensed under the GPL
+  */
+ 
+-#include "linux/config.h"
+ #include "linux/module.h"
+ #include "linux/string.h"
+ #include "linux/smp_lock.h"
+diff -puN arch/um/kernel/process_kern.c~kill-include-linux-configh arch/um/kernel/process_kern.c
+--- a/arch/um/kernel/process_kern.c~kill-include-linux-configh
++++ a/arch/um/kernel/process_kern.c
+@@ -4,7 +4,6 @@
+  * Licensed under the GPL
+  */
+ 
+-#include "linux/config.h"
+ #include "linux/kernel.h"
+ #include "linux/sched.h"
+ #include "linux/interrupt.h"
+diff -puN arch/um/kernel/signal.c~kill-include-linux-configh arch/um/kernel/signal.c
+--- a/arch/um/kernel/signal.c~kill-include-linux-configh
++++ a/arch/um/kernel/signal.c
+@@ -3,7 +3,6 @@
+  * Licensed under the GPL
+  */
+ 
+-#include "linux/config.h"
+ #include "linux/stddef.h"
+ #include "linux/sys.h"
+ #include "linux/sched.h"
+diff -puN arch/um/kernel/skas/mem.c~kill-include-linux-configh arch/um/kernel/skas/mem.c
+--- a/arch/um/kernel/skas/mem.c~kill-include-linux-configh
++++ a/arch/um/kernel/skas/mem.c
+@@ -3,7 +3,6 @@
+  * Licensed under the GPL
+  */
+ 
+-#include "linux/config.h"
+ #include "linux/mm.h"
+ #include "asm/pgtable.h"
+ #include "mem_user.h"
+diff -puN arch/um/kernel/skas/mmu.c~kill-include-linux-configh arch/um/kernel/skas/mmu.c
+--- a/arch/um/kernel/skas/mmu.c~kill-include-linux-configh
++++ a/arch/um/kernel/skas/mmu.c
+@@ -3,7 +3,6 @@
+  * Licensed under the GPL
+  */
+ 
+-#include "linux/config.h"
+ #include "linux/sched.h"
+ #include "linux/list.h"
+ #include "linux/spinlock.h"
+diff -puN arch/um/kernel/skas/tlb.c~kill-include-linux-configh arch/um/kernel/skas/tlb.c
+--- a/arch/um/kernel/skas/tlb.c~kill-include-linux-configh
++++ a/arch/um/kernel/skas/tlb.c
+@@ -6,7 +6,6 @@
+ 
+ #include "linux/stddef.h"
+ #include "linux/sched.h"
+-#include "linux/config.h"
+ #include "linux/mm.h"
+ #include "asm/page.h"
+ #include "asm/pgtable.h"
+diff -puN arch/um/kernel/smp.c~kill-include-linux-configh arch/um/kernel/smp.c
+--- a/arch/um/kernel/smp.c~kill-include-linux-configh
++++ a/arch/um/kernel/smp.c
+@@ -3,7 +3,6 @@
+  * Licensed under the GPL
+  */
+ 
+-#include "linux/config.h"
+ #include "linux/percpu.h"
+ #include "asm/pgalloc.h"
+ #include "asm/tlb.h"
+diff -puN arch/um/kernel/sysrq.c~kill-include-linux-configh arch/um/kernel/sysrq.c
+--- a/arch/um/kernel/sysrq.c~kill-include-linux-configh
++++ a/arch/um/kernel/sysrq.c
+@@ -3,7 +3,6 @@
+  * Licensed under the GPL
+  */
+ 
+-#include "linux/config.h"
+ #include "linux/sched.h"
+ #include "linux/kernel.h"
+ #include "linux/module.h"
+diff -puN arch/um/kernel/trap.c~kill-include-linux-configh arch/um/kernel/trap.c
+--- a/arch/um/kernel/trap.c~kill-include-linux-configh
++++ a/arch/um/kernel/trap.c
+@@ -8,7 +8,6 @@
+ #include "linux/sched.h"
+ #include "linux/mm.h"
+ #include "linux/spinlock.h"
+-#include "linux/config.h"
+ #include "linux/init.h"
+ #include "linux/ptrace.h"
+ #include "asm/semaphore.h"
+diff -puN arch/um/kernel/tt/gdb_kern.c~kill-include-linux-configh arch/um/kernel/tt/gdb_kern.c
+--- a/arch/um/kernel/tt/gdb_kern.c~kill-include-linux-configh
++++ a/arch/um/kernel/tt/gdb_kern.c
+@@ -4,7 +4,6 @@
+  */
+ 
+ #include "linux/init.h"
+-#include "linux/config.h"
+ #include "mconsole_kern.h"
+ 
+ #ifdef CONFIG_MCONSOLE
+diff -puN arch/um/kernel/tt/mem.c~kill-include-linux-configh arch/um/kernel/tt/mem.c
+--- a/arch/um/kernel/tt/mem.c~kill-include-linux-configh
++++ a/arch/um/kernel/tt/mem.c
+@@ -4,7 +4,6 @@
+  */
+ 
+ #include "linux/stddef.h"
+-#include "linux/config.h"
+ #include "linux/mm.h"
+ #include "asm/uaccess.h"
+ #include "mem_user.h"
+diff -puN arch/um/kernel/um_arch.c~kill-include-linux-configh arch/um/kernel/um_arch.c
+--- a/arch/um/kernel/um_arch.c~kill-include-linux-configh
++++ a/arch/um/kernel/um_arch.c
+@@ -3,7 +3,6 @@
+  * Licensed under the GPL
+  */
+ 
+-#include "linux/config.h"
+ #include "linux/kernel.h"
+ #include "linux/sched.h"
+ #include "linux/notifier.h"
+diff -puN arch/um/sys-i386/ldt.c~kill-include-linux-configh arch/um/sys-i386/ldt.c
+--- a/arch/um/sys-i386/ldt.c~kill-include-linux-configh
++++ a/arch/um/sys-i386/ldt.c
+@@ -4,7 +4,6 @@
+  */
+ 
+ #include "linux/stddef.h"
+-#include "linux/config.h"
+ #include "linux/sched.h"
+ #include "linux/slab.h"
+ #include "linux/types.h"
+diff -puN arch/um/sys-i386/sysrq.c~kill-include-linux-configh arch/um/sys-i386/sysrq.c
+--- a/arch/um/sys-i386/sysrq.c~kill-include-linux-configh
++++ a/arch/um/sys-i386/sysrq.c
+@@ -3,7 +3,6 @@
+  * Licensed under the GPL
+  */
+ 
+-#include "linux/config.h"
+ #include "linux/kernel.h"
+ #include "linux/smp.h"
+ #include "linux/sched.h"
+diff -puN arch/um/sys-i386/tls.c~kill-include-linux-configh arch/um/sys-i386/tls.c
+--- a/arch/um/sys-i386/tls.c~kill-include-linux-configh
++++ a/arch/um/sys-i386/tls.c
+@@ -3,7 +3,6 @@
+  * Licensed under the GPL
+  */
+ 
+-#include "linux/config.h"
+ #include "linux/kernel.h"
+ #include "linux/sched.h"
+ #include "linux/slab.h"
+diff -puN arch/v850/kernel/time.c~kill-include-linux-configh arch/v850/kernel/time.c
+--- a/arch/v850/kernel/time.c~kill-include-linux-configh
++++ a/arch/v850/kernel/time.c
+@@ -10,7 +10,6 @@
+  *		"A Kernel Model for Precision Timekeeping" by Dave Mills
+  */
+ 
+-#include <linux/config.h> /* CONFIG_HEARTBEAT */
+ #include <linux/errno.h>
+ #include <linux/kernel.h>
+ #include <linux/module.h>
+diff -puN arch/x86_64/boot/video.S~kill-include-linux-configh arch/x86_64/boot/video.S
+--- a/arch/x86_64/boot/video.S~kill-include-linux-configh
++++ a/arch/x86_64/boot/video.S
+@@ -11,8 +11,6 @@
+  *
+  */
+ 
+-#include <linux/config.h> /* for CONFIG_VIDEO_* */
+-
+ /* Enable autodetection of SVGA adapters and modes. */
+ #undef CONFIG_VIDEO_SVGA
+ 
+diff -puN arch/x86_64/ia32/ia32_binfmt.c~kill-include-linux-configh arch/x86_64/ia32/ia32_binfmt.c
+--- a/arch/x86_64/ia32/ia32_binfmt.c~kill-include-linux-configh
++++ a/arch/x86_64/ia32/ia32_binfmt.c
+@@ -6,7 +6,6 @@
+  * of ugly preprocessor tricks. Talk about very very poor man's inheritance.
+  */ 
+ #include <linux/types.h>
+-#include <linux/config.h> 
+ #include <linux/stddef.h>
+ #include <linux/rwsem.h>
+ #include <linux/sched.h>
+diff -puN arch/x86_64/kernel/pci-calgary.c~kill-include-linux-configh arch/x86_64/kernel/pci-calgary.c
+--- a/arch/x86_64/kernel/pci-calgary.c~kill-include-linux-configh
++++ a/arch/x86_64/kernel/pci-calgary.c
+@@ -21,7 +21,6 @@
+  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307 USA
+  */
+ 
+-#include <linux/config.h>
+ #include <linux/kernel.h>
+ #include <linux/init.h>
+ #include <linux/types.h>
+diff -puN arch/x86_64/kernel/tce.c~kill-include-linux-configh arch/x86_64/kernel/tce.c
+--- a/arch/x86_64/kernel/tce.c~kill-include-linux-configh
++++ a/arch/x86_64/kernel/tce.c
+@@ -23,7 +23,6 @@
+  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307 USA
+  */
+ 
+-#include <linux/config.h>
+ #include <linux/types.h>
+ #include <linux/slab.h>
+ #include <linux/mm.h>
+diff -puN arch/x86_64/kernel/x8664_ksyms.c~kill-include-linux-configh arch/x86_64/kernel/x8664_ksyms.c
+--- a/arch/x86_64/kernel/x8664_ksyms.c~kill-include-linux-configh
++++ a/arch/x86_64/kernel/x8664_ksyms.c
+@@ -1,7 +1,6 @@
+ /* Exports for assembly files.
+    All C exports should go in the respective C files. */
+ 
+-#include <linux/config.h>
+ #include <linux/module.h>
+ #include <linux/smp.h>
+ 
+diff -puN arch/x86_64/lib/delay.c~kill-include-linux-configh arch/x86_64/lib/delay.c
+--- a/arch/x86_64/lib/delay.c~kill-include-linux-configh
++++ a/arch/x86_64/lib/delay.c
+@@ -8,7 +8,6 @@
+  *	depends wildly on alignment on many x86 processors. 
+  */
+ 
+-#include <linux/config.h>
+ #include <linux/module.h>
+ #include <linux/sched.h>
+ #include <linux/delay.h>
+diff -puN arch/x86_64/lib/thunk.S~kill-include-linux-configh arch/x86_64/lib/thunk.S
+--- a/arch/x86_64/lib/thunk.S~kill-include-linux-configh
++++ a/arch/x86_64/lib/thunk.S
+@@ -5,7 +5,6 @@
+  * Subject to the GNU public license, v.2. No warranty of any kind.
+  */
+ 
+-	#include <linux/config.h>
+ 	#include <linux/linkage.h>
+ 	#include <asm/dwarf2.h>
+ 	#include <asm/calling.h>			
+diff -puN drivers/block/cciss.c~kill-include-linux-configh drivers/block/cciss.c
+--- a/drivers/block/cciss.c~kill-include-linux-configh
++++ a/drivers/block/cciss.c
+@@ -20,7 +20,6 @@
+  *
+  */
+ 
+-#include <linux/config.h>	/* CONFIG_PROC_FS */
+ #include <linux/module.h>
+ #include <linux/interrupt.h>
+ #include <linux/types.h>
+diff -puN drivers/block/cpqarray.c~kill-include-linux-configh drivers/block/cpqarray.c
+--- a/drivers/block/cpqarray.c~kill-include-linux-configh
++++ a/drivers/block/cpqarray.c
+@@ -19,7 +19,6 @@
+  *    Questions/Comments/Bugfixes to iss_storagedev@hp.com
+  *
+  */
+-#include <linux/config.h>	/* CONFIG_PROC_FS */
+ #include <linux/module.h>
+ #include <linux/types.h>
+ #include <linux/pci.h>
+diff -puN drivers/char/ftape/lowlevel/fdc-io.c~kill-include-linux-configh drivers/char/ftape/lowlevel/fdc-io.c
+--- a/drivers/char/ftape/lowlevel/fdc-io.c~kill-include-linux-configh
++++ a/drivers/char/ftape/lowlevel/fdc-io.c
+@@ -26,7 +26,6 @@
+  *      Linux.
+  */
+ 
+-#include <linux/config.h> /* for CONFIG_FT_* */
+ #include <linux/errno.h>
+ #include <linux/sched.h>
+ #include <linux/ioport.h>
+diff -puN drivers/char/ftape/zftape/zftape-rw.c~kill-include-linux-configh drivers/char/ftape/zftape/zftape-rw.c
+--- a/drivers/char/ftape/zftape/zftape-rw.c~kill-include-linux-configh
++++ a/drivers/char/ftape/zftape/zftape-rw.c
+@@ -24,7 +24,6 @@
+  *      zftape.
+  */
+ 
+-#include <linux/config.h> /* for CONFIG_ZFT_DFLT_BLK_SZ */
+ #include <linux/errno.h>
+ #include <linux/mm.h>
+ 
+diff -puN drivers/char/ftape/zftape/zftape-rw.h~kill-include-linux-configh drivers/char/ftape/zftape/zftape-rw.h
+--- a/drivers/char/ftape/zftape/zftape-rw.h~kill-include-linux-configh
++++ a/drivers/char/ftape/zftape/zftape-rw.h
+@@ -28,7 +28,6 @@
+  *
+  */
+ 
+-#include <linux/config.h> /* for CONFIG_ZFT_DFLT_BLK_SZ */
+ #include "../zftape/zftape-buffers.h"
+ 
+ #define SEGMENTS_PER_TAPE  (ft_segments_per_track * ft_tracks_per_tape)
+diff -puN drivers/char/hw_random/ixp4xx-rng.c~kill-include-linux-configh drivers/char/hw_random/ixp4xx-rng.c
+--- a/drivers/char/hw_random/ixp4xx-rng.c~kill-include-linux-configh
++++ a/drivers/char/hw_random/ixp4xx-rng.c
+@@ -15,7 +15,6 @@
+  */
+ 
+ #include <linux/kernel.h>
+-#include <linux/config.h>
+ #include <linux/types.h>
+ #include <linux/module.h>
+ #include <linux/moduleparam.h>
+diff -puN drivers/char/nsc_gpio.c~kill-include-linux-configh drivers/char/nsc_gpio.c
+--- a/drivers/char/nsc_gpio.c~kill-include-linux-configh
++++ a/drivers/char/nsc_gpio.c
+@@ -7,7 +7,6 @@
+    Copyright (c) 2005      Jim Cromie <jim.cromie@gmail.com>
+ */
+ 
+-#include <linux/config.h>
+ #include <linux/fs.h>
+ #include <linux/module.h>
+ #include <linux/errno.h>
+diff -puN drivers/char/pcmcia/synclink_cs.c~kill-include-linux-configh drivers/char/pcmcia/synclink_cs.c
+--- a/drivers/char/pcmcia/synclink_cs.c~kill-include-linux-configh
++++ a/drivers/char/pcmcia/synclink_cs.c
+@@ -35,7 +35,6 @@
+ 
+ #define MAX_DEVICE_COUNT 4
+ 
+-#include <linux/config.h>	
+ #include <linux/module.h>
+ #include <linux/errno.h>
+ #include <linux/signal.h>
+diff -puN drivers/char/sx.c~kill-include-linux-configh drivers/char/sx.c
+--- a/drivers/char/sx.c~kill-include-linux-configh
++++ a/drivers/char/sx.c
+@@ -203,9 +203,7 @@
+ #define RCS_ID "$Id: sx.c,v 1.33 2000/03/08 10:01:02 wolff, pvdl Exp $"
+ #define RCS_REV "$Revision: 1.33 $"
+ 
+-
+ #include <linux/module.h>
+-#include <linux/config.h> 
+ #include <linux/kdev_t.h>
+ #include <linux/kernel.h>
+ #include <linux/sched.h>
+diff -puN drivers/char/synclink.c~kill-include-linux-configh drivers/char/synclink.c
+--- a/drivers/char/synclink.c~kill-include-linux-configh
++++ a/drivers/char/synclink.c
+@@ -63,7 +63,6 @@
+ #define MAX_PCI_DEVICES 10
+ #define MAX_TOTAL_DEVICES 20
+ 
+-#include <linux/config.h>	
+ #include <linux/module.h>
+ #include <linux/errno.h>
+ #include <linux/signal.h>
+diff -puN drivers/char/watchdog/pcwd.c~kill-include-linux-configh drivers/char/watchdog/pcwd.c
+--- a/drivers/char/watchdog/pcwd.c~kill-include-linux-configh
++++ a/drivers/char/watchdog/pcwd.c
+@@ -49,7 +49,6 @@
+  *	More info available at http://www.berkprod.com/ or http://www.pcwatchdog.com/
+  */
+ 
+-#include <linux/config.h>	/* For CONFIG_WATCHDOG_NOWAYOUT/... */
+ #include <linux/module.h>	/* For module specific items */
+ #include <linux/moduleparam.h>	/* For new moduleparam's */
+ #include <linux/types.h>	/* For standard types (like size_t) */
+diff -puN drivers/char/watchdog/pcwd_pci.c~kill-include-linux-configh drivers/char/watchdog/pcwd_pci.c
+--- a/drivers/char/watchdog/pcwd_pci.c~kill-include-linux-configh
++++ a/drivers/char/watchdog/pcwd_pci.c
+@@ -31,7 +31,6 @@
+  *	Includes, defines, variables, module parameters, ...
+  */
+ 
+-#include <linux/config.h>	/* For CONFIG_WATCHDOG_NOWAYOUT/... */
+ #include <linux/module.h>	/* For module specific items */
+ #include <linux/moduleparam.h>	/* For new moduleparam's */
+ #include <linux/types.h>	/* For standard types (like size_t) */
+diff -puN drivers/hwmon/w83791d.c~kill-include-linux-configh drivers/hwmon/w83791d.c
+--- a/drivers/hwmon/w83791d.c~kill-include-linux-configh
++++ a/drivers/hwmon/w83791d.c
+@@ -32,7 +32,6 @@
+     program which treats the 83791d as an 83781d).
+ */
+ 
+-#include <linux/config.h>
+ #include <linux/module.h>
+ #include <linux/init.h>
+ #include <linux/slab.h>
+diff -puN drivers/i2c/busses/i2c-ocores.c~kill-include-linux-configh drivers/i2c/busses/i2c-ocores.c
+--- a/drivers/i2c/busses/i2c-ocores.c~kill-include-linux-configh
++++ a/drivers/i2c/busses/i2c-ocores.c
+@@ -9,7 +9,6 @@
+  * kind, whether express or implied.
+  */
+ 
+-#include <linux/config.h>
+ #include <linux/kernel.h>
+ #include <linux/module.h>
+ #include <linux/sched.h>
+diff -puN drivers/ide/pci/generic.c~kill-include-linux-configh drivers/ide/pci/generic.c
+--- a/drivers/ide/pci/generic.c~kill-include-linux-configh
++++ a/drivers/ide/pci/generic.c
+@@ -23,7 +23,6 @@
+ 
+ #undef REALLY_SLOW_IO		/* most systems can safely undef this */
+ 
+-#include <linux/config.h> /* for CONFIG_BLK_DEV_IDEPCI */
+ #include <linux/types.h>
+ #include <linux/module.h>
+ #include <linux/kernel.h>
+diff -puN drivers/ide/pci/rz1000.c~kill-include-linux-configh drivers/ide/pci/rz1000.c
+--- a/drivers/ide/pci/rz1000.c~kill-include-linux-configh
++++ a/drivers/ide/pci/rz1000.c
+@@ -17,7 +17,6 @@
+ 
+ #undef REALLY_SLOW_IO		/* most systems can safely undef this */
+ 
+-#include <linux/config.h> /* for CONFIG_BLK_DEV_IDEPCI */
+ #include <linux/types.h>
+ #include <linux/module.h>
+ #include <linux/kernel.h>
+diff -puN drivers/leds/leds-ams-delta.c~kill-include-linux-configh drivers/leds/leds-ams-delta.c
+--- a/drivers/leds/leds-ams-delta.c~kill-include-linux-configh
++++ a/drivers/leds/leds-ams-delta.c
+@@ -8,7 +8,6 @@
+  * published by the Free Software Foundation.
+  */
+ 
+-#include <linux/config.h>
+ #include <linux/kernel.h>
+ #include <linux/init.h>
+ #include <linux/platform_device.h>
+diff -puN drivers/rtc/rtc-max6902.c~kill-include-linux-configh drivers/rtc/rtc-max6902.c
+--- a/drivers/rtc/rtc-max6902.c~kill-include-linux-configh
++++ a/drivers/rtc/rtc-max6902.c
+@@ -19,7 +19,6 @@
+  *                - Initial driver creation.
+  */
+ 
+-#include <linux/config.h>
+ #include <linux/module.h>
+ #include <linux/version.h>
+ 
+diff -puN drivers/scsi/imm.h~kill-include-linux-configh drivers/scsi/imm.h
+--- a/drivers/scsi/imm.h~kill-include-linux-configh
++++ a/drivers/scsi/imm.h
+@@ -66,7 +66,6 @@
+  */
+ /* ------ END OF USER CONFIGURABLE PARAMETERS ----- */
+ 
+-#include  <linux/config.h>
+ #include  <linux/stddef.h>
+ #include  <linux/module.h>
+ #include  <linux/kernel.h>
+diff -puN drivers/scsi/ppa.h~kill-include-linux-configh drivers/scsi/ppa.h
+--- a/drivers/scsi/ppa.h~kill-include-linux-configh
++++ a/drivers/scsi/ppa.h
+@@ -73,7 +73,6 @@
+  */
+ /* ------ END OF USER CONFIGURABLE PARAMETERS ----- */
+ 
+-#include  <linux/config.h>
+ #include  <linux/stddef.h>
+ #include  <linux/module.h>
+ #include  <linux/kernel.h>
+diff -puN drivers/serial/cpm_uart/cpm_uart.h~kill-include-linux-configh drivers/serial/cpm_uart/cpm_uart.h
+--- a/drivers/serial/cpm_uart/cpm_uart.h~kill-include-linux-configh
++++ a/drivers/serial/cpm_uart/cpm_uart.h
+@@ -16,7 +16,6 @@
+ #ifndef CPM_UART_H
+ #define CPM_UART_H
+ 
+-#include <linux/config.h>
+ #include <linux/platform_device.h>
+ #include <linux/fs_uart_pd.h>
+ 
+diff -puN drivers/serial/netx-serial.c~kill-include-linux-configh drivers/serial/netx-serial.c
+--- a/drivers/serial/netx-serial.c~kill-include-linux-configh
++++ a/drivers/serial/netx-serial.c
+@@ -17,8 +17,6 @@
+  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
+  */
+ 
+-#include <linux/config.h>
+-
+ #if defined(CONFIG_SERIAL_NETX_CONSOLE) && defined(CONFIG_MAGIC_SYSRQ)
+ #define SUPPORT_SYSRQ
+ #endif
+diff -puN drivers/spi/spi_s3c24xx.c~kill-include-linux-configh drivers/spi/spi_s3c24xx.c
+--- a/drivers/spi/spi_s3c24xx.c~kill-include-linux-configh
++++ a/drivers/spi/spi_s3c24xx.c
+@@ -13,7 +13,6 @@
+ 
+ //#define DEBUG
+ 
+-#include <linux/config.h>
+ #include <linux/init.h>
+ #include <linux/spinlock.h>
+ #include <linux/workqueue.h>
+diff -puN drivers/spi/spi_s3c24xx_gpio.c~kill-include-linux-configh drivers/spi/spi_s3c24xx_gpio.c
+--- a/drivers/spi/spi_s3c24xx_gpio.c~kill-include-linux-configh
++++ a/drivers/spi/spi_s3c24xx_gpio.c
+@@ -11,7 +11,6 @@
+  *
+ */
+ 
+-#include <linux/config.h>
+ #include <linux/kernel.h>
+ #include <linux/init.h>
+ #include <linux/delay.h>
+diff -puN drivers/usb/input/usbtouchscreen.c~kill-include-linux-configh drivers/usb/input/usbtouchscreen.c
+--- a/drivers/usb/input/usbtouchscreen.c~kill-include-linux-configh
++++ a/drivers/usb/input/usbtouchscreen.c
+@@ -35,7 +35,6 @@
+ 
+ //#define DEBUG
+ 
+-#include <linux/config.h>
+ #include <linux/kernel.h>
+ #include <linux/slab.h>
+ #include <linux/input.h>
+diff -puN drivers/usb/misc/appledisplay.c~kill-include-linux-configh drivers/usb/misc/appledisplay.c
+--- a/drivers/usb/misc/appledisplay.c~kill-include-linux-configh
++++ a/drivers/usb/misc/appledisplay.c
+@@ -20,7 +20,6 @@
+  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
+  */
+ 
+-#include <linux/config.h>
+ #include <linux/kernel.h>
+ #include <linux/errno.h>
+ #include <linux/init.h>
+diff -puN drivers/usb/misc/sisusbvga/sisusb.c~kill-include-linux-configh drivers/usb/misc/sisusbvga/sisusb.c
+--- a/drivers/usb/misc/sisusbvga/sisusb.c~kill-include-linux-configh
++++ a/drivers/usb/misc/sisusbvga/sisusb.c
+@@ -36,7 +36,6 @@
+  *
+  */
+ 
+-#include <linux/config.h>
+ #include <linux/mutex.h>
+ #include <linux/module.h>
+ #include <linux/kernel.h>
+diff -puN drivers/usb/misc/sisusbvga/sisusb_con.c~kill-include-linux-configh drivers/usb/misc/sisusbvga/sisusb_con.c
+--- a/drivers/usb/misc/sisusbvga/sisusb_con.c~kill-include-linux-configh
++++ a/drivers/usb/misc/sisusbvga/sisusb_con.c
+@@ -47,7 +47,6 @@
+  *
+  */
+ 
+-#include <linux/config.h>
+ #include <linux/mutex.h>
+ #include <linux/module.h>
+ #include <linux/kernel.h>
+diff -puN fs/isofs/namei.c~kill-include-linux-configh fs/isofs/namei.c
+--- a/fs/isofs/namei.c~kill-include-linux-configh
++++ a/fs/isofs/namei.c
+@@ -6,7 +6,6 @@
+  *  (C) 1991  Linus Torvalds - minix filesystem
+  */
+ 
+-#include <linux/config.h>	/* Joliet? */
+ #include <linux/smp_lock.h>
+ #include "isofs.h"
+ 
+diff -puN fs/nfs/namespace.c~kill-include-linux-configh fs/nfs/namespace.c
+--- a/fs/nfs/namespace.c~kill-include-linux-configh
++++ a/fs/nfs/namespace.c
+@@ -7,8 +7,6 @@
+  * NFS namespace
+  */
+ 
+-#include <linux/config.h>
+-
+ #include <linux/dcache.h>
+ #include <linux/mount.h>
+ #include <linux/namei.h>
+diff -puN fs/nfs/nfs4namespace.c~kill-include-linux-configh fs/nfs/nfs4namespace.c
+--- a/fs/nfs/nfs4namespace.c~kill-include-linux-configh
++++ a/fs/nfs/nfs4namespace.c
+@@ -7,8 +7,6 @@
+  * NFSv4 namespace
+  */
+ 
+-#include <linux/config.h>
+-
+ #include <linux/dcache.h>
+ #include <linux/mount.h>
+ #include <linux/namei.h>
+diff -puN fs/nfs/nfsroot.c~kill-include-linux-configh fs/nfs/nfsroot.c
+--- a/fs/nfs/nfsroot.c~kill-include-linux-configh
++++ a/fs/nfs/nfsroot.c
+@@ -69,7 +69,6 @@
+  *	Fabian Frederick:	Option parser rebuilt (using parser lib)
+ */
+ 
+-#include <linux/config.h>
+ #include <linux/types.h>
+ #include <linux/string.h>
+ #include <linux/kernel.h>
+diff -puN fs/nfs/super.c~kill-include-linux-configh fs/nfs/super.c
+--- a/fs/nfs/super.c~kill-include-linux-configh
++++ a/fs/nfs/super.c
+@@ -20,7 +20,6 @@
+  *   of another (see nfs_lookup())
+  */
+ 
+-#include <linux/config.h>
+ #include <linux/module.h>
+ #include <linux/init.h>
+ 
+diff -puN include/asm-arm/arch-lh7a40x/clocks.h~kill-include-linux-configh include/asm-arm/arch-lh7a40x/clocks.h
+--- a/include/asm-arm/arch-lh7a40x/clocks.h~kill-include-linux-configh
++++ a/include/asm-arm/arch-lh7a40x/clocks.h
+@@ -8,8 +8,6 @@
+  *
+  */
+ 
+-#include <linux/config.h>
+-
+ #ifndef __ASM_ARCH_CLOCKS_H
+ #define __ASM_ARCH_CLOCKS_H
+ 
+diff -puN include/asm-arm/pgtable-nommu.h~kill-include-linux-configh include/asm-arm/pgtable-nommu.h
+--- a/include/asm-arm/pgtable-nommu.h~kill-include-linux-configh
++++ a/include/asm-arm/pgtable-nommu.h
+@@ -13,7 +13,6 @@
+ 
+ #ifndef __ASSEMBLY__
+ 
+-#include <linux/config.h>
+ #include <linux/slab.h>
+ #include <asm/processor.h>
+ #include <asm/page.h>
+diff -puN include/asm-powerpc/irq.h~kill-include-linux-configh include/asm-powerpc/irq.h
+--- a/include/asm-powerpc/irq.h~kill-include-linux-configh
++++ a/include/asm-powerpc/irq.h
+@@ -9,7 +9,6 @@
+  * 2 of the License, or (at your option) any later version.
+  */
+ 
+-#include <linux/config.h>
+ #include <linux/threads.h>
+ #include <linux/list.h>
+ #include <linux/radix-tree.h>
+diff -puN include/asm-powerpc/pci-bridge.h~kill-include-linux-configh include/asm-powerpc/pci-bridge.h
+--- a/include/asm-powerpc/pci-bridge.h~kill-include-linux-configh
++++ a/include/asm-powerpc/pci-bridge.h
+@@ -6,7 +6,6 @@
+ #include <asm-ppc/pci-bridge.h>
+ #else
+ 
+-#include <linux/config.h>
+ #include <linux/pci.h>
+ #include <linux/list.h>
+ 
+diff -puN include/asm-x86_64/calgary.h~kill-include-linux-configh include/asm-x86_64/calgary.h
+--- a/include/asm-x86_64/calgary.h~kill-include-linux-configh
++++ a/include/asm-x86_64/calgary.h
+@@ -24,7 +24,6 @@
+ #ifndef _ASM_X86_64_CALGARY_H
+ #define _ASM_X86_64_CALGARY_H
+ 
+-#include <linux/config.h>
+ #include <linux/spinlock.h>
+ #include <linux/device.h>
+ #include <linux/dma-mapping.h>
+diff -puN init/do_mounts.h~kill-include-linux-configh init/do_mounts.h
+--- a/init/do_mounts.h~kill-include-linux-configh
++++ a/init/do_mounts.h
+@@ -1,4 +1,3 @@
+-#include <linux/config.h>
+ #include <linux/kernel.h>
+ #include <linux/init.h>
+ #include <linux/syscalls.h>
+diff -puN kernel/rtmutex-debug.c~kill-include-linux-configh kernel/rtmutex-debug.c
+--- a/kernel/rtmutex-debug.c~kill-include-linux-configh
++++ a/kernel/rtmutex-debug.c
+@@ -16,7 +16,6 @@
+  *
+  * See rt.c in preempt-rt for proper credits and further information
+  */
+-#include <linux/config.h>
+ #include <linux/sched.h>
+ #include <linux/delay.h>
+ #include <linux/module.h>
+diff -puN kernel/rtmutex-tester.c~kill-include-linux-configh kernel/rtmutex-tester.c
+--- a/kernel/rtmutex-tester.c~kill-include-linux-configh
++++ a/kernel/rtmutex-tester.c
+@@ -6,7 +6,6 @@
+  *  Copyright (C) 2006, Timesys Corp., Thomas Gleixner <tglx@timesys.com>
+  *
+  */
+-#include <linux/config.h>
+ #include <linux/kthread.h>
+ #include <linux/module.h>
+ #include <linux/sched.h>
+diff -puN mm/filemap.h~kill-include-linux-configh mm/filemap.h
+--- a/mm/filemap.h~kill-include-linux-configh
++++ a/mm/filemap.h
+@@ -12,7 +12,6 @@
+ #include <linux/mm.h>
+ #include <linux/highmem.h>
+ #include <linux/uio.h>
+-#include <linux/config.h>
+ #include <linux/uaccess.h>
+ 
+ size_t
+diff -puN mm/slab.c~kill-include-linux-configh mm/slab.c
+--- a/mm/slab.c~kill-include-linux-configh
++++ a/mm/slab.c
+@@ -86,7 +86,6 @@
+  *	All object allocations for a node occur from node specific slab lists.
+  */
+ 
+-#include	<linux/config.h>
+ #include	<linux/slab.h>
+ #include	<linux/mm.h>
+ #include	<linux/poison.h>
+diff -puN mm/vmstat.c~kill-include-linux-configh mm/vmstat.c
+--- a/mm/vmstat.c~kill-include-linux-configh
++++ a/mm/vmstat.c
+@@ -9,7 +9,6 @@
+  *		Christoph Lameter <christoph@lameter.com>
+  */
+ 
+-#include <linux/config.h>
+ #include <linux/mm.h>
+ #include <linux/module.h>
+ 
+diff -puN net/atm/atm_sysfs.c~kill-include-linux-configh net/atm/atm_sysfs.c
+--- a/net/atm/atm_sysfs.c~kill-include-linux-configh
++++ a/net/atm/atm_sysfs.c
+@@ -1,6 +1,5 @@
+ /* ATM driver model support. */
+ 
+-#include <linux/config.h>
+ #include <linux/kernel.h>
+ #include <linux/init.h>
+ #include <linux/kobject.h>
+diff -puN net/core/dev_mcast.c~kill-include-linux-configh net/core/dev_mcast.c
+--- a/net/core/dev_mcast.c~kill-include-linux-configh
++++ a/net/core/dev_mcast.c
+@@ -21,7 +21,6 @@
+  *	2 of the License, or (at your option) any later version.
+  */
+ 
+-#include <linux/config.h> 
+ #include <linux/module.h> 
+ #include <asm/uaccess.h>
+ #include <asm/system.h>
+diff -puN sound/aoa/soundbus/sysfs.c~kill-include-linux-configh sound/aoa/soundbus/sysfs.c
+--- a/sound/aoa/soundbus/sysfs.c~kill-include-linux-configh
++++ a/sound/aoa/soundbus/sysfs.c
+@@ -1,4 +1,3 @@
+-#include <linux/config.h>
+ #include <linux/kernel.h>
+ #include <linux/stat.h>
+ /* FIX UP */
+diff -puN sound/core/memory.c~kill-include-linux-configh sound/core/memory.c
+--- a/sound/core/memory.c~kill-include-linux-configh
++++ a/sound/core/memory.c
+@@ -20,7 +20,6 @@
+  *
+  */
+ 
+-#include <linux/config.h>
+ #include <linux/module.h>
+ #include <asm/io.h>
+ #include <asm/uaccess.h>
+--- linux-2.6.18.noarch/arch/i386/kernel/nmi.c~	2006-09-21 20:22:09.000000000 -0400
++++ linux-2.6.18.noarch/arch/i386/kernel/nmi.c	2006-09-21 20:22:11.000000000 -0400
+@@ -13,7 +13,6 @@
+  *  Mikael Pettersson	: PM converted to driver model. Disable/enable API.
+  */
+ 
+-#include <linux/config.h>
+ #include <linux/delay.h>
+ #include <linux/interrupt.h>
+ #include <linux/module.h>
+--- linux-2.6.18.noarch/arch/i386/lib/delay.c~	2006-09-21 20:22:22.000000000 -0400
++++ linux-2.6.18.noarch/arch/i386/lib/delay.c	2006-09-21 20:22:24.000000000 -0400
+@@ -11,7 +11,6 @@
+  */
+ 
+ #include <linux/module.h>
+-#include <linux/config.h>
+ #include <linux/sched.h>
+ #include <linux/delay.h>
+ 
+--- linux-2.6.18.noarch/drivers/usb/input/pid.c~	2006-09-21 20:22:30.000000000 -0400
++++ linux-2.6.18.noarch/drivers/usb/input/pid.c	2006-09-21 20:22:33.000000000 -0400
+@@ -24,7 +24,6 @@
+  * e-mail - mail your message to <rdamazio@lsi.usp.br>
+  */
+ 
+-#include <linux/config.h>
+ #include <linux/module.h>
+ #include <linux/slab.h>
+ #include <linux/kernel.h>
+--- linux-2.6.18.noarch/arch/i386/boot/video.S~	2006-09-21 20:22:50.000000000 -0400
++++ linux-2.6.18.noarch/arch/i386/boot/video.S	2006-09-21 20:23:03.000000000 -0400
+@@ -11,8 +11,6 @@
+  *
+  */
+ 
+-#include <linux/config.h> /* for CONFIG_VIDEO_* */
+-
+ /* Enable autodetection of SVGA adapters and modes. */
+ #undef CONFIG_VIDEO_SVGA
+ 
+--- linux-2.6.18.noarch/drivers/media/video/cx88/cx88-tvaudio.c~	2006-09-21 20:23:22.000000000 -0400
++++ linux-2.6.18.noarch/drivers/media/video/cx88/cx88-tvaudio.c	2006-09-21 20:23:25.000000000 -0400
+@@ -52,7 +52,6 @@
+ #include <linux/init.h>
+ #include <linux/smp_lock.h>
+ #include <linux/delay.h>
+-#include <linux/config.h>
+ #include <linux/kthread.h>
+ 
+ #include "cx88.h"
+--- linux-2.6.18.noarch/drivers/media/video/pvrusb2/pvrusb2-main.c~	2006-09-21 20:23:31.000000000 -0400
++++ linux-2.6.18.noarch/drivers/media/video/pvrusb2/pvrusb2-main.c	2006-09-21 20:23:33.000000000 -0400
+@@ -20,7 +20,6 @@
+  *
+  */
+ 
+-#include <linux/config.h>
+ #include <linux/kernel.h>
+ #include <linux/errno.h>
+ #include <linux/slab.h>
+--- linux-2.6.18.noarch/drivers/media/video/pvrusb2/pvrusb2-sysfs.c~	2006-09-21 20:23:36.000000000 -0400
++++ linux-2.6.18.noarch/drivers/media/video/pvrusb2/pvrusb2-sysfs.c	2006-09-21 20:23:38.000000000 -0400
+@@ -19,7 +19,6 @@
+  *
+  */
+ 
+-#include <linux/config.h>
+ #include <linux/string.h>
+ #include <linux/slab.h>
+ #include <asm/semaphore.h>
+--- linux-2.6.18.noarch/drivers/net/phy/fixed.c~	2006-09-21 20:23:50.000000000 -0400
++++ linux-2.6.18.noarch/drivers/net/phy/fixed.c	2006-09-21 20:23:51.000000000 -0400
+@@ -13,7 +13,6 @@
+  * option) any later version.
+  *
+  */
+-#include <linux/config.h>
+ #include <linux/kernel.h>
+ #include <linux/sched.h>
+ #include <linux/string.h>

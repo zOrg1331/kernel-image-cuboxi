@@ -1,0 +1,37 @@
+From: Glauber Costa <glommer@redhat.com>
+Date: Mon, 24 May 2010 20:08:06 -0400
+Subject: [misc] add atomic64_cmpxcgh to x86_64 include files
+Message-id: <1274731689-21363-3-git-send-email-glommer@redhat.com>
+Patchwork-id: 25796
+O-Subject: [PATCH RHEL5.6/5.5.z v2 2/5] add atomic64_cmpxcgh to x86_64 include
+	files
+Bugzilla: 570824
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+RH-Acked-by: Zachary Amsden <zamsden@redhat.com>
+RH-Acked-by: Jes Sorensen <Jes.Sorensen@redhat.com>
+
+RH-Author: Glauber Costa <glommer@redhat.com>
+RH-Bugzilla: 570824 and many, many others
+RH-Upstream-status: N/A.
+
+We already have atomic_cmpxcgh, which is basically what we want,
+except that it trims the final result to an integer, which we don't
+want.
+
+This is used in pvclock implementation.
+
+Signed-off-by: Glauber Costa <glommer@redhat.com>
+
+diff --git a/include/asm-x86_64/atomic.h b/include/asm-x86_64/atomic.h
+index 007e88d..f759767 100644
+--- a/include/asm-x86_64/atomic.h
++++ b/include/asm-x86_64/atomic.h
+@@ -391,6 +391,8 @@ static __inline__ long atomic64_sub_return(long i, atomic64_t *v)
+ #define atomic_cmpxchg(v, old, new) ((int)cmpxchg(&((v)->counter), old, new))
+ #define atomic_xchg(v, new) (xchg(&((v)->counter), new))
+ 
++#define atomic64_cmpxchg(v, old, new) (cmpxchg(&((v)->counter), old, new))
++
+ /**
+  * atomic_add_unless - add unless the number is a given value
+  * @v: pointer of type atomic_t

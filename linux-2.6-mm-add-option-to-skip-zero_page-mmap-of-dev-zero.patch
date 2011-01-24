@@ -1,0 +1,109 @@
+From: Larry Woodman <lwoodman@redhat.com>
+Date: Tue, 10 Aug 2010 11:51:44 -0400
+Subject: [mm] add option to skip ZERO_PAGE mmap of /dev/zero
+Message-id: <4C613D50.3030308@redhat.com>
+Patchwork-id: 27482
+O-Subject: [RHEL5-U6 Patch] Remove optimization to map the ZERO_PAGE when
+	mmap()'ng /dev/zero
+Bugzilla: 619541
+RH-Acked-by: Jarod Wilson <jarod@redhat.com>
+
+We have a customer running Oracle Tuxedo and migrated from
+RHEL3 to RHEL5.
+When they did, the performance of the application suite dropped hundreds
+of percent.  After
+investigating this I found the application was mmap()'ng & munmap()'ng
+/dev/zero millions
+of time, a common way of malloc()/free() anonymous memory on Solaris.
+
+Anyway, mmap() of /dev/zero results in calling map_zero() which on RHEL5
+maps the
+ZERO_PAGE in every pte within that virtual address range.  Since the
+application is
+also multi-threaded the subsequest munmap() of /dev/zero results is TLB
+shootdowns
+to all other CPUs.  When this happens thousands or millions of times the
+application
+performance is terrible. The mapping ZERO_PAGE in every pte within that
+virtual
+address range was an optimization to make the subsequent pagefault times
+faster on
+RHEL5 that has been removed/changed upstream.
+
+Rather than removing this optimization I added a new tunable for RHEL5
+/proc/sys/vm/vm_devzero_optimized that allows one to disable this
+optimization.
+By default its set to 1 so the optimization is still set.  If you set it
+to zero mmap_zero()
+will not map the ZERO_PAGE so the address range is basically anonymous
+virtual
+memory.  This means the pagefault is slower but the mmap() is much faster.
+
+The attached patch adds this and fixes BZ619541
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/char/mem.c b/drivers/char/mem.c
+index 2451273..97b34af 100644
+--- a/drivers/char/mem.c
++++ b/drivers/char/mem.c
+@@ -34,6 +34,8 @@
+ # include <linux/efi.h>
+ #endif
+ 
++int vm_devzero_optimized = 1;
++
+ static inline int range_is_allowed(unsigned long pfn, unsigned long size)
+ {
+ 	u64 from = ((u64)pfn) << PAGE_SHIFT;
+@@ -595,7 +597,8 @@ static int mmap_zero(struct file * file, struct vm_area_struct * vma)
+ {
+ 	if (vma->vm_flags & VM_SHARED)
+ 		return shmem_zero_setup(vma);
+-	if (zeromap_page_range(vma, vma->vm_start, vma->vm_end - vma->vm_start, vma->vm_page_prot))
++	if (vm_devzero_optimized &&
++	    zeromap_page_range(vma, vma->vm_start, vma->vm_end - vma->vm_start, vma->vm_page_prot))
+ 		return -EAGAIN;
+ 	return 0;
+ }
+diff --git a/include/linux/sysctl.h b/include/linux/sysctl.h
+index 88e94c0..adfb1c9 100644
+--- a/include/linux/sysctl.h
++++ b/include/linux/sysctl.h
+@@ -214,6 +214,7 @@ enum
+ 	VM_ZONE_RECLAIM_INTERVAL=41, /* interval between zone_reclaim failures */
+ 	VM_TOPDOWN_ALLOCATE_FAST=42, /* optimize speed over fragmentation in topdown alloc */
+ 	VM_MAX_RECLAIMS=43,     /* max reclaims allowed */
++	VM_DEVZERO_OPTIMIZED=44, /* pagetables initialized with ZERO_PAGE at mmmap time */
+ };
+ 
+ 
+diff --git a/kernel/sysctl.c b/kernel/sysctl.c
+index 6ff0cf3..494f90b 100644
+--- a/kernel/sysctl.c
++++ b/kernel/sysctl.c
+@@ -83,6 +83,7 @@ extern int compat_log;
+ extern int flush_mmap_pages;
+ extern int max_writeback_pages;
+ extern int blk_iopoll_enabled;
++extern int vm_devzero_optimized;
+ 
+ #if defined(CONFIG_X86_LOCAL_APIC) && defined(CONFIG_X86)
+ extern int proc_unknown_nmi_panic(ctl_table *, int, struct file *,
+@@ -1232,6 +1233,16 @@ static ctl_table vm_table[] = {
+ 		.strategy	= &sysctl_intvec,
+ 		.extra1		= &zero,
+ 	},
++	{
++		.ctl_name	= VM_DEVZERO_OPTIMIZED,
++		.procname	= "vm_devzero_optimized",
++		.data		= &vm_devzero_optimized,
++		.maxlen		= sizeof(vm_devzero_optimized),
++		.mode		= 0644,
++		.proc_handler	= &proc_dointvec,
++		.strategy	= &sysctl_intvec,
++		.extra1		= &zero,
++	},
+ 	{ .ctl_name = 0 }
+ };
+ 

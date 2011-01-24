@@ -1,0 +1,59 @@
+From: Marcus Barrow <mbarrow@redhat.com>
+Subject: [Bug 260701][QLogic][RHEL 5.1 bug] URGENT regression, 	nvram/vpd updates produce soft lockups and system hangs
+Date: Mon, 17 Sep 2007 11:07:44 -0400
+Bugzilla: 260701
+Message-Id: <20070917150744.2699.23455.sendpatchset@shell.boston.redhat.com>
+Changelog: [scsi] qlogic: fix nvram/vpd update memory corruptions
+
+
+I have updated this patch to correct the driver's version number
+string to match the version number.
+
+
+During continued testing at QLogic a typo has been found in the
+previous patch to fix this problem.
+
+This caused software lockups and NMI watchdog timeouts.
+
+The correction is to supply the address of a memory buffer
+instead of the address of a pointer.
+
+
+ drivers/scsi/qla2xxx/qla_attr.c |    2 +-
+ 1 files changed, 1 insertions(+), 1 deletions(-)
+
+diff --git a/drivers/scsi/qla2xxx/qla_attr.c b/drivers/scsi/qla2xxx/qla_attr.c
+index aa232a5..fb319f7 100644
+--- a/drivers/scsi/qla2xxx/qla_attr.c
++++ b/drivers/scsi/qla2xxx/qla_attr.c
+@@ -140,7 +140,7 @@ qla2x00_sysfs_write_nvram(struct kobject
+ 	/* Write NVRAM. */
+ 	spin_lock_irqsave(&ha->hardware_lock, flags);
+ 	ha->isp_ops.write_nvram(ha, (uint8_t *)buf, ha->nvram_base, count);
+-	ha->isp_ops.read_nvram(ha, (uint8_t *)&ha->nvram, ha->nvram_base,
++	ha->isp_ops.read_nvram(ha, (uint8_t *)ha->nvram, ha->nvram_base,
+ 	    count);
+ 	spin_unlock_irqrestore(&ha->hardware_lock, flags);
+ 
+-- 
+1.4.4.1
+
+ drivers/scsi/qla2xxx/qla_version.h |    2 +-
+ 1 files changed, 1 insertions(+), 1 deletions(-)
+
+diff --git a/drivers/scsi/qla2xxx/qla_version.h b/drivers/scsi/qla2xxx/qla_version.h
+index dc85495..c375a4e 100644
+--- a/drivers/scsi/qla2xxx/qla_version.h
++++ b/drivers/scsi/qla2xxx/qla_version.h
+@@ -7,7 +7,7 @@
+ /*
+  * Driver version
+  */
+-#define QLA2XXX_VERSION      "8.01.07-k6"
++#define QLA2XXX_VERSION      "8.01.07-k7"
+ 
+ #define QLA_DRIVER_MAJOR_VER	8
+ #define QLA_DRIVER_MINOR_VER	1
+-- 
+1.4.4.1
+

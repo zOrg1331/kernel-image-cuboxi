@@ -1,0 +1,71 @@
+From: AMEET M. PARANJAPE <aparanja@redhat.com>
+Date: Tue, 13 Jan 2009 10:24:13 -0600
+Subject: [ppc64] handle null iommu dma-window property correctly
+Message-id: 496CC02D.8000708@REDHAT.COM
+O-Subject: Re: [PATCH RHEL5.4 BZ393241] Handle null iommu dma-window property correctly
+Bugzilla: 393241
+RH-Acked-by: David Howells <dhowells@redhat.com>
+
+RHBZ#:
+======
+https://bugzilla.redhat.com/show_bug.cgi?id=393241
+
+Description:
+===========
+Some versions of pSeries firmware fail to set up
+a dma-window property for PCI slots that are occupied
+with bad hardware.
+
+As a result, the loop searching for this property, in
+iommu_dev_setup_pSeriesLP(), can run to the end, resulting
+in a NULL pointer dereference later in the routine. This
+patch prevents the crash, and prints a warning message.
+
+RHEL Version Found:
+================
+RHEL 5.3
+
+kABI Status:
+============
+No symbols were harmed.
+
+Brew:
+=====
+Built on all platforms.
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1641732
+
+Upstream Status:
+================
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=650f7b3b2f0ead0673e90452cf3dedde97c537ba
+
+Test Status:
+============
+Boot the kernel on a System P box with a known bad card and the boot fails.
+Now with this patch applied this failure is not seen as the kernel boots
+without a crash.
+===============================================================
+Ameet Paranjape 978-392-3903 ext 23903
+IBM on-site partner
+
+Proposed Patch:
+===============
+
+diff --git a/arch/powerpc/platforms/pseries/iommu.c b/arch/powerpc/platforms/pseries/iommu.c
+index d3bcb66..02fdeaa 100644
+--- a/arch/powerpc/platforms/pseries/iommu.c
++++ b/arch/powerpc/platforms/pseries/iommu.c
+@@ -520,6 +520,14 @@ static void iommu_dev_setup_pSeriesLP(struct pci_dev *dev)
+ 			break;
+ 	}
+ 
++	if (!pdn || !PCI_DN(pdn)) {
++		printk(KERN_WARNING "pci_dma_dev_setup_pSeriesLP: "
++		       "no DMA window found for pci dev=%s dn=%s\n",
++				 pci_name(dev), dn? dn->full_name : "<null>");
++		return;
++	}
++	DBG("  parent is %s\n", pdn->full_name);
++
+ 	/* Check for parent == NULL so we don't try to setup the empty EADS
+ 	 * slots on POWER4 machines.
+ 	 */

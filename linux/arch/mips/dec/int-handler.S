@@ -1,4 +1,6 @@
 /*
+ * arch/mips/dec/int-handler.S
+ *
  * Copyright (C) 1995, 1996, 1997 Paul M. Antoine and Harald Koerfgen
  * Copyright (C) 2000, 2001, 2002, 2003, 2005  Maciej W. Rozycki
  *
@@ -262,7 +264,10 @@
 		 srlv	t3,t1,t2
 
 handle_it:
-		j	dec_irq_dispatch
+		jal	do_IRQ
+		 move	a1,sp
+
+		j	ret_from_irq
 		 nop
 
 #ifdef CONFIG_32BIT
@@ -272,7 +277,9 @@ fpu:
 #endif
 
 spurious:
-		j	spurious_interrupt
+		jal	spurious_interrupt
+		 nop
+		j	ret_from_irq
 		 nop
 		END(plat_irq_dispatch)
 

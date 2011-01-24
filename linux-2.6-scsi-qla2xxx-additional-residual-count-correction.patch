@@ -1,0 +1,38 @@
+From: Marcus Barrow <mbarrow@redhat.com>
+Date: Fri, 12 Sep 2008 15:29:04 -0400
+Subject: [scsi] qla2xxx: additional residual-count correction
+Message-id: 20080912192859.28390.35793.sendpatchset@file.bos.redhat.com
+O-Subject: [rhel 5.3 patch] qla2xxx: Additional residual-count correction during UNDERRUN handling.
+Bugzilla: 462117
+
+BZ 462117 - qla2xxx: Additional residual-count corrections during UNDERRUN handling.
+
+This is a back port of a critical patch currently being submitted upstream.
+
+It is a very simple 3 line fix to a problem reported by a major OEM.
+
+This is been verified both via FW simulation of the FCP_RSP packet as
+well as tested within the lab with a FC-jammer. It was also verified to fix
+the original problem reported.
+
+Add additional tightening of residual-count handling (originally
+from commit 6acf8190025e9c4ea513d4084ff089d476112816) where the
+driver should discard any lower SCSI-status during
+firmware/transport residual-count mismatches.
+
+diff --git a/drivers/scsi/qla2xxx/qla_isr.c b/drivers/scsi/qla2xxx/qla_isr.c
+index 09b7c0c..4106c90 100644
+--- a/drivers/scsi/qla2xxx/qla_isr.c
++++ b/drivers/scsi/qla2xxx/qla_isr.c
+@@ -1048,8 +1048,9 @@ qla2x00_status_entry(scsi_qla_host_t *ha, void *pkt)
+ 		resid = resid_len;
+ 		/* Use F/W calculated residual length. */
+ 		if (IS_FWI2_CAPABLE(ha)) {
+-			if (scsi_status & SS_RESIDUAL_UNDER &&
+-			    resid != fw_resid_len) {
++			if (!(scsi_status & SS_RESIDUAL_UNDER)) {
++				lscsi_status = 0;
++			} else if (resid != fw_resid_len) {
+ 				scsi_status &= ~SS_RESIDUAL_UNDER;
+ 				lscsi_status = 0;
+ 			}

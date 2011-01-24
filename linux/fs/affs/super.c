@@ -14,9 +14,6 @@
 #include <linux/init.h>
 #include <linux/statfs.h>
 #include <linux/parser.h>
-#include <linux/magic.h>
-#include <linux/sched.h>
-#include <linux/smp_lock.h>
 #include "affs.h"
 
 extern struct timezone sys_tz;
@@ -25,83 +22,59 @@ static int affs_statfs(struct dentry *dentry, struct kstatfs *buf);
 static int affs_remount (struct super_block *sb, int *flags, char *data);
 
 static void
-affs_commit_super(struct super_block *sb, int clean)
-{
-	struct affs_sb_info *sbi = AFFS_SB(sb);
-	struct buffer_head *bh = sbi->s_root_bh;
-	struct affs_root_tail *tail = AFFS_ROOT_TAIL(sb, bh);
-
-	tail->bm_flag = cpu_to_be32(clean);
-	secs_to_datestamp(get_seconds(), &tail->disk_change);
-	affs_fix_checksum(sb, bh);
-	mark_buffer_dirty(bh);
-}
-
-static void
 affs_put_super(struct super_block *sb)
 {
 	struct affs_sb_info *sbi = AFFS_SB(sb);
 	pr_debug("AFFS: put_super()\n");
 
-	lock_kernel();
-
-	if (!(sb->s_flags & MS_RDONLY))
-		affs_commit_super(sb, 1);
+	if (!(sb->s_flags & MS_RDONLY)) {
+		AFFS_ROOT_TAIL(sb, sbi->s_root_bh)->bm_flag = cpu_to_be32(1);
+		secs_to_datestamp(get_seconds(),
+				  &AFFS_ROOT_TAIL(sb, sbi->s_root_bh)->disk_change);
+		affs_fix_checksum(sb, sbi->s_root_bh);
+		mark_buffer_dirty(sbi->s_root_bh);
+	}
 
 	kfree(sbi->s_prefix);
 	affs_free_bitmap(sb);
 	affs_brelse(sbi->s_root_bh);
 	kfree(sbi);
 	sb->s_fs_info = NULL;
-
-	unlock_kernel();
+	return;
 }
 
 static void
 affs_write_super(struct super_block *sb)
 {
 	int clean = 2;
+	struct affs_sb_info *sbi = AFFS_SB(sb);
 
-	lock_super(sb);
 	if (!(sb->s_flags & MS_RDONLY)) {
 		//	if (sbi->s_bitmap[i].bm_bh) {
 		//		if (buffer_dirty(sbi->s_bitmap[i].bm_bh)) {
 		//			clean = 0;
-		affs_commit_super(sb, clean);
+		AFFS_ROOT_TAIL(sb, sbi->s_root_bh)->bm_flag = cpu_to_be32(clean);
+		secs_to_datestamp(get_seconds(),
+				  &AFFS_ROOT_TAIL(sb, sbi->s_root_bh)->disk_change);
+		affs_fix_checksum(sb, sbi->s_root_bh);
+		mark_buffer_dirty(sbi->s_root_bh);
 		sb->s_dirt = !clean;	/* redo until bitmap synced */
 	} else
 		sb->s_dirt = 0;
-	unlock_super(sb);
 
 	pr_debug("AFFS: write_super() at %lu, clean=%d\n", get_seconds(), clean);
 }
 
-static int
-affs_sync_fs(struct super_block *sb, int wait)
-{
-	lock_super(sb);
-	affs_commit_super(sb, 2);
-	sb->s_dirt = 0;
-	unlock_super(sb);
-	return 0;
-}
-
-static struct kmem_cache * affs_inode_cachep;
+static kmem_cache_t * affs_inode_cachep;
 
 static struct inode *affs_alloc_inode(struct super_block *sb)
 {
-	struct affs_inode_info *i;
-
-	i = kmem_cache_alloc(affs_inode_cachep, GFP_KERNEL);
-	if (!i)
+	struct affs_inode_info *ei;
+	ei = (struct affs_inode_info *)kmem_cache_alloc(affs_inode_cachep, SLAB_KERNEL);
+	if (!ei)
 		return NULL;
-
-	i->vfs_inode.i_version = 1;
-	i->i_lc = NULL;
-	i->i_ext_bh = NULL;
-	i->i_pa_cnt = 0;
-
-	return &i->vfs_inode;
+	ei->vfs_inode.i_version = 1;
+	return &ei->vfs_inode;
 }
 
 static void affs_destroy_inode(struct inode *inode)
@@ -109,13 +82,16 @@ static void affs_destroy_inode(struct inode *inode)
 	kmem_cache_free(affs_inode_cachep, AFFS_I(inode));
 }
 
-static void init_once(void *foo)
+static void init_once(void * foo, kmem_cache_t * cachep, unsigned long flags)
 {
 	struct affs_inode_info *ei = (struct affs_inode_info *) foo;
 
-	init_MUTEX(&ei->i_link_lock);
-	init_MUTEX(&ei->i_ext_lock);
-	inode_init_once(&ei->vfs_inode);
+	if ((flags & (SLAB_CTOR_VERIFY|SLAB_CTOR_CONSTRUCTOR)) ==
+	    SLAB_CTOR_CONSTRUCTOR) {
+		init_MUTEX(&ei->i_link_lock);
+		init_MUTEX(&ei->i_ext_lock);
+		inode_init_once(&ei->vfs_inode);
+	}
 }
 
 static int init_inodecache(void)
@@ -124,7 +100,7 @@ static int init_inodecache(void)
 					     sizeof(struct affs_inode_info),
 					     0, (SLAB_RECLAIM_ACCOUNT|
 						SLAB_MEM_SPREAD),
-					     init_once);
+					     init_once, NULL);
 	if (affs_inode_cachep == NULL)
 		return -ENOMEM;
 	return 0;
@@ -132,21 +108,22 @@ static int init_inodecache(void)
 
 static void destroy_inodecache(void)
 {
-	kmem_cache_destroy(affs_inode_cachep);
+	if (kmem_cache_destroy(affs_inode_cachep))
+		printk(KERN_INFO "affs_inode_cache: not all structures were freed\n");
 }
 
-static const struct super_operations affs_sops = {
+static struct super_operations affs_sops = {
 	.alloc_inode	= affs_alloc_inode,
 	.destroy_inode	= affs_destroy_inode,
+	.read_inode	= affs_read_inode,
 	.write_inode	= affs_write_inode,
+	.put_inode	= affs_put_inode,
 	.delete_inode	= affs_delete_inode,
 	.clear_inode	= affs_clear_inode,
 	.put_super	= affs_put_super,
 	.write_super	= affs_write_super,
-	.sync_fs	= affs_sync_fs,
 	.statfs		= affs_statfs,
 	.remount_fs	= affs_remount,
-	.show_options	= generic_show_options,
 };
 
 enum {
@@ -155,7 +132,7 @@ enum {
 	Opt_verbose, Opt_volume, Opt_ignore, Opt_err,
 };
 
-static const match_table_t tokens = {
+static match_table_t tokens = {
 	{Opt_bs, "bs=%u"},
 	{Opt_mode, "mode=%o"},
 	{Opt_mufs, "mufs"},
@@ -183,8 +160,8 @@ parse_options(char *options, uid_t *uid, gid_t *gid, int *mode, int *reserved, s
 
 	/* Fill in defaults */
 
-	*uid        = current_uid();
-	*gid        = current_gid();
+	*uid        = current->uid;
+	*gid        = current->gid;
 	*reserved   = 2;
 	*root       = -1;
 	*blocksize  = -1;
@@ -223,6 +200,7 @@ parse_options(char *options, uid_t *uid, gid_t *gid, int *mode, int *reserved, s
 		case Opt_prefix:
 			/* Free any previous prefix */
 			kfree(*prefix);
+			*prefix = NULL;
 			*prefix = match_strdup(&args[0]);
 			if (!*prefix)
 				return 0;
@@ -256,8 +234,6 @@ parse_options(char *options, uid_t *uid, gid_t *gid, int *mode, int *reserved, s
 			break;
 		case Opt_volume: {
 			char *vol = match_strdup(&args[0]);
-			if (!vol)
-				return 0;
 			strlcpy(volume, vol, 32);
 			kfree(vol);
 			break;
@@ -296,9 +272,6 @@ static int affs_fill_super(struct super_block *sb, void *data, int silent)
 	unsigned long		 mount_flags;
 	int			 tmp_flags;	/* fix remount prototype... */
 	u8			 sig[4];
-	int			 ret = -EINVAL;
-
-	save_mount_options(sb, data);
 
 	pr_debug("AFFS: read_super(%s)\n",data ? (const char *)data : "no options");
 
@@ -306,11 +279,12 @@ static int affs_fill_super(struct super_block *sb, void *data, int silent)
 	sb->s_op                = &affs_sops;
 	sb->s_flags |= MS_NODIRATIME;
 
-	sbi = kzalloc(sizeof(struct affs_sb_info), GFP_KERNEL);
+	sbi = kmalloc(sizeof(struct affs_sb_info), GFP_KERNEL);
 	if (!sbi)
 		return -ENOMEM;
 	sb->s_fs_info = sbi;
-	mutex_init(&sbi->s_bmlock);
+	memset(sbi, 0, sizeof(*sbi));
+	init_MUTEX(&sbi->s_bmlock);
 
 	if (!parse_options(data,&uid,&gid,&i,&reserved,&root_block,
 				&blocksize,&sbi->s_prefix,
@@ -472,12 +446,7 @@ got_root:
 
 	/* set up enough so that it can read an inode */
 
-	root_inode = affs_iget(sb, root_block);
-	if (IS_ERR(root_inode)) {
-		ret = PTR_ERR(root_inode);
-		goto out_error_noinode;
-	}
-
+	root_inode = iget(sb, root_block);
 	sb->s_root = d_alloc_root(root_inode);
 	if (!sb->s_root) {
 		printk(KERN_ERR "AFFS: Get root inode failed\n");
@@ -494,13 +463,12 @@ got_root:
 out_error:
 	if (root_inode)
 		iput(root_inode);
-out_error_noinode:
 	kfree(sbi->s_bitmap);
 	affs_brelse(root_bh);
 	kfree(sbi->s_prefix);
 	kfree(sbi);
 	sb->s_fs_info = NULL;
-	return ret;
+	return -EINVAL;
 }
 
 static int
@@ -515,30 +483,21 @@ affs_remount(struct super_block *sb, int *flags, char *data)
 	int			 root_block;
 	unsigned long		 mount_flags;
 	int			 res = 0;
-	char			*new_opts = kstrdup(data, GFP_KERNEL);
 
 	pr_debug("AFFS: remount(flags=0x%x,opts=\"%s\")\n",*flags,data);
 
 	*flags |= MS_NODIRATIME;
 
-	if (!parse_options(data, &uid, &gid, &mode, &reserved, &root_block,
-			   &blocksize, &sbi->s_prefix, sbi->s_volume,
-			   &mount_flags)) {
-		kfree(new_opts);
+	if (!parse_options(data,&uid,&gid,&mode,&reserved,&root_block,
+	    &blocksize,&sbi->s_prefix,sbi->s_volume,&mount_flags))
 		return -EINVAL;
-	}
-	lock_kernel();
-	replace_mount_options(sb, new_opts);
-
 	sbi->s_flags = mount_flags;
 	sbi->s_mode  = mode;
 	sbi->s_uid   = uid;
 	sbi->s_gid   = gid;
 
-	if ((*flags & MS_RDONLY) == (sb->s_flags & MS_RDONLY)) {
-		unlock_kernel();
+	if ((*flags & MS_RDONLY) == (sb->s_flags & MS_RDONLY))
 		return 0;
-	}
 	if (*flags & MS_RDONLY) {
 		sb->s_dirt = 1;
 		while (sb->s_dirt)
@@ -547,7 +506,6 @@ affs_remount(struct super_block *sb, int *flags, char *data)
 	} else
 		res = affs_init_bitmap(sb, flags);
 
-	unlock_kernel();
 	return res;
 }
 
@@ -556,7 +514,6 @@ affs_statfs(struct dentry *dentry, struct kstatfs *buf)
 {
 	struct super_block *sb = dentry->d_sb;
 	int		 free;
-	u64		 id = huge_encode_dev(sb->s_bdev->bd_dev);
 
 	pr_debug("AFFS: statfs() partsize=%d, reserved=%d\n",AFFS_SB(sb)->s_partition_size,
 	     AFFS_SB(sb)->s_reserved);
@@ -567,9 +524,6 @@ affs_statfs(struct dentry *dentry, struct kstatfs *buf)
 	buf->f_blocks  = AFFS_SB(sb)->s_partition_size - AFFS_SB(sb)->s_reserved;
 	buf->f_bfree   = free;
 	buf->f_bavail  = free;
-	buf->f_fsid.val[0] = (u32)id;
-	buf->f_fsid.val[1] = (u32)(id >> 32);
-	buf->f_namelen = 30;
 	return 0;
 }
 

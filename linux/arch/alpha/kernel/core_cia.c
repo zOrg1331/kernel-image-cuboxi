@@ -1192,7 +1192,8 @@ cia_decode_mchk(unsigned long la_ptr)
 }
 
 void
-cia_machine_check(unsigned long vector, unsigned long la_ptr)
+cia_machine_check(unsigned long vector, unsigned long la_ptr,
+		  struct pt_regs * regs)
 {
 	int expected;
 
@@ -1207,5 +1208,5 @@ cia_machine_check(unsigned long vector, unsigned long la_ptr)
 	expected = mcheck_expected(0);
 	if (!expected && vector == 0x660)
 		expected = cia_decode_mchk(la_ptr);
-	process_mcheck_info(vector, la_ptr, "CIA", expected);
+	process_mcheck_info(vector, la_ptr, regs, "CIA", expected);
 }

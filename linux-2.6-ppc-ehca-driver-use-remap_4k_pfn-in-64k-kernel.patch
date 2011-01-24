@@ -1,0 +1,146 @@
+From: Scott Moser <smoser@redhat.com>
+Subject: [PATCH RHEL5.1] bz250496 [ppc] make eHCA driver use remap_4k_pfn in 	64k kernel [REPOST]
+Date: Mon, 13 Aug 2007 13:17:57 -0400 (EDT)
+Bugzilla: 250496
+Message-Id: <Pine.LNX.4.64.0708131316430.30310@squad5-lp1.lab.boston.redhat.com>
+Changelog: [ppc] make eHCA driver use remap_4k_pfn in 64k kernel
+
+
+RHBZ#: 250496
+------
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=250496
+
+Description:
+------------
+This is a patch for eHCA device driver to map 4k pages of ehca resources
+into user space by using remap_4k_pfn() that was introduced in bug 250144.
+
+It is required to make eHCA driver and associated infiniband devices work
+on kernels that have 64k pages enabled (as the ppc64 kernels do).
+Additional changes in openib userspace are needed, as addressed by bug
+250497.
+
+This patch utilizes remap_4k_pfn() as introduced in bug 250144, to map ehca cq,
+qp firmware context (4k) to user space if kernel page size is 64k. In addition
+to that the kernel page offset of firmware context needs to be set in cq and qp
+response block so that user space can assemble the proper virtual address to
+use.
+
+This post contains an updated patch over what was posted at [1].  The lkml
+complete repost is at [2]. Compared to the original post, it contains:
+  1. a cosmetic fix pointed out on lkml at [3] (2 sides of #ifdef were
+     identical).
+  2. a fix for a paranoid check (vsize) referenced [4]
+
+Upstream Status:
+----------------
+The patch is posted to lkml at [2].
+
+RHEL Version Found:
+-------------------
+This is a bug found in RHEL5u1 kernel 2.6.18-39.el5.
+
+Test Status:
+------------
+To ensure cross-platform build, this code has been built with brew
+--scratch against a 2.6.18-39.el5 kernel and is available at [5].
+
+This bug has been tested by Hoang-Nam Nguyen.  He has applied the patches
+for 250144, 250496 (this bug) and 250497 (to openib), and has run the
+following tests on two nodes (one node has ehca and mthca/Mellanox and the
+other has ehca only):
+ * kernel space: flood ping plus ifconfig down/up, rmmod/insmod
+ * user space: ibv_ud/rc/uc_pingpong (100000 packets)
+ * user space: mpi:
+  [root@idd50 osu_benchmarks-2.2]# mpirun --mca btl openib,self \
+    -np 3 -host 192.168.123.50,192.168.123.60,192.168.123.61 \
+    /root/mpitests-2.0/osu_benchmarks-2.2/osu_bcast
+  (first two ips are ehca, the last ip is mthca)
+Thus, those patches enable user space support for ehca and don't affect
+other components, here mthca.
+
+--
+[1] http://post-office.corp.redhat.com/archives/rhkernel-list/2007-August/thread.html#00038
+[2] http://lkml.org/lkml/2007/8/8/420
+[3] http://lkml.org/lkml/2007/8/2/190
+[4] http://lkml.org/lkml/2007/8/8/220
+[5] http://brewweb.devel.redhat.com/brew/taskinfo?taskID=917509
+---
+ drivers/infiniband/hw/ehca/ehca_classes.h |    4 +++-
+ drivers/infiniband/hw/ehca/ehca_cq.c      |    2 ++
+ drivers/infiniband/hw/ehca/ehca_qp.c      |    2 ++
+ drivers/infiniband/hw/ehca/ehca_uverbs.c  |    6 +++---
+ 4 files changed, 10 insertions(+), 4 deletions(-)
+Index: b/drivers/infiniband/hw/ehca/ehca_classes.h
+===================================================================
+--- a/drivers/infiniband/hw/ehca/ehca_classes.h
++++ b/drivers/infiniband/hw/ehca/ehca_classes.h
+@@ -294,6 +294,8 @@ struct ehca_create_cq_resp {
+ 	u32 cq_number;
+ 	u32 token;
+ 	struct ipzu_queue_resp ipz_queue;
++	u32 fw_handle_ofs;
++	u32 dummy;
+ };
+ 
+ struct ehca_create_qp_resp {
+@@ -303,7 +305,7 @@ struct ehca_create_qp_resp {
+ 	u32 qkey;
+ 	/* qp_num assigned by ehca: sqp0/1 may have got different numbers */
+ 	u32 real_qp_num;
+-	u32 dummy; /* padding for 8 byte alignment */
++	u32 fw_handle_ofs;
+ 	struct ipzu_queue_resp ipz_squeue;
+ 	struct ipzu_queue_resp ipz_rqueue;
+ };
+Index: b/drivers/infiniband/hw/ehca/ehca_cq.c
+===================================================================
+--- a/drivers/infiniband/hw/ehca/ehca_cq.c
++++ b/drivers/infiniband/hw/ehca/ehca_cq.c
+@@ -276,6 +276,8 @@ struct ib_cq *ehca_create_cq(struct ib_d
+ 		resp.ipz_queue.queue_length = ipz_queue->queue_length;
+ 		resp.ipz_queue.pagesize = ipz_queue->pagesize;
+ 		resp.ipz_queue.toggle_state = ipz_queue->toggle_state;
++		resp.fw_handle_ofs = (u32)
++		  (my_cq->galpas.user.fw_handle & (PAGE_SIZE - 1));
+ 		if (ib_copy_to_udata(udata, &resp, sizeof(resp))) {
+ 			ehca_err(device, "Copy to udata failed.");
+ 			goto create_cq_exit4;
+Index: b/drivers/infiniband/hw/ehca/ehca_qp.c
+===================================================================
+--- a/drivers/infiniband/hw/ehca/ehca_qp.c
++++ b/drivers/infiniband/hw/ehca/ehca_qp.c
+@@ -656,6 +656,8 @@ struct ib_qp *ehca_create_qp(struct ib_p
+ 		resp.ipz_squeue.queue_length = ipz_squeue->queue_length;
+ 		resp.ipz_squeue.pagesize = ipz_squeue->pagesize;
+ 		resp.ipz_squeue.toggle_state = ipz_squeue->toggle_state;
++		resp.fw_handle_ofs = (u32)
++		  (my_qp->galpas.user.fw_handle & (PAGE_SIZE - 1));
+ 		if (ib_copy_to_udata(udata, &resp, sizeof resp)) {
+ 			ehca_err(pd->device, "Copy to udata failed");
+ 			ret = -EINVAL;
+Index: b/drivers/infiniband/hw/ehca/ehca_uverbs.c
+===================================================================
+--- a/drivers/infiniband/hw/ehca/ehca_uverbs.c
++++ b/drivers/infiniband/hw/ehca/ehca_uverbs.c
+@@ -109,7 +109,7 @@ static int ehca_mmap_fw(struct vm_area_s
+ 	u64 vsize, physical;
+ 
+ 	vsize = vma->vm_end - vma->vm_start;
+-	if (vsize != EHCA_PAGESIZE) {
++	if (vsize < EHCA_PAGESIZE) {
+ 		ehca_gen_err("invalid vsize=%lx", vma->vm_end - vma->vm_start);
+ 		return -EINVAL;
+ 	}
+@@ -118,8 +118,8 @@ static int ehca_mmap_fw(struct vm_area_s
+ 	vma->vm_page_prot = pgprot_noncached(vma->vm_page_prot);
+ 	ehca_gen_dbg("vsize=%lx physical=%lx", vsize, physical);
+ 	/* VM_IO | VM_RESERVED are set by remap_pfn_range() */
+-	ret = remap_pfn_range(vma, vma->vm_start, physical >> PAGE_SHIFT,
+-			      vsize, vma->vm_page_prot);
++	ret = remap_4k_pfn(vma, vma->vm_start, physical >> EHCA_PAGESHIFT,
++			   vma->vm_page_prot);
+ 	if (unlikely(ret)) {
+ 		ehca_gen_err("remap_pfn_range() failed ret=%x", ret);
+ 		return -ENOMEM;
+

@@ -1,0 +1,44 @@
+From: Jonathan Brassow <jbrassow@redhat.com>
+Subject: [PATCH RHEL 5.1] bz235039 unconditionalize log flush
+Date: Tue, 08 May 2007 13:22:10 -0500
+Bugzilla: 235039
+Message-Id: <1178648531.10582.23.camel@hydrogen.msp.redhat.com>
+Changelog: [md] unconditionalize log flush
+
+
+ brassow
+
+RHEL5
+
+Bug 235039: conditionalized flush causes clear region requests...
+
+If you suspend/dtr a mirror, clear region requests are not flushed
+to disk.  This means that the next time a [cluster] mirror is started,
+those regions will be incorrectly assumed to be not in-sync.
+
+The culprit is in rh_update_states:
+        if (!list_empty(&recovered))
+                rh->log->type->flush(rh->log);
+
+The conditional should be removed.  Note that this does not cause
+extra disk activity, since the (disk) log checks for lc->touched.
+
+Index: linux-rhel5/drivers/md/dm-raid1.c
+===================================================================
+--- linux-rhel5.orig/drivers/md/dm-raid1.c
++++ linux-rhel5/drivers/md/dm-raid1.c
+@@ -437,8 +437,11 @@ static void rh_update_states(struct regi
+ 		mempool_free(reg, rh->region_pool);
+ 	}
+ 
+-	if (!list_empty(&recovered))
+-		rh->log->type->flush(rh->log);
++	/*
++	 * If the log implementation is good, it will only
++	 * flush (to disk) if it is necessary.
++	 */
++	rh->log->type->flush(rh->log);
+ 
+ 	list_for_each_entry_safe (reg, next, &clean, list)
+ 		mempool_free(reg, rh->region_pool);
+

@@ -1,0 +1,66 @@
+From: Tetsu Yamamoto <tyamamot@redhat.com>
+Date: Tue, 12 Aug 2008 16:07:32 -0400
+Subject: [xen] serialize scrubbing pages
+Message-id: 20080812200732.4832.81645.sendpatchset@pq0-1.lab.bos.redhat.com
+O-Subject: [RHEL5.3 PATCH 6/7] xen: Serialize scrubbing pages
+Bugzilla: 456171
+RH-Acked-by: Chris Lalancette <clalance@redhat.com>
+RH-Acked-by: Bill Burns <bburns@redhat.com>
+
+bz456171
+# HG changeset patch
+# User Keir Fraser <keir.fraser@citrix.com>
+# Date 1218449930 -3600
+# Node ID f10d436d9a9ef413135374e73b32659fc2da9cfb
+# Parent  3d5515f40b9b2bfee339cc223f891bd5c61d6855
+Serialize scrubbing pages
+
+I noticed that parallel scrubbing pages is not efficient
+due to spinlock contention. (also memory bandwidth?)
+Actually heap_lock becomes a bottleneck.
+
+In my investigation, it often takes 1 millisec just to acquire
+the lock on ia64 with 8cpus. It's very wasteful.
+
+Signed-off-by: Kouya Shimura <kouya@jp.fujitsu.com>
+
+diff --git a/common/page_alloc.c b/common/page_alloc.c
+index 81baf22..7a54dbe 100644
+--- a/common/page_alloc.c
++++ b/common/page_alloc.c
+@@ -1018,10 +1018,15 @@ static void page_scrub_softirq(void)
+     int               i;
+     s_time_t          start = NOW();
+ 
++    /* free_heap_pages() does not parallelise well. Serialise this function. */
++    if ( !spin_trylock(&page_scrub_lock) )
++    {
++        set_timer(&this_cpu(page_scrub_timer), NOW() + MILLISECS(1));
++        return;
++    }
++
+     /* Aim to do 1ms of work every 10ms. */
+     do {
+-        spin_lock(&page_scrub_lock);
+-
+         if ( unlikely((ent = page_scrub_list.next) == &page_scrub_list) )
+         {
+             spin_unlock(&page_scrub_lock);
+@@ -1041,8 +1046,6 @@ static void page_scrub_softirq(void)
+         page_scrub_list.next = ent->next;
+         scrub_pages -= (i+1);
+ 
+-        spin_unlock(&page_scrub_lock);
+-
+         /* Working backwards, scrub each page in turn. */
+         while ( ent != &page_scrub_list )
+         {
+@@ -1055,6 +1058,8 @@ static void page_scrub_softirq(void)
+         }
+     } while ( (NOW() - start) < MILLISECS(1) );
+ 
++    spin_unlock(&page_scrub_lock);
++
+     set_timer(&this_cpu(page_scrub_timer), NOW() + MILLISECS(10));
+ }
+ 

@@ -1,0 +1,204 @@
+From: Jerome Marchand <jmarchan@redhat.com>
+Subject: [RHEL-5 PATCH] BZ232012: 32-bit process running on a 64-bit kernel  cannot use IPC msgsnd/msgrcv larger than 64K
+Date: Thu, 22 Mar 2007 14:55:32 +0100
+Bugzilla: 232012
+Message-Id: <46028AD4.4000002@redhat.com>
+Changelog: [misc] some apps cannot use IPC msgsnd/msgrcv larger than 64K
+
+
+BZ# 232012
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=232012
+
+Description:
+32-bit process running on a 64-bit kernel cannot use IPC msgsnd/msgrcv
+larger than 64K. The problem comes from compat_sys_msgsnd() and
+compat_sys_msgrcv() in ipc/compat.c. Currently to deal with the
+different layout of struct msgbuf between architectures, we allocate
+64k space on the user stack and copy in user from/to it for the
+conversion from/to msgbuf to/from compat_msgbuf.
+
+How to reproduce:
+A sample program is attached on bugzilla. It tries to receive
+messages (which are not really sent) whose size are powers of two to
+estimate the size limit. This test is not sensitive to
+/proc/sys/kernel/msgmax value.
+
+Test status:
+I tested it successfully on x86_64 using the program described above. I
+also made some simples sendings and receivings of message of severals
+sizes, in order to test the patch with real messages.
+
+--- ./include/linux/msg.h.orig	2006-09-20 05:42:06.000000000 +0200
++++ ./include/linux/msg.h	2007-03-14 14:08:14.000000000 +0100
+@@ -92,6 +92,12 @@ struct msg_queue {
+ 	struct list_head q_senders;
+ };
+ 
++/* Helper routines for sys_msgsnd and sys_msgrcv */
++extern long do_msgsnd(int msqid, long mtype, void __user *mtext,
++			size_t msgsz, int msgflg);
++extern long do_msgrcv(int msqid, long *pmtype, void __user *mtext,
++			size_t msgsz, long msgtyp, int msgflg);
++
+ #endif /* __KERNEL__ */
+ 
+ #endif /* _LINUX_MSG_H */
+--- ./ipc/compat.c.orig	2006-09-20 05:42:06.000000000 +0200
++++ ./ipc/compat.c	2007-03-14 14:08:14.000000000 +0100
+@@ -115,7 +115,6 @@ struct compat_shm_info {
+ 
+ extern int sem_ctls[];
+ #define sc_semopm	(sem_ctls[2])
+-#define MAXBUF (64*1024)
+ 
+ static inline int compat_ipc_parse_version(int *cmd)
+ {
+@@ -307,35 +306,30 @@ long compat_sys_semctl(int first, int se
+ 
+ long compat_sys_msgsnd(int first, int second, int third, void __user *uptr)
+ {
+-	struct msgbuf __user *p;
+ 	struct compat_msgbuf __user *up = uptr;
+ 	long type;
+ 
+ 	if (first < 0)
+ 		return -EINVAL;
+-	if (second < 0 || (second >= MAXBUF - sizeof(struct msgbuf)))
++	if (second < 0)
+ 		return -EINVAL;
+ 
+-	p = compat_alloc_user_space(second + sizeof(struct msgbuf));
+-	if (get_user(type, &up->mtype) ||
+-	    put_user(type, &p->mtype) ||
+-	    copy_in_user(p->mtext, up->mtext, second))
++	if (get_user(type, &up->mtype))
+ 		return -EFAULT;
+ 
+-	return sys_msgsnd(first, p, second, third);
++	return do_msgsnd(first, type, up->mtext, second, third);
+ }
+ 
+ long compat_sys_msgrcv(int first, int second, int msgtyp, int third,
+ 			   int version, void __user *uptr)
+ {
+-	struct msgbuf __user *p;
+ 	struct compat_msgbuf __user *up;
+ 	long type;
+ 	int err;
+ 
+ 	if (first < 0)
+ 		return -EINVAL;
+-	if (second < 0 || (second >= MAXBUF - sizeof(struct msgbuf)))
++	if (second < 0)
+ 		return -EINVAL;
+ 
+ 	if (!version) {
+@@ -349,14 +343,11 @@ long compat_sys_msgrcv(int first, int se
+ 		uptr = compat_ptr(ipck.msgp);
+ 		msgtyp = ipck.msgtyp;
+ 	}
+-	p = compat_alloc_user_space(second + sizeof(struct msgbuf));
+-	err = sys_msgrcv(first, p, second, msgtyp, third);
++	up = uptr;
++	err = do_msgrcv(first, &type, up->mtext, second, msgtyp, third);
+ 	if (err < 0)
+ 		goto out;
+-	up = uptr;
+-	if (get_user(type, &p->mtype) ||
+-	    put_user(type, &up->mtype) ||
+-	    copy_in_user(up->mtext, p->mtext, err))
++	if (put_user(type, &up->mtype))
+ 		err = -EFAULT;
+ out:
+ 	return err;
+--- ./ipc/msg.c.orig	2006-09-20 05:42:06.000000000 +0200
++++ ./ipc/msg.c	2007-03-14 14:08:14.000000000 +0100
+@@ -575,22 +575,19 @@ static inline int pipelined_send(struct 
+ 	return 0;
+ }
+ 
+-asmlinkage long
+-sys_msgsnd(int msqid, struct msgbuf __user *msgp, size_t msgsz, int msgflg)
++long do_msgsnd(int msqid, long mtype, void __user *mtext,
++		size_t msgsz, int msgflg)
+ {
+ 	struct msg_queue *msq;
+ 	struct msg_msg *msg;
+-	long mtype;
+ 	int err;
+ 
+ 	if (msgsz > msg_ctlmax || (long) msgsz < 0 || msqid < 0)
+ 		return -EINVAL;
+-	if (get_user(mtype, &msgp->mtype))
+-		return -EFAULT;
+ 	if (mtype < 1)
+ 		return -EINVAL;
+ 
+-	msg = load_msg(msgp->mtext, msgsz);
++	msg = load_msg(mtext, msgsz);
+ 	if (IS_ERR(msg))
+ 		return PTR_ERR(msg);
+ 
+@@ -669,6 +666,16 @@ out_free:
+ 	return err;
+ }
+ 
++asmlinkage long
++sys_msgsnd(int msqid, struct msgbuf __user *msgp, size_t msgsz, int msgflg)
++{
++	long mtype;
++
++	if (get_user(mtype, &msgp->mtype))
++		return -EFAULT;
++	return do_msgsnd(msqid, mtype, msgp->mtext, msgsz, msgflg);
++}
++
+ static inline int convert_mode(long *msgtyp, int msgflg)
+ {
+ 	/*
+@@ -688,8 +695,8 @@ static inline int convert_mode(long *msg
+ 	return SEARCH_EQUAL;
+ }
+ 
+-asmlinkage long sys_msgrcv(int msqid, struct msgbuf __user *msgp, size_t msgsz,
+-			   long msgtyp, int msgflg)
++long do_msgrcv(int msqid, long *pmtype, void __user *mtext,
++		size_t msgsz, long msgtyp, int msgflg)
+ {
+ 	struct msg_queue *msq;
+ 	struct msg_msg *msg;
+@@ -833,15 +840,30 @@ out_unlock:
+ 		return PTR_ERR(msg);
+ 
+ 	msgsz = (msgsz > msg->m_ts) ? msg->m_ts : msgsz;
+-	if (put_user (msg->m_type, &msgp->mtype) ||
+-	    store_msg(msgp->mtext, msg, msgsz)) {
++	*pmtype = msg->m_type;
++	if (store_msg(mtext, msg, msgsz))
+ 		msgsz = -EFAULT;
+-	}
++
+ 	free_msg(msg);
+ 
+ 	return msgsz;
+ }
+ 
++asmlinkage long sys_msgrcv(int msqid, struct msgbuf __user *msgp, size_t msgsz,
++			   long msgtyp, int msgflg)
++{
++	long err, mtype;
++
++	err =  do_msgrcv(msqid, &mtype, msgp->mtext, msgsz, msgtyp, msgflg);
++	if (err < 0)
++		goto out;
++
++	if (put_user(mtype, &msgp->mtype))
++		err = -EFAULT;
++out:
++	return err;
++}
++
+ #ifdef CONFIG_PROC_FS
+ static int sysvipc_msg_proc_show(struct seq_file *s, void *it)
+ {
+

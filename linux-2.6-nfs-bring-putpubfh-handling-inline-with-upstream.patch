@@ -1,0 +1,76 @@
+From: Wade Mealing <wmealing@redhat.com>
+Date: Mon, 17 Aug 2009 19:50:58 +0800
+Subject: [nfs] bring putpubfh handling inline with upstream
+Message-id: 20090817115058.GA6049@deadly.sin.redhat.com
+O-Subject: Re: [PATCH RHEL 5.5] BZ 515405 - Bring putpubfh handling inline with upstream behavior.
+Bugzilla: 515405
+RH-Acked-by: Jerome Marchand <jmarchan@redhat.com>
+RH-Acked-by: Danny Feng <dfeng@redhat.com>
+RH-Acked-by: Jeff Layton <jlayton@redhat.com>
+RH-Acked-by: Peter Staubach <staubach@redhat.com>
+
+When use putpubfh, server should return NFS4_OK instead of NFSERR_OP_ILLEGAL.
+
+The upstream code has diverged, changing the way that op->status/op->func handling
+has changed into a separate struct named nfsd4_operation.
+
+This change is a smaller change than porting back the new struct and
+handling code.
+
+Test case:
+https://bugzilla.redhat.com/attachment.cgi?id=356098
+
+Reproduction instructions are in the bugzilla.
+
+diff --git a/fs/nfsd/nfs4proc.c b/fs/nfsd/nfs4proc.c
+index 0d4e647..8779b39 100644
+--- a/fs/nfsd/nfs4proc.c
++++ b/fs/nfsd/nfs4proc.c
+@@ -833,12 +833,13 @@ nfsd4_proc_compound(struct svc_rqst *rqstp,
+ 		}
+ 
+ 		/* All operations except RENEW, SETCLIENTID, RESTOREFH
+-		* SETCLIENTID_CONFIRM, PUTFH and PUTROOTFH
++		* SETCLIENTID_CONFIRM, PUTFH, PUTPUBFH and PUTROOTFH
+ 		* require a valid current filehandle
+ 		*/
+ 		if (!current_fh->fh_dentry) {
+ 			if (!((op->opnum == OP_PUTFH) ||
+ 			      (op->opnum == OP_PUTROOTFH) ||
++			      (op->opnum == OP_PUTPUBFH) ||
+ 			      (op->opnum == OP_SETCLIENTID) ||
+ 			      (op->opnum == OP_SETCLIENTID_CONFIRM) ||
+ 			      (op->opnum == OP_RENEW) ||
+@@ -921,6 +922,9 @@ nfsd4_proc_compound(struct svc_rqst *rqstp,
+ 		case OP_PUTROOTFH:
+ 			op->status = nfsd4_putrootfh(rqstp, current_fh);
+ 			break;
++		case OP_PUTPUBFH:
++			op->status = nfsd4_putrootfh(rqstp, current_fh);
++			break;
+ 		case OP_READ:
+ 			op->status = nfsd4_read(rqstp, current_fh, &op->u.read);
+ 			break;
+diff --git a/fs/nfsd/nfs4xdr.c b/fs/nfsd/nfs4xdr.c
+index b65b915..13123a7 100644
+--- a/fs/nfsd/nfs4xdr.c
++++ b/fs/nfsd/nfs4xdr.c
+@@ -1121,6 +1121,9 @@ nfsd4_decode_compound(struct nfsd4_compoundargs *argp)
+ 		case OP_PUTROOTFH:
+ 			op->status = nfs_ok;
+ 			break;
++		case OP_PUTPUBFH:
++			op->status = nfs_ok;
++			break;
+ 		case OP_READ:
+ 			op->status = nfsd4_decode_read(argp, &op->u.read);
+ 			break;
+@@ -2611,6 +2614,8 @@ nfsd4_encode_operation(struct nfsd4_compoundres *resp, struct nfsd4_op *op)
+ 		break;
+ 	case OP_PUTROOTFH:
+ 		break;
++	case OP_PUTPUBFH: 
++		break;
+ 	case OP_READ:
+ 		op->status = nfsd4_encode_read(resp, op->status, &op->u.read);
+ 		break;

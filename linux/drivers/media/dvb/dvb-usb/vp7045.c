@@ -15,15 +15,9 @@
 #include "vp7045.h"
 
 /* debug */
-static int dvb_usb_vp7045_debug;
+int dvb_usb_vp7045_debug;
 module_param_named(debug,dvb_usb_vp7045_debug, int, 0644);
 MODULE_PARM_DESC(debug, "set debugging level (1=info,xfer=2,rc=4 (or-able))." DVB_USB_DEBUG_STATUS);
-
-DVB_DEFINE_MOD_OPT_ADAPTER_NR(adapter_nr);
-
-#define deb_info(args...) dprintk(dvb_usb_vp7045_debug,0x01,args)
-#define deb_xfer(args...) dprintk(dvb_usb_vp7045_debug,0x02,args)
-#define deb_rc(args...)   dprintk(dvb_usb_vp7045_debug,0x04,args)
 
 int vp7045_usb_op(struct dvb_usb_device *d, u8 cmd, u8 *out, int outlen, u8 *in, int inlen, int msec)
 {
@@ -100,56 +94,38 @@ static int vp7045_power_ctrl(struct dvb_usb_device *d, int onoff)
 /* The keymapping struct. Somehow this should be loaded to the driver, but
  * currently it is hardcoded. */
 static struct dvb_usb_rc_key vp7045_rc_keys[] = {
-	{ 0x0016, KEY_POWER },
-	{ 0x0010, KEY_MUTE },
-	{ 0x0003, KEY_1 },
-	{ 0x0001, KEY_2 },
-	{ 0x0006, KEY_3 },
-	{ 0x0009, KEY_4 },
-	{ 0x001d, KEY_5 },
-	{ 0x001f, KEY_6 },
-	{ 0x000d, KEY_7 },
-	{ 0x0019, KEY_8 },
-	{ 0x001b, KEY_9 },
-	{ 0x0015, KEY_0 },
-	{ 0x0005, KEY_CHANNELUP },
-	{ 0x0002, KEY_CHANNELDOWN },
-	{ 0x001e, KEY_VOLUMEUP },
-	{ 0x000a, KEY_VOLUMEDOWN },
-	{ 0x0011, KEY_RECORD },
-	{ 0x0017, KEY_FAVORITES }, /* Heart symbol - Channel list. */
-	{ 0x0014, KEY_PLAY },
-	{ 0x001a, KEY_STOP },
-	{ 0x0040, KEY_REWIND },
-	{ 0x0012, KEY_FASTFORWARD },
-	{ 0x000e, KEY_PREVIOUS }, /* Recall - Previous channel. */
-	{ 0x004c, KEY_PAUSE },
-	{ 0x004d, KEY_SCREEN }, /* Full screen mode. */
-	{ 0x0054, KEY_AUDIO }, /* MTS - Switch to secondary audio. */
-	{ 0x000c, KEY_CANCEL }, /* Cancel */
-	{ 0x001c, KEY_EPG }, /* EPG */
-	{ 0x0000, KEY_TAB }, /* Tab */
-	{ 0x0048, KEY_INFO }, /* Preview */
-	{ 0x0004, KEY_LIST }, /* RecordList */
-	{ 0x000f, KEY_TEXT }, /* Teletext */
-	{ 0x0041, KEY_PREVIOUSSONG },
-	{ 0x0042, KEY_NEXTSONG },
-	{ 0x004b, KEY_UP },
-	{ 0x0051, KEY_DOWN },
-	{ 0x004e, KEY_LEFT },
-	{ 0x0052, KEY_RIGHT },
-	{ 0x004f, KEY_ENTER },
-	{ 0x0013, KEY_CANCEL },
-	{ 0x004a, KEY_CLEAR },
-	{ 0x0054, KEY_PRINT }, /* Capture */
-	{ 0x0043, KEY_SUBTITLE }, /* Subtitle/CC */
-	{ 0x0008, KEY_VIDEO }, /* A/V */
-	{ 0x0007, KEY_SLEEP }, /* Hibernate */
-	{ 0x0045, KEY_ZOOM }, /* Zoom+ */
-	{ 0x0018, KEY_RED},
-	{ 0x0053, KEY_GREEN},
-	{ 0x005e, KEY_YELLOW},
-	{ 0x005f, KEY_BLUE}
+	{ 0x00, 0x16, KEY_POWER },
+	{ 0x00, 0x10, KEY_MUTE },
+	{ 0x00, 0x03, KEY_1 },
+	{ 0x00, 0x01, KEY_2 },
+	{ 0x00, 0x06, KEY_3 },
+	{ 0x00, 0x09, KEY_4 },
+	{ 0x00, 0x1d, KEY_5 },
+	{ 0x00, 0x1f, KEY_6 },
+	{ 0x00, 0x0d, KEY_7 },
+	{ 0x00, 0x19, KEY_8 },
+	{ 0x00, 0x1b, KEY_9 },
+	{ 0x00, 0x15, KEY_0 },
+	{ 0x00, 0x05, KEY_CHANNELUP },
+	{ 0x00, 0x02, KEY_CHANNELDOWN },
+	{ 0x00, 0x1e, KEY_VOLUMEUP },
+	{ 0x00, 0x0a, KEY_VOLUMEDOWN },
+	{ 0x00, 0x11, KEY_RECORD },
+	{ 0x00, 0x17, KEY_FAVORITES }, /* Heart symbol - Channel list. */
+	{ 0x00, 0x14, KEY_PLAY },
+	{ 0x00, 0x1a, KEY_STOP },
+	{ 0x00, 0x40, KEY_REWIND },
+	{ 0x00, 0x12, KEY_FASTFORWARD },
+	{ 0x00, 0x0e, KEY_PREVIOUS }, /* Recall - Previous channel. */
+	{ 0x00, 0x4c, KEY_PAUSE },
+	{ 0x00, 0x4d, KEY_SCREEN }, /* Full screen mode. */
+	{ 0x00, 0x54, KEY_AUDIO }, /* MTS - Switch to secondary audio. */
+	{ 0x00, 0x0c, KEY_CANCEL }, /* Cancel */
+	{ 0x00, 0x1c, KEY_EPG }, /* EPG */
+	{ 0x00, 0x00, KEY_TAB }, /* Tab */
+	{ 0x00, 0x48, KEY_INFO }, /* Preview */
+	{ 0x00, 0x04, KEY_LIST }, /* RecordList */
+	{ 0x00, 0x0f, KEY_TEXT } /* Teletext */
 };
 
 static int vp7045_rc_query(struct dvb_usb_device *d, u32 *event, int *state)
@@ -165,8 +141,8 @@ static int vp7045_rc_query(struct dvb_usb_device *d, u32 *event, int *state)
 		return 0;
 	}
 
-	for (i = 0; i < ARRAY_SIZE(vp7045_rc_keys); i++)
-		if (rc5_data(&vp7045_rc_keys[i]) == key) {
+	for (i = 0; i < sizeof(vp7045_rc_keys)/sizeof(struct dvb_usb_rc_key); i++)
+		if (vp7045_rc_keys[i].data == key) {
 			*state = REMOTE_KEY_PRESSED;
 			*event = vp7045_rc_keys[i].event;
 			break;
@@ -193,37 +169,36 @@ static int vp7045_read_mac_addr(struct dvb_usb_device *d,u8 mac[6])
 	return vp7045_read_eeprom(d,mac, 6, MAC_0_ADDR);
 }
 
-static int vp7045_frontend_attach(struct dvb_usb_adapter *adap)
+static int vp7045_frontend_attach(struct dvb_usb_device *d)
 {
 	u8 buf[255] = { 0 };
 
-	vp7045_usb_op(adap->dev,VENDOR_STRING_READ,NULL,0,buf,20,0);
+	vp7045_usb_op(d,VENDOR_STRING_READ,NULL,0,buf,20,0);
 	buf[10] = '\0';
 	deb_info("firmware says: %s ",buf);
 
-	vp7045_usb_op(adap->dev,PRODUCT_STRING_READ,NULL,0,buf,20,0);
+	vp7045_usb_op(d,PRODUCT_STRING_READ,NULL,0,buf,20,0);
 	buf[10] = '\0';
 	deb_info("%s ",buf);
 
-	vp7045_usb_op(adap->dev,FW_VERSION_READ,NULL,0,buf,20,0);
+	vp7045_usb_op(d,FW_VERSION_READ,NULL,0,buf,20,0);
 	buf[10] = '\0';
 	deb_info("v%s\n",buf);
 
 /*	Dump the EEPROM */
 /*	vp7045_read_eeprom(d,buf, 255, FX2_ID_ADDR); */
 
-	adap->fe = vp7045_fe_attach(adap->dev);
+	d->fe = vp7045_fe_attach(d);
 
 	return 0;
 }
 
-static struct dvb_usb_device_properties vp7045_properties;
+static struct dvb_usb_properties vp7045_properties;
 
 static int vp7045_usb_probe(struct usb_interface *intf,
 		const struct usb_device_id *id)
 {
-	return dvb_usb_device_init(intf, &vp7045_properties,
-				   THIS_MODULE, NULL, adapter_nr);
+	return dvb_usb_device_init(intf,&vp7045_properties,THIS_MODULE,NULL);
 }
 
 static struct usb_device_id vp7045_usb_table [] = {
@@ -235,34 +210,32 @@ static struct usb_device_id vp7045_usb_table [] = {
 };
 MODULE_DEVICE_TABLE(usb, vp7045_usb_table);
 
-static struct dvb_usb_device_properties vp7045_properties = {
+static struct dvb_usb_properties vp7045_properties = {
+	.caps = 0,
+
 	.usb_ctrl = CYPRESS_FX2,
 	.firmware = "dvb-usb-vp7045-01.fw",
 
-	.num_adapters = 1,
-	.adapter = {
-		{
-			.frontend_attach  = vp7045_frontend_attach,
-			/* parameter for the MPEG2-data transfer */
-			.stream = {
-				.type = USB_BULK,
-				.count = 7,
-				.endpoint = 0x02,
-				.u = {
-					.bulk = {
-						.buffersize = 4096,
-					}
-				}
-			},
-		}
-	},
 	.power_ctrl       = vp7045_power_ctrl,
+	.frontend_attach  = vp7045_frontend_attach,
 	.read_mac_address = vp7045_read_mac_addr,
 
 	.rc_interval      = 400,
 	.rc_key_map       = vp7045_rc_keys,
 	.rc_key_map_size  = ARRAY_SIZE(vp7045_rc_keys),
 	.rc_query         = vp7045_rc_query,
+
+	/* parameter for the MPEG2-data transfer */
+	.urb = {
+		.type = DVB_USB_BULK,
+		.count = 7,
+		.endpoint = 0x02,
+		.u = {
+			.bulk = {
+				.buffersize = 4096,
+			}
+		}
+	},
 
 	.num_device_descs = 2,
 	.devices = {

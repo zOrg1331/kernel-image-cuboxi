@@ -1,0 +1,129 @@
+From: Abhijith Das <adas@redhat.com>
+Subject: [RHEL5.1 PATCH][GFS2] bz 272021: GFS2 - flocks from same process trip kernel BUG at fs/gfs2/glock.c:1118!
+Date: Fri, 14 Sep 2007 08:36:17 -0500
+Bugzilla: 272021
+Message-Id: <46EA8E51.9000309@redhat.com>
+Changelog: [gfs2] allow process to handle multiple flocks on a file
+
+
+This patch adds a new flag to the gfs2_holder structure GL_FLOCK. 
+It is set on holders of glocks representing flocks. This flag is 
+checked in add_to_queue() and a process is permitted to queue more 
+than one holder onto a glock if it is set. This solves the issue 
+of a process not being able to do multiple flocks on the same file. 
+Through a single descriptor, a process can now promote and demote 
+flocks. Through multiple descriptors a process can now queue 
+multiple flocks on the same file. There's still the problem of 
+a process deadlocking itself (because gfs2 blocking locks are not 
+interruptible) by queueing incompatible flocks.
+
+Signed-off-by: Abhijith Das <adas@redhat.com>
+
+
+Index: linux-2.6.18.noarch/fs/gfs2/glock.c
+===================================================================
+--- linux-2.6.18.noarch.orig/fs/gfs2/glock.c	2007-09-14 08:25:30.000000000 -0500
++++ linux-2.6.18.noarch/fs/gfs2/glock.c	2007-09-14 08:27:55.000000000 -0500
+@@ -1105,24 +1105,31 @@
+ 	if (test_and_set_bit(HIF_WAIT, &gh->gh_iflags))
+ 		BUG();
+ 
+-	existing = find_holder_by_owner(&gl->gl_holders, gh->gh_owner_pid);
+-	if (existing) {
+-		print_symbol(KERN_WARNING "original: %s\n", existing->gh_ip);
+-		printk(KERN_INFO "pid : %d\n", existing->gh_owner_pid);
+-		printk(KERN_INFO "lock type : %d lock state : %d\n",
+-				existing->gh_gl->gl_name.ln_type, existing->gh_gl->gl_state);
+-		print_symbol(KERN_WARNING "new: %s\n", gh->gh_ip);
+-		printk(KERN_INFO "pid : %d\n", gh->gh_owner_pid);
+-		printk(KERN_INFO "lock type : %d lock state : %d\n",
+-				gl->gl_name.ln_type, gl->gl_state);
+-		BUG();
+-	}
+-
+-	existing = find_holder_by_owner(&gl->gl_waiters3, gh->gh_owner_pid);
+-	if (existing) {
+-		print_symbol(KERN_WARNING "original: %s\n", existing->gh_ip);
+-		print_symbol(KERN_WARNING "new: %s\n", gh->gh_ip);
+-		BUG();
++	if (!(gh->gh_flags & GL_FLOCK)) {
++		existing = find_holder_by_owner(&gl->gl_holders,
++						gh->gh_owner_pid);
++		if (existing) {
++			print_symbol(KERN_WARNING "original: %s\n",
++				     existing->gh_ip);
++			printk(KERN_INFO "pid : %d\n", existing->gh_owner_pid);
++			printk(KERN_INFO "lock type : %d lock state : %d\n",
++			       existing->gh_gl->gl_name.ln_type,
++			       existing->gh_gl->gl_state);
++			print_symbol(KERN_WARNING "new: %s\n", gh->gh_ip);
++			printk(KERN_INFO "pid : %d\n", gh->gh_owner_pid);
++			printk(KERN_INFO "lock type : %d lock state : %d\n",
++			       gl->gl_name.ln_type, gl->gl_state);
++			BUG();
++		}
++		
++		existing = find_holder_by_owner(&gl->gl_waiters3,
++						gh->gh_owner_pid);
++		if (existing) {
++			print_symbol(KERN_WARNING "original: %s\n",
++				     existing->gh_ip);
++			print_symbol(KERN_WARNING "new: %s\n", gh->gh_ip);
++			BUG();
++		}
+ 	}
+ 
+ 	if (gh->gh_flags & LM_FLAG_PRIORITY)
+Index: linux-2.6.18.noarch/fs/gfs2/glock.h
+===================================================================
+--- linux-2.6.18.noarch.orig/fs/gfs2/glock.h	2007-09-14 08:25:30.000000000 -0500
++++ linux-2.6.18.noarch/fs/gfs2/glock.h	2007-09-14 08:26:24.000000000 -0500
+@@ -25,6 +25,7 @@
+ #define GL_SKIP			0x00000100
+ #define GL_ATIME		0x00000200
+ #define GL_NOCACHE		0x00000400
++#define GL_FLOCK		0x00000800
+ #define GL_NOCANCEL		0x00001000
+ 
+ #define GLR_TRYFAILED		13
+Index: linux-2.6.18.noarch/fs/gfs2/ops_file.c
+===================================================================
+--- linux-2.6.18.noarch.orig/fs/gfs2/ops_file.c	2007-09-14 08:25:30.000000000 -0500
++++ linux-2.6.18.noarch/fs/gfs2/ops_file.c	2007-09-14 08:26:51.000000000 -0500
+@@ -550,7 +550,8 @@
+ 	int error = 0;
+ 
+ 	state = (fl->fl_type == F_WRLCK) ? LM_ST_EXCLUSIVE : LM_ST_SHARED;
+-	flags = (IS_SETLKW(cmd) ? 0 : LM_FLAG_TRY) | GL_EXACT | GL_NOCACHE;
++	flags = (IS_SETLKW(cmd) ? 0 : LM_FLAG_TRY) | GL_EXACT | GL_NOCACHE
++		| GL_FLOCK;
+ 
+ 	mutex_lock(&fp->f_fl_mutex);
+ 
+@@ -558,21 +559,19 @@
+ 	if (gl) {
+ 		if (fl_gh->gh_state == state)
+ 			goto out;
+-		gfs2_glock_hold(gl);
+ 		flock_lock_file_wait(file,
+ 				     &(struct file_lock){.fl_type = F_UNLCK});
+-		gfs2_glock_dq_uninit(fl_gh);
++		gfs2_glock_dq_wait(fl_gh);
++		gfs2_holder_reinit(state, flags, fl_gh);
+ 	} else {
+ 		error = gfs2_glock_get(GFS2_SB(&ip->i_inode),
+ 				      ip->i_no_addr, &gfs2_flock_glops,
+ 				      CREATE, &gl);
+ 		if (error)
+ 			goto out;
++		gfs2_holder_init(gl, state, flags, fl_gh);
++		gfs2_glock_put(gl);
+ 	}
+-
+-	gfs2_holder_init(gl, state, flags, fl_gh);
+-	gfs2_glock_put(gl);
+-
+ 	error = gfs2_glock_nq(fl_gh);
+ 	if (error) {
+ 		gfs2_holder_uninit(fl_gh);
+

@@ -1,7 +1,4 @@
-/* ZD1211 USB-WLAN driver for Linux
- *
- * Copyright (C) 2005-2007 Ulrich Kunitz <kune@deine-taler.de>
- * Copyright (C) 2006-2007 Daniel Drake <dsd@gentoo.org>
+/* zd_rf.c
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -23,10 +20,10 @@
 
 #include "zd_def.h"
 #include "zd_rf.h"
-#include "zd_mac.h"
+#include "zd_ieee80211.h"
 #include "zd_chip.h"
 
-static const char * const rfs[] = {
+static const char *rfs[] = {
 	[0]		= "unknown RF0",
 	[1]		= "unknown RF1",
 	[UW2451_RF]	= "UW2451_RF",
@@ -55,40 +52,29 @@ const char *zd_rf_name(u8 type)
 void zd_rf_init(struct zd_rf *rf)
 {
 	memset(rf, 0, sizeof(*rf));
-
-	/* default to update channel integration, as almost all RF's do want
-	 * this */
-	rf->update_channel_int = 1;
 }
 
 void zd_rf_clear(struct zd_rf *rf)
 {
-	if (rf->clear)
-		rf->clear(rf);
-	ZD_MEMCLEAR(rf, sizeof(*rf));
+	memset(rf, 0, sizeof(*rf));
 }
 
 int zd_rf_init_hw(struct zd_rf *rf, u8 type)
 {
-	int r = 0;
-	int t;
+	int r, t;
 	struct zd_chip *chip = zd_rf_to_chip(rf);
 
 	ZD_ASSERT(mutex_is_locked(&chip->mutex));
 	switch (type) {
 	case RF2959_RF:
 		r = zd_rf_init_rf2959(rf);
+		if (r)
+			return r;
 		break;
 	case AL2230_RF:
-	case AL2230S_RF:
 		r = zd_rf_init_al2230(rf);
-		break;
-	case AL7230B_RF:
-		r = zd_rf_init_al7230b(rf);
-		break;
-	case MAXIM_NEW_RF:
-	case UW2453_RF:
-		r = zd_rf_init_uw2453(rf);
+		if (r)
+			return r;
 		break;
 	default:
 		dev_err(zd_chip_dev(chip),
@@ -96,9 +82,6 @@ int zd_rf_init_hw(struct zd_rf *rf, u8 type)
 		rf->type = 0;
 		return -ENODEV;
 	}
-
-	if (r)
-		return r;
 
 	rf->type = type;
 
@@ -166,17 +149,3 @@ int zd_switch_radio_off(struct zd_rf *rf)
 		r = t;
 	return r;
 }
-
-int zd_rf_patch_6m_band_edge(struct zd_rf *rf, u8 channel)
-{
-	if (!rf->patch_6m_band_edge)
-		return 0;
-
-	return rf->patch_6m_band_edge(rf, channel);
-}
-
-int zd_rf_generic_patch_6m(struct zd_rf *rf, u8 channel)
-{
-	return zd_chip_generic_patch_6m_band(zd_rf_to_chip(rf), channel);
-}
-

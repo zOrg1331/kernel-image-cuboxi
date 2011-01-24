@@ -1,0 +1,64 @@
+From: Luming Yu <luyu@redhat.com>
+Date: Thu, 20 Dec 2007 15:17:19 +0800
+Subject: [ia64] fix kernel warnings from rpm prep stage
+Message-id: 476A16FF.6060107@redhat.com
+O-Subject: Re: [RHEL 5.2 PATCH] bz 208271 RHEL5: Kernel warnings are output during rpmbuild -bp kernel.2.6.spec
+Bugzilla: 208271
+
+Don Zickus wrote:
+> On Tue, Aug 28, 2007 at 04:08:59PM +0800, Luming Yu wrote:
+>
+>> bz 208271
+>>
+>> Description of problem:
+>>
+>> Warnings are output during rpmbuild -bp kernel.2.6.spec Version-Release
+>> number of selected component (if applicable):
+>> kernel-2.6.18-1.2685.el5
+>>
+>> How reproducible: 100%
+>>
+>> Steps to Reproduce:
+>> 1. rpmbuild -bp --target=ia64 kernel-2.6.spec
+>>
+>>
+>> Upstream patch:
+>> http://marc.info/?l=linux-ia64&m=118828626903048&w=4, It is __not__
+>> upstream yet.
+>>
+>> Ia64 seems to be the only one that use arch specific scripts to check
+>> tool chain bugs that create the dependency on ia64 tool chain which
+>> make the command:
+>> make ARCH=ia64 oldconfig  fail if ia64 cross tool chain is __not__
+>> installed or OBJDUMP and CC is __not__ set with cross tool path on a
+>> non-ia64 box.  Given the current state of art of tool chain, I don't
+>> know if these check are still useful.
+>>
+>> I tested the patch it fixes the problem. Please help review and ACK.
+>>
+>
+
+Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+diff --git a/arch/ia64/Makefile b/arch/ia64/Makefile
+index 594dcaa..a50cb16 100644
+--- a/arch/ia64/Makefile
++++ b/arch/ia64/Makefile
+@@ -28,16 +28,7 @@ cflags-y	:= -pipe $(EXTRA) -ffixed-r13 -mfixed-range=f12-f15,f32-f127 \
+ 		   -falign-functions=32 -frename-registers -fno-optimize-sibling-calls
+ CFLAGS_KERNEL	:= -mconstant-gp
+ 
+-GAS_STATUS	= $(shell $(srctree)/arch/ia64/scripts/check-gas "$(CC)" "$(OBJDUMP)")
+-CPPFLAGS += $(shell $(srctree)/arch/ia64/scripts/toolchain-flags "$(CC)" "$(OBJDUMP)" "$(READELF)")
+-
+-ifeq ($(GAS_STATUS),buggy)
+-$(error Sorry, you need a newer version of the assember, one that is built from	\
+-	a source-tree that post-dates 18-Dec-2002.  You can find a pre-compiled	\
+-	static binary of such an assembler at:					\
+-										\
+-		ftp://ftp.hpl.hp.com/pub/linux-ia64/gas-030124.tar.gz)
+-endif
++CPPFLAGS += -DHAVE_WORKING_TEXT_ALIGN -DHAVE_MODEL_SMALL_ATTRIBUTE -DHAVE_SERIALIZE_DIRECTIVE
+ 
+ ifeq ($(call cc-version),0304)
+ 	cflags-$(CONFIG_ITANIUM)	+= -mtune=merced

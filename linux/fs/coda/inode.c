@@ -38,12 +38,12 @@ static void coda_clear_inode(struct inode *);
 static void coda_put_super(struct super_block *);
 static int coda_statfs(struct dentry *dentry, struct kstatfs *buf);
 
-static struct kmem_cache * coda_inode_cachep;
+static kmem_cache_t * coda_inode_cachep;
 
 static struct inode *coda_alloc_inode(struct super_block *sb)
 {
 	struct coda_inode_info *ei;
-	ei = (struct coda_inode_info *)kmem_cache_alloc(coda_inode_cachep, GFP_KERNEL);
+	ei = (struct coda_inode_info *)kmem_cache_alloc(coda_inode_cachep, SLAB_KERNEL);
 	if (!ei)
 		return NULL;
 	memset(&ei->c_fid, 0, sizeof(struct CodaFid));
@@ -58,19 +58,21 @@ static void coda_destroy_inode(struct inode *inode)
 	kmem_cache_free(coda_inode_cachep, ITOC(inode));
 }
 
-static void init_once(void *foo)
+static void init_once(void * foo, kmem_cache_t * cachep, unsigned long flags)
 {
 	struct coda_inode_info *ei = (struct coda_inode_info *) foo;
 
-	inode_init_once(&ei->vfs_inode);
+	if ((flags & (SLAB_CTOR_VERIFY|SLAB_CTOR_CONSTRUCTOR)) ==
+	    SLAB_CTOR_CONSTRUCTOR)
+		inode_init_once(&ei->vfs_inode);
 }
-
+ 
 int coda_init_inodecache(void)
 {
 	coda_inode_cachep = kmem_cache_create("coda_inode_cache",
 				sizeof(struct coda_inode_info),
 				0, SLAB_RECLAIM_ACCOUNT|SLAB_MEM_SPREAD,
-				init_once);
+				init_once, NULL);
 	if (coda_inode_cachep == NULL)
 		return -ENOMEM;
 	return 0;
@@ -78,17 +80,18 @@ int coda_init_inodecache(void)
 
 void coda_destroy_inodecache(void)
 {
-	kmem_cache_destroy(coda_inode_cachep);
+	if (kmem_cache_destroy(coda_inode_cachep))
+		printk(KERN_INFO "coda_inode_cache: not all structures were freed\n");
 }
 
 static int coda_remount(struct super_block *sb, int *flags, char *data)
 {
-	*flags |= MS_NOATIME;
+	*flags |= MS_NODIRATIME;
 	return 0;
 }
 
 /* exported operations */
-static const struct super_operations coda_super_operations =
+static struct super_operations coda_super_operations =
 {
 	.alloc_inode	= coda_alloc_inode,
 	.destroy_inode	= coda_destroy_inode,
@@ -117,7 +120,7 @@ static int get_device_index(struct coda_mount_data *data)
 	file = fget(data->fd);
 	inode = NULL;
 	if(file)
-		inode = file->f_path.dentry->d_inode;
+		inode = file->f_dentry->d_inode;
 	
 	if(!inode || !S_ISCHR(inode->i_mode) ||
 	   imajor(inode) != CODA_PSDEV_MAJOR) {
@@ -141,10 +144,11 @@ static int get_device_index(struct coda_mount_data *data)
 
 static int coda_fill_super(struct super_block *sb, void *data, int silent)
 {
-	struct inode *root = NULL;
+        struct inode *root = NULL; 
+	struct coda_sb_info *sbi = NULL;
 	struct venus_comm *vc = NULL;
 	struct CodaFid fid;
-	int error;
+        int error;
 	int idx;
 
 	idx = get_device_index((struct coda_mount_data *) data);
@@ -166,14 +170,21 @@ static int coda_fill_super(struct super_block *sb, void *data, int silent)
 		return -EBUSY;
 	}
 
+	sbi = kmalloc(sizeof(struct coda_sb_info), GFP_KERNEL);
+	if(!sbi) {
+		return -ENOMEM;
+	}
+
 	vc->vc_sb = sb;
 
-	sb->s_fs_info = vc;
-	sb->s_flags |= MS_NOATIME;
-	sb->s_blocksize = 4096;	/* XXXXX  what do we put here?? */
-	sb->s_blocksize_bits = 12;
-	sb->s_magic = CODA_SUPER_MAGIC;
-	sb->s_op = &coda_super_operations;
+	sbi->sbi_vcomm = vc;
+
+        sb->s_fs_info = sbi;
+	sb->s_flags |= MS_NODIRATIME; /* probably even noatime */
+        sb->s_blocksize = 1024;	/* XXXXX  what do we put here?? */
+        sb->s_blocksize_bits = 10;
+        sb->s_magic = CODA_SUPER_MAGIC;
+        sb->s_op = &coda_super_operations;
 
 	/* get root fid from Venus: this needs the root inode */
 	error = venus_rootfid(sb, &fid);
@@ -199,20 +210,26 @@ static int coda_fill_super(struct super_block *sb, void *data, int silent)
         return 0;
 
  error:
+	if (sbi) {
+		kfree(sbi);
+		if(vc)
+			vc->vc_sb = NULL;		
+	}
 	if (root)
-		iput(root);
-	if (vc)
-		vc->vc_sb = NULL;
+                iput(root);
 
-	return -EINVAL;
+        return -EINVAL;
 }
 
 static void coda_put_super(struct super_block *sb)
 {
-	coda_vcp(sb)->vc_sb = NULL;
-	sb->s_fs_info = NULL;
+        struct coda_sb_info *sbi;
+
+	sbi = coda_sbp(sb);
+	sbi->sbi_vcomm->vc_sb = NULL;
 
 	printk("Coda: Bye bye.\n");
+	kfree(sbi);
 }
 
 static void coda_clear_inode(struct inode *inode)
@@ -255,7 +272,7 @@ int coda_setattr(struct dentry *de, struct iattr *iattr)
 	return error;
 }
 
-const struct inode_operations coda_file_inode_operations = {
+struct inode_operations coda_file_inode_operations = {
 	.permission	= coda_permission,
 	.getattr	= coda_getattr,
 	.setattr	= coda_setattr,
@@ -282,7 +299,7 @@ static int coda_statfs(struct dentry *dentry, struct kstatfs *buf)
 
 	/* and fill in the rest */
 	buf->f_type = CODA_SUPER_MAGIC;
-	buf->f_bsize = 4096;
+	buf->f_bsize = 1024;
 	buf->f_namelen = CODA_MAXNAMLEN;
 
 	return 0; 

@@ -1,0 +1,189 @@
+From: Steven Whitehouse <swhiteho@redhat.com>
+Date: Fri, 6 Nov 2009 20:24:36 +0000
+Subject: [gfs2] careful unlinking inodes
+Message-id: 1257539076.2685.6.camel@localhost.localdomain
+O-Subject: [RHEL 5.5] Updated patch for bz #519049 (being more careful unlinking inodes)
+Bugzilla: 519049
+RH-Acked-by: Abhijith Das <adas@redhat.com>
+
+This is an updated version of the previous patch which fixes an issue
+relating to lock ordering in the first patch.
+
+The patch means that we now perform an extra check before trying to
+deallocate unlinked inodes, just in case there has been a race and
+another node has beaten us to it.
+
+Steve.
+
+diff --git a/fs/gfs2/ops_export.c b/fs/gfs2/ops_export.c
+index 1a5dd36..42b98b1 100644
+--- a/fs/gfs2/ops_export.c
++++ b/fs/gfs2/ops_export.c
+@@ -189,14 +189,11 @@ static struct dentry *gfs2_get_dentry(struct super_block *sb, void *inum_obj)
+ {
+ 	struct gfs2_sbd *sdp = sb->s_fs_info;
+ 	struct gfs2_inum_host *inum = inum_obj;
+-	struct gfs2_holder i_gh, ri_gh, rgd_gh;
+-	struct gfs2_rgrpd *rgd;
++	struct gfs2_holder i_gh;
+ 	struct inode *inode;
+ 	struct dentry *dentry;
+ 	int error;
+ 
+-	/* System files? */
+-
+ 	inode = gfs2_ilookup(sb, inum->no_addr);
+ 	if (inode) {
+ 		if (GFS2_I(inode)->i_no_formal_ino != inum->no_formal_ino) {
+@@ -211,29 +208,11 @@ static struct dentry *gfs2_get_dentry(struct super_block *sb, void *inum_obj)
+ 	if (error)
+ 		return ERR_PTR(error);
+ 
+-	error = gfs2_rindex_hold(sdp, &ri_gh);
++	error = gfs2_check_blk_type(sdp, inum->no_addr, GFS2_BLKST_DINODE);
+ 	if (error)
+ 		goto fail;
+ 
+-	error = -EINVAL;
+-	rgd = gfs2_blk2rgrpd(sdp, inum->no_addr);
+-	if (!rgd)
+-		goto fail_rindex;
+-
+-	error = gfs2_glock_nq_init(rgd->rd_gl, LM_ST_SHARED, 0, &rgd_gh);
+-	if (error)
+-		goto fail_rindex;
+-
+-	error = -ESTALE;
+-	if (gfs2_get_block_type(rgd, inum->no_addr) != GFS2_BLKST_DINODE)
+-		goto fail_rgd;
+-
+-	gfs2_glock_dq_uninit(&rgd_gh);
+-	gfs2_glock_dq_uninit(&ri_gh);
+-
+-	inode = gfs2_inode_lookup(sb, DT_UNKNOWN,
+-					inum->no_addr,
+-					0, 0);
++	inode = gfs2_inode_lookup(sb, DT_UNKNOWN, inum->no_addr, 0, 0);
+ 	if (!inode)
+ 		goto fail;
+ 	if (IS_ERR(inode)) {
+@@ -274,12 +253,6 @@ out_inode:
+ 	dentry->d_op = &gfs2_dops;
+ 	return dentry;
+ 
+-fail_rgd:
+-	gfs2_glock_dq_uninit(&rgd_gh);
+-
+-fail_rindex:
+-	gfs2_glock_dq_uninit(&ri_gh);
+-
+ fail:
+ 	gfs2_glock_dq_uninit(&i_gh);
+ 	return ERR_PTR(error);
+diff --git a/fs/gfs2/ops_super.c b/fs/gfs2/ops_super.c
+index 7d634a3..81e01bd 100644
+--- a/fs/gfs2/ops_super.c
++++ b/fs/gfs2/ops_super.c
+@@ -545,8 +545,13 @@ static void gfs2_delete_inode(struct inode *inode)
+ 		goto out;
+ 	}
+ 
++	error = gfs2_check_blk_type(sdp, ip->i_no_addr, GFS2_BLKST_UNLINKED);
++	if (error)
++		goto out_truncate;
++
+ 	gfs2_glock_dq_wait(&ip->i_iopen_gh);
+-	gfs2_holder_reinit(LM_ST_EXCLUSIVE, LM_FLAG_TRY_1CB | GL_NOCACHE, &ip->i_iopen_gh);
++	gfs2_holder_reinit(LM_ST_EXCLUSIVE, LM_FLAG_TRY_1CB | GL_NOCACHE,
++			   &ip->i_iopen_gh);
+ 	error = gfs2_glock_nq(&ip->i_iopen_gh);
+ 	if (error)
+ 		goto out_truncate;
+diff --git a/fs/gfs2/rgrp.c b/fs/gfs2/rgrp.c
+index a7164e7..43805af 100644
+--- a/fs/gfs2/rgrp.c
++++ b/fs/gfs2/rgrp.c
+@@ -1275,7 +1275,7 @@ void gfs2_inplace_release(struct gfs2_inode *ip)
+  * Returns: The block type (GFS2_BLKST_*)
+  */
+ 
+-unsigned char gfs2_get_block_type(struct gfs2_rgrpd *rgd, u64 block)
++static unsigned char gfs2_get_block_type(struct gfs2_rgrpd *rgd, u64 block)
+ {
+ 	struct gfs2_bitmap *bi = NULL;
+ 	u32 length, rgrp_block, buf_block;
+@@ -1686,6 +1686,53 @@ void gfs2_free_di(struct gfs2_rgrpd *rgd, struct gfs2_inode *ip)
+ }
+ 
+ /**
++ * gfs2_check_blk_type - Check the type of a block
++ * @sdp: The superblock
++ * @no_addr: The block number to check
++ * @type: The block type we are looking for
++ *
++ * Returns: 0 if the block type matches the expected type
++ *          -ESTALE if it doesn't match
++ *          or -ve errno if something went wrong while checking
++ */
++
++int gfs2_check_blk_type(struct gfs2_sbd *sdp, u64 no_addr, unsigned int type)
++{
++	struct gfs2_rgrpd *rgd;
++	struct gfs2_holder ri_gh, rgd_gh;
++	struct gfs2_inode *ip = GFS2_I(sdp->sd_rindex);
++	int ri_locked = 0;
++	int error;
++
++	if (!gfs2_glock_is_locked_by_me(ip->i_gl)) {
++		error = gfs2_rindex_hold(sdp, &ri_gh);
++		if (error)
++			goto fail;
++		ri_locked = 1;
++	}
++
++	error = -EINVAL;
++	rgd = gfs2_blk2rgrpd(sdp, no_addr);
++	if (!rgd)
++		goto fail_rindex;
++
++	error = gfs2_glock_nq_init(rgd->rd_gl, LM_ST_SHARED, 0, &rgd_gh);
++	if (error)
++		goto fail_rindex;
++
++	error = 0;
++	if (gfs2_get_block_type(rgd, no_addr) != type)
++		error = -ESTALE;
++
++	gfs2_glock_dq_uninit(&rgd_gh);
++fail_rindex:
++	if (ri_locked)
++		gfs2_glock_dq_uninit(&ri_gh);
++fail:
++	return error;
++}
++
++/**
+  * gfs2_rlist_add - add a RG to a list of RGs
+  * @sdp: the filesystem
+  * @rlist: the list of resource groups
+diff --git a/fs/gfs2/rgrp.h b/fs/gfs2/rgrp.h
+index 5683605..83a4554 100644
+--- a/fs/gfs2/rgrp.h
++++ b/fs/gfs2/rgrp.h
+@@ -44,8 +44,6 @@ gfs2_inplace_reserve_i((ip), __FILE__, __LINE__)
+ 
+ void gfs2_inplace_release(struct gfs2_inode *ip);
+ 
+-unsigned char gfs2_get_block_type(struct gfs2_rgrpd *rgd, u64 block);
+-
+ u64 gfs2_alloc_data(struct gfs2_inode *ip);
+ u64 gfs2_alloc_meta(struct gfs2_inode *ip);
+ u64 gfs2_alloc_di(struct gfs2_inode *ip, u64 *generation);
+@@ -54,6 +52,7 @@ void gfs2_free_data(struct gfs2_inode *ip, u64 bstart, u32 blen);
+ void gfs2_free_meta(struct gfs2_inode *ip, u64 bstart, u32 blen);
+ void gfs2_free_di(struct gfs2_rgrpd *rgd, struct gfs2_inode *ip);
+ void gfs2_unlink_di(struct inode *inode);
++int gfs2_check_blk_type(struct gfs2_sbd *sdp, u64 no_addr, unsigned int type);
+ 
+ struct gfs2_rgrp_list {
+ 	unsigned int rl_rgrps;

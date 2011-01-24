@@ -1,5 +1,5 @@
 /*
- * arch/parisc/kernel/topology.c - Populate sysfs with topology information
+ * arch/parisc/kernel/topology.c - Populate driverfs with topology information
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -22,14 +22,14 @@
 #include <linux/cpu.h>
 #include <linux/cache.h>
 
-static DEFINE_PER_CPU(struct cpu, cpu_devices);
+static struct cpu cpu_devices[NR_CPUS] __read_mostly;
 
 static int __init topology_init(void)
 {
 	int num;
 
 	for_each_present_cpu(num) {
-		register_cpu(&per_cpu(cpu_devices, num), num);
+		register_cpu(&cpu_devices[num], num);
 	}
 	return 0;
 }

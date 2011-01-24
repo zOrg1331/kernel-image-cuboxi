@@ -70,7 +70,7 @@ static void cw_clear(struct vc_data *vc, struct fb_info *info, int sy,
 	int bgshift = (vc->vc_hi_font_mask) ? 13 : 12;
 	u32 vxres = GETVXRES(ops->p->scrollmode, info);
 
-	region.color = attr_bgcol_ec(bgshift,vc,info);
+	region.color = attr_bgcol_ec(bgshift,vc);
 	region.dx = vxres - ((sy + height) * vc->vc_font.height);
 	region.dy = sx *  vc->vc_font.width;
 	region.height = width * vc->vc_font.width;
@@ -182,7 +182,7 @@ static void cw_clear_margins(struct vc_data *vc, struct fb_info *info,
 	struct fb_fillrect region;
 	int bgshift = (vc->vc_hi_font_mask) ? 13 : 12;
 
-	region.color = attr_bgcol_ec(bgshift,vc,info);
+	region.color = attr_bgcol_ec(bgshift,vc);
 	region.rop = ROP_COPY;
 
 	if (rw && !bottom_only) {
@@ -375,7 +375,7 @@ static void cw_cursor(struct vc_data *vc, struct fb_info *info, int mode,
 	ops->cursor_reset = 0;
 }
 
-static int cw_update_start(struct fb_info *info)
+int cw_update_start(struct fb_info *info)
 {
 	struct fbcon_ops *ops = info->fbcon_par;
 	u32 vxres = GETVXRES(ops->p->scrollmode, info);

@@ -1,0 +1,36 @@
+From: Michal Schmidt <mschmidt@redhat.com>
+Date: Fri, 3 Sep 2010 16:42:57 -0400
+Subject: [net] bnx2x: update date and version to 1.52.53-1
+Message-id: <20100903164257.25415.23740.stgit@brian.englab.brq.redhat.com>
+Patchwork-id: 28097
+O-Subject: [RHEL5.6 BZ572012 PATCH 22/46] bnx2x: Date and version
+Bugzilla: 572012
+RH-Acked-by: David S. Miller <davem@redhat.com>
+RH-Acked-by: Stanislaw Gruszka <sgruszka@redhat.com>
+
+Set version to 1.52.53-1.
+
+Signed-off-by: Vladislav Zolotarov <vladz@broadcom.com>
+Signed-off-by: Eilon Greenstein <eilong@broadcom.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+(cherry picked from commit a03b1a5c95e8bcb07512122995bbf5bd3c39f2b9)
+
+Conflicts:
+
+	drivers/net/bnx2x_main.c
+
+diff --git a/drivers/net/bnx2x_main.c b/drivers/net/bnx2x_main.c
+index ed9036a..affab0f 100644
+--- a/drivers/net/bnx2x_main.c
++++ b/drivers/net/bnx2x_main.c
+@@ -56,8 +56,8 @@
+ #include "bnx2x_init_ops.h"
+ #include "bnx2x_dump.h"
+ 
+-#define DRV_MODULE_VERSION	"1.52.1-8"
+-#define DRV_MODULE_RELDATE	"2010/02/28"
++#define DRV_MODULE_VERSION	"1.52.53-1"
++#define DRV_MODULE_RELDATE	"2010/18/04"
+ #define BNX2X_BC_VER		0x040200
+ 
+ #include <linux/firmware.h>

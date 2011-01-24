@@ -1,4 +1,5 @@
 /*
+ *  
  *  Copyright (C) 2002 Intersil Americas Inc.
  *  Copyright (C) 2004 Aurelien Alleaume <slts@free.fr>
  *  This program is free software; you can redistribute it and/or modify
@@ -23,7 +24,6 @@
 #include <linux/netdevice.h>
 #include <linux/etherdevice.h>
 #include <linux/if_arp.h>
-#include <asm/byteorder.h>
 
 #include "prismcompat.h"
 #include "isl_38xx.h"
@@ -48,9 +48,9 @@ islpci_eth_cleanup_transmit(islpci_private *priv,
 		/* read the index of the first fragment to be freed */
 		index = priv->free_data_tx % ISL38XX_CB_TX_QSIZE;
 
-		/* check for holes in the arrays caused by multi fragment frames
+		/* check for holes in the arrays caused by multi fragment frames 
 		 * searching for the last fragment of a frame */
-		if (priv->pci_map_tx_address[index]) {
+		if (priv->pci_map_tx_address[index] != (dma_addr_t) NULL) {
 			/* entry is the last fragment of a frame
 			 * free the skb structure and unmap pci memory */
 			skb = priv->data_low_tx[index];
@@ -72,7 +72,7 @@ islpci_eth_cleanup_transmit(islpci_private *priv,
 	}
 }
 
-netdev_tx_t
+int
 islpci_eth_transmit(struct sk_buff *skb, struct net_device *ndev)
 {
 	islpci_private *priv = netdev_priv(ndev);
@@ -87,6 +87,7 @@ islpci_eth_transmit(struct sk_buff *skb, struct net_device *ndev)
 	unsigned long flags;
 	unsigned char wds_mac[6];
 	u32 curr_frag;
+	int err = 0;
 
 #if VERBOSE > SHOW_ERROR_MESSAGES
 	DEBUG(SHOW_FUNCTION_CALLS, "islpci_eth_transmit \n");
@@ -106,6 +107,8 @@ islpci_eth_transmit(struct sk_buff *skb, struct net_device *ndev)
 		isl38xx_w32_flush(priv->device_base, ISL38XX_DEV_INT_UPDATE,
 				  ISL38XX_DEV_INT_REG);
 		udelay(ISL38XX_WRITEIO_DELAY);
+
+		err = -EBUSY;
 		goto drop_free;
 	}
 	/* Check alignment and WDS frame formatting. The start of the packet should
@@ -134,7 +137,7 @@ islpci_eth_transmit(struct sk_buff *skb, struct net_device *ndev)
 				printk("islpci_eth_transmit:wds_mac\n");
 #endif
 				memmove(skb->data + 6, src, skb->len);
-				skb_copy_to_linear_data(skb, wds_mac, 6);
+				memcpy(skb->data, wds_mac, 6);
 			} else {
 				memmove(skb->data, src, skb->len);
 			}
@@ -149,6 +152,7 @@ islpci_eth_transmit(struct sk_buff *skb, struct net_device *ndev)
 			if (unlikely(newskb == NULL)) {
 				printk(KERN_ERR "%s: Cannot allocate skb\n",
 				       ndev->name);
+				err = -ENOMEM;
 				goto drop_free;
 			}
 			newskb_offset = (4 - (long) newskb->data) & 0x03;
@@ -159,16 +163,13 @@ islpci_eth_transmit(struct sk_buff *skb, struct net_device *ndev)
 
 			skb_put(newskb, init_wds ? skb->len + 6 : skb->len);
 			if (init_wds) {
-				skb_copy_from_linear_data(skb,
-							  newskb->data + 6,
-							  skb->len);
-				skb_copy_to_linear_data(newskb, wds_mac, 6);
+				memcpy(newskb->data + 6, skb->data, skb->len);
+				memcpy(newskb->data, wds_mac, 6);
 #ifdef ISLPCI_ETH_DEBUG
 				printk("islpci_eth_transmit:wds_mac\n");
 #endif
 			} else
-				skb_copy_from_linear_data(skb, newskb->data,
-							  skb->len);
+				memcpy(newskb->data, skb->data, skb->len);
 
 #if VERBOSE > SHOW_ERROR_MESSAGES
 			DEBUG(SHOW_TRACING, "memcpy %p %p %i wds %i\n",
@@ -193,6 +194,8 @@ islpci_eth_transmit(struct sk_buff *skb, struct net_device *ndev)
 	if (unlikely(pci_map_address == 0)) {
 		printk(KERN_WARNING "%s: cannot map buffer to PCI\n",
 		       ndev->name);
+
+		err = -EIO;
 		goto drop_free;
 	}
 	/* Place the fragment in the control block structure. */
@@ -225,8 +228,8 @@ islpci_eth_transmit(struct sk_buff *skb, struct net_device *ndev)
 
 	/* set the transmission time */
 	ndev->trans_start = jiffies;
-	ndev->stats.tx_packets++;
-	ndev->stats.tx_bytes += skb->len;
+	priv->statistics.tx_packets++;
+	priv->statistics.tx_bytes += skb->len;
 
 	/* trigger the device */
 	islpci_trigger(priv);
@@ -234,13 +237,13 @@ islpci_eth_transmit(struct sk_buff *skb, struct net_device *ndev)
 	/* unlock the driver code */
 	spin_unlock_irqrestore(&priv->slock, flags);
 
-	return NETDEV_TX_OK;
+	return 0;
 
       drop_free:
-	ndev->stats.tx_dropped++;
+	priv->statistics.tx_dropped++;
 	spin_unlock_irqrestore(&priv->slock, flags);
 	dev_kfree_skb(skb);
-	return NETDEV_TX_OK;
+	return err;
 }
 
 static inline int
@@ -250,7 +253,6 @@ islpci_monitor_rx(islpci_private *priv, struct sk_buff **skb)
 	 * header and without the FCS. But there a is a bit that
 	 * indicates if the packet is corrupted :-) */
 	struct rfmon_header *hdr = (struct rfmon_header *) (*skb)->data;
-
 	if (hdr->flags & 0x01)
 		/* This one is bad. Drop it ! */
 		return -1;
@@ -282,10 +284,10 @@ islpci_monitor_rx(islpci_private *priv, struct sk_buff **skb)
 		    (struct avs_80211_1_header *) skb_push(*skb,
 							   sizeof (struct
 								   avs_80211_1_header));
-
+		
 		avs->version = cpu_to_be32(P80211CAPTURE_VERSION);
 		avs->length = cpu_to_be32(sizeof (struct avs_80211_1_header));
-		avs->mactime = cpu_to_be64(clock);
+		avs->mactime = cpu_to_be64(le64_to_cpu(clock));
 		avs->hosttime = cpu_to_be64(jiffies);
 		avs->phytype = cpu_to_be32(6);	/*OFDM: 6 for (g), 8 for (a) */
 		avs->channel = cpu_to_be32(channel_of_freq(freq));
@@ -301,7 +303,7 @@ islpci_monitor_rx(islpci_private *priv, struct sk_buff **skb)
 		skb_pull(*skb, sizeof (struct rfmon_header));
 
 	(*skb)->protocol = htons(ETH_P_802_2);
-	skb_reset_mac_header(*skb);
+	(*skb)->mac.raw = (*skb)->data;
 	(*skb)->pkt_type = PACKET_OTHERHOST;
 
 	return 0;
@@ -372,11 +374,14 @@ islpci_eth_receive(islpci_private *priv)
 	DEBUG(SHOW_BUFFER_CONTENTS, "\nrx %p ", skb->data);
 	display_buffer((char *) skb->data, skb->len);
 #endif
+
+	/* do some additional sk_buff and network layer parameters */
+	skb->dev = ndev;
+
 	/* take care of monitor mode and spy monitoring. */
-	if (unlikely(priv->iw_mode == IW_MODE_MONITOR)) {
-		skb->dev = ndev;
+	if (unlikely(priv->iw_mode == IW_MODE_MONITOR))
 		discard = islpci_monitor_rx(priv, &skb);
-	} else {
+	else {
 		if (unlikely(skb->data[2 * ETH_ALEN] == 0)) {
 			/* The packet has a rx_annex. Read it for spy monitoring, Then
 			 * remove it, while keeping the 2 leading MAC addr.
@@ -385,7 +390,7 @@ islpci_eth_receive(islpci_private *priv)
 			struct rx_annex_header *annex =
 			    (struct rx_annex_header *) skb->data;
 			wstats.level = annex->rfmon.rssi;
-			/* The noise value can be a bit outdated if nobody's
+			/* The noise value can be a bit outdated if nobody's 
 			 * reading wireless stats... */
 			wstats.noise = priv->local_iwstatistics.qual.noise;
 			wstats.qual = wstats.level - wstats.noise;
@@ -393,17 +398,15 @@ islpci_eth_receive(islpci_private *priv)
 			/* Update spy records */
 			wireless_spy_update(ndev, annex->addr2, &wstats);
 
-			skb_copy_from_linear_data(skb,
-						  (skb->data +
-						   sizeof(struct rfmon_header)),
-						  2 * ETH_ALEN);
+			memcpy(skb->data + sizeof (struct rfmon_header),
+			       skb->data, 2 * ETH_ALEN);
 			skb_pull(skb, sizeof (struct rfmon_header));
 		}
 		skb->protocol = eth_type_trans(skb, ndev);
 	}
 	skb->ip_summed = CHECKSUM_NONE;
-	ndev->stats.rx_packets++;
-	ndev->stats.rx_bytes += size;
+	priv->statistics.rx_packets++;
+	priv->statistics.rx_bytes += size;
 
 	/* deliver the skb to the network layer */
 #ifdef ISLPCI_ETH_DEBUG
@@ -450,7 +453,7 @@ islpci_eth_receive(islpci_private *priv)
 		    pci_map_single(priv->pdev, (void *) skb->data,
 				   MAX_FRAGMENT_SIZE_RX + 2,
 				   PCI_DMA_FROMDEVICE);
-		if (unlikely(!priv->pci_map_rx_address[index])) {
+		if (unlikely(priv->pci_map_rx_address[index] == (dma_addr_t) NULL)) {
 			/* error mapping the buffer to device accessable memory address */
 			DEBUG(SHOW_ERROR_MESSAGES,
 			      "Error mapping DMA address\n");
@@ -461,13 +464,15 @@ islpci_eth_receive(islpci_private *priv)
 			break;
 		}
 		/* update the fragment address */
-		control_block->rx_data_low[index].address =
-			cpu_to_le32((u32)priv->pci_map_rx_address[index]);
+		control_block->rx_data_low[index].address = cpu_to_le32((u32)
+									priv->
+									pci_map_rx_address
+									[index]);
 		wmb();
 
 		/* increment the driver read pointer */
-		le32_add_cpu(&control_block->
-			     driver_curr_frag[ISL38XX_CB_RX_DATA_LQ], 1);
+		add_le32p((u32 *) &control_block->
+			  driver_curr_frag[ISL38XX_CB_RX_DATA_LQ], 1);
 	}
 
 	/* trigger the device */
@@ -477,32 +482,29 @@ islpci_eth_receive(islpci_private *priv)
 }
 
 void
-islpci_do_reset_and_wake(struct work_struct *work)
+islpci_do_reset_and_wake(void *data)
 {
-	islpci_private *priv = container_of(work, islpci_private, reset_task);
-
+	islpci_private *priv = (islpci_private *) data;
 	islpci_reset(priv, 1);
-	priv->reset_task_pending = 0;
-	smp_wmb();
 	netif_wake_queue(priv->ndev);
+	priv->reset_task_pending = 0;
 }
 
 void
 islpci_eth_tx_timeout(struct net_device *ndev)
 {
 	islpci_private *priv = netdev_priv(ndev);
+	struct net_device_stats *statistics = &priv->statistics;
 
 	/* increment the transmit error counter */
-	ndev->stats.tx_errors++;
+	statistics->tx_errors++;
 
+	printk(KERN_WARNING "%s: tx_timeout", ndev->name);
 	if (!priv->reset_task_pending) {
-		printk(KERN_WARNING
-			"%s: tx_timeout, scheduling reset", ndev->name);
-		netif_stop_queue(ndev);
 		priv->reset_task_pending = 1;
+		printk(", scheduling a reset");
+		netif_stop_queue(ndev);
 		schedule_work(&priv->reset_task);
-	} else {
-		printk(KERN_WARNING
-			"%s: tx_timeout, waiting for reset", ndev->name);
 	}
+	printk("\n");
 }

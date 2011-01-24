@@ -1,0 +1,88 @@
+From: Marcus Barrow <mbarrow@redhat.com>
+Subject: [Bug 252410][QLOGIC 5.1 bug] qla2xxx MSI-X hardware issues on some 	platforms
+Date: Wed, 15 Aug 2007 20:22:09 -0400
+Bugzilla: 252410
+Message-Id: <3A253AE9-1301-4046-B5BD-62F6053DC1D7@redhat.com>
+Changelog: [scsi] qla2xxx: disable MSI-X by default
+
+
+
+
+Testing and upstream have found problems handling MSI-X by some
+chipsets. These include major servers. Enabling MSI-X support
+has caused a major regression on some machines.
+
+This attached patch disable the MSI-X feature by default, but
+allows enabling with a module parameter "ql2x_enable_msix".
+
+It basically ammounts to one line, plus 5 lines to declare
+the module parameter.
+
+
+From 174422b4e58acbe6c134672ae8d1803c8d12db51 Mon Sep 17 00:00:00 2001
+From: Marcus Barrow <mbarrow@marcus-barrows-computer.local>
+Date: Wed, 15 Aug 2007 19:51:43 -0400
+Subject: [PATCH] By default disable MSI-X, enable with module param.
+
+---
+ drivers/scsi/qla2xxx/qla_gbl.h |    1 +
+ drivers/scsi/qla2xxx/qla_isr.c |    2 +-
+ drivers/scsi/qla2xxx/qla_os.c  |    6 ++++++
+ 3 files changed, 8 insertions(+), 1 deletions(-)
+
+diff --git a/drivers/scsi/qla2xxx/qla_gbl.h b/drivers/scsi/qla2xxx/qla_gbl.h
+index 8f73f22..c28ceb2 100644
+--- a/drivers/scsi/qla2xxx/qla_gbl.h
++++ b/drivers/scsi/qla2xxx/qla_gbl.h
+@@ -62,6 +62,7 @@ extern int ql2xfdmienable;
+ extern int ql2xallocfwdump;
+ extern int ql2xextended_error_logging;
+ extern int ql2xqfullrampup;
++extern int ql2x_enable_msix;
+ 
+ extern void qla2x00_sp_compl(scsi_qla_host_t *, srb_t *);
+ 
+diff --git a/drivers/scsi/qla2xxx/qla_isr.c b/drivers/scsi/qla2xxx/qla_isr.c
+index 1a8c919..2a6c20c 100644
+--- a/drivers/scsi/qla2xxx/qla_isr.c
++++ b/drivers/scsi/qla2xxx/qla_isr.c
+@@ -1707,7 +1707,7 @@ qla2x00_request_irqs(scsi_qla_host_t *ha
+ 	int ret;
+ 
+ 	/* If possible, enable MSI-X. */
+-	if (!IS_QLA2432(ha))
++	if (!IS_QLA2432(ha) || !ql2x_enable_msix)
+ 		goto skip_msix;
+ 
+         if (ha->chip_revision < QLA_MSIX_CHIP_REV_24XX ||
+diff --git a/drivers/scsi/qla2xxx/qla_os.c b/drivers/scsi/qla2xxx/qla_os.c
+index b040e31..6388091 100644
+--- a/drivers/scsi/qla2xxx/qla_os.c
++++ b/drivers/scsi/qla2xxx/qla_os.c
+@@ -67,6 +67,7 @@ MODULE_PARM_DESC(ql2xextended_error_logg
+ 		"Option to enable extended error logging, "
+ 		"Default is 0 - no logging. 1 - log errors.");
+ 
++
+ static void qla2x00_free_device(scsi_qla_host_t *);
+ 
+ static void qla2x00_config_dma_addressing(scsi_qla_host_t *ha);
+@@ -90,6 +91,11 @@ MODULE_PARM_DESC(ql2xqfullrampup,
+ 		"depth for a device after a queue-full condition has been "
+ 		"detected.  Default is 120 seconds.");
+ 
++int ql2x_enable_msix = 0;
++module_param(ql2x_enable_msix, int, S_IRUGO|S_IRUSR);
++MODULE_PARM_DESC(ql2x_enable_msix,
++                 "Set to enable MSI-X interrupt mechanism.");
++
+ /*
+  * SCSI host template entry points
+  */
+-- 
+1.4.4.1
+
+
+
+
+

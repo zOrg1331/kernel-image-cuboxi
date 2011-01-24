@@ -16,15 +16,15 @@
 #include <linux/errno.h>
 #include <linux/ptrace.h>
 #include <linux/timer.h>
-#include <linux/delay.h>
 #include <linux/mm.h>
 #include <linux/module.h>
 #include <linux/smp.h>
+#include <linux/smp_lock.h>
 #include <linux/spinlock.h>
 #include <linux/init.h>
 #include <linux/interrupt.h>
 #include <linux/console.h>
-#include <linux/bug.h>
+#include <linux/kallsyms.h>
 
 #include <asm/assembly.h>
 #include <asm/system.h>
@@ -38,8 +38,6 @@
 #include <asm/pdc.h>
 #include <asm/pdc_chassis.h>
 #include <asm/unwind.h>
-#include <asm/tlbflush.h>
-#include <asm/cacheflush.h>
 
 #include "../math-emu/math-emu.h"	/* for handle_fpe() */
 
@@ -50,10 +48,7 @@
 DEFINE_SPINLOCK(pa_dbit_lock);
 #endif
 
-static void parisc_show_stack(struct task_struct *task, unsigned long *sp,
-	struct pt_regs *regs);
-
-static int printbinary(char *buf, unsigned long x, int nbits)
+int printbinary(char *buf, unsigned long x, int nbits)
 {
 	unsigned long mask = 1UL << (nbits - 1);
 	while (mask != 0) {
@@ -65,7 +60,7 @@ static int printbinary(char *buf, unsigned long x, int nbits)
 	return nbits;
 }
 
-#ifdef CONFIG_64BIT
+#ifdef __LP64__
 #define RFMT "%016lx"
 #else
 #define RFMT "%08lx"
@@ -120,19 +115,18 @@ static void print_fr(char *level, struct pt_regs *regs)
 
 void show_regs(struct pt_regs *regs)
 {
-	int i, user;
+	int i;
 	char *level;
 	unsigned long cr30, cr31;
 
-	user = user_mode(regs);
-	level = user ? KERN_DEBUG : KERN_CRIT;
+	level = user_mode(regs) ? KERN_DEBUG : KERN_CRIT;
 
 	print_gr(level, regs);
 
 	for (i = 0; i < 8; i += 4)
 		PRINTREGS(level, regs->sr, "sr", RFMT, i);
 
-	if (user)
+	if (user_mode(regs))
 		print_fr(level, regs);
 
 	cr30 = mfctl(30);
@@ -145,18 +139,12 @@ void show_regs(struct pt_regs *regs)
 	printk("%s CPU: %8d   CR30: " RFMT " CR31: " RFMT "\n",
 	       level, current_thread_info()->cpu, cr30, cr31);
 	printk("%s ORIG_R28: " RFMT "\n", level, regs->orig_r28);
-
-	if (user) {
-		printk("%s IAOQ[0]: " RFMT "\n", level, regs->iaoq[0]);
-		printk("%s IAOQ[1]: " RFMT "\n", level, regs->iaoq[1]);
-		printk("%s RP(r2): " RFMT "\n", level, regs->gr[2]);
-	} else {
-		printk("%s IAOQ[0]: %pS\n", level, (void *) regs->iaoq[0]);
-		printk("%s IAOQ[1]: %pS\n", level, (void *) regs->iaoq[1]);
-		printk("%s RP(r2): %pS\n", level, (void *) regs->gr[2]);
-
-		parisc_show_stack(current, NULL, regs);
-	}
+	printk(level);
+	print_symbol(" IAOQ[0]: %s\n", regs->iaoq[0]);
+	printk(level);
+	print_symbol(" IAOQ[1]: %s\n", regs->iaoq[1]);
+	printk(level);
+	print_symbol(" RP(r2): %s\n", regs->gr[2]);
 }
 
 
@@ -171,63 +159,48 @@ static void do_show_stack(struct unwind_frame_info *info)
 {
 	int i = 1;
 
-	printk(KERN_CRIT "Backtrace:\n");
+	printk("Backtrace:\n");
 	while (i <= 16) {
 		if (unwind_once(info) < 0 || info->ip == 0)
 			break;
 
 		if (__kernel_text_address(info->ip)) {
-			printk(KERN_CRIT " [<" RFMT ">] %pS\n",
-				info->ip, (void *) info->ip);
+			printk(" [<" RFMT ">] ", info->ip);
+#ifdef CONFIG_KALLSYMS
+			print_symbol("%s\n", info->ip);
+#else
+			if ((i & 0x03) == 0)
+				printk("\n");
+#endif
 			i++;
 		}
 	}
-	printk(KERN_CRIT "\n");
+	printk("\n");
 }
 
-static void parisc_show_stack(struct task_struct *task, unsigned long *sp,
-	struct pt_regs *regs)
+void show_stack(struct task_struct *task, unsigned long *s)
 {
 	struct unwind_frame_info info;
-	struct task_struct *t;
 
-	t = task ? task : current;
-	if (regs) {
-		unwind_frame_init(&info, t, regs);
-		goto show_stack;
-	}
-
-	if (t == current) {
+	if (!task) {
 		unsigned long sp;
+		struct pt_regs *r;
 
 HERE:
 		asm volatile ("copy %%r30, %0" : "=r"(sp));
-		{
-			struct pt_regs r;
-
-			memset(&r, 0, sizeof(struct pt_regs));
-			r.iaoq[0] = (unsigned long)&&HERE;
-			r.gr[2] = (unsigned long)__builtin_return_address(0);
-			r.gr[30] = sp;
-
-			unwind_frame_init(&info, current, &r);
-		}
+		r = kzalloc(sizeof(struct pt_regs), GFP_KERNEL);
+		if (!r)
+			return;
+		r->iaoq[0] = (unsigned long)&&HERE;
+		r->gr[2] = (unsigned long)__builtin_return_address(0);
+		r->gr[30] = sp;
+		unwind_frame_init(&info, current, r);
+		kfree(r);
 	} else {
-		unwind_frame_init_from_blocked_task(&info, t);
+		unwind_frame_init_from_blocked_task(&info, task);
 	}
 
-show_stack:
 	do_show_stack(&info);
-}
-
-void show_stack(struct task_struct *t, unsigned long *sp)
-{
-	return parisc_show_stack(t, sp, NULL);
-}
-
-int is_valid_bugaddr(unsigned long iaoq)
-{
-	return 1;
 }
 
 void die_if_kernel(char *str, struct pt_regs *regs, long err)
@@ -237,7 +210,7 @@ void die_if_kernel(char *str, struct pt_regs *regs, long err)
 			return; /* STFU */
 
 		printk(KERN_CRIT "%s (pid %d): %s (code %ld) at " RFMT "\n",
-			current->comm, task_pid_nr(current), str, err, regs->iaoq[0]);
+			current->comm, current->pid, str, err, regs->iaoq[0]);
 #ifdef PRINT_USER_FAULTS
 		/* XXX for debugging only */
 		show_regs(regs);
@@ -247,17 +220,16 @@ void die_if_kernel(char *str, struct pt_regs *regs, long err)
 
 	oops_in_progress = 1;
 
-	oops_enter();
-
 	/* Amuse the user in a SPARC fashion */
-	if (err) printk(KERN_CRIT
-			"      _______________________________ \n"
-			"     < Your System ate a SPARC! Gah! >\n"
-			"      ------------------------------- \n"
-			"             \\   ^__^\n"
-			"                 (__)\\       )\\/\\\n"
-			"                  U  ||----w |\n"
-			"                     ||     ||\n");
+	printk(
+"      _______________________________ \n"
+"     < Your System ate a SPARC! Gah! >\n"
+"      ------------------------------- \n"
+"             \\   ^__^\n"
+"              \\  (xx)\\_______\n"
+"                 (__)\\       )\\/\\\n"
+"                  U  ||----w |\n"
+"                     ||     ||\n");
 	
 	/* unlock the pdc lock if necessary */
 	pdc_emergency_unlock();
@@ -269,32 +241,18 @@ void die_if_kernel(char *str, struct pt_regs *regs, long err)
 	if (!console_drivers)
 		pdc_console_restart();
 	
-	if (err)
-		printk(KERN_CRIT "%s (pid %d): %s (code %ld)\n",
-			current->comm, task_pid_nr(current), str, err);
+	printk(KERN_CRIT "%s (pid %d): %s (code %ld)\n",
+		current->comm, current->pid, str, err);
+	show_regs(regs);
 
 	/* Wot's wrong wif bein' racy? */
 	if (current->thread.flags & PARISC_KERNEL_DEATH) {
-		printk(KERN_CRIT "%s() recursion detected.\n", __func__);
+		printk(KERN_CRIT "%s() recursion detected.\n", __FUNCTION__);
 		local_irq_enable();
 		while (1);
 	}
+
 	current->thread.flags |= PARISC_KERNEL_DEATH;
-
-	show_regs(regs);
-	dump_stack();
-	add_taint(TAINT_DIE);
-
-	if (in_interrupt())
-		panic("Fatal exception in interrupt");
-
-	if (panic_on_oops) {
-		printk(KERN_EMERG "Fatal exception: panic in 5 seconds\n");
-		ssleep(5);
-		panic("Fatal exception");
-	}
-
-	oops_exit();
 	do_exit(SIGSEGV);
 }
 
@@ -305,45 +263,61 @@ int syscall_ipi(int (*syscall) (struct pt_regs *), struct pt_regs *regs)
 
 /* gdb uses break 4,8 */
 #define GDB_BREAK_INSN 0x10004
-static void handle_gdb_break(struct pt_regs *regs, int wot)
+void handle_gdb_break(struct pt_regs *regs, int wot)
 {
 	struct siginfo si;
 
-	si.si_signo = SIGTRAP;
-	si.si_errno = 0;
 	si.si_code = wot;
 	si.si_addr = (void __user *) (regs->iaoq[0] & ~3);
+	si.si_signo = SIGTRAP;
+	si.si_errno = 0;
 	force_sig_info(SIGTRAP, &si, current);
 }
 
-static void handle_break(struct pt_regs *regs)
+void handle_break(unsigned iir, struct pt_regs *regs)
 {
-	unsigned iir = regs->iir;
+	struct siginfo si;
 
-	if (unlikely(iir == PARISC_BUG_BREAK_INSN && !user_mode(regs))) {
-		/* check if a BUG() or WARN() trapped here.  */
-		enum bug_trap_type tt;
-		tt = report_bug(regs->iaoq[0] & ~3, regs);
-		if (tt == BUG_TRAP_TYPE_WARN) {
-			regs->iaoq[0] += 4;
-			regs->iaoq[1] += 4;
-			return; /* return to next instruction when WARN_ON().  */
-		}
-		die_if_kernel("Unknown kernel breakpoint", regs,
-			(tt == BUG_TRAP_TYPE_NONE) ? 9 : 0);
-	}
-
+	switch(iir) {
+	case 0x00:
 #ifdef PRINT_USER_FAULTS
-	if (unlikely(iir != GDB_BREAK_INSN)) {
-		printk(KERN_DEBUG "break %d,%d: pid=%d command='%s'\n",
-			iir & 31, (iir>>13) & ((1<<13)-1),
-			task_pid_nr(current), current->comm);
-		show_regs(regs);
-	}
+		printk(KERN_DEBUG "break 0,0: pid=%d command='%s'\n",
+		       current->pid, current->comm);
 #endif
+		die_if_kernel("Breakpoint", regs, 0);
+#ifdef PRINT_USER_FAULTS
+		show_regs(regs);
+#endif
+		si.si_code = TRAP_BRKPT;
+		si.si_addr = (void __user *) (regs->iaoq[0] & ~3);
+		si.si_signo = SIGTRAP;
+		force_sig_info(SIGTRAP, &si, current);
+		break;
 
-	/* send standard GDB signal */
-	handle_gdb_break(regs, TRAP_BRKPT);
+	case GDB_BREAK_INSN:
+		die_if_kernel("Breakpoint", regs, 0);
+		handle_gdb_break(regs, TRAP_BRKPT);
+		break;
+
+	default:
+#ifdef PRINT_USER_FAULTS
+		printk(KERN_DEBUG "break %#08x: pid=%d command='%s'\n",
+		       iir, current->pid, current->comm);
+		show_regs(regs);
+#endif
+		si.si_signo = SIGTRAP;
+		si.si_code = TRAP_BRKPT;
+		si.si_addr = (void __user *) (regs->iaoq[0] & ~3);
+		force_sig_info(SIGTRAP, &si, current);
+		return;
+	}
+}
+
+
+int handle_toc(void)
+{
+	printk(KERN_CRIT "TOC call.\n");
+	return 0;
 }
 
 static void default_trap(int code, struct pt_regs *regs)
@@ -352,7 +326,7 @@ static void default_trap(int code, struct pt_regs *regs)
 	show_regs(regs);
 }
 
-void (*cpu_lpmc) (int code, struct pt_regs *regs) __read_mostly = default_trap;
+void (*cpu_lpmc) (int code, struct pt_regs *regs) = default_trap;
 
 
 void transfer_pim_to_trap_frame(struct pt_regs *regs)
@@ -496,7 +470,7 @@ void parisc_terminate(char *msg, struct pt_regs *regs, int code, unsigned long o
 	panic(msg);
 }
 
-void notrace handle_interruption(int code, struct pt_regs *regs)
+void handle_interruption(int code, struct pt_regs *regs)
 {
 	unsigned long fault_address = 0;
 	unsigned long fault_space = 0;
@@ -532,7 +506,7 @@ void notrace handle_interruption(int code, struct pt_regs *regs)
 	  	/* Kill the user process later */
 	  	regs->iaoq[0] = 0 | 3;
 		regs->iaoq[1] = regs->iaoq[0] + 4;
-	 	regs->iasq[0] = regs->iasq[1] = regs->sr[7];
+	 	regs->iasq[0] = regs->iasq[0] = regs->sr[7];
 		regs->gr[0] &= ~PSW_B;
 		return;
 	}
@@ -570,8 +544,7 @@ void notrace handle_interruption(int code, struct pt_regs *regs)
 		/* Low-priority machine check */
 		pdc_chassis_send_status(PDC_CHASSIS_DIRECT_LPMC);
 		
-		flush_cache_all();
-		flush_tlb_all();
+		flush_all_caches();
 		cpu_lpmc(5, regs);
 		return;
 
@@ -589,7 +562,7 @@ void notrace handle_interruption(int code, struct pt_regs *regs)
 
 	case  9:
 		/* Break instruction trap */
-		handle_break(regs);
+		handle_break(regs->iir,regs);
 		return;
 	
 	case 10:
@@ -636,7 +609,7 @@ void notrace handle_interruption(int code, struct pt_regs *regs)
 		
 	case 13:
 		/* Conditional Trap
-		   The condition succeeds in an instruction which traps
+		   The condition succees in an instruction which traps 
 		   on condition  */
 		if(user_mode(regs)){
 			si.si_signo = SIGFPE;
@@ -747,10 +720,6 @@ void notrace handle_interruption(int code, struct pt_regs *regs)
 		/* Fall Through */
 	case 27: 
 		/* Data memory protection ID trap */
-		if (code == 27 && !user_mode(regs) &&
-			fixup_exception(regs))
-			return;
-
 		die_if_kernel("Protection id trap", regs, code);
 		si.si_code = SEGV_MAPERR;
 		si.si_signo = SIGSEGV;
@@ -771,7 +740,7 @@ void notrace handle_interruption(int code, struct pt_regs *regs)
 		if (user_mode(regs)) {
 #ifdef PRINT_USER_FAULTS
 			printk(KERN_DEBUG "\nhandle_interruption() pid=%d command='%s'\n",
-			    task_pid_nr(current), current->comm);
+			    current->pid, current->comm);
 			show_regs(regs);
 #endif
 			/* SIGBUS, for lack of a better one. */
@@ -796,8 +765,7 @@ void notrace handle_interruption(int code, struct pt_regs *regs)
 		else
 			printk(KERN_DEBUG "User Fault (long pointer) (fault %d) ",
 			       code);
-		printk(KERN_CONT "pid=%d command='%s'\n",
-		       task_pid_nr(current), current->comm);
+		printk("pid=%d command='%s'\n", current->pid, current->comm);
 		show_regs(regs);
 #endif
 		si.si_signo = SIGSEGV;
@@ -828,14 +796,13 @@ void notrace handle_interruption(int code, struct pt_regs *regs)
 
 int __init check_ivt(void *iva)
 {
-	extern u32 os_hpmc_size;
-	extern const u32 os_hpmc[];
-
 	int i;
 	u32 check = 0;
 	u32 *ivap;
 	u32 *hpmcp;
 	u32 length;
+	extern void os_hpmc(void);
+	extern void os_hpmc_end(void);
 
 	if (strcmp((char *)iva, "cows can fly"))
 		return -1;
@@ -846,7 +813,8 @@ int __init check_ivt(void *iva)
 	    *ivap++ = 0;
 
 	/* Compute Checksum for HPMC handler */
-	length = os_hpmc_size;
+
+	length = (u32)((unsigned long)os_hpmc_end - (unsigned long)os_hpmc);
 	ivap[7] = length;
 
 	hpmcp = (u32 *)os_hpmc;
@@ -862,7 +830,7 @@ int __init check_ivt(void *iva)
 	return 0;
 }
 	
-#ifndef CONFIG_64BIT
+#ifndef __LP64__
 extern const void fault_vector_11;
 #endif
 extern const void fault_vector_20;
@@ -874,7 +842,7 @@ void __init trap_init(void)
 	if (boot_cpu_data.cpu_type >= pcxu)
 		iva = (void *) &fault_vector_20;
 	else
-#ifdef CONFIG_64BIT
+#ifdef __LP64__
 		panic("Can't boot 64-bit OS on PA1.1 processor!");
 #else
 		iva = (void *) &fault_vector_11;

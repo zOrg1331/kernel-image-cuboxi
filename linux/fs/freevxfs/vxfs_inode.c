@@ -41,7 +41,12 @@
 #include "vxfs_extern.h"
 
 
-struct kmem_cache		*vxfs_inode_cachep;
+extern const struct address_space_operations vxfs_aops;
+extern const struct address_space_operations vxfs_immed_aops;
+
+extern struct inode_operations vxfs_immed_symlink_iops;
+
+kmem_cache_t		*vxfs_inode_cachep;
 
 
 #ifdef DIAGNOSTIC
@@ -94,11 +99,11 @@ vxfs_blkiget(struct super_block *sbp, u_long extent, ino_t ino)
 	offset = ((ino % (sbp->s_blocksize / VXFS_ISIZE)) * VXFS_ISIZE);
 	bp = sb_bread(sbp, block);
 
-	if (bp && buffer_mapped(bp)) {
+	if (buffer_mapped(bp)) {
 		struct vxfs_inode_info	*vip;
 		struct vxfs_dinode	*dip;
 
-		if (!(vip = kmem_cache_alloc(vxfs_inode_cachep, GFP_KERNEL)))
+		if (!(vip = kmem_cache_alloc(vxfs_inode_cachep, SLAB_KERNEL)))
 			goto fail;
 		dip = (struct vxfs_dinode *)(bp->b_data + offset);
 		memcpy(vip, dip, sizeof(*vip));
@@ -124,7 +129,7 @@ fail:
  * Description:
  *  Search the for inode number @ino in the filesystem
  *  described by @sbp.  Use the specified inode table (@ilistp).
- *  Returns the matching VxFS inode on success, else an error code.
+ *  Returns the matching VxFS inode on success, else a NULL pointer.
  */
 static struct vxfs_inode_info *
 __vxfs_iget(ino_t ino, struct inode *ilistp)
@@ -140,7 +145,7 @@ __vxfs_iget(ino_t ino, struct inode *ilistp)
 		struct vxfs_dinode	*dip;
 		caddr_t			kaddr = (char *)page_address(pp);
 
-		if (!(vip = kmem_cache_alloc(vxfs_inode_cachep, GFP_KERNEL)))
+		if (!(vip = kmem_cache_alloc(vxfs_inode_cachep, SLAB_KERNEL)))
 			goto fail;
 		dip = (struct vxfs_dinode *)(kaddr + offset);
 		memcpy(vip, dip, sizeof(*vip));
@@ -152,12 +157,12 @@ __vxfs_iget(ino_t ino, struct inode *ilistp)
 	}
 
 	printk(KERN_WARNING "vxfs: error on page %p\n", pp);
-	return ERR_CAST(pp);
+	return NULL;
 
 fail:
 	printk(KERN_WARNING "vxfs: unable to read inode %ld\n", (unsigned long)ino);
 	vxfs_put_page(pp);
-	return ERR_PTR(-ENOMEM);
+	return NULL;
 }
 
 /**
@@ -173,10 +178,7 @@ fail:
 struct vxfs_inode_info *
 vxfs_stiget(struct super_block *sbp, ino_t ino)
 {
-	struct vxfs_inode_info *vip;
-
-	vip = __vxfs_iget(ino, VXFS_SBI(sbp)->vsi_stilist);
-	return IS_ERR(vip) ? NULL : vip;
+        return __vxfs_iget(ino, VXFS_SBI(sbp)->vsi_stilist);
 }
 
 /**
@@ -237,10 +239,11 @@ vxfs_iinit(struct inode *ip, struct vxfs_inode_info *vip)
 	ip->i_ctime.tv_nsec = 0;
 	ip->i_mtime.tv_nsec = 0;
 
+	ip->i_blksize = PAGE_SIZE;
 	ip->i_blocks = vip->vii_blocks;
 	ip->i_generation = vip->vii_gen;
 
-	ip->i_private = vip;
+	ip->u.generic_ip = (void *)vip;
 	
 }
 
@@ -280,32 +283,23 @@ vxfs_put_fake_inode(struct inode *ip)
 }
 
 /**
- * vxfs_iget - get an inode
- * @sbp:	the superblock to get the inode for
- * @ino:	the number of the inode to get
+ * vxfs_read_inode - fill in inode information
+ * @ip:		inode pointer to fill
  *
  * Description:
- *  vxfs_read_inode creates an inode, reads the disk inode for @ino and fills
- *  in all relevant fields in the new inode.
+ *  vxfs_read_inode reads the disk inode for @ip and fills
+ *  in all relevant fields in @ip.
  */
-struct inode *
-vxfs_iget(struct super_block *sbp, ino_t ino)
+void
+vxfs_read_inode(struct inode *ip)
 {
+	struct super_block		*sbp = ip->i_sb;
 	struct vxfs_inode_info		*vip;
 	const struct address_space_operations	*aops;
-	struct inode *ip;
+	ino_t				ino = ip->i_ino;
 
-	ip = iget_locked(sbp, ino);
-	if (!ip)
-		return ERR_PTR(-ENOMEM);
-	if (!(ip->i_state & I_NEW))
-		return ip;
-
-	vip = __vxfs_iget(ino, VXFS_SBI(sbp)->vsi_ilist);
-	if (IS_ERR(vip)) {
-		iget_failed(ip);
-		return ERR_CAST(vip);
-	}
+	if (!(vip = __vxfs_iget(ino, VXFS_SBI(sbp)->vsi_ilist)))
+		return;
 
 	vxfs_iinit(ip, vip);
 
@@ -325,15 +319,12 @@ vxfs_iget(struct super_block *sbp, ino_t ino)
 		if (!VXFS_ISIMMED(vip)) {
 			ip->i_op = &page_symlink_inode_operations;
 			ip->i_mapping->a_ops = &vxfs_aops;
-		} else {
+		} else
 			ip->i_op = &vxfs_immed_symlink_iops;
-			vip->vii_immed.vi_immed[ip->i_size] = '\0';
-		}
 	} else
 		init_special_inode(ip, ip->i_mode, old_decode_dev(vip->vii_rdev));
 
-	unlock_new_inode(ip);
-	return ip;
+	return;
 }
 
 /**
@@ -347,5 +338,5 @@ vxfs_iget(struct super_block *sbp, ino_t ino)
 void
 vxfs_clear_inode(struct inode *ip)
 {
-	kmem_cache_free(vxfs_inode_cachep, ip->i_private);
+	kmem_cache_free(vxfs_inode_cachep, ip->u.generic_ip);
 }

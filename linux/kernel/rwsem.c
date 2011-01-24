@@ -6,7 +6,6 @@
 
 #include <linux/types.h>
 #include <linux/kernel.h>
-#include <linux/sched.h>
 #include <linux/module.h>
 #include <linux/rwsem.h>
 
@@ -16,12 +15,12 @@
 /*
  * lock for reading
  */
-void __sched down_read(struct rw_semaphore *sem)
+void down_read(struct rw_semaphore *sem)
 {
 	might_sleep();
 	rwsem_acquire_read(&sem->dep_map, 0, 0, _RET_IP_);
 
-	LOCK_CONTENDED(sem, __down_read_trylock, __down_read);
+	__down_read(sem);
 }
 
 EXPORT_SYMBOL(down_read);
@@ -43,12 +42,12 @@ EXPORT_SYMBOL(down_read_trylock);
 /*
  * lock for writing
  */
-void __sched down_write(struct rw_semaphore *sem)
+void down_write(struct rw_semaphore *sem)
 {
 	might_sleep();
 	rwsem_acquire(&sem->dep_map, 0, 0, _RET_IP_);
 
-	LOCK_CONTENDED(sem, __down_write_trylock, __down_write);
+	__down_write(sem);
 }
 
 EXPORT_SYMBOL(down_write);
@@ -61,7 +60,7 @@ int down_write_trylock(struct rw_semaphore *sem)
 	int ret = __down_write_trylock(sem);
 
 	if (ret == 1)
-		rwsem_acquire(&sem->dep_map, 0, 1, _RET_IP_);
+		rwsem_acquire(&sem->dep_map, 0, 0, _RET_IP_);
 	return ret;
 }
 
@@ -112,7 +111,7 @@ void down_read_nested(struct rw_semaphore *sem, int subclass)
 	might_sleep();
 	rwsem_acquire_read(&sem->dep_map, subclass, 0, _RET_IP_);
 
-	LOCK_CONTENDED(sem, __down_read_trylock, __down_read);
+	__down_read(sem);
 }
 
 EXPORT_SYMBOL(down_read_nested);
@@ -131,7 +130,7 @@ void down_write_nested(struct rw_semaphore *sem, int subclass)
 	might_sleep();
 	rwsem_acquire(&sem->dep_map, subclass, 0, _RET_IP_);
 
-	LOCK_CONTENDED(sem, __down_write_trylock, __down_write);
+	__down_write_nested(sem, subclass);
 }
 
 EXPORT_SYMBOL(down_write_nested);

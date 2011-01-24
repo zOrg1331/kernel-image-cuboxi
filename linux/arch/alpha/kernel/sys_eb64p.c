@@ -69,8 +69,8 @@ eb64p_end_irq(unsigned int irq)
 		eb64p_enable_irq(irq);
 }
 
-static struct irq_chip eb64p_irq_type = {
-	.name		= "EB64P",
+static struct hw_interrupt_type eb64p_irq_type = {
+	.typename	= "EB64P",
 	.startup	= eb64p_startup_irq,
 	.shutdown	= eb64p_disable_irq,
 	.enable		= eb64p_enable_irq,
@@ -80,7 +80,7 @@ static struct irq_chip eb64p_irq_type = {
 };
 
 static void 
-eb64p_device_interrupt(unsigned long vector)
+eb64p_device_interrupt(unsigned long vector, struct pt_regs *regs)
 {
 	unsigned long pld;
 	unsigned int i;
@@ -97,9 +97,9 @@ eb64p_device_interrupt(unsigned long vector)
 		pld &= pld - 1;	/* clear least bit set */
 
 		if (i == 5) {
-			isa_device_interrupt(vector);
+			isa_device_interrupt(vector, regs);
 		} else {
-			handle_irq(16 + i);
+			handle_irq(16 + i, regs);
 		}
 	}
 }

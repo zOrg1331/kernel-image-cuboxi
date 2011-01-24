@@ -1,0 +1,37 @@
+From: Chris Lalancette <clalance@redhat.com>
+Subject: [RHEL5 PATCH]: Compute checksum properly in netpoll_send_udp
+Date: Wed, 08 Nov 2006 00:09:18 -0500
+Bugzilla: 214542
+Message-Id: <4551667E.7040300@redhat.com>
+Changelog: Compute checksum properly in netpoll_send_udp
+
+
+All,
+    While looking at some netconsole captures the other day, I noticed that 
+    all packets between the netconsole client and netconsole server had a 
+    zero UDP checksum.  This is because netconsole makes a call to 
+    netpoll_send_udp, which just sets the checksum to 0.  While technically 
+    allowed by the protocol, having no checksum is generally considered a 
+    bad thing.  The attached patch fixes this by simply computing the 
+    checksum before sending it out.  This fixes BZ 214542.  This patch is 
+    currently upstream in David Miller's network tree.  Please ACK.
+
+Thanks,
+Chris Lalancette
+
+--- linux-2.6.18.noarch/net/core/netpoll.c.orig	2006-11-07 20:11:48.622089003 -0500
++++ linux-2.6.18.noarch/net/core/netpoll.c	2006-11-07 20:12:14.243963859 -0500
+@@ -340,6 +340,12 @@ void netpoll_send_udp(struct netpoll *np
+ 	udph->dest = htons(np->remote_port);
+ 	udph->len = htons(udp_len);
+ 	udph->check = 0;
++	udph->check = csum_tcpudp_magic(htonl(np->local_ip),
++					htonl(np->remote_ip),
++					udp_len, IPPROTO_UDP,
++					csum_partial((unsigned char *)udph, udp_len, 0));
++	if (udph->check == 0)
++		udph->check = -1;
+ 
+ 	iph = (struct iphdr *)skb_push(skb, sizeof(*iph));
+ 
+

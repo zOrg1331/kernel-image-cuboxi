@@ -1,0 +1,86 @@
+From: Hans-Joachim Picht <hpicht@redhat.com>
+Date: Thu, 26 Feb 2009 17:26:38 +0100
+Subject: [s390] iucv: failing cpu hot remove for inactive iucv
+Message-id: 20090226162638.GA17830@redhat.com
+O-Subject: [RHEL5 U4 PATCH 1/1] s390 - iucv: failing cpu hot remove for inactive iucv
+Bugzilla: 485412
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+
+Description
+============
+
+If the iucv module is compiled in/loaded but no user is registered cpu
+hot remove doesn't work. Reason for that is that the iucv cpu hotplug
+notifier on CPU_DOWN_PREPARE checks if the iucv_buffer_cpumask would
+be empty after the corresponding bit would be cleared. However the bit
+was never set since iucv wasn't enable. That causes all cpu hot unplug
+operations to fail in this scenario.
+To fix this use iucv_path_table as an indicator wether iucv is enabled
+or not.
+
+Bugzilla
+=========
+
+BZ 485412
+https://bugzilla.redhat.com/show_bug.cgi?id=
+
+Upstream status of the patch:
+=============================
+
+The patch is upstream as of git commit
+f1d3e4dca3f8d4f55656477e83d0afe0ea7cbaed,
+
+Test status:
+============
+
+The patch has been tested and fixes the problem.
+The fix has been verified by the IBM test department.
+
+Please ACK.
+
+With best regards,
+
+	--Hans
+
+diff --git a/net/iucv/iucv.c b/net/iucv/iucv.c
+index 8b44eb1..b6c76e5 100644
+--- a/net/iucv/iucv.c
++++ b/net/iucv/iucv.c
+@@ -526,12 +526,12 @@ static int iucv_enable(void)
+ 	preempt_enable();
+ 	if (cpus_empty(iucv_buffer_cpumask))
+ 		/* No cpu could declare an iucv buffer. */
+-		goto out_path;
++		goto out;
+ 	return 0;
+ 
+-out_path:
+-	kfree(iucv_path_table);
+ out:
++	kfree(iucv_path_table);
++	iucv_path_table = NULL;
+ 	return rc;
+ }
+ 
+@@ -546,6 +546,7 @@ static void iucv_disable(void)
+ {
+ 	on_each_cpu(iucv_retrieve_cpu, NULL, 0, 1);
+ 	kfree(iucv_path_table);
++	iucv_path_table = NULL;
+ }
+ 
+ #ifdef CONFIG_SMP
+@@ -689,9 +690,13 @@ static int __cpuinit iucv_cpu_notify(struct notifier_block *self,
+ 		break;
+ 	case CPU_ONLINE:
+ 	case CPU_DOWN_FAILED:
++		if (!iucv_path_table)
++			break;
+ 		smp_call_function_on(iucv_declare_cpu, NULL, 0, 1, cpu);
+ 		break;
+ 	case CPU_DOWN_PREPARE:
++		if (!iucv_path_table)
++			break;
+ 		cpumask = iucv_buffer_cpumask;
+ 		cpu_clear(cpu, cpumask);
+ 		if (cpus_empty(cpumask))

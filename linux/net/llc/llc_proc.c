@@ -17,7 +17,6 @@
 #include <linux/proc_fs.h>
 #include <linux/errno.h>
 #include <linux/seq_file.h>
-#include <net/net_namespace.h>
 #include <net/sock.h>
 #include <net/llc.h>
 #include <net/llc_c_ac.h>
@@ -25,9 +24,10 @@
 #include <net/llc_c_st.h>
 #include <net/llc_conn.h>
 
-static void llc_ui_format_mac(struct seq_file *seq, u8 *addr)
+static void llc_ui_format_mac(struct seq_file *seq, unsigned char *mac)
 {
-	seq_printf(seq, "%pM", addr);
+	seq_printf(seq, "%02X:%02X:%02X:%02X:%02X:%02X",
+		   mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
 }
 
 static struct sock *llc_get_sk_idx(loff_t pos)
@@ -127,15 +127,13 @@ static int llc_seq_socket_show(struct seq_file *seq, void *v)
 
 	if (llc->dev)
 		llc_ui_format_mac(seq, llc->dev->dev_addr);
-	else {
-		u8 addr[6] = {0,0,0,0,0,0};
-		llc_ui_format_mac(seq, addr);
-	}
+	else
+		seq_printf(seq, "00:00:00:00:00:00");
 	seq_printf(seq, "@%02X ", llc->sap->laddr.lsap);
 	llc_ui_format_mac(seq, llc->daddr.mac);
 	seq_printf(seq, "@%02X %8d %8d %2d %3d %4d\n", llc->daddr.lsap,
-		   sk_wmem_alloc_get(sk),
-		   sk_rmem_alloc_get(sk) - llc->copied_seq,
+		   atomic_read(&sk->sk_wmem_alloc),
+		   atomic_read(&sk->sk_rmem_alloc) - llc->copied_seq,
 		   sk->sk_state,
 		   sk->sk_socket ? SOCK_INODE(sk->sk_socket)->i_uid : -1,
 		   llc->link);
@@ -143,19 +141,19 @@ out:
 	return 0;
 }
 
-static const char *const llc_conn_state_names[] = {
-	[LLC_CONN_STATE_ADM] =        "adm",
-	[LLC_CONN_STATE_SETUP] =      "setup",
+static char *llc_conn_state_names[] = {
+	[LLC_CONN_STATE_ADM] =        "adm", 
+	[LLC_CONN_STATE_SETUP] =      "setup", 
 	[LLC_CONN_STATE_NORMAL] =     "normal",
-	[LLC_CONN_STATE_BUSY] =       "busy",
-	[LLC_CONN_STATE_REJ] =        "rej",
-	[LLC_CONN_STATE_AWAIT] =      "await",
+	[LLC_CONN_STATE_BUSY] =       "busy", 
+	[LLC_CONN_STATE_REJ] =        "rej", 
+	[LLC_CONN_STATE_AWAIT] =      "await", 
 	[LLC_CONN_STATE_AWAIT_BUSY] = "await_busy",
 	[LLC_CONN_STATE_AWAIT_REJ] =  "await_rej",
 	[LLC_CONN_STATE_D_CONN]	=     "d_conn",
-	[LLC_CONN_STATE_RESET] =      "reset",
-	[LLC_CONN_STATE_ERROR] =      "error",
-	[LLC_CONN_STATE_TEMP] =       "temp",
+	[LLC_CONN_STATE_RESET] =      "reset", 
+	[LLC_CONN_STATE_ERROR] =      "error", 
+	[LLC_CONN_STATE_TEMP] =       "temp", 
 };
 
 static int llc_seq_core_show(struct seq_file *seq, void *v)
@@ -186,14 +184,14 @@ out:
 	return 0;
 }
 
-static const struct seq_operations llc_seq_socket_ops = {
+static struct seq_operations llc_seq_socket_ops = {
 	.start  = llc_seq_start,
 	.next   = llc_seq_next,
 	.stop   = llc_seq_stop,
 	.show   = llc_seq_socket_show,
 };
 
-static const struct seq_operations llc_seq_core_ops = {
+static struct seq_operations llc_seq_core_ops = {
 	.start  = llc_seq_start,
 	.next   = llc_seq_next,
 	.stop   = llc_seq_stop,
@@ -210,7 +208,7 @@ static int llc_seq_core_open(struct inode *inode, struct file *file)
 	return seq_open(file, &llc_seq_core_ops);
 }
 
-static const struct file_operations llc_seq_socket_fops = {
+static struct file_operations llc_seq_socket_fops = {
 	.owner		= THIS_MODULE,
 	.open		= llc_seq_socket_open,
 	.read		= seq_read,
@@ -218,7 +216,7 @@ static const struct file_operations llc_seq_socket_fops = {
 	.release	= seq_release,
 };
 
-static const struct file_operations llc_seq_core_fops = {
+static struct file_operations llc_seq_core_fops = {
 	.owner		= THIS_MODULE,
 	.open		= llc_seq_core_open,
 	.read		= seq_read,
@@ -233,17 +231,22 @@ int __init llc_proc_init(void)
 	int rc = -ENOMEM;
 	struct proc_dir_entry *p;
 
-	llc_proc_dir = proc_mkdir("llc", init_net.proc_net);
+	llc_proc_dir = proc_mkdir("llc", proc_net);
 	if (!llc_proc_dir)
 		goto out;
+	llc_proc_dir->owner = THIS_MODULE;
 
-	p = proc_create("socket", S_IRUGO, llc_proc_dir, &llc_seq_socket_fops);
+	p = create_proc_entry("socket", S_IRUGO, llc_proc_dir);
 	if (!p)
 		goto out_socket;
 
-	p = proc_create("core", S_IRUGO, llc_proc_dir, &llc_seq_core_fops);
+	p->proc_fops = &llc_seq_socket_fops;
+
+	p = create_proc_entry("core", S_IRUGO, llc_proc_dir);
 	if (!p)
 		goto out_core;
+
+	p->proc_fops = &llc_seq_core_fops;
 
 	rc = 0;
 out:
@@ -251,7 +254,7 @@ out:
 out_core:
 	remove_proc_entry("socket", llc_proc_dir);
 out_socket:
-	remove_proc_entry("llc", init_net.proc_net);
+	remove_proc_entry("llc", proc_net);
 	goto out;
 }
 
@@ -259,5 +262,5 @@ void llc_proc_exit(void)
 {
 	remove_proc_entry("socket", llc_proc_dir);
 	remove_proc_entry("core", llc_proc_dir);
-	remove_proc_entry("llc", init_net.proc_net);
+	remove_proc_entry("llc", proc_net);
 }

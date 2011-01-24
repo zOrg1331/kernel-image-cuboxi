@@ -1,0 +1,675 @@
+From: Neil Horman <nhorman@redhat.com>
+Date: Thu, 12 Jul 2007 14:47:07 -0400
+Subject: [net] sctp: rewrite receive buffer management code
+Message-id: 20070712184706.GF12979@hmsendeavour.rdu.redhat.com
+O-Subject: [RHEL 5.2 PATCH] rewrite of sctp receive buffer management code (bz 246722)
+Bugzilla: 246722
+
+Hey all-
+	For a long time now, we've had a pretty serious problem with sctp, in
+that its easy to make it start dropping frames due to receive buffer limitations
+before its receive window closes.  This leads to all sorts of bad behavior that
+we've had to hack around for quite some time, both in RHEL and upstream.  A few
+weeks ago, I wrote this patch to replace all those hack with reasonable receive
+and send buffer management that is in line with the way tcp does memory
+management:
+
+http://git.kernel.org/?p=linux/kernel/git/vxy/lksctp-2.6.23.git;a=commit;h=178e3a7bf7892b4e7589d99329c3318866ea27c0
+
+Its been tested throughly by me and the sctp maintainer upstream, and is slated
+for inclusion to 2.6.23.  This is a backport of that patch, and its supporting
+bits.  It resolves bz 246722, and should likely solve several other sctp
+performance related bz's.
+
+Thanks & Regards
+Neil
+
+Acked-by: "David S. Miller" <davem@redhat.com>
+---
+ include/linux/sysctl.h      |    3 +
+ include/net/sctp/sctp.h     |   19 +++++++
+ include/net/sctp/ulpevent.h |    1 +
+ net/sctp/endpointola.c      |    1 +
+ net/sctp/protocol.c         |   32 +++++++++++
+ net/sctp/sm_statefuns.c     |   73 +++++++--------------------
+ net/sctp/socket.c           |  120 +++++++++++++++++++++++++++++++++++++-----
+ net/sctp/sysctl.c           |   33 ++++++++++++
+ net/sctp/ulpevent.c         |   36 ++++++++++---
+ net/sctp/ulpqueue.c         |    3 +-
+ 10 files changed, 242 insertions(+), 79 deletions(-)
+
+diff --git a/include/linux/sysctl.h b/include/linux/sysctl.h
+index 9bf1545..909fd90 100644
+--- a/include/linux/sysctl.h
++++ b/include/linux/sysctl.h
+@@ -775,6 +775,9 @@ enum {
+ 	NET_SCTP_SNDBUF_POLICY		 = 15,
+ 	NET_SCTP_SACK_TIMEOUT		 = 16,
+ 	NET_SCTP_RCVBUF_POLICY		 = 17,
++	NET_SCTP_BUF_MEM		 = 18,
++	NET_SCTP_BUF_RMEM		 = 19,
++	NET_SCTP_BUF_WMEM		 = 20,
+ };
+ 
+ /* /proc/sys/net/bridge */
+diff --git a/include/net/sctp/sctp.h b/include/net/sctp/sctp.h
+index 92eae0e..178300f 100644
+--- a/include/net/sctp/sctp.h
++++ b/include/net/sctp/sctp.h
+@@ -137,6 +137,7 @@ int sctp_inet_listen(struct socket *sock, int backlog);
+ void sctp_write_space(struct sock *sk);
+ unsigned int sctp_poll(struct file *file, struct socket *sock,
+ 		poll_table *wait);
++void sctp_sock_rfree(struct sk_buff *skb);
+ 
+ /*
+  * sctp/primitive.c
+@@ -398,6 +399,24 @@ static inline struct list_head *sctp_list_dequeue(struct list_head *list)
+ 	return result;
+ }
+ 
++/* SCTP version of skb_set_owner_r.  We need this one because
++ * of the way we have to do receive buffer accounting on bundled
++ * chunks.
++ */
++static inline void sctp_skb_set_owner_r(struct sk_buff *skb, struct sock *sk)
++{
++	struct sctp_ulpevent *event = sctp_skb2event(skb);
++
++	skb->sk = sk;
++	skb->destructor = sctp_sock_rfree;
++	atomic_add(event->rmem_len, &sk->sk_rmem_alloc);
++	/*
++	 * This mimics the behavior of
++	 * sk_stream_set_owner_r
++	 */
++	sk->sk_forward_alloc -= event->rmem_len;
++}
++
+ /* Tests if the list has one and only one entry. */
+ static inline int sctp_list_single_entry(struct list_head *head)
+ {
+diff --git a/include/net/sctp/ulpevent.h b/include/net/sctp/ulpevent.h
+index 6c40cfc..1a4ddc1 100644
+--- a/include/net/sctp/ulpevent.h
++++ b/include/net/sctp/ulpevent.h
+@@ -63,6 +63,7 @@ struct sctp_ulpevent {
+ 	__u32 cumtsn;
+ 	int msg_flags;
+ 	int iif;
++	unsigned int rmem_len;
+ };
+ 
+ /* Retrieve the skb this event sits inside of. */
+diff --git a/net/sctp/endpointola.c b/net/sctp/endpointola.c
+index ffda1d6..cd85b79 100644
+--- a/net/sctp/endpointola.c
++++ b/net/sctp/endpointola.c
+@@ -101,6 +101,7 @@ static struct sctp_endpoint *sctp_endpoint_init(struct sctp_endpoint *ep,
+ 
+ 	/* Use SCTP specific send buffer space queues.  */
+ 	ep->sndbuf_policy = sctp_sndbuf_policy;
++
+ 	sk->sk_write_space = sctp_write_space;
+ 	sock_set_flag(sk, SOCK_USE_WRITE_QUEUE);
+ 
+diff --git a/net/sctp/protocol.c b/net/sctp/protocol.c
+index 1ab03a2..8762957 100644
+--- a/net/sctp/protocol.c
++++ b/net/sctp/protocol.c
+@@ -51,6 +51,7 @@
+ #include <linux/netdevice.h>
+ #include <linux/inetdevice.h>
+ #include <linux/seq_file.h>
++#include <linux/bootmem.h>
+ #include <net/protocol.h>
+ #include <net/ip.h>
+ #include <net/ipv6.h>
+@@ -89,6 +90,10 @@ extern int sctp_eps_proc_exit(void);
+ extern int sctp_assocs_proc_init(void);
+ extern int sctp_assocs_proc_exit(void);
+ 
++extern int sysctl_sctp_mem[3];
++extern int sysctl_sctp_rmem[3];
++extern int sysctl_sctp_wmem[3];
++
+ /* Return the address of the control sock. */
+ struct sock *sctp_get_ctl_sock(void)
+ {
+@@ -982,6 +987,8 @@ SCTP_STATIC __init int sctp_init(void)
+ 	int i;
+ 	int status = -EINVAL;
+ 	unsigned long goal;
++ 	unsigned long limit;
++ 	int max_share;
+ 	int order;
+ 
+ 	/* SCTP_DEBUG sanity check. */
+@@ -1086,6 +1093,31 @@ SCTP_STATIC __init int sctp_init(void)
+ 	/* Initialize handle used for association ids. */
+ 	idr_init(&sctp_assocs_id);
+ 
++ 	/* Set the pressure threshold to be a fraction of global memory that
++	 * is up to 1/2 at 256 MB, decreasing toward zero with the amount of
++	 * memory, with a floor of 128 pages.
++ 	 * Note this initalizes the data in sctpv6_prot too
++ 	 * Unabashedly stolen from tcp_init
++	 */
++ 	limit = min(num_physpages, 1UL<<(28-PAGE_SHIFT)) >> (20-PAGE_SHIFT);
++ 	limit = (limit * (num_physpages >> (20-PAGE_SHIFT))) >> (PAGE_SHIFT-11);
++ 	limit = max(limit, 128UL);
++ 	sysctl_sctp_mem[0] = limit / 4 * 3;
++ 	sysctl_sctp_mem[1] = limit;
++ 	sysctl_sctp_mem[2] = sysctl_sctp_mem[0] * 2;
++ 
++ 	/* Set per-socket limits to no more than 1/128 the pressure threshold*/
++	limit = (sysctl_sctp_mem[1]) << (PAGE_SHIFT - 7);
++	max_share = min(4UL*1024*1024, limit);
++ 
++ 	sysctl_sctp_rmem[0] = PAGE_SIZE; /* give each asoc 1 page min */
++ 	sysctl_sctp_rmem[1] = (1500 *(sizeof(struct sk_buff) + 1));
++ 	sysctl_sctp_rmem[2] = max(sysctl_sctp_rmem[1], max_share);
++ 
++ 	sysctl_sctp_wmem[0] = SK_STREAM_MEM_QUANTUM;
++ 	sysctl_sctp_wmem[1] = 16*1024;
++ 	sysctl_sctp_wmem[2] = max(64*1024, max_share);
++ 
+ 	/* Size and allocate the association hash table.
+ 	 * The methodology is similar to that of the tcp hash tables.
+ 	 */
+diff --git a/net/sctp/sm_statefuns.c b/net/sctp/sm_statefuns.c
+index 5b5ae79..a4a2037 100644
+--- a/net/sctp/sm_statefuns.c
++++ b/net/sctp/sm_statefuns.c
+@@ -5174,7 +5174,6 @@ static int sctp_eat_data(const struct sctp_association *asoc,
+ 	int account_value;
+ 	struct sctp_tsnmap *map = (struct sctp_tsnmap *)&asoc->peer.tsn_map;
+ 	struct sock *sk = asoc->base.sk;
+-	int rcvbuf_over = 0;
+ 
+ 	data_hdr = chunk->subh.data_hdr = (sctp_datahdr_t *)chunk->skb->data;
+ 	skb_pull(chunk->skb, sizeof(sctp_datahdr_t));
+@@ -5184,48 +5183,6 @@ static int sctp_eat_data(const struct sctp_association *asoc,
+ 
+ 	/* ASSERT:  Now skb->data is really the user data.  */
+ 
+-	/*
+-	 * If we are established, and we have used up our receive buffer
+-	 * memory, think about droping the frame.
+-	 * Note that we have an opportunity to improve performance here.
+-	 * If we accept one chunk from an skbuff, we have to keep all the
+-	 * memory of that skbuff around until the chunk is read into user
+-	 * space. Therefore, once we accept 1 chunk we may as well accept all
+-	 * remaining chunks in the skbuff. The data_accepted flag helps us do
+-	 * that.
+-	 */
+-	if ((asoc->state == SCTP_STATE_ESTABLISHED) && (!chunk->data_accepted)) {
+-		/*
+-		 * If the receive buffer policy is 1, then each
+-		 * association can allocate up to sk_rcvbuf bytes
+-		 * otherwise, all the associations in aggregate
+-		 * may allocate up to sk_rcvbuf bytes
+-		 */
+-		if (asoc->ep->rcvbuf_policy)
+-			account_value = atomic_read(&asoc->rmem_alloc);
+-		else
+-			account_value = atomic_read(&sk->sk_rmem_alloc);
+-		if (account_value > sk->sk_rcvbuf) {
+-			/*
+-			 * We need to make forward progress, even when we are
+-			 * under memory pressure, so we always allow the
+-			 * next tsn after the ctsn ack point to be accepted.
+-			 * This lets us avoid deadlocks in which we have to
+-			 * drop frames that would otherwise let us drain the
+-			 * receive queue.
+-			 */
+-			if ((sctp_tsnmap_get_ctsn(map) + 1) != tsn)
+-				return SCTP_IERROR_IGNORE_TSN;
+-
+-			/*
+-			 * We're going to accept the frame but we should renege
+-			 * to make space for it. This will send us down that
+-			 * path later in this function.
+-			 */
+-			rcvbuf_over = 1;
+-		}
+-	}
+-
+ 	/* Process ECN based congestion.
+ 	 *
+ 	 * Since the chunk structure is reused for all chunks within
+@@ -5285,18 +5242,9 @@ static int sctp_eat_data(const struct sctp_association *asoc,
+ 	 * seems a bit troublesome in that frag_point varies based on
+ 	 * PMTU.  In cases, such as loopback, this might be a rather
+ 	 * large spill over.
+-	 * NOTE: If we have a full receive buffer here, we only renege if
+-	 * our receiver can still make progress without the tsn being
+-	 * received. We do this because in the event that the associations
+-	 * receive queue is empty we are filling a leading gap, and since
+-	 * reneging moves the gap to the end of the tsn stream, we are likely
+-	 * to stall again very shortly. Avoiding the renege when we fill a
+-	 * leading gap is a good heuristic for avoiding such steady state
+-	 * stalls.
+-	 */
+-	if (!asoc->rwnd || asoc->rwnd_over ||
+-	    (datalen > asoc->rwnd + asoc->frag_point) ||
+-	    (rcvbuf_over && (!skb_queue_len(&sk->sk_receive_queue)))) {
++	 */
++	if ((!chunk->data_accepted) && (!asoc->rwnd || asoc->rwnd_over ||
++	    (datalen > asoc->rwnd + asoc->frag_point))) {
+ 
+ 		/* If this is the next TSN, consider reneging to make
+ 		 * room.   Note: Playing nice with a confused sender.  A
+@@ -5317,6 +5265,21 @@ static int sctp_eat_data(const struct sctp_association *asoc,
+ 	}
+ 
+ 	/*
++	 * Also try to renege to limit our memory usage in the event that
++	 * we are under memory pressure
++	 * If we can't renege, don't worry about it, the sk_stream_rmem_schedule
++	 * in sctp_ulpevent_make_rcvmsg will drop the frame if we grow our
++	 * memory usage too much
++	 */
++	if (*sk->sk_prot_creator->memory_pressure) {
++		if (sctp_tsnmap_has_gap(map) &&
++	           (sctp_tsnmap_get_ctsn(map) + 1) == tsn) {
++			SCTP_DEBUG_PRINTK("Under Pressure! Reneging for tsn:%u\n", tsn);
++			deliver = SCTP_CMD_RENEGE;
++		 }
++	}
++
++	/*
+ 	 * Section 3.3.10.9 No User Data (9)
+ 	 *
+ 	 * Cause of error
+diff --git a/net/sctp/socket.c b/net/sctp/socket.c
+index dab1594..3309778 100644
+--- a/net/sctp/socket.c
++++ b/net/sctp/socket.c
+@@ -109,23 +109,42 @@ static char *sctp_hmac_alg = SCTP_COOKIE_HMAC_ALG;
+ 
+ extern kmem_cache_t *sctp_bucket_cachep;
+ 
++extern int sysctl_sctp_mem[3];
++extern int sysctl_sctp_rmem[3];
++extern int sysctl_sctp_wmem[3];
++
++int sctp_memory_pressure;
++atomic_t sctp_memory_allocated;
++atomic_t sctp_sockets_allocated;
++ 
++static void sctp_enter_memory_pressure(void)
++{
++	sctp_memory_pressure = 1;
++}
++
+ /* Get the sndbuf space available at the time on the association.  */
+ static inline int sctp_wspace(struct sctp_association *asoc)
+ {
++	int amt;
+ 	struct sock *sk = asoc->base.sk;
+-	int amt = 0;
+ 
+-	if (asoc->ep->sndbuf_policy) {
+-		/* make sure that no association uses more than sk_sndbuf */
+-		amt = sk->sk_sndbuf - asoc->sndbuf_used;
++	if (asoc->ep->sndbuf_policy)
++		amt = asoc->sndbuf_used;
++	else 
++		amt = atomic_read(&sk->sk_wmem_alloc);
++
++	if (amt >= sk->sk_sndbuf) {
++		if (sk->sk_userlocks & SOCK_SNDBUF_LOCK)
++			amt = 0;
++		else {
++			amt = sk_stream_wspace(sk);
++			if (amt < 0)
++				amt = 0;
++		}
+ 	} else {
+-		/* do socket level accounting */
+-		amt = sk->sk_sndbuf - atomic_read(&sk->sk_wmem_alloc);
++		amt = sk->sk_sndbuf - amt;
+ 	}
+-
+-	if (amt < 0)
+-		amt = 0;
+-
++	
+ 	return amt;
+ }
+ 
+@@ -157,6 +176,7 @@ static inline void sctp_set_owner_w(struct sctp_chunk *chunk)
+ 				sizeof(struct sctp_chunk);
+ 
+ 	atomic_add(sizeof(struct sctp_chunk), &sk->sk_wmem_alloc);
++	sk_charge_skb(sk, chunk->skb);
+ }
+ 
+ /* Verify that this is a valid address. */
+@@ -3121,6 +3141,7 @@ SCTP_STATIC int sctp_init_sock(struct sock *sk)
+ 	sp->hmac = NULL;
+ 
+ 	SCTP_DBG_OBJCNT_INC(sock);
++	atomic_inc(&sctp_sockets_allocated);
+ 	return 0;
+ }
+ 
+@@ -3134,7 +3155,7 @@ SCTP_STATIC int sctp_destroy_sock(struct sock *sk)
+ 	/* Release our hold on the endpoint. */
+ 	ep = sctp_sk(sk)->ep;
+ 	sctp_endpoint_free(ep);
+-
++	atomic_dec(&sctp_sockets_allocated);
+ 	return 0;
+ }
+ 
+@@ -5357,12 +5378,38 @@ static void sctp_wfree(struct sk_buff *skb)
+ 
+ 	atomic_sub(sizeof(struct sctp_chunk), &sk->sk_wmem_alloc);
+ 
++	/*
++	 * This undoes what is done via sk_charge_skb
++	 */
++	sk->sk_wmem_queued   -= skb->truesize;
++	sk->sk_forward_alloc += skb->truesize;
++
+ 	sock_wfree(skb);
+ 	__sctp_write_space(asoc);
+ 
+ 	sctp_association_put(asoc);
+ }
+ 
++/* Do accounting for the receive space on the socket.
++ * Accounting for the association is done in ulpevent.c
++ * We set this as a destructor for the cloned data skbs so that
++ * accounting is done at the correct time.
++ */
++void sctp_sock_rfree(struct sk_buff *skb)
++{
++	struct sock *sk = skb->sk;
++	struct sctp_ulpevent *event = sctp_skb2event(skb);
++
++	atomic_sub(event->rmem_len, &sk->sk_rmem_alloc);
++
++	/*
++	 * Mimic the behavior of sk_stream_rfree
++	 */
++	sk->sk_forward_alloc += event->rmem_len;
++
++}
++
++
+ /* Helper function to wait for space in the sndbuf.  */
+ static int sctp_wait_for_sndbuf(struct sctp_association *asoc, long *timeo_p,
+ 				size_t msg_len)
+@@ -5581,6 +5628,36 @@ void sctp_wait_for_close(struct sock *sk, long timeout)
+ 	finish_wait(sk->sk_sleep, &wait);
+ }
+ 
++static void sctp_sock_rfree_frag(struct sk_buff *skb)
++{
++	struct sk_buff *frag;
++
++	if (!skb->data_len)
++		goto done;
++
++	/* Don't forget the fragments. */
++	for (frag = skb_shinfo(skb)->frag_list; frag; frag = frag->next)
++		sctp_sock_rfree_frag(frag);
++
++done:
++	sctp_sock_rfree(skb);
++}
++
++static void sctp_skb_set_owner_r_frag(struct sk_buff *skb, struct sock *sk)
++{
++	struct sk_buff *frag;
++
++	if (!skb->data_len)
++		goto done;
++
++	/* Don't forget the fragments. */
++	for (frag = skb_shinfo(skb)->frag_list; frag; frag = frag->next)
++		sctp_skb_set_owner_r_frag(frag, sk);
++
++done:
++	sctp_skb_set_owner_r(skb, sk);
++}
++
+ /* Populate the fields of the newsk from the oldsk and migrate the assoc
+  * and its messages to the newsk.
+  */
+@@ -5633,10 +5710,10 @@ static void sctp_sock_migrate(struct sock *oldsk, struct sock *newsk,
+ 	sctp_skb_for_each(skb, &oldsk->sk_receive_queue, tmp) {
+ 		event = sctp_skb2event(skb);
+ 		if (event->asoc == assoc) {
+-			sock_rfree(skb);
++			sctp_sock_rfree_frag(skb);
+ 			__skb_unlink(skb, &oldsk->sk_receive_queue);
+ 			__skb_queue_tail(&newsk->sk_receive_queue, skb);
+-			skb_set_owner_r(skb, newsk);
++			sctp_skb_set_owner_r_frag(skb, newsk);
+ 		}
+ 	}
+ 
+@@ -5664,10 +5741,10 @@ static void sctp_sock_migrate(struct sock *oldsk, struct sock *newsk,
+ 		sctp_skb_for_each(skb, &oldsp->pd_lobby, tmp) {
+ 			event = sctp_skb2event(skb);
+ 			if (event->asoc == assoc) {
+-				sock_rfree(skb);
++				sctp_sock_rfree_frag(skb);
+ 				__skb_unlink(skb, &oldsp->pd_lobby);
+ 				__skb_queue_tail(queue, skb);
+-				skb_set_owner_r(skb, newsk);
++				sctp_skb_set_owner_r_frag(skb, newsk);
+ 			}
+ 		}
+ 
+@@ -5704,6 +5781,7 @@ static void sctp_sock_migrate(struct sock *oldsk, struct sock *newsk,
+ 	sctp_release_sock(newsk);
+ }
+ 
++
+ /* This proto struct describes the ULP interface for SCTP.  */
+ struct proto sctp_prot = {
+ 	.name        =	"SCTP",
+@@ -5726,6 +5804,12 @@ struct proto sctp_prot = {
+ 	.unhash      =	sctp_unhash,
+ 	.get_port    =	sctp_get_port,
+ 	.obj_size    =  sizeof(struct sctp_sock),
++	.sysctl_mem  =  sysctl_sctp_mem,
++	.sysctl_rmem =  sysctl_sctp_rmem,
++	.sysctl_wmem =  sysctl_sctp_wmem,
++	.memory_pressure = &sctp_memory_pressure,
++	.enter_memory_pressure = sctp_enter_memory_pressure,
++	.memory_allocated = &sctp_memory_allocated,
+ };
+ 
+ #if defined(CONFIG_IPV6) || defined(CONFIG_IPV6_MODULE)
+@@ -5750,5 +5834,11 @@ struct proto sctpv6_prot = {
+ 	.unhash		= sctp_unhash,
+ 	.get_port	= sctp_get_port,
+ 	.obj_size	= sizeof(struct sctp6_sock),
++	.sysctl_mem	= sysctl_sctp_mem,
++	.sysctl_rmem	= sysctl_sctp_rmem,
++	.sysctl_wmem	= sysctl_sctp_wmem,
++	.memory_pressure = &sctp_memory_pressure,
++	.enter_memory_pressure = sctp_enter_memory_pressure,
++	.memory_allocated = &sctp_memory_allocated,
+ };
+ #endif /* defined(CONFIG_IPV6) || defined(CONFIG_IPV6_MODULE) */
+diff --git a/net/sctp/sysctl.c b/net/sctp/sysctl.c
+index dc6f3ff..a97570e 100644
+--- a/net/sctp/sysctl.c
++++ b/net/sctp/sysctl.c
+@@ -51,6 +51,15 @@ static long rto_timer_max = 86400000; /* One day */
+ static long sack_timer_min = 1;
+ static long sack_timer_max = 500;
+ 
++int sysctl_sctp_mem[3];
++int sysctl_sctp_rmem[3];
++int sysctl_sctp_wmem[3];
++
++/*
++ * per assoc memory limitationf for sends
++ */
++int sysctl_sctp_wmem[3];
++
+ static ctl_table sctp_table[] = {
+ 	{
+ 		.ctl_name	= NET_SCTP_RTO_INITIAL,
+@@ -206,6 +215,30 @@ static ctl_table sctp_table[] = {
+ 		.extra1         = &sack_timer_min,
+ 		.extra2         = &sack_timer_max,
+ 	},
++	{
++		.ctl_name	= NET_SCTP_BUF_MEM,
++		.procname	= "sctp_mem",
++		.data		= &sysctl_sctp_mem,
++		.maxlen		= sizeof(sysctl_sctp_mem),
++		.mode		= 0644,
++		.proc_handler	= &proc_dointvec,
++	},
++	{
++		.ctl_name	= NET_SCTP_BUF_RMEM,
++		.procname	= "sctp_rmem",
++		.data		= &sysctl_sctp_rmem,
++		.maxlen		= sizeof(sysctl_sctp_rmem),
++		.mode		= 0644,
++		.proc_handler	= &proc_dointvec,
++	},
++	{
++		.ctl_name	= NET_SCTP_BUF_WMEM,
++		.procname	= "sctp_wmem",
++		.data		= &sysctl_sctp_wmem,
++		.maxlen		= sizeof(sysctl_sctp_wmem),
++		.mode		= 0644,
++		.proc_handler	= &proc_dointvec,
++	},
+ 	{ .ctl_name = 0 }
+ };
+ 
+diff --git a/net/sctp/ulpevent.c b/net/sctp/ulpevent.c
+index ee23678..e7c7080 100644
+--- a/net/sctp/ulpevent.c
++++ b/net/sctp/ulpevent.c
+@@ -55,10 +55,12 @@ static void sctp_ulpevent_release_frag_data(struct sctp_ulpevent *event);
+ 
+ 
+ /* Initialize an ULP event from an given skb.  */
+-SCTP_STATIC void sctp_ulpevent_init(struct sctp_ulpevent *event, int msg_flags)
++SCTP_STATIC void sctp_ulpevent_init(struct sctp_ulpevent *event, int msg_flags,
++				    unsigned int len)
+ {
+ 	memset(event, 0, sizeof(struct sctp_ulpevent));
+ 	event->msg_flags = msg_flags;
++	event->rmem_len = len;
+ }
+ 
+ /* Create a new sctp_ulpevent.  */
+@@ -73,7 +75,7 @@ SCTP_STATIC struct sctp_ulpevent *sctp_ulpevent_new(int size, int msg_flags,
+ 		goto fail;
+ 
+ 	event = sctp_skb2event(skb);
+-	sctp_ulpevent_init(event, msg_flags);
++	sctp_ulpevent_init(event, msg_flags, skb->truesize);
+ 
+ 	return event;
+ 
+@@ -101,8 +103,8 @@ static inline void sctp_ulpevent_set_owner(struct sctp_ulpevent *event,
+ 	sctp_association_hold((struct sctp_association *)asoc);
+ 	skb = sctp_event2skb(event);
+ 	event->asoc = (struct sctp_association *)asoc;
+-	atomic_add(skb->truesize, &event->asoc->rmem_alloc);
+-	skb_set_owner_r(skb, asoc->base.sk);
++	atomic_add(event->rmem_len, &event->asoc->rmem_alloc);
++	sctp_skb_set_owner_r(skb, asoc->base.sk);
+ }
+ 
+ /* A simple destructor to give up the reference to the association. */
+@@ -111,7 +113,7 @@ static inline void sctp_ulpevent_release_owner(struct sctp_ulpevent *event)
+ 	struct sctp_association *asoc = event->asoc;
+ 	struct sk_buff *skb = sctp_event2skb(event);
+ 
+-	atomic_sub(skb->truesize, &asoc->rmem_alloc);
++	atomic_sub(event->rmem_len, &asoc->rmem_alloc);
+ 	sctp_association_put(asoc);
+ }
+ 
+@@ -372,7 +374,7 @@ struct sctp_ulpevent *sctp_ulpevent_make_remote_error(
+ 
+ 	/* Embed the event fields inside the cloned skb.  */
+ 	event = sctp_skb2event(skb);
+-	sctp_ulpevent_init(event, MSG_NOTIFICATION);
++	sctp_ulpevent_init(event, MSG_NOTIFICATION, skb->truesize);
+ 
+ 	sre = (struct sctp_remote_error *)
+ 		skb_push(skb, sizeof(struct sctp_remote_error));
+@@ -464,7 +466,7 @@ struct sctp_ulpevent *sctp_ulpevent_make_send_failed(
+ 
+ 	/* Embed the event fields inside the cloned skb.  */
+ 	event = sctp_skb2event(skb);
+-	sctp_ulpevent_init(event, MSG_NOTIFICATION);
++	sctp_ulpevent_init(event, MSG_NOTIFICATION, skb->truesize);
+ 
+ 	ssf = (struct sctp_send_failed *)
+ 		skb_push(skb, sizeof(struct sctp_send_failed));
+@@ -655,6 +657,24 @@ struct sctp_ulpevent *sctp_ulpevent_make_rcvmsg(struct sctp_association *asoc,
+ 	struct sctp_ulpevent *event = NULL;
+ 	struct sk_buff *skb;
+ 	size_t padding, len;
++	int rx_count;
++
++	/*
++	 * check to see if we need to make space for this
++	 * new skb, expand the rcvbuffer if needed, or drop
++	 * the frame
++	 */
++	if (asoc->ep->rcvbuf_policy) 
++		rx_count = atomic_read(&asoc->rmem_alloc);
++	else
++		rx_count = atomic_read(&asoc->base.sk->sk_rmem_alloc);
++
++	if (rx_count >= asoc->base.sk->sk_rcvbuf) {
++
++		if ((asoc->base.sk->sk_userlocks & SOCK_RCVBUF_LOCK) ||
++		   (!sk_stream_rmem_schedule(asoc->base.sk, chunk->skb)))
++			goto fail;
++	}
+ 
+ 	/* Clone the original skb, sharing the data.  */
+ 	skb = skb_clone(chunk->skb, gfp);
+@@ -683,7 +703,7 @@ struct sctp_ulpevent *sctp_ulpevent_make_rcvmsg(struct sctp_association *asoc,
+ 	event = sctp_skb2event(skb);
+ 
+ 	/* Initialize event with flags 0.  */
+-	sctp_ulpevent_init(event, 0);
++	sctp_ulpevent_init(event, 0, skb->len + sizeof(struct sk_buff));
+ 
+ 	sctp_ulpevent_receive_data(event, asoc);
+ 
+diff --git a/net/sctp/ulpqueue.c b/net/sctp/ulpqueue.c
+index 575e556..8857ade 100644
+--- a/net/sctp/ulpqueue.c
++++ b/net/sctp/ulpqueue.c
+@@ -309,7 +309,7 @@ static struct sctp_ulpevent *sctp_make_reassembled_event(struct sk_buff_head *qu
+  			if (!new)
+  				return NULL;	/* try again later */
+ 
+- 			new->sk = f_frag->sk;
++			sctp_skb_set_owner_r(new, f_frag->sk);
+ 
+  			skb_shinfo(new)->frag_list = pos;
+  		} else
+@@ -870,6 +870,7 @@ void sctp_ulpq_renege(struct sctp_ulpq *ulpq, struct sctp_chunk *chunk,
+ 		sctp_ulpq_partial_delivery(ulpq, chunk, gfp);
+ 	}
+ 
++	sk_stream_mem_reclaim(asoc->base.sk);
+ 	return;
+ }
+ 
+-- 
+1.5.3.5.645.gbb47
+

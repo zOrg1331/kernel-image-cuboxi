@@ -1,0 +1,33 @@
+From: Dean Nelson <dnelson@redhat.com>
+Date: Fri, 12 Feb 2010 17:14:35 -0500
+Subject: [hwmon] f71805f: fix sio_data to platform_device_add_data
+Message-id: <20100212171435.3355.50584.send-patch@aqua>
+Patchwork-id: 23259
+O-Subject: [RHEL5.6 PATCH 2/5] hwmon: f71805f: fix passing of &sio_data to
+	platform_device_add_data()
+Bugzilla: 564399
+RH-Acked-by: David Milburn <dmilburn@redhat.com>
+RH-Acked-by: Jarod Wilson <jarod@redhat.com>
+
+Resolves RHBZ 564399.
+
+The call to platform_device_add_data() passes '&sio_data' as the second arg.
+This results in an "Unable to handle kernel paging request at ..." type panic
+when a 'modprobe f71805f' is executed on a system with the relevant chip.
+
+The upstream version of this driver passes 'sio_data' minus the '&'.
+
+
+diff --git a/drivers/hwmon/f71805f.c b/drivers/hwmon/f71805f.c
+index 8830b6b..4dcb9ef 100644
+--- a/drivers/hwmon/f71805f.c
++++ b/drivers/hwmon/f71805f.c
+@@ -1462,7 +1462,7 @@ static int __init f71805f_device_add(unsigned short address,
+ 		goto exit_device_put;
+ 	}
+ 
+-	err = platform_device_add_data(pdev, &sio_data,
++	err = platform_device_add_data(pdev, sio_data,
+ 				       sizeof(struct f71805f_sio_data));
+ 	if (err) {
+ 		printk(KERN_ERR DRVNAME ": Platform data allocation failed\n");

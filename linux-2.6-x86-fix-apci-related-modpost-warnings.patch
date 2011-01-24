@@ -1,0 +1,138 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Subject: Re: [RHEL5.1 PATCH] BZ 226845 : fix apci related MODPOST warnings
+Date: Mon, 19 Feb 2007 11:50:32 -0500
+Bugzilla: 226845
+Message-Id: <45D9D558.6050109@redhat.com>
+Changelog: [x86] fix apci related MODPOST warnings
+
+Backport of
+
+http://marc.theaimsgroup.com/?l=osdl-fastboot&m=116884463316292&w=2
+
+Resolves BZ 226845.
+
+Tested successfully by me.
+
+--- linux-2.6.18.i386.orig/include/asm-i386/mach-es7000/mach_mpparse.h	2007-02-01 16:08:24.000000000 -0500
++++ linux-2.6.18.i386/include/asm-i386/mach-es7000/mach_mpparse.h	2007-02-05 10:43:53.000000000 -0500
+@@ -18,18 +18,6 @@ extern int parse_unisys_oem (char *oempt
+ extern int find_unisys_acpi_oem_table(unsigned long *oem_addr);
+ extern void setup_unisys(void);
+ 
+-static inline int mps_oem_check(struct mp_config_table *mpc, char *oem,
+-		char *productid)
+-{
+-	if (mpc->mpc_oemptr) {
+-		struct mp_config_oemtable *oem_table = 
+-			(struct mp_config_oemtable *)mpc->mpc_oemptr;
+-		if (!strncmp(oem, "UNISYS", 6))
+-			return parse_unisys_oem((char *)oem_table);
+-	}
+-	return 0;
+-}
+-
+ #ifdef CONFIG_ACPI
+ static inline int es7000_check_dsdt(void)
+ {
+@@ -40,26 +28,6 @@ static inline int es7000_check_dsdt(void
+ 		return 1;
+ 	return 0;
+ }
+-
+-/* Hook from generic ACPI tables.c */
+-static inline int acpi_madt_oem_check(char *oem_id, char *oem_table_id)
+-{
+-	unsigned long oem_addr; 
+-	if (!find_unisys_acpi_oem_table(&oem_addr)) {
+-		if (es7000_check_dsdt())
+-			return parse_unisys_oem((char *)oem_addr);
+-		else {
+-			setup_unisys();
+-			return 1;
+-		}
+-	}
+-	return 0;
+-}
+-#else
+-static inline int acpi_madt_oem_check(char *oem_id, char *oem_table_id)
+-{
+-	return 0;
+-}
+ #endif
+ 
+ #endif /* __ASM_MACH_MPPARSE_H */
+--- linux-2.6.18.i386.orig/arch/i386/mach-generic/es7000.c	2007-02-01 16:08:21.000000000 -0500
++++ linux-2.6.18.i386/arch/i386/mach-generic/es7000.c	2007-02-05 10:43:53.000000000 -0500
+@@ -24,4 +24,45 @@ static __init int probe_es7000(void)
+ 	return 0;
+ }
+ 
++extern void es7000_sw_apic(void);
++static void __init enable_apic_mode(void)
++{
++	es7000_sw_apic();
++	return;
++}
++
++static __init int mps_oem_check(struct mp_config_table *mpc, char *oem,
++		char *productid)
++{
++	if (mpc->mpc_oemptr) {
++		struct mp_config_oemtable *oem_table =
++			(struct mp_config_oemtable *)mpc->mpc_oemptr;
++		if (!strncmp(oem, "UNISYS", 6))
++			return parse_unisys_oem((char *)oem_table);
++	}
++	return 0;
++}
++
++#ifdef CONFIG_ACPI
++/* Hook from generic ACPI tables.c */
++static int __init acpi_madt_oem_check(char *oem_id, char *oem_table_id)
++{
++	unsigned long oem_addr;
++	if (!find_unisys_acpi_oem_table(&oem_addr)) {
++		if (es7000_check_dsdt())
++			return parse_unisys_oem((char *)oem_addr);
++		else {
++			setup_unisys();
++			return 1;
++		}
++	}
++	return 0;
++}
++#else
++static int __init acpi_madt_oem_check(char *oem_id, char *oem_table_id)
++{
++	return 0;
++}
++#endif
++
+ struct genapic apic_es7000 = APIC_INIT("es7000", probe_es7000);
+--- linux-2.6.18.x86_64.orig/include/asm-i386/mach-es7000/mach_apic.h	2006-09-19 23:42:06.000000000 -0400
++++ linux-2.6.18.x86_64/include/asm-i386/mach-es7000/mach_apic.h	2007-02-19 11:45:14.000000000 -0500
+@@ -73,13 +73,6 @@ static inline void init_apic_ldr(void)
+ 	apic_write_around(APIC_LDR, val);
+ }
+ 
+-extern void es7000_sw_apic(void);
+-static inline void enable_apic_mode(void)
+-{
+-	es7000_sw_apic();
+-	return;
+-}
+-
+ extern int apic_version [MAX_APICS];
+ static inline void clustered_apic_check(void)
+ {
+--- linux-2.6.18.i386.orig/scripts/mod/modpost.c	2007-02-02 10:04:30.000000000 -0500
++++ linux-2.6.18.i386/scripts/mod/modpost.c	2007-02-05 10:43:53.000000000 -0500
+@@ -604,6 +604,7 @@ static int secref_whitelist(const char *
+ 		"_probe",
+ 		"_probe_one",
+ 		"_console",
++		"apic_es7000",
+ 		NULL
+ 	};
+ 
+

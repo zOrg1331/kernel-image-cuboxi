@@ -1,0 +1,48 @@
+From: Dave Anderson <anderson@redhat.com>
+Date: Fri, 26 Feb 2010 16:45:14 -0500
+Subject: [mm] prevent severe performance degradation hang fix
+Message-id: <1124585371.2423541267202714440.JavaMail.root@zmail05.collab.prod.int.phx2.redhat.com>
+Patchwork-id: 23450
+O-Subject: [RHEL5.5 PATCH] BZ #544448: update to "prevent severe performance
+	degradation" patch
+Bugzilla: 544448
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+
+This is an add-on to the initial patch applied for this BZ:
+
+ BZ #544448 - Strange vm performance degradation moving 32 bit app from
+              RHEL 4.6 32bit to 5.4 64bit
+ https://bugzilla.redhat.com/show_bug.cgi?id=544448
+
+This is patch as posted on 1/28:
+
+ [RHEL5-U5 Patch] prevent severe performance degradation of 32-bit apps running
+                  on x86_64 that mmap() thousands of files.
+ http://post-office.corp.redhat.com/archives/rhkernel-list/2010-January/msg01808.html
+
+That patch implemented the arch_get_unmapped_area_topdown_fast() function.
+QA testing of that patch uncovered a corner-case bug that can cause a task to
+hang in the kernel forever.  If the topdown VMA search works its way down to
+the bottom of the virtual address space such that the only remaining space:
+
+ (1) precisely starts at user virtual address 0, and
+ (2) fills up the virtual address space up from there to the starting
+     address of the task's first VMA, then the function will loop forever.
+
+Tested with the QA test and system parameters that showed the bug.
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/arch/x86_64/kernel/sys_x86_64.c b/arch/x86_64/kernel/sys_x86_64.c
+index e0b23f4..e24f562 100644
+--- a/arch/x86_64/kernel/sys_x86_64.c
++++ b/arch/x86_64/kernel/sys_x86_64.c
+@@ -287,7 +287,7 @@ try_again:
+ 
+ 		/* try just below the current vma->vm_start */
+ 		addr = vma->vm_start-len;
+-	} while (len <= vma->vm_start);
++	} while (len < vma->vm_start);
+ 
+ bottomup:
+ 	/*

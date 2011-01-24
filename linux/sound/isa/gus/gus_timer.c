@@ -1,6 +1,6 @@
 /*
  *  Routines for Gravis UltraSound soundcards - Timers
- *  Copyright (c) by Jaroslav Kysela <perex@perex.cz>
+ *  Copyright (c) by Jaroslav Kysela <perex@suse.cz>
  *
  *  GUS have similar timers as AdLib (OPL2/OPL3 chips).
  *
@@ -21,6 +21,7 @@
  *
  */
 
+#include <sound/driver.h>
 #include <linux/time.h>
 #include <sound/core.h>
 #include <sound/gus.h>

@@ -5,7 +5,7 @@
  *   This program is free software; you can redistribute it and/or modify
  *   it under the terms of the GNU General Public License as published by
  *   the Free Software Foundation, Inc., 53 Temple Place Ste 330,
- *   Boston MA 02111-1307, USA; either version 2 of the License, or
+ *   Bostom MA 02111-1307, USA; either version 2 of the License, or
  *   (at your option) any later version; incorporated herein by reference.
  *
  * ----------------------------------------------------------------------- */
@@ -16,20 +16,13 @@
  * Algorithm list and algorithm selection for RAID-6
  */
 
-#include <linux/raid/pq.h>
+#include "raid6.h"
 #ifndef __KERNEL__
 #include <sys/mman.h>
 #include <stdio.h>
-#else
-#if !RAID6_USE_EMPTY_ZERO_PAGE
-/* In .bss so it's zeroed */
-const char raid6_empty_zero_page[PAGE_SIZE] __attribute__((aligned(256)));
-EXPORT_SYMBOL(raid6_empty_zero_page);
-#endif
 #endif
 
 struct raid6_calls raid6_call;
-EXPORT_SYMBOL_GPL(raid6_call);
 
 /* Various routine sets */
 extern const struct raid6_calls raid6_intx1;
@@ -59,7 +52,7 @@ const struct raid6_calls * const raid6_algos[] = {
 	&raid6_intx16,
 	&raid6_intx32,
 #endif
-#if defined(__i386__) && !defined(__arch_um__)
+#if defined(__i386__)
 	&raid6_mmxx1,
 	&raid6_mmxx2,
 	&raid6_sse1x1,
@@ -67,7 +60,7 @@ const struct raid6_calls * const raid6_algos[] = {
 	&raid6_sse2x1,
 	&raid6_sse2x2,
 #endif
-#if defined(__x86_64__) && !defined(__arch_um__)
+#if defined(__x86_64__)
 	&raid6_sse2x1,
 	&raid6_sse2x2,
 	&raid6_sse2x4,
@@ -86,7 +79,6 @@ const struct raid6_calls * const raid6_algos[] = {
 #else
 /* Need more time to be stable in userspace */
 #define RAID6_TIME_JIFFIES_LG2	9
-#define time_before(x, y) ((x) < (y))
 #endif
 
 /* Try to pick the best algorithm */
@@ -129,8 +121,7 @@ int __init raid6_select_algo(void)
 			j0 = jiffies;
 			while ( (j1 = jiffies) == j0 )
 				cpu_relax();
-			while (time_before(jiffies,
-					    j1 + (1<<RAID6_TIME_JIFFIES_LG2))) {
+			while ( (jiffies-j1) < (1 << RAID6_TIME_JIFFIES_LG2) ) {
 				(*algo)->gen_syndrome(disks, PAGE_SIZE, dptrs);
 				perf++;
 			}
@@ -160,13 +151,3 @@ int __init raid6_select_algo(void)
 
 	return best ? 0 : -EINVAL;
 }
-
-static void raid6_exit(void)
-{
-	do { } while (0);
-}
-
-subsys_initcall(raid6_select_algo);
-module_exit(raid6_exit);
-MODULE_LICENSE("GPL");
-MODULE_DESCRIPTION("RAID6 Q-syndrome calculations");

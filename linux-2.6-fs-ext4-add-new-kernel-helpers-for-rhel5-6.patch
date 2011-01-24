@@ -1,0 +1,202 @@
+From: Eric Sandeen <sandeen@redhat.com>
+Date: Wed, 1 Sep 2010 15:59:34 -0400
+Subject: [fs] ext4: add new kernel helpers for RHEL5.6
+Message-id: <4C7E7866.1070303@redhat.com>
+Patchwork-id: 27987
+O-Subject: [PATCH RHEL5.6 1/4] ext4: kernel helpers
+Bugzilla: 457153
+RH-Acked-by: Edward Shishkin <edward@redhat.com>
+
+For Bug 457153 - ext4 full support in RHEL5
+
+These is support infrastructure for subsequent ext4 changes.
+
+All or part of the following upstream commits:
+
+d5aacad548db1ff547adf35d0a77eb2a8ed4fe14 New helper - simple_fsync()
+de9330d13eac1f331e63ab1d18c506365b0151f3 log2.h: Define order_base_2() macro for convenience.
+25d9e2d15286281ec834b829a4aaf8969011f1cd truncate: new helpers
+
+and a couple of extra exports I needed to fix up the backport.
+
+KABI NOTE:
+
+Simply including <linux/writeback.h> in fs/libfs.c changed the signatures
+of all symbols in that file; I tracked this down to the definition of
+struct writeback_control{ ... }; which changes things.  I think the only
+change here is the full definition of the structure, which should not
+break KABI... so I wrapped it in #ifndef __GENKSYMS__.  KABI expert
+eyes are welcomed, but I think this should be fine.
+
+-Eric
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/fs/attr.c b/fs/attr.c
+index 1fb8e92..af0b2a0 100644
+--- a/fs/attr.c
++++ b/fs/attr.c
+@@ -61,9 +61,51 @@ fine:
+ error:
+ 	return retval;
+ }
+-
+ EXPORT_SYMBOL(inode_change_ok);
+ 
++/**
++ * inode_newsize_ok - may this inode be truncated to a given size
++ * @inode:	the inode to be truncated
++ * @offset:	the new size to assign to the inode
++ * @Returns:	0 on success, -ve errno on failure
++ *
++ * inode_newsize_ok will check filesystem limits and ulimits to check that the
++ * new inode size is within limits. inode_newsize_ok will also send SIGXFSZ
++ * when necessary. Caller must not proceed with inode size change if failure is
++ * returned. @inode must be a file (not directory), with appropriate
++ * permissions to allow truncate (inode_newsize_ok does NOT check these
++ * conditions).
++ *
++ * inode_newsize_ok must be called with i_mutex held.
++ */
++int inode_newsize_ok(const struct inode *inode, loff_t offset)
++{
++	if (inode->i_size < offset) {
++		unsigned long limit;
++
++		limit = current->signal->rlim[RLIMIT_FSIZE].rlim_cur;
++		if (limit != RLIM_INFINITY && offset > limit)
++			goto out_sig;
++		if (offset > inode->i_sb->s_maxbytes)
++			goto out_big;
++	} else {
++		/*
++		 * truncation of in-use swapfiles is disallowed - it would
++		 * cause subsequent swapout to scribble on the now-freed
++		 * blocks.
++		 */
++		if (IS_SWAPFILE(inode))
++			return -ETXTBSY;
++	}
++
++	return 0;
++out_sig:
++	send_sig(SIGXFSZ, current, 0);
++out_big:
++	return -EFBIG;
++}
++EXPORT_SYMBOL(inode_newsize_ok);
++
+ int inode_setattr(struct inode * inode, struct iattr * attr)
+ {
+ 	unsigned int ia_valid = attr->ia_valid;
+diff --git a/fs/fs-writeback.c b/fs/fs-writeback.c
+index 0b5ebcd..025763e 100644
+--- a/fs/fs-writeback.c
++++ b/fs/fs-writeback.c
+@@ -493,6 +493,7 @@ void sync_inodes_sb(struct super_block *sb, int wait)
+ 	sync_sb_inodes(sb, &wbc);
+ 	spin_unlock(&inode_lock);
+ }
++EXPORT_SYMBOL_GPL(sync_inodes_sb);
+ 
+ /*
+  * Rather lame livelock avoidance.
+@@ -700,6 +701,7 @@ int writeback_in_progress(struct backing_dev_info *bdi)
+ {
+ 	return test_bit(BDI_pdflush, &bdi->state);
+ }
++EXPORT_SYMBOL_GPL(writeback_in_progress);
+ 
+ /**
+  * writeback_release: relinquish exclusive writeback access against a device.
+diff --git a/fs/libfs.c b/fs/libfs.c
+index e09ecbf..0c3239b 100644
+--- a/fs/libfs.c
++++ b/fs/libfs.c
+@@ -8,6 +8,10 @@
+ #include <linux/mount.h>
+ #include <linux/vfs.h>
+ #include <linux/mutex.h>
++#ifndef __GENKSYMS__
++#include <linux/writeback.h>
++#endif
++#include <linux/buffer_head.h>
+ 
+ #include <asm/uaccess.h>
+ 
+@@ -657,6 +661,29 @@ out:
+ 	return ret;
+ }
+ 
++int simple_fsync(struct file *file, struct dentry *dentry, int datasync)
++{
++	struct writeback_control wbc = {
++		.sync_mode = WB_SYNC_ALL,
++		.nr_to_write = 0, /* metadata-only; caller takes care of data */
++	};
++	struct inode *inode = dentry->d_inode;
++	int err;
++	int ret;
++
++	ret = sync_mapping_buffers(inode->i_mapping);
++	if (!(inode->i_state & I_DIRTY))
++		return ret;
++	if (datasync && !(inode->i_state & I_DIRTY_DATASYNC))
++		return ret;
++
++	err = sync_inode(inode, &wbc);
++	if (ret == 0)
++		ret = err;
++	return ret;
++}
++EXPORT_SYMBOL(simple_fsync);
++
+ EXPORT_SYMBOL(dcache_dir_close);
+ EXPORT_SYMBOL(dcache_dir_lseek);
+ EXPORT_SYMBOL(dcache_dir_open);
+diff --git a/include/linux/fs.h b/include/linux/fs.h
+index bae2f3d..564027b 100644
+--- a/include/linux/fs.h
++++ b/include/linux/fs.h
+@@ -2073,6 +2073,8 @@ extern void simple_release_fs(struct vfsmount **mount, int *count);
+ 
+ extern ssize_t simple_read_from_buffer(void __user *, size_t, loff_t *, const void *, size_t);
+ 
++extern int simple_fsync(struct file *, struct dentry *, int);
++
+ #ifdef CONFIG_MIGRATION
+ extern int buffer_migrate_page(struct address_space *,
+ 				struct page *, struct page *);
+@@ -2081,6 +2083,7 @@ extern int buffer_migrate_page(struct address_space *,
+ #endif
+ 
+ extern int inode_change_ok(struct inode *, struct iattr *);
++extern int inode_newsize_ok(const struct inode *, loff_t offset);
+ extern int __must_check inode_setattr(struct inode *, struct iattr *);
+ 
+ extern void file_update_time(struct file *file);
+diff --git a/include/linux/log2.h b/include/linux/log2.h
+index 99922be..05b34dd 100644
+--- a/include/linux/log2.h
++++ b/include/linux/log2.h
+@@ -165,4 +165,20 @@ unsigned long __roundup_pow_of_two(unsigned long n)
+ 	__roundup_pow_of_two(n)			\
+  )
+ 
++/**
++ * order_base_2 - calculate the (rounded up) base 2 order of the argument
++ * @n: parameter
++ *
++ * The first few values calculated by this routine:
++ *  ob2(0) = 0
++ *  ob2(1) = 0
++ *  ob2(2) = 1
++ *  ob2(3) = 2
++ *  ob2(4) = 2
++ *  ob2(5) = 3
++ *  ... and so on.
++ */
++
++#define order_base_2(n) ilog2(roundup_pow_of_two(n))
++
+ #endif /* _LINUX_LOG2_H */

@@ -1,0 +1,66 @@
+From: Ivan Vecera <ivecera@redhat.com>
+Date: Wed, 15 Oct 2008 18:15:12 +0200
+Subject: [x86] make halt -f command work correctly
+Message-id: 1224087312-11493-1-git-send-email-ivecera@redhat.com
+O-Subject: [RHEL5 PATCH] The halt command in the busybox does not work.
+Bugzilla: 413921
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+RH-Acked-by: Michal Schmidt <mschmidt@redhat.com>
+RH-Acked-by: Brian Maly <bmaly@redhat.com>
+
+BZs solved:
+#413921 - The halt command in the busybox does not work.
+
+Description:
+When the action in kdump.conf is set to halt the command
+"halt -f" is invoked after vmcore dump. kernel_halt function
+calls machine_halt but it is empty for arches i386 and x86_64.
+Then do_exit is invoked and halt process finished but init
+script in initramfs continues processing.
+Expectation is that system is really halt after invocation
+of 'reboot(LINUX_REBOOT_CMD_HALT)'
+
+Testing status:
+- Kernel built successfully without any kabi issues
+- Tested by myself, the issue doesn't occur anymore
+  and system is really halted
+
+Upstream status:
+Not yet, I'm going to post the patch upstream.
+
+Signed-off-by: Ivan Vecera <ivecera@redhat.com>
+
+diff --git a/arch/i386/kernel/reboot.c b/arch/i386/kernel/reboot.c
+index 54cfeab..bbd0862 100644
+--- a/arch/i386/kernel/reboot.c
++++ b/arch/i386/kernel/reboot.c
+@@ -351,6 +351,12 @@ void machine_restart(char * __unused)
+ 
+ void machine_halt(void)
+ {
++	machine_shutdown();
++
++	/* stop current CPU */
++	local_irq_disable();
++	for (;;)
++		halt();
+ }
+ 
+ void machine_power_off(void)
+diff --git a/arch/x86_64/kernel/reboot.c b/arch/x86_64/kernel/reboot.c
+index 3bdfe22..5b14772 100644
+--- a/arch/x86_64/kernel/reboot.c
++++ b/arch/x86_64/kernel/reboot.c
+@@ -165,6 +165,12 @@ void machine_restart(char * __unused)
+ 
+ void machine_halt(void)
+ {
++	machine_shutdown();
++
++	/* stop current CPU */
++	local_irq_disable();
++	for (;;)
++		halt();
+ }
+ 
+ void machine_power_off(void)

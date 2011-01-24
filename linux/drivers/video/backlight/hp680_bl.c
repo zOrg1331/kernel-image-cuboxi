@@ -18,9 +18,9 @@
 #include <linux/fb.h>
 #include <linux/backlight.h>
 
-#include <cpu/dac.h>
-#include <mach/hp6xx.h>
-#include <asm/hd64461.h>
+#include <asm/cpu/dac.h>
+#include <asm/hp6xx/hp6xx.h>
+#include <asm/hd64461/hd64461.h>
 
 #define HP680_MAX_INTENSITY 255
 #define HP680_DEFAULT_INTENSITY 10
@@ -28,16 +28,17 @@
 static int hp680bl_suspended;
 static int current_intensity = 0;
 static DEFINE_SPINLOCK(bl_lock);
+static struct backlight_device *hp680_backlight_device;
 
 static void hp680bl_send_intensity(struct backlight_device *bd)
 {
 	unsigned long flags;
 	u16 v;
-	int intensity = bd->props.brightness;
+	int intensity = bd->props->brightness;
 
-	if (bd->props.power != FB_BLANK_UNBLANK)
+	if (bd->props->power != FB_BLANK_UNBLANK)
 		intensity = 0;
-	if (bd->props.fb_blank != FB_BLANK_UNBLANK)
+	if (bd->props->fb_blank != FB_BLANK_UNBLANK)
 		intensity = 0;
 	if (hp680bl_suspended)
 		intensity = 0;
@@ -65,21 +66,17 @@ static void hp680bl_send_intensity(struct backlight_device *bd)
 
 
 #ifdef CONFIG_PM
-static int hp680bl_suspend(struct platform_device *pdev, pm_message_t state)
+static int hp680bl_suspend(struct platform_device *dev, pm_message_t state)
 {
-	struct backlight_device *bd = platform_get_drvdata(pdev);
-
 	hp680bl_suspended = 1;
-	hp680bl_send_intensity(bd);
+	hp680bl_send_intensity(hp680_backlight_device);
 	return 0;
 }
 
-static int hp680bl_resume(struct platform_device *pdev)
+static int hp680bl_resume(struct platform_device *dev)
 {
-	struct backlight_device *bd = platform_get_drvdata(pdev);
-
 	hp680bl_suspended = 0;
-	hp680bl_send_intensity(bd);
+	hp680bl_send_intensity(hp680_backlight_device);
 	return 0;
 }
 #else
@@ -98,38 +95,29 @@ static int hp680bl_get_intensity(struct backlight_device *bd)
 	return current_intensity;
 }
 
-static struct backlight_ops hp680bl_ops = {
+static struct backlight_properties hp680bl_data = {
+	.owner		= THIS_MODULE,
+	.max_brightness = HP680_MAX_INTENSITY,
 	.get_brightness = hp680bl_get_intensity,
 	.update_status  = hp680bl_set_intensity,
 };
 
-static int __devinit hp680bl_probe(struct platform_device *pdev)
+static int __init hp680bl_probe(struct platform_device *dev)
 {
-	struct backlight_device *bd;
+	hp680_backlight_device = backlight_device_register ("hp680-bl",
+		NULL, &hp680bl_data);
+	if (IS_ERR (hp680_backlight_device))
+		return PTR_ERR (hp680_backlight_device);
 
-	bd = backlight_device_register ("hp680-bl", &pdev->dev, NULL,
-		    &hp680bl_ops);
-	if (IS_ERR(bd))
-		return PTR_ERR(bd);
-
-	platform_set_drvdata(pdev, bd);
-
-	bd->props.max_brightness = HP680_MAX_INTENSITY;
-	bd->props.brightness = HP680_DEFAULT_INTENSITY;
-	hp680bl_send_intensity(bd);
+	hp680_backlight_device->props->brightness = HP680_DEFAULT_INTENSITY;
+	hp680bl_send_intensity(hp680_backlight_device);
 
 	return 0;
 }
 
-static int hp680bl_remove(struct platform_device *pdev)
+static int hp680bl_remove(struct platform_device *dev)
 {
-	struct backlight_device *bd = platform_get_drvdata(pdev);
-
-	bd->props.brightness = 0;
-	bd->props.power = 0;
-	hp680bl_send_intensity(bd);
-
-	backlight_device_unregister(bd);
+	backlight_device_unregister(hp680_backlight_device);
 
 	return 0;
 }
@@ -151,15 +139,19 @@ static int __init hp680bl_init(void)
 	int ret;
 
 	ret = platform_driver_register(&hp680bl_driver);
-	if (ret)
-		return ret;
-	hp680bl_device = platform_device_register_simple("hp680-bl", -1,
-							NULL, 0);
-	if (IS_ERR(hp680bl_device)) {
-		platform_driver_unregister(&hp680bl_driver);
-		return PTR_ERR(hp680bl_device);
+	if (!ret) {
+		hp680bl_device = platform_device_alloc("hp680-bl", -1);
+		if (!hp680bl_device)
+			return -ENOMEM;
+
+		ret = platform_device_add(hp680bl_device);
+
+		if (ret) {
+			platform_device_put(hp680bl_device);
+			platform_driver_unregister(&hp680bl_driver);
+		}
 	}
-	return 0;
+	return ret;
 }
 
 static void __exit hp680bl_exit(void)
@@ -171,6 +163,6 @@ static void __exit hp680bl_exit(void)
 module_init(hp680bl_init);
 module_exit(hp680bl_exit);
 
-MODULE_AUTHOR("Andriy Skulysh <askulysh@gmail.com>");
+MODULE_AUTHOR("Andriy Skulysh <askulysh@image.kiev.ua>");
 MODULE_DESCRIPTION("HP Jornada 680 Backlight Driver");
 MODULE_LICENSE("GPL");

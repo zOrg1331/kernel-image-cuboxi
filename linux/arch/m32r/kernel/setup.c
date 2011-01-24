@@ -64,7 +64,7 @@ struct screen_info screen_info = {
 
 extern int root_mountflags;
 
-static char __initdata command_line[COMMAND_LINE_SIZE];
+static char command_line[COMMAND_LINE_SIZE];
 
 static struct resource data_resource = {
 	.name   = "Kernel data",
@@ -95,8 +95,8 @@ static __inline__ void parse_mem_cmdline(char ** cmdline_p)
 	int usermem = 0;
 
 	/* Save unparsed command line copy for /proc/cmdline */
-	memcpy(boot_command_line, COMMAND_LINE, COMMAND_LINE_SIZE);
-	boot_command_line[COMMAND_LINE_SIZE-1] = '\0';
+	memcpy(saved_command_line, COMMAND_LINE, COMMAND_LINE_SIZE);
+	saved_command_line[COMMAND_LINE_SIZE-1] = '\0';
 
 	memory_start = (unsigned long)CONFIG_MEMORY_START+PAGE_OFFSET;
 	memory_end = memory_start+(unsigned long)CONFIG_MEMORY_SIZE;
@@ -177,29 +177,28 @@ static unsigned long __init setup_memory(void)
 	 */
 	reserve_bootmem(CONFIG_MEMORY_START + PAGE_SIZE,
 		(PFN_PHYS(start_pfn) + bootmap_size + PAGE_SIZE - 1)
-		- CONFIG_MEMORY_START,
-		BOOTMEM_DEFAULT);
+		- CONFIG_MEMORY_START);
 
 	/*
 	 * reserve physical page 0 - it's a special BIOS page on many boxes,
 	 * enabling clean reboots, SMP operation, laptop functions.
 	 */
-	reserve_bootmem(CONFIG_MEMORY_START, PAGE_SIZE, BOOTMEM_DEFAULT);
+	reserve_bootmem(CONFIG_MEMORY_START, PAGE_SIZE);
 
 	/*
 	 * reserve memory hole
 	 */
 #ifdef CONFIG_MEMHOLE
-	reserve_bootmem(CONFIG_MEMHOLE_START, CONFIG_MEMHOLE_SIZE,
-			BOOTMEM_DEFAULT);
+	reserve_bootmem(CONFIG_MEMHOLE_START, CONFIG_MEMHOLE_SIZE);
 #endif
 
 #ifdef CONFIG_BLK_DEV_INITRD
 	if (LOADER_TYPE && INITRD_START) {
 		if (INITRD_START + INITRD_SIZE <= (max_low_pfn << PAGE_SHIFT)) {
-			reserve_bootmem(INITRD_START, INITRD_SIZE,
-					BOOTMEM_DEFAULT);
-			initrd_start = INITRD_START + PAGE_OFFSET;
+			reserve_bootmem(INITRD_START, INITRD_SIZE);
+			initrd_start = INITRD_START ?
+				INITRD_START + PAGE_OFFSET : 0;
+
 			initrd_end = initrd_start + INITRD_SIZE;
 			printk("initrd:start[%08lx],size[%08lx]\n",
 				initrd_start, INITRD_SIZE);
@@ -369,11 +368,11 @@ static void c_stop(struct seq_file *m, void *v)
 {
 }
 
-const struct seq_operations cpuinfo_op = {
-	.start = c_start,
-	.next = c_next,
-	.stop = c_stop,
-	.show = show_cpuinfo,
+struct seq_operations cpuinfo_op = {
+	start:	c_start,
+	next:	c_next,
+	stop:	c_stop,
+	show:	show_cpuinfo,
 };
 #endif	/* CONFIG_PROC_FS */
 

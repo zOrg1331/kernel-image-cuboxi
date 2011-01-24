@@ -1,0 +1,94 @@
+From: Jeff Layton <jlayton@redhat.com>
+Date: Fri, 18 Apr 2008 07:00:12 -0400
+Subject: [nfs] v4: fix ref count and signal for callback thread
+Message-id: 1208516412-4186-1-git-send-email-jlayton@redhat.com
+O-Subject: [RHEL5.3 PATCH] BZ#423521: NFS: fix reference counting and signaling for NFSv4 callback thread
+Bugzilla: 423521
+RH-Acked-by: Peter Staubach <staubach@redhat.com>
+
+The reference counting for the NFSv4 callback thread stays artificially
+high. When this thread comes down, it doesn't properly tear down the
+svc_serv, causing a memory leak. In my testing on an older kernel on
+x86_64, memory would leak out of the 8k kmalloc slab. So, we're leaking
+at least a page of memory every time the thread comes down.
+
+svc_create() creates the svc_serv with a sv_nrthreads count of 1, and
+then svc_create_thread() increments that count. Whenever the callback
+thread is started it has a sv_nrthreads count of 2. When coming down, it
+calls svc_exit_thread() which decrements that count and if it hits 0, it
+tears everything down. That never happens here since the count is always
+at 2 when the thread exits.
+
+The problem is that nfs_callback_up() should be calling svc_destroy() on
+the svc_serv on both success and failure. This is how lockd_up_proto()
+handles the reference counting, and doing that here fixes the leak.
+
+Also, make sure that we flush signals before doing shutdown processing
+on callback thread. Leaving the signal pending can interfere with
+portmap communications when we try to unregister the port.
+
+These patches went upstream in 2.6.25. Tested by repeatedly mounting
+and unmounting a NFSv4 filesystem and checking for memory leaks in
+the size-8192 slab.
+
+Signed-off-by: Jeff Layton <jlayton@redhat.com>
+
+ fs/nfs/callback.c |   18 ++++++++++++------
+ 1 files changed, 12 insertions(+), 6 deletions(-)
+
+diff --git a/fs/nfs/callback.c b/fs/nfs/callback.c
+index a3ee113..be11beb 100644
+--- a/fs/nfs/callback.c
++++ b/fs/nfs/callback.c
+@@ -93,7 +93,7 @@ static void nfs_callback_svc(struct svc_rqst *rqstp)
+ 				NIPQUAD(rqstp->rq_addr.sin_addr.s_addr));
+ 		svc_process(serv, rqstp);
+ 	}
+-
++	flush_signals(current);
+ 	svc_exit_thread(rqstp);
+ 	nfs_callback_info.pid = 0;
+ 	complete(&nfs_callback_info.stopped);
+@@ -106,7 +106,7 @@ static void nfs_callback_svc(struct svc_rqst *rqstp)
+  */
+ int nfs_callback_up(void)
+ {
+-	struct svc_serv *serv;
++	struct svc_serv *serv = NULL;
+ 	struct svc_sock *svsk;
+ 	int ret = 0;
+ 
+@@ -123,7 +123,7 @@ int nfs_callback_up(void)
+ 	/* FIXME: We don't want to register this socket with the portmapper */
+ 	ret = svc_makesock(serv, IPPROTO_TCP, nfs_callback_set_tcpport);
+ 	if (ret < 0)
+-		goto out_destroy;
++		goto out_err;
+ 	if (!list_empty(&serv->sv_permsocks)) {
+ 		svsk = list_entry(serv->sv_permsocks.next,
+ 				struct svc_sock, sk_list);
+@@ -133,15 +133,21 @@ int nfs_callback_up(void)
+ 		BUG();
+ 	ret = svc_create_thread(nfs_callback_svc, serv);
+ 	if (ret < 0)
+-		goto out_destroy;
++		goto out_err;
+ 	nfs_callback_info.serv = serv;
+ 	wait_for_completion(&nfs_callback_info.started);
+ out:
++	/*
++	 * svc_create creates the svc_serv with sv_nrthreads == 1, and then
++	 * svc_create_thread increments that. So we need to call svc_destroy
++	 * on both success and failure so that the refcount is 1 when the
++	 * thread exits.
++	 */
++	if (serv)
++		svc_destroy(serv);
+ 	mutex_unlock(&nfs_callback_mutex);
+ 	unlock_kernel();
+ 	return ret;
+-out_destroy:
+-	svc_destroy(serv);
+ out_err:
+ 	nfs_callback_info.users--;
+ 	goto out;

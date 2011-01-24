@@ -1,0 +1,58 @@
+From: Geoff Gustafson <grgustaf@redhat.com>
+Subject: Re: [RHEL5.1 PATCH] I/O space mismatch with P64H2 (bz 220511)
+Date: Tue, 05 Jun 2007 10:53:23 -0400
+Bugzilla: 220511
+Message-Id: <466578E3.40003@redhat.com>
+Changelog: [pci] I/O space mismatch with P64H2
+
+
+Geoff Gustafson wrote:
+>Reported by Unisys, when Intel P64H2 southbridge is set to allocate 
+>I/O space with 1k granularity, kernel aligns to 4k and nastiness 
+>ensues. They submitted this PCI quirk patch upstream. It changed form 
+>slightly from what they submitted so I took the upstream version from 
+>2.6.21.
+>
+I suppose the patch would be useful for any reviewing.
+
+- Geoff
+
+
+
+Index: linux-2.6.18.x86_64/drivers/pci/quirks.c
+===================================================================
+--- linux-2.6.18.x86_64.orig/drivers/pci/quirks.c	2007-06-04 16:51:56.000000000 -0400
++++ linux-2.6.18.x86_64/drivers/pci/quirks.c	2007-06-04 16:57:24.000000000 -0400
+@@ -1665,6 +1665,31 @@ static void __devinit quirk_p64h2_1k_io(
+ }
+ DECLARE_PCI_FIXUP_HEADER(PCI_VENDOR_ID_INTEL,	0x1460,		quirk_p64h2_1k_io);
+ 
++/* Fix the IOBL_ADR for 1k I/O space granularity on the Intel P64H2
++ * The IOBL_ADR gets re-written to 4k boundaries in pci_setup_bridge()
++ * in drivers/pci/setup-bus.c
++ */
++static void __devinit quirk_p64h2_1k_io_fix_iobl(struct pci_dev *dev)
++{
++	u16 en1k, iobl_adr, iobl_adr_1k;
++	struct resource *res = dev->resource + PCI_BRIDGE_RESOURCES;
++
++	pci_read_config_word(dev, 0x40, &en1k);
++
++	if (en1k & 0x200) {
++		pci_read_config_word(dev, PCI_IO_BASE, &iobl_adr);
++
++		iobl_adr_1k = iobl_adr | (res->start >> 8) | (res->end & 0xfc00);
++
++		if (iobl_adr != iobl_adr_1k) {
++			printk(KERN_INFO "PCI: Fixing P64H2 IOBL_ADR from 0x%x to 0x%x for 1 KB Granularity\n",
++				iobl_adr,iobl_adr_1k);
++			pci_write_config_word(dev, PCI_IO_BASE, iobl_adr_1k);
++		}
++	}
++}
++DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_INTEL,	0x1460,		quirk_p64h2_1k_io_fix_iobl);
++
+ /* Under some circumstances, AER is not linked with extended capabilities.
+  * Force it to be linked by setting the corresponding control bit in the
+  * config space.
+

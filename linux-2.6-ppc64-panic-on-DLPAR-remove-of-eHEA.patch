@@ -1,0 +1,116 @@
+From: Scott Moser <smoser@redhat.com>
+Date: Sun, 14 Oct 2007 13:13:52 -0400
+Subject: [ppc64] panic on DLPAR remove of eHEA
+Message-id: Pine.LNX.4.64.0710141309240.3159@squad5-lp1.lab.boston.redhat.com
+O-Subject: [PATCH RHEL5u2] bz253767 kernel panic on DLPAR remove of eHEA ('real fix')
+Bugzilla: 253767
+
+Bug 253767 [1]
+---------------
+
+Description:
+-----------
+When posting my changes for bug 251370, developers asked that I find "The
+real fix".  The suggested workaround fix was added for RHEL5u1 and this
+bug was opened to address the fix in RHEL5u2.
+
+The patch below backs out the workaround portion of bug 251370 and
+adds the upstream fix for this issue, which is to remove the unused
+'linux,device' property of of_device_register.
+
+Kernel Version:
+--------------
+Patch built against 2.6.18-52
+
+Upstream Status:
+---------------
+980ffd3258dbcdb011e929de5d658ec81febba8d
+
+Test Status:
+----
+To ensure cross platform build, a brew scratch build has been done against
+2.6.18-52 at [2].
+
+I have successfully tested eHEA DLPAR with these changes applied from the
+brew build listed above.  Additionally, I saw the original crash by booting
+a kernel with the workaround removed and no other changes. So, these
+changes fix the problem that was originally worked around.
+
+I have grepped through the entire patched kernel tree looking for other
+occurences of 'linux,device' and have not found any.
+
+Please review patch below for RHEL5u2
+--
+[1]:https://bugzilla.redhat.com/show_bug.cgi?id=253767
+
+Acked-by: Prarit Bhargava <prarit@redhat.com>
+Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+---
+ arch/powerpc/kernel/of_device.c |   24 ------------------------
+ drivers/net/ehea/ehea_main.c    |    3 ++-
+ 2 files changed, 2 insertions(+), 25 deletions(-)
+
+diff --git a/arch/powerpc/kernel/of_device.c b/arch/powerpc/kernel/of_device.c
+index f15d8e9..f6f0f0c 100644
+--- a/arch/powerpc/kernel/of_device.c
++++ b/arch/powerpc/kernel/of_device.c
+@@ -103,27 +103,9 @@ void of_release_dev(struct device *dev)
+ int of_device_register(struct of_device *ofdev)
+ {
+ 	int rc;
+-	struct of_device **odprop;
+ 
+ 	BUG_ON(ofdev->node == NULL);
+ 
+-	odprop = (struct of_device **)get_property(ofdev->node, "linux,device", NULL);
+-	if (!odprop) {
+-		struct property *new_prop;
+-	
+-		new_prop = kmalloc(sizeof(struct property) + sizeof(struct of_device *),
+-			GFP_KERNEL);
+-		if (new_prop == NULL)
+-			return -ENOMEM;
+-		new_prop->name = "linux,device";
+-		new_prop->length = sizeof(sizeof(struct of_device *));
+-		new_prop->value = (unsigned char *)&new_prop[1];
+-		odprop = (struct of_device **)new_prop->value;
+-		*odprop = NULL;
+-		prom_add_property(ofdev->node, new_prop);
+-	}
+-	*odprop = ofdev;
+-
+ 	rc = device_register(&ofdev->dev);
+ 	if (rc)
+ 		return rc;
+@@ -135,14 +117,8 @@ int of_device_register(struct of_device *ofdev)
+ 
+ void of_device_unregister(struct of_device *ofdev)
+ {
+-	struct of_device **odprop;
+-
+ 	device_remove_file(&ofdev->dev, &dev_attr_devspec);
+ 
+-	odprop = (struct of_device **)get_property(ofdev->node, "linux,device", NULL);
+-	if (odprop)
+-		*odprop = NULL;
+-
+ 	device_unregister(&ofdev->dev);
+ }
+ 
+diff --git a/drivers/net/ehea/ehea_main.c b/drivers/net/ehea/ehea_main.c
+index a6b5316..ec49af2 100644
+--- a/drivers/net/ehea/ehea_main.c
++++ b/drivers/net/ehea/ehea_main.c
+@@ -2401,7 +2401,8 @@ static DEVICE_ATTR(log_port_id, S_IRUSR | S_IRGRP | S_IROTH, ehea_show_port_id,
+ 
+ static void __devinit logical_port_release(struct device *dev)
+ {
+-	return;
++	struct ehea_port *port = container_of(dev, struct ehea_port, ofdev.dev);
++	of_node_put(port->ofdev.node);
+ }
+ 
+ static int ehea_driver_sysfs_add(struct device *dev,
+-- 
+1.5.3.5.645.gbb47
+

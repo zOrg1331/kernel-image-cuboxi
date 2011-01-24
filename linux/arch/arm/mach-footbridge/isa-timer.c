@@ -7,8 +7,8 @@
 #include <linux/init.h>
 #include <linux/interrupt.h>
 #include <linux/irq.h>
-#include <linux/io.h>
 
+#include <asm/io.h>
 #include <asm/irq.h>
 
 #include <asm/mach/time.h>
@@ -62,16 +62,18 @@ static unsigned long isa_gettimeoffset(void)
 }
 
 static irqreturn_t
-isa_timer_interrupt(int irq, void *dev_id)
+isa_timer_interrupt(int irq, void *dev_id, struct pt_regs *regs)
 {
-	timer_tick();
+	write_seqlock(&xtime_lock);
+	timer_tick(regs);
+	write_sequnlock(&xtime_lock);
 	return IRQ_HANDLED;
 }
 
 static struct irqaction isa_timer_irq = {
 	.name		= "ISA timer tick",
 	.handler	= isa_timer_interrupt,
-	.flags		= IRQF_DISABLED | IRQF_TIMER | IRQF_IRQPOLL,
+	.flags		= IRQF_DISABLED | IRQF_TIMER,
 };
 
 static void __init isa_timer_init(void)

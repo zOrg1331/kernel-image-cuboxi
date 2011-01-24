@@ -53,7 +53,7 @@ static int led_init(struct cphy *cphy)
 	 * Writing these bits maps control to another
 	 * register. mmd(0x1) addr(0x7)
 	 */
-	cphy_mdio_write(cphy, MDIO_MMD_PCS, 0x8304, 0xdddd);
+	mdio_write(cphy, 0x3, 0x8304, 0xdddd);
 	return 0;
 }
 
@@ -62,14 +62,14 @@ static int led_link(struct cphy *cphy, u32 do_enable)
 	u32 led = 0;
 #define LINK_ENABLE_BIT 0x1
 
-	cphy_mdio_read(cphy, MDIO_MMD_PMAPMD, MDIO_CTRL2, &led);
+	mdio_read(cphy, 0x1, 0x7, &led);
 
 	if (do_enable & LINK_ENABLE_BIT) {
 		led |= LINK_ENABLE_BIT;
-		cphy_mdio_write(cphy, MDIO_MMD_PMAPMD, MDIO_CTRL2, led);
+		mdio_write(cphy, 0x1, 0x7, led);
 	} else {
 		led &= ~LINK_ENABLE_BIT;
-		cphy_mdio_write(cphy, MDIO_MMD_PMAPMD, MDIO_CTRL2, led);
+		mdio_write(cphy, 0x1, 0x7, led);
 	}
 	return 0;
 }
@@ -85,34 +85,29 @@ static int mv88x201x_reset(struct cphy *cphy, int wait)
 
 static int mv88x201x_interrupt_enable(struct cphy *cphy)
 {
+	u32 elmer;
+
 	/* Enable PHY LASI interrupts. */
-	cphy_mdio_write(cphy, MDIO_MMD_PMAPMD, MDIO_PMA_LASI_CTRL,
-			MDIO_PMA_LASI_LSALARM);
+	mdio_write(cphy, 0x1, 0x9002, 0x1);
 
 	/* Enable Marvell interrupts through Elmer0. */
-	if (t1_is_asic(cphy->adapter)) {
-		u32 elmer;
-
-		t1_tpi_read(cphy->adapter, A_ELMER0_INT_ENABLE, &elmer);
-		elmer |= ELMER0_GP_BIT6;
-		t1_tpi_write(cphy->adapter, A_ELMER0_INT_ENABLE, elmer);
-	}
+	t1_tpi_read(cphy->adapter, A_ELMER0_INT_ENABLE, &elmer);
+	elmer |= ELMER0_GP_BIT6;
+	t1_tpi_write(cphy->adapter, A_ELMER0_INT_ENABLE, elmer);
 	return 0;
 }
 
 static int mv88x201x_interrupt_disable(struct cphy *cphy)
 {
+	u32 elmer;
+
 	/* Disable PHY LASI interrupts. */
-	cphy_mdio_write(cphy, MDIO_MMD_PMAPMD, MDIO_PMA_LASI_CTRL, 0x0);
+	mdio_write(cphy, 0x1, 0x9002, 0x0);
 
 	/* Disable Marvell interrupts through Elmer0. */
-	if (t1_is_asic(cphy->adapter)) {
-		u32 elmer;
-
-		t1_tpi_read(cphy->adapter, A_ELMER0_INT_ENABLE, &elmer);
-		elmer &= ~ELMER0_GP_BIT6;
-		t1_tpi_write(cphy->adapter, A_ELMER0_INT_ENABLE, elmer);
-	}
+	t1_tpi_read(cphy->adapter, A_ELMER0_INT_ENABLE, &elmer);
+	elmer &= ~ELMER0_GP_BIT6;
+	t1_tpi_write(cphy->adapter, A_ELMER0_INT_ENABLE, elmer);
 	return 0;
 }
 
@@ -123,33 +118,31 @@ static int mv88x201x_interrupt_clear(struct cphy *cphy)
 
 #ifdef MV88x2010_LINK_STATUS_BUGS
 	/* Required to read twice before clear takes affect. */
-	cphy_mdio_read(cphy, MDIO_MMD_PMAPMD, MDIO_PMA_LASI_RXSTAT, &val);
-	cphy_mdio_read(cphy, MDIO_MMD_PMAPMD, MDIO_PMA_LASI_TXSTAT, &val);
-	cphy_mdio_read(cphy, MDIO_MMD_PMAPMD, MDIO_PMA_LASI_STAT, &val);
+	mdio_read(cphy, 0x1, 0x9003, &val);
+	mdio_read(cphy, 0x1, 0x9004, &val);
+	mdio_read(cphy, 0x1, 0x9005, &val);
 
 	/* Read this register after the others above it else
 	 * the register doesn't clear correctly.
 	 */
-	cphy_mdio_read(cphy, MDIO_MMD_PMAPMD, MDIO_STAT1, &val);
+	mdio_read(cphy, 0x1, 0x1, &val);
 #endif
 
 	/* Clear link status. */
-	cphy_mdio_read(cphy, MDIO_MMD_PMAPMD, MDIO_STAT1, &val);
+	mdio_read(cphy, 0x1, 0x1, &val);
 	/* Clear PHY LASI interrupts. */
-	cphy_mdio_read(cphy, MDIO_MMD_PMAPMD, MDIO_PMA_LASI_STAT, &val);
+	mdio_read(cphy, 0x1, 0x9005, &val);
 
 #ifdef MV88x2010_LINK_STATUS_BUGS
 	/* Do it again. */
-	cphy_mdio_read(cphy, MDIO_MMD_PMAPMD, MDIO_PMA_LASI_RXSTAT, &val);
-	cphy_mdio_read(cphy, MDIO_MMD_PMAPMD, MDIO_PMA_LASI_TXSTAT, &val);
+	mdio_read(cphy, 0x1, 0x9003, &val);
+	mdio_read(cphy, 0x1, 0x9004, &val);
 #endif
 
 	/* Clear Marvell interrupts through Elmer0. */
-	if (t1_is_asic(cphy->adapter)) {
-		t1_tpi_read(cphy->adapter, A_ELMER0_INT_CAUSE, &elmer);
-		elmer |= ELMER0_GP_BIT6;
-		t1_tpi_write(cphy->adapter, A_ELMER0_INT_CAUSE, elmer);
-	}
+	t1_tpi_read(cphy->adapter, A_ELMER0_INT_CAUSE, &elmer);
+	elmer |= ELMER0_GP_BIT6;
+	t1_tpi_write(cphy->adapter, A_ELMER0_INT_CAUSE, elmer);
 	return 0;
 }
 
@@ -173,12 +166,13 @@ static int mv88x201x_get_link_status(struct cphy *cphy, int *link_ok,
 				     int *speed, int *duplex, int *fc)
 {
 	u32 val = 0;
+#define LINK_STATUS_BIT 0x4
 
 	if (link_ok) {
 		/* Read link status. */
-		cphy_mdio_read(cphy, MDIO_MMD_PMAPMD, MDIO_STAT1, &val);
-		val &= MDIO_STAT1_LSTATUS;
-		*link_ok = (val == MDIO_STAT1_LSTATUS);
+		mdio_read(cphy, 0x1, 0x1, &val);
+		val &= LINK_STATUS_BIT;
+		*link_ok = (val == LINK_STATUS_BIT);
 		/* Turn on/off Link LED */
 		led_link(cphy, *link_ok);
 	}
@@ -205,28 +199,26 @@ static struct cphy_ops mv88x201x_ops = {
 	.interrupt_handler = mv88x201x_interrupt_handler,
 	.get_link_status   = mv88x201x_get_link_status,
 	.set_loopback      = mv88x201x_set_loopback,
-	.mmds              = (MDIO_DEVS_PMAPMD | MDIO_DEVS_PCS |
-			      MDIO_DEVS_PHYXS | MDIO_DEVS_WIS),
 };
 
-static struct cphy *mv88x201x_phy_create(struct net_device *dev, int phy_addr,
-					 const struct mdio_ops *mdio_ops)
+static struct cphy *mv88x201x_phy_create(adapter_t *adapter, int phy_addr,
+					 struct mdio_ops *mdio_ops)
 {
 	u32 val;
-	struct cphy *cphy = kzalloc(sizeof(*cphy), GFP_KERNEL);
+	struct cphy *cphy = kmalloc(sizeof(*cphy), GFP_KERNEL);
 
 	if (!cphy)
 		return NULL;
-
-	cphy_init(cphy, dev, phy_addr, &mv88x201x_ops, mdio_ops);
+	memset(cphy, 0, sizeof(*cphy));
+	cphy_init(cphy, adapter, phy_addr, &mv88x201x_ops, mdio_ops);
 
 	/* Commands the PHY to enable XFP's clock. */
-	cphy_mdio_read(cphy, MDIO_MMD_PCS, 0x8300, &val);
-	cphy_mdio_write(cphy, MDIO_MMD_PCS, 0x8300, val | 1);
+	mdio_read(cphy, 0x3, 0x8300, &val);
+	mdio_write(cphy, 0x3, 0x8300, val | 1);
 
 	/* Clear link status. Required because of a bug in the PHY.  */
-	cphy_mdio_read(cphy, MDIO_MMD_PMAPMD, MDIO_STAT2, &val);
-	cphy_mdio_read(cphy, MDIO_MMD_PCS, MDIO_STAT2, &val);
+	mdio_read(cphy, 0x1, 0x8, &val);
+	mdio_read(cphy, 0x3, 0x8, &val);
 
 	/* Allows for Link,Ack LED turn on/off */
 	led_init(cphy);
@@ -254,7 +246,7 @@ static int mv88x201x_phy_reset(adapter_t *adapter)
 	return 0;
 }
 
-const struct gphy t1_mv88x201x_ops = {
-	.create = mv88x201x_phy_create,
-	.reset = mv88x201x_phy_reset
+struct gphy t1_mv88x201x_ops = {
+	mv88x201x_phy_create,
+	mv88x201x_phy_reset
 };

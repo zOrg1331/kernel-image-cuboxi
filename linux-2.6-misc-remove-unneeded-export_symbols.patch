@@ -1,0 +1,34 @@
+From: Don Zickus <dzickus@redhat.com>
+Date: Mon, 10 Mar 2008 14:16:18 -0400
+Subject: [misc] remove unneeded EXPORT_SYMBOLS
+Message-id: 20080310181618.GA6743@redhat.com
+O-Subject: [RHEL-5 PATCH] remove unneeded EXPORT_SYMBOLS
+Bugzilla: 295491
+
+https://bugzilla.redhat.com/show_bug.cgi?id=295491
+
+As part of our on-going EXPORT_SYMBOL validation efforts, I went through
+the 5.2 queue and verified where all the non-GPL EXPORT_SYMBOLS were
+upstream.  The result is an extra symbol not being needed.  The patch
+below removes this symbol from our tree.
+
+Most of the symbols are upstream, with a handful on queue for 2.6.25 and
+another handful promised for 2.6.26.  A small amount are only maintained
+internally (I kept those as non-gpl because they are ours).
+
+I will follow up this email with a whitelist I plan on maintaining to
+avoid having to re-review these symbols later.
+
+Cheers,
+Don
+
+diff --git a/net/ipv4/icmp.c b/net/ipv4/icmp.c
+index 83ff7c0..56558b7 100644
+--- a/net/ipv4/icmp.c
++++ b/net/ipv4/icmp.c
+@@ -1159,5 +1159,4 @@ void __init icmp_init(struct net_proto_family *ops)
+ EXPORT_SYMBOL(icmp_err_convert);
+ EXPORT_SYMBOL(icmp_send);
+ EXPORT_SYMBOL(icmp_statistics);
+-EXPORT_SYMBOL(icmpmsg_statistics);
+ EXPORT_SYMBOL(xrlim_allow);

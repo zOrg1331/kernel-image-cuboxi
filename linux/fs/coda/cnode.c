@@ -16,7 +16,7 @@ static inline int coda_fideq(struct CodaFid *fid1, struct CodaFid *fid2)
 	return memcmp(fid1, fid2, sizeof(*fid1)) == 0;
 }
 
-static const struct inode_operations coda_symlink_inode_operations = {
+static struct inode_operations coda_symlink_inode_operations = {
 	.readlink	= generic_readlink,
 	.follow_link	= page_follow_link_light,
 	.put_link	= page_put_link,
@@ -53,6 +53,11 @@ static int coda_set_inode(struct inode *inode, void *data)
 	struct CodaFid *fid = (struct CodaFid *)data;
 	ITOC(inode)->c_fid = *fid;
 	return 0;
+}
+
+static int coda_fail_inode(struct inode *inode, void *data)
+{
+	return -1;
 }
 
 struct inode * coda_iget(struct super_block * sb, struct CodaFid * fid,
@@ -136,7 +141,7 @@ struct inode *coda_fid_to_inode(struct CodaFid *fid, struct super_block *sb)
 		return NULL;
 	}
 
-	inode = ilookup5(sb, hash, coda_test_inode, fid);
+	inode = iget5_locked(sb, hash, coda_test_inode, coda_fail_inode, fid);
 	if ( !inode )
 		return NULL;
 

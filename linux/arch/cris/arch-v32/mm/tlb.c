@@ -9,12 +9,12 @@
 
 #include <asm/tlb.h>
 #include <asm/mmu_context.h>
-#include <arch/hwregs/asm/mmu_defs_asm.h>
-#include <arch/hwregs/supp_reg.h>
+#include <asm/arch/hwregs/asm/mmu_defs_asm.h>
+#include <asm/arch/hwregs/supp_reg.h>
 
 #define UPDATE_TLB_SEL_IDX(val)					\
-do {								\
-	unsigned long tlb_sel;					\
+do { 								\
+	unsigned long tlb_sel; 					\
 								\
 	tlb_sel = REG_FIELD(mmu, rw_mm_tlb_sel, idx, val);	\
 	SUPP_REG_WR(RW_MM_TLB_SEL, tlb_sel);			\
@@ -54,7 +54,8 @@ __flush_tlb_all(void)
 	 * Mask with 0xf so similar TLB entries aren't written in the same 4-way
 	 * entry group.
 	 */
-	local_irq_save(flags);
+	local_save_flags(flags);
+	local_irq_disable();
 
 	for (mmu = 1; mmu <= 2; mmu++) {
 		SUPP_BANK_SEL(mmu); /* Select the MMU */
@@ -91,7 +92,8 @@ __flush_tlb_mm(struct mm_struct *mm)
 		return;
 
 	/* Mark the TLB entries that match the page_id as invalid. */
-	local_irq_save(flags);
+	local_save_flags(flags);
+	local_irq_disable();
 
 	for (mmu = 1; mmu <= 2; mmu++) {
 		SUPP_BANK_SEL(mmu);
@@ -138,7 +140,8 @@ __flush_tlb_page(struct vm_area_struct *vma, unsigned long addr)
 	 * Invalidate those TLB entries that match both the mm context and the
 	 * requested virtual address.
 	 */
-	local_irq_save(flags);
+	local_save_flags(flags);
+	local_irq_disable();
 
 	for (mmu = 1; mmu <= 2; mmu++) {
 		SUPP_BANK_SEL(mmu);
@@ -179,29 +182,29 @@ void
 switch_mm(struct mm_struct *prev, struct mm_struct *next,
 	  struct task_struct *tsk)
 {
-	if (prev != next) {
-		int cpu = smp_processor_id();
+	int cpu = smp_processor_id();
 
-		/* Make sure there is a MMU context. */
-		spin_lock(&mmu_context_lock);
-		get_mmu_context(next);
-		cpumask_set_cpu(cpu, mm_cpumask(next));
-		spin_unlock(&mmu_context_lock);
+	/* Make sure there is a MMU context. */
+	spin_lock(&mmu_context_lock);
+	get_mmu_context(next);
+	cpu_set(cpu, next->cpu_vm_mask);
+	spin_unlock(&mmu_context_lock);
 
-		/*
-		 * Remember the pgd for the fault handlers. Keep a seperate
-		 * copy of it because current and active_mm might be invalid
-		 * at points where * there's still a need to derefer the pgd.
-		 */
-		per_cpu(current_pgd, cpu) = next->pgd;
+	/*
+	 * Remember the pgd for the fault handlers. Keep a seperate copy of it
+	 * because current and active_mm might be invalid at points where
+	 * there's still a need to derefer the pgd.
+	 */
+	per_cpu(current_pgd, cpu) = next->pgd;
 
-		/* Switch context in the MMU. */
-		if (tsk && task_thread_info(tsk)) {
-			SPEC_REG_WR(SPEC_REG_PID, next->context.page_id |
-				task_thread_info(tsk)->tls);
-		} else {
-			SPEC_REG_WR(SPEC_REG_PID, next->context.page_id);
-		}
-	}
+	/* Switch context in the MMU. */
+        if (tsk && task_thread_info(tsk))
+        {
+          SPEC_REG_WR(SPEC_REG_PID, next->context.page_id | task_thread_info(tsk)->tls);
+        }
+        else
+        {
+          SPEC_REG_WR(SPEC_REG_PID, next->context.page_id);
+        }
 }
 

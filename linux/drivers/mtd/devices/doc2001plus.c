@@ -6,6 +6,8 @@
  * (c) 1999 Machine Vision Holdings, Inc.
  * (c) 1999, 2000 David Woodhouse <dwmw2@infradead.org>
  *
+ * $Id: doc2001plus.c,v 1.14 2005/11/07 11:14:24 gleixner Exp $
+ *
  * Released under GPL
  */
 
@@ -14,8 +16,11 @@
 #include <asm/errno.h>
 #include <asm/io.h>
 #include <asm/uaccess.h>
+#include <linux/miscdevice.h>
+#include <linux/pci.h>
 #include <linux/delay.h>
 #include <linux/slab.h>
+#include <linux/sched.h>
 #include <linux/init.h>
 #include <linux/types.h>
 #include <linux/bitops.h>
@@ -468,6 +473,7 @@ void DoCMilPlus_init(struct mtd_info *mtd)
 
 	mtd->type = MTD_NANDFLASH;
 	mtd->flags = MTD_CAP_NANDFLASH;
+	mtd->ecctype = MTD_ECC_RS_DiskOnChip;
 	mtd->size = 0;
 
 	mtd->erasesize = 0;
@@ -745,7 +751,7 @@ static int doc_write(struct mtd_info *mtd, loff_t to, size_t len,
 	WriteDOC(DoC_GetDataOffset(mtd, &fto), docptr, Mplus_FlashCmd);
 
 	/* On interleaved devices the flags for 2nd half 512 are before data */
-	if (before)
+	if (eccbuf && before)
 		fto -= 2;
 
 	/* issue the Serial Data In command to initial the Page Program process */

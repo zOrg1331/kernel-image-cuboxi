@@ -1,0 +1,44 @@
+From: Neil Horman <nhorman@redhat.com>
+Date: Thu, 10 Apr 2008 15:10:03 -0400
+Subject: [net] add aes-ctr algorithm to xfrm_nalgo
+Message-id: 20080410191003.GA9914@hmsendeavour.rdu.redhat.com
+O-Subject: [RHEL5.2 PATCH] Add aes-ctr algorithm to xfrm_nalgo (bz 441425)
+Bugzilla: 441425
+
+Hey-
+	Backport of upstream commit 405137d16fbe4c80b9e06e61af05856027745d23.
+Adds aes-ctr algorithm support.  Required for Ipv6 DOD certification and
+satifies bz 441425
+
+Neil
+
+Acked-by: "David S. Miller" <davem@redhat.com>
+
+diff --git a/net/xfrm/xfrm_nalgo.c b/net/xfrm/xfrm_nalgo.c
+index 6d55cae..1fbc40a 100644
+--- a/net/xfrm/xfrm_nalgo.c
++++ b/net/xfrm/xfrm_nalgo.c
+@@ -332,6 +332,23 @@ static struct xfrm_nalgo_desc ealg_list[] = {
+ 		.sadb_alg_maxbits = 256
+ 	}
+ },
++{
++	.name = "rfc3686(ctr(aes))",
++
++	.uinfo = {
++		.encr = {
++			.blockbits = 128,
++			.defkeybits = 160, /* 128-bit key + 32-bit nonce */
++		}
++	},
++
++	.desc = {
++		.sadb_alg_id = SADB_X_EALG_AESCTR,
++		.sadb_alg_ivlen = 8,
++		.sadb_alg_minbits = 128,
++		.sadb_alg_maxbits = 256
++	}
++},
+ };
+ 
+ static struct xfrm_nalgo_desc calg_list[] = {

@@ -1,0 +1,1397 @@
+From: Chip Coldwell <coldwell@redhat.com>
+Date: Tue, 18 Dec 2007 12:51:44 -0500
+Subject: [scsi] aacraid: update to 1.1.5-2453
+Message-id: alpine.LFD.0.9999.0712181236120.27475@localhost.localdomain
+O-Subject: [RHEL-5.2 PATCH] bz364371 Update aacraid to 1.1.5-2453
+Bugzilla: 364371
+
+Vendor supplied patch to bring the aacraid driver up to date.
+All-arches build here:
+
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1083658
+
+Tested by the vendor and myself, with further partner testing promised
+after integration.
+
+Upstream commits
+
+88e2f98e1b3eb27ae708daa3b37dd50f3f06c952 [SCSI] aacraid: add vpd to inquiry
+727eead62e22cf0a9498cf34e075c08269402978 [SCSI] aacraid: convert to use the data buffer accessors
+e8f32de52c0d74d397d21afc655a4e2a7dfe1f98 [SCSI] aacraid: rework packet support code
+b90f90d2303f27b9b241ab78419a07b41de5ac62 [SCSI] aacraid: add SCSI SYNCHONIZE_CACHE range checking
+29c976844d0bef07d97babc8db60fa6c46788133 [SCSI] aacraid: add user initiated reset
+1a655040c24ebf3954ad5cf8848391cb420b1ffb [SCSI] aacraid: probe related code cleanup
+9ad5204d68a3b48b92907d88d1c28d33fde6ba2a [SCSI] aacraid: incorrect dma mapping mask during blinkled recover or user initiated reset
+
+Patch below
+
+diff --git a/Documentation/scsi/aacraid.txt b/Documentation/scsi/aacraid.txt
+index be55670..a825784 100644
+--- a/Documentation/scsi/aacraid.txt
++++ b/Documentation/scsi/aacraid.txt
+@@ -4,45 +4,59 @@ Introduction
+ -------------------------
+ The aacraid driver adds support for Adaptec (http://www.adaptec.com)
+ RAID controllers. This is a major rewrite from the original
+-Adaptec supplied driver. It has signficantly cleaned up both the code
++Adaptec supplied driver. It has significantly cleaned up both the code
+ and the running binary size (the module is less than half the size of
+ the original).
+ 
+ Supported Cards/Chipsets
+ -------------------------
+ 	PCI ID (pci.ids)	OEM	Product
+-	9005:0285:9005:028a	Adaptec	2020ZCR (Skyhawk)
+-	9005:0285:9005:028e	Adaptec	2020SA (Skyhawk)
+-	9005:0285:9005:028b	Adaptec 2025ZCR (Terminator)
+-	9005:0285:9005:028f	Adaptec 2025SA (Terminator)
+-	9005:0285:9005:0286	Adaptec	2120S (Crusader)
+-	9005:0286:9005:028d	Adaptec	2130S (Lancer)
+ 	9005:0285:9005:0285	Adaptec	2200S (Vulcan)
++	9005:0285:9005:0286	Adaptec	2120S (Crusader)
+ 	9005:0285:9005:0287	Adaptec	2200S (Vulcan-2m)
++	9005:0285:9005:0288	Adaptec	3230S (Harrier)
++	9005:0285:9005:0289	Adaptec	3240S (Tornado)
++	9005:0285:9005:028a	Adaptec	2020ZCR (Skyhawk)
++	9005:0285:9005:028b	Adaptec	2025ZCR (Terminator)
+ 	9005:0286:9005:028c	Adaptec	2230S (Lancer)
+ 	9005:0286:9005:028c	Adaptec	2230SLP (Lancer)
+-	9005:0285:9005:0296	Adaptec	2240S (SabreExpress)
++	9005:0286:9005:028d	Adaptec	2130S (Lancer)
++	9005:0285:9005:028e	Adaptec	2020SA (Skyhawk)
++	9005:0285:9005:028f	Adaptec	2025SA (Terminator)
+ 	9005:0285:9005:0290	Adaptec	2410SA (Jaguar)
+-	9005:0285:9005:0293	Adaptec 21610SA (Corsair-16)
+-	9005:0285:103c:3227	Adaptec 2610SA (Bearcat HP release)
++	9005:0285:103c:3227	Adaptec	2610SA (Bearcat HP release)
++	9005:0285:9005:0293	Adaptec	21610SA (Corsair-16)
++	9005:0285:9005:0296	Adaptec	2240S (SabreExpress)
+ 	9005:0285:9005:0292	Adaptec	2810SA (Corsair-8)
+-	9005:0285:9005:0294	Adaptec	Prowler
+-	9005:0286:9005:029d	Adaptec	2420SA (Intruder HP release)
+-	9005:0286:9005:029c	Adaptec	2620SA (Intruder)
+-	9005:0286:9005:029b	Adaptec	2820SA (Intruder)
+-	9005:0286:9005:02a7	Adaptec	2830SA (Skyray)
+-	9005:0286:9005:02a8	Adaptec	2430SA (Skyray)
+-	9005:0285:9005:0288	Adaptec	3230S (Harrier)
+-	9005:0285:9005:0289	Adaptec	3240S (Tornado)
+-	9005:0285:9005:0298	Adaptec	4000SAS (BlackBird)
+-	9005:0285:9005:0297	Adaptec	4005SAS (AvonPark)
++	9005:0285:9005:0297	Adaptec	4005 (AvonPark)
++	9005:0285:9005:0298	Adaptec	4000 (BlackBird)
+ 	9005:0285:9005:0299	Adaptec	4800SAS (Marauder-X)
+ 	9005:0285:9005:029a	Adaptec	4805SAS (Marauder-E)
+-	9005:0286:9005:02a2	Adaptec	3800SAS (Hurricane44)
++	9005:0286:9005:029b	Adaptec	2820SA (Intruder)
++	9005:0286:9005:029c	Adaptec	2620SA (Intruder)
++	9005:0286:9005:029d	Adaptec	2420SA (Intruder HP release)
++	9005:0286:9005:02ac	Adaptec	1800 (Typhoon44)
++	9005:0285:9005:02b5	Adaptec	5445 (Voodoo44)
++	9005:0285:15d9:02b5	SMC	AOC-USAS-S4i
++	9005:0285:9005:02b6	Adaptec	5805 (Voodoo80)
++	9005:0285:15d9:02b6	SMC	AOC-USAS-S8i
++	9005:0285:9005:02b7	Adaptec	5085 (Voodoo08)
++	9005:0285:9005:02bb	Adaptec	3405 (Marauder40LP)
++	9005:0285:9005:02bc	Adaptec	3805 (Marauder80LP)
++	9005:0285:9005:02c7	Adaptec	3085 (Marauder08ELP)
++	9005:0285:9005:02bd	Adaptec	31205 (Marauder120)
++	9005:0285:9005:02be	Adaptec	31605 (Marauder160)
++	9005:0285:9005:02c3	Adaptec	51205 (Voodoo120)
++	9005:0285:9005:02c4	Adaptec	51605 (Voodoo160)
++	9005:0285:15d9:02c9	SMC	AOC-USAS-S4iR
++	9005:0285:15d9:02ca	SMC	AOC-USAS-S8iR
++	9005:0285:9005:02ce	Adaptec	51245 (Voodoo124)
++	9005:0285:9005:02cf	Adaptec	51645 (Voodoo164)
++	9005:0285:9005:02d0	Adaptec	52445 (Voodoo244)
++	9005:0285:9005:02d1	Adaptec	5405 (Voodoo40)
++	9005:0285:15d9:02d2	SMC	AOC-USAS-S8i-LP
++	9005:0285:15d9:02d3	SMC	AOC-USAS-S8iR-LP
+ 	1011:0046:9005:0364	Adaptec	5400S (Mustang)
+-	1011:0046:9005:0365	Adaptec	5400S (Mustang)
+-	9005:0283:9005:0283	Adaptec	Catapult (3210S with arc firmware)
+-	9005:0284:9005:0284	Adaptec	Tomcat (3410S with arc firmware)
+ 	9005:0287:9005:0800	Adaptec	Themisto (Jupiter)
+ 	9005:0200:9005:0200	Adaptec	Themisto (Jupiter)
+ 	9005:0286:9005:0800	Adaptec	Callisto (Jupiter)
+@@ -63,19 +77,36 @@ Supported Cards/Chipsets
+ 	9005:0285:17aa:0287	Legend	S230 (Vulcan)
+ 	9005:0285:9005:0290	IBM	ServeRAID 7t (Jaguar)
+ 	9005:0285:1014:02F2	IBM	ServeRAID 8i (AvonPark)
+-	9005:0285:1014:0312	IBM	ServeRAID 8i (AvonParkLite)
+-	9005:0286:1014:9580	IBM	ServeRAID 8k/8k-l8 (Aurora)
+ 	9005:0286:1014:9540	IBM	ServeRAID 8k/8k-l4 (AuroraLite)
+-	9005:0286:9005:029f	ICP	ICP9014R0 (Lancer)
+-	9005:0286:9005:029e	ICP	ICP9024R0 (Lancer)
++	9005:0286:1014:9580	IBM	ServeRAID 8k/8k-l8 (Aurora)
++	9005:0285:1014:034d	IBM	ServeRAID 8s (Marauder-E)
++	9005:0286:9005:029e	ICP	ICP9024RO (Lancer)
++	9005:0286:9005:029f	ICP	ICP9014RO (Lancer)
+ 	9005:0286:9005:02a0	ICP	ICP9047MA (Lancer)
+ 	9005:0286:9005:02a1	ICP	ICP9087MA (Lancer)
+-	9005:0286:9005:02a4	ICP	ICP9085LI (Marauder-X)
+-	9005:0286:9005:02a5	ICP	ICP5085BR (Marauder-E)
+-	9005:0286:9005:02a3	ICP	ICP5445AU (Hurricane44)
++	9005:0285:9005:02a4	ICP	ICP9085LI (Marauder-X)
++	9005:0285:9005:02a5	ICP	ICP5085BR (Marauder-E)
+ 	9005:0286:9005:02a6	ICP	ICP9067MA (Intruder-6)
+-	9005:0286:9005:02a9	ICP	ICP5087AU (Skyray)
+-	9005:0286:9005:02aa	ICP	ICP5047AU (Skyray)
++	9005:0285:9005:02b2	ICP	(Voodoo 8 internal 8 external)
++	9005:0285:9005:02b8	ICP	ICP5445SL (Voodoo44)
++	9005:0285:9005:02b9	ICP	ICP5085SL (Voodoo80)
++	9005:0285:9005:02ba	ICP	ICP5805SL (Voodoo08)
++	9005:0285:9005:02bf	ICP	ICP5045BL (Marauder40LP)
++	9005:0285:9005:02c0	ICP	ICP5085BL (Marauder80LP)
++	9005:0285:9005:02c8	ICP	ICP5805BL (Marauder08ELP)
++	9005:0285:9005:02c1	ICP	ICP5125BR (Marauder120)
++	9005:0285:9005:02c2	ICP	ICP5165BR (Marauder160)
++	9005:0285:9005:02c5	ICP	ICP5125SL (Voodoo120)
++	9005:0285:9005:02c6	ICP	ICP5165SL (Voodoo160)
++	9005:0286:9005:02ab		(Typhoon40)
++	9005:0286:9005:02ad		(Aurora ARK)
++	9005:0286:9005:02ae		(Aurora Lite ARK)
++	9005:0285:9005:02b0		(Sunrise Lake ARK)
++	9005:0285:9005:02b1	Adaptec	(Voodoo 8 internal 8 external)
++	9005:0285:108e:7aac	SUN	STK RAID REM (Voodoo44 Coyote)
++	9005:0285:108e:0286	SUN	STK RAID INT (Cougar)
++	9005:0285:108e:0287	SUN	STK RAID EXT (Prometheus)
++	9005:0285:108e:7aae	SUN	STK RAID EM (Narvi)
+ 
+ People
+ -------------------------
+diff --git a/drivers/scsi/aacraid/aachba.c b/drivers/scsi/aacraid/aachba.c
+index c6cf295..cfe9b75 100644
+--- a/drivers/scsi/aacraid/aachba.c
++++ b/drivers/scsi/aacraid/aachba.c
+@@ -169,6 +169,18 @@ int acbsize = -1;
+ module_param(acbsize, int, S_IRUGO|S_IWUSR);
+ MODULE_PARM_DESC(acbsize, "Request a specific adapter control block (FIB) size. Valid values are 512, 2048, 4096 and 8192. Default is to use suggestion from Firmware.");
+ 
++int update_interval = 30 * 60;
++module_param(update_interval, int, S_IRUGO|S_IWUSR);
++MODULE_PARM_DESC(update_interval, "Interval in seconds between time sync updates issued to adapter.");
++
++int check_interval = 24 * 60 * 60;
++module_param(check_interval, int, S_IRUGO|S_IWUSR);
++MODULE_PARM_DESC(check_interval, "Interval in seconds between adapter health checks.");
++
++int aac_check_reset = 1;
++module_param_named(check_reset, aac_check_reset, int, S_IRUGO|S_IWUSR);
++MODULE_PARM_DESC(aac_check_reset, "If adapter fails health check, reset the adapter. a value of -1 forces the reset to adapters programmed to ignore it.");
++
+ int expose_physicals = -1;
+ module_param(expose_physicals, int, S_IRUGO|S_IWUSR);
+ MODULE_PARM_DESC(expose_physicals, "Expose physical components of the arrays. -1=protect 0=off, 1=on");
+@@ -356,7 +368,9 @@ static void aac_internal_transfer(struct scsi_cmnd *scsicmd, void *data, unsigne
+ 		memcpy(buf + offset, data, transfer_len);
+ 
+ 	if (scsicmd->use_sg) {
++#if (defined(ARCH_HAS_FLUSH_ANON_PAGE) || defined(CONFIG_PARISC))
+ 		flush_kernel_dcache_page(kmap_atomic_to_page(buf - sg->offset));
++#endif
+ 		kunmap_atomic(buf - sg->offset, KM_IRQ0);
+ 	}
+ 
+@@ -463,16 +477,14 @@ static void _aac_probe_container2(void * context, struct fib * fibptr)
+ {
+ 	struct fsa_dev_info *fsa_dev_ptr;
+ 	int (*callback)(struct scsi_cmnd *);
+-	struct aac_dev *dev;
+ 	struct scsi_cmnd * scsicmd = (struct scsi_cmnd *)context;
+ 
+ 
+ 	if (!aac_valid_context(scsicmd, fibptr))
+ 		return;
+ 
+-	dev = fibptr->dev;
+ 	scsicmd->SCp.Status = 0;
+-	fsa_dev_ptr = dev->fsa_dev;
++	fsa_dev_ptr = fibptr->dev->fsa_dev;
+ 	if (fsa_dev_ptr) {
+ 		struct aac_mount * dresp = (struct aac_mount *) fib_data(fibptr);
+ 		fsa_dev_ptr += scmd_id(scsicmd);
+@@ -637,13 +649,6 @@ int aac_probe_container(struct aac_dev *dev, int cid)
+ 	return status;
+ }
+ 
+-/* Local Structure to set SCSI inquiry data strings */
+-struct scsi_inq {
+-	char vid[8];         /* Vendor ID */
+-	char pid[16];        /* Product ID */
+-	char prl[4];         /* Product Revision Level */
+-};
+-
+ /**
+  *	InqStrCopy	-	string merge
+  *	@a:	string to copy from
+@@ -695,7 +700,7 @@ static char *container_types[] = {
+  * files instead of in OS dependant driver source.
+  */
+ 
+-static void setinqstr(struct aac_dev *dev, void *data, int tindex)
++void setinqstr(struct aac_dev *dev, void *data, int tindex)
+ {
+ 	struct scsi_inq *str;
+ 
+@@ -704,16 +709,21 @@ static void setinqstr(struct aac_dev *dev, void *data, int tindex)
+ 
+ 	if (dev->supplement_adapter_info.AdapterTypeText[0]) {
+ 		char * cp = dev->supplement_adapter_info.AdapterTypeText;
+-		int c = sizeof(str->vid);
+-		while (*cp && *cp != ' ' && --c)
+-			++cp;
+-		c = *cp;
+-		*cp = '\0';
+-		inqstrcpy (dev->supplement_adapter_info.AdapterTypeText,
+-		  str->vid); 
+-		*cp = c;
+-		while (*cp && *cp != ' ')
+-			++cp;
++		int c;
++		if ((cp[0] == 'A') && (cp[1] == 'O') && (cp[2] == 'C'))
++			inqstrcpy("SMC", str->vid);
++		else {
++			c = sizeof(str->vid);
++			while (*cp && *cp != ' ' && --c)
++				++cp;
++			c = *cp;
++			*cp = '\0';
++			inqstrcpy (dev->supplement_adapter_info.AdapterTypeText,
++			  str->vid); 
++			*cp = c;
++			while (*cp && *cp != ' ')
++				++cp;
++		}
+ 		while (*cp == ' ')
+ 			++cp;
+ 		/* last six chars reserved for vol type */
+@@ -747,6 +757,101 @@ static void setinqstr(struct aac_dev *dev, void *data, int tindex)
+ 	inqstrcpy ("V1.0", str->prl);
+ }
+ 
++static void get_container_serial_callback(void *context, struct fib * fibptr)
++{
++	struct aac_get_serial_resp * get_serial_reply;
++	struct scsi_cmnd * scsicmd;
++
++	BUG_ON(fibptr == NULL);
++
++	scsicmd = (struct scsi_cmnd *) context;
++	if (!aac_valid_context(scsicmd, fibptr))
++		return;
++
++	get_serial_reply = (struct aac_get_serial_resp *) fib_data(fibptr);
++	/* Failure is irrelevant, using default value instead */
++	if (le32_to_cpu(get_serial_reply->status) == CT_OK) {
++		char sp[13];
++		/* EVPD bit set */
++		sp[0] = INQD_PDT_DA;
++		sp[1] = scsicmd->cmnd[2];
++		sp[2] = 0;
++		sp[3] = snprintf(sp+4, sizeof(sp)-4, "%08X",
++		  le32_to_cpu(get_serial_reply->uid));
++		aac_internal_transfer(scsicmd, sp, 0, sizeof(sp));
++	}
++
++	scsicmd->result = DID_OK << 16 | COMMAND_COMPLETE << 8 | SAM_STAT_GOOD;
++
++	aac_fib_complete(fibptr);
++	aac_fib_free(fibptr);
++	scsicmd->scsi_done(scsicmd);
++}
++
++/**
++ *	aac_get_container_serial - get container serial, none blocking.
++ */
++static int aac_get_container_serial(struct scsi_cmnd * scsicmd)
++{
++	int status;
++	struct aac_get_serial *dinfo;
++	struct fib * cmd_fibcontext;
++	struct aac_dev * dev;
++
++	dev = (struct aac_dev *)scsicmd->device->host->hostdata;
++
++	if (!(cmd_fibcontext = aac_fib_alloc(dev)))
++		return -ENOMEM;
++
++	aac_fib_init(cmd_fibcontext);
++	dinfo = (struct aac_get_serial *) fib_data(cmd_fibcontext);
++
++	dinfo->command = cpu_to_le32(VM_ContainerConfig);
++	dinfo->type = cpu_to_le32(CT_CID_TO_32BITS_UID);
++	dinfo->cid = cpu_to_le32(scmd_id(scsicmd));
++
++	status = aac_fib_send(ContainerCommand,
++		  cmd_fibcontext,
++		  sizeof (struct aac_get_serial),
++		  FsaNormal,
++		  0, 1,
++		  (fib_callback) get_container_serial_callback,
++		  (void *) scsicmd);
++
++	/*
++	 *	Check that the command queued to the controller
++	 */
++	if (status == -EINPROGRESS) {
++		scsicmd->SCp.phase = AAC_OWNER_FIRMWARE;
++		return 0;
++	}
++
++	printk(KERN_WARNING "aac_get_container_serial: aac_fib_send failed with status: %d.\n", status);
++	aac_fib_complete(cmd_fibcontext);
++	aac_fib_free(cmd_fibcontext);
++	return -1;
++}
++
++/* Function: setinqserial
++ *
++ * Arguments: [1] pointer to void [1] int
++ *
++ * Purpose: Sets SCSI Unit Serial number.
++ *          This is a fake. We should read a proper
++ *          serial number from the container. <SuSE>But
++ *          without docs it's quite hard to do it :-)
++ *          So this will have to do in the meantime.</SuSE>
++ */
++
++static int setinqserial(struct aac_dev *dev, void *data, int cid)
++{
++	/*
++	 *	This breaks array migration.
++	 */
++	return snprintf((char *)(data), sizeof(struct scsi_inq) - 4, "%08X%02X",
++			le32_to_cpu(dev->adapter_info.serial[0]), cid);
++}
++
+ static void set_sense(u8 *sense_buf, u8 sense_key, u8 sense_code,
+ 		      u8 a_sense_code, u8 incorrect_length,
+ 		      u8 bit_pointer, u16 field_pointer,
+@@ -1092,6 +1197,15 @@ static int aac_scsi_32(struct fib * fib, struct scsi_cmnd * cmd)
+ 				  (fib_callback) aac_srb_callback, (void *) cmd);
+ }
+ 
++static int aac_scsi_32_64(struct fib * fib, struct scsi_cmnd * cmd)
++{
++	if ((sizeof(dma_addr_t) > 4) &&
++	 (num_physpages > (0xFFFFFFFFULL >> PAGE_SHIFT)) &&
++	 (fib->dev->adapter_info.options & AAC_OPT_SGMAP_HOST64))
++		return FAILED;
++	return aac_scsi_32(fib, cmd);
++}
++
+ int aac_get_adapter_info(struct aac_dev* dev)
+ {
+ 	struct fib* fibptr;
+@@ -1169,6 +1283,8 @@ int aac_get_adapter_info(struct aac_dev* dev)
+ 			 1, 1,
+ 			 NULL, NULL);
+ 
++	/* reasoned default */
++	dev->maximum_num_physicals = 16;
+ 	if (rcode >= 0 && le32_to_cpu(bus_info->Status) == ST_OK) {
+ 		dev->maximum_num_physicals = le32_to_cpu(bus_info->TargetsPerBus);
+ 		dev->maximum_num_channels = le32_to_cpu(bus_info->BusCount);
+@@ -1207,6 +1323,12 @@ int aac_get_adapter_info(struct aac_dev* dev)
+ 			  (int)sizeof(dev->supplement_adapter_info.VpdInfo.Tsid),
+ 			  dev->supplement_adapter_info.VpdInfo.Tsid);
+ 		}
++		if (!aac_check_reset || ((aac_check_reset != 1) &&
++		  (dev->supplement_adapter_info.SupportedOptions2 &
++		  le32_to_cpu(AAC_OPTION_IGNORE_RESET)))) {
++			printk(KERN_INFO "%s%d: Reset Adapter Ignored\n",
++			  dev->name, dev->id);
++		}
+ 	}
+ 
+ 	dev->nondasd_support = 0;
+@@ -1272,7 +1394,9 @@ int aac_get_adapter_info(struct aac_dev* dev)
+ 	 * interface.
+ 	 */
+ 	dev->a_ops.adapter_scsi = (dev->dac_support)
+-				? aac_scsi_64
++	  ? ((aac_get_driver_ident(dev->cardtype)->quirks & AAC_QUIRK_SCSI_32)
++				? aac_scsi_32_64
++				: aac_scsi_64)
+ 				: aac_scsi_32;
+ 	if (dev->raw_io_interface) {
+ 		dev->a_ops.adapter_bounds = (dev->raw_io_64)
+@@ -1591,23 +1715,23 @@ static void synchronize_callback(void *context, struct fib *fibptr)
+ 	if (!aac_valid_context(cmd, fibptr))
+ 		return;
+ 
+-	dprintk((KERN_DEBUG "synchronize_callback[cpu %d]: t = %ld.\n", 
++	dprintk((KERN_DEBUG "synchronize_callback[cpu %d]: t = %ld.\n",
+ 				smp_processor_id(), jiffies));
+ 	BUG_ON(fibptr == NULL);
+ 
+ 
+ 	synchronizereply = fib_data(fibptr);
+ 	if (le32_to_cpu(synchronizereply->status) == CT_OK)
+-		cmd->result = DID_OK << 16 | 
++		cmd->result = DID_OK << 16 |
+ 			COMMAND_COMPLETE << 8 | SAM_STAT_GOOD;
+ 	else {
+ 		struct scsi_device *sdev = cmd->device;
+ 		struct aac_dev *dev = fibptr->dev;
+ 		u32 cid = sdev_id(sdev);
+-		printk(KERN_WARNING 
++		printk(KERN_WARNING
+ 		     "synchronize_callback: synchronize failed, status = %d\n",
+ 		     le32_to_cpu(synchronizereply->status));
+-		cmd->result = DID_OK << 16 | 
++		cmd->result = DID_OK << 16 |
+ 			COMMAND_COMPLETE << 8 | SAM_STAT_CHECK_CONDITION;
+ 		set_sense((u8 *)&dev->fsa_dev[cid].sense_data,
+ 				    HARDWARE_ERROR,
+@@ -1615,7 +1739,7 @@ static void synchronize_callback(void *context, struct fib *fibptr)
+ 				    ASENCODE_INTERNAL_TARGET_FAILURE, 0, 0,
+ 				    0, 0);
+ 		memcpy(cmd->sense_buffer, &dev->fsa_dev[cid].sense_data,
+-		  min(sizeof(dev->fsa_dev[cid].sense_data), 
++		  min(sizeof(dev->fsa_dev[cid].sense_data),
+ 			  sizeof(cmd->sense_buffer)));
+ 	}
+ 
+@@ -1633,6 +1757,9 @@ static int aac_synchronize(struct scsi_cmnd *scsicmd)
+ 	struct scsi_device *sdev = scsicmd->device;
+ 	int active = 0;
+ 	struct aac_dev *aac;
++	u64 lba = ((u64)scsicmd->cmnd[2] << 24) | (scsicmd->cmnd[3] << 16) |
++		(scsicmd->cmnd[4] << 8) | scsicmd->cmnd[5];
++	u32 count = (scsicmd->cmnd[7] << 8) | scsicmd->cmnd[8];
+ 	unsigned long flags;
+ 
+ 	/*
+@@ -1641,7 +1768,51 @@ static int aac_synchronize(struct scsi_cmnd *scsicmd)
+ 	 */
+ 	spin_lock_irqsave(&sdev->list_lock, flags);
+ 	list_for_each_entry(cmd, &sdev->cmd_list, list)
+-		if (cmd != scsicmd && cmd->SCp.phase == AAC_OWNER_FIRMWARE) {
++		if (cmd->SCp.phase == AAC_OWNER_FIRMWARE) {
++			u64 cmnd_lba;
++			u32 cmnd_count;
++
++			if (cmd->cmnd[0] == WRITE_6) {
++				cmnd_lba = ((cmd->cmnd[1] & 0x1F) << 16) |
++					(cmd->cmnd[2] << 8) |
++					cmd->cmnd[3];
++				cmnd_count = cmd->cmnd[4];
++				if (cmnd_count == 0)
++					cmnd_count = 256;
++			} else if (cmd->cmnd[0] == WRITE_16) {
++				cmnd_lba = ((u64)cmd->cmnd[2] << 56) |
++					((u64)cmd->cmnd[3] << 48) |
++					((u64)cmd->cmnd[4] << 40) |
++					((u64)cmd->cmnd[5] << 32) |
++					((u64)cmd->cmnd[6] << 24) |
++					(cmd->cmnd[7] << 16) |
++					(cmd->cmnd[8] << 8) |
++					cmd->cmnd[9];
++				cmnd_count = (cmd->cmnd[10] << 24) |
++					(cmd->cmnd[11] << 16) |
++					(cmd->cmnd[12] << 8) |
++					cmd->cmnd[13];
++			} else if (cmd->cmnd[0] == WRITE_12) {
++				cmnd_lba = ((u64)cmd->cmnd[2] << 24) |
++					(cmd->cmnd[3] << 16) |
++					(cmd->cmnd[4] << 8) |
++					cmd->cmnd[5];
++				cmnd_count = (cmd->cmnd[6] << 24) |
++					(cmd->cmnd[7] << 16) |
++					(cmd->cmnd[8] << 8) |
++					cmd->cmnd[9];
++			} else if (cmd->cmnd[0] == WRITE_10) {
++				cmnd_lba = ((u64)cmd->cmnd[2] << 24) |
++					(cmd->cmnd[3] << 16) |
++					(cmd->cmnd[4] << 8) |
++					cmd->cmnd[5];
++				cmnd_count = (cmd->cmnd[7] << 8) |
++					cmd->cmnd[8];
++			} else
++				continue;
++			if (((cmnd_lba + cmnd_count) < lba) ||
++			  (count && ((lba + count) < cmnd_lba)))
++				continue;
+ 			++active;
+ 			break;
+ 		}
+@@ -1654,7 +1825,7 @@ static int aac_synchronize(struct scsi_cmnd *scsicmd)
+ 	if (active)
+ 		return SCSI_MLQUEUE_DEVICE_BUSY;
+ 
+-	aac = (struct aac_dev *)scsicmd->device->host->hostdata;
++	aac = (struct aac_dev *)sdev->host->hostdata;
+ 	if (aac->in_reset)
+ 		return SCSI_MLQUEUE_HOST_BUSY;
+ 
+@@ -1670,7 +1841,7 @@ static int aac_synchronize(struct scsi_cmnd *scsicmd)
+ 	synchronizecmd->command = cpu_to_le32(VM_ContainerConfig);
+ 	synchronizecmd->type = cpu_to_le32(CT_FLUSH_CACHE);
+ 	synchronizecmd->cid = cpu_to_le32(scmd_id(scsicmd));
+-	synchronizecmd->count = 
++	synchronizecmd->count =
+ 	     cpu_to_le32(sizeof(((struct aac_synchronize_reply *)NULL)->data));
+ 
+ 	/*
+@@ -1692,7 +1863,7 @@ static int aac_synchronize(struct scsi_cmnd *scsicmd)
+ 		return 0;
+ 	}
+ 
+-	printk(KERN_WARNING 
++	printk(KERN_WARNING
+ 		"aac_synchronize: aac_fib_send failed with status: %d.\n", status);
+ 	aac_fib_complete(cmd_fibcontext);
+ 	aac_fib_free(cmd_fibcontext);
+@@ -1795,6 +1966,49 @@ int aac_scsi_cmd(struct scsi_cmnd * scsicmd)
+ 		dprintk((KERN_DEBUG "INQUIRY command, ID: %d.\n", cid));
+ 		memset(&inq_data, 0, sizeof (struct inquiry_data));
+ 
++		if (scsicmd->cmnd[1] & 0x1 ) {
++			char *arr = (char *)&inq_data;
++
++			/* EVPD bit set */
++			arr[0] = (scmd_id(scsicmd) == host->this_id) ?
++			  INQD_PDT_PROC : INQD_PDT_DA;
++			if (scsicmd->cmnd[2] == 0) {
++				/* supported vital product data pages */
++				arr[3] = 2;
++				arr[4] = 0x0;
++				arr[5] = 0x80;
++				arr[1] = scsicmd->cmnd[2];
++				aac_internal_transfer(scsicmd, &inq_data, 0,
++				  sizeof(inq_data));
++				scsicmd->result = DID_OK << 16 |
++				  COMMAND_COMPLETE << 8 | SAM_STAT_GOOD;
++			} else if (scsicmd->cmnd[2] == 0x80) {
++				/* unit serial number page */
++				arr[3] = setinqserial(dev, &arr[4],
++				  scmd_id(scsicmd));
++				arr[1] = scsicmd->cmnd[2];
++				aac_internal_transfer(scsicmd, &inq_data, 0,
++				  sizeof(inq_data));
++				return aac_get_container_serial(scsicmd);
++			} else {
++				/* vpd page not implemented */
++				scsicmd->result = DID_OK << 16 |
++				  COMMAND_COMPLETE << 8 |
++				  SAM_STAT_CHECK_CONDITION;
++				set_sense((u8 *) &dev->fsa_dev[cid].sense_data,
++				  ILLEGAL_REQUEST,
++				  SENCODE_INVALID_CDB_FIELD,
++				  ASENCODE_NO_SENSE, 0, 7, 2, 0);
++				memcpy(scsicmd->sense_buffer,
++				  &dev->fsa_dev[cid].sense_data,
++				  (sizeof(dev->fsa_dev[cid].sense_data) >
++				    sizeof(scsicmd->sense_buffer))
++				       ? sizeof(scsicmd->sense_buffer)
++				       : sizeof(dev->fsa_dev[cid].sense_data));
++			}
++			scsicmd->scsi_done(scsicmd);
++			return 0;
++		}
+ 		inq_data.inqd_ver = 2;	/* claim compliance to SCSI-2 */
+ 		inq_data.inqd_rdf = 2;	/* A response data format value of two indicates that the data shall be in the format specified in SCSI-2 */
+ 		inq_data.inqd_len = 31;
+@@ -2406,7 +2620,7 @@ static unsigned long aac_build_sg(struct scsi_cmnd* scsicmd, struct sgmap* psg)
+ 		}
+ 		/* hba wants the size to be exact */
+ 		if(byte_count > scsicmd->request_bufflen){
+-			u32 temp = le32_to_cpu(psg->sg[i-1].count) - 
++			u32 temp = le32_to_cpu(psg->sg[i-1].count) -
+ 				(byte_count - scsicmd->request_bufflen);
+ 			psg->sg[i-1].count = cpu_to_le32(temp);
+ 			byte_count = scsicmd->request_bufflen;
+@@ -2466,7 +2680,7 @@ static unsigned long aac_build_sg64(struct scsi_cmnd* scsicmd, struct sgmap64* p
+ 		psg->count = cpu_to_le32(sg_count);
+ 		/* hba wants the size to be exact */
+ 		if(byte_count > scsicmd->request_bufflen){
+-			u32 temp = le32_to_cpu(psg->sg[i-1].count) - 
++			u32 temp = le32_to_cpu(psg->sg[i-1].count) -
+ 				(byte_count - scsicmd->request_bufflen);
+ 			psg->sg[i-1].count = cpu_to_le32(temp);
+ 			byte_count = scsicmd->request_bufflen;
+@@ -2530,7 +2744,7 @@ static unsigned long aac_build_sgraw(struct scsi_cmnd* scsicmd, struct sgmapraw*
+ 		psg->count = cpu_to_le32(sg_count);
+ 		/* hba wants the size to be exact */
+ 		if(byte_count > scsicmd->request_bufflen){
+-			u32 temp = le32_to_cpu(psg->sg[i-1].count) - 
++			u32 temp = le32_to_cpu(psg->sg[i-1].count) -
+ 				(byte_count - scsicmd->request_bufflen);
+ 			psg->sg[i-1].count = cpu_to_le32(temp);
+ 			byte_count = scsicmd->request_bufflen;
+diff --git a/drivers/scsi/aacraid/aacraid.h b/drivers/scsi/aacraid/aacraid.h
+index 1a36511..13d0241 100644
+--- a/drivers/scsi/aacraid/aacraid.h
++++ b/drivers/scsi/aacraid/aacraid.h
+@@ -12,8 +12,7 @@
+  *----------------------------------------------------------------------------*/
+ 
+ #ifndef AAC_DRIVER_BUILD
+-# define AAC_DRIVER_BUILD 2437
+-# define AAC_DRIVER_BRANCH "-mh4"
++# define AAC_DRIVER_BUILD 2453
+ #endif
+ #define MAXIMUM_NUM_CONTAINERS	32
+ 
+@@ -521,6 +520,12 @@ struct aac_driver_ident
+ #define AAC_QUIRK_17SG	0x0010
+ 
+ /*
++ *	Some adapter firmware does not support 64 bit scsi passthrough
++ * commands.
++ */
++#define AAC_QUIRK_SCSI_32	0x0020
++
++/*
+  *	The adapter interface specs all queues to be located in the same
+  *	physically contigous block. The host structure that defines the
+  *	commuication queues will assume they are each a separate physically
+@@ -865,6 +870,7 @@ struct aac_supplement_adapter_info
+ };
+ #define AAC_FEATURE_FALCON	0x00000010
+ #define AAC_OPTION_MU_RESET	0x00000001
++#define AAC_OPTION_IGNORE_RESET	0x00000002
+ #define AAC_SIS_VERSION_V3	3
+ #define AAC_SIS_SLOT_UNKNOWN	0xFF
+ 
+@@ -1261,6 +1267,19 @@ struct aac_synchronize_reply {
+ 	u8		data[16];
+ };
+ 
++#define CT_PAUSE_IO    65
++#define CT_RELEASE_IO  66
++struct aac_pause {
++	__le32		command;	/* VM_ContainerConfig */
++	__le32		type;		/* CT_PAUSE_IO */
++	__le32		timeout;	/* 10ms ticks */
++	__le32		min;
++	__le32		noRescan;
++	__le32		parm3;
++	__le32		parm4;
++	__le32		count;	/* sizeof(((struct aac_pause_reply *)NULL)->data) */
++};
++
+ struct aac_srb
+ {
+ 	__le32		function;
+@@ -1512,7 +1531,7 @@ struct aac_mntent {
+ 	__le32			capacityhigh;
+ };
+ 
+-#define FSCS_NOTCLEAN	0x0001  /* fsck is neccessary before mounting */
++#define FSCS_NOTCLEAN	0x0001  /* fsck is necessary before mounting */
+ #define FSCS_READONLY	0x0002	/* possible result of broken mirror */
+ #define FSCS_HIDDEN	0x0004	/* should be ignored - set during a clear */
+ 
+@@ -1553,6 +1572,20 @@ struct aac_get_name_resp {
+ 	u8		data[16];
+ };
+ 
++#define CT_CID_TO_32BITS_UID 165
++struct aac_get_serial {
++	__le32		command;	/* VM_ContainerConfig */
++	__le32		type;		/* CT_CID_TO_32BITS_UID */
++	__le32		cid;
++};
++
++struct aac_get_serial_resp {
++	__le32		dummy0;
++	__le32		dummy1;
++	__le32		status;	/* CT_OK */
++	__le32		uid;
++};
++
+ /*
+  * The following command is sent to shut down each container.
+  */
+@@ -1779,10 +1812,10 @@ struct aac_aifcmd {
+  *  	accounting for the fact capacity could be a 64 bit value
+  *
+  */
+-static inline u32 cap_to_cyls(sector_t capacity, u32 divisor)
++static inline unsigned int cap_to_cyls(sector_t capacity, unsigned divisor)
+ {
+ 	sector_div(capacity, divisor);
+-	return (u32)capacity;
++	return capacity;
+ }
+ 
+ /* SCp.phase values */
+@@ -1821,11 +1854,19 @@ int aac_queue_get(struct aac_dev * dev, u32 * index, u32 qid, struct hw_fib * hw
+ unsigned int aac_response_normal(struct aac_queue * q);
+ unsigned int aac_command_normal(struct aac_queue * q);
+ unsigned int aac_intr_normal(struct aac_dev * dev, u32 Index);
++int aac_reset_adapter(struct aac_dev * dev, int forced);
+ int aac_check_health(struct aac_dev * dev);
+ int aac_command_thread(void *data);
+ int aac_close_fib_context(struct aac_dev * dev, struct aac_fib_context *fibctx);
+ int aac_fib_adapter_complete(struct fib * fibptr, unsigned short size);
+ struct aac_driver_ident* aac_get_driver_ident(int devtype);
++/* Local Structure to set SCSI inquiry data strings */
++struct scsi_inq {
++	char vid[8];         /* Vendor ID */
++	char pid[16];        /* Product ID */
++	char prl[4];         /* Product Revision Level */
++};
++void setinqstr(struct aac_dev *dev, void *data, int tindex);
+ int aac_get_adapter_info(struct aac_dev* dev);
+ int aac_send_shutdown(struct aac_dev *dev);
+ int aac_probe_container(struct aac_dev *dev, int cid);
+@@ -1840,3 +1881,6 @@ extern int aif_timeout;
+ extern int expose_physicals;
+ extern int aac_reset_devices;
+ extern int aac_commit;
++extern int update_interval;
++extern int check_interval;
++extern int aac_check_reset;
+diff --git a/drivers/scsi/aacraid/commctrl.c b/drivers/scsi/aacraid/commctrl.c
+index 5835465..72b0393 100644
+--- a/drivers/scsi/aacraid/commctrl.c
++++ b/drivers/scsi/aacraid/commctrl.c
+@@ -52,7 +52,7 @@
+  *	This routine sends a fib to the adapter on behalf of a user level
+  *	program.
+  */
+-# define AAC_DEBUG_PREAMBLE	
++# define AAC_DEBUG_PREAMBLE	KERN_INFO
+ # define AAC_DEBUG_POSTAMBLE
+  
+ static int ioctl_send_fib(struct aac_dev * dev, void __user *arg)
+diff --git a/drivers/scsi/aacraid/comminit.c b/drivers/scsi/aacraid/comminit.c
+index 333c5ee..3009ad8 100644
+--- a/drivers/scsi/aacraid/comminit.c
++++ b/drivers/scsi/aacraid/comminit.c
+@@ -106,7 +106,7 @@ static int aac_alloc_comm(struct aac_dev *dev, void **commaddr, unsigned long co
+ 	 * Increment the base address by the amount already used
+ 	 */
+ 	base = base + fibsize + sizeof(struct aac_init);
+-	phys = phys + (fibsize + sizeof(struct aac_init));
++	phys = (dma_addr_t)((ulong)phys + fibsize + sizeof(struct aac_init));
+ 	/*
+ 	 *	Align the beginning of Headers to commalign
+ 	 */
+diff --git a/drivers/scsi/aacraid/commsup.c b/drivers/scsi/aacraid/commsup.c
+index d42816f..ad6afe1 100644
+--- a/drivers/scsi/aacraid/commsup.c
++++ b/drivers/scsi/aacraid/commsup.c
+@@ -80,7 +80,11 @@ static int fib_map_alloc(struct aac_dev *dev)
+ 
+ void aac_fib_map_free(struct aac_dev *dev)
+ {
+-	pci_free_consistent(dev->pdev, dev->max_fib_size * (dev->scsi_host_ptr->can_queue + AAC_NUM_MGT_FIB), dev->hw_fib_va, dev->hw_fib_pa);
++	pci_free_consistent(dev->pdev,
++	  dev->max_fib_size * (dev->scsi_host_ptr->can_queue + AAC_NUM_MGT_FIB),
++	  dev->hw_fib_va, dev->hw_fib_pa);
++	dev->hw_fib_va = NULL;
++	dev->hw_fib_pa = 0;
+ }
+ 
+ /**
+@@ -1021,7 +1025,7 @@ static void aac_handle_aif(struct aac_dev * dev, struct fib * fibptr)
+ 
+ }
+ 
+-static int _aac_reset_adapter(struct aac_dev *aac)
++static int _aac_reset_adapter(struct aac_dev *aac, int forced)
+ {
+ 	int index, quirks;
+ 	int retval;
+@@ -1029,10 +1033,13 @@ static int _aac_reset_adapter(struct aac_dev *aac)
+ 	struct scsi_device *dev;
+ 	struct scsi_cmnd *command;
+ 	struct scsi_cmnd *command_list;
++	int jafo = 0;
+ 
+ 	/*
+ 	 * Assumptions:
+-	 *	- host is locked.
++	 *	- host is locked, unless called by the aacraid thread.
++	 *	  (a matter of convenience, due to legacy issues surrounding
++	 *	  eh_host_adapter_reset).
+ 	 *	- in_reset is asserted, so no new i/o is getting to the
+ 	 *	  card.
+ 	 *	- The card is dead, or will be very shortly ;-/ so no new
+@@ -1041,14 +1048,17 @@ static int _aac_reset_adapter(struct aac_dev *aac)
+ 	host = aac->scsi_host_ptr;
+ 	scsi_block_requests(host);
+ 	aac_adapter_disable_int(aac);
+-	spin_unlock_irq(host->host_lock);
+-	kthread_stop(aac->thread);
++	if (aac->thread->pid != current->pid) {
++		spin_unlock_irq(host->host_lock);
++		kthread_stop(aac->thread);
++		jafo = 1;
++	}
+ 
+ 	/*
+ 	 *	If a positive health, means in a known DEAD PANIC
+ 	 * state and the adapter could be reset to `try again'.
+ 	 */
+-	retval = aac_adapter_restart(aac, aac_adapter_check_health(aac));
++	retval = aac_adapter_restart(aac, forced ? 0 : aac_adapter_check_health(aac));
+ 
+ 	if (retval)
+ 		goto out;
+@@ -1081,8 +1091,6 @@ static int _aac_reset_adapter(struct aac_dev *aac)
+ 	 * case.
+ 	 */
+ 	aac_fib_map_free(aac);
+-	aac->hw_fib_va = NULL;
+-	aac->hw_fib_pa = 0;
+ 	pci_free_consistent(aac->pdev, aac->comm_size, aac->comm_addr, aac->comm_phys);
+ 	aac->comm_addr = NULL;
+ 	aac->comm_phys = 0;
+@@ -1091,27 +1099,29 @@ static int _aac_reset_adapter(struct aac_dev *aac)
+ 	free_irq(aac->pdev->irq, aac);
+ 	kfree(aac->fsa_dev);
+ 	aac->fsa_dev = NULL;
+-	if (aac_get_driver_ident(index)->quirks & AAC_QUIRK_31BIT) {
+-		if (((retval = pci_set_dma_mask(aac->pdev, DMA_32BIT_MASK))) ||
+-		  ((retval = pci_set_consistent_dma_mask(aac->pdev, DMA_32BIT_MASK))))
++	quirks = aac_get_driver_ident(index)->quirks;
++	if (quirks & AAC_QUIRK_31BIT) {
++		if (((retval = pci_set_dma_mask(aac->pdev, DMA_31BIT_MASK))) ||
++		  ((retval = pci_set_consistent_dma_mask(aac->pdev, DMA_31BIT_MASK))))
+ 			goto out;
+ 	} else {
+-		if (((retval = pci_set_dma_mask(aac->pdev, 0x7FFFFFFFULL))) ||
+-		  ((retval = pci_set_consistent_dma_mask(aac->pdev, 0x7FFFFFFFULL))))
++		if (((retval = pci_set_dma_mask(aac->pdev, DMA_32BIT_MASK))) ||
++		  ((retval = pci_set_consistent_dma_mask(aac->pdev, DMA_32BIT_MASK))))
+ 			goto out;
+ 	}
+ 	if ((retval = (*(aac_get_driver_ident(index)->init))(aac)))
+ 		goto out;
+-	if (aac_get_driver_ident(index)->quirks & AAC_QUIRK_31BIT)
++	if (quirks & AAC_QUIRK_31BIT)
+ 		if ((retval = pci_set_dma_mask(aac->pdev, DMA_32BIT_MASK)))
+ 			goto out;
+-	aac->thread = kthread_run(aac_command_thread, aac, aac->name);
+-	if (IS_ERR(aac->thread)) {
+-		retval = PTR_ERR(aac->thread);
+-		goto out;
++	if (jafo) {
++		aac->thread = kthread_run(aac_command_thread, aac, aac->name);
++		if (IS_ERR(aac->thread)) {
++			retval = PTR_ERR(aac->thread);
++			goto out;
++		}
+ 	}
+ 	(void)aac_get_adapter_info(aac);
+-	quirks = aac_get_driver_ident(index)->quirks;
+ 	if ((quirks & AAC_QUIRK_34SG) && (host->sg_tablesize > 34)) {
+  		host->sg_tablesize = 34;
+  		host->max_sectors = (host->sg_tablesize * 8) + 112;
+@@ -1151,7 +1161,99 @@ static int _aac_reset_adapter(struct aac_dev *aac)
+ out:
+ 	aac->in_reset = 0;
+ 	scsi_unblock_requests(host);
+-	spin_lock_irq(host->host_lock);
++	if (jafo) {
++		spin_lock_irq(host->host_lock);
++	}
++	return retval;
++}
++
++int aac_reset_adapter(struct aac_dev * aac, int forced)
++{
++	unsigned long flagv = 0;
++	int retval;
++	struct Scsi_Host * host;
++
++	if (spin_trylock_irqsave(&aac->fib_lock, flagv) == 0)
++		return -EBUSY;
++
++	if (aac->in_reset) {
++		spin_unlock_irqrestore(&aac->fib_lock, flagv);
++		return -EBUSY;
++	}
++	aac->in_reset = 1;
++	spin_unlock_irqrestore(&aac->fib_lock, flagv);
++
++	/*
++	 * Wait for all commands to complete to this specific
++	 * target (block maximum 60 seconds). Although not necessary,
++	 * it does make us a good storage citizen.
++	 */
++	host = aac->scsi_host_ptr;
++	scsi_block_requests(host);
++	if (forced < 2) for (retval = 60; retval; --retval) {
++		struct scsi_device * dev;
++		struct scsi_cmnd * command;
++		int active = 0;
++
++		__shost_for_each_device(dev, host) {
++			spin_lock_irqsave(&dev->list_lock, flagv);
++			list_for_each_entry(command, &dev->cmd_list, list) {
++				if (command->SCp.phase == AAC_OWNER_FIRMWARE) {
++					active++;
++					break;
++				}
++			}
++			spin_unlock_irqrestore(&dev->list_lock, flagv);
++			if (active)
++				break;
++
++		}
++		/*
++		 * We can exit If all the commands are complete
++		 */
++		if (active == 0)
++			break;
++		ssleep(1);
++	}
++
++	/* Quiesce build, flush cache, write through mode */
++	if (forced < 2)
++		aac_send_shutdown(aac);
++	spin_lock_irqsave(host->host_lock, flagv);
++	retval = _aac_reset_adapter(aac, forced ? forced : ((aac_check_reset != 0) && (aac_check_reset != 1)));
++	spin_unlock_irqrestore(host->host_lock, flagv);
++
++	if ((forced < 2) && (retval == -ENODEV)) {
++		/* Unwind aac_send_shutdown() IOP_RESET unsupported/disabled */
++		struct fib * fibctx = aac_fib_alloc(aac);
++		if (fibctx) {
++			struct aac_pause *cmd;
++			int status;
++
++			aac_fib_init(fibctx);
++
++			cmd = (struct aac_pause *) fib_data(fibctx);
++
++			cmd->command = cpu_to_le32(VM_ContainerConfig);
++			cmd->type = cpu_to_le32(CT_PAUSE_IO);
++			cmd->timeout = cpu_to_le32(1);
++			cmd->min = cpu_to_le32(1);
++			cmd->noRescan = cpu_to_le32(1);
++			cmd->count = cpu_to_le32(0);
++
++			status = aac_fib_send(ContainerCommand,
++			  fibctx,
++			  sizeof(struct aac_pause),
++			  FsaNormal,
++			  -2 /* Timeout silently */, 1,
++			  NULL, NULL);
++
++			if (status >= 0)
++				aac_fib_complete(fibctx);
++			aac_fib_free(fibctx);
++		}
++	}
++
+ 	return retval;
+ }
+ 
+@@ -1238,10 +1340,10 @@ int aac_check_health(struct aac_dev * aac)
+ 			aif = (struct aac_aifcmd *)hw_fib->data;
+ 			aif->command = cpu_to_le32(AifCmdEventNotify);
+ 		 	aif->seqnum = cpu_to_le32(0xFFFFFFFF);
+-		 	aif->data[0] = cpu_to_le32(AifEnExpEvent);
+-			aif->data[1] = cpu_to_le32(AifExeFirmwarePanic);
+-		 	aif->data[2] = cpu_to_le32(AifHighPriority);
+-			aif->data[3] = cpu_to_le32(BlinkLED);
++		 	aif->data[0] = AifEnExpEvent;
++			aif->data[1] = AifExeFirmwarePanic;
++		 	aif->data[2] = AifHighPriority;
++			aif->data[3] = BlinkLED;
+ 
+ 			/*
+ 			 * Put the FIB onto the
+@@ -1271,10 +1373,16 @@ int aac_check_health(struct aac_dev * aac)
+ 
+ 	printk(KERN_ERR "%s: Host adapter BLINK LED 0x%x\n", aac->name, BlinkLED);
+ 
++	if (!aac_check_reset || ((aac_check_reset != 1) &&
++		(aac->supplement_adapter_info.SupportedOptions2 &
++			le32_to_cpu(AAC_OPTION_IGNORE_RESET))))
++		goto out;
+ 	host = aac->scsi_host_ptr;
+-	spin_lock_irqsave(host->host_lock, flagv);
+-	BlinkLED = _aac_reset_adapter(aac);
+-	spin_unlock_irqrestore(host->host_lock, flagv);
++	if (aac->thread->pid != current->pid)
++		spin_lock_irqsave(host->host_lock, flagv);
++	BlinkLED = _aac_reset_adapter(aac, aac_check_reset != 1);
++	if (aac->thread->pid != current->pid)
++		spin_unlock_irqrestore(host->host_lock, flagv);
+ 	return BlinkLED;
+ 
+ out:
+@@ -1301,6 +1409,9 @@ int aac_command_thread(void *data)
+ 	struct aac_fib_context *fibctx;
+ 	unsigned long flags;
+ 	DECLARE_WAITQUEUE(wait, current);
++	unsigned long next_jiffies = jiffies + HZ;
++	unsigned long next_check_jiffies = next_jiffies;
++	long difference = HZ;
+ 
+ 	/*
+ 	 *	We can only have one thread per adapter for AIF's.
+@@ -1369,7 +1480,7 @@ int aac_command_thread(void *data)
+ 				     cpu_to_le32(AifCmdJobProgress))) {
+ 					aac_handle_aif(dev, fib);
+ 				}
+- 
++
+ 				time_now = jiffies/HZ;
+ 
+ 				/*
+@@ -1508,11 +1619,79 @@ int aac_command_thread(void *data)
+ 		 *	There are no more AIF's
+ 		 */
+ 		spin_unlock_irqrestore(dev->queues->queue[HostNormCmdQueue].lock, flags);
+-		schedule();
++
++		/*
++		 *	Background activity
++		 */
++		if ((time_before(next_check_jiffies,next_jiffies))
++		 && ((difference = next_check_jiffies - jiffies) <= 0)) {
++			next_check_jiffies = next_jiffies;
++			if (aac_check_health(dev) == 0) {
++				difference = ((long)(unsigned)check_interval)
++					   * HZ;
++				next_check_jiffies = jiffies + difference;
++			} else if (!dev->queues)
++				break;
++		}
++		if (!time_before(next_check_jiffies,next_jiffies)
++		 && ((difference = next_jiffies - jiffies) <= 0)) {
++			struct timeval now;
++			int ret;
++
++			/* Don't even try to talk to adapter if its sick */
++			ret = aac_check_health(dev);
++			if (!ret && !dev->queues)
++				break;
++			next_check_jiffies = jiffies
++					   + ((long)(unsigned)check_interval)
++					   * HZ;
++			do_gettimeofday(&now);
++
++			/* Synchronize our watches */
++			if (((1000000 - (1000000 / HZ)) > now.tv_usec)
++			 && (now.tv_usec > (1000000 / HZ)))
++				difference = (((1000000 - now.tv_usec) * HZ)
++				  + 500000) / 1000000;
++			else if (ret == 0) {
++				struct fib *fibptr;
++
++				if ((fibptr = aac_fib_alloc(dev))) {
++					u32 * info;
++
++					aac_fib_init(fibptr);
++
++					info = (u32 *) fib_data(fibptr);
++					if (now.tv_usec > 500000)
++						++now.tv_sec;
++
++					*info = cpu_to_le32(now.tv_sec);
++
++					(void)aac_fib_send(SendHostTime,
++						fibptr,
++						sizeof(*info),
++						FsaNormal,
++						1, 1,
++						NULL,
++						NULL);
++					aac_fib_complete(fibptr);
++					aac_fib_free(fibptr);
++				}
++				difference = (long)(unsigned)update_interval*HZ;
++			} else {
++				/* retry shortly */
++				difference = 10 * HZ;
++			}
++			next_jiffies = jiffies + difference;
++			if (time_before(next_check_jiffies,next_jiffies))
++				difference = next_check_jiffies - jiffies;
++		}
++		if (difference <= 0)
++			difference = 1;
++		set_current_state(TASK_INTERRUPTIBLE);
++		schedule_timeout(difference);
+ 
+ 		if (kthread_should_stop())
+ 			break;
+-		set_current_state(TASK_INTERRUPTIBLE);
+ 	}
+ 	if (dev->queues)
+ 		remove_wait_queue(&dev->queues->queue[HostNormCmdQueue].cmdready, &wait);
+diff --git a/drivers/scsi/aacraid/linit.c b/drivers/scsi/aacraid/linit.c
+index 1b728a3..fc06f60 100644
+--- a/drivers/scsi/aacraid/linit.c
++++ b/drivers/scsi/aacraid/linit.c
+@@ -164,22 +164,22 @@ MODULE_DEVICE_TABLE(pci, aac_pci_tbl);
+  * for the card.  At that time we can remove the channels from here
+  */
+ static struct aac_driver_ident aac_drivers[] = {
+-	{ aac_rx_init, "percraid", "DELL    ", "PERCRAID        ", 2, AAC_QUIRK_31BIT | AAC_QUIRK_34SG }, /* PERC 2/Si (Iguana/PERC2Si) */
+-	{ aac_rx_init, "percraid", "DELL    ", "PERCRAID        ", 2, AAC_QUIRK_31BIT | AAC_QUIRK_34SG }, /* PERC 3/Di (Opal/PERC3Di) */
+-	{ aac_rx_init, "percraid", "DELL    ", "PERCRAID        ", 2, AAC_QUIRK_31BIT | AAC_QUIRK_34SG }, /* PERC 3/Si (SlimFast/PERC3Si */
+-	{ aac_rx_init, "percraid", "DELL    ", "PERCRAID        ", 2, AAC_QUIRK_31BIT | AAC_QUIRK_34SG }, /* PERC 3/Di (Iguana FlipChip/PERC3DiF */
+-	{ aac_rx_init, "percraid", "DELL    ", "PERCRAID        ", 2, AAC_QUIRK_31BIT | AAC_QUIRK_34SG }, /* PERC 3/Di (Viper/PERC3DiV) */
+-	{ aac_rx_init, "percraid", "DELL    ", "PERCRAID        ", 2, AAC_QUIRK_31BIT | AAC_QUIRK_34SG }, /* PERC 3/Di (Lexus/PERC3DiL) */
+-	{ aac_rx_init, "percraid", "DELL    ", "PERCRAID        ", 1, AAC_QUIRK_31BIT | AAC_QUIRK_34SG }, /* PERC 3/Di (Jaguar/PERC3DiJ) */
+-	{ aac_rx_init, "percraid", "DELL    ", "PERCRAID        ", 2, AAC_QUIRK_31BIT | AAC_QUIRK_34SG }, /* PERC 3/Di (Dagger/PERC3DiD) */
+-	{ aac_rx_init, "percraid", "DELL    ", "PERCRAID        ", 2, AAC_QUIRK_31BIT | AAC_QUIRK_34SG }, /* PERC 3/Di (Boxster/PERC3DiB) */
+-	{ aac_rx_init, "aacraid",  "ADAPTEC ", "catapult        ", 2, AAC_QUIRK_31BIT | AAC_QUIRK_34SG }, /* catapult */
+-	{ aac_rx_init, "aacraid",  "ADAPTEC ", "tomcat          ", 2, AAC_QUIRK_31BIT | AAC_QUIRK_34SG }, /* tomcat */
+-	{ aac_rx_init, "aacraid",  "ADAPTEC ", "Adaptec 2120S   ", 1, AAC_QUIRK_31BIT | AAC_QUIRK_34SG }, /* Adaptec 2120S (Crusader) */
+-	{ aac_rx_init, "aacraid",  "ADAPTEC ", "Adaptec 2200S   ", 2, AAC_QUIRK_31BIT | AAC_QUIRK_34SG }, /* Adaptec 2200S (Vulcan) */
+-	{ aac_rx_init, "aacraid",  "ADAPTEC ", "Adaptec 2200S   ", 2, AAC_QUIRK_31BIT | AAC_QUIRK_34SG }, /* Adaptec 2200S (Vulcan-2m) */
+-	{ aac_rx_init, "aacraid",  "Legend  ", "Legend S220     ", 1, AAC_QUIRK_31BIT | AAC_QUIRK_34SG }, /* Legend S220 (Legend Crusader) */
+-	{ aac_rx_init, "aacraid",  "Legend  ", "Legend S230     ", 2, AAC_QUIRK_31BIT | AAC_QUIRK_34SG }, /* Legend S230 (Legend Vulcan) */
++	{ aac_rx_init, "percraid", "DELL    ", "PERCRAID        ", 2, AAC_QUIRK_31BIT | AAC_QUIRK_34SG | AAC_QUIRK_SCSI_32 }, /* PERC 2/Si (Iguana/PERC2Si) */
++	{ aac_rx_init, "percraid", "DELL    ", "PERCRAID        ", 2, AAC_QUIRK_31BIT | AAC_QUIRK_34SG | AAC_QUIRK_SCSI_32 }, /* PERC 3/Di (Opal/PERC3Di) */
++	{ aac_rx_init, "percraid", "DELL    ", "PERCRAID        ", 2, AAC_QUIRK_31BIT | AAC_QUIRK_34SG | AAC_QUIRK_SCSI_32 }, /* PERC 3/Si (SlimFast/PERC3Si */
++	{ aac_rx_init, "percraid", "DELL    ", "PERCRAID        ", 2, AAC_QUIRK_31BIT | AAC_QUIRK_34SG | AAC_QUIRK_SCSI_32 }, /* PERC 3/Di (Iguana FlipChip/PERC3DiF */
++	{ aac_rx_init, "percraid", "DELL    ", "PERCRAID        ", 2, AAC_QUIRK_31BIT | AAC_QUIRK_34SG | AAC_QUIRK_SCSI_32 }, /* PERC 3/Di (Viper/PERC3DiV) */
++	{ aac_rx_init, "percraid", "DELL    ", "PERCRAID        ", 2, AAC_QUIRK_31BIT | AAC_QUIRK_34SG | AAC_QUIRK_SCSI_32 }, /* PERC 3/Di (Lexus/PERC3DiL) */
++	{ aac_rx_init, "percraid", "DELL    ", "PERCRAID        ", 1, AAC_QUIRK_31BIT | AAC_QUIRK_34SG | AAC_QUIRK_SCSI_32 }, /* PERC 3/Di (Jaguar/PERC3DiJ) */
++	{ aac_rx_init, "percraid", "DELL    ", "PERCRAID        ", 2, AAC_QUIRK_31BIT | AAC_QUIRK_34SG | AAC_QUIRK_SCSI_32 }, /* PERC 3/Di (Dagger/PERC3DiD) */
++	{ aac_rx_init, "percraid", "DELL    ", "PERCRAID        ", 2, AAC_QUIRK_31BIT | AAC_QUIRK_34SG | AAC_QUIRK_SCSI_32 }, /* PERC 3/Di (Boxster/PERC3DiB) */
++	{ aac_rx_init, "aacraid",  "ADAPTEC ", "catapult        ", 2, AAC_QUIRK_31BIT | AAC_QUIRK_34SG | AAC_QUIRK_SCSI_32 }, /* catapult */
++	{ aac_rx_init, "aacraid",  "ADAPTEC ", "tomcat          ", 2, AAC_QUIRK_31BIT | AAC_QUIRK_34SG | AAC_QUIRK_SCSI_32 }, /* tomcat */
++	{ aac_rx_init, "aacraid",  "ADAPTEC ", "Adaptec 2120S   ", 1, AAC_QUIRK_31BIT | AAC_QUIRK_34SG | AAC_QUIRK_SCSI_32 }, /* Adaptec 2120S (Crusader) */
++	{ aac_rx_init, "aacraid",  "ADAPTEC ", "Adaptec 2200S   ", 2, AAC_QUIRK_31BIT | AAC_QUIRK_34SG | AAC_QUIRK_SCSI_32 }, /* Adaptec 2200S (Vulcan) */
++	{ aac_rx_init, "aacraid",  "ADAPTEC ", "Adaptec 2200S   ", 2, AAC_QUIRK_31BIT | AAC_QUIRK_34SG | AAC_QUIRK_SCSI_32 }, /* Adaptec 2200S (Vulcan-2m) */
++	{ aac_rx_init, "aacraid",  "Legend  ", "Legend S220     ", 1, AAC_QUIRK_31BIT | AAC_QUIRK_34SG | AAC_QUIRK_SCSI_32 }, /* Legend S220 (Legend Crusader) */
++	{ aac_rx_init, "aacraid",  "Legend  ", "Legend S230     ", 2, AAC_QUIRK_31BIT | AAC_QUIRK_34SG | AAC_QUIRK_SCSI_32 }, /* Legend S230 (Legend Vulcan) */
+ 
+ 	{ aac_rx_init, "aacraid",  "ADAPTEC ", "Adaptec 3230S   ", 2 }, /* Adaptec 3230S (Harrier) */
+ 	{ aac_rx_init, "aacraid",  "ADAPTEC ", "Adaptec 3240S   ", 2 }, /* Adaptec 3240S (Tornado) */
+@@ -224,8 +224,8 @@ static struct aac_driver_ident aac_drivers[] = {
+ 	{ aac_sa_init, "percraid", "DELL    ", "PERCRAID        ", 4, AAC_QUIRK_34SG }, /* Dell PERC2/QC */
+ 	{ aac_sa_init, "hpnraid",  "HP      ", "NetRAID         ", 4, AAC_QUIRK_34SG }, /* HP NetRAID-4M */
+ 
+-	{ aac_rx_init, "aacraid",  "DELL    ", "RAID            ", 2, AAC_QUIRK_31BIT | AAC_QUIRK_34SG }, /* Dell Catchall */
+-	{ aac_rx_init, "aacraid",  "Legend  ", "RAID            ", 2, AAC_QUIRK_31BIT | AAC_QUIRK_34SG }, /* Legend Catchall */
++	{ aac_rx_init, "aacraid",  "DELL    ", "RAID            ", 2, AAC_QUIRK_31BIT | AAC_QUIRK_34SG | AAC_QUIRK_SCSI_32 }, /* Dell Catchall */
++	{ aac_rx_init, "aacraid",  "Legend  ", "RAID            ", 2, AAC_QUIRK_31BIT | AAC_QUIRK_34SG | AAC_QUIRK_SCSI_32 }, /* Legend Catchall */
+ 	{ aac_rx_init, "aacraid",  "ADAPTEC ", "RAID            ", 2 }, /* Adaptec Catch All */
+ 	{ aac_rkt_init, "aacraid", "ADAPTEC ", "RAID            ", 2 }, /* Adaptec Rocket Catch All */
+ 	{ aac_nark_init, "aacraid", "ADAPTEC ", "RAID            ", 2 } /* Adaptec NEMER/ARK Catch All */
+@@ -420,6 +420,12 @@ static int aac_slave_configure(struct scsi_device *sdev)
+ 		unsigned num_one = 0;
+ 		unsigned depth;
+ 
++		/*
++		 * Firmware has an individual device recovery time typically
++		 * of 35 seconds, give us a margin.
++		 */
++		if (sdev->timeout < (45 * HZ))
++			sdev->timeout = 45 * HZ;
+ 		__shost_for_each_device(dev, host) {
+ 			if (dev->tagged_supported && (dev->type == TYPE_DISK) &&
+ 				(sdev_channel(dev) == CONTAINER_CHANNEL))
+@@ -484,6 +490,8 @@ static int aac_change_queue_depth(struct scsi_device *sdev, int depth)
+ static int aac_ioctl(struct scsi_device *sdev, int cmd, void __user * arg)
+ {
+ 	struct aac_dev *dev = (struct aac_dev *)sdev->host->hostdata;
++	if (!capable(CAP_SYS_RAWIO))
++		return -EPERM;
+ 	return aac_do_ioctl(dev, cmd, arg);
+ }
+ 
+@@ -579,6 +587,17 @@ static int aac_eh_reset(struct scsi_cmnd* cmd)
+ 		ssleep(1);
+ 	}
+ 	printk(KERN_ERR "%s: SCSI bus appears hung\n", AAC_DRIVERNAME);
++	/*
++	 * This adapter needs a blind reset, only do so for Adapters that
++	 * support a register, instead of a commanded, reset.
++	 */
++	if ((aac->supplement_adapter_info.SupportedOptions2 &
++	   le32_to_cpu(AAC_OPTION_MU_RESET)) &&
++	  aac_check_reset &&
++	  ((aac_check_reset != 1) ||
++	   (aac->supplement_adapter_info.SupportedOptions2 &
++	    le32_to_cpu(AAC_OPTION_IGNORE_RESET))))
++		aac_reset_adapter(aac, 2); /* Bypass wait for command quiesce */
+ 	return SUCCESS; /* Cause an immediate retry of the command with a ten second delay after successful tur */
+ }
+ 
+@@ -694,17 +713,15 @@ static ssize_t aac_show_model(struct class_device *class_dev,
+ {
+ 	struct aac_dev *dev = (struct aac_dev*)class_to_shost(class_dev)->hostdata;
+ 	int len;
+-
+-	if (dev->supplement_adapter_info.AdapterTypeText[0]) {
+-		char * cp = dev->supplement_adapter_info.AdapterTypeText;
+-		while (*cp && *cp != ' ')
+-			++cp;
+-		while (*cp == ' ')
+-			++cp;
+-		len = snprintf(buf, PAGE_SIZE, "%s\n", cp);
+-	} else
+-		len = snprintf(buf, PAGE_SIZE, "%s\n",
+-		  aac_drivers[dev->cardtype].model);
++	struct scsi_inq scsi_inq;
++	char *cp;
++
++	setinqstr(dev, &scsi_inq, 255);
++	cp = &scsi_inq.pid[sizeof(scsi_inq.pid)-1];
++	while (*cp && *cp == ' ' && cp > scsi_inq.pid)
++		--cp;
++	len = snprintf(buf, PAGE_SIZE,
++	  "%.*s\n", (int)(cp - scsi_inq.pid) + 1, scsi_inq.pid);
+ 	return len;
+ }
+ 
+@@ -713,17 +730,15 @@ static ssize_t aac_show_vendor(struct class_device *class_dev,
+ {
+ 	struct aac_dev *dev = (struct aac_dev*)class_to_shost(class_dev)->hostdata;
+ 	int len;
+-
+-	if (dev->supplement_adapter_info.AdapterTypeText[0]) {
+-		char * cp = dev->supplement_adapter_info.AdapterTypeText;
+-		while (*cp && *cp != ' ')
+-			++cp;
+-		len = snprintf(buf, PAGE_SIZE, "%.*s\n",
+-		  (int)(cp - (char *)dev->supplement_adapter_info.AdapterTypeText),
+-		  dev->supplement_adapter_info.AdapterTypeText);
+-	} else
+-		len = snprintf(buf, PAGE_SIZE, "%s\n",
+-		  aac_drivers[dev->cardtype].vname);
++	struct scsi_inq scsi_inq;
++	char *cp;
++
++	setinqstr(dev, &scsi_inq, 255);
++	cp = &scsi_inq.vid[sizeof(scsi_inq.vid)-1];
++	while (*cp && *cp == ' ' && cp > scsi_inq.vid)
++		--cp;
++	len = snprintf(buf, PAGE_SIZE,
++	  "%.*s\n", (int)(cp - scsi_inq.vid) + 1, scsi_inq.vid);
+ 	return len;
+ }
+ 
+@@ -796,6 +811,31 @@ static ssize_t aac_show_max_id(struct class_device *class_dev, char *buf)
+ 	  class_to_shost(class_dev)->max_id);
+ }
+ 
++static ssize_t aac_store_reset_adapter(struct class_device *class_dev,
++		const char *buf, size_t count)
++{
++	int retval = -EACCES;
++
++	if (!capable(CAP_SYS_ADMIN))
++		return retval;
++	retval = aac_reset_adapter((struct aac_dev*)class_to_shost(class_dev)->hostdata, buf[0] == '!');
++	if (retval >= 0)
++		retval = count;
++	return retval;
++}
++
++static ssize_t aac_show_reset_adapter(struct class_device *class_dev,
++		char *buf)
++{
++	struct aac_dev *dev = (struct aac_dev*)class_to_shost(class_dev)->hostdata;
++	int len, tmp;
++
++	tmp = aac_adapter_check_health(dev);
++	if ((tmp == 0) && dev->in_reset)
++		tmp = -EBUSY;
++	len = snprintf(buf, PAGE_SIZE, "0x%x\n", tmp);
++	return len;
++}
+ 
+ static struct class_device_attribute aac_model = {
+ 	.attr = {
+@@ -853,6 +893,14 @@ static struct class_device_attribute aac_max_id = {
+ 	},
+ 	.show = aac_show_max_id,
+ };
++static struct class_device_attribute aac_reset = {
++	.attr = {
++		.name = "reset_host",
++		.mode = S_IWUSR|S_IRUGO,
++	},
++	.store = aac_store_reset_adapter,
++	.show = aac_show_reset_adapter,
++};
+ 
+ static struct class_device_attribute *aac_attrs[] = {
+ 	&aac_model,
+@@ -863,6 +911,7 @@ static struct class_device_attribute *aac_attrs[] = {
+ 	&aac_serial_number,
+ 	&aac_max_channel,
+ 	&aac_max_id,
++	&aac_reset,
+ 	NULL
+ };
+ 
+@@ -907,7 +956,8 @@ static struct scsi_host_template aac_driver_template = {
+ 
+ static void __aac_shutdown(struct aac_dev * aac)
+ {
+-	kthread_stop(aac->thread);
++	if (aac->aif_thread)
++		kthread_stop(aac->thread);
+ 	aac_send_shutdown(aac);
+ 	aac_adapter_disable_int(aac);
+ 	free_irq(aac->pdev->irq, aac);
+@@ -1068,7 +1118,9 @@ static int __devinit aac_probe_one(struct pci_dev *pdev,
+ 	__aac_shutdown(aac);
+  out_unmap:
+ 	aac_fib_map_free(aac);
+-	pci_free_consistent(aac->pdev, aac->comm_size, aac->comm_addr, aac->comm_phys);
++	if (aac->comm_addr)
++		pci_free_consistent(aac->pdev, aac->comm_size, aac->comm_addr,
++		  aac->comm_phys);
+ 	kfree(aac->queues);
+ 	aac_adapter_ioremap(aac, 0);
+ 	kfree(aac->fibs);
+@@ -1084,9 +1136,8 @@ static int __devinit aac_probe_one(struct pci_dev *pdev,
+ static void aac_shutdown(struct pci_dev *dev)
+ {
+ 	struct Scsi_Host *shost = pci_get_drvdata(dev);
+-	struct aac_dev *aac = (struct aac_dev *)shost->hostdata;
+ 	scsi_block_requests(shost);
+-	__aac_shutdown(aac);
++	__aac_shutdown((struct aac_dev *)shost->hostdata);
+ }
+ 
+ static void __devexit aac_remove_one(struct pci_dev *pdev)
+diff --git a/drivers/scsi/aacraid/rx.c b/drivers/scsi/aacraid/rx.c
+index ffe2383..9a5a0ef 100644
+--- a/drivers/scsi/aacraid/rx.c
++++ b/drivers/scsi/aacraid/rx.c
+@@ -472,13 +472,13 @@ static int aac_rx_restart_adapter(struct aac_dev *dev, int bled)
+ 		else {
+ 			bled = aac_adapter_sync_cmd(dev, IOP_RESET_ALWAYS,
+ 			  0, 0, 0, 0, 0, 0, &var, NULL, NULL, NULL, NULL);
+-			if (!bled && (var != 0x00000001))
++			if (!bled && (var != 0x00000001) && (var != 0x3803000F))
+ 				bled = -EINVAL;
+ 		}
+ 		if (bled && (bled != -ETIMEDOUT))
+ 			bled = aac_adapter_sync_cmd(dev, IOP_RESET,
+ 			  0, 0, 0, 0, 0, 0, &var, NULL, NULL, NULL, NULL);
+-	
++
+ 		if (bled && (bled != -ETIMEDOUT))
+ 			return -EINVAL;
+ 	}
+@@ -549,7 +549,9 @@ int _aac_rx_init(struct aac_dev *dev)
+ 	dev->OIMR = status = rx_readb (dev, MUnit.OIMR);
+ 	if ((((status & 0x0c) != 0x0c) || aac_reset_devices || reset_devices) &&
+ 	  !aac_rx_restart_adapter(dev, 0))
+-		++restart;
++		/* Make sure the Hardware FIFO is empty */
++		while ((++restart < 512) &&
++		  (rx_readl(dev, MUnit.OutboundQueue) != 0xFFFFFFFFL));
+ 	/*
+ 	 *	Check to see if the board panic'd while booting.
+ 	 */
+@@ -599,7 +601,7 @@ int _aac_rx_init(struct aac_dev *dev)
+ 		}
+ 		msleep(1);
+ 	}
+-	if (restart)
++	if (restart && aac_commit)
+ 		aac_commit = 1;
+ 	/*
+ 	 *	Fill in the common function dispatch table.

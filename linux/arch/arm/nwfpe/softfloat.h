@@ -226,8 +226,6 @@ char floatx80_le_quiet( floatx80, floatx80 );
 char floatx80_lt_quiet( floatx80, floatx80 );
 char floatx80_is_signaling_nan( floatx80 );
 
-extern flag floatx80_is_nan(floatx80);
-
 #endif
 
 static inline flag extractFloat32Sign(float32 a)
@@ -274,8 +272,5 @@ static inline flag float64_lt_nocheck(float64 a, float64 b)
 
 extern flag float32_is_nan( float32 a );
 extern flag float64_is_nan( float64 a );
-
-extern int32 float64_to_uint32( struct roundingData *roundData, float64 a );
-extern int32 float64_to_uint32_round_to_zero( float64 a );
 
 #endif

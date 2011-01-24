@@ -1,0 +1,32 @@
+From: Luming Yu <luyu@redhat.com>
+Date: Mon, 14 Jan 2008 13:40:31 +0800
+Subject: [ia64] /proc/cpuinfo of Montecito
+Message-id: 478AF5CF.5040505@redhat.com
+O-Subject: Re: [RHEL 5.2 PATCH] BZ 251089: FEAT RHEL5.2: /proc/cpuinfo of Montecito (*)
+Bugzilla: 251089
+
+bz 251089
+
+Description of problem:
+With RHEL 5 kernel, the /proc/cpuinfo should show family  "Itanium 2"
+instead of number 32 for montecito processor to be consistent with other
+itanium processors.
+
+Upstream status:
+Upstream shows family number instead of name. So this is RHEL 5 specific
+issue.
+
+diff --git a/arch/ia64/kernel/setup.c b/arch/ia64/kernel/setup.c
+index 044021a..9144e81 100644
+--- a/arch/ia64/kernel/setup.c
++++ b/arch/ia64/kernel/setup.c
+@@ -703,7 +703,8 @@ show_cpuinfo (struct seq_file *m, void *v)
+ 
+ 	switch (c->family) {
+ 	      case 0x07:	memcpy(family, "Itanium", 8); break;
+-	      case 0x1f:	memcpy(family, "Itanium 2", 10); break;
++	      case 0x1f:
++	      case 0x20:	memcpy(family, "Itanium 2", 10); break;
+ 	      default:		sprintf(family, "%u", c->family); break;
+ 	}
+ 

@@ -83,6 +83,8 @@
 
 /*======== HFS structures as they appear on the disk ========*/
 
+#define __packed __attribute__ ((packed))
+
 /* Pascal-style string of up to 31 characters */
 struct hfs_name {
 	u8 len;
@@ -166,9 +168,6 @@ typedef union hfs_btree_key {
 	struct hfs_cat_key cat;
 	struct hfs_ext_key ext;
 } hfs_btree_key;
-
-#define HFS_MAX_CAT_KEYLEN	(sizeof(struct hfs_cat_key) - sizeof(u8))
-#define HFS_MAX_EXT_KEYLEN	(sizeof(struct hfs_ext_key) - sizeof(u8))
 
 typedef union hfs_btree_key btree_key;
 

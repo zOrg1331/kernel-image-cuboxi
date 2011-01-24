@@ -1,0 +1,46 @@
+From: Doug Chapman <dchapman@redhat.com>
+Date: Fri, 29 Feb 2008 15:36:33 -0500
+Subject: [ia64] fix userspace compile error in gcc_intrin.h
+Message-id: 1204317394.8186.17.camel@athlon
+O-Subject: [RHEL5.2 patch] fix userspace compile error in gcc_intrin.h
+Bugzilla: 429074
+
+fix for BZ 429074
+
+Backport of 0df29025fd0379d5950d206314d0b10a2c8a9607 from upstream
+which adds the #ifdef __KERNEL__.  It was pointed out to me today
+that I should have posted the Kbuild change to move gcc_intrin.h
+to unifdef-y.  I submitted that part upstream just today.
+
+[IA64] fix userspace compile error in gcc_intrin.h
+
+Fixes userspace build errors when linux/ipv6.h is included such as in the
+dhcpv6 package under fedora.  Likely causes other userspace build errors as
+well.
+
+Acked-by: Jarod Wilson <jwilson@redhat.com>
+Acked-by: David Woodhouse <dwmw2@redhat.com>
+
+diff --git a/include/asm-ia64/Kbuild b/include/asm-ia64/Kbuild
+index 15818a1..c793b46 100644
+--- a/include/asm-ia64/Kbuild
++++ b/include/asm-ia64/Kbuild
+@@ -15,3 +15,4 @@ header-y += ucontext.h
+ 
+ unifdef-y += perfmon.h
+ unifdef-y += ustack.h
++unifdef-y += gcc_intrin.h
+diff --git a/include/asm-ia64/gcc_intrin.h b/include/asm-ia64/gcc_intrin.h
+index b23a280..6bb44d9 100644
+--- a/include/asm-ia64/gcc_intrin.h
++++ b/include/asm-ia64/gcc_intrin.h
+@@ -24,7 +24,9 @@
+ extern void ia64_bad_param_for_setreg (void);
+ extern void ia64_bad_param_for_getreg (void);
+ 
++#ifdef __KERNEL__
+ register unsigned long ia64_r13 asm ("r13") __attribute_used__;
++#endif
+ 
+ #define __ia64_setreg(regnum, val)						\
+ ({										\

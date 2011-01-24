@@ -1,0 +1,33 @@
+From: Kimball Murray <kmurray@redhat.com>
+Date: Thu, 12 Jul 2007 10:45:16 -0400
+Subject: [mm] xen: export xen_create_contiguous_region
+Message-id: 20070712144130.18199.37207.sendpatchset@dhcp83-86.boston.redhat.com
+O-Subject: [RHEL5.1 Patch 2/3 ] (BZ-247839)
+Bugzilla: 247839
+
+This trivial patch EXPORTs xen_create_contiguous_region to
+kernel modules.  The Stratus management code needs such a region
+to communicate with it SMI handler.  It's quite likely other
+3rd party modules may need to do this too.
+
+I've been told this is already upstream.
+
+Please ACK for RHEL5.1.
+
+---------------------- snip ----------------------------
+
+Acked-by: "Stephen C. Tweedie" <sct@redhat.com>
+Acked-by: Chris Lalancette <clalance@redhat.com>
+
+diff --git a/arch/i386/mm/hypervisor.c b/arch/i386/mm/hypervisor.c
+index e9af618..dcb0e5f 100644
+--- a/arch/i386/mm/hypervisor.c
++++ b/arch/i386/mm/hypervisor.c
+@@ -363,6 +363,7 @@ int xen_create_contiguous_region(
+ 
+ 	return success ? 0 : -ENOMEM;
+ }
++EXPORT_SYMBOL_GPL(xen_create_contiguous_region);
+ 
+ void xen_destroy_contiguous_region(unsigned long vstart, unsigned int order)
+ {

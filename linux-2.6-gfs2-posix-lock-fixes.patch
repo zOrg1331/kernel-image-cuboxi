@@ -1,0 +1,65 @@
+From: David Teigland <teigland@redhat.com>
+Subject: [RHEL5.1 PATCH] GFS2: posix lock fixes
+Date: Mon, 11 Jun 2007 14:54:07 -0500
+Bugzilla: 243195
+Message-Id: <20070611195407.GB19371@redhat.com>
+Changelog: [gfs2] posix lock fixes
+
+
+bz 243195
+
+Some fixes for posix locks in GFS2:
+- doing F_SETLK/FUNLK or F_GETLK should return 0 if there are no locks on
+  the file (instead of ENOENT)
+- F_GETLK should return 0 if there's a conflicting lock
+- in F_GETLK, set the owner field in the info struct passed to userspace,
+  so a process will detect conflicts with its own locks
+
+upstream: gfs2-2.6-nmw.git or beyond
+
+Index: linux-rhel51-quilt/fs/gfs2/locking/dlm/plock.c
+===================================================================
+--- linux-rhel51-quilt.orig/fs/gfs2/locking/dlm/plock.c	2007-06-08 09:01:02.000000000 -0500
++++ linux-rhel51-quilt/fs/gfs2/locking/dlm/plock.c	2007-06-11 14:34:10.000000000 -0500
+@@ -137,6 +137,9 @@
+ 
+ 	rv = op->info.rv;
+ 
++	if (rv == -ENOENT)
++		rv = 0;
++
+ 	kfree(op);
+ 	return rv;
+ }
+@@ -159,6 +162,7 @@
+ 	op->info.number		= name->ln_number;
+ 	op->info.start		= fl->fl_start;
+ 	op->info.end		= fl->fl_end;
++	op->info.owner          = (__u64)(long) fl->fl_owner;
+ 
+ 	send_op(op);
+ 	wait_event(recv_wq, (op->done != 0));
+@@ -170,15 +174,20 @@
+ 	}
+ 	spin_unlock(&ops_lock);
+ 
++	/* info.rv from userspace is 1 for conflict, 0 for no-conflict,
++	   -ENOENT if there are no locks on the file */
++
+ 	rv = op->info.rv;
+ 
+-	if (rv == 0)
+-		fl->fl_type = F_UNLCK;
++	fl->fl_type = F_UNLCK;
++	if (rv == -ENOENT)
++		rv = 0;
+ 	else if (rv > 0) {
+ 		fl->fl_type = (op->info.ex) ? F_WRLCK : F_RDLCK;
+ 		fl->fl_pid = op->info.pid;
+ 		fl->fl_start = op->info.start;
+ 		fl->fl_end = op->info.end;
++		rv = 0;
+ 	}
+ 
+ 	kfree(op);
+

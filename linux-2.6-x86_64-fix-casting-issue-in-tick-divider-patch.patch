@@ -1,0 +1,27 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Subject: [RHEL 5.1 PATCH]: Fix casting issue in tick divider patch
+Date: Wed, 20 Jun 2007 14:16:29 -0400
+Bugzilla: 244861
+Message-Id: <20070620181629.28881.27223.sendpatchset@prarit.boston.redhat.com>
+Changelog: [x86_64] Fix casting issue in tick divider patch
+
+
+Fix a casting bug in the tick divider patch.
+
+Successfully tested by me on a variety of systems that were exhibiting slow
+boot behaviour.
+
+Resolves BZ 244861.
+
+--- linux-2.6.18.x86_64/arch/x86_64/kernel/time.c.orig	2007-06-20 04:21:58.000000000 -0400
++++ linux-2.6.18.x86_64/arch/x86_64/kernel/time.c	2007-06-20 04:28:58.000000000 -0400
+@@ -433,7 +433,7 @@ void main_timer_handler(struct pt_regs *
+ 				(((long) offset << US_SCALE) / vxtime.tsc_quot) - 1;
+ 	}
+ 	/* SCALE: We expect tick_divider - 1 lost, ie 0 for normal behaviour */
+-	if (lost > tick_divider - 1)  {
++	if (lost > (int)tick_divider - 1)  {
+ 		handle_lost_ticks(lost, regs);
+ 		jiffies += lost - (tick_divider - 1);
+ 	}
+

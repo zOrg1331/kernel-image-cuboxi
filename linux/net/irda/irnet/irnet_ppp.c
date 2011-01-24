@@ -13,8 +13,6 @@
  *	2) as a control channel (write commands, read events)
  */
 
-#include <linux/sched.h>
-#include <linux/smp_lock.h>
 #include "irnet_ppp.h"		/* Private header */
 /* Please put other headers in irnet.h - Thanks */
 
@@ -76,8 +74,9 @@ irnet_ctrl_write(irnet_socket *	ap,
       /* Look at the next command */
       start = next;
 
-	/* Scrap whitespaces before the command */
-	start = skip_spaces(start);
+      /* Scrap whitespaces before the command */
+      while(isspace(*start))
+	start++;
 
       /* ',' is our command separator */
       next = strchr(start, ',');
@@ -94,7 +93,7 @@ irnet_ctrl_write(irnet_socket *	ap,
 
       /* Check if we recognised one of the known command
        * We can't use "switch" with strings, so hack with "continue" */
-
+      
       /* First command : name -> Requested IrDA nickname */
       if(!strncmp(start, "name", 4))
 	{
@@ -132,7 +131,8 @@ irnet_ctrl_write(irnet_socket *	ap,
 	      char *	endp;
 
 	      /* Scrap whitespaces before the command */
-	      begp = skip_spaces(begp);
+	      while(isspace(*begp))
+		begp++;
 
 	      /* Convert argument to a number (last arg is the base) */
 	      addr = simple_strtoul(begp, &endp, 16);
@@ -479,7 +479,6 @@ dev_irnet_open(struct inode *	inode,
   ap = kzalloc(sizeof(*ap), GFP_KERNEL);
   DABORT(ap == NULL, -ENOMEM, FS_ERROR, "Can't allocate struct irnet...\n");
 
-  lock_kernel();
   /* initialize the irnet structure */
   ap->file = file;
 
@@ -501,7 +500,6 @@ dev_irnet_open(struct inode *	inode,
     {
       DERROR(FS_ERROR, "Can't setup IrDA link...\n");
       kfree(ap);
-      unlock_kernel();
       return err;
     }
 
@@ -512,7 +510,6 @@ dev_irnet_open(struct inode *	inode,
   file->private_data = ap;
 
   DEXIT(FS_TRACE, " - ap=0x%p\n", ap);
-  unlock_kernel();
   return 0;
 }
 
@@ -631,8 +628,8 @@ dev_irnet_poll(struct file *	file,
  * This is the way pppd configure us and control us while the PPP
  * instance is active.
  */
-static long
-dev_irnet_ioctl(
+static int
+dev_irnet_ioctl(struct inode *	inode,
 		struct file *	file,
 		unsigned int	cmd,
 		unsigned long	arg)
@@ -663,7 +660,6 @@ dev_irnet_ioctl(
 	{
 	  DEBUG(FS_INFO, "Entering PPP discipline.\n");
 	  /* PPP channel setup (ap->chan in configued in dev_irnet_open())*/
-	  lock_kernel();
 	  err = ppp_register_channel(&ap->chan);
 	  if(err == 0)
 	    {
@@ -676,14 +672,12 @@ dev_irnet_ioctl(
 	    }
 	  else
 	    DERROR(FS_ERROR, "Can't setup PPP channel...\n");
-          unlock_kernel();
 	}
       else
 	{
 	  /* In theory, should be N_TTY */
 	  DEBUG(FS_INFO, "Exiting PPP discipline.\n");
 	  /* Disconnect from the generic PPP layer */
-	  lock_kernel();
 	  if(ap->ppp_open)
 	    {
 	      ap->ppp_open = 0;
@@ -692,20 +686,24 @@ dev_irnet_ioctl(
 	  else
 	    DERROR(FS_ERROR, "Channel not registered !\n");
 	  err = 0;
-	  unlock_kernel();
 	}
       break;
 
       /* Query PPP channel and unit number */
     case PPPIOCGCHAN:
-      if(ap->ppp_open && !put_user(ppp_channel_index(&ap->chan),
-						(int __user *)argp))
-	err = 0;
+      if(!ap->ppp_open)
+	break;
+      if(put_user(ppp_channel_index(&ap->chan), (int __user *)argp))
+	break;
+      DEBUG(FS_INFO, "Query channel.\n");
+      err = 0;
       break;
     case PPPIOCGUNIT:
-      lock_kernel();
-      if(ap->ppp_open && !put_user(ppp_unit_number(&ap->chan),
-						(int __user *)argp))
+      if(!ap->ppp_open)
+	break;
+      if(put_user(ppp_unit_number(&ap->chan), (int __user *)argp))
+	break;
+      DEBUG(FS_INFO, "Query unit number.\n");
       err = 0;
       break;
 
@@ -725,43 +723,28 @@ dev_irnet_ioctl(
       DEBUG(FS_INFO, "Standard PPP ioctl.\n");
       if(!capable(CAP_NET_ADMIN))
 	err = -EPERM;
-      else {
-	lock_kernel();
+      else
 	err = ppp_irnet_ioctl(&ap->chan, cmd, arg);
-	unlock_kernel();
-      }
       break;
 
       /* TTY IOCTLs : Pretend that we are a tty, to keep pppd happy */
       /* Get termios */
     case TCGETS:
       DEBUG(FS_INFO, "Get termios.\n");
-      lock_kernel();
-#ifndef TCGETS2
-      if(!kernel_termios_to_user_termios((struct termios __user *)argp, &ap->termios))
-	err = 0;
-#else
-      if(kernel_termios_to_user_termios_1((struct termios __user *)argp, &ap->termios))
-	err = 0;
-#endif
-      unlock_kernel();
+      if(kernel_termios_to_user_termios((struct termios __user *)argp, &ap->termios))
+	break;
+      err = 0;
       break;
       /* Set termios */
     case TCSETSF:
       DEBUG(FS_INFO, "Set termios.\n");
-      lock_kernel();
-#ifndef TCGETS2
-      if(!user_termios_to_kernel_termios(&ap->termios, (struct termios __user *)argp))
-	err = 0;
-#else
-      if(!user_termios_to_kernel_termios_1(&ap->termios, (struct termios __user *)argp))
-	err = 0;
-#endif
-      unlock_kernel();
+      if(user_termios_to_kernel_termios(&ap->termios, (struct termios __user *)argp))
+	break;
+      err = 0;
       break;
 
       /* Set DTR/RTS */
-    case TIOCMBIS:
+    case TIOCMBIS: 
     case TIOCMBIC:
       /* Set exclusive/non-exclusive mode */
     case TIOCEXCL:
@@ -780,9 +763,7 @@ dev_irnet_ioctl(
        * We should also worry that we don't accept junk here and that
        * we get rid of our own buffers */
 #ifdef FLUSH_TO_PPP
-      lock_kernel();
       ppp_output_wakeup(&ap->chan);
-      unlock_kernel();
 #endif /* FLUSH_TO_PPP */
       err = 0;
       break;
@@ -797,7 +778,7 @@ dev_irnet_ioctl(
 
     default:
       DERROR(FS_ERROR, "Unsupported ioctl (0x%X)\n", cmd);
-      err = -ENOTTY;
+      err = -ENOIOCTLCMD;
     }
 
   DEXIT(FS_TRACE, " - err = 0x%X\n", err);
@@ -960,7 +941,7 @@ ppp_irnet_send(struct ppp_channel *	chan,
   ret = irttp_data_request(self->tsap, skb);
   if(ret < 0)
     {
-      /*
+      /*   
        * > IrTTPs tx queue is full, so we just have to
        * > drop the frame! You might think that we should
        * > just return -1 and don't deallocate the frame,
@@ -968,7 +949,7 @@ ppp_irnet_send(struct ppp_channel *	chan,
        * > we have replaced the original skb with a new
        * > one with larger headroom, and that would really
        * > confuse do_dev_queue_xmit() in dev.c! I have
-       * > tried :-) DB
+       * > tried :-) DB 
        * Correction : we verify the flow control above (self->tx_flow),
        * so we come here only if IrTTP doesn't like the packet (empty,
        * too large, IrTTP not connected). In those rare cases, it's ok
@@ -1155,6 +1136,6 @@ irnet_cleanup(void)
 module_init(irnet_init);
 module_exit(irnet_cleanup);
 MODULE_AUTHOR("Jean Tourrilhes <jt@hpl.hp.com>");
-MODULE_DESCRIPTION("IrNET : Synchronous PPP over IrDA");
+MODULE_DESCRIPTION("IrNET : Synchronous PPP over IrDA"); 
 MODULE_LICENSE("GPL");
 MODULE_ALIAS_CHARDEV(10, 187);

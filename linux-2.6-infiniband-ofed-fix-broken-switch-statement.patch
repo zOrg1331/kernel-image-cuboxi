@@ -1,0 +1,52 @@
+From: Doug Ledford <dledford@redhat.com>
+Date: Mon, 15 Jun 2009 09:52:38 -0400
+Subject: [infiniband] OFED: fix broken switch statement
+Message-id: 2660d57d88225638c5e683a39ad41e546e231d0a.1245072809.git.dledford@redhat.com
+O-Subject: [Patch RHEL5.4 03/16] [OFED] Fix broken switch statement
+Bugzilla: 506097
+
+Signed-off-by: Doug Ledford <dledford@redhat.com>
+
+diff --git a/drivers/infiniband/core/sysfs.c b/drivers/infiniband/core/sysfs.c
+index 1091946..ccc6ec7 100644
+--- a/drivers/infiniband/core/sysfs.c
++++ b/drivers/infiniband/core/sysfs.c
+@@ -246,14 +246,30 @@ static ssize_t phys_state_show(struct ib_port *p, struct port_attribute *unused,
+ 		ret = ib_query_port(p->ibdev, p->port_num, &attr);
+ 		if (!ret) {
+ 			switch (attr.phys_state) {
+-			case 1:  ret = sprintf(buf, "1: Sleep\n");
+-			case 2:  ret = sprintf(buf, "2: Polling\n");
+-			case 3:  ret = sprintf(buf, "3: Disabled\n");
+-			case 4:  ret = sprintf(buf, "4: PortConfigurationTraining\n");
+-			case 5:  ret = sprintf(buf, "5: LinkUp\n");
+-			case 6:  ret = sprintf(buf, "6: LinkErrorRecovery\n");
+-			case 7:  ret = sprintf(buf, "7: Phy Test\n");
+-			default: ret = sprintf(buf, "%d: <unknown>\n", attr.phys_state);
++			case 1:
++				ret = sprintf(buf, "1: Sleep\n");
++				break;
++			case 2:
++				ret = sprintf(buf, "2: Polling\n");
++				break;
++			case 3:
++				ret = sprintf(buf, "3: Disabled\n");
++				break;
++			case 4:
++				ret = sprintf(buf, "4: PortConfigurationTraining\n");
++				break;
++			case 5:
++				ret = sprintf(buf, "5: LinkUp\n");
++				break;
++			case 6:
++				ret = sprintf(buf, "6: LinkErrorRecovery\n");
++				break;
++			case 7:
++				ret = sprintf(buf, "7: Phy Test\n");
++				break;
++			default:
++				ret = sprintf(buf, "%d: <unknown>\n", attr.phys_state);
++				break;
+ 			}
+ 		}
+ 	}

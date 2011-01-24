@@ -1,0 +1,5289 @@
+From: Andy Gospodarek <gospo@redhat.com>
+Date: Mon, 18 May 2009 14:17:23 -0400
+Subject: [net] igbvf: new driver, support 82576 virtual functions
+Message-id: 20090518181722.GA31221@gospo.rdu.redhat.com
+O-Subject: Re: [RHEL5.4 PATCH] igbvf: add new driver to support 82576 virtual functions
+Bugzilla: 480524
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+RH-Acked-by: Chris Wright <chrisw@redhat.com>
+RH-Acked-by: David Miller <davem@redhat.com>
+
+This patch adds support for the igbvf driver.  The three upstream
+commits that exist for this driver have been backported to create this
+patch:
+
+    commit 0364d6fd2c353d2d82da865a6f093f97c69b669c
+    Author: Alexander Duyck <alexander.h.duyck@intel.com>
+
+        igbvf: cleanup flags and allow for rx checksum to be disabled
+
+    commit 2d165771062cae75de26fe7bc7cb2d937ff6f1b4
+    Author: Alexander Duyck <alexander.h.duyck@intel.com>
+
+        igbvf: fix unused external references
+
+    commit d4e0fe01a38a073568aee541a0247fe734095979
+    Author: Alexander Duyck <alexander.h.duyck@intel.com>
+
+        igbvf: add new driver to support 82576 virtual functions
+
+This has been lightly tested and should resolve the request in RHBZ
+480524.
+
+diff --git a/drivers/net/Kconfig b/drivers/net/Kconfig
+index 89add4f..33dd9b5 100644
+--- a/drivers/net/Kconfig
++++ b/drivers/net/Kconfig
+@@ -2006,6 +2006,27 @@ config IGB
+ 	  <file:Documentation/networking/net-modules.txt>.  The module
+ 	  will be called igb.
+ 
++config IGBVF
++       tristate "Intel(R) 82576 Virtual Function Ethernet support"
++       depends on PCI
++       ---help---
++         This driver supports Intel(R) 82576 virtual functions.  For more
++         information on how to identify your adapter, go to the Adapter &
++         Driver ID Guide at:
++
++         <http://support.intel.com/support/network/adapter/pro100/21397.htm>
++
++         For general information and support, go to the Intel support
++         website at:
++
++         <http://support.intel.com>
++
++         More specific information on configuring the driver is in
++         <file:Documentation/networking/e1000.txt>.
++
++         To compile this driver as a module, choose M here. The module
++         will be called igbvf.
++
+ source "drivers/net/ixp2000/Kconfig"
+ 
+ config MYRI_SBUS
+diff --git a/drivers/net/Makefile b/drivers/net/Makefile
+index 7755f25..fd44c1d 100644
+--- a/drivers/net/Makefile
++++ b/drivers/net/Makefile
+@@ -10,6 +10,7 @@ obj-$(CONFIG_E1000) += e1000/
+ obj-$(CONFIG_E1000E) += e1000e/
+ obj-$(CONFIG_IGB) += igb/
+ obj-$(CONFIG_IBM_EMAC) += ibm_emac/
++obj-$(CONFIG_IGBVF) += igbvf/
+ obj-$(CONFIG_IXGBE) += ixgbe/
+ obj-$(CONFIG_IXGB) += ixgb/
+ obj-$(CONFIG_CHELSIO_T1) += chelsio/
+diff --git a/drivers/net/igbvf/Makefile b/drivers/net/igbvf/Makefile
+new file mode 100644
+index 0000000..c2f150d
+--- /dev/null
++++ b/drivers/net/igbvf/Makefile
+@@ -0,0 +1,38 @@
++################################################################################
++#
++# Intel(R) 82576 Virtual Function Linux driver
++# Copyright(c) 2009 Intel Corporation.
++#
++# This program is free software; you can redistribute it and/or modify it
++# under the terms and conditions of the GNU General Public License,
++# version 2, as published by the Free Software Foundation.
++#
++# This program is distributed in the hope it will be useful, but WITHOUT
++# ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
++# FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
++# more details.
++#
++# You should have received a copy of the GNU General Public License along with
++# this program; if not, write to the Free Software Foundation, Inc.,
++# 51 Franklin St - Fifth Floor, Boston, MA 02110-1301 USA.
++#
++# The full GNU General Public License is included in this distribution in
++# the file called "COPYING".
++#
++# Contact Information:
++# e1000-devel Mailing List <e1000-devel@lists.sourceforge.net>
++# Intel Corporation, 5200 N.E. Elam Young Parkway, Hillsboro, OR 97124-6497
++#
++################################################################################
++
++#
++# Makefile for the Intel(R) 82576 VF ethernet driver
++#
++
++obj-$(CONFIG_IGBVF) += igbvf.o
++
++igbvf-objs := vf.o \
++              mbx.o \
++              ethtool.o \
++              netdev.o
++
+diff --git a/drivers/net/igbvf/defines.h b/drivers/net/igbvf/defines.h
+new file mode 100644
+index 0000000..88a4753
+--- /dev/null
++++ b/drivers/net/igbvf/defines.h
+@@ -0,0 +1,125 @@
++/*******************************************************************************
++
++  Intel(R) 82576 Virtual Function Linux driver
++  Copyright(c) 1999 - 2009 Intel Corporation.
++
++  This program is free software; you can redistribute it and/or modify it
++  under the terms and conditions of the GNU General Public License,
++  version 2, as published by the Free Software Foundation.
++
++  This program is distributed in the hope it will be useful, but WITHOUT
++  ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
++  FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
++  more details.
++
++  You should have received a copy of the GNU General Public License along with
++  this program; if not, write to the Free Software Foundation, Inc.,
++  51 Franklin St - Fifth Floor, Boston, MA 02110-1301 USA.
++
++  The full GNU General Public License is included in this distribution in
++  the file called "COPYING".
++
++  Contact Information:
++  e1000-devel Mailing List <e1000-devel@lists.sourceforge.net>
++  Intel Corporation, 5200 N.E. Elam Young Parkway, Hillsboro, OR 97124-6497
++
++*******************************************************************************/
++
++#ifndef _E1000_DEFINES_H_
++#define _E1000_DEFINES_H_
++
++/* Number of Transmit and Receive Descriptors must be a multiple of 8 */
++#define REQ_TX_DESCRIPTOR_MULTIPLE  8
++#define REQ_RX_DESCRIPTOR_MULTIPLE  8
++
++/* IVAR valid bit */
++#define E1000_IVAR_VALID        0x80
++
++/* Receive Descriptor bit definitions */
++#define E1000_RXD_STAT_DD       0x01    /* Descriptor Done */
++#define E1000_RXD_STAT_EOP      0x02    /* End of Packet */
++#define E1000_RXD_STAT_IXSM     0x04    /* Ignore checksum */
++#define E1000_RXD_STAT_VP       0x08    /* IEEE VLAN Packet */
++#define E1000_RXD_STAT_UDPCS    0x10    /* UDP xsum calculated */
++#define E1000_RXD_STAT_TCPCS    0x20    /* TCP xsum calculated */
++#define E1000_RXD_STAT_IPCS     0x40    /* IP xsum calculated */
++#define E1000_RXD_ERR_SE        0x02    /* Symbol Error */
++#define E1000_RXD_SPC_VLAN_MASK 0x0FFF  /* VLAN ID is in lower 12 bits */
++
++#define E1000_RXDEXT_STATERR_CE    0x01000000
++#define E1000_RXDEXT_STATERR_SE    0x02000000
++#define E1000_RXDEXT_STATERR_SEQ   0x04000000
++#define E1000_RXDEXT_STATERR_CXE   0x10000000
++#define E1000_RXDEXT_STATERR_TCPE  0x20000000
++#define E1000_RXDEXT_STATERR_IPE   0x40000000
++#define E1000_RXDEXT_STATERR_RXE   0x80000000
++
++
++/* Same mask, but for extended and packet split descriptors */
++#define E1000_RXDEXT_ERR_FRAME_ERR_MASK ( \
++    E1000_RXDEXT_STATERR_CE  |            \
++    E1000_RXDEXT_STATERR_SE  |            \
++    E1000_RXDEXT_STATERR_SEQ |            \
++    E1000_RXDEXT_STATERR_CXE |            \
++    E1000_RXDEXT_STATERR_RXE)
++
++/* Device Control */
++#define E1000_CTRL_RST      0x04000000  /* Global reset */
++
++/* Device Status */
++#define E1000_STATUS_FD         0x00000001      /* Full duplex.0=half,1=full */
++#define E1000_STATUS_LU         0x00000002      /* Link up.0=no,1=link */
++#define E1000_STATUS_TXOFF      0x00000010      /* transmission paused */
++#define E1000_STATUS_SPEED_10   0x00000000      /* Speed 10Mb/s */
++#define E1000_STATUS_SPEED_100  0x00000040      /* Speed 100Mb/s */
++#define E1000_STATUS_SPEED_1000 0x00000080      /* Speed 1000Mb/s */
++
++#define SPEED_10    10
++#define SPEED_100   100
++#define SPEED_1000  1000
++#define HALF_DUPLEX 1
++#define FULL_DUPLEX 2
++
++/* Transmit Descriptor bit definitions */
++#define E1000_TXD_POPTS_IXSM 0x01       /* Insert IP checksum */
++#define E1000_TXD_POPTS_TXSM 0x02       /* Insert TCP/UDP checksum */
++#define E1000_TXD_CMD_DEXT   0x20000000 /* Descriptor extension (0 = legacy) */
++#define E1000_TXD_STAT_DD    0x00000001 /* Descriptor Done */
++
++#define MAX_JUMBO_FRAME_SIZE    0x3F00
++
++/* 802.1q VLAN Packet Size */
++#define VLAN_TAG_SIZE              4    /* 802.3ac tag (not DMA'd) */
++
++/* Error Codes */
++#define E1000_SUCCESS      0
++#define E1000_ERR_CONFIG   3
++#define E1000_ERR_MAC_INIT 5
++#define E1000_ERR_MBX      15
++
++#ifndef ETH_ADDR_LEN
++#define ETH_ADDR_LEN                 6
++#endif
++
++/* SRRCTL bit definitions */
++#define E1000_SRRCTL_BSIZEPKT_SHIFT                     10 /* Shift _right_ */
++#define E1000_SRRCTL_BSIZEHDRSIZE_MASK                  0x00000F00
++#define E1000_SRRCTL_BSIZEHDRSIZE_SHIFT                 2  /* Shift _left_ */
++#define E1000_SRRCTL_DESCTYPE_ADV_ONEBUF                0x02000000
++#define E1000_SRRCTL_DESCTYPE_HDR_SPLIT_ALWAYS          0x0A000000
++#define E1000_SRRCTL_DESCTYPE_MASK                      0x0E000000
++#define E1000_SRRCTL_DROP_EN                            0x80000000
++
++#define E1000_SRRCTL_BSIZEPKT_MASK      0x0000007F
++#define E1000_SRRCTL_BSIZEHDR_MASK      0x00003F00
++
++/* Additional Descriptor Control definitions */
++#define E1000_TXDCTL_QUEUE_ENABLE  0x02000000 /* Enable specific Tx Queue */
++#define E1000_RXDCTL_QUEUE_ENABLE  0x02000000 /* Enable specific Rx Queue */
++
++/* Direct Cache Access (DCA) definitions */
++#define E1000_DCA_TXCTRL_TX_WB_RO_EN (1 << 11) /* Tx Desc writeback RO bit */
++
++#define E1000_VF_INIT_TIMEOUT 200 /* Number of retries to clear RSTI */
++
++#endif /* _E1000_DEFINES_H_ */
+diff --git a/drivers/net/igbvf/ethtool.c b/drivers/net/igbvf/ethtool.c
+new file mode 100644
+index 0000000..5b77380
+--- /dev/null
++++ b/drivers/net/igbvf/ethtool.c
+@@ -0,0 +1,544 @@
++/*******************************************************************************
++
++  Intel(R) 82576 Virtual Function Linux driver
++  Copyright(c) 2009 Intel Corporation.
++
++  This program is free software; you can redistribute it and/or modify it
++  under the terms and conditions of the GNU General Public License,
++  version 2, as published by the Free Software Foundation.
++
++  This program is distributed in the hope it will be useful, but WITHOUT
++  ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
++  FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
++  more details.
++
++  You should have received a copy of the GNU General Public License along with
++  this program; if not, write to the Free Software Foundation, Inc.,
++  51 Franklin St - Fifth Floor, Boston, MA 02110-1301 USA.
++
++  The full GNU General Public License is included in this distribution in
++  the file called "COPYING".
++
++  Contact Information:
++  e1000-devel Mailing List <e1000-devel@lists.sourceforge.net>
++  Intel Corporation, 5200 N.E. Elam Young Parkway, Hillsboro, OR 97124-6497
++
++*******************************************************************************/
++
++/* ethtool support for igbvf */
++
++#include <linux/netdevice.h>
++#include <linux/ethtool.h>
++#include <linux/pci.h>
++#include <linux/vmalloc.h>
++#include <linux/delay.h>
++
++#include "igbvf.h"
++#include <linux/if_vlan.h>
++
++
++struct igbvf_stats {
++	char stat_string[ETH_GSTRING_LEN];
++	int sizeof_stat;
++	int stat_offset;
++	int base_stat_offset;
++};
++
++#define IGBVF_STAT(current, base) \
++		sizeof(((struct igbvf_adapter *)0)->current), \
++		offsetof(struct igbvf_adapter, current), \
++		offsetof(struct igbvf_adapter, base)
++
++static const struct igbvf_stats igbvf_gstrings_stats[] = {
++	{ "rx_packets", IGBVF_STAT(stats.gprc, stats.base_gprc) },
++	{ "tx_packets", IGBVF_STAT(stats.gptc, stats.base_gptc) },
++	{ "rx_bytes", IGBVF_STAT(stats.gorc, stats.base_gorc) },
++	{ "tx_bytes", IGBVF_STAT(stats.gotc, stats.base_gotc) },
++	{ "multicast", IGBVF_STAT(stats.mprc, stats.base_mprc) },
++	{ "lbrx_bytes", IGBVF_STAT(stats.gorlbc, stats.base_gorlbc) },
++	{ "lbrx_packets", IGBVF_STAT(stats.gprlbc, stats.base_gprlbc) },
++	{ "tx_restart_queue", IGBVF_STAT(restart_queue, zero_base) },
++	{ "rx_long_byte_count", IGBVF_STAT(stats.gorc, stats.base_gorc) },
++	{ "rx_csum_offload_good", IGBVF_STAT(hw_csum_good, zero_base) },
++	{ "rx_csum_offload_errors", IGBVF_STAT(hw_csum_err, zero_base) },
++	{ "rx_header_split", IGBVF_STAT(rx_hdr_split, zero_base) },
++	{ "alloc_rx_buff_failed", IGBVF_STAT(alloc_rx_buff_failed, zero_base) },
++};
++
++#define IGBVF_GLOBAL_STATS_LEN ARRAY_SIZE(igbvf_gstrings_stats)
++
++static const char igbvf_gstrings_test[][ETH_GSTRING_LEN] = {
++	"Link test   (on/offline)"
++};
++
++#define IGBVF_TEST_LEN ARRAY_SIZE(igbvf_gstrings_test)
++
++static int igbvf_get_settings(struct net_device *netdev,
++                              struct ethtool_cmd *ecmd)
++{
++	struct igbvf_adapter *adapter = netdev_priv(netdev);
++	struct e1000_hw *hw = &adapter->hw;
++	u32 status;
++
++	ecmd->supported   = SUPPORTED_1000baseT_Full;
++
++	ecmd->advertising = ADVERTISED_1000baseT_Full;
++
++	ecmd->port = -1;
++	ecmd->transceiver = XCVR_DUMMY1;
++
++	status = er32(STATUS);
++	if (status & E1000_STATUS_LU) {
++		if (status & E1000_STATUS_SPEED_1000)
++			ecmd->speed = 1000;
++		else if (status & E1000_STATUS_SPEED_100)
++			ecmd->speed = 100;
++		else
++			ecmd->speed = 10;
++
++		if (status & E1000_STATUS_FD)
++			ecmd->duplex = DUPLEX_FULL;
++		else
++			ecmd->duplex = DUPLEX_HALF;
++	} else {
++		ecmd->speed = -1;
++		ecmd->duplex = -1;
++	}
++
++	ecmd->autoneg = AUTONEG_DISABLE;
++
++	return 0;
++}
++
++static u32 igbvf_get_link(struct net_device *netdev)
++{
++	return netif_carrier_ok(netdev);
++}
++
++static int igbvf_set_settings(struct net_device *netdev,
++                              struct ethtool_cmd *ecmd)
++{
++	return -EOPNOTSUPP;
++}
++
++static void igbvf_get_pauseparam(struct net_device *netdev,
++                                 struct ethtool_pauseparam *pause)
++{
++	return;
++}
++
++static int igbvf_set_pauseparam(struct net_device *netdev,
++                                struct ethtool_pauseparam *pause)
++{
++	return -EOPNOTSUPP;
++}
++
++static u32 igbvf_get_rx_csum(struct net_device *netdev)
++{
++	struct igbvf_adapter *adapter = netdev_priv(netdev);
++	return !(adapter->flags & IGBVF_FLAG_RX_CSUM_DISABLED);
++}
++
++static int igbvf_set_rx_csum(struct net_device *netdev, u32 data)
++{
++	struct igbvf_adapter *adapter = netdev_priv(netdev);
++
++	if (data)
++		adapter->flags &= ~IGBVF_FLAG_RX_CSUM_DISABLED;
++	else
++		adapter->flags |= IGBVF_FLAG_RX_CSUM_DISABLED;
++
++	return 0;
++}
++
++static u32 igbvf_get_tx_csum(struct net_device *netdev)
++{
++	return ((netdev->features & NETIF_F_IP_CSUM) != 0);
++}
++
++static int igbvf_set_tx_csum(struct net_device *netdev, u32 data)
++{
++	if (data)
++		netdev->features |= NETIF_F_HW_CSUM;
++	else
++		netdev->features &= NETIF_F_HW_CSUM;
++	return 0;
++}
++
++static int igbvf_set_tso(struct net_device *netdev, u32 data)
++{
++	struct igbvf_adapter *adapter = netdev_priv(netdev);
++
++	if (data) {
++		netdev->features |= NETIF_F_TSO;
++		netdev->features |= NETIF_F_TSO6;
++	} else {
++		netdev->features &= ~NETIF_F_TSO;
++		netdev->features &= ~NETIF_F_TSO6;
++	}
++
++	dev_info(&adapter->pdev->dev, "TSO is %s\n",
++	         data ? "Enabled" : "Disabled");
++	return 0;
++}
++
++static u32 igbvf_get_msglevel(struct net_device *netdev)
++{
++	struct igbvf_adapter *adapter = netdev_priv(netdev);
++	return adapter->msg_enable;
++}
++
++static void igbvf_set_msglevel(struct net_device *netdev, u32 data)
++{
++	struct igbvf_adapter *adapter = netdev_priv(netdev);
++	adapter->msg_enable = data;
++}
++
++static int igbvf_get_regs_len(struct net_device *netdev)
++{
++#define IGBVF_REGS_LEN 8
++	return IGBVF_REGS_LEN * sizeof(u32);
++}
++
++static void igbvf_get_regs(struct net_device *netdev,
++                           struct ethtool_regs *regs, void *p)
++{
++	struct igbvf_adapter *adapter = netdev_priv(netdev);
++	struct e1000_hw *hw = &adapter->hw;
++	u32 *regs_buff = p;
++	u8 revision_id;
++
++	memset(p, 0, IGBVF_REGS_LEN * sizeof(u32));
++
++	pci_read_config_byte(adapter->pdev, PCI_REVISION_ID, &revision_id);
++
++	regs->version = (1 << 24) | (revision_id << 16) | adapter->pdev->device;
++
++	regs_buff[0] = er32(CTRL);
++	regs_buff[1] = er32(STATUS);
++
++	regs_buff[2] = er32(RDLEN(0));
++	regs_buff[3] = er32(RDH(0));
++	regs_buff[4] = er32(RDT(0));
++
++	regs_buff[5] = er32(TDLEN(0));
++	regs_buff[6] = er32(TDH(0));
++	regs_buff[7] = er32(TDT(0));
++}
++
++static int igbvf_get_eeprom_len(struct net_device *netdev)
++{
++	return 0;
++}
++
++static int igbvf_get_eeprom(struct net_device *netdev,
++                            struct ethtool_eeprom *eeprom, u8 *bytes)
++{
++	return -EOPNOTSUPP;
++}
++
++static int igbvf_set_eeprom(struct net_device *netdev,
++                            struct ethtool_eeprom *eeprom, u8 *bytes)
++{
++	return -EOPNOTSUPP;
++}
++
++static void igbvf_get_drvinfo(struct net_device *netdev,
++                              struct ethtool_drvinfo *drvinfo)
++{
++	struct igbvf_adapter *adapter = netdev_priv(netdev);
++	char firmware_version[32] = "N/A";
++
++	strncpy(drvinfo->driver,  igbvf_driver_name, 32);
++	strncpy(drvinfo->version, igbvf_driver_version, 32);
++	strncpy(drvinfo->fw_version, firmware_version, 32);
++	strncpy(drvinfo->bus_info, pci_name(adapter->pdev), 32);
++	drvinfo->regdump_len = igbvf_get_regs_len(netdev);
++	drvinfo->eedump_len = igbvf_get_eeprom_len(netdev);
++}
++
++static void igbvf_get_ringparam(struct net_device *netdev,
++                                struct ethtool_ringparam *ring)
++{
++	struct igbvf_adapter *adapter = netdev_priv(netdev);
++	struct igbvf_ring *tx_ring = adapter->tx_ring;
++	struct igbvf_ring *rx_ring = adapter->rx_ring;
++
++	ring->rx_max_pending = IGBVF_MAX_RXD;
++	ring->tx_max_pending = IGBVF_MAX_TXD;
++	ring->rx_mini_max_pending = 0;
++	ring->rx_jumbo_max_pending = 0;
++	ring->rx_pending = rx_ring->count;
++	ring->tx_pending = tx_ring->count;
++	ring->rx_mini_pending = 0;
++	ring->rx_jumbo_pending = 0;
++}
++
++static int igbvf_set_ringparam(struct net_device *netdev,
++                               struct ethtool_ringparam *ring)
++{
++	struct igbvf_adapter *adapter = netdev_priv(netdev);
++	struct igbvf_ring *temp_ring;
++	int err;
++	u32 new_rx_count, new_tx_count;
++
++	if ((ring->rx_mini_pending) || (ring->rx_jumbo_pending))
++		return -EINVAL;
++
++	new_rx_count = max(ring->rx_pending, (u32)IGBVF_MIN_RXD);
++	new_rx_count = min(new_rx_count, (u32)IGBVF_MAX_RXD);
++	new_rx_count = ALIGN(new_rx_count, REQ_RX_DESCRIPTOR_MULTIPLE);
++
++	new_tx_count = max(ring->tx_pending, (u32)IGBVF_MIN_TXD);
++	new_tx_count = min(new_tx_count, (u32)IGBVF_MAX_TXD);
++	new_tx_count = ALIGN(new_tx_count, REQ_TX_DESCRIPTOR_MULTIPLE);
++
++	if ((new_tx_count == adapter->tx_ring->count) &&
++	    (new_rx_count == adapter->rx_ring->count)) {
++		/* nothing to do */
++		return 0;
++	}
++
++	temp_ring = vmalloc(sizeof(struct igbvf_ring));
++	if (!temp_ring)
++		return -ENOMEM;
++
++	while (test_and_set_bit(__IGBVF_RESETTING, &adapter->state))
++		msleep(1);
++
++	if (netif_running(adapter->netdev))
++		igbvf_down(adapter);
++
++	/*
++	 * We can't just free everything and then setup again,
++	 * because the ISRs in MSI-X mode get passed pointers
++	 * to the tx and rx ring structs.
++	 */
++	if (new_tx_count != adapter->tx_ring->count) {
++		memcpy(temp_ring, adapter->tx_ring, sizeof(struct igbvf_ring));
++
++		temp_ring->count = new_tx_count;
++		err = igbvf_setup_tx_resources(adapter, temp_ring);
++		if (err)
++			goto err_setup;
++
++		igbvf_free_tx_resources(adapter->tx_ring);
++
++		memcpy(adapter->tx_ring, temp_ring, sizeof(struct igbvf_ring));
++	}
++
++	if (new_rx_count != adapter->rx_ring->count) {
++		memcpy(temp_ring, adapter->rx_ring, sizeof(struct igbvf_ring));
++
++		temp_ring->count = new_rx_count;
++		err = igbvf_setup_rx_resources(adapter, temp_ring);
++		if (err)
++			goto err_setup;
++
++		igbvf_free_rx_resources(adapter->rx_ring);
++
++		memcpy(adapter->rx_ring, temp_ring,sizeof(struct igbvf_ring));
++	}
++
++	err = 0;
++err_setup:
++	if (netif_running(adapter->netdev))
++		igbvf_up(adapter);
++
++	clear_bit(__IGBVF_RESETTING, &adapter->state);
++	vfree(temp_ring);
++	return err;
++}
++
++static int igbvf_link_test(struct igbvf_adapter *adapter, u64 *data)
++{
++	struct e1000_hw *hw = &adapter->hw;
++	*data = 0;
++
++	hw->mac.ops.check_for_link(hw);
++
++	if (!(er32(STATUS) & E1000_STATUS_LU))
++		*data = 1;
++
++	return *data;
++}
++
++static int igbvf_get_self_test_count(struct net_device *netdev)
++{
++	return IGBVF_TEST_LEN;
++}
++
++static int igbvf_get_stats_count(struct net_device *netdev)
++{
++	return IGBVF_GLOBAL_STATS_LEN;
++}
++
++static void igbvf_diag_test(struct net_device *netdev,
++                            struct ethtool_test *eth_test, u64 *data)
++{
++	struct igbvf_adapter *adapter = netdev_priv(netdev);
++
++	set_bit(__IGBVF_TESTING, &adapter->state);
++
++	/*
++	 * Link test performed before hardware reset so autoneg doesn't
++	 * interfere with test result
++	 */
++	if (igbvf_link_test(adapter, &data[0]))
++		eth_test->flags |= ETH_TEST_FL_FAILED;
++
++	clear_bit(__IGBVF_TESTING, &adapter->state);
++	msleep_interruptible(4 * 1000);
++}
++
++static void igbvf_get_wol(struct net_device *netdev,
++                          struct ethtool_wolinfo *wol)
++{
++	wol->supported = 0;
++	wol->wolopts = 0;
++
++	return;
++}
++
++static int igbvf_set_wol(struct net_device *netdev,
++                         struct ethtool_wolinfo *wol)
++{
++	return -EOPNOTSUPP;
++}
++
++static int igbvf_phys_id(struct net_device *netdev, u32 data)
++{
++	return 0;
++}
++
++static int igbvf_get_coalesce(struct net_device *netdev,
++                              struct ethtool_coalesce *ec)
++{
++	struct igbvf_adapter *adapter = netdev_priv(netdev);
++
++	if (adapter->itr_setting <= 3)
++		ec->rx_coalesce_usecs = adapter->itr_setting;
++	else
++		ec->rx_coalesce_usecs = adapter->itr_setting >> 2;
++
++	return 0;
++}
++
++static int igbvf_set_coalesce(struct net_device *netdev,
++                              struct ethtool_coalesce *ec)
++{
++	struct igbvf_adapter *adapter = netdev_priv(netdev);
++	struct e1000_hw *hw = &adapter->hw;
++
++	if ((ec->rx_coalesce_usecs > IGBVF_MAX_ITR_USECS) ||
++	    ((ec->rx_coalesce_usecs > 3) &&
++	     (ec->rx_coalesce_usecs < IGBVF_MIN_ITR_USECS)) ||
++	    (ec->rx_coalesce_usecs == 2))
++		return -EINVAL;
++
++	/* convert to rate of irq's per second */
++	if (ec->rx_coalesce_usecs && ec->rx_coalesce_usecs <= 3) {
++		adapter->itr = IGBVF_START_ITR;
++		adapter->itr_setting = ec->rx_coalesce_usecs;
++	} else {
++		adapter->itr = ec->rx_coalesce_usecs << 2;
++		adapter->itr_setting = adapter->itr;
++	}
++
++	writel(adapter->itr,
++	       hw->hw_addr + adapter->rx_ring[0].itr_register);
++
++	return 0;
++}
++
++static int igbvf_nway_reset(struct net_device *netdev)
++{
++	struct igbvf_adapter *adapter = netdev_priv(netdev);
++	if (netif_running(netdev))
++		igbvf_reinit_locked(adapter);
++	return 0;
++}
++
++
++static void igbvf_get_ethtool_stats(struct net_device *netdev,
++                                    struct ethtool_stats *stats,
++                                    u64 *data)
++{
++	struct igbvf_adapter *adapter = netdev_priv(netdev);
++	int i;
++
++	igbvf_update_stats(adapter);
++	for (i = 0; i < IGBVF_GLOBAL_STATS_LEN; i++) {
++		char *p = (char *)adapter +
++		          igbvf_gstrings_stats[i].stat_offset;
++		char *b = (char *)adapter +
++		          igbvf_gstrings_stats[i].base_stat_offset;
++		data[i] = ((igbvf_gstrings_stats[i].sizeof_stat ==
++		            sizeof(u64)) ? (*(u64 *)p - *(u64 *)b) :
++		            (*(u32 *)p - *(u32 *)b));
++	}
++
++}
++
++static void igbvf_get_strings(struct net_device *netdev, u32 stringset,
++                              u8 *data)
++{
++	u8 *p = data;
++	int i;
++
++	switch (stringset) {
++	case ETH_SS_TEST:
++		memcpy(data, *igbvf_gstrings_test, sizeof(igbvf_gstrings_test));
++		break;
++	case ETH_SS_STATS:
++		for (i = 0; i < IGBVF_GLOBAL_STATS_LEN; i++) {
++			memcpy(p, igbvf_gstrings_stats[i].stat_string,
++			       ETH_GSTRING_LEN);
++			p += ETH_GSTRING_LEN;
++		}
++		break;
++	}
++}
++
++static const struct ethtool_ops igbvf_ethtool_ops = {
++	.get_settings		= igbvf_get_settings,
++	.set_settings		= igbvf_set_settings,
++	.get_drvinfo		= igbvf_get_drvinfo,
++	.get_regs_len		= igbvf_get_regs_len,
++	.get_regs		= igbvf_get_regs,
++	.get_wol		= igbvf_get_wol,
++	.set_wol		= igbvf_set_wol,
++	.get_msglevel		= igbvf_get_msglevel,
++	.set_msglevel		= igbvf_set_msglevel,
++	.nway_reset		= igbvf_nway_reset,
++	.get_link		= igbvf_get_link,
++	.get_eeprom_len		= igbvf_get_eeprom_len,
++	.get_eeprom		= igbvf_get_eeprom,
++	.set_eeprom		= igbvf_set_eeprom,
++	.get_ringparam		= igbvf_get_ringparam,
++	.set_ringparam		= igbvf_set_ringparam,
++	.get_pauseparam		= igbvf_get_pauseparam,
++	.set_pauseparam		= igbvf_set_pauseparam,
++	.get_rx_csum            = igbvf_get_rx_csum,
++	.set_rx_csum            = igbvf_set_rx_csum,
++	.get_tx_csum		= igbvf_get_tx_csum,
++	.set_tx_csum		= igbvf_set_tx_csum,
++	.get_sg			= ethtool_op_get_sg,
++	.set_sg			= ethtool_op_set_sg,
++	.get_tso		= ethtool_op_get_tso,
++	.set_tso		= igbvf_set_tso,
++	.self_test		= igbvf_diag_test,
++	.get_strings		= igbvf_get_strings,
++	.phys_id		= igbvf_phys_id,
++	.get_ethtool_stats	= igbvf_get_ethtool_stats,
++	.self_test_count	= igbvf_get_self_test_count,
++	.get_stats_count	= igbvf_get_stats_count,
++	.get_coalesce		= igbvf_get_coalesce,
++	.set_coalesce		= igbvf_set_coalesce,
++};
++
++void igbvf_set_ethtool_ops(struct net_device *netdev)
++{
++	/* have to "undeclare" const on this struct to remove warnings */
++	SET_ETHTOOL_OPS(netdev, (struct ethtool_ops *)&igbvf_ethtool_ops);
++}
+diff --git a/drivers/net/igbvf/igbvf.h b/drivers/net/igbvf/igbvf.h
+new file mode 100644
+index 0000000..98d98fa
+--- /dev/null
++++ b/drivers/net/igbvf/igbvf.h
+@@ -0,0 +1,328 @@
++/*******************************************************************************
++
++  Intel(R) 82576 Virtual Function Linux driver
++  Copyright(c) 2009 Intel Corporation.
++
++  This program is free software; you can redistribute it and/or modify it
++  under the terms and conditions of the GNU General Public License,
++  version 2, as published by the Free Software Foundation.
++
++  This program is distributed in the hope it will be useful, but WITHOUT
++  ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
++  FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
++  more details.
++
++  You should have received a copy of the GNU General Public License along with
++  this program; if not, write to the Free Software Foundation, Inc.,
++  51 Franklin St - Fifth Floor, Boston, MA 02110-1301 USA.
++
++  The full GNU General Public License is included in this distribution in
++  the file called "COPYING".
++
++  Contact Information:
++  e1000-devel Mailing List <e1000-devel@lists.sourceforge.net>
++  Intel Corporation, 5200 N.E. Elam Young Parkway, Hillsboro, OR 97124-6497
++
++*******************************************************************************/
++
++/* Linux PRO/1000 Ethernet Driver main header file */
++
++#ifndef _IGBVF_H_
++#define _IGBVF_H_
++
++#include <linux/types.h>
++#include <linux/timer.h>
++#include <linux/io.h>
++#include <linux/netdevice.h>
++
++
++#include "vf.h"
++#include "igbvf_compat.h"
++
++/* Forward declarations */
++struct igbvf_info;
++struct igbvf_adapter;
++
++/* Interrupt defines */
++#define IGBVF_START_ITR                 648 /* ~6000 ints/sec */
++
++/* Interrupt modes, as used by the IntMode paramter */
++#define IGBVF_INT_MODE_LEGACY           0
++#define IGBVF_INT_MODE_MSI              1
++#define IGBVF_INT_MODE_MSIX             2
++
++/* Tx/Rx descriptor defines */
++#define IGBVF_DEFAULT_TXD               256
++#define IGBVF_MAX_TXD                   4096
++#define IGBVF_MIN_TXD                   80
++
++#define IGBVF_DEFAULT_RXD               256
++#define IGBVF_MAX_RXD                   4096
++#define IGBVF_MIN_RXD                   80
++
++#define IGBVF_MIN_ITR_USECS             10 /* 100000 irq/sec */
++#define IGBVF_MAX_ITR_USECS             10000 /* 100    irq/sec */
++
++/* RX descriptor control thresholds.
++ * PTHRESH - MAC will consider prefetch if it has fewer than this number of
++ *           descriptors available in its onboard memory.
++ *           Setting this to 0 disables RX descriptor prefetch.
++ * HTHRESH - MAC will only prefetch if there are at least this many descriptors
++ *           available in host memory.
++ *           If PTHRESH is 0, this should also be 0.
++ * WTHRESH - RX descriptor writeback threshold - MAC will delay writing back
++ *           descriptors until either it has this many to write back, or the
++ *           ITR timer expires.
++ */
++#define IGBVF_RX_PTHRESH                16
++#define IGBVF_RX_HTHRESH                8
++#define IGBVF_RX_WTHRESH                1
++
++/* this is the size past which hardware will drop packets when setting LPE=0 */
++#define MAXIMUM_ETHERNET_VLAN_SIZE      1522
++
++#define IGBVF_FC_PAUSE_TIME             0x0680 /* 858 usec */
++
++/* How many Tx Descriptors do we need to call netif_wake_queue ? */
++#define IGBVF_TX_QUEUE_WAKE             32
++/* How many Rx Buffers do we bundle into one write to the hardware ? */
++#define IGBVF_RX_BUFFER_WRITE           16 /* Must be power of 2 */
++
++#define AUTO_ALL_MODES                  0
++#define IGBVF_EEPROM_APME               0x0400
++
++#define IGBVF_MNG_VLAN_NONE             (-1)
++
++/* Number of packet split data buffers (not including the header buffer) */
++#define PS_PAGE_BUFFERS                 (MAX_PS_BUFFERS - 1)
++
++enum igbvf_boards {
++	board_vf,
++};
++
++struct igbvf_queue_stats {
++	u64 packets;
++	u64 bytes;
++};
++
++/*
++ * wrappers around a pointer to a socket buffer,
++ * so a DMA handle can be stored along with the buffer
++ */
++struct igbvf_buffer {
++	dma_addr_t dma;
++	struct sk_buff *skb;
++	union {
++		/* Tx */
++		struct {
++			unsigned long time_stamp;
++			u16 length;
++			u16 next_to_watch;
++		};
++		/* Rx */
++		struct {
++			struct page *page;
++			u64 page_dma;
++			unsigned int page_offset;
++		};
++	};
++	struct page *page;
++};
++
++union igbvf_desc {
++	union e1000_adv_rx_desc rx_desc;
++	union e1000_adv_tx_desc tx_desc;
++	struct e1000_adv_tx_context_desc tx_context_desc;
++};
++
++struct igbvf_ring {
++	struct igbvf_adapter *adapter;  /* backlink */
++	union igbvf_desc *desc;         /* pointer to ring memory  */
++	dma_addr_t dma;                 /* phys address of ring    */
++	unsigned int size;              /* length of ring in bytes */
++	unsigned int count;             /* number of desc. in ring */
++
++	u16 next_to_use;
++	u16 next_to_clean;
++
++	u16 head;
++	u16 tail;
++
++	/* array of buffer information structs */
++	struct igbvf_buffer *buffer_info;
++
++	char name[IFNAMSIZ + 5];
++	u32 eims_value;
++	u32 itr_val;
++	u16 itr_register;
++	int set_itr;
++
++	struct sk_buff *rx_skb_top;
++
++	struct igbvf_queue_stats stats;
++};
++
++/* board specific private data structure */
++struct igbvf_adapter {
++	struct timer_list watchdog_timer;
++	struct timer_list blink_timer;
++
++	struct work_struct reset_task;
++	struct work_struct watchdog_task;
++
++	const struct igbvf_info *ei;
++
++	struct vlan_group *vlgrp;
++	u32 bd_number;
++	u32 rx_buffer_len;
++	u32 polling_interval;
++	u16 mng_vlan_id;
++	u16 link_speed;
++	u16 link_duplex;
++
++	spinlock_t tx_queue_lock; /* prevent concurrent tail updates */
++
++	/* track device up/down/testing state */
++	unsigned long state;
++
++	/* Interrupt Throttle Rate */
++	u32 itr;
++	u32 itr_setting;
++	u16 tx_itr;
++	u16 rx_itr;
++
++	/*
++	 * Tx
++	 */
++	struct igbvf_ring *tx_ring /* One per active queue */
++	____cacheline_aligned_in_smp;
++
++	unsigned long tx_queue_len;
++	unsigned int restart_queue;
++	u32 txd_cmd;
++
++	bool detect_tx_hung;
++	u8 tx_timeout_factor;
++
++	u32 tx_int_delay;
++	u32 tx_abs_int_delay;
++
++	unsigned int total_tx_bytes;
++	unsigned int total_tx_packets;
++	unsigned int total_rx_bytes;
++	unsigned int total_rx_packets;
++
++	/* Tx stats */
++	u32 tx_timeout_count;
++	u32 tx_fifo_head;
++	u32 tx_head_addr;
++	u32 tx_fifo_size;
++	u32 tx_dma_failed;
++
++	/*
++	 * Rx
++	 */
++	struct igbvf_ring *rx_ring;
++
++	u32 rx_int_delay;
++	u32 rx_abs_int_delay;
++
++	/* Rx stats */
++	u64 hw_csum_err;
++	u64 hw_csum_good;
++	u64 rx_hdr_split;
++	u32 alloc_rx_buff_failed;
++	u32 rx_dma_failed;
++
++	unsigned int rx_ps_hdr_size;
++	u32 max_frame_size;
++	u32 min_frame_size;
++
++	/* OS defined structs */
++	struct net_device *netdev;
++	struct pci_dev *pdev;
++	struct net_device_stats net_stats;
++	spinlock_t stats_lock;      /* prevent concurrent stats updates */
++
++	/* structs defined in e1000_hw.h */
++	struct e1000_hw hw;
++
++	/* The VF counters don't clear on read so we have to get a base
++	 * count on driver start up and always subtract that base on
++	 * on the first update, thus the flag..
++	 */
++	struct e1000_vf_stats stats;
++	u64 zero_base;
++
++	struct igbvf_ring test_tx_ring;
++	struct igbvf_ring test_rx_ring;
++	u32 test_icr;
++
++	u32 msg_enable;
++	struct msix_entry *msix_entries;
++	int int_mode;
++	u32 eims_enable_mask;
++	u32 eims_other;
++	u32 int_counter0;
++	u32 int_counter1;
++
++	u32 eeprom_wol;
++	u32 wol;
++	u32 pba;
++
++	bool fc_autoneg;
++
++	unsigned long led_status;
++
++	unsigned int flags;
++};
++
++struct igbvf_info {
++	enum e1000_mac_type     mac;
++	unsigned int            flags;
++	u32                     pba;
++	void                    (*init_ops)(struct e1000_hw *);
++	s32                     (*get_variants)(struct igbvf_adapter *);
++};
++
++/* hardware capability, feature, and workaround flags */
++#define IGBVF_FLAG_RX_CSUM_DISABLED             (1 << 0)
++
++#define IGBVF_RX_DESC_ADV(R, i)     \
++	(&((((R).desc))[i].rx_desc))
++#define IGBVF_TX_DESC_ADV(R, i)     \
++	(&((((R).desc))[i].tx_desc))
++#define IGBVF_TX_CTXTDESC_ADV(R, i) \
++	(&((((R).desc))[i].tx_context_desc))
++
++enum igbvf_state_t {
++	__IGBVF_TESTING,
++	__IGBVF_RESETTING,
++	__IGBVF_DOWN
++};
++
++enum latency_range {
++	lowest_latency = 0,
++	low_latency = 1,
++	bulk_latency = 2,
++	latency_invalid = 255
++};
++
++extern char igbvf_driver_name[];
++extern const char igbvf_driver_version[];
++
++extern void igbvf_check_options(struct igbvf_adapter *);
++extern void igbvf_set_ethtool_ops(struct net_device *);
++
++extern int igbvf_up(struct igbvf_adapter *);
++extern void igbvf_down(struct igbvf_adapter *);
++extern void igbvf_reinit_locked(struct igbvf_adapter *);
++extern int igbvf_setup_rx_resources(struct igbvf_adapter *, struct igbvf_ring *);
++extern int igbvf_setup_tx_resources(struct igbvf_adapter *, struct igbvf_ring *);
++extern void igbvf_free_rx_resources(struct igbvf_ring *);
++extern void igbvf_free_tx_resources(struct igbvf_ring *);
++extern void igbvf_update_stats(struct igbvf_adapter *);
++
++extern unsigned int copybreak;
++
++#endif /* _IGBVF_H_ */
+diff --git a/drivers/net/igbvf/igbvf_compat.h b/drivers/net/igbvf/igbvf_compat.h
+new file mode 100644
+index 0000000..ad8d09f
+--- /dev/null
++++ b/drivers/net/igbvf/igbvf_compat.h
+@@ -0,0 +1,20 @@
++#ifndef __IXBVF_COMPAT_H__
++#define __IXVVF_COMPAT_H__
++
++#include <linux/if_vlan.h>
++
++#define ETH_FCS_LEN               4
++
++static inline struct net_device *vlan_group_get_device(struct vlan_group *vg,
++						       int vlan_id)
++{
++	return vg->vlan_devices[vlan_id];
++}
++
++static inline void vlan_group_set_device(struct vlan_group *vg, int vlan_id,
++					 struct net_device *dev)
++{
++	vg->vlan_devices[vlan_id] = NULL;
++}
++
++#endif 
+diff --git a/drivers/net/igbvf/mbx.c b/drivers/net/igbvf/mbx.c
+new file mode 100644
+index 0000000..819a8ec
+--- /dev/null
++++ b/drivers/net/igbvf/mbx.c
+@@ -0,0 +1,350 @@
++/*******************************************************************************
++
++  Intel(R) 82576 Virtual Function Linux driver
++  Copyright(c) 2009 Intel Corporation.
++
++  This program is free software; you can redistribute it and/or modify it
++  under the terms and conditions of the GNU General Public License,
++  version 2, as published by the Free Software Foundation.
++
++  This program is distributed in the hope it will be useful, but WITHOUT
++  ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
++  FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
++  more details.
++
++  You should have received a copy of the GNU General Public License along with
++  this program; if not, write to the Free Software Foundation, Inc.,
++  51 Franklin St - Fifth Floor, Boston, MA 02110-1301 USA.
++
++  The full GNU General Public License is included in this distribution in
++  the file called "COPYING".
++
++  Contact Information:
++  e1000-devel Mailing List <e1000-devel@lists.sourceforge.net>
++  Intel Corporation, 5200 N.E. Elam Young Parkway, Hillsboro, OR 97124-6497
++
++*******************************************************************************/
++
++#include "mbx.h"
++
++/**
++ *  e1000_poll_for_msg - Wait for message notification
++ *  @hw: pointer to the HW structure
++ *
++ *  returns SUCCESS if it successfully received a message notification
++ **/
++static s32 e1000_poll_for_msg(struct e1000_hw *hw)
++{
++	struct e1000_mbx_info *mbx = &hw->mbx;
++	int countdown = mbx->timeout;
++
++	if (!mbx->ops.check_for_msg)
++		goto out;
++
++	while (countdown && mbx->ops.check_for_msg(hw)) {
++		countdown--;
++		udelay(mbx->usec_delay);
++	}
++
++	/* if we failed, all future posted messages fail until reset */
++	if (!countdown)
++		mbx->timeout = 0;
++out:
++	return countdown ? E1000_SUCCESS : -E1000_ERR_MBX;
++}
++
++/**
++ *  e1000_poll_for_ack - Wait for message acknowledgement
++ *  @hw: pointer to the HW structure
++ *
++ *  returns SUCCESS if it successfully received a message acknowledgement
++ **/
++static s32 e1000_poll_for_ack(struct e1000_hw *hw)
++{
++	struct e1000_mbx_info *mbx = &hw->mbx;
++	int countdown = mbx->timeout;
++
++	if (!mbx->ops.check_for_ack)
++		goto out;
++
++	while (countdown && mbx->ops.check_for_ack(hw)) {
++		countdown--;
++		udelay(mbx->usec_delay);
++	}
++
++	/* if we failed, all future posted messages fail until reset */
++	if (!countdown)
++		mbx->timeout = 0;
++out:
++	return countdown ? E1000_SUCCESS : -E1000_ERR_MBX;
++}
++
++/**
++ *  e1000_read_posted_mbx - Wait for message notification and receive message
++ *  @hw: pointer to the HW structure
++ *  @msg: The message buffer
++ *  @size: Length of buffer
++ *
++ *  returns SUCCESS if it successfully received a message notification and
++ *  copied it into the receive buffer.
++ **/
++static s32 e1000_read_posted_mbx(struct e1000_hw *hw, u32 *msg, u16 size)
++{
++	struct e1000_mbx_info *mbx = &hw->mbx;
++	s32 ret_val = -E1000_ERR_MBX;
++
++	if (!mbx->ops.read)
++		goto out;
++
++	ret_val = e1000_poll_for_msg(hw);
++
++	/* if ack received read message, otherwise we timed out */
++	if (!ret_val)
++		ret_val = mbx->ops.read(hw, msg, size);
++out:
++	return ret_val;
++}
++
++/**
++ *  e1000_write_posted_mbx - Write a message to the mailbox, wait for ack
++ *  @hw: pointer to the HW structure
++ *  @msg: The message buffer
++ *  @size: Length of buffer
++ *
++ *  returns SUCCESS if it successfully copied message into the buffer and
++ *  received an ack to that message within delay * timeout period
++ **/
++static s32 e1000_write_posted_mbx(struct e1000_hw *hw, u32 *msg, u16 size)
++{
++	struct e1000_mbx_info *mbx = &hw->mbx;
++	s32 ret_val = -E1000_ERR_MBX;
++
++	/* exit if we either can't write or there isn't a defined timeout */
++	if (!mbx->ops.write || !mbx->timeout)
++		goto out;
++
++	/* send msg*/
++	ret_val = mbx->ops.write(hw, msg, size);
++
++	/* if msg sent wait until we receive an ack */
++	if (!ret_val)
++		ret_val = e1000_poll_for_ack(hw);
++out:
++	return ret_val;
++}
++
++/**
++ *  e1000_read_v2p_mailbox - read v2p mailbox
++ *  @hw: pointer to the HW structure
++ *
++ *  This function is used to read the v2p mailbox without losing the read to
++ *  clear status bits.
++ **/
++static u32 e1000_read_v2p_mailbox(struct e1000_hw *hw)
++{
++	u32 v2p_mailbox = er32(V2PMAILBOX(0));
++
++	v2p_mailbox |= hw->dev_spec.vf.v2p_mailbox;
++	hw->dev_spec.vf.v2p_mailbox |= v2p_mailbox & E1000_V2PMAILBOX_R2C_BITS;
++
++	return v2p_mailbox;
++}
++
++/**
++ *  e1000_check_for_bit_vf - Determine if a status bit was set
++ *  @hw: pointer to the HW structure
++ *  @mask: bitmask for bits to be tested and cleared
++ *
++ *  This function is used to check for the read to clear bits within
++ *  the V2P mailbox.
++ **/
++static s32 e1000_check_for_bit_vf(struct e1000_hw *hw, u32 mask)
++{
++	u32 v2p_mailbox = e1000_read_v2p_mailbox(hw);
++	s32 ret_val = -E1000_ERR_MBX;
++
++	if (v2p_mailbox & mask)
++		ret_val = E1000_SUCCESS;
++
++	hw->dev_spec.vf.v2p_mailbox &= ~mask;
++
++	return ret_val;
++}
++
++/**
++ *  e1000_check_for_msg_vf - checks to see if the PF has sent mail
++ *  @hw: pointer to the HW structure
++ *
++ *  returns SUCCESS if the PF has set the Status bit or else ERR_MBX
++ **/
++static s32 e1000_check_for_msg_vf(struct e1000_hw *hw)
++{
++	s32 ret_val = -E1000_ERR_MBX;
++
++	if (!e1000_check_for_bit_vf(hw, E1000_V2PMAILBOX_PFSTS)) {
++		ret_val = E1000_SUCCESS;
++		hw->mbx.stats.reqs++;
++	}
++
++	return ret_val;
++}
++
++/**
++ *  e1000_check_for_ack_vf - checks to see if the PF has ACK'd
++ *  @hw: pointer to the HW structure
++ *
++ *  returns SUCCESS if the PF has set the ACK bit or else ERR_MBX
++ **/
++static s32 e1000_check_for_ack_vf(struct e1000_hw *hw)
++{
++	s32 ret_val = -E1000_ERR_MBX;
++
++	if (!e1000_check_for_bit_vf(hw, E1000_V2PMAILBOX_PFACK)) {
++		ret_val = E1000_SUCCESS;
++		hw->mbx.stats.acks++;
++	}
++
++	return ret_val;
++}
++
++/**
++ *  e1000_check_for_rst_vf - checks to see if the PF has reset
++ *  @hw: pointer to the HW structure
++ *
++ *  returns true if the PF has set the reset done bit or else false
++ **/
++static s32 e1000_check_for_rst_vf(struct e1000_hw *hw)
++{
++	s32 ret_val = -E1000_ERR_MBX;
++
++	if (!e1000_check_for_bit_vf(hw, (E1000_V2PMAILBOX_RSTD |
++	                                 E1000_V2PMAILBOX_RSTI))) {
++		ret_val = E1000_SUCCESS;
++		hw->mbx.stats.rsts++;
++	}
++
++	return ret_val;
++}
++
++/**
++ *  e1000_obtain_mbx_lock_vf - obtain mailbox lock
++ *  @hw: pointer to the HW structure
++ *
++ *  return SUCCESS if we obtained the mailbox lock
++ **/
++static s32 e1000_obtain_mbx_lock_vf(struct e1000_hw *hw)
++{
++	s32 ret_val = -E1000_ERR_MBX;
++
++	/* Take ownership of the buffer */
++	ew32(V2PMAILBOX(0), E1000_V2PMAILBOX_VFU);
++
++	/* reserve mailbox for vf use */
++	if (e1000_read_v2p_mailbox(hw) & E1000_V2PMAILBOX_VFU)
++		ret_val = E1000_SUCCESS;
++
++	return ret_val;
++}
++
++/**
++ *  e1000_write_mbx_vf - Write a message to the mailbox
++ *  @hw: pointer to the HW structure
++ *  @msg: The message buffer
++ *  @size: Length of buffer
++ *
++ *  returns SUCCESS if it successfully copied message into the buffer
++ **/
++static s32 e1000_write_mbx_vf(struct e1000_hw *hw, u32 *msg, u16 size)
++{
++	s32 err;
++	u16 i;
++
++	/* lock the mailbox to prevent pf/vf race condition */
++	err = e1000_obtain_mbx_lock_vf(hw);
++	if (err)
++		goto out_no_write;
++
++	/* flush any ack or msg as we are going to overwrite mailbox */
++	e1000_check_for_ack_vf(hw);
++	e1000_check_for_msg_vf(hw);
++
++	/* copy the caller specified message to the mailbox memory buffer */
++	for (i = 0; i < size; i++)
++		array_ew32(VMBMEM(0), i, msg[i]);
++
++	/* update stats */
++	hw->mbx.stats.msgs_tx++;
++
++	/* Drop VFU and interrupt the PF to tell it a message has been sent */
++	ew32(V2PMAILBOX(0), E1000_V2PMAILBOX_REQ);
++
++out_no_write:
++	return err;
++}
++
++/**
++ *  e1000_read_mbx_vf - Reads a message from the inbox intended for vf
++ *  @hw: pointer to the HW structure
++ *  @msg: The message buffer
++ *  @size: Length of buffer
++ *
++ *  returns SUCCESS if it successfuly read message from buffer
++ **/
++static s32 e1000_read_mbx_vf(struct e1000_hw *hw, u32 *msg, u16 size)
++{
++	s32 err;
++	u16 i;
++
++	/* lock the mailbox to prevent pf/vf race condition */
++	err = e1000_obtain_mbx_lock_vf(hw);
++	if (err)
++		goto out_no_read;
++
++	/* copy the message from the mailbox memory buffer */
++	for (i = 0; i < size; i++)
++		msg[i] = array_er32(VMBMEM(0), i);
++
++	/* Acknowledge receipt and release mailbox, then we're done */
++	ew32(V2PMAILBOX(0), E1000_V2PMAILBOX_ACK);
++
++	/* update stats */
++	hw->mbx.stats.msgs_rx++;
++
++out_no_read:
++	return err;
++}
++
++/**
++ *  e1000_init_mbx_params_vf - set initial values for vf mailbox
++ *  @hw: pointer to the HW structure
++ *
++ *  Initializes the hw->mbx struct to correct values for vf mailbox
++ */
++s32 e1000_init_mbx_params_vf(struct e1000_hw *hw)
++{
++	struct e1000_mbx_info *mbx = &hw->mbx;
++
++	/* start mailbox as timed out and let the reset_hw call set the timeout
++	 * value to being communications */
++	mbx->timeout = 0;
++	mbx->usec_delay = E1000_VF_MBX_INIT_DELAY;
++
++	mbx->size = E1000_VFMAILBOX_SIZE;
++
++	mbx->ops.read = e1000_read_mbx_vf;
++	mbx->ops.write = e1000_write_mbx_vf;
++	mbx->ops.read_posted = e1000_read_posted_mbx;
++	mbx->ops.write_posted = e1000_write_posted_mbx;
++	mbx->ops.check_for_msg = e1000_check_for_msg_vf;
++	mbx->ops.check_for_ack = e1000_check_for_ack_vf;
++	mbx->ops.check_for_rst = e1000_check_for_rst_vf;
++
++	mbx->stats.msgs_tx = 0;
++	mbx->stats.msgs_rx = 0;
++	mbx->stats.reqs = 0;
++	mbx->stats.acks = 0;
++	mbx->stats.rsts = 0;
++
++	return E1000_SUCCESS;
++}
++
+diff --git a/drivers/net/igbvf/mbx.h b/drivers/net/igbvf/mbx.h
+new file mode 100644
+index 0000000..4938609
+--- /dev/null
++++ b/drivers/net/igbvf/mbx.h
+@@ -0,0 +1,75 @@
++/*******************************************************************************
++
++  Intel(R) 82576 Virtual Function Linux driver
++  Copyright(c) 1999 - 2009 Intel Corporation.
++
++  This program is free software; you can redistribute it and/or modify it
++  under the terms and conditions of the GNU General Public License,
++  version 2, as published by the Free Software Foundation.
++
++  This program is distributed in the hope it will be useful, but WITHOUT
++  ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
++  FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
++  more details.
++
++  You should have received a copy of the GNU General Public License along with
++  this program; if not, write to the Free Software Foundation, Inc.,
++  51 Franklin St - Fifth Floor, Boston, MA 02110-1301 USA.
++
++  The full GNU General Public License is included in this distribution in
++  the file called "COPYING".
++
++  Contact Information:
++  e1000-devel Mailing List <e1000-devel@lists.sourceforge.net>
++  Intel Corporation, 5200 N.E. Elam Young Parkway, Hillsboro, OR 97124-6497
++
++*******************************************************************************/
++
++#ifndef _E1000_MBX_H_
++#define _E1000_MBX_H_
++
++#include "vf.h"
++
++#define E1000_V2PMAILBOX_REQ   0x00000001 /* Request for PF Ready bit */
++#define E1000_V2PMAILBOX_ACK   0x00000002 /* Ack PF message received */
++#define E1000_V2PMAILBOX_VFU   0x00000004 /* VF owns the mailbox buffer */
++#define E1000_V2PMAILBOX_PFU   0x00000008 /* PF owns the mailbox buffer */
++#define E1000_V2PMAILBOX_PFSTS 0x00000010 /* PF wrote a message in the MB */
++#define E1000_V2PMAILBOX_PFACK 0x00000020 /* PF ack the previous VF msg */
++#define E1000_V2PMAILBOX_RSTI  0x00000040 /* PF has reset indication */
++#define E1000_V2PMAILBOX_RSTD  0x00000080 /* PF has indicated reset done */
++#define E1000_V2PMAILBOX_R2C_BITS 0x000000B0 /* All read to clear bits */
++
++#define E1000_VFMAILBOX_SIZE   16 /* 16 32 bit words - 64 bytes */
++
++/* If it's a E1000_VF_* msg then it originates in the VF and is sent to the
++ * PF.  The reverse is true if it is E1000_PF_*.
++ * Message ACK's are the value or'd with 0xF0000000
++ */
++#define E1000_VT_MSGTYPE_ACK      0x80000000  /* Messages below or'd with
++                                               * this are the ACK */
++#define E1000_VT_MSGTYPE_NACK     0x40000000  /* Messages below or'd with
++                                               * this are the NACK */
++#define E1000_VT_MSGTYPE_CTS      0x20000000  /* Indicates that VF is still
++                                                 clear to send requests */
++
++/* We have a total wait time of 1s for vf mailbox posted messages */
++#define E1000_VF_MBX_INIT_TIMEOUT 2000 /* retry count for mailbox timeout */
++#define E1000_VF_MBX_INIT_DELAY   500  /* usec delay between retries */
++
++#define E1000_VT_MSGINFO_SHIFT    16
++/* bits 23:16 are used for exra info for certain messages */
++#define E1000_VT_MSGINFO_MASK     (0xFF << E1000_VT_MSGINFO_SHIFT)
++
++#define E1000_VF_RESET            0x01 /* VF requests reset */
++#define E1000_VF_SET_MAC_ADDR     0x02 /* VF requests PF to set MAC addr */
++#define E1000_VF_SET_MULTICAST    0x03 /* VF requests PF to set MC addr */
++#define E1000_VF_SET_VLAN         0x04 /* VF requests PF to set VLAN */
++#define E1000_VF_SET_LPE          0x05 /* VF requests PF to set VMOLR.LPE */
++
++#define E1000_PF_CONTROL_MSG      0x0100 /* PF control message */
++
++void e1000_init_mbx_ops_generic(struct e1000_hw *hw);
++s32 e1000_init_mbx_params_vf(struct e1000_hw *);
++
++#endif /* _E1000_MBX_H_ */
+diff --git a/drivers/net/igbvf/netdev.c b/drivers/net/igbvf/netdev.c
+new file mode 100644
+index 0000000..a516893
+--- /dev/null
++++ b/drivers/net/igbvf/netdev.c
+@@ -0,0 +1,2897 @@
++/*******************************************************************************
++
++  Intel(R) 82576 Virtual Function Linux driver
++  Copyright(c) 2009 Intel Corporation.
++
++  This program is free software; you can redistribute it and/or modify it
++  under the terms and conditions of the GNU General Public License,
++  version 2, as published by the Free Software Foundation.
++
++  This program is distributed in the hope it will be useful, but WITHOUT
++  ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
++  FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
++  more details.
++
++  You should have received a copy of the GNU General Public License along with
++  this program; if not, write to the Free Software Foundation, Inc.,
++  51 Franklin St - Fifth Floor, Boston, MA 02110-1301 USA.
++
++  The full GNU General Public License is included in this distribution in
++  the file called "COPYING".
++
++  Contact Information:
++  e1000-devel Mailing List <e1000-devel@lists.sourceforge.net>
++  Intel Corporation, 5200 N.E. Elam Young Parkway, Hillsboro, OR 97124-6497
++
++*******************************************************************************/
++
++#include <linux/module.h>
++#include <linux/types.h>
++#include <linux/init.h>
++#include <linux/pci.h>
++#include <linux/vmalloc.h>
++#include <linux/pagemap.h>
++#include <linux/delay.h>
++#include <linux/netdevice.h>
++#include <linux/tcp.h>
++#include <linux/ipv6.h>
++#include <net/checksum.h>
++#include <net/ip6_checksum.h>
++#include <linux/mii.h>
++#include <linux/ethtool.h>
++#include <linux/if_vlan.h>
++
++#include "igbvf.h"
++
++#define DRV_VERSION "1.0.0-k0"
++char igbvf_driver_name[] = "igbvf";
++const char igbvf_driver_version[] = DRV_VERSION;
++static const char igbvf_driver_string[] =
++				"Intel(R) Virtual Function Network Driver";
++static const char igbvf_copyright[] = "Copyright (c) 2009 Intel Corporation.";
++
++static int igbvf_poll(struct net_device *poll_dev, int *budget);
++static void igbvf_reset(struct igbvf_adapter *);
++static void igbvf_set_interrupt_capability(struct igbvf_adapter *);
++static void igbvf_reset_interrupt_capability(struct igbvf_adapter *);
++
++static struct igbvf_info igbvf_vf_info = {
++	.mac                    = e1000_vfadapt,
++	.flags                  = 0,
++	.pba                    = 10,
++	.init_ops               = e1000_init_function_pointers_vf,
++};
++
++static const struct igbvf_info *igbvf_info_tbl[] = {
++	[board_vf]              = &igbvf_vf_info,
++};
++
++/**
++ * igbvf_desc_unused - calculate if we have unused descriptors
++ **/
++static int igbvf_desc_unused(struct igbvf_ring *ring)
++{
++	if (ring->next_to_clean > ring->next_to_use)
++		return ring->next_to_clean - ring->next_to_use - 1;
++
++	return ring->count + ring->next_to_clean - ring->next_to_use - 1;
++}
++
++/**
++ * igbvf_receive_skb - helper function to handle Rx indications
++ * @adapter: board private structure
++ * @status: descriptor status field as written by hardware
++ * @vlan: descriptor vlan field as written by hardware (no le/be conversion)
++ * @skb: pointer to sk_buff to be indicated to stack
++ **/
++static void igbvf_receive_skb(struct igbvf_adapter *adapter,
++                              struct net_device *netdev,
++                              struct sk_buff *skb,
++                              u32 status, u16 vlan)
++{
++	if (adapter->vlgrp && (status & E1000_RXD_STAT_VP))
++		vlan_hwaccel_receive_skb(skb, adapter->vlgrp,
++		                         le16_to_cpu(vlan) &
++		                         E1000_RXD_SPC_VLAN_MASK);
++	else
++		netif_receive_skb(skb);
++
++	netdev->last_rx = jiffies;
++}
++
++static inline void igbvf_rx_checksum_adv(struct igbvf_adapter *adapter,
++                                         u32 status_err, struct sk_buff *skb)
++{
++	skb->ip_summed = CHECKSUM_NONE;
++
++	/* Ignore Checksum bit is set or checksum is disabled through ethtool */
++	if ((status_err & E1000_RXD_STAT_IXSM) ||
++	    (adapter->flags & IGBVF_FLAG_RX_CSUM_DISABLED))
++		return;
++
++	/* TCP/UDP checksum error bit is set */
++	if (status_err &
++	    (E1000_RXDEXT_STATERR_TCPE | E1000_RXDEXT_STATERR_IPE)) {
++		/* let the stack verify checksum errors */
++		adapter->hw_csum_err++;
++		return;
++	}
++
++	/* It must be a TCP or UDP packet with a valid checksum */
++	if (status_err & (E1000_RXD_STAT_TCPCS | E1000_RXD_STAT_UDPCS))
++		skb->ip_summed = CHECKSUM_UNNECESSARY;
++
++	adapter->hw_csum_good++;
++}
++
++/**
++ * igbvf_alloc_rx_buffers - Replace used receive buffers; packet split
++ * @rx_ring: address of ring structure to repopulate
++ * @cleaned_count: number of buffers to repopulate
++ **/
++static void igbvf_alloc_rx_buffers(struct igbvf_ring *rx_ring,
++                                   int cleaned_count)
++{
++	struct igbvf_adapter *adapter = rx_ring->adapter;
++	struct net_device *netdev = adapter->netdev;
++	struct pci_dev *pdev = adapter->pdev;
++	union e1000_adv_rx_desc *rx_desc;
++	struct igbvf_buffer *buffer_info;
++	struct sk_buff *skb;
++	unsigned int i;
++	int bufsz;
++
++	i = rx_ring->next_to_use;
++	buffer_info = &rx_ring->buffer_info[i];
++
++	if (adapter->rx_ps_hdr_size)
++		bufsz = adapter->rx_ps_hdr_size;
++	else
++		bufsz = adapter->rx_buffer_len;
++	bufsz += NET_IP_ALIGN;
++
++	while (cleaned_count--) {
++		rx_desc = IGBVF_RX_DESC_ADV(*rx_ring, i);
++
++		if (adapter->rx_ps_hdr_size && !buffer_info->page_dma) {
++			if (!buffer_info->page) {
++				buffer_info->page = alloc_page(GFP_ATOMIC);
++				if (!buffer_info->page) {
++					adapter->alloc_rx_buff_failed++;
++					goto no_buffers;
++				}
++				buffer_info->page_offset = 0;
++			} else {
++				buffer_info->page_offset ^= PAGE_SIZE / 2;
++			}
++			buffer_info->page_dma =
++				pci_map_page(pdev, buffer_info->page,
++				             buffer_info->page_offset,
++				             PAGE_SIZE / 2,
++				             PCI_DMA_FROMDEVICE);
++		}
++
++		if (!buffer_info->skb) {
++			skb = netdev_alloc_skb(netdev, bufsz);
++			if (!skb) {
++				adapter->alloc_rx_buff_failed++;
++				goto no_buffers;
++			}
++
++			/* Make buffer alignment 2 beyond a 16 byte boundary
++			 * this will result in a 16 byte aligned IP header after
++			 * the 14 byte MAC header is removed
++			 */
++			skb_reserve(skb, NET_IP_ALIGN);
++
++			buffer_info->skb = skb;
++			buffer_info->dma = pci_map_single(pdev, skb->data,
++			                                  bufsz,
++			                                  PCI_DMA_FROMDEVICE);
++		}
++		/* Refresh the desc even if buffer_addrs didn't change because
++		 * each write-back erases this info. */
++		if (adapter->rx_ps_hdr_size) {
++			rx_desc->read.pkt_addr =
++			     cpu_to_le64(buffer_info->page_dma);
++			rx_desc->read.hdr_addr = cpu_to_le64(buffer_info->dma);
++		} else {
++			rx_desc->read.pkt_addr =
++			     cpu_to_le64(buffer_info->dma);
++			rx_desc->read.hdr_addr = 0;
++		}
++
++		i++;
++		if (i == rx_ring->count)
++			i = 0;
++		buffer_info = &rx_ring->buffer_info[i];
++	}
++
++no_buffers:
++	if (rx_ring->next_to_use != i) {
++		rx_ring->next_to_use = i;
++		if (i == 0)
++			i = (rx_ring->count - 1);
++		else
++			i--;
++
++		/* Force memory writes to complete before letting h/w
++		 * know there are new descriptors to fetch.  (Only
++		 * applicable for weak-ordered memory model archs,
++		 * such as IA-64). */
++		wmb();
++		writel(i, adapter->hw.hw_addr + rx_ring->tail);
++	}
++}
++
++/**
++ * igbvf_clean_rx_irq - Send received data up the network stack; legacy
++ * @adapter: board private structure
++ *
++ * the return value indicates whether actual cleaning was done, there
++ * is no guarantee that everything was cleaned
++ **/
++static bool igbvf_clean_rx_irq(struct igbvf_adapter *adapter,
++                               int *work_done, int work_to_do)
++{
++	struct igbvf_ring *rx_ring = adapter->rx_ring;
++	struct net_device *netdev = adapter->netdev;
++	struct pci_dev *pdev = adapter->pdev;
++	union e1000_adv_rx_desc *rx_desc, *next_rxd;
++	struct igbvf_buffer *buffer_info, *next_buffer;
++	struct sk_buff *skb;
++	bool cleaned = false;
++	int cleaned_count = 0;
++	unsigned int total_bytes = 0, total_packets = 0;
++	unsigned int i;
++	u32 length, hlen, staterr;
++
++	i = rx_ring->next_to_clean;
++	rx_desc = IGBVF_RX_DESC_ADV(*rx_ring, i);
++	staterr = le32_to_cpu(rx_desc->wb.upper.status_error);
++
++	while (staterr & E1000_RXD_STAT_DD) {
++		if (*work_done >= work_to_do)
++			break;
++		(*work_done)++;
++
++		buffer_info = &rx_ring->buffer_info[i];
++
++		/* HW will not DMA in data larger than the given buffer, even
++		 * if it parses the (NFS, of course) header to be larger.  In
++		 * that case, it fills the header buffer and spills the rest
++		 * into the page.
++		 */
++		hlen = (le16_to_cpu(rx_desc->wb.lower.lo_dword.hs_rss.hdr_info) &
++		  E1000_RXDADV_HDRBUFLEN_MASK) >> E1000_RXDADV_HDRBUFLEN_SHIFT;
++		if (hlen > adapter->rx_ps_hdr_size)
++			hlen = adapter->rx_ps_hdr_size;
++
++		length = le16_to_cpu(rx_desc->wb.upper.length);
++		cleaned = true;
++		cleaned_count++;
++
++		skb = buffer_info->skb;
++		prefetch(skb->data - NET_IP_ALIGN);
++		buffer_info->skb = NULL;
++		if (!adapter->rx_ps_hdr_size) {
++			pci_unmap_single(pdev, buffer_info->dma,
++			                 adapter->rx_buffer_len,
++			                 PCI_DMA_FROMDEVICE);
++			buffer_info->dma = 0;
++			skb_put(skb, length);
++			goto send_up;
++		}
++
++		if (!skb_shinfo(skb)->nr_frags) {
++			pci_unmap_single(pdev, buffer_info->dma,
++			                 adapter->rx_ps_hdr_size + NET_IP_ALIGN,
++			                 PCI_DMA_FROMDEVICE);
++			skb_put(skb, hlen);
++		}
++
++		if (length) {
++			pci_unmap_page(pdev, buffer_info->page_dma,
++			               PAGE_SIZE / 2,
++			               PCI_DMA_FROMDEVICE);
++			buffer_info->page_dma = 0;
++
++			skb_fill_page_desc(skb, skb_shinfo(skb)->nr_frags++,
++			                   buffer_info->page,
++			                   buffer_info->page_offset,
++			                   length);
++
++			if ((adapter->rx_buffer_len > (PAGE_SIZE / 2)) ||
++			    (page_count(buffer_info->page) != 1))
++				buffer_info->page = NULL;
++			else
++				get_page(buffer_info->page);
++
++			skb->len += length;
++			skb->data_len += length;
++			skb->truesize += length;
++		}
++send_up:
++		i++;
++		if (i == rx_ring->count)
++			i = 0;
++		next_rxd = IGBVF_RX_DESC_ADV(*rx_ring, i);
++		prefetch(next_rxd);
++		next_buffer = &rx_ring->buffer_info[i];
++
++		if (!(staterr & E1000_RXD_STAT_EOP)) {
++			buffer_info->skb = next_buffer->skb;
++			buffer_info->dma = next_buffer->dma;
++			next_buffer->skb = skb;
++			next_buffer->dma = 0;
++			goto next_desc;
++		}
++
++		if (staterr & E1000_RXDEXT_ERR_FRAME_ERR_MASK) {
++			dev_kfree_skb_irq(skb);
++			goto next_desc;
++		}
++
++		total_bytes += skb->len;
++		total_packets++;
++
++		igbvf_rx_checksum_adv(adapter, staterr, skb);
++
++		skb->protocol = eth_type_trans(skb, netdev);
++
++		igbvf_receive_skb(adapter, netdev, skb, staterr,
++		                  rx_desc->wb.upper.vlan);
++
++		netdev->last_rx = jiffies;
++
++next_desc:
++		rx_desc->wb.upper.status_error = 0;
++
++		/* return some buffers to hardware, one at a time is too slow */
++		if (cleaned_count >= IGBVF_RX_BUFFER_WRITE) {
++			igbvf_alloc_rx_buffers(rx_ring, cleaned_count);
++			cleaned_count = 0;
++		}
++
++		/* use prefetched values */
++		rx_desc = next_rxd;
++		buffer_info = next_buffer;
++
++		staterr = le32_to_cpu(rx_desc->wb.upper.status_error);
++	}
++
++	rx_ring->next_to_clean = i;
++	cleaned_count = igbvf_desc_unused(rx_ring);
++
++	if (cleaned_count)
++		igbvf_alloc_rx_buffers(rx_ring, cleaned_count);
++
++	adapter->total_rx_packets += total_packets;
++	adapter->total_rx_bytes += total_bytes;
++	adapter->net_stats.rx_bytes += total_bytes;
++	adapter->net_stats.rx_packets += total_packets;
++	return cleaned;
++}
++
++static void igbvf_put_txbuf(struct igbvf_adapter *adapter,
++                            struct igbvf_buffer *buffer_info)
++{
++	if (buffer_info->skb) {
++		pci_unmap_page(adapter->pdev,
++				buffer_info->dma,
++				buffer_info->length,
++				PCI_DMA_TODEVICE);
++		buffer_info->dma = 0;
++	}
++	if (buffer_info->skb) {
++		dev_kfree_skb_any(buffer_info->skb);
++		buffer_info->skb = NULL;
++	}
++	buffer_info->time_stamp = 0;
++	buffer_info->next_to_watch = 0;
++}
++
++static void igbvf_print_tx_hang(struct igbvf_adapter *adapter)
++{
++	struct igbvf_ring *tx_ring = adapter->tx_ring;
++	unsigned int i = tx_ring->next_to_clean;
++	unsigned int eop = tx_ring->buffer_info[i].next_to_watch;
++	union e1000_adv_tx_desc *eop_desc = IGBVF_TX_DESC_ADV(*tx_ring, eop);
++
++	/* detected Tx unit hang */
++	dev_err(&adapter->pdev->dev,
++	        "Detected Tx Unit Hang:\n"
++	        "  TDH                  <%x>\n"
++	        "  TDT                  <%x>\n"
++	        "  next_to_use          <%x>\n"
++	        "  next_to_clean        <%x>\n"
++	        "buffer_info[next_to_clean]:\n"
++	        "  time_stamp           <%lx>\n"
++	        "  next_to_watch        <%x>\n"
++	        "  jiffies              <%lx>\n"
++	        "  next_to_watch.status <%x>\n",
++	        readl(adapter->hw.hw_addr + tx_ring->head),
++	        readl(adapter->hw.hw_addr + tx_ring->tail),
++	        tx_ring->next_to_use,
++	        tx_ring->next_to_clean,
++	        tx_ring->buffer_info[eop].time_stamp,
++	        eop,
++	        jiffies,
++	        eop_desc->wb.status);
++}
++
++/**
++ * igbvf_setup_tx_resources - allocate Tx resources (Descriptors)
++ * @adapter: board private structure
++ *
++ * Return 0 on success, negative on failure
++ **/
++int igbvf_setup_tx_resources(struct igbvf_adapter *adapter,
++                             struct igbvf_ring *tx_ring)
++{
++	struct pci_dev *pdev = adapter->pdev;
++	int size;
++
++	size = sizeof(struct igbvf_buffer) * tx_ring->count;
++	tx_ring->buffer_info = vmalloc(size);
++	if (!tx_ring->buffer_info)
++		goto err;
++	memset(tx_ring->buffer_info, 0, size);
++
++	/* round up to nearest 4K */
++	tx_ring->size = tx_ring->count * sizeof(union e1000_adv_tx_desc);
++	tx_ring->size = ALIGN(tx_ring->size, 4096);
++
++	tx_ring->desc = pci_alloc_consistent(pdev, tx_ring->size,
++					     &tx_ring->dma);
++
++	if (!tx_ring->desc)
++		goto err;
++
++	tx_ring->adapter = adapter;
++	tx_ring->next_to_use = 0;
++	tx_ring->next_to_clean = 0;
++
++	return 0;
++err:
++	vfree(tx_ring->buffer_info);
++	dev_err(&adapter->pdev->dev,
++	        "Unable to allocate memory for the transmit descriptor ring\n");
++	return -ENOMEM;
++}
++
++/**
++ * igbvf_setup_rx_resources - allocate Rx resources (Descriptors)
++ * @adapter: board private structure
++ *
++ * Returns 0 on success, negative on failure
++ **/
++int igbvf_setup_rx_resources(struct igbvf_adapter *adapter,
++			     struct igbvf_ring *rx_ring)
++{
++	struct pci_dev *pdev = adapter->pdev;
++	int size, desc_len;
++
++	size = sizeof(struct igbvf_buffer) * rx_ring->count;
++	rx_ring->buffer_info = vmalloc(size);
++	if (!rx_ring->buffer_info)
++		goto err;
++	memset(rx_ring->buffer_info, 0, size);
++
++	desc_len = sizeof(union e1000_adv_rx_desc);
++
++	/* Round up to nearest 4K */
++	rx_ring->size = rx_ring->count * desc_len;
++	rx_ring->size = ALIGN(rx_ring->size, 4096);
++
++	rx_ring->desc = pci_alloc_consistent(pdev, rx_ring->size,
++	                                     &rx_ring->dma);
++
++	if (!rx_ring->desc)
++		goto err;
++
++	rx_ring->next_to_clean = 0;
++	rx_ring->next_to_use = 0;
++
++	rx_ring->adapter = adapter;
++
++	return 0;
++
++err:
++	vfree(rx_ring->buffer_info);
++	rx_ring->buffer_info = NULL;
++	dev_err(&adapter->pdev->dev,
++	        "Unable to allocate memory for the receive descriptor ring\n");
++	return -ENOMEM;
++}
++
++/**
++ * igbvf_clean_tx_ring - Free Tx Buffers
++ * @tx_ring: ring to be cleaned
++ **/
++static void igbvf_clean_tx_ring(struct igbvf_ring *tx_ring)
++{
++	struct igbvf_adapter *adapter = tx_ring->adapter;
++	struct igbvf_buffer *buffer_info;
++	unsigned long size;
++	unsigned int i;
++
++	if (!tx_ring->buffer_info)
++		return;
++
++	/* Free all the Tx ring sk_buffs */
++	for (i = 0; i < tx_ring->count; i++) {
++		buffer_info = &tx_ring->buffer_info[i];
++		igbvf_put_txbuf(adapter, buffer_info);
++	}
++
++	size = sizeof(struct igbvf_buffer) * tx_ring->count;
++	memset(tx_ring->buffer_info, 0, size);
++
++	/* Zero out the descriptor ring */
++	memset(tx_ring->desc, 0, tx_ring->size);
++
++	tx_ring->next_to_use = 0;
++	tx_ring->next_to_clean = 0;
++
++	writel(0, adapter->hw.hw_addr + tx_ring->head);
++	writel(0, adapter->hw.hw_addr + tx_ring->tail);
++}
++
++/**
++ * igbvf_free_tx_resources - Free Tx Resources per Queue
++ * @tx_ring: ring to free resources from
++ *
++ * Free all transmit software resources
++ **/
++void igbvf_free_tx_resources(struct igbvf_ring *tx_ring)
++{
++	struct pci_dev *pdev = tx_ring->adapter->pdev;
++
++	igbvf_clean_tx_ring(tx_ring);
++
++	vfree(tx_ring->buffer_info);
++	tx_ring->buffer_info = NULL;
++
++	pci_free_consistent(pdev, tx_ring->size, tx_ring->desc, tx_ring->dma);
++
++	tx_ring->desc = NULL;
++}
++
++/**
++ * igbvf_clean_rx_ring - Free Rx Buffers per Queue
++ * @adapter: board private structure
++ **/
++static void igbvf_clean_rx_ring(struct igbvf_ring *rx_ring)
++{
++	struct igbvf_adapter *adapter = rx_ring->adapter;
++	struct igbvf_buffer *buffer_info;
++	struct pci_dev *pdev = adapter->pdev;
++	unsigned long size;
++	unsigned int i;
++
++	if (!rx_ring->buffer_info)
++		return;
++
++	/* Free all the Rx ring sk_buffs */
++	for (i = 0; i < rx_ring->count; i++) {
++		buffer_info = &rx_ring->buffer_info[i];
++		if (buffer_info->dma) {
++			if (adapter->rx_ps_hdr_size){
++				pci_unmap_single(pdev, buffer_info->dma,
++				                 adapter->rx_ps_hdr_size,
++				                 PCI_DMA_FROMDEVICE);
++			} else {
++				pci_unmap_single(pdev, buffer_info->dma,
++				                 adapter->rx_buffer_len,
++				                 PCI_DMA_FROMDEVICE);
++			}
++			buffer_info->dma = 0;
++		}
++
++		if (buffer_info->skb) {
++			dev_kfree_skb(buffer_info->skb);
++			buffer_info->skb = NULL;
++		}
++
++		if (buffer_info->page) {
++			if (buffer_info->page_dma)
++				pci_unmap_page(pdev, buffer_info->page_dma,
++				               PAGE_SIZE / 2,
++				               PCI_DMA_FROMDEVICE);
++			put_page(buffer_info->page);
++			buffer_info->page = NULL;
++			buffer_info->page_dma = 0;
++			buffer_info->page_offset = 0;
++		}
++	}
++
++	size = sizeof(struct igbvf_buffer) * rx_ring->count;
++	memset(rx_ring->buffer_info, 0, size);
++
++	/* Zero out the descriptor ring */
++	memset(rx_ring->desc, 0, rx_ring->size);
++
++	rx_ring->next_to_clean = 0;
++	rx_ring->next_to_use = 0;
++
++	writel(0, adapter->hw.hw_addr + rx_ring->head);
++	writel(0, adapter->hw.hw_addr + rx_ring->tail);
++}
++
++/**
++ * igbvf_free_rx_resources - Free Rx Resources
++ * @rx_ring: ring to clean the resources from
++ *
++ * Free all receive software resources
++ **/
++
++void igbvf_free_rx_resources(struct igbvf_ring *rx_ring)
++{
++	struct pci_dev *pdev = rx_ring->adapter->pdev;
++
++	igbvf_clean_rx_ring(rx_ring);
++
++	vfree(rx_ring->buffer_info);
++	rx_ring->buffer_info = NULL;
++
++	dma_free_coherent(&pdev->dev, rx_ring->size, rx_ring->desc,
++	                  rx_ring->dma);
++	rx_ring->desc = NULL;
++}
++
++/**
++ * igbvf_update_itr - update the dynamic ITR value based on statistics
++ * @adapter: pointer to adapter
++ * @itr_setting: current adapter->itr
++ * @packets: the number of packets during this measurement interval
++ * @bytes: the number of bytes during this measurement interval
++ *
++ *      Stores a new ITR value based on packets and byte
++ *      counts during the last interrupt.  The advantage of per interrupt
++ *      computation is faster updates and more accurate ITR for the current
++ *      traffic pattern.  Constants in this function were computed
++ *      based on theoretical maximum wire speed and thresholds were set based
++ *      on testing data as well as attempting to minimize response time
++ *      while increasing bulk throughput.  This functionality is controlled
++ *      by the InterruptThrottleRate module parameter.
++ **/
++static unsigned int igbvf_update_itr(struct igbvf_adapter *adapter,
++                                     u16 itr_setting, int packets,
++                                     int bytes)
++{
++	unsigned int retval = itr_setting;
++
++	if (packets == 0)
++		goto update_itr_done;
++
++	switch (itr_setting) {
++	case lowest_latency:
++		/* handle TSO and jumbo frames */
++		if (bytes/packets > 8000)
++			retval = bulk_latency;
++		else if ((packets < 5) && (bytes > 512))
++			retval = low_latency;
++		break;
++	case low_latency:  /* 50 usec aka 20000 ints/s */
++		if (bytes > 10000) {
++			/* this if handles the TSO accounting */
++			if (bytes/packets > 8000)
++				retval = bulk_latency;
++			else if ((packets < 10) || ((bytes/packets) > 1200))
++				retval = bulk_latency;
++			else if ((packets > 35))
++				retval = lowest_latency;
++		} else if (bytes/packets > 2000) {
++			retval = bulk_latency;
++		} else if (packets <= 2 && bytes < 512) {
++			retval = lowest_latency;
++		}
++		break;
++	case bulk_latency: /* 250 usec aka 4000 ints/s */
++		if (bytes > 25000) {
++			if (packets > 35)
++				retval = low_latency;
++		} else if (bytes < 6000) {
++			retval = low_latency;
++		}
++		break;
++	}
++
++update_itr_done:
++	return retval;
++}
++
++static void igbvf_set_itr(struct igbvf_adapter *adapter)
++{
++	struct e1000_hw *hw = &adapter->hw;
++	u16 current_itr;
++	u32 new_itr = adapter->itr;
++
++	adapter->tx_itr = igbvf_update_itr(adapter, adapter->tx_itr,
++	                                   adapter->total_tx_packets,
++	                                   adapter->total_tx_bytes);
++	/* conservative mode (itr 3) eliminates the lowest_latency setting */
++	if (adapter->itr_setting == 3 && adapter->tx_itr == lowest_latency)
++		adapter->tx_itr = low_latency;
++
++	adapter->rx_itr = igbvf_update_itr(adapter, adapter->rx_itr,
++	                                   adapter->total_rx_packets,
++	                                   adapter->total_rx_bytes);
++	/* conservative mode (itr 3) eliminates the lowest_latency setting */
++	if (adapter->itr_setting == 3 && adapter->rx_itr == lowest_latency)
++		adapter->rx_itr = low_latency;
++
++	current_itr = max(adapter->rx_itr, adapter->tx_itr);
++
++	switch (current_itr) {
++	/* counts and packets in update_itr are dependent on these numbers */
++	case lowest_latency:
++		new_itr = 70000;
++		break;
++	case low_latency:
++		new_itr = 20000; /* aka hwitr = ~200 */
++		break;
++	case bulk_latency:
++		new_itr = 4000;
++		break;
++	default:
++		break;
++	}
++
++	if (new_itr != adapter->itr) {
++		/*
++		 * this attempts to bias the interrupt rate towards Bulk
++		 * by adding intermediate steps when interrupt rate is
++		 * increasing
++		 */
++		new_itr = new_itr > adapter->itr ?
++		             min(adapter->itr + (new_itr >> 2), new_itr) :
++		             new_itr;
++		adapter->itr = new_itr;
++		adapter->rx_ring->itr_val = 1952;
++
++		if (adapter->msix_entries)
++			adapter->rx_ring->set_itr = 1;
++		else
++			ew32(ITR, 1952);
++	}
++}
++
++/**
++ * igbvf_clean_tx_irq - Reclaim resources after transmit completes
++ * @adapter: board private structure
++ * returns true if ring is completely cleaned
++ **/
++static bool igbvf_clean_tx_irq(struct igbvf_ring *tx_ring)
++{
++	struct igbvf_adapter *adapter = tx_ring->adapter;
++	struct e1000_hw *hw = &adapter->hw;
++	struct net_device *netdev = adapter->netdev;
++	struct igbvf_buffer *buffer_info;
++	struct sk_buff *skb;
++	union e1000_adv_tx_desc *tx_desc, *eop_desc;
++	unsigned int total_bytes = 0, total_packets = 0;
++	unsigned int i, eop, count = 0;
++	bool cleaned = false;
++
++	i = tx_ring->next_to_clean;
++	eop = tx_ring->buffer_info[i].next_to_watch;
++	eop_desc = IGBVF_TX_DESC_ADV(*tx_ring, eop);
++
++	while ((eop_desc->wb.status & cpu_to_le32(E1000_TXD_STAT_DD)) &&
++	       (count < tx_ring->count)) {
++		for (cleaned = false; !cleaned; count++) {
++			tx_desc = IGBVF_TX_DESC_ADV(*tx_ring, i);
++			buffer_info = &tx_ring->buffer_info[i];
++			cleaned = (i == eop);
++			skb = buffer_info->skb;
++
++			if (skb) {
++				unsigned int segs, bytecount;
++
++				/* gso_segs is currently only valid for tcp */
++				segs = skb_shinfo(skb)->gso_segs ?: 1;
++				/* multiply data chunks by size of headers */
++				bytecount = ((segs - 1) * skb_headlen(skb)) +
++				            skb->len;
++				total_packets += segs;
++				total_bytes += bytecount;
++			}
++
++			igbvf_put_txbuf(adapter, buffer_info);
++			tx_desc->wb.status = 0;
++
++			i++;
++			if (i == tx_ring->count)
++				i = 0;
++		}
++		eop = tx_ring->buffer_info[i].next_to_watch;
++		eop_desc = IGBVF_TX_DESC_ADV(*tx_ring, eop);
++	}
++
++	tx_ring->next_to_clean = i;
++
++	if (unlikely(count &&
++	             netif_carrier_ok(netdev) &&
++	             igbvf_desc_unused(tx_ring) >= IGBVF_TX_QUEUE_WAKE)) {
++		/* Make sure that anybody stopping the queue after this
++		 * sees the new next_to_clean.
++		 */
++		smp_mb();
++		if (netif_queue_stopped(netdev) &&
++		    !(test_bit(__IGBVF_DOWN, &adapter->state))) {
++			netif_wake_queue(netdev);
++			++adapter->restart_queue;
++		}
++	}
++
++	if (adapter->detect_tx_hung) {
++		/* Detect a transmit hang in hardware, this serializes the
++		 * check with the clearing of time_stamp and movement of i */
++		adapter->detect_tx_hung = false;
++		if (tx_ring->buffer_info[i].time_stamp &&
++		    time_after(jiffies, tx_ring->buffer_info[i].time_stamp +
++		               (adapter->tx_timeout_factor * HZ))
++		    && !(er32(STATUS) & E1000_STATUS_TXOFF)) {
++
++			tx_desc = IGBVF_TX_DESC_ADV(*tx_ring, i);
++			/* detected Tx unit hang */
++			igbvf_print_tx_hang(adapter);
++
++			netif_stop_queue(netdev);
++		}
++	}
++	adapter->net_stats.tx_bytes += total_bytes;
++	adapter->net_stats.tx_packets += total_packets;
++	return (count < tx_ring->count);
++}
++
++static irqreturn_t igbvf_msix_other(int irq, void *data, struct pt_regs *regs)
++{
++	struct net_device *netdev = data;
++	struct igbvf_adapter *adapter = netdev_priv(netdev);
++	struct e1000_hw *hw = &adapter->hw;
++
++	adapter->int_counter1++;
++
++	netif_carrier_off(netdev);
++	hw->mac.get_link_status = 1;
++	if (!test_bit(__IGBVF_DOWN, &adapter->state))
++		mod_timer(&adapter->watchdog_timer, jiffies + 1);
++
++	ew32(EIMS, adapter->eims_other);
++
++	return IRQ_HANDLED;
++}
++
++static irqreturn_t igbvf_intr_msix_tx(int irq, void *data, struct pt_regs *regs)
++{
++	struct net_device *netdev = data;
++	struct igbvf_adapter *adapter = netdev_priv(netdev);
++	struct e1000_hw *hw = &adapter->hw;
++	struct igbvf_ring *tx_ring = adapter->tx_ring;
++
++
++	adapter->total_tx_bytes = 0;
++	adapter->total_tx_packets = 0;
++
++	/* auto mask will automatically reenable the interrupt when we write
++	 * EICS */
++	if (!igbvf_clean_tx_irq(tx_ring))
++		/* Ring was not completely cleaned, so fire another interrupt */
++		ew32(EICS, tx_ring->eims_value);
++	else
++		ew32(EIMS, tx_ring->eims_value);
++
++	return IRQ_HANDLED;
++}
++
++static irqreturn_t igbvf_intr_msix_rx(int irq, void *data, struct pt_regs *regs)
++{
++	struct net_device *netdev = data;
++	struct igbvf_adapter *adapter = netdev_priv(netdev);
++
++	adapter->int_counter0++;
++
++	/* Write the ITR value calculated at the end of the
++	 * previous interrupt.
++	 */
++	if (adapter->rx_ring->set_itr) {
++		writel(adapter->rx_ring->itr_val,
++		       adapter->hw.hw_addr + adapter->rx_ring->itr_register);
++		adapter->rx_ring->set_itr = 0;
++	}
++
++	if (netif_rx_schedule_prep(netdev)) {
++		adapter->total_rx_bytes = 0;
++		adapter->total_rx_packets = 0;
++		__netif_rx_schedule(netdev);
++	}
++
++	return IRQ_HANDLED;
++}
++
++#define IGBVF_NO_QUEUE -1
++
++static void igbvf_assign_vector(struct igbvf_adapter *adapter, int rx_queue,
++                                int tx_queue, int msix_vector)
++{
++	struct e1000_hw *hw = &adapter->hw;
++	u32 ivar, index;
++
++	/* 82576 uses a table-based method for assigning vectors.
++	   Each queue has a single entry in the table to which we write
++	   a vector number along with a "valid" bit.  Sadly, the layout
++	   of the table is somewhat counterintuitive. */
++	if (rx_queue > IGBVF_NO_QUEUE) {
++		index = (rx_queue >> 1);
++		ivar = array_er32(IVAR0, index);
++		if (rx_queue & 0x1) {
++			/* vector goes into third byte of register */
++			ivar = ivar & 0xFF00FFFF;
++			ivar |= (msix_vector | E1000_IVAR_VALID) << 16;
++		} else {
++			/* vector goes into low byte of register */
++			ivar = ivar & 0xFFFFFF00;
++			ivar |= msix_vector | E1000_IVAR_VALID;
++		}
++		adapter->rx_ring[rx_queue].eims_value = 1 << msix_vector;
++		array_ew32(IVAR0, index, ivar);
++	}
++	if (tx_queue > IGBVF_NO_QUEUE) {
++		index = (tx_queue >> 1);
++		ivar = array_er32(IVAR0, index);
++		if (tx_queue & 0x1) {
++			/* vector goes into high byte of register */
++			ivar = ivar & 0x00FFFFFF;
++			ivar |= (msix_vector | E1000_IVAR_VALID) << 24;
++		} else {
++			/* vector goes into second byte of register */
++			ivar = ivar & 0xFFFF00FF;
++			ivar |= (msix_vector | E1000_IVAR_VALID) << 8;
++		}
++		adapter->tx_ring[tx_queue].eims_value = 1 << msix_vector;
++		array_ew32(IVAR0, index, ivar);
++	}
++}
++
++/**
++ * igbvf_configure_msix - Configure MSI-X hardware
++ *
++ * igbvf_configure_msix sets up the hardware to properly
++ * generate MSI-X interrupts.
++ **/
++static void igbvf_configure_msix(struct igbvf_adapter *adapter)
++{
++	u32 tmp;
++	struct e1000_hw *hw = &adapter->hw;
++	struct igbvf_ring *tx_ring = adapter->tx_ring;
++	struct igbvf_ring *rx_ring = adapter->rx_ring;
++	int vector = 0;
++
++	adapter->eims_enable_mask = 0;
++
++	igbvf_assign_vector(adapter, IGBVF_NO_QUEUE, 0, vector++);
++	adapter->eims_enable_mask |= tx_ring->eims_value;
++	if (tx_ring->itr_val)
++		writel(tx_ring->itr_val,
++		       hw->hw_addr + tx_ring->itr_register);
++	else
++		writel(1952, hw->hw_addr + tx_ring->itr_register);
++
++	igbvf_assign_vector(adapter, 0, IGBVF_NO_QUEUE, vector++);
++	adapter->eims_enable_mask |= rx_ring->eims_value;
++	if (rx_ring->itr_val)
++		writel(rx_ring->itr_val,
++		       hw->hw_addr + rx_ring->itr_register);
++	else
++		writel(1952, hw->hw_addr + rx_ring->itr_register);
++
++	/* set vector for other causes, i.e. link changes */
++
++	tmp = (vector++ | E1000_IVAR_VALID);
++
++	ew32(IVAR_MISC, tmp);
++
++	adapter->eims_enable_mask = (1 << (vector)) - 1;
++	adapter->eims_other = 1 << (vector - 1);
++	e1e_flush();
++}
++
++static void igbvf_reset_interrupt_capability(struct igbvf_adapter *adapter)
++{
++	if (adapter->msix_entries) {
++		pci_disable_msix(adapter->pdev);
++		kfree(adapter->msix_entries);
++		adapter->msix_entries = NULL;
++	}
++}
++
++/**
++ * igbvf_set_interrupt_capability - set MSI or MSI-X if supported
++ *
++ * Attempt to configure interrupts using the best available
++ * capabilities of the hardware and kernel.
++ **/
++static void igbvf_set_interrupt_capability(struct igbvf_adapter *adapter)
++{
++	int err = -ENOMEM;
++	int i;
++
++	/* we allocate 3 vectors, 1 for tx, 1 for rx, one for pf messages */
++	adapter->msix_entries = kcalloc(3, sizeof(struct msix_entry),
++	                                GFP_KERNEL);
++	if (adapter->msix_entries) {
++		for (i = 0; i < 3; i++)
++			adapter->msix_entries[i].entry = i;
++
++		err = pci_enable_msix(adapter->pdev,
++		                      adapter->msix_entries, 3);
++	}
++
++	if (err) {
++		/* MSI-X failed */
++		dev_err(&adapter->pdev->dev,
++		        "Failed to initialize MSI-X interrupts.\n");
++		igbvf_reset_interrupt_capability(adapter);
++	}
++}
++
++/**
++ * igbvf_request_msix - Initialize MSI-X interrupts
++ *
++ * igbvf_request_msix allocates MSI-X vectors and requests interrupts from the
++ * kernel.
++ **/
++static int igbvf_request_msix(struct igbvf_adapter *adapter)
++{
++	struct net_device *netdev = adapter->netdev;
++	int err = 0, vector = 0;
++
++	if (strlen(netdev->name) < (IFNAMSIZ - 5)) {
++		sprintf(adapter->tx_ring->name, "%s-tx-0", netdev->name);
++		sprintf(adapter->rx_ring->name, "%s-rx-0", netdev->name);
++	} else {
++		memcpy(adapter->tx_ring->name, netdev->name, IFNAMSIZ);
++		memcpy(adapter->rx_ring->name, netdev->name, IFNAMSIZ);
++	}
++
++	err = request_irq(adapter->msix_entries[vector].vector,
++	                  &igbvf_intr_msix_tx, 0, adapter->tx_ring->name,
++	                  netdev);
++	if (err)
++		goto out;
++
++	adapter->tx_ring->itr_register = E1000_EITR(vector);
++	adapter->tx_ring->itr_val = 1952;
++	vector++;
++
++	err = request_irq(adapter->msix_entries[vector].vector,
++	                  &igbvf_intr_msix_rx, 0, adapter->rx_ring->name,
++	                  netdev);
++	if (err)
++		goto out;
++
++	adapter->rx_ring->itr_register = E1000_EITR(vector);
++	adapter->rx_ring->itr_val = 1952;
++	vector++;
++
++	err = request_irq(adapter->msix_entries[vector].vector,
++	                  &igbvf_msix_other, 0, netdev->name, netdev);
++	if (err)
++		goto out;
++
++	igbvf_configure_msix(adapter);
++	return 0;
++out:
++	return err;
++}
++
++/**
++ * igbvf_alloc_queues - Allocate memory for all rings
++ * @adapter: board private structure to initialize
++ **/
++static int __devinit igbvf_alloc_queues(struct igbvf_adapter *adapter)
++{
++	struct net_device *netdev = adapter->netdev;
++
++	adapter->tx_ring = kzalloc(sizeof(struct igbvf_ring), GFP_KERNEL);
++	if (!adapter->tx_ring)
++		return -ENOMEM;
++
++	adapter->rx_ring = kzalloc(sizeof(struct igbvf_ring), GFP_KERNEL);
++	if (!adapter->rx_ring) {
++		kfree(adapter->tx_ring);
++		return -ENOMEM;
++	}
++
++	netdev->poll = igbvf_poll;
++	netdev->weight = 64;
++
++	return 0;
++}
++
++/**
++ * igbvf_request_irq - initialize interrupts
++ *
++ * Attempts to configure interrupts using the best available
++ * capabilities of the hardware and kernel.
++ **/
++static int igbvf_request_irq(struct igbvf_adapter *adapter)
++{
++	int err = -1;
++
++	/* igbvf supports msi-x only */
++	if (adapter->msix_entries)
++		err = igbvf_request_msix(adapter);
++
++	if (!err)
++		return err;
++
++	dev_err(&adapter->pdev->dev,
++	        "Unable to allocate interrupt, Error: %d\n", err);
++
++	return err;
++}
++
++static void igbvf_free_irq(struct igbvf_adapter *adapter)
++{
++	struct net_device *netdev = adapter->netdev;
++	int vector;
++
++	if (adapter->msix_entries) {
++		for (vector = 0; vector < 3; vector++)
++			free_irq(adapter->msix_entries[vector].vector, netdev);
++	}
++}
++
++/**
++ * igbvf_irq_disable - Mask off interrupt generation on the NIC
++ **/
++static void igbvf_irq_disable(struct igbvf_adapter *adapter)
++{
++	struct e1000_hw *hw = &adapter->hw;
++
++	ew32(EIMC, ~0);
++
++	if (adapter->msix_entries)
++		ew32(EIAC, 0);
++}
++
++/**
++ * igbvf_irq_enable - Enable default interrupt generation settings
++ **/
++static void igbvf_irq_enable(struct igbvf_adapter *adapter)
++{
++	struct e1000_hw *hw = &adapter->hw;
++
++	ew32(EIAC, adapter->eims_enable_mask);
++	ew32(EIAM, adapter->eims_enable_mask);
++	ew32(EIMS, adapter->eims_enable_mask);
++}
++
++/**
++ * igbvf_poll - NAPI Rx polling callback
++ * @napi: struct associated with this polling callback
++ * @budget: amount of packets driver is allowed to process this poll
++ **/
++static int igbvf_poll(struct net_device *poll_dev, int *budget)
++{
++	struct igbvf_adapter *adapter = netdev_priv(poll_dev);
++	struct e1000_hw *hw = &adapter->hw;
++	int work_done = 0;
++
++	igbvf_clean_rx_irq(adapter, &work_done, *budget);
++
++	*budget -= work_done;
++	poll_dev->quota -= work_done;
++
++	/* If not enough Rx work done, exit the polling mode */
++	if (work_done < *budget) {
++		netif_rx_complete(poll_dev);
++
++		if (adapter->itr_setting & 3)
++			igbvf_set_itr(adapter);
++
++		if (!test_bit(__IGBVF_DOWN, &adapter->state))
++			ew32(EIMS, adapter->rx_ring->eims_value);
++		return 0;
++	}
++
++	return 1;
++}
++
++/**
++ * igbvf_set_rlpml - set receive large packet maximum length
++ * @adapter: board private structure
++ *
++ * Configure the maximum size of packets that will be received
++ */
++static void igbvf_set_rlpml(struct igbvf_adapter *adapter)
++{
++	int max_frame_size = adapter->max_frame_size;
++	struct e1000_hw *hw = &adapter->hw;
++
++	if (adapter->vlgrp)
++		max_frame_size += VLAN_TAG_SIZE;
++
++	e1000_rlpml_set_vf(hw, max_frame_size);
++}
++
++static void igbvf_vlan_rx_add_vid(struct net_device *netdev, u16 vid)
++{
++	struct igbvf_adapter *adapter = netdev_priv(netdev);
++	struct e1000_hw *hw = &adapter->hw;
++
++	if (hw->mac.ops.set_vfta(hw, vid, true))
++		dev_err(&adapter->pdev->dev, "Failed to add vlan id %d\n", vid);
++}
++
++static void igbvf_vlan_rx_kill_vid(struct net_device *netdev, u16 vid)
++{
++	struct igbvf_adapter *adapter = netdev_priv(netdev);
++	struct e1000_hw *hw = &adapter->hw;
++
++	igbvf_irq_disable(adapter);
++	vlan_group_set_device(adapter->vlgrp, vid, NULL);
++
++	if (!test_bit(__IGBVF_DOWN, &adapter->state))
++		igbvf_irq_enable(adapter);
++
++	if (hw->mac.ops.set_vfta(hw, vid, false))
++		dev_err(&adapter->pdev->dev,
++		        "Failed to remove vlan id %d\n", vid);
++}
++
++static void igbvf_vlan_rx_register(struct net_device *netdev,
++                                   struct vlan_group *grp)
++{
++	struct igbvf_adapter *adapter = netdev_priv(netdev);
++
++	adapter->vlgrp = grp;
++}
++
++static void igbvf_restore_vlan(struct igbvf_adapter *adapter)
++{
++	u16 vid;
++
++	if (!adapter->vlgrp)
++		return;
++
++	for (vid = 0; vid < VLAN_GROUP_ARRAY_LEN; vid++) {
++		if (!vlan_group_get_device(adapter->vlgrp, vid))
++			continue;
++		igbvf_vlan_rx_add_vid(adapter->netdev, vid);
++	}
++
++	igbvf_set_rlpml(adapter);
++}
++
++/**
++ * igbvf_configure_tx - Configure Transmit Unit after Reset
++ * @adapter: board private structure
++ *
++ * Configure the Tx unit of the MAC after a reset.
++ **/
++static void igbvf_configure_tx(struct igbvf_adapter *adapter)
++{
++	struct e1000_hw *hw = &adapter->hw;
++	struct igbvf_ring *tx_ring = adapter->tx_ring;
++	u64 tdba;
++	u32 txdctl, dca_txctrl;
++
++	/* disable transmits */
++	txdctl = er32(TXDCTL(0));
++	ew32(TXDCTL(0), txdctl & ~E1000_TXDCTL_QUEUE_ENABLE);
++	msleep(10);
++
++	/* Setup the HW Tx Head and Tail descriptor pointers */
++	ew32(TDLEN(0), tx_ring->count * sizeof(union e1000_adv_tx_desc));
++	tdba = tx_ring->dma;
++	ew32(TDBAL(0), (tdba & DMA_32BIT_MASK));
++	ew32(TDBAH(0), (tdba >> 32));
++	ew32(TDH(0), 0);
++	ew32(TDT(0), 0);
++	tx_ring->head = E1000_TDH(0);
++	tx_ring->tail = E1000_TDT(0);
++
++	/* Turn off Relaxed Ordering on head write-backs.  The writebacks
++	 * MUST be delivered in order or it will completely screw up
++	 * our bookeeping.
++	 */
++	dca_txctrl = er32(DCA_TXCTRL(0));
++	dca_txctrl &= ~E1000_DCA_TXCTRL_TX_WB_RO_EN;
++	ew32(DCA_TXCTRL(0), dca_txctrl);
++
++	/* enable transmits */
++	txdctl |= E1000_TXDCTL_QUEUE_ENABLE;
++	ew32(TXDCTL(0), txdctl);
++
++	/* Setup Transmit Descriptor Settings for eop descriptor */
++	adapter->txd_cmd = E1000_ADVTXD_DCMD_EOP | E1000_ADVTXD_DCMD_IFCS;
++
++	/* enable Report Status bit */
++	adapter->txd_cmd |= E1000_ADVTXD_DCMD_RS;
++
++	adapter->tx_queue_len = adapter->netdev->tx_queue_len;
++}
++
++/**
++ * igbvf_setup_srrctl - configure the receive control registers
++ * @adapter: Board private structure
++ **/
++static void igbvf_setup_srrctl(struct igbvf_adapter *adapter)
++{
++	struct e1000_hw *hw = &adapter->hw;
++	u32 srrctl = 0;
++
++	srrctl &= ~(E1000_SRRCTL_DESCTYPE_MASK |
++	            E1000_SRRCTL_BSIZEHDR_MASK |
++	            E1000_SRRCTL_BSIZEPKT_MASK);
++
++	/* Enable queue drop to avoid head of line blocking */
++	srrctl |= E1000_SRRCTL_DROP_EN;
++
++	/* Setup buffer sizes */
++	srrctl |= ALIGN(adapter->rx_buffer_len, 1024) >>
++	          E1000_SRRCTL_BSIZEPKT_SHIFT;
++
++	if (adapter->rx_buffer_len < 2048) {
++		adapter->rx_ps_hdr_size = 0;
++		srrctl |= E1000_SRRCTL_DESCTYPE_ADV_ONEBUF;
++	} else {
++		adapter->rx_ps_hdr_size = 128;
++		srrctl |= adapter->rx_ps_hdr_size <<
++		          E1000_SRRCTL_BSIZEHDRSIZE_SHIFT;
++		srrctl |= E1000_SRRCTL_DESCTYPE_HDR_SPLIT_ALWAYS;
++	}
++
++	ew32(SRRCTL(0), srrctl);
++}
++
++/**
++ * igbvf_configure_rx - Configure Receive Unit after Reset
++ * @adapter: board private structure
++ *
++ * Configure the Rx unit of the MAC after a reset.
++ **/
++static void igbvf_configure_rx(struct igbvf_adapter *adapter)
++{
++	struct e1000_hw *hw = &adapter->hw;
++	struct igbvf_ring *rx_ring = adapter->rx_ring;
++	u64 rdba;
++	u32 rdlen, rxdctl;
++
++	/* disable receives */
++	rxdctl = er32(RXDCTL(0));
++	ew32(RXDCTL(0), rxdctl & ~E1000_RXDCTL_QUEUE_ENABLE);
++	msleep(10);
++
++	rdlen = rx_ring->count * sizeof(union e1000_adv_rx_desc);
++
++	/*
++	 * Setup the HW Rx Head and Tail Descriptor Pointers and
++	 * the Base and Length of the Rx Descriptor Ring
++	 */
++	rdba = rx_ring->dma;
++	ew32(RDBAL(0), (rdba & DMA_32BIT_MASK));
++	ew32(RDBAH(0), (rdba >> 32));
++	ew32(RDLEN(0), rx_ring->count * sizeof(union e1000_adv_rx_desc));
++	rx_ring->head = E1000_RDH(0);
++	rx_ring->tail = E1000_RDT(0);
++	ew32(RDH(0), 0);
++	ew32(RDT(0), 0);
++
++	rxdctl |= E1000_RXDCTL_QUEUE_ENABLE;
++	rxdctl &= 0xFFF00000;
++	rxdctl |= IGBVF_RX_PTHRESH;
++	rxdctl |= IGBVF_RX_HTHRESH << 8;
++	rxdctl |= IGBVF_RX_WTHRESH << 16;
++
++	igbvf_set_rlpml(adapter);
++
++	/* enable receives */
++	ew32(RXDCTL(0), rxdctl);
++}
++
++/**
++ * igbvf_set_multi - Multicast and Promiscuous mode set
++ * @netdev: network interface device structure
++ *
++ * The set_multi entry point is called whenever the multicast address
++ * list or the network interface flags are updated.  This routine is
++ * responsible for configuring the hardware for proper multicast,
++ * promiscuous mode, and all-multi behavior.
++ **/
++static void igbvf_set_multi(struct net_device *netdev)
++{
++	struct igbvf_adapter *adapter = netdev_priv(netdev);
++	struct e1000_hw *hw = &adapter->hw;
++	struct dev_mc_list *mc_ptr;
++	u8  *mta_list = NULL;
++	int i;
++
++	if (netdev->mc_count) {
++		mta_list = kmalloc(netdev->mc_count * 6, GFP_ATOMIC);
++		if (!mta_list) {
++			dev_err(&adapter->pdev->dev,
++			        "failed to allocate multicast filter list\n");
++			return;
++		}
++	}
++
++	/* prepare a packed array of only addresses. */
++	mc_ptr = netdev->mc_list;
++
++	for (i = 0; i < netdev->mc_count; i++) {
++		if (!mc_ptr)
++			break;
++		memcpy(mta_list + (i*ETH_ALEN), mc_ptr->dmi_addr,
++		       ETH_ALEN);
++		mc_ptr = mc_ptr->next;
++	}
++
++	hw->mac.ops.update_mc_addr_list(hw, mta_list, i, 0, 0);
++	kfree(mta_list);
++}
++
++/**
++ * igbvf_configure - configure the hardware for Rx and Tx
++ * @adapter: private board structure
++ **/
++static void igbvf_configure(struct igbvf_adapter *adapter)
++{
++	igbvf_set_multi(adapter->netdev);
++
++	igbvf_restore_vlan(adapter);
++
++	igbvf_configure_tx(adapter);
++	igbvf_setup_srrctl(adapter);
++	igbvf_configure_rx(adapter);
++	igbvf_alloc_rx_buffers(adapter->rx_ring,
++	                       igbvf_desc_unused(adapter->rx_ring));
++}
++
++/* igbvf_reset - bring the hardware into a known good state
++ *
++ * This function boots the hardware and enables some settings that
++ * require a configuration cycle of the hardware - those cannot be
++ * set/changed during runtime. After reset the device needs to be
++ * properly configured for Rx, Tx etc.
++ */
++static void igbvf_reset(struct igbvf_adapter *adapter)
++{
++	struct e1000_mac_info *mac = &adapter->hw.mac;
++	struct net_device *netdev = adapter->netdev;
++	struct e1000_hw *hw = &adapter->hw;
++
++	/* Allow time for pending master requests to run */
++	if (mac->ops.reset_hw(hw))
++		dev_err(&adapter->pdev->dev, "PF still resetting\n");
++
++	mac->ops.init_hw(hw);
++
++	if (is_valid_ether_addr(adapter->hw.mac.addr)) {
++		memcpy(netdev->dev_addr, adapter->hw.mac.addr,
++		       netdev->addr_len);
++		memcpy(netdev->perm_addr, adapter->hw.mac.addr,
++		       netdev->addr_len);
++	}
++}
++
++int igbvf_up(struct igbvf_adapter *adapter)
++{
++	struct e1000_hw *hw = &adapter->hw;
++
++	/* hardware has been reset, we need to reload some things */
++	igbvf_configure(adapter);
++
++	clear_bit(__IGBVF_DOWN, &adapter->state);
++
++	netif_poll_enable(adapter->netdev);
++	if (adapter->msix_entries)
++		igbvf_configure_msix(adapter);
++
++	/* Clear any pending interrupts. */
++	er32(EICR);
++	igbvf_irq_enable(adapter);
++
++	/* start the watchdog */
++	hw->mac.get_link_status = 1;
++	mod_timer(&adapter->watchdog_timer, jiffies + 1);
++
++
++	return 0;
++}
++
++void igbvf_down(struct igbvf_adapter *adapter)
++{
++	struct net_device *netdev = adapter->netdev;
++	struct e1000_hw *hw = &adapter->hw;
++	u32 rxdctl, txdctl;
++
++	/*
++	 * signal that we're down so the interrupt handler does not
++	 * reschedule our watchdog timer
++	 */
++	set_bit(__IGBVF_DOWN, &adapter->state);
++
++	/* disable receives in the hardware */
++	rxdctl = er32(RXDCTL(0));
++	ew32(RXDCTL(0), rxdctl & ~E1000_RXDCTL_QUEUE_ENABLE);
++
++	netif_stop_queue(netdev);
++
++	/* disable transmits in the hardware */
++	txdctl = er32(TXDCTL(0));
++	ew32(TXDCTL(0), txdctl & ~E1000_TXDCTL_QUEUE_ENABLE);
++
++	/* flush both disables and wait for them to finish */
++	e1e_flush();
++	msleep(10);
++
++	netif_poll_disable(netdev);
++
++	igbvf_irq_disable(adapter);
++
++	del_timer_sync(&adapter->watchdog_timer);
++
++	netdev->tx_queue_len = adapter->tx_queue_len;
++	netif_carrier_off(netdev);
++
++	/* record the stats before reset*/
++	igbvf_update_stats(adapter);
++
++	adapter->link_speed = 0;
++	adapter->link_duplex = 0;
++
++	igbvf_reset(adapter);
++	igbvf_clean_tx_ring(adapter->tx_ring);
++	igbvf_clean_rx_ring(adapter->rx_ring);
++}
++
++void igbvf_reinit_locked(struct igbvf_adapter *adapter)
++{
++	might_sleep();
++	while (test_and_set_bit(__IGBVF_RESETTING, &adapter->state))
++		msleep(1);
++	igbvf_down(adapter);
++	igbvf_up(adapter);
++	clear_bit(__IGBVF_RESETTING, &adapter->state);
++}
++
++/**
++ * igbvf_sw_init - Initialize general software structures (struct igbvf_adapter)
++ * @adapter: board private structure to initialize
++ *
++ * igbvf_sw_init initializes the Adapter private data structure.
++ * Fields are initialized based on PCI device information and
++ * OS network device settings (MTU size).
++ **/
++static int __devinit igbvf_sw_init(struct igbvf_adapter *adapter)
++{
++	struct net_device *netdev = adapter->netdev;
++	s32 rc;
++
++	adapter->rx_buffer_len = ETH_FRAME_LEN + VLAN_HLEN + ETH_FCS_LEN;
++	adapter->rx_ps_hdr_size = 0;
++	adapter->max_frame_size = netdev->mtu + ETH_HLEN + ETH_FCS_LEN;
++	adapter->min_frame_size = ETH_ZLEN + ETH_FCS_LEN;
++
++	adapter->tx_int_delay = 8;
++	adapter->tx_abs_int_delay = 32;
++	adapter->rx_int_delay = 0;
++	adapter->rx_abs_int_delay = 8;
++	adapter->itr_setting = 3;
++	adapter->itr = 20000;
++
++	/* Set various function pointers */
++	adapter->ei->init_ops(&adapter->hw);
++
++	rc = adapter->hw.mac.ops.init_params(&adapter->hw);
++	if (rc)
++		return rc;
++
++	rc = adapter->hw.mbx.ops.init_params(&adapter->hw);
++	if (rc)
++		return rc;
++
++	igbvf_set_interrupt_capability(adapter);
++
++	if (igbvf_alloc_queues(adapter))
++		return -ENOMEM;
++
++	spin_lock_init(&adapter->tx_queue_lock);
++
++	/* Explicitly disable IRQ since the NIC can be in any state. */
++	igbvf_irq_disable(adapter);
++
++	spin_lock_init(&adapter->stats_lock);
++
++	set_bit(__IGBVF_DOWN, &adapter->state);
++	return 0;
++}
++
++static void igbvf_initialize_last_counter_stats(struct igbvf_adapter *adapter)
++{
++	struct e1000_hw *hw = &adapter->hw;
++
++	adapter->stats.last_gprc = er32(VFGPRC);
++	adapter->stats.last_gorc = er32(VFGORC);
++	adapter->stats.last_gptc = er32(VFGPTC);
++	adapter->stats.last_gotc = er32(VFGOTC);
++	adapter->stats.last_mprc = er32(VFMPRC);
++	adapter->stats.last_gotlbc = er32(VFGOTLBC);
++	adapter->stats.last_gptlbc = er32(VFGPTLBC);
++	adapter->stats.last_gorlbc = er32(VFGORLBC);
++	adapter->stats.last_gprlbc = er32(VFGPRLBC);
++
++	adapter->stats.base_gprc = er32(VFGPRC);
++	adapter->stats.base_gorc = er32(VFGORC);
++	adapter->stats.base_gptc = er32(VFGPTC);
++	adapter->stats.base_gotc = er32(VFGOTC);
++	adapter->stats.base_mprc = er32(VFMPRC);
++	adapter->stats.base_gotlbc = er32(VFGOTLBC);
++	adapter->stats.base_gptlbc = er32(VFGPTLBC);
++	adapter->stats.base_gorlbc = er32(VFGORLBC);
++	adapter->stats.base_gprlbc = er32(VFGPRLBC);
++}
++
++/**
++ * igbvf_open - Called when a network interface is made active
++ * @netdev: network interface device structure
++ *
++ * Returns 0 on success, negative value on failure
++ *
++ * The open entry point is called when a network interface is made
++ * active by the system (IFF_UP).  At this point all resources needed
++ * for transmit and receive operations are allocated, the interrupt
++ * handler is registered with the OS, the watchdog timer is started,
++ * and the stack is notified that the interface is ready.
++ **/
++static int igbvf_open(struct net_device *netdev)
++{
++	struct igbvf_adapter *adapter = netdev_priv(netdev);
++	struct e1000_hw *hw = &adapter->hw;
++	int err;
++
++	/* disallow open during test */
++	if (test_bit(__IGBVF_TESTING, &adapter->state))
++		return -EBUSY;
++
++	/* allocate transmit descriptors */
++	err = igbvf_setup_tx_resources(adapter, adapter->tx_ring);
++	if (err)
++		goto err_setup_tx;
++
++	/* allocate receive descriptors */
++	err = igbvf_setup_rx_resources(adapter, adapter->rx_ring);
++	if (err)
++		goto err_setup_rx;
++
++	/*
++	 * before we allocate an interrupt, we must be ready to handle it.
++	 * Setting DEBUG_SHIRQ in the kernel makes it fire an interrupt
++	 * as soon as we call pci_request_irq, so we have to setup our
++	 * clean_rx handler before we do so.
++	 */
++	igbvf_configure(adapter);
++
++	err = igbvf_request_irq(adapter);
++	if (err)
++		goto err_req_irq;
++
++	/* From here on the code is the same as igbvf_up() */
++	clear_bit(__IGBVF_DOWN, &adapter->state);
++
++	netif_poll_enable(netdev);
++
++	/* clear any pending interrupts */
++	er32(EICR);
++
++	igbvf_irq_enable(adapter);
++
++	/* start the watchdog */
++	hw->mac.get_link_status = 1;
++	mod_timer(&adapter->watchdog_timer, jiffies + 1);
++
++	return 0;
++
++err_req_irq:
++	igbvf_free_rx_resources(adapter->rx_ring);
++err_setup_rx:
++	igbvf_free_tx_resources(adapter->tx_ring);
++err_setup_tx:
++	igbvf_reset(adapter);
++
++	return err;
++}
++
++/**
++ * igbvf_close - Disables a network interface
++ * @netdev: network interface device structure
++ *
++ * Returns 0, this is not allowed to fail
++ *
++ * The close entry point is called when an interface is de-activated
++ * by the OS.  The hardware is still under the drivers control, but
++ * needs to be disabled.  A global MAC reset is issued to stop the
++ * hardware, and all transmit and receive resources are freed.
++ **/
++static int igbvf_close(struct net_device *netdev)
++{
++	struct igbvf_adapter *adapter = netdev_priv(netdev);
++
++	WARN_ON(test_bit(__IGBVF_RESETTING, &adapter->state));
++	igbvf_down(adapter);
++
++	igbvf_free_irq(adapter);
++
++	igbvf_free_tx_resources(adapter->tx_ring);
++	igbvf_free_rx_resources(adapter->rx_ring);
++
++	return 0;
++}
++/**
++ * igbvf_set_mac - Change the Ethernet Address of the NIC
++ * @netdev: network interface device structure
++ * @p: pointer to an address structure
++ *
++ * Returns 0 on success, negative on failure
++ **/
++static int igbvf_set_mac(struct net_device *netdev, void *p)
++{
++	struct igbvf_adapter *adapter = netdev_priv(netdev);
++	struct e1000_hw *hw = &adapter->hw;
++	struct sockaddr *addr = p;
++
++	if (!is_valid_ether_addr(addr->sa_data))
++		return -EADDRNOTAVAIL;
++
++	memcpy(hw->mac.addr, addr->sa_data, netdev->addr_len);
++
++	hw->mac.ops.rar_set(hw, hw->mac.addr, 0);
++
++	if (memcmp(addr->sa_data, hw->mac.addr, 6))
++		return -EADDRNOTAVAIL;
++
++	memcpy(netdev->dev_addr, addr->sa_data, netdev->addr_len);
++
++	return 0;
++}
++
++#define UPDATE_VF_COUNTER(reg, name)                                    \
++	{                                                               \
++		u32 current_counter = er32(reg);                        \
++		if (current_counter < adapter->stats.last_##name)       \
++			adapter->stats.name += 0x100000000LL;           \
++		adapter->stats.last_##name = current_counter;           \
++		adapter->stats.name &= 0xFFFFFFFF00000000LL;            \
++		adapter->stats.name |= current_counter;                 \
++	}
++
++/**
++ * igbvf_update_stats - Update the board statistics counters
++ * @adapter: board private structure
++**/
++void igbvf_update_stats(struct igbvf_adapter *adapter)
++{
++	struct e1000_hw *hw = &adapter->hw;
++	struct pci_dev *pdev = adapter->pdev;
++
++	/*
++	 * Prevent stats update while adapter is being reset, link is down
++	 * or if the pci connection is down.
++	 */
++	if (adapter->link_speed == 0)
++		return;
++
++	if (test_bit(__IGBVF_RESETTING, &adapter->state))
++		return;
++
++	if (pci_channel_offline(pdev))
++		return;
++
++	UPDATE_VF_COUNTER(VFGPRC, gprc);
++	UPDATE_VF_COUNTER(VFGORC, gorc);
++	UPDATE_VF_COUNTER(VFGPTC, gptc);
++	UPDATE_VF_COUNTER(VFGOTC, gotc);
++	UPDATE_VF_COUNTER(VFMPRC, mprc);
++	UPDATE_VF_COUNTER(VFGOTLBC, gotlbc);
++	UPDATE_VF_COUNTER(VFGPTLBC, gptlbc);
++	UPDATE_VF_COUNTER(VFGORLBC, gorlbc);
++	UPDATE_VF_COUNTER(VFGPRLBC, gprlbc);
++
++	/* Fill out the OS statistics structure */
++	adapter->net_stats.multicast = adapter->stats.mprc;
++}
++
++static void igbvf_print_link_info(struct igbvf_adapter *adapter)
++{
++	dev_info(&adapter->pdev->dev, "Link is Up %d Mbps %s\n",
++	         adapter->link_speed,
++	         ((adapter->link_duplex == FULL_DUPLEX) ?
++	          "Full Duplex" : "Half Duplex"));
++}
++
++static bool igbvf_has_link(struct igbvf_adapter *adapter)
++{
++	struct e1000_hw *hw = &adapter->hw;
++	s32 ret_val = E1000_SUCCESS;
++	bool link_active;
++
++	ret_val = hw->mac.ops.check_for_link(hw);
++	link_active = !hw->mac.get_link_status;
++
++	/* if check for link returns error we will need to reset */
++	if (ret_val)
++		schedule_work(&adapter->reset_task);
++
++	return link_active;
++}
++
++/**
++ * igbvf_watchdog - Timer Call-back
++ * @data: pointer to adapter cast into an unsigned long
++ **/
++static void igbvf_watchdog(unsigned long data)
++{
++	struct igbvf_adapter *adapter = (struct igbvf_adapter *) data;
++
++	/* Do the rest outside of interrupt context */
++	schedule_work(&adapter->watchdog_task);
++}
++
++static void igbvf_watchdog_task(struct igbvf_adapter *adapter)
++{
++	struct net_device *netdev = adapter->netdev;
++	struct e1000_mac_info *mac = &adapter->hw.mac;
++	struct igbvf_ring *tx_ring = adapter->tx_ring;
++	struct e1000_hw *hw = &adapter->hw;
++	u32 link;
++	int tx_pending = 0;
++
++	link = igbvf_has_link(adapter);
++
++	if (link) {
++		if (!netif_carrier_ok(netdev)) {
++			bool txb2b = 1;
++
++			mac->ops.get_link_up_info(&adapter->hw,
++			                          &adapter->link_speed,
++			                          &adapter->link_duplex);
++			igbvf_print_link_info(adapter);
++
++			/*
++			 * tweak tx_queue_len according to speed/duplex
++			 * and adjust the timeout factor
++			 */
++			netdev->tx_queue_len = adapter->tx_queue_len;
++			adapter->tx_timeout_factor = 1;
++			switch (adapter->link_speed) {
++			case SPEED_10:
++				txb2b = 0;
++				netdev->tx_queue_len = 10;
++				adapter->tx_timeout_factor = 16;
++				break;
++			case SPEED_100:
++				txb2b = 0;
++				netdev->tx_queue_len = 100;
++				/* maybe add some timeout factor ? */
++				break;
++			}
++
++			netif_carrier_on(netdev);
++			netif_wake_queue(netdev);
++		}
++	} else {
++		if (netif_carrier_ok(netdev)) {
++			adapter->link_speed = 0;
++			adapter->link_duplex = 0;
++			dev_info(&adapter->pdev->dev, "Link is Down\n");
++			netif_carrier_off(netdev);
++			netif_stop_queue(netdev);
++		}
++	}
++
++	if (netif_carrier_ok(netdev)) {
++		igbvf_update_stats(adapter);
++	} else {
++		tx_pending = (igbvf_desc_unused(tx_ring) + 1 <
++		              tx_ring->count);
++		if (tx_pending) {
++			/*
++			 * We've lost link, so the controller stops DMA,
++			 * but we've got queued Tx work that's never going
++			 * to get done, so reset controller to flush Tx.
++			 * (Do the reset outside of interrupt context).
++			 */
++			adapter->tx_timeout_count++;
++			schedule_work(&adapter->reset_task);
++		}
++	}
++
++	/* Cause software interrupt to ensure Rx ring is cleaned */
++	ew32(EICS, adapter->rx_ring->eims_value);
++
++	/* Force detection of hung controller every watchdog period */
++	adapter->detect_tx_hung = 1;
++
++	/* Reset the timer */
++	if (!test_bit(__IGBVF_DOWN, &adapter->state))
++		mod_timer(&adapter->watchdog_timer,
++			  round_jiffies(jiffies + (2 * HZ)));
++}
++
++#define IGBVF_TX_FLAGS_CSUM             0x00000001
++#define IGBVF_TX_FLAGS_VLAN             0x00000002
++#define IGBVF_TX_FLAGS_TSO              0x00000004
++#define IGBVF_TX_FLAGS_IPV4             0x00000008
++#define IGBVF_TX_FLAGS_VLAN_MASK        0xffff0000
++#define IGBVF_TX_FLAGS_VLAN_SHIFT       16
++
++static int igbvf_tso(struct igbvf_adapter *adapter,
++                     struct igbvf_ring *tx_ring,
++                     struct sk_buff *skb, u32 tx_flags, u8 *hdr_len)
++{
++	struct e1000_adv_tx_context_desc *context_desc;
++	unsigned int i;
++	int err;
++	struct igbvf_buffer *buffer_info;
++	u32 info = 0, tu_cmd = 0;
++	u32 mss_l4len_idx, l4len;
++	*hdr_len = 0;
++
++	if (skb_header_cloned(skb)) {
++		err = pskb_expand_head(skb, 0, 0, GFP_ATOMIC);
++		if (err) {
++			dev_err(&adapter->pdev->dev,
++			        "igbvf_tso returning an error\n");
++			return err;
++		}
++	}
++
++	l4len = tcp_hdrlen(skb);
++	*hdr_len += l4len;
++
++	if (skb->protocol == htons(ETH_P_IP)) {
++		struct iphdr *iph = ip_hdr(skb);
++		iph->tot_len = 0;
++		iph->check = 0;
++		tcp_hdr(skb)->check = ~csum_tcpudp_magic(iph->saddr,
++		                                         iph->daddr, 0,
++		                                         IPPROTO_TCP,
++		                                         0);
++	} else if (skb_shinfo(skb)->gso_type == SKB_GSO_TCPV6) {
++		ipv6_hdr(skb)->payload_len = 0;
++		tcp_hdr(skb)->check = ~csum_ipv6_magic(&ipv6_hdr(skb)->saddr,
++		                                       &ipv6_hdr(skb)->daddr,
++		                                       0, IPPROTO_TCP, 0);
++	}
++
++	i = tx_ring->next_to_use;
++
++	buffer_info = &tx_ring->buffer_info[i];
++	context_desc = IGBVF_TX_CTXTDESC_ADV(*tx_ring, i);
++	/* VLAN MACLEN IPLEN */
++	if (tx_flags & IGBVF_TX_FLAGS_VLAN)
++		info |= (tx_flags & IGBVF_TX_FLAGS_VLAN_MASK);
++	info |= (skb_network_offset(skb) << E1000_ADVTXD_MACLEN_SHIFT);
++	*hdr_len += skb_network_offset(skb);
++	info |= (skb_transport_header(skb) - skb_network_header(skb));
++	*hdr_len += (skb_transport_header(skb) - skb_network_header(skb));
++	context_desc->vlan_macip_lens = cpu_to_le32(info);
++
++	/* ADV DTYP TUCMD MKRLOC/ISCSIHEDLEN */
++	tu_cmd |= (E1000_TXD_CMD_DEXT | E1000_ADVTXD_DTYP_CTXT);
++
++	if (skb->protocol == htons(ETH_P_IP))
++		tu_cmd |= E1000_ADVTXD_TUCMD_IPV4;
++	tu_cmd |= E1000_ADVTXD_TUCMD_L4T_TCP;
++
++	context_desc->type_tucmd_mlhl = cpu_to_le32(tu_cmd);
++
++	/* MSS L4LEN IDX */
++	mss_l4len_idx = (skb_shinfo(skb)->gso_size << E1000_ADVTXD_MSS_SHIFT);
++	mss_l4len_idx |= (l4len << E1000_ADVTXD_L4LEN_SHIFT);
++
++	context_desc->mss_l4len_idx = cpu_to_le32(mss_l4len_idx);
++	context_desc->seqnum_seed = 0;
++
++	buffer_info->time_stamp = jiffies;
++	buffer_info->next_to_watch = i;
++	buffer_info->dma = 0;
++	i++;
++	if (i == tx_ring->count)
++		i = 0;
++
++	tx_ring->next_to_use = i;
++
++	return true;
++}
++
++static inline bool igbvf_tx_csum(struct igbvf_adapter *adapter,
++                                 struct igbvf_ring *tx_ring,
++                                 struct sk_buff *skb, u32 tx_flags)
++{
++	struct e1000_adv_tx_context_desc *context_desc;
++	unsigned int i;
++	struct igbvf_buffer *buffer_info;
++	u32 info = 0, tu_cmd = 0;
++
++	if ((skb->ip_summed == CHECKSUM_PARTIAL) ||
++	    (tx_flags & IGBVF_TX_FLAGS_VLAN)) {
++		i = tx_ring->next_to_use;
++		buffer_info = &tx_ring->buffer_info[i];
++		context_desc = IGBVF_TX_CTXTDESC_ADV(*tx_ring, i);
++
++		if (tx_flags & IGBVF_TX_FLAGS_VLAN)
++			info |= (tx_flags & IGBVF_TX_FLAGS_VLAN_MASK);
++
++		info |= (skb_network_offset(skb) << E1000_ADVTXD_MACLEN_SHIFT);
++		if (skb->ip_summed == CHECKSUM_PARTIAL)
++			info |= (skb_transport_header(skb) -
++			         skb_network_header(skb));
++
++
++		context_desc->vlan_macip_lens = cpu_to_le32(info);
++
++		tu_cmd |= (E1000_TXD_CMD_DEXT | E1000_ADVTXD_DTYP_CTXT);
++
++		if (skb->ip_summed == CHECKSUM_PARTIAL) {
++			switch (skb->protocol) {
++			case __constant_htons(ETH_P_IP):
++				tu_cmd |= E1000_ADVTXD_TUCMD_IPV4;
++				if (ip_hdr(skb)->protocol == IPPROTO_TCP)
++					tu_cmd |= E1000_ADVTXD_TUCMD_L4T_TCP;
++				break;
++			case __constant_htons(ETH_P_IPV6):
++				if (ipv6_hdr(skb)->nexthdr == IPPROTO_TCP)
++					tu_cmd |= E1000_ADVTXD_TUCMD_L4T_TCP;
++				break;
++			default:
++				break;
++			}
++		}
++
++		context_desc->type_tucmd_mlhl = cpu_to_le32(tu_cmd);
++		context_desc->seqnum_seed = 0;
++		context_desc->mss_l4len_idx = 0;
++
++		buffer_info->time_stamp = jiffies;
++		buffer_info->next_to_watch = i;
++		buffer_info->dma = 0;
++		i++;
++		if (i == tx_ring->count)
++			i = 0;
++		tx_ring->next_to_use = i;
++
++		return true;
++	}
++
++	return false;
++}
++
++static int igbvf_maybe_stop_tx(struct net_device *netdev, int size)
++{
++	struct igbvf_adapter *adapter = netdev_priv(netdev);
++
++	/* there is enough descriptors then we don't need to worry  */
++	if (igbvf_desc_unused(adapter->tx_ring) >= size)
++		return 0;
++
++	netif_stop_queue(netdev);
++
++	smp_mb();
++
++	/* We need to check again just in case room has been made available */
++	if (igbvf_desc_unused(adapter->tx_ring) < size)
++		return -EBUSY;
++
++	netif_wake_queue(netdev);
++
++	++adapter->restart_queue;
++	return 0;
++}
++
++#define IGBVF_MAX_TXD_PWR       16
++#define IGBVF_MAX_DATA_PER_TXD  (1 << IGBVF_MAX_TXD_PWR)
++
++static inline int igbvf_tx_map_adv(struct igbvf_adapter *adapter,
++                                   struct igbvf_ring *tx_ring,
++                                   struct sk_buff *skb,
++                                   unsigned int first)
++{
++	struct igbvf_buffer *buffer_info;
++	unsigned int len = skb_headlen(skb);
++	unsigned int count = 0, i;
++	unsigned int f;
++
++	i = tx_ring->next_to_use;
++
++	buffer_info = &tx_ring->buffer_info[i];
++	BUG_ON(len >= IGBVF_MAX_DATA_PER_TXD);
++	buffer_info->length = len;
++	/* set time_stamp *before* dma to help avoid a possible race */
++	buffer_info->time_stamp = jiffies;
++	buffer_info->next_to_watch = i;
++	buffer_info->dma = pci_map_single(adapter->pdev, skb->data, len,
++					  PCI_DMA_TODEVICE);
++	count++;
++
++	for (f = 0; f < skb_shinfo(skb)->nr_frags; f++) {
++		struct skb_frag_struct *frag;
++
++		i++;
++		if (i == tx_ring->count)
++			i = 0;
++
++		frag = &skb_shinfo(skb)->frags[f];
++		len = frag->size;
++
++		buffer_info = &tx_ring->buffer_info[i];
++		BUG_ON(len >= IGBVF_MAX_DATA_PER_TXD);
++		buffer_info->length = len;
++		buffer_info->time_stamp = jiffies;
++		buffer_info->next_to_watch = i;
++		buffer_info->dma = pci_map_page(adapter->pdev,
++						frag->page,
++						frag->page_offset,
++						len,
++						PCI_DMA_TODEVICE);
++
++		count++;
++	}
++
++	tx_ring->buffer_info[i].skb = skb;
++	tx_ring->buffer_info[first].next_to_watch = i;
++
++	return count;
++}
++
++static inline void igbvf_tx_queue_adv(struct igbvf_adapter *adapter,
++                                      struct igbvf_ring *tx_ring,
++                                      int tx_flags, int count, u32 paylen,
++                                      u8 hdr_len)
++{
++	union e1000_adv_tx_desc *tx_desc = NULL;
++	struct igbvf_buffer *buffer_info;
++	u32 olinfo_status = 0, cmd_type_len;
++	unsigned int i;
++
++	cmd_type_len = (E1000_ADVTXD_DTYP_DATA | E1000_ADVTXD_DCMD_IFCS |
++	                E1000_ADVTXD_DCMD_DEXT);
++
++	if (tx_flags & IGBVF_TX_FLAGS_VLAN)
++		cmd_type_len |= E1000_ADVTXD_DCMD_VLE;
++
++	if (tx_flags & IGBVF_TX_FLAGS_TSO) {
++		cmd_type_len |= E1000_ADVTXD_DCMD_TSE;
++
++		/* insert tcp checksum */
++		olinfo_status |= E1000_TXD_POPTS_TXSM << 8;
++
++		/* insert ip checksum */
++		if (tx_flags & IGBVF_TX_FLAGS_IPV4)
++			olinfo_status |= E1000_TXD_POPTS_IXSM << 8;
++
++	} else if (tx_flags & IGBVF_TX_FLAGS_CSUM) {
++		olinfo_status |= E1000_TXD_POPTS_TXSM << 8;
++	}
++
++	olinfo_status |= ((paylen - hdr_len) << E1000_ADVTXD_PAYLEN_SHIFT);
++
++	i = tx_ring->next_to_use;
++	while (count--) {
++		buffer_info = &tx_ring->buffer_info[i];
++		tx_desc = IGBVF_TX_DESC_ADV(*tx_ring, i);
++		tx_desc->read.buffer_addr = cpu_to_le64(buffer_info->dma);
++		tx_desc->read.cmd_type_len =
++		         cpu_to_le32(cmd_type_len | buffer_info->length);
++		tx_desc->read.olinfo_status = cpu_to_le32(olinfo_status);
++		i++;
++		if (i == tx_ring->count)
++			i = 0;
++	}
++
++	tx_desc->read.cmd_type_len |= cpu_to_le32(adapter->txd_cmd);
++	/* Force memory writes to complete before letting h/w
++	 * know there are new descriptors to fetch.  (Only
++	 * applicable for weak-ordered memory model archs,
++	 * such as IA-64). */
++	wmb();
++
++	tx_ring->next_to_use = i;
++	writel(i, adapter->hw.hw_addr + tx_ring->tail);
++	/* we need this if more than one processor can write to our tail
++	 * at a time, it syncronizes IO on IA64/Altix systems */
++	mmiowb();
++}
++
++static int igbvf_xmit_frame_ring_adv(struct sk_buff *skb,
++                                   struct net_device *netdev,
++                                   struct igbvf_ring *tx_ring)
++{
++	struct igbvf_adapter *adapter = netdev_priv(netdev);
++	unsigned int first, tx_flags = 0;
++	u8 hdr_len = 0;
++	int count = 0;
++	int tso = 0;
++
++	if (test_bit(__IGBVF_DOWN, &adapter->state)) {
++		dev_kfree_skb_any(skb);
++		return NETDEV_TX_OK;
++	}
++
++	if (skb->len <= 0) {
++		dev_kfree_skb_any(skb);
++		return NETDEV_TX_OK;
++	}
++
++	/*
++	 * need: count + 4 desc gap to keep tail from touching
++         *       + 2 desc gap to keep tail from touching head,
++         *       + 1 desc for skb->data,
++         *       + 1 desc for context descriptor,
++	 * head, otherwise try next time
++	 */
++	if (igbvf_maybe_stop_tx(netdev, skb_shinfo(skb)->nr_frags + 4)) {
++		/* this is a hard error */
++		return NETDEV_TX_BUSY;
++	}
++
++	if (adapter->vlgrp && vlan_tx_tag_present(skb)) {
++		tx_flags |= IGBVF_TX_FLAGS_VLAN;
++		tx_flags |= (vlan_tx_tag_get(skb) << IGBVF_TX_FLAGS_VLAN_SHIFT);
++	}
++
++	if (skb->protocol == htons(ETH_P_IP))
++		tx_flags |= IGBVF_TX_FLAGS_IPV4;
++
++	first = tx_ring->next_to_use;
++
++	tso = skb_is_gso(skb) ?
++		igbvf_tso(adapter, tx_ring, skb, tx_flags, &hdr_len) : 0;
++	if (unlikely(tso < 0)) {
++		dev_kfree_skb_any(skb);
++		return NETDEV_TX_OK;
++	}
++
++	if (tso)
++		tx_flags |= IGBVF_TX_FLAGS_TSO;
++	else if (igbvf_tx_csum(adapter, tx_ring, skb, tx_flags) &&
++	         (skb->ip_summed == CHECKSUM_PARTIAL))
++		tx_flags |= IGBVF_TX_FLAGS_CSUM;
++
++	/*
++	 * count reflects descriptors mapped, if 0 then mapping error
++	 * has occured and we need to rewind the descriptor queue
++	 */
++	count = igbvf_tx_map_adv(adapter, tx_ring, skb, first);
++
++	if (count) {
++		igbvf_tx_queue_adv(adapter, tx_ring, tx_flags, count,
++		                   skb->len, hdr_len);
++		netdev->trans_start = jiffies;
++		/* Make sure there is space in the ring for the next send. */
++		igbvf_maybe_stop_tx(netdev, MAX_SKB_FRAGS + 4);
++	} else {
++		dev_kfree_skb_any(skb);
++		tx_ring->buffer_info[first].time_stamp = 0;
++		tx_ring->next_to_use = first;
++	}
++
++	return NETDEV_TX_OK;
++}
++
++static int igbvf_xmit_frame(struct sk_buff *skb, struct net_device *netdev)
++{
++	struct igbvf_adapter *adapter = netdev_priv(netdev);
++	struct igbvf_ring *tx_ring;
++	int retval;
++
++	if (test_bit(__IGBVF_DOWN, &adapter->state)) {
++		dev_kfree_skb_any(skb);
++		return NETDEV_TX_OK;
++	}
++
++	tx_ring = &adapter->tx_ring[0];
++
++	retval = igbvf_xmit_frame_ring_adv(skb, netdev, tx_ring);
++
++	return retval;
++}
++
++/**
++ * igbvf_tx_timeout - Respond to a Tx Hang
++ * @netdev: network interface device structure
++ **/
++static void igbvf_tx_timeout(struct net_device *netdev)
++{
++	struct igbvf_adapter *adapter = netdev_priv(netdev);
++
++	/* Do the reset outside of interrupt context */
++	adapter->tx_timeout_count++;
++	schedule_work(&adapter->reset_task);
++}
++
++static void igbvf_reset_task(struct igbvf_adapter *adapter)
++{
++	igbvf_reinit_locked(adapter);
++}
++
++/**
++ * igbvf_get_stats - Get System Network Statistics
++ * @netdev: network interface device structure
++ *
++ * Returns the address of the device statistics structure.
++ * The statistics are actually updated from the timer callback.
++ **/
++static struct net_device_stats *igbvf_get_stats(struct net_device *netdev)
++{
++	struct igbvf_adapter *adapter = netdev_priv(netdev);
++
++	/* only return the current stats */
++	return &adapter->net_stats;
++}
++
++/**
++ * igbvf_change_mtu - Change the Maximum Transfer Unit
++ * @netdev: network interface device structure
++ * @new_mtu: new value for maximum frame size
++ *
++ * Returns 0 on success, negative on failure
++ **/
++static int igbvf_change_mtu(struct net_device *netdev, int new_mtu)
++{
++	struct igbvf_adapter *adapter = netdev_priv(netdev);
++	int max_frame = new_mtu + ETH_HLEN + ETH_FCS_LEN;
++
++	if ((new_mtu < 68) || (max_frame > MAX_JUMBO_FRAME_SIZE)) {
++		dev_err(&adapter->pdev->dev, "Invalid MTU setting\n");
++		return -EINVAL;
++	}
++
++#define MAX_STD_JUMBO_FRAME_SIZE 9234
++	if (max_frame > MAX_STD_JUMBO_FRAME_SIZE) {
++		dev_err(&adapter->pdev->dev, "MTU > 9216 not supported.\n");
++		return -EINVAL;
++	}
++
++	while (test_and_set_bit(__IGBVF_RESETTING, &adapter->state))
++		msleep(1);
++	/* igbvf_down has a dependency on max_frame_size */
++	adapter->max_frame_size = max_frame;
++	if (netif_running(netdev))
++		igbvf_down(adapter);
++
++	/*
++	 * NOTE: netdev_alloc_skb reserves 16 bytes, and typically NET_IP_ALIGN
++	 * means we reserve 2 more, this pushes us to allocate from the next
++	 * larger slab size.
++	 * i.e. RXBUFFER_2048 --> size-4096 slab
++	 * However with the new *_jumbo_rx* routines, jumbo receives will use
++	 * fragmented skbs
++	 */
++
++	if (max_frame <= 1024)
++		adapter->rx_buffer_len = 1024;
++	else if (max_frame <= 2048)
++		adapter->rx_buffer_len = 2048;
++	else
++#if (PAGE_SIZE / 2) > 16384
++		adapter->rx_buffer_len = 16384;
++#else
++		adapter->rx_buffer_len = PAGE_SIZE / 2;
++#endif
++
++
++	/* adjust allocation if LPE protects us, and we aren't using SBP */
++	if ((max_frame == ETH_FRAME_LEN + ETH_FCS_LEN) ||
++	     (max_frame == ETH_FRAME_LEN + VLAN_HLEN + ETH_FCS_LEN))
++		adapter->rx_buffer_len = ETH_FRAME_LEN + VLAN_HLEN +
++		                         ETH_FCS_LEN;
++
++	dev_info(&adapter->pdev->dev, "changing MTU from %d to %d\n",
++	         netdev->mtu, new_mtu);
++	netdev->mtu = new_mtu;
++
++	if (netif_running(netdev))
++		igbvf_up(adapter);
++	else
++		igbvf_reset(adapter);
++
++	clear_bit(__IGBVF_RESETTING, &adapter->state);
++
++	return 0;
++}
++
++static int igbvf_ioctl(struct net_device *netdev, struct ifreq *ifr, int cmd)
++{
++	switch (cmd) {
++	default:
++		return -EOPNOTSUPP;
++	}
++}
++
++static int igbvf_suspend(struct pci_dev *pdev, pm_message_t state)
++{
++	struct net_device *netdev = pci_get_drvdata(pdev);
++	struct igbvf_adapter *adapter = netdev_priv(netdev);
++#ifdef CONFIG_PM
++	int retval = 0;
++#endif
++
++	netif_device_detach(netdev);
++
++	if (netif_running(netdev)) {
++		WARN_ON(test_bit(__IGBVF_RESETTING, &adapter->state));
++		igbvf_down(adapter);
++		igbvf_free_irq(adapter);
++	}
++
++#ifdef CONFIG_PM
++	retval = pci_save_state(pdev);
++	if (retval)
++		return retval;
++#endif
++
++	pci_disable_device(pdev);
++
++	return 0;
++}
++
++#ifdef CONFIG_PM
++static int igbvf_resume(struct pci_dev *pdev)
++{
++	struct net_device *netdev = pci_get_drvdata(pdev);
++	struct igbvf_adapter *adapter = netdev_priv(netdev);
++	u32 err;
++
++	pci_restore_state(pdev);
++	err = pci_enable_device_mem(pdev);
++	if (err) {
++		dev_err(&pdev->dev, "Cannot enable PCI device from suspend\n");
++		return err;
++	}
++
++	pci_set_master(pdev);
++
++	if (netif_running(netdev)) {
++		err = igbvf_request_irq(adapter);
++		if (err)
++			return err;
++	}
++
++	igbvf_reset(adapter);
++
++	if (netif_running(netdev))
++		igbvf_up(adapter);
++
++	netif_device_attach(netdev);
++
++	return 0;
++}
++#endif
++
++static void igbvf_shutdown(struct pci_dev *pdev)
++{
++	igbvf_suspend(pdev, PMSG_SUSPEND);
++}
++
++#ifdef CONFIG_NET_POLL_CONTROLLER
++/*
++ * Polling 'interrupt' - used by things like netconsole to send skbs
++ * without having to re-enable interrupts. It's not called while
++ * the interrupt routine is executing.
++ */
++static void igbvf_netpoll(struct net_device *netdev)
++{
++	struct igbvf_adapter *adapter = netdev_priv(netdev);
++
++	disable_irq(adapter->pdev->irq);
++
++	igbvf_clean_tx_irq(adapter->tx_ring);
++
++	enable_irq(adapter->pdev->irq);
++}
++#endif
++
++/**
++ * igbvf_io_error_detected - called when PCI error is detected
++ * @pdev: Pointer to PCI device
++ * @state: The current pci connection state
++ *
++ * This function is called after a PCI bus error affecting
++ * this device has been detected.
++ */
++static pci_ers_result_t igbvf_io_error_detected(struct pci_dev *pdev,
++                                                pci_channel_state_t state)
++{
++	struct net_device *netdev = pci_get_drvdata(pdev);
++	struct igbvf_adapter *adapter = netdev_priv(netdev);
++
++	netif_device_detach(netdev);
++
++	if (netif_running(netdev))
++		igbvf_down(adapter);
++	pci_disable_device(pdev);
++
++	/* Request a slot slot reset. */
++	return PCI_ERS_RESULT_NEED_RESET;
++}
++
++/**
++ * igbvf_io_slot_reset - called after the pci bus has been reset.
++ * @pdev: Pointer to PCI device
++ *
++ * Restart the card from scratch, as if from a cold-boot. Implementation
++ * resembles the first-half of the igbvf_resume routine.
++ */
++static pci_ers_result_t igbvf_io_slot_reset(struct pci_dev *pdev)
++{
++	struct net_device *netdev = pci_get_drvdata(pdev);
++	struct igbvf_adapter *adapter = netdev_priv(netdev);
++
++	if (pci_enable_device_mem(pdev)) {
++		dev_err(&pdev->dev,
++			"Cannot re-enable PCI device after reset.\n");
++		return PCI_ERS_RESULT_DISCONNECT;
++	}
++	pci_set_master(pdev);
++
++	igbvf_reset(adapter);
++
++	return PCI_ERS_RESULT_RECOVERED;
++}
++
++/**
++ * igbvf_io_resume - called when traffic can start flowing again.
++ * @pdev: Pointer to PCI device
++ *
++ * This callback is called when the error recovery driver tells us that
++ * its OK to resume normal operation. Implementation resembles the
++ * second-half of the igbvf_resume routine.
++ */
++static void igbvf_io_resume(struct pci_dev *pdev)
++{
++	struct net_device *netdev = pci_get_drvdata(pdev);
++	struct igbvf_adapter *adapter = netdev_priv(netdev);
++
++	if (netif_running(netdev)) {
++		if (igbvf_up(adapter)) {
++			dev_err(&pdev->dev,
++				"can't bring device back up after reset\n");
++			return;
++		}
++	}
++
++	netif_device_attach(netdev);
++}
++
++static void igbvf_print_device_info(struct igbvf_adapter *adapter)
++{
++	struct e1000_hw *hw = &adapter->hw;
++	struct net_device *netdev = adapter->netdev;
++	struct pci_dev *pdev = adapter->pdev;
++
++	dev_info(&pdev->dev, "Intel(R) 82576 Virtual Function\n");
++	dev_info(&pdev->dev, "Address: %02x:%02x:%02x:%02x:%02x:%02x\n",
++	         /* MAC address */
++	         netdev->dev_addr[0], netdev->dev_addr[1],
++	         netdev->dev_addr[2], netdev->dev_addr[3],
++	         netdev->dev_addr[4], netdev->dev_addr[5]);
++	dev_info(&pdev->dev, "MAC: %d\n", hw->mac.type);
++}
++
++/**
++ * igbvf_probe - Device Initialization Routine
++ * @pdev: PCI device information struct
++ * @ent: entry in igbvf_pci_tbl
++ *
++ * Returns 0 on success, negative on failure
++ *
++ * igbvf_probe initializes an adapter identified by a pci_dev structure.
++ * The OS initialization, configuring of the adapter private structure,
++ * and a hardware reset occur.
++ **/
++static int __devinit igbvf_probe(struct pci_dev *pdev,
++                                 const struct pci_device_id *ent)
++{
++	struct net_device *netdev;
++	struct igbvf_adapter *adapter;
++	struct e1000_hw *hw;
++	const struct igbvf_info *ei = igbvf_info_tbl[ent->driver_data];
++
++	static int cards_found;
++	int err, pci_using_dac;
++
++	err = pci_enable_device_mem(pdev);
++	if (err)
++		return err;
++
++	pci_using_dac = 0;
++	err = pci_set_dma_mask(pdev, DMA_64BIT_MASK);
++	if (!err) {
++		err = pci_set_consistent_dma_mask(pdev, DMA_64BIT_MASK);
++		if (!err)
++			pci_using_dac = 1;
++	} else {
++		err = pci_set_dma_mask(pdev, DMA_32BIT_MASK);
++		if (err) {
++			err = pci_set_consistent_dma_mask(pdev, DMA_32BIT_MASK);
++			if (err) {
++				dev_err(&pdev->dev, "No usable DMA "
++				        "configuration, aborting\n");
++				goto err_dma;
++			}
++		}
++	}
++
++	err = pci_request_regions(pdev, igbvf_driver_name);
++	if (err)
++		goto err_pci_reg;
++
++	pci_set_master(pdev);
++
++	err = -ENOMEM;
++	netdev = alloc_etherdev(sizeof(struct igbvf_adapter));
++	if (!netdev)
++		goto err_alloc_etherdev;
++
++	SET_NETDEV_DEV(netdev, &pdev->dev);
++
++	pci_set_drvdata(pdev, netdev);
++	adapter = netdev_priv(netdev);
++	hw = &adapter->hw;
++	adapter->netdev = netdev;
++	adapter->pdev = pdev;
++	adapter->ei = ei;
++	adapter->pba = ei->pba;
++	adapter->flags = ei->flags;
++	adapter->hw.back = adapter;
++	adapter->hw.mac.type = ei->mac;
++	adapter->msg_enable = (1 << NETIF_MSG_DRV | NETIF_MSG_PROBE) - 1;
++
++	/* PCI config space info */
++
++	hw->vendor_id = pdev->vendor;
++	hw->device_id = pdev->device;
++	hw->subsystem_vendor_id = pdev->subsystem_vendor;
++	hw->subsystem_device_id = pdev->subsystem_device;
++
++	pci_read_config_byte(pdev, PCI_REVISION_ID, &hw->revision_id);
++
++	err = -EIO;
++	adapter->hw.hw_addr = ioremap(pci_resource_start(pdev, 0),
++	                              pci_resource_len(pdev, 0));
++
++	if (!adapter->hw.hw_addr)
++		goto err_ioremap;
++
++	if (ei->get_variants) {
++		err = ei->get_variants(adapter);
++		if (err)
++			goto err_ioremap;
++	}
++
++	/* setup adapter struct */
++	err = igbvf_sw_init(adapter);
++	if (err)
++		goto err_sw_init;
++
++	/* construct the net_device struct */
++	netdev->open = &igbvf_open;
++	netdev->stop = &igbvf_close;
++	netdev->hard_start_xmit = &igbvf_xmit_frame;
++	netdev->get_stats = &igbvf_get_stats;
++	netdev->set_multicast_list = &igbvf_set_multi;
++	netdev->set_mac_address = &igbvf_set_mac;
++	netdev->change_mtu = &igbvf_change_mtu;
++	netdev->do_ioctl = &igbvf_ioctl;
++	netdev->tx_timeout = &igbvf_tx_timeout;
++	netdev->vlan_rx_register = &igbvf_vlan_rx_register;
++	netdev->vlan_rx_add_vid = &igbvf_vlan_rx_add_vid;
++	netdev->vlan_rx_kill_vid = &igbvf_vlan_rx_kill_vid;
++#ifdef CONFIG_NET_POLL_CONTROLLER
++	netdev->poll_controller = &igbvf_netpoll;
++#endif
++
++	igbvf_set_ethtool_ops(netdev);
++	netdev->watchdog_timeo = 5 * HZ;
++	strncpy(netdev->name, pci_name(pdev), sizeof(netdev->name) - 1);
++
++	adapter->bd_number = cards_found++;
++
++	netdev->features = NETIF_F_SG |
++	                   NETIF_F_IP_CSUM |
++	                   NETIF_F_HW_VLAN_TX |
++	                   NETIF_F_HW_VLAN_RX |
++	                   NETIF_F_HW_VLAN_FILTER;
++
++	netdev->features |= NETIF_F_TSO;
++	netdev->features |= NETIF_F_TSO6;
++
++	if (pci_using_dac)
++		netdev->features |= NETIF_F_HIGHDMA;
++
++	/*reset the controller to put the device in a known good state */
++	err = hw->mac.ops.reset_hw(hw);
++	if (err) {
++		dev_info(&pdev->dev,
++		         "PF still in reset state, assigning new address\n");
++		random_ether_addr(hw->mac.addr);
++	} else {
++		err = hw->mac.ops.read_mac_addr(hw);
++		if (err) {
++			dev_err(&pdev->dev, "Error reading MAC address\n");
++			goto err_hw_init;
++		}
++	}
++
++	memcpy(netdev->dev_addr, adapter->hw.mac.addr, netdev->addr_len);
++	memcpy(netdev->perm_addr, adapter->hw.mac.addr, netdev->addr_len);
++
++	if (!is_valid_ether_addr(netdev->perm_addr)) {
++		dev_err(&pdev->dev, "Invalid MAC Address: "
++		        "%02x:%02x:%02x:%02x:%02x:%02x\n",
++		        netdev->dev_addr[0], netdev->dev_addr[1],
++		        netdev->dev_addr[2], netdev->dev_addr[3],
++		        netdev->dev_addr[4], netdev->dev_addr[5]);
++		err = -EIO;
++		goto err_hw_init;
++	}
++
++	setup_timer(&adapter->watchdog_timer, &igbvf_watchdog,
++	            (unsigned long) adapter);
++
++	INIT_WORK(&adapter->reset_task,
++		  (void (*)(void *))igbvf_reset_task, adapter);
++	INIT_WORK(&adapter->watchdog_task,
++		  (void (*)(void *))igbvf_watchdog_task, adapter);
++
++	/* ring size defaults */
++	adapter->rx_ring->count = 1024;
++	adapter->tx_ring->count = 1024;
++
++	/* reset the hardware with the new settings */
++	igbvf_reset(adapter);
++
++	/* tell the stack to leave us alone until igbvf_open() is called */
++	netif_carrier_off(netdev);
++	netif_stop_queue(netdev);
++
++	strcpy(netdev->name, "eth%d");
++	err = register_netdev(netdev);
++	if (err)
++		goto err_hw_init;
++
++	igbvf_print_device_info(adapter);
++
++	igbvf_initialize_last_counter_stats(adapter);
++
++	return 0;
++
++err_hw_init:
++	kfree(adapter->tx_ring);
++	kfree(adapter->rx_ring);
++err_sw_init:
++	igbvf_reset_interrupt_capability(adapter);
++	iounmap(adapter->hw.hw_addr);
++err_ioremap:
++	free_netdev(netdev);
++err_alloc_etherdev:
++	pci_release_regions(pdev);
++err_pci_reg:
++err_dma:
++	pci_disable_device(pdev);
++	return err;
++}
++
++/**
++ * igbvf_remove - Device Removal Routine
++ * @pdev: PCI device information struct
++ *
++ * igbvf_remove is called by the PCI subsystem to alert the driver
++ * that it should release a PCI device.  The could be caused by a
++ * Hot-Plug event, or because the driver is going to be removed from
++ * memory.
++ **/
++static void __devexit igbvf_remove(struct pci_dev *pdev)
++{
++	struct net_device *netdev = pci_get_drvdata(pdev);
++	struct igbvf_adapter *adapter = netdev_priv(netdev);
++	struct e1000_hw *hw = &adapter->hw;
++
++	/*
++	 * flush_scheduled work may reschedule our watchdog task, so
++	 * explicitly disable watchdog tasks from being rescheduled
++	 */
++	set_bit(__IGBVF_DOWN, &adapter->state);
++	del_timer_sync(&adapter->watchdog_timer);
++
++	flush_scheduled_work();
++
++	unregister_netdev(netdev);
++
++	igbvf_reset_interrupt_capability(adapter);
++
++	kfree(adapter->tx_ring);
++	kfree(adapter->rx_ring);
++
++	iounmap(hw->hw_addr);
++	if (hw->flash_address)
++		iounmap(hw->flash_address);
++	pci_release_regions(pdev);
++
++	free_netdev(netdev);
++
++	pci_disable_device(pdev);
++}
++
++/* PCI Error Recovery (ERS) */
++static struct pci_error_handlers igbvf_err_handler = {
++	.error_detected = igbvf_io_error_detected,
++	.slot_reset = igbvf_io_slot_reset,
++	.resume = igbvf_io_resume,
++};
++
++static struct pci_device_id igbvf_pci_tbl[] = {
++	{ PCI_VDEVICE(INTEL, E1000_DEV_ID_82576_VF), board_vf },
++	{ } /* terminate list */
++};
++MODULE_DEVICE_TABLE(pci, igbvf_pci_tbl);
++
++/* PCI Device API Driver */
++static struct pci_driver igbvf_driver = {
++	.name     = igbvf_driver_name,
++	.id_table = igbvf_pci_tbl,
++	.probe    = igbvf_probe,
++	.remove   = __devexit_p(igbvf_remove),
++#ifdef CONFIG_PM
++	/* Power Management Hooks */
++	.suspend  = igbvf_suspend,
++	.resume   = igbvf_resume,
++#endif
++	.shutdown = igbvf_shutdown,
++	.err_handler = &igbvf_err_handler
++};
++
++/**
++ * igbvf_init_module - Driver Registration Routine
++ *
++ * igbvf_init_module is the first routine called when the driver is
++ * loaded. All it does is register with the PCI subsystem.
++ **/
++static int __init igbvf_init_module(void)
++{
++	int ret;
++	printk(KERN_INFO "%s - version %s\n",
++	       igbvf_driver_string, igbvf_driver_version);
++	printk(KERN_INFO "%s\n", igbvf_copyright);
++
++	ret = pci_register_driver(&igbvf_driver);
++	return ret;
++}
++module_init(igbvf_init_module);
++
++/**
++ * igbvf_exit_module - Driver Exit Cleanup Routine
++ *
++ * igbvf_exit_module is called just before the driver is removed
++ * from memory.
++ **/
++static void __exit igbvf_exit_module(void)
++{
++	pci_unregister_driver(&igbvf_driver);
++}
++module_exit(igbvf_exit_module);
++
++
++MODULE_AUTHOR("Intel Corporation, <e1000-devel@lists.sourceforge.net>");
++MODULE_DESCRIPTION("Intel(R) 82576 Virtual Function Network Driver");
++MODULE_LICENSE("GPL");
++MODULE_VERSION(DRV_VERSION);
++
++/* netdev.c */
+diff --git a/drivers/net/igbvf/regs.h b/drivers/net/igbvf/regs.h
+new file mode 100644
+index 0000000..b9e24ed
+--- /dev/null
++++ b/drivers/net/igbvf/regs.h
+@@ -0,0 +1,108 @@
++/*******************************************************************************
++
++  Intel(R) 82576 Virtual Function Linux driver
++  Copyright(c) 2009 Intel Corporation.
++
++  This program is free software; you can redistribute it and/or modify it
++  under the terms and conditions of the GNU General Public License,
++  version 2, as published by the Free Software Foundation.
++
++  This program is distributed in the hope it will be useful, but WITHOUT
++  ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
++  FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
++  more details.
++
++  You should have received a copy of the GNU General Public License along with
++  this program; if not, write to the Free Software Foundation, Inc.,
++  51 Franklin St - Fifth Floor, Boston, MA 02110-1301 USA.
++
++  The full GNU General Public License is included in this distribution in
++  the file called "COPYING".
++
++  Contact Information:
++  e1000-devel Mailing List <e1000-devel@lists.sourceforge.net>
++  Intel Corporation, 5200 N.E. Elam Young Parkway, Hillsboro, OR 97124-6497
++
++*******************************************************************************/
++
++#ifndef _E1000_REGS_H_
++#define _E1000_REGS_H_
++
++#define E1000_CTRL      0x00000 /* Device Control - RW */
++#define E1000_STATUS    0x00008 /* Device Status - RO */
++#define E1000_ITR       0x000C4 /* Interrupt Throttling Rate - RW */
++#define E1000_EICR      0x01580 /* Ext. Interrupt Cause Read - R/clr */
++#define E1000_EITR(_n)  (0x01680 + (0x4 * (_n)))
++#define E1000_EICS      0x01520 /* Ext. Interrupt Cause Set - W0 */
++#define E1000_EIMS      0x01524 /* Ext. Interrupt Mask Set/Read - RW */
++#define E1000_EIMC      0x01528 /* Ext. Interrupt Mask Clear - WO */
++#define E1000_EIAC      0x0152C /* Ext. Interrupt Auto Clear - RW */
++#define E1000_EIAM      0x01530 /* Ext. Interrupt Ack Auto Clear Mask - RW */
++#define E1000_IVAR0     0x01700 /* Interrupt Vector Allocation (array) - RW */
++#define E1000_IVAR_MISC 0x01740 /* IVAR for "other" causes - RW */
++/*
++ * Convenience macros
++ *
++ * Note: "_n" is the queue number of the register to be written to.
++ *
++ * Example usage:
++ * E1000_RDBAL_REG(current_rx_queue)
++ */
++#define E1000_RDBAL(_n)      ((_n) < 4 ? (0x02800 + ((_n) * 0x100)) : \
++                                         (0x0C000 + ((_n) * 0x40)))
++#define E1000_RDBAH(_n)      ((_n) < 4 ? (0x02804 + ((_n) * 0x100)) : \
++                                         (0x0C004 + ((_n) * 0x40)))
++#define E1000_RDLEN(_n)      ((_n) < 4 ? (0x02808 + ((_n) * 0x100)) : \
++                                         (0x0C008 + ((_n) * 0x40)))
++#define E1000_SRRCTL(_n)     ((_n) < 4 ? (0x0280C + ((_n) * 0x100)) : \
++                                         (0x0C00C + ((_n) * 0x40)))
++#define E1000_RDH(_n)        ((_n) < 4 ? (0x02810 + ((_n) * 0x100)) : \
++                                         (0x0C010 + ((_n) * 0x40)))
++#define E1000_RDT(_n)        ((_n) < 4 ? (0x02818 + ((_n) * 0x100)) : \
++                                         (0x0C018 + ((_n) * 0x40)))
++#define E1000_RXDCTL(_n)     ((_n) < 4 ? (0x02828 + ((_n) * 0x100)) : \
++                                         (0x0C028 + ((_n) * 0x40)))
++#define E1000_TDBAL(_n)      ((_n) < 4 ? (0x03800 + ((_n) * 0x100)) : \
++                                         (0x0E000 + ((_n) * 0x40)))
++#define E1000_TDBAH(_n)      ((_n) < 4 ? (0x03804 + ((_n) * 0x100)) : \
++                                         (0x0E004 + ((_n) * 0x40)))
++#define E1000_TDLEN(_n)      ((_n) < 4 ? (0x03808 + ((_n) * 0x100)) : \
++                                         (0x0E008 + ((_n) * 0x40)))
++#define E1000_TDH(_n)        ((_n) < 4 ? (0x03810 + ((_n) * 0x100)) : \
++                                         (0x0E010 + ((_n) * 0x40)))
++#define E1000_TDT(_n)        ((_n) < 4 ? (0x03818 + ((_n) * 0x100)) : \
++                                         (0x0E018 + ((_n) * 0x40)))
++#define E1000_TXDCTL(_n)     ((_n) < 4 ? (0x03828 + ((_n) * 0x100)) : \
++                                         (0x0E028 + ((_n) * 0x40)))
++#define E1000_DCA_TXCTRL(_n) (0x03814 + (_n << 8))
++#define E1000_DCA_RXCTRL(_n) (0x02814 + (_n << 8))
++#define E1000_RAL(_i)  (((_i) <= 15) ? (0x05400 + ((_i) * 8)) : \
++                                       (0x054E0 + ((_i - 16) * 8)))
++#define E1000_RAH(_i)  (((_i) <= 15) ? (0x05404 + ((_i) * 8)) : \
++                                       (0x054E4 + ((_i - 16) * 8)))
++
++/* Statistics registers */
++#define E1000_VFGPRC    0x00F10
++#define E1000_VFGORC    0x00F18
++#define E1000_VFMPRC    0x00F3C
++#define E1000_VFGPTC    0x00F14
++#define E1000_VFGOTC    0x00F34
++#define E1000_VFGOTLBC  0x00F50
++#define E1000_VFGPTLBC  0x00F44
++#define E1000_VFGORLBC  0x00F48
++#define E1000_VFGPRLBC  0x00F40
++
++/* These act per VF so an array friendly macro is used */
++#define E1000_V2PMAILBOX(_n)   (0x00C40 + (4 * (_n)))
++#define E1000_VMBMEM(_n)       (0x00800 + (64 * (_n)))
++
++/* Define macros for handling registers */
++#define er32(reg) readl(hw->hw_addr + E1000_##reg)
++#define ew32(reg, val) writel((val), hw->hw_addr +  E1000_##reg)
++#define array_er32(reg, offset) \
++	readl(hw->hw_addr + E1000_##reg + (offset << 2))
++#define array_ew32(reg, offset, val) \
++	writel((val), hw->hw_addr +  E1000_##reg + (offset << 2))
++#define e1e_flush() er32(STATUS)
++
++#endif
+diff --git a/drivers/net/igbvf/vf.c b/drivers/net/igbvf/vf.c
+new file mode 100644
+index 0000000..2a4faf9
+--- /dev/null
++++ b/drivers/net/igbvf/vf.c
+@@ -0,0 +1,398 @@
++/*******************************************************************************
++
++  Intel(R) 82576 Virtual Function Linux driver
++  Copyright(c) 2009 Intel Corporation.
++
++  This program is free software; you can redistribute it and/or modify it
++  under the terms and conditions of the GNU General Public License,
++  version 2, as published by the Free Software Foundation.
++
++  This program is distributed in the hope it will be useful, but WITHOUT
++  ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
++  FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
++  more details.
++
++  You should have received a copy of the GNU General Public License along with
++  this program; if not, write to the Free Software Foundation, Inc.,
++  51 Franklin St - Fifth Floor, Boston, MA 02110-1301 USA.
++
++  The full GNU General Public License is included in this distribution in
++  the file called "COPYING".
++
++  Contact Information:
++  e1000-devel Mailing List <e1000-devel@lists.sourceforge.net>
++  Intel Corporation, 5200 N.E. Elam Young Parkway, Hillsboro, OR 97124-6497
++
++*******************************************************************************/
++
++
++#include "vf.h"
++
++static s32 e1000_check_for_link_vf(struct e1000_hw *hw);
++static s32 e1000_get_link_up_info_vf(struct e1000_hw *hw, u16 *speed,
++                                     u16 *duplex);
++static s32 e1000_init_hw_vf(struct e1000_hw *hw);
++static s32 e1000_reset_hw_vf(struct e1000_hw *hw);
++
++static void e1000_update_mc_addr_list_vf(struct e1000_hw *hw, u8 *,
++                                         u32, u32, u32);
++static void e1000_rar_set_vf(struct e1000_hw *, u8 *, u32);
++static s32 e1000_read_mac_addr_vf(struct e1000_hw *);
++static s32 e1000_set_vfta_vf(struct e1000_hw *, u16, bool);
++
++/**
++ *  e1000_init_mac_params_vf - Inits MAC params
++ *  @hw: pointer to the HW structure
++ **/
++static s32 e1000_init_mac_params_vf(struct e1000_hw *hw)
++{
++	struct e1000_mac_info *mac = &hw->mac;
++
++	/* VF's have no MTA Registers - PF feature only */
++	mac->mta_reg_count = 128;
++	/* VF's have no access to RAR entries  */
++	mac->rar_entry_count = 1;
++
++	/* Function pointers */
++	/* reset */
++	mac->ops.reset_hw = e1000_reset_hw_vf;
++	/* hw initialization */
++	mac->ops.init_hw = e1000_init_hw_vf;
++	/* check for link */
++	mac->ops.check_for_link = e1000_check_for_link_vf;
++	/* link info */
++	mac->ops.get_link_up_info = e1000_get_link_up_info_vf;
++	/* multicast address update */
++	mac->ops.update_mc_addr_list = e1000_update_mc_addr_list_vf;
++	/* set mac address */
++	mac->ops.rar_set = e1000_rar_set_vf;
++	/* read mac address */
++	mac->ops.read_mac_addr = e1000_read_mac_addr_vf;
++	/* set vlan filter table array */
++	mac->ops.set_vfta = e1000_set_vfta_vf;
++
++	return E1000_SUCCESS;
++}
++
++/**
++ *  e1000_init_function_pointers_vf - Inits function pointers
++ *  @hw: pointer to the HW structure
++ **/
++void e1000_init_function_pointers_vf(struct e1000_hw *hw)
++{
++	hw->mac.ops.init_params = e1000_init_mac_params_vf;
++	hw->mbx.ops.init_params = e1000_init_mbx_params_vf;
++}
++
++/**
++ *  e1000_get_link_up_info_vf - Gets link info.
++ *  @hw: pointer to the HW structure
++ *  @speed: pointer to 16 bit value to store link speed.
++ *  @duplex: pointer to 16 bit value to store duplex.
++ *
++ *  Since we cannot read the PHY and get accurate link info, we must rely upon
++ *  the status register's data which is often stale and inaccurate.
++ **/
++static s32 e1000_get_link_up_info_vf(struct e1000_hw *hw, u16 *speed,
++                                     u16 *duplex)
++{
++	s32 status;
++
++	status = er32(STATUS);
++	if (status & E1000_STATUS_SPEED_1000)
++		*speed = SPEED_1000;
++	else if (status & E1000_STATUS_SPEED_100)
++		*speed = SPEED_100;
++	else
++		*speed = SPEED_10;
++
++	if (status & E1000_STATUS_FD)
++		*duplex = FULL_DUPLEX;
++	else
++		*duplex = HALF_DUPLEX;
++
++	return E1000_SUCCESS;
++}
++
++/**
++ *  e1000_reset_hw_vf - Resets the HW
++ *  @hw: pointer to the HW structure
++ *
++ *  VF's provide a function level reset. This is done using bit 26 of ctrl_reg.
++ *  This is all the reset we can perform on a VF.
++ **/
++static s32 e1000_reset_hw_vf(struct e1000_hw *hw)
++{
++	struct e1000_mbx_info *mbx = &hw->mbx;
++	u32 timeout = E1000_VF_INIT_TIMEOUT;
++	u32 ret_val = -E1000_ERR_MAC_INIT;
++	u32 msgbuf[3];
++	u8 *addr = (u8 *)(&msgbuf[1]);
++	u32 ctrl;
++
++	/* assert vf queue/interrupt reset */
++	ctrl = er32(CTRL);
++	ew32(CTRL, ctrl | E1000_CTRL_RST);
++
++	/* we cannot initialize while the RSTI / RSTD bits are asserted */
++	while (!mbx->ops.check_for_rst(hw) && timeout) {
++		timeout--;
++		udelay(5);
++	}
++
++	if (timeout) {
++		/* mailbox timeout can now become active */
++		mbx->timeout = E1000_VF_MBX_INIT_TIMEOUT;
++
++		/* notify pf of vf reset completion */
++		msgbuf[0] = E1000_VF_RESET;
++		mbx->ops.write_posted(hw, msgbuf, 1);
++
++		msleep(10);
++
++		/* set our "perm_addr" based on info provided by PF */
++		ret_val = mbx->ops.read_posted(hw, msgbuf, 3);
++		if (!ret_val) {
++			if (msgbuf[0] == (E1000_VF_RESET | E1000_VT_MSGTYPE_ACK))
++				memcpy(hw->mac.perm_addr, addr, 6);
++			else
++				ret_val = -E1000_ERR_MAC_INIT;
++		}
++	}
++
++	return ret_val;
++}
++
++/**
++ *  e1000_init_hw_vf - Inits the HW
++ *  @hw: pointer to the HW structure
++ *
++ *  Not much to do here except clear the PF Reset indication if there is one.
++ **/
++static s32 e1000_init_hw_vf(struct e1000_hw *hw)
++{
++	/* attempt to set and restore our mac address */
++	e1000_rar_set_vf(hw, hw->mac.addr, 0);
++
++	return E1000_SUCCESS;
++}
++
++/**
++ *  e1000_hash_mc_addr_vf - Generate a multicast hash value
++ *  @hw: pointer to the HW structure
++ *  @mc_addr: pointer to a multicast address
++ *
++ *  Generates a multicast address hash value which is used to determine
++ *  the multicast filter table array address and new table value.  See
++ *  e1000_mta_set_generic()
++ **/
++static u32 e1000_hash_mc_addr_vf(struct e1000_hw *hw, u8 *mc_addr)
++{
++	u32 hash_value, hash_mask;
++	u8 bit_shift = 0;
++
++	/* Register count multiplied by bits per register */
++	hash_mask = (hw->mac.mta_reg_count * 32) - 1;
++
++	/*
++	 * The bit_shift is the number of left-shifts
++	 * where 0xFF would still fall within the hash mask.
++	 */
++	while (hash_mask >> bit_shift != 0xFF)
++		bit_shift++;
++
++	hash_value = hash_mask & (((mc_addr[4] >> (8 - bit_shift)) |
++	                          (((u16) mc_addr[5]) << bit_shift)));
++
++	return hash_value;
++}
++
++/**
++ *  e1000_update_mc_addr_list_vf - Update Multicast addresses
++ *  @hw: pointer to the HW structure
++ *  @mc_addr_list: array of multicast addresses to program
++ *  @mc_addr_count: number of multicast addresses to program
++ *  @rar_used_count: the first RAR register free to program
++ *  @rar_count: total number of supported Receive Address Registers
++ *
++ *  Updates the Receive Address Registers and Multicast Table Array.
++ *  The caller must have a packed mc_addr_list of multicast addresses.
++ *  The parameter rar_count will usually be hw->mac.rar_entry_count
++ *  unless there are workarounds that change this.
++ **/
++void e1000_update_mc_addr_list_vf(struct e1000_hw *hw,
++                                  u8 *mc_addr_list, u32 mc_addr_count,
++                                  u32 rar_used_count, u32 rar_count)
++{
++	struct e1000_mbx_info *mbx = &hw->mbx;
++	u32 msgbuf[E1000_VFMAILBOX_SIZE];
++	u16 *hash_list = (u16 *)&msgbuf[1];
++	u32 hash_value;
++	u32 cnt, i;
++
++	/* Each entry in the list uses 1 16 bit word.  We have 30
++	 * 16 bit words available in our HW msg buffer (minus 1 for the
++	 * msg type).  That's 30 hash values if we pack 'em right.  If
++	 * there are more than 30 MC addresses to add then punt the
++	 * extras for now and then add code to handle more than 30 later.
++	 * It would be unusual for a server to request that many multi-cast
++	 * addresses except for in large enterprise network environments.
++	 */
++
++	cnt = (mc_addr_count > 30) ? 30 : mc_addr_count;
++	msgbuf[0] = E1000_VF_SET_MULTICAST;
++	msgbuf[0] |= cnt << E1000_VT_MSGINFO_SHIFT;
++
++	for (i = 0; i < cnt; i++) {
++		hash_value = e1000_hash_mc_addr_vf(hw, mc_addr_list);
++		hash_list[i] = hash_value & 0x0FFFF;
++		mc_addr_list += ETH_ADDR_LEN;
++	}
++
++	mbx->ops.write_posted(hw, msgbuf, E1000_VFMAILBOX_SIZE);
++}
++
++/**
++ *  e1000_set_vfta_vf - Set/Unset vlan filter table address
++ *  @hw: pointer to the HW structure
++ *  @vid: determines the vfta register and bit to set/unset
++ *  @set: if true then set bit, else clear bit
++ **/
++static s32 e1000_set_vfta_vf(struct e1000_hw *hw, u16 vid, bool set)
++{
++	struct e1000_mbx_info *mbx = &hw->mbx;
++	u32 msgbuf[2];
++	s32 err;
++
++	msgbuf[0] = E1000_VF_SET_VLAN;
++	msgbuf[1] = vid;
++	/* Setting the 8 bit field MSG INFO to true indicates "add" */
++	if (set)
++		msgbuf[0] |= 1 << E1000_VT_MSGINFO_SHIFT;
++
++	mbx->ops.write_posted(hw, msgbuf, 2);
++
++	err = mbx->ops.read_posted(hw, msgbuf, 2);
++
++	/* if nacked the vlan was rejected */
++	if (!err && (msgbuf[0] == (E1000_VF_SET_VLAN | E1000_VT_MSGTYPE_NACK)))
++		err = -E1000_ERR_MAC_INIT;
++
++	return err;
++}
++
++/** e1000_rlpml_set_vf - Set the maximum receive packet length
++ *  @hw: pointer to the HW structure
++ *  @max_size: value to assign to max frame size
++ **/
++void e1000_rlpml_set_vf(struct e1000_hw *hw, u16 max_size)
++{
++	struct e1000_mbx_info *mbx = &hw->mbx;
++	u32 msgbuf[2];
++
++	msgbuf[0] = E1000_VF_SET_LPE;
++	msgbuf[1] = max_size;
++
++	mbx->ops.write_posted(hw, msgbuf, 2);
++}
++
++/**
++ *  e1000_rar_set_vf - set device MAC address
++ *  @hw: pointer to the HW structure
++ *  @addr: pointer to the receive address
++ *  @index receive address array register
++ **/
++static void e1000_rar_set_vf(struct e1000_hw *hw, u8 * addr, u32 index)
++{
++	struct e1000_mbx_info *mbx = &hw->mbx;
++	u32 msgbuf[3];
++	u8 *msg_addr = (u8 *)(&msgbuf[1]);
++	s32 ret_val;
++
++	memset(msgbuf, 0, 12);
++	msgbuf[0] = E1000_VF_SET_MAC_ADDR;
++	memcpy(msg_addr, addr, 6);
++	ret_val = mbx->ops.write_posted(hw, msgbuf, 3);
++
++	if (!ret_val)
++		ret_val = mbx->ops.read_posted(hw, msgbuf, 3);
++
++	/* if nacked the address was rejected, use "perm_addr" */
++	if (!ret_val &&
++	    (msgbuf[0] == (E1000_VF_SET_MAC_ADDR | E1000_VT_MSGTYPE_NACK)))
++		e1000_read_mac_addr_vf(hw);
++}
++
++/**
++ *  e1000_read_mac_addr_vf - Read device MAC address
++ *  @hw: pointer to the HW structure
++ **/
++static s32 e1000_read_mac_addr_vf(struct e1000_hw *hw)
++{
++	int i;
++
++	for (i = 0; i < ETH_ADDR_LEN; i++)
++		hw->mac.addr[i] = hw->mac.perm_addr[i];
++
++	return E1000_SUCCESS;
++}
++
++/**
++ *  e1000_check_for_link_vf - Check for link for a virtual interface
++ *  @hw: pointer to the HW structure
++ *
++ *  Checks to see if the underlying PF is still talking to the VF and
++ *  if it is then it reports the link state to the hardware, otherwise
++ *  it reports link down and returns an error.
++ **/
++static s32 e1000_check_for_link_vf(struct e1000_hw *hw)
++{
++	struct e1000_mbx_info *mbx = &hw->mbx;
++	struct e1000_mac_info *mac = &hw->mac;
++	s32 ret_val = E1000_SUCCESS;
++	u32 in_msg = 0;
++
++	/*
++	 * We only want to run this if there has been a rst asserted.
++	 * in this case that could mean a link change, device reset,
++	 * or a virtual function reset
++	 */
++
++	/* If we were hit with a reset drop the link */
++	if (!mbx->ops.check_for_rst(hw))
++		mac->get_link_status = true;
++
++	if (!mac->get_link_status)
++		goto out;
++
++	/* if link status is down no point in checking to see if pf is up */
++	if (!(er32(STATUS) & E1000_STATUS_LU))
++		goto out;
++
++	/* if the read failed it could just be a mailbox collision, best wait
++	 * until we are called again and don't report an error */
++	if (mbx->ops.read(hw, &in_msg, 1))
++		goto out;
++
++	/* if incoming message isn't clear to send we are waiting on response */
++	if (!(in_msg & E1000_VT_MSGTYPE_CTS)) {
++		/* message is not CTS and is NACK we must have lost CTS status */
++		if (in_msg & E1000_VT_MSGTYPE_NACK)
++			ret_val = -E1000_ERR_MAC_INIT;
++		goto out;
++	}
++
++	/* the pf is talking, if we timed out in the past we reinit */
++	if (!mbx->timeout) {
++		ret_val = -E1000_ERR_MAC_INIT;
++		goto out;
++	}
++
++	/* if we passed all the tests above then the link is up and we no
++	 * longer need to check for link */
++	mac->get_link_status = false;
++
++out:
++	return ret_val;
++}
++
+diff --git a/drivers/net/igbvf/vf.h b/drivers/net/igbvf/vf.h
+new file mode 100644
+index 0000000..1e8ce37
+--- /dev/null
++++ b/drivers/net/igbvf/vf.h
+@@ -0,0 +1,264 @@
++/*******************************************************************************
++
++  Intel(R) 82576 Virtual Function Linux driver
++  Copyright(c) 2009 Intel Corporation.
++
++  This program is free software; you can redistribute it and/or modify it
++  under the terms and conditions of the GNU General Public License,
++  version 2, as published by the Free Software Foundation.
++
++  This program is distributed in the hope it will be useful, but WITHOUT
++  ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
++  FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
++  more details.
++
++  You should have received a copy of the GNU General Public License along with
++  this program; if not, write to the Free Software Foundation, Inc.,
++  51 Franklin St - Fifth Floor, Boston, MA 02110-1301 USA.
++
++  The full GNU General Public License is included in this distribution in
++  the file called "COPYING".
++
++  Contact Information:
++  e1000-devel Mailing List <e1000-devel@lists.sourceforge.net>
++  Intel Corporation, 5200 N.E. Elam Young Parkway, Hillsboro, OR 97124-6497
++
++*******************************************************************************/
++
++#ifndef _E1000_VF_H_
++#define _E1000_VF_H_
++
++#include <linux/pci.h>
++#include <linux/delay.h>
++#include <linux/interrupt.h>
++#include <linux/if_ether.h>
++
++#include "regs.h"
++#include "defines.h"
++
++struct e1000_hw;
++
++#define E1000_DEV_ID_82576_VF                 0x10CA
++#define E1000_REVISION_0 0
++#define E1000_REVISION_1 1
++#define E1000_REVISION_2 2
++#define E1000_REVISION_3 3
++#define E1000_REVISION_4 4
++
++#define E1000_FUNC_0     0
++#define E1000_FUNC_1     1
++
++/*
++ * Receive Address Register Count
++ * Number of high/low register pairs in the RAR.  The RAR (Receive Address
++ * Registers) holds the directed and multicast addresses that we monitor.
++ * These entries are also used for MAC-based filtering.
++ */
++#define E1000_RAR_ENTRIES_VF      1
++
++/* Receive Descriptor - Advanced */
++union e1000_adv_rx_desc {
++	struct {
++		u64 pkt_addr;             /* Packet buffer address */
++		u64 hdr_addr;             /* Header buffer address */
++	} read;
++	struct {
++		struct {
++			union {
++				u32 data;
++				struct {
++					u16 pkt_info; /* RSS/Packet type */
++					u16 hdr_info; /* Split Header,
++					               * hdr buffer length */
++				} hs_rss;
++			} lo_dword;
++			union {
++				u32 rss;          /* RSS Hash */
++				struct {
++					u16 ip_id;    /* IP id */
++					u16 csum;     /* Packet Checksum */
++				} csum_ip;
++			} hi_dword;
++		} lower;
++		struct {
++			u32 status_error;     /* ext status/error */
++			u16 length;           /* Packet length */
++			u16 vlan;             /* VLAN tag */
++		} upper;
++	} wb;  /* writeback */
++};
++
++#define E1000_RXDADV_HDRBUFLEN_MASK      0x7FE0
++#define E1000_RXDADV_HDRBUFLEN_SHIFT     5
++
++/* Transmit Descriptor - Advanced */
++union e1000_adv_tx_desc {
++	struct {
++		u64 buffer_addr;    /* Address of descriptor's data buf */
++		u32 cmd_type_len;
++		u32 olinfo_status;
++	} read;
++	struct {
++		u64 rsvd;       /* Reserved */
++		u32 nxtseq_seed;
++		u32 status;
++	} wb;
++};
++
++/* Adv Transmit Descriptor Config Masks */
++#define E1000_ADVTXD_DTYP_CTXT    0x00200000 /* Advanced Context Descriptor */
++#define E1000_ADVTXD_DTYP_DATA    0x00300000 /* Advanced Data Descriptor */
++#define E1000_ADVTXD_DCMD_EOP     0x01000000 /* End of Packet */
++#define E1000_ADVTXD_DCMD_IFCS    0x02000000 /* Insert FCS (Ethernet CRC) */
++#define E1000_ADVTXD_DCMD_RS      0x08000000 /* Report Status */
++#define E1000_ADVTXD_DCMD_DEXT    0x20000000 /* Descriptor extension (1=Adv) */
++#define E1000_ADVTXD_DCMD_VLE     0x40000000 /* VLAN pkt enable */
++#define E1000_ADVTXD_DCMD_TSE     0x80000000 /* TCP Seg enable */
++#define E1000_ADVTXD_PAYLEN_SHIFT    14 /* Adv desc PAYLEN shift */
++
++/* Context descriptors */
++struct e1000_adv_tx_context_desc {
++	u32 vlan_macip_lens;
++	u32 seqnum_seed;
++	u32 type_tucmd_mlhl;
++	u32 mss_l4len_idx;
++};
++
++#define E1000_ADVTXD_MACLEN_SHIFT    9  /* Adv ctxt desc mac len shift */
++#define E1000_ADVTXD_TUCMD_IPV4    0x00000400  /* IP Packet Type: 1=IPv4 */
++#define E1000_ADVTXD_TUCMD_L4T_TCP 0x00000800  /* L4 Packet TYPE of TCP */
++#define E1000_ADVTXD_L4LEN_SHIFT     8  /* Adv ctxt L4LEN shift */
++#define E1000_ADVTXD_MSS_SHIFT      16  /* Adv ctxt MSS shift */
++
++enum e1000_mac_type {
++	e1000_undefined = 0,
++	e1000_vfadapt,
++	e1000_num_macs  /* List is 1-based, so subtract 1 for true count. */
++};
++
++struct e1000_vf_stats {
++	u64 base_gprc;
++	u64 base_gptc;
++	u64 base_gorc;
++	u64 base_gotc;
++	u64 base_mprc;
++	u64 base_gotlbc;
++	u64 base_gptlbc;
++	u64 base_gorlbc;
++	u64 base_gprlbc;
++
++	u32 last_gprc;
++	u32 last_gptc;
++	u32 last_gorc;
++	u32 last_gotc;
++	u32 last_mprc;
++	u32 last_gotlbc;
++	u32 last_gptlbc;
++	u32 last_gorlbc;
++	u32 last_gprlbc;
++
++	u64 gprc;
++	u64 gptc;
++	u64 gorc;
++	u64 gotc;
++	u64 mprc;
++	u64 gotlbc;
++	u64 gptlbc;
++	u64 gorlbc;
++	u64 gprlbc;
++};
++
++#include "mbx.h"
++
++struct e1000_mac_operations {
++	/* Function pointers for the MAC. */
++	s32  (*init_params)(struct e1000_hw *);
++	s32  (*check_for_link)(struct e1000_hw *);
++	void (*clear_vfta)(struct e1000_hw *);
++	s32  (*get_bus_info)(struct e1000_hw *);
++	s32  (*get_link_up_info)(struct e1000_hw *, u16 *, u16 *);
++	void (*update_mc_addr_list)(struct e1000_hw *, u8 *, u32, u32, u32);
++	s32  (*reset_hw)(struct e1000_hw *);
++	s32  (*init_hw)(struct e1000_hw *);
++	s32  (*setup_link)(struct e1000_hw *);
++	void (*write_vfta)(struct e1000_hw *, u32, u32);
++	void (*mta_set)(struct e1000_hw *, u32);
++	void (*rar_set)(struct e1000_hw *, u8*, u32);
++	s32  (*read_mac_addr)(struct e1000_hw *);
++	s32  (*set_vfta)(struct e1000_hw *, u16, bool);
++};
++
++struct e1000_mac_info {
++	struct e1000_mac_operations ops;
++	u8 addr[6];
++	u8 perm_addr[6];
++
++	enum e1000_mac_type type;
++
++	u16 mta_reg_count;
++	u16 rar_entry_count;
++
++	bool get_link_status;
++};
++
++struct e1000_mbx_operations {
++	s32 (*init_params)(struct e1000_hw *hw);
++	s32 (*read)(struct e1000_hw *, u32 *, u16);
++	s32 (*write)(struct e1000_hw *, u32 *, u16);
++	s32 (*read_posted)(struct e1000_hw *, u32 *, u16);
++	s32 (*write_posted)(struct e1000_hw *, u32 *, u16);
++	s32 (*check_for_msg)(struct e1000_hw *);
++	s32 (*check_for_ack)(struct e1000_hw *);
++	s32 (*check_for_rst)(struct e1000_hw *);
++};
++
++struct e1000_mbx_stats {
++	u32 msgs_tx;
++	u32 msgs_rx;
++
++	u32 acks;
++	u32 reqs;
++	u32 rsts;
++};
++
++struct e1000_mbx_info {
++	struct e1000_mbx_operations ops;
++	struct e1000_mbx_stats stats;
++	u32 timeout;
++	u32 usec_delay;
++	u16 size;
++};
++
++struct e1000_dev_spec_vf {
++	u32 vf_number;
++	u32 v2p_mailbox;
++};
++
++struct e1000_hw {
++	void *back;
++
++	u8 __iomem *hw_addr;
++	u8 __iomem *flash_address;
++	unsigned long io_base;
++
++	struct e1000_mac_info  mac;
++	struct e1000_mbx_info mbx;
++
++	union {
++		struct e1000_dev_spec_vf vf;
++	} dev_spec;
++
++	u16 device_id;
++	u16 subsystem_vendor_id;
++	u16 subsystem_device_id;
++	u16 vendor_id;
++
++	u8  revision_id;
++};
++
++/* These functions must be implemented by drivers */
++void e1000_rlpml_set_vf(struct e1000_hw *, u16);
++void e1000_init_function_pointers_vf(struct e1000_hw *hw);
++
++
++#endif /* _E1000_VF_H_ */

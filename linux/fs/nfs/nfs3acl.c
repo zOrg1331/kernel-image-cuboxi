@@ -5,8 +5,6 @@
 #include <linux/posix_acl_xattr.h>
 #include <linux/nfsacl.h>
 
-#include "internal.h"
-
 #define NFSDBG_FACILITY	NFSDBG_PROC
 
 ssize_t nfs3_listxattr(struct dentry *dentry, char *buffer, size_t size)
@@ -184,6 +182,7 @@ static void nfs3_cache_acls(struct inode *inode, struct posix_acl *acl,
 struct posix_acl *nfs3_proc_getacl(struct inode *inode, int type)
 {
 	struct nfs_server *server = NFS_SERVER(inode);
+	struct nfs_fattr fattr;
 	struct page *pages[NFSACL_MAXPAGES] = { };
 	struct nfs3_getaclargs args = {
 		.fh = NFS_FH(inode),
@@ -191,7 +190,7 @@ struct posix_acl *nfs3_proc_getacl(struct inode *inode, int type)
 		.pages = pages,
 	};
 	struct nfs3_getaclres res = {
-		0
+		.fattr =	&fattr,
 	};
 	struct rpc_message msg = {
 		.rpc_argp	= &args,
@@ -226,10 +225,6 @@ struct posix_acl *nfs3_proc_getacl(struct inode *inode, int type)
 
 	dprintk("NFS call getacl\n");
 	msg.rpc_proc = &server->client_acl->cl_procinfo[ACLPROC3_GETACL];
-	res.fattr = nfs_alloc_fattr();
-	if (res.fattr == NULL)
-		return ERR_PTR(-ENOMEM);
-
 	status = rpc_call_sync(server->client_acl, &msg, 0);
 	dprintk("NFS reply getacl: %d\n", status);
 
@@ -239,7 +234,7 @@ struct posix_acl *nfs3_proc_getacl(struct inode *inode, int type)
 
 	switch (status) {
 		case 0:
-			status = nfs_refresh_inode(inode, res.fattr);
+			status = nfs_refresh_inode(inode, &fattr);
 			break;
 		case -EPFNOSUPPORT:
 		case -EPROTONOSUPPORT:
@@ -279,7 +274,6 @@ struct posix_acl *nfs3_proc_getacl(struct inode *inode, int type)
 getout:
 	posix_acl_release(res.acl_access);
 	posix_acl_release(res.acl_default);
-	nfs_free_fattr(res.fattr);
 
 	if (status != 0) {
 		posix_acl_release(acl);
@@ -292,8 +286,8 @@ static int nfs3_proc_setacls(struct inode *inode, struct posix_acl *acl,
 		  struct posix_acl *dfacl)
 {
 	struct nfs_server *server = NFS_SERVER(inode);
-	struct nfs_fattr *fattr;
-	struct page *pages[NFSACL_MAXPAGES];
+	struct nfs_fattr fattr;
+	struct page *pages[NFSACL_MAXPAGES] = { };
 	struct nfs3_setaclargs args = {
 		.inode = inode,
 		.mask = NFS_ACL,
@@ -304,7 +298,7 @@ static int nfs3_proc_setacls(struct inode *inode, struct posix_acl *acl,
 		.rpc_argp	= &args,
 		.rpc_resp	= &fattr,
 	};
-	int status;
+	int status, count;
 
 	status = -EOPNOTSUPP;
 	if (!nfs_server_capable(inode, NFS_CAP_ACLS))
@@ -320,38 +314,25 @@ static int nfs3_proc_setacls(struct inode *inode, struct posix_acl *acl,
 	if (S_ISDIR(inode->i_mode)) {
 		args.mask |= NFS_DFACL;
 		args.acl_default = dfacl;
-		args.len = nfsacl_size(acl, dfacl);
-	} else
-		args.len = nfsacl_size(acl, NULL);
-
-	if (args.len > NFS_ACL_INLINE_BUFSIZE) {
-		unsigned int npages = 1 + ((args.len - 1) >> PAGE_SHIFT);
-
-		status = -ENOMEM;
-		do {
-			args.pages[args.npages] = alloc_page(GFP_KERNEL);
-			if (args.pages[args.npages] == NULL)
-				goto out_freepages;
-			args.npages++;
-		} while (args.npages < npages);
 	}
 
 	dprintk("NFS call setacl\n");
-	status = -ENOMEM;
-	fattr = nfs_alloc_fattr();
-	if (fattr == NULL)
-		goto out_freepages;
-
+	nfs_begin_data_update(inode);
 	msg.rpc_proc = &server->client_acl->cl_procinfo[ACLPROC3_SETACL];
-	msg.rpc_resp = fattr;
 	status = rpc_call_sync(server->client_acl, &msg, 0);
-	nfs_access_zap_cache(inode);
-	nfs_zap_acl_cache(inode);
+	spin_lock(&inode->i_lock);
+	NFS_I(inode)->cache_validity |= NFS_INO_INVALID_ACCESS;
+	spin_unlock(&inode->i_lock);
+	nfs_end_data_update(inode);
 	dprintk("NFS reply setacl: %d\n", status);
+
+	/* pages may have been allocated at the xdr layer. */
+	for (count = 0; count < NFSACL_MAXPAGES && args.pages[count]; count++)
+		__free_page(args.pages[count]);
 
 	switch (status) {
 		case 0:
-			status = nfs_refresh_inode(inode, fattr);
+			status = nfs_refresh_inode(inode, &fattr);
 			nfs3_cache_acls(inode, acl, dfacl);
 			break;
 		case -EPFNOSUPPORT:
@@ -361,12 +342,6 @@ static int nfs3_proc_setacls(struct inode *inode, struct posix_acl *acl,
 			server->caps &= ~NFS_CAP_ACLS;
 		case -ENOTSUPP:
 			status = -EOPNOTSUPP;
-	}
-	nfs_free_fattr(fattr);
-out_freepages:
-	while (args.npages != 0) {
-		args.npages--;
-		__free_page(args.pages[args.npages]);
 	}
 out:
 	return status;

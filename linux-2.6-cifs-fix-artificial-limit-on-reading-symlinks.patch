@@ -1,0 +1,38 @@
+From: Jeff Layton <jlayton@redhat.com>
+Date: Thu, 19 Nov 2009 14:38:28 -0500
+Subject: [cifs] fix artificial limit on reading symlinks
+Message-id: <1258641517-20756-2-git-send-email-jlayton@redhat.com>
+Patchwork-id: 21431
+O-Subject: [RHEL5.5 PATCH 01/10] BZ#500838: cifs: fix artificial limit on
+	reading symlinks
+Bugzilla: 500838
+RH-Acked-by: Peter Staubach <staubach@redhat.com>
+
+(Upstream commit 46a7574caf5bc533c24b315800ed323c187614f5)
+
+There's no reason to limit the size of a symlink that we can read to
+4000 bytes. That may be nowhere near PATH_MAX if the server is sending
+UCS2 strings. CIFS should be able to read in a symlink up to the size of
+the buffer. The size of the header has already been accounted for when
+creating the slabcache, so CIFSMaxBufSize should be the correct size to
+pass in.
+
+Fixes samba bug #6384.
+
+Signed-off-by: Jeff Layton <jlayton@redhat.com>
+Signed-off-by: Steve French <sfrench@us.ibm.com>
+
+diff --git a/fs/cifs/cifssmb.c b/fs/cifs/cifssmb.c
+index 20d1a92..e3351ac 100644
+--- a/fs/cifs/cifssmb.c
++++ b/fs/cifs/cifssmb.c
+@@ -2436,8 +2436,7 @@ querySymLinkRetry:
+ 	params = 2 /* level */  + 4 /* rsrvd */  + name_len /* incl null */ ;
+ 	pSMB->TotalDataCount = 0;
+ 	pSMB->MaxParameterCount = cpu_to_le16(2);
+-	/* BB find exact max data count below from sess structure BB */
+-	pSMB->MaxDataCount = cpu_to_le16(4000);
++	pSMB->MaxDataCount = cpu_to_le16(CIFSMaxBufSize);
+ 	pSMB->MaxSetupCount = 0;
+ 	pSMB->Reserved = 0;
+ 	pSMB->Flags = 0;

@@ -1,0 +1,284 @@
+From: Jerome Marchand <jmarchan@redhat.com>
+Date: Mon, 28 Jul 2008 15:39:30 +0200
+Subject: [misc] remove MAX_ARG_PAGES limit: independent stack top
+Message-id: 20080728134021.344336431@redhat.com
+O-Subject: [RHEL5.3 1/3] Remove MAX_ARG_PAGES limit: personality independent stack top
+Bugzilla: 443659
+
+Bugzilla:
+https://bugzilla.redhat.com/show_bug.cgi?id=443659
+
+Description: (from cvs commit)
+New arch macro STACK_TOP_MAX it gives the larges valid stack address
+for the architecture in question.
+
+It differs from STACK_TOP in that it will not distinguish between
+personalities but will always return the largest possible address.
+
+This is used to create the initial stack on execve, which we will move
+down to the proper location once the binfmt code has figured out where
+that is.
+
+Upstream status:
+commit: b111757c50ee30dad162192df6168e270a90c252
+
+diff --git a/include/asm-alpha/a.out.h b/include/asm-alpha/a.out.h
+index d97daf4..e43cf61 100644
+--- a/include/asm-alpha/a.out.h
++++ b/include/asm-alpha/a.out.h
+@@ -101,6 +101,8 @@ struct exec
+ #define STACK_TOP \
+   (current->personality & ADDR_LIMIT_32BIT ? 0x80000000 : 0x00120000000UL)
+ 
++#define STACK_TOP_MAX	0x00120000000UL
++
+ #endif
+ 
+ #endif /* __A_OUT_GNU_H__ */
+diff --git a/include/asm-arm/a.out.h b/include/asm-arm/a.out.h
+index 3e5fe64..d7165e8 100644
+--- a/include/asm-arm/a.out.h
++++ b/include/asm-arm/a.out.h
+@@ -30,6 +30,7 @@ struct exec
+ #ifdef __KERNEL__
+ #define STACK_TOP	((current->personality == PER_LINUX_32BIT) ? \
+ 			 TASK_SIZE : TASK_SIZE_26)
++#define STACK_TOP_MAX	TASK_SIZE
+ #endif
+ 
+ #ifndef LIBRARY_START_TEXT
+diff --git a/include/asm-arm26/a.out.h b/include/asm-arm26/a.out.h
+index 9b2702c..7167f54 100644
+--- a/include/asm-arm26/a.out.h
++++ b/include/asm-arm26/a.out.h
+@@ -29,6 +29,7 @@ struct exec
+ 
+ #ifdef __KERNEL__
+ #define STACK_TOP	TASK_SIZE
++#define STACK_TOP_MAX	STACK_TOP
+ #endif
+ 
+ #ifndef LIBRARY_START_TEXT
+diff --git a/include/asm-cris/a.out.h b/include/asm-cris/a.out.h
+index 770734c..919b34a 100644
+--- a/include/asm-cris/a.out.h
++++ b/include/asm-cris/a.out.h
+@@ -8,6 +8,7 @@
+ 
+ /* grabbed from the intel stuff  */   
+ #define STACK_TOP TASK_SIZE
++#define STACK_TOP_MAX	STACK_TOP
+ 
+ 
+ struct exec
+diff --git a/include/asm-frv/mem-layout.h b/include/asm-frv/mem-layout.h
+index a025dd4..aaf2a77 100644
+--- a/include/asm-frv/mem-layout.h
++++ b/include/asm-frv/mem-layout.h
+@@ -60,6 +60,7 @@
+  */
+ #define BRK_BASE			__UL(2 * 1024 * 1024 + PAGE_SIZE)
+ #define STACK_TOP			__UL(2 * 1024 * 1024)
++#define STACK_TOP_MAX	STACK_TOP
+ 
+ /* userspace process size */
+ #ifdef CONFIG_MMU
+diff --git a/include/asm-h8300/a.out.h b/include/asm-h8300/a.out.h
+index 3c70939..aa5d227 100644
+--- a/include/asm-h8300/a.out.h
++++ b/include/asm-h8300/a.out.h
+@@ -20,6 +20,7 @@ struct exec
+ #ifdef __KERNEL__
+ 
+ #define STACK_TOP	TASK_SIZE
++#define STACK_TOP_MAX	STACK_TOP
+ 
+ #endif
+ 
+diff --git a/include/asm-i386/a.out.h b/include/asm-i386/a.out.h
+index c964d07..f02b25f 100644
+--- a/include/asm-i386/a.out.h
++++ b/include/asm-i386/a.out.h
+@@ -20,6 +20,7 @@ struct exec
+ #ifdef __KERNEL__
+ 
+ #define STACK_TOP	(TASK_SIZE - PAGE_SIZE)  /* 1 page for vdso */
++#define STACK_TOP_MAX	STACK_TOP
+ 
+ #endif
+ 
+diff --git a/include/asm-ia64/ustack.h b/include/asm-ia64/ustack.h
+index a349467..504167c 100644
+--- a/include/asm-ia64/ustack.h
++++ b/include/asm-ia64/ustack.h
+@@ -11,6 +11,7 @@
+ /* The absolute hard limit for stack size is 1/2 of the mappable space in the region */
+ #define MAX_USER_STACK_SIZE	(RGN_MAP_LIMIT/2)
+ #define STACK_TOP		(0x6000000000000000UL + RGN_MAP_LIMIT)
++#define STACK_TOP_MAX		STACK_TOP
+ #endif
+ 
+ /* Make a default stack size of 2GiB */
+diff --git a/include/asm-m32r/a.out.h b/include/asm-m32r/a.out.h
+index 4619ba5..b130397 100644
+--- a/include/asm-m32r/a.out.h
++++ b/include/asm-m32r/a.out.h
+@@ -22,6 +22,7 @@ struct exec
+ #ifdef __KERNEL__
+ 
+ #define STACK_TOP	TASK_SIZE
++#define STACK_TOP_MAX	STACK_TOP
+ 
+ #endif
+ 
+diff --git a/include/asm-m68k/a.out.h b/include/asm-m68k/a.out.h
+index eda1662..6fc86a2 100644
+--- a/include/asm-m68k/a.out.h
++++ b/include/asm-m68k/a.out.h
+@@ -20,6 +20,7 @@ struct exec
+ #ifdef __KERNEL__
+ 
+ #define STACK_TOP	TASK_SIZE
++#define STACK_TOP_MAX	STACK_TOP
+ 
+ #endif
+ 
+diff --git a/include/asm-mips/a.out.h b/include/asm-mips/a.out.h
+index ef33c3f..1ad60ba 100644
+--- a/include/asm-mips/a.out.h
++++ b/include/asm-mips/a.out.h
+@@ -40,6 +40,7 @@ struct exec
+ #ifdef CONFIG_64BIT
+ #define STACK_TOP	(current->thread.mflags & MF_32BIT_ADDR ? TASK_SIZE32 : TASK_SIZE)
+ #endif
++#define STACK_TOP_MAX	TASK_SIZE
+ 
+ #endif
+ 
+diff --git a/include/asm-parisc/a.out.h b/include/asm-parisc/a.out.h
+index 2a490cc..23e2c90 100644
+--- a/include/asm-parisc/a.out.h
++++ b/include/asm-parisc/a.out.h
+@@ -23,6 +23,7 @@ struct exec
+  * prumpf */
+ 
+ #define STACK_TOP	TASK_SIZE
++#define STACK_TOP_MAX	DEFAULT_TASK_SIZE
+ 
+ #endif
+ 
+diff --git a/include/asm-powerpc/a.out.h b/include/asm-powerpc/a.out.h
+index c7393a9..5c5ea83 100644
+--- a/include/asm-powerpc/a.out.h
++++ b/include/asm-powerpc/a.out.h
+@@ -26,9 +26,12 @@ struct exec
+ #define STACK_TOP (test_thread_flag(TIF_32BIT) ? \
+ 		   STACK_TOP_USER32 : STACK_TOP_USER64)
+ 
++#define STACK_TOP_MAX STACK_TOP_USER64
++
+ #else /* __powerpc64__ */
+ 
+ #define STACK_TOP TASK_SIZE
++#define STACK_TOP_MAX	STACK_TOP
+ 
+ #endif /* __powerpc64__ */
+ #endif /* __KERNEL__ */
+diff --git a/include/asm-s390/a.out.h b/include/asm-s390/a.out.h
+index 72adee6..46158dc 100644
+--- a/include/asm-s390/a.out.h
++++ b/include/asm-s390/a.out.h
+@@ -32,6 +32,7 @@ struct exec
+ #ifdef __KERNEL__
+ 
+ #define STACK_TOP	TASK_SIZE
++#define STACK_TOP_MAX	DEFAULT_TASK_SIZE
+ 
+ #endif
+ 
+diff --git a/include/asm-sh/a.out.h b/include/asm-sh/a.out.h
+index 6e9fca9..685d0f6 100644
+--- a/include/asm-sh/a.out.h
++++ b/include/asm-sh/a.out.h
+@@ -20,6 +20,7 @@ struct exec
+ #ifdef __KERNEL__
+ 
+ #define STACK_TOP	TASK_SIZE
++#define STACK_TOP_MAX	STACK_TOP
+ 
+ #endif
+ 
+diff --git a/include/asm-sh64/a.out.h b/include/asm-sh64/a.out.h
+index e1995e8..237ee4e 100644
+--- a/include/asm-sh64/a.out.h
++++ b/include/asm-sh64/a.out.h
+@@ -31,6 +31,7 @@ struct exec
+ #ifdef __KERNEL__
+ 
+ #define STACK_TOP	TASK_SIZE
++#define STACK_TOP_MAX	STACK_TOP
+ 
+ #endif
+ 
+diff --git a/include/asm-sparc/a.out.h b/include/asm-sparc/a.out.h
+index e4e83eb..c39ab0e 100644
+--- a/include/asm-sparc/a.out.h
++++ b/include/asm-sparc/a.out.h
+@@ -92,6 +92,7 @@ struct relocation_info /* used when header.a_machtype == M_SPARC */
+ #include <asm/page.h>
+ 
+ #define STACK_TOP	(PAGE_OFFSET - PAGE_SIZE)
++#define STACK_TOP_MAX	STACK_TOP
+ 
+ #endif /* __KERNEL__ */
+ 
+diff --git a/include/asm-sparc64/a.out.h b/include/asm-sparc64/a.out.h
+index 35cb5c9..33c82d7 100644
+--- a/include/asm-sparc64/a.out.h
++++ b/include/asm-sparc64/a.out.h
+@@ -101,6 +101,8 @@ struct relocation_info /* used when header.a_machtype == M_SPARC */
+ #define STACK_TOP (test_thread_flag(TIF_32BIT) ? \
+ 		   STACK_TOP32 : STACK_TOP64)
+ 
++#define STACK_TOP_MAX STACK_TOP64
++
+ #endif
+ 
+ #endif /* !(__ASSEMBLY__) */
+diff --git a/include/asm-um/a.out.h b/include/asm-um/a.out.h
+index 50cee7b..f3da192 100644
+--- a/include/asm-um/a.out.h
++++ b/include/asm-um/a.out.h
+@@ -16,4 +16,6 @@ extern int honeypot;
+ #define STACK_TOP \
+ 	CHOOSE_MODE((honeypot ? host_task_size : task_size), task_size)
+ 
++#define STACK_TOP_MAX	STACK_TOP
++
+ #endif
+diff --git a/include/asm-x86_64/a.out.h b/include/asm-x86_64/a.out.h
+index 7255cde..e789300 100644
+--- a/include/asm-x86_64/a.out.h
++++ b/include/asm-x86_64/a.out.h
+@@ -21,7 +21,8 @@ struct exec
+ 
+ #ifdef __KERNEL__
+ #include <linux/thread_info.h>
+-#define STACK_TOP TASK_SIZE
++#define STACK_TOP	TASK_SIZE
++#define STACK_TOP_MAX	TASK_SIZE64
+ #endif
+ 
+ #endif /* __A_OUT_GNU_H__ */
+diff --git a/include/asm-xtensa/a.out.h b/include/asm-xtensa/a.out.h
+index 3be701d..9c2e3c5 100644
+--- a/include/asm-xtensa/a.out.h
++++ b/include/asm-xtensa/a.out.h
+@@ -17,6 +17,7 @@
+ /* Note: the kernel needs the a.out definitions, even if only ELF is used. */
+ 
+ #define STACK_TOP	TASK_SIZE
++#define STACK_TOP_MAX	STACK_TOP
+ 
+ struct exec
+ {

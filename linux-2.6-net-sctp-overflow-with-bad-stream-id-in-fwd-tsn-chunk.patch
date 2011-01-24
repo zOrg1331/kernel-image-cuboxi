@@ -1,0 +1,73 @@
+From: Eugene Teo <eteo@redhat.com>
+Date: Tue, 6 Jan 2009 13:24:06 +0800
+Subject: [net] sctp: overflow with bad stream ID in FWD-TSN chunk
+Message-id: 4962EAF6.9030405@redhat.com
+O-Subject: [RHEL5.4 patch] BZ#478805 kernel: sctp: memory overflow when FWD-TSN chunk is received with bad stream ID
+Bugzilla: 478805
+RH-Acked-by: David Miller <davem@redhat.com>
+RH-Acked-by: Thomas Graf <tgraf@redhat.com>
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+CVE: CVE-2009-0065
+
+This is for bz#478805.
+
+If FWD-TSN chunk is received with bad stream ID, the sctp will not do
+the validity check, this may cause memory overflow when overwrite the
+TSN of the stream ID.
+
+This patch fix this problem by discard the chunk if stream ID is not
+less than MIS.
+
+Backport of upstream commit: 9fcb95a105758b81ef0131cd18e2db5149f13e95
+
+Brew build: https://brewweb.devel.redhat.com/taskinfo?taskID=1636866
+
+Test status:
+Booted on i686
+
+diff --git a/net/sctp/sm_statefuns.c b/net/sctp/sm_statefuns.c
+index 541f828..fd98947 100644
+--- a/net/sctp/sm_statefuns.c
++++ b/net/sctp/sm_statefuns.c
+@@ -3406,6 +3406,7 @@ sctp_disposition_t sctp_sf_eat_fwd_tsn(const struct sctp_endpoint *ep,
+ {
+ 	struct sctp_chunk *chunk = arg;
+ 	struct sctp_fwdtsn_hdr *fwdtsn_hdr;
++	struct sctp_fwdtsn_skip *skip;
+ 	__u16 len;
+ 	__u32 tsn;
+ 
+@@ -3435,6 +3436,12 @@ sctp_disposition_t sctp_sf_eat_fwd_tsn(const struct sctp_endpoint *ep,
+ 	if (sctp_tsnmap_check(&asoc->peer.tsn_map, tsn) < 0)
+ 		goto discard_noforce;
+ 
++	/* Silently discard the chunk if stream-id is not valid */
++	sctp_walk_fwdtsn(skip, chunk) {
++		if (ntohs(skip->stream) >= asoc->c.sinit_max_instreams)
++			goto discard_noforce;
++	}
++
+ 	sctp_add_cmd_sf(commands, SCTP_CMD_REPORT_FWDTSN, SCTP_U32(tsn));
+ 	if (len > sizeof(struct sctp_fwdtsn_hdr))
+ 		sctp_add_cmd_sf(commands, SCTP_CMD_PROCESS_FWDTSN, 
+@@ -3466,6 +3473,7 @@ sctp_disposition_t sctp_sf_eat_fwd_tsn_fast(
+ {
+ 	struct sctp_chunk *chunk = arg;
+ 	struct sctp_fwdtsn_hdr *fwdtsn_hdr;
++	struct sctp_fwdtsn_skip *skip;
+ 	__u16 len;
+ 	__u32 tsn;
+ 
+@@ -3495,6 +3503,12 @@ sctp_disposition_t sctp_sf_eat_fwd_tsn_fast(
+ 	if (sctp_tsnmap_check(&asoc->peer.tsn_map, tsn) < 0)
+ 		goto gen_shutdown;
+ 
++	/* Silently discard the chunk if stream-id is not valid */
++	sctp_walk_fwdtsn(skip, chunk) {
++		if (ntohs(skip->stream) >= asoc->c.sinit_max_instreams)
++			goto gen_shutdown;
++	}
++
+ 	sctp_add_cmd_sf(commands, SCTP_CMD_REPORT_FWDTSN, SCTP_U32(tsn));
+ 	if (len > sizeof(struct sctp_fwdtsn_hdr))
+ 		sctp_add_cmd_sf(commands, SCTP_CMD_PROCESS_FWDTSN, 

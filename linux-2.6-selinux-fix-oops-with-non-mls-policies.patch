@@ -1,0 +1,38 @@
+From: Eric Paris <eparis@redhat.com>
+Subject: [RHEL5 PATCH] BZ 214397 SELinux: Fix oops with non-mls policies
+Date: Fri, 01 Dec 2006 14:24:26 -0500
+Bugzilla: 214397
+Message-Id: <1165001066.2079.130.camel@localhost.localdomain>
+Changelog: SELinux: Fix oops with non-mls policies
+
+
+BZ 214397
+
+The following fixes a bug where random mem is being tampered with in the
+non-mls case; encountered by Joshua Brindle on a gentoo box.  Red Hat
+does not ship a 'non-mls' policy but any customer who uses RHEL with a
+custom policy will hit this.
+
+Upstream in 2.6.19:
+
+http://marc.theaimsgroup.com/?l=git-commits-head&m=115905653315945&w=2
+
+-Eric
+
+ security/selinux/ss/services.c |    2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/security/selinux/ss/services.c b/security/selinux/ss/services.c
+index 27ee28c..7eb69a6 100644
+--- a/security/selinux/ss/services.c
++++ b/security/selinux/ss/services.c
+@@ -1841,7 +1841,7 @@ int security_sid_mls_copy(u32 sid, u32 m
+ 	u32 len;
+ 	int rc = 0;
+ 
+-	if (!ss_initialized) {
++	if (!ss_initialized || !selinux_mls_enabled) {
+ 		*new_sid = sid;
+ 		goto out;
+ 	}
+

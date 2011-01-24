@@ -1,0 +1,29 @@
+From: Jeff Layton <jlayton@redhat.com>
+Date: Tue, 8 Jun 2010 12:26:16 -0400
+Subject: [fs] cifs: increase maximum buffer size in CIFSSMBQAllEAs
+Message-id: <1275999978-20705-5-git-send-email-jlayton@redhat.com>
+Patchwork-id: 26027
+O-Subject: [RHEL5.6 PATCH 4/6] BZ#527268: cifs: increase maximum buffer size in
+	CIFSSMBQAllEAs
+Bugzilla: 527268
+RH-Acked-by: Steve Dickson <SteveD@redhat.com>
+
+It's 4000 now, but there's no reason to limit it to that. We should be
+able to handle a response up to CIFSMaxBufSize.
+
+Signed-off-by: Jeff Layton <jlayton@redhat.com>
+Signed-off-by: Steve French <sfrench@us.ibm.com>
+
+diff --git a/fs/cifs/cifssmb.c b/fs/cifs/cifssmb.c
+index 1a7ea96..6bb9779 100644
+--- a/fs/cifs/cifssmb.c
++++ b/fs/cifs/cifssmb.c
+@@ -5338,7 +5338,7 @@ QAllEAsRetry:
+ 	pSMB->TotalDataCount = 0;
+ 	pSMB->MaxParameterCount = cpu_to_le16(2);
+ 	/* BB find exact max SMB PDU from sess structure BB */
+-	pSMB->MaxDataCount = cpu_to_le16(4000);
++	pSMB->MaxDataCount = cpu_to_le16(CIFSMaxBufSize);
+ 	pSMB->MaxSetupCount = 0;
+ 	pSMB->Reserved = 0;
+ 	pSMB->Flags = 0;

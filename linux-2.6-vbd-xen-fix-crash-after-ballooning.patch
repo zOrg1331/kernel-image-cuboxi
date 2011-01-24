@@ -1,0 +1,44 @@
+From: Christopher Lalancette <clalance@redhat.com>
+Date: Thu, 26 Nov 2009 09:45:30 -0500
+Subject: [vbd] xen: fix crash after ballooning
+Message-id: <4B0E4E3A.6040304@redhat.com>
+Patchwork-id: 21516
+O-Subject: [RHEL5.5 PATCH]: Fix crash after ballooning
+Bugzilla: 540811
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+All,
+     While doing some recent testing, I found that a RHEL-5.5 Xen PV i686
+guest would crash after it was ballooned.  I eventually tracked this down
+to the fact that in Xen:
+
+1)  We never set up bounce buffering (in mm/highmem.c), and
+2)  We forget to tell the block layer never to use bounce buffering
+
+The combination of these two factors mean that in the right circumstances,
+the system could go ahead and try to use bounce buffering even though we
+have never set it up.  This leads to a NULL pointer being accessed and
+a crash.
+
+The fix is simple; simply tell the block layer never to bounce buffer.
+This fixes the crash for me in testing, and should fix BZ 540811.  It's
+a backport of linux-2.6.18-xen.hg c/s 148.  Please review and ACK.
+
+Signed-off-by: Don Zickus <dzickus@redhat.com>
+
+diff --git a/drivers/xen/blkfront/vbd.c b/drivers/xen/blkfront/vbd.c
+index a1f1bff..98bf39d 100644
+--- a/drivers/xen/blkfront/vbd.c
++++ b/drivers/xen/blkfront/vbd.c
+@@ -238,6 +238,9 @@ xlvbd_init_blk_queue(struct gendisk *gd, u16 sector_size)
+ 	/* Make sure buffer addresses are sector-aligned. */
+ 	blk_queue_dma_alignment(rq, 511);
+ 
++	/* Make sure we don't use bounce buffers. */
++	blk_queue_bounce_limit(rq, BLK_BOUNCE_ANY);
++
+ 	gd->queue = rq;
+ 
+ 	return 0;

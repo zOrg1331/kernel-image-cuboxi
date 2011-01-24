@@ -33,23 +33,54 @@
 #include <asm/rtas.h>
 #include "rpaphp.h"
 
+static ssize_t location_read_file (struct hotplug_slot *php_slot, char *buf)
+{
+	char *value;
+	int retval = -ENOENT;
+	struct slot *slot = (struct slot *)php_slot->private;
+
+	if (!slot)
+		return retval;
+
+	value = slot->location;
+	retval = sprintf (buf, "%s\n", value);
+	return retval;
+}
+
+static struct hotplug_slot_attribute hotplug_slot_attr_location = {
+	.attr = {.name = "phy_location", .mode = S_IFREG | S_IRUGO},
+	.show = location_read_file,
+};
+
+static void rpaphp_sysfs_add_attr_location (struct hotplug_slot *slot)
+{
+	sysfs_create_file(&slot->kobj, &hotplug_slot_attr_location.attr);
+}
+
+static void rpaphp_sysfs_remove_attr_location (struct hotplug_slot *slot)
+{
+	sysfs_remove_file(&slot->kobj, &hotplug_slot_attr_location.attr);
+}
+
 /* free up the memory used by a slot */
 static void rpaphp_release_slot(struct hotplug_slot *hotplug_slot)
 {
 	struct slot *slot = (struct slot *) hotplug_slot->private;
+
 	dealloc_slot_struct(slot);
 }
 
 void dealloc_slot_struct(struct slot *slot)
 {
 	kfree(slot->hotplug_slot->info);
-	kfree(slot->name);
+	kfree(slot->hotplug_slot->name);
 	kfree(slot->hotplug_slot);
 	kfree(slot);
+	return;
 }
 
-struct slot *alloc_slot_struct(struct device_node *dn,
-                       int drc_index, char *drc_name, int power_domain)
+struct slot *alloc_slot_struct(struct device_node *dn, int drc_index, char *drc_name,
+		  int power_domain)
 {
 	struct slot *slot;
 	
@@ -63,11 +94,16 @@ struct slot *alloc_slot_struct(struct device_node *dn,
 					   GFP_KERNEL);
 	if (!slot->hotplug_slot->info)
 		goto error_hpslot;
-	slot->name = kstrdup(drc_name, GFP_KERNEL);
-	if (!slot->name)
+	slot->hotplug_slot->name = kmalloc(BUS_ID_SIZE + 1, GFP_KERNEL);
+	if (!slot->hotplug_slot->name)
 		goto error_info;	
+	slot->location = kmalloc(strlen(drc_name) + 1, GFP_KERNEL);
+	if (!slot->location)
+		goto error_name;
+	slot->name = slot->hotplug_slot->name;
 	slot->dn = dn;
 	slot->index = drc_index;
+	strcpy(slot->location, drc_name);
 	slot->power_domain = power_domain;
 	slot->hotplug_slot->private = slot;
 	slot->hotplug_slot->ops = &rpaphp_hotplug_slot_ops;
@@ -75,6 +111,8 @@ struct slot *alloc_slot_struct(struct device_node *dn,
 	
 	return (slot);
 
+error_name:
+	kfree(slot->hotplug_slot->name);
 error_info:
 	kfree(slot->hotplug_slot->info);
 error_hpslot:
@@ -87,7 +125,7 @@ error_nomem:
 
 static int is_registered(struct slot *slot)
 {
-	struct slot *tmp_slot;
+	struct slot             *tmp_slot;
 
 	list_for_each_entry(tmp_slot, &rpaphp_slot_head, rpaphp_slot_list) {
 		if (!strcmp(tmp_slot->name, slot->name))
@@ -102,48 +140,85 @@ int rpaphp_deregister_slot(struct slot *slot)
 	struct hotplug_slot *php_slot = slot->hotplug_slot;
 
 	 dbg("%s - Entry: deregistering slot=%s\n",
-		__func__, slot->name);
+		__FUNCTION__, slot->name);
 
 	list_del(&slot->rpaphp_slot_list);
 	
+	/* remove "phy_location" file */
+	rpaphp_sysfs_remove_attr_location(php_slot);
+
 	retval = pci_hp_deregister(php_slot);
 	if (retval)
 		err("Problem unregistering a slot %s\n", slot->name);
+	else
+		num_slots--;
 
-	dbg("%s - Exit: rc[%d]\n", __func__, retval);
+	dbg("%s - Exit: rc[%d]\n", __FUNCTION__, retval);
 	return retval;
 }
 EXPORT_SYMBOL_GPL(rpaphp_deregister_slot);
 
 int rpaphp_register_slot(struct slot *slot)
 {
-	struct hotplug_slot *php_slot = slot->hotplug_slot;
 	int retval;
-	int slotno;
 
 	dbg("%s registering slot:path[%s] index[%x], name[%s] pdomain[%x] type[%d]\n", 
-		__func__, slot->dn->full_name, slot->index, slot->name,
+		__FUNCTION__, slot->dn->full_name, slot->index, slot->name, 
 		slot->power_domain, slot->type);
-
 	/* should not try to register the same slot twice */
-	if (is_registered(slot)) {
+	if (is_registered(slot)) { /* should't be here */
 		err("rpaphp_register_slot: slot[%s] is already registered\n", slot->name);
+		rpaphp_release_slot(slot->hotplug_slot);
 		return -EAGAIN;
 	}	
-
-	if (slot->dn->child)
-		slotno = PCI_SLOT(PCI_DN(slot->dn->child)->devfn);
-	else
-		slotno = -1;
-	retval = pci_hp_register(php_slot, slot->bus, slotno, slot->name);
+	retval = pci_hp_register(slot->hotplug_slot);
 	if (retval) {
 		err("pci_hp_register failed with error %d\n", retval);
+		rpaphp_release_slot(slot->hotplug_slot);
 		return retval;
 	}
+	
+	/* create "phy_locatoin" file */
+	rpaphp_sysfs_add_attr_location(slot->hotplug_slot);	
 
 	/* add slot to our internal list */
+	dbg("%s adding slot[%s] to rpaphp_slot_list\n",
+	    __FUNCTION__, slot->name);
+
 	list_add(&slot->rpaphp_slot_list, &rpaphp_slot_head);
-	info("Slot [%s] registered\n", slot->name);
+	info("Slot [%s](PCI location=%s) registered\n", slot->name,
+			slot->location);
+	num_slots++;
 	return 0;
 }
 
+int rpaphp_get_power_status(struct slot *slot, u8 * value)
+{
+	int rc = 0, level;
+	
+	rc = rtas_get_power_level(slot->power_domain, &level);
+	if (rc < 0) {
+		err("failed to get power-level for slot(%s), rc=0x%x\n",
+			slot->location, rc);
+		return rc;
+	}
+
+	dbg("%s the power level of slot %s(pwd-domain:0x%x) is %d\n",
+		__FUNCTION__, slot->name, slot->power_domain, level);
+	*value = level;
+
+	return rc;
+}
+
+int rpaphp_set_attention_status(struct slot *slot, u8 status)
+{
+	int rc;
+
+	/* status: LED_OFF or LED_ON */
+	rc = rtas_set_indicator(DR_INDICATOR, slot->index, status);
+	if (rc < 0)
+		err("slot(name=%s location=%s index=0x%x) set attention-status(%d) failed! rc=0x%x\n",
+		    slot->name, slot->location, slot->index, status, rc);
+
+	return rc;
+}

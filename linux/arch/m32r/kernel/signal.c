@@ -13,6 +13,7 @@
 #include <linux/sched.h>
 #include <linux/mm.h>
 #include <linux/smp.h>
+#include <linux/smp_lock.h>
 #include <linux/kernel.h>
 #include <linux/signal.h>
 #include <linux/errno.h>
@@ -20,8 +21,7 @@
 #include <linux/unistd.h>
 #include <linux/stddef.h>
 #include <linux/personality.h>
-#include <linux/freezer.h>
-#include <linux/tracehook.h>
+#include <linux/suspend.h>
 #include <asm/cacheflush.h>
 #include <asm/ucontext.h>
 #include <asm/uaccess.h>
@@ -33,11 +33,11 @@
 int do_signal(struct pt_regs *, sigset_t *);
 
 asmlinkage int
-sys_rt_sigsuspend(sigset_t __user *unewset, size_t sigsetsize,
+sys_rt_sigsuspend(sigset_t *unewset, size_t sigsetsize,
 		  unsigned long r2, unsigned long r3, unsigned long r4,
 		  unsigned long r5, unsigned long r6, struct pt_regs *regs)
 {
-	sigset_t newset;
+	sigset_t saveset, newset;
 
 	/* XXX: Don't preclude handling different sized sigset_t's.  */
 	if (sigsetsize != sizeof(sigset_t))
@@ -45,18 +45,21 @@ sys_rt_sigsuspend(sigset_t __user *unewset, size_t sigsetsize,
 
 	if (copy_from_user(&newset, unewset, sizeof(newset)))
 		return -EFAULT;
-	sigdelsetmask(&newset, sigmask(SIGKILL)|sigmask(SIGSTOP));
+	sigdelsetmask(&newset, ~_BLOCKABLE);
 
 	spin_lock_irq(&current->sighand->siglock);
-	current->saved_sigmask = current->blocked;
+	saveset = current->blocked;
 	current->blocked = newset;
 	recalc_sigpending();
 	spin_unlock_irq(&current->sighand->siglock);
 
-	current->state = TASK_INTERRUPTIBLE;
-	schedule();
-	set_thread_flag(TIF_RESTORE_SIGMASK);
-	return -ERESTARTNOHAND;
+	regs->r0 = -EINTR;
+	while (1) {
+		current->state = TASK_INTERRUPTIBLE;
+		schedule();
+		if (do_signal(regs, &saveset))
+			return regs->r0;
+	}
 }
 
 asmlinkage int
@@ -75,8 +78,8 @@ sys_sigaltstack(const stack_t __user *uss, stack_t __user *uoss,
 struct rt_sigframe
 {
 	int sig;
-	struct siginfo __user *pinfo;
-	void __user *puc;
+	struct siginfo *pinfo;
+	void *puc;
 	struct siginfo info;
 	struct ucontext uc;
 //	struct _fpstate fpstate;
@@ -106,10 +109,19 @@ restore_sigcontext(struct pt_regs *regs, struct sigcontext __user *sc,
 	COPY(r10);
 	COPY(r11);
 	COPY(r12);
+#if defined(CONFIG_ISA_M32R2) && defined(CONFIG_ISA_DSP_LEVEL2)
 	COPY(acc0h);
 	COPY(acc0l);
-	COPY(acc1h);		/* ISA_DSP_LEVEL2 only */
-	COPY(acc1l);		/* ISA_DSP_LEVEL2 only */
+	COPY(acc1h);
+	COPY(acc1l);
+#elif defined(CONFIG_ISA_M32R2) || defined(CONFIG_ISA_M32R)
+	COPY(acch);
+	COPY(accl);
+	COPY(dummy_acc1h);
+	COPY(dummy_acc1l);
+#else
+#error unknown isa configuration
+#endif
 	COPY(psw);
 	COPY(bpc);
 	COPY(bbpsw);
@@ -184,10 +196,19 @@ setup_sigcontext(struct sigcontext __user *sc, struct pt_regs *regs,
 	COPY(r10);
 	COPY(r11);
 	COPY(r12);
+#if defined(CONFIG_ISA_M32R2) && defined(CONFIG_ISA_DSP_LEVEL2)
 	COPY(acc0h);
 	COPY(acc0l);
-	COPY(acc1h);		/* ISA_DSP_LEVEL2 only */
-	COPY(acc1l);		/* ISA_DSP_LEVEL2 only */
+	COPY(acc1h);
+	COPY(acc1l);
+#elif defined(CONFIG_ISA_M32R2) || defined(CONFIG_ISA_M32R)
+	COPY(acch);
+	COPY(accl);
+	COPY(dummy_acc1h);
+	COPY(dummy_acc1l);
+#else
+#error unknown isa configuration
+#endif
 	COPY(psw);
 	COPY(bpc);
 	COPY(bbpsw);
@@ -356,7 +377,7 @@ int do_signal(struct pt_regs *regs, sigset_t *oldset)
 
 	signr = get_signal_to_deliver(&info, &ka, regs, NULL);
 	if (signr > 0) {
-		/* Re-enable any watchpoints before delivering the
+		/* Reenable any watchpoints before delivering the
 		 * signal to user space. The processor register will
 		 * have been cleared if the watchpoint triggered
 		 * inside the kernel.
@@ -408,13 +429,6 @@ void do_notify_resume(struct pt_regs *regs, sigset_t *oldset,
 	/* deal with pending signal delivery */
 	if (thread_info_flags & _TIF_SIGPENDING)
 		do_signal(regs,oldset);
-
-	if (thread_info_flags & _TIF_NOTIFY_RESUME) {
-		clear_thread_flag(TIF_NOTIFY_RESUME);
-		tracehook_notify_resume(regs);
-		if (current->replacement_session_keyring)
-			key_replace_session_keyring();
-	}
 
 	clear_thread_flag(TIF_IRET);
 }

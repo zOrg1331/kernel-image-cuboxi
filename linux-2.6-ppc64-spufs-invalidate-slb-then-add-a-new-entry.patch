@@ -1,0 +1,50 @@
+From: Brad Peters <bpeters@redhat.com>
+Date: Fri, 7 Mar 2008 18:20:15 -0500
+Subject: [ppc64] spufs: invalidate SLB then add a new entry
+Message-id: 47D1CDAF.1040905@redhat.com
+O-Subject: Re: [RHEL 5.2 Patch 2/2] Fix data corruption on SLB update, invalidate SLB translation before adding new entry
+Bugzilla: 436336
+
+Subject: spufs: invalidate SLB translation before adding a new entry
+
+When we replace an SLB entry in the MFC after using up all the
+available entries, there is a short window in which an incorrect
+entry is marked as valid.
+
+The problem is that the 'valid' bit is stored in the ESID, which
+is always written after the VSID. Overwriting the VSID first
+will make the original ESID entry point to the new VSID, which
+means that any concurrent DMA accessing the old ESID ends up
+being redirected to the new virtual address.
+A few cycles later, we write the new ESID and everything is fine
+again.
+
+That race can be closed by writing a zero entry to the ESID first,
+which makes sure that the VSID is not accessed until we write
+the new ESID.
+
+Note that we don't actually need to invalidate the SLB entry
+using the invalidation register, which would also flush any
+ERAT entries for that segment, because the segment translation
+does not become invalid but is only removed from the SLB.
+
+Signed-off-by: Arnd Bergmann <arnd@arndb.de>
+
+Acked-by: David Howells <dhowells@redhat.com>
+
+diff --git a/arch/powerpc/platforms/cell/spu_base.c b/arch/powerpc/platforms/cell/spu_base.c
+index 425617b..de45b16 100644
+--- a/arch/powerpc/platforms/cell/spu_base.c
++++ b/arch/powerpc/platforms/cell/spu_base.c
+@@ -192,7 +192,11 @@ static int __spu_trap_data_seg(struct spu *spu, unsigned long ea)
+ 	llp = mmu_psize_defs[psize].sllp;
+ 
+ 	out_be64(&priv2->slb_index_W, spu->slb_replace);
++	/* set invalid before  writing vsid */
++	out_be64(&priv2->slb_esid_RW, 0);
++	/* now it's safe to write the vsid */
+ 	out_be64(&priv2->slb_vsid_RW, vsid | llp);
++	/* setting the new esid makes the entry valid again */
+ 	out_be64(&priv2->slb_esid_RW, esid);
+ 
+ 	spu->slb_replace++;

@@ -1,0 +1,710 @@
+From: Neil Horman <nhorman@redhat.com>
+Date: Fri, 22 Oct 2010 20:33:45 -0400
+Subject: [net] bonding: support netconsole over bonded link
+Message-id: <20101022203345.GI778@hmsreliant.think-freely.org>
+Patchwork-id: 28904
+O-Subject: [RHEL 5.6 PATCH] bonding: support netconsole over bond (bz 235343)
+Bugzilla: 235343
+RH-Acked-by: David S. Miller <davem@redhat.com>
+
+Hey -
+	This is a backport of the upstream commits:
+f6dc31a85cd46a959bdd987adad14c3b645e03c1
+e843fa50887582c867d8b7995f81fe9c1a076806
+
+And some supporting bits to get it working in RHEL5.  It enables
+netpoll/netconsole to work over bonded interfaces
+
+Brew status:
+https://brewweb.devel.redhat.com/taskinfo?taskID=2846247
+
+Test status
+
+I've tested the backport in beaker in roundrobin and active-backup modes
+streaming netconsole messages while taking interfaces up/down and
+removing/adding them from the bond.  All seems to work soundly.
+
+Neil
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/net/bonding/bond_3ad.c b/drivers/net/bonding/bond_3ad.c
+index afb458c..7d17422 100644
+--- a/drivers/net/bonding/bond_3ad.c
++++ b/drivers/net/bonding/bond_3ad.c
+@@ -2350,6 +2350,13 @@ int bond_3ad_xmit_xor(struct sk_buff *skb, struct net_device *dev)
+ 	struct ad_info ad_info;
+ 	int res = 1;
+ 
++	/*
++	 * If we risk deadlock from transmitting this in the
++	 * netpoll path, tell netpoll to queue the frame for later tx
++	 */
++	if (is_netpoll_tx_blocked(dev))
++		return NETDEV_TX_BUSY;
++
+ 	/* make sure that the slaves list will
+ 	 * not change during tx
+ 	 */
+diff --git a/drivers/net/bonding/bond_alb.c b/drivers/net/bonding/bond_alb.c
+index 552b760..43bdae3 100644
+--- a/drivers/net/bonding/bond_alb.c
++++ b/drivers/net/bonding/bond_alb.c
+@@ -1304,6 +1304,14 @@ int bond_alb_xmit(struct sk_buff *skb, struct net_device *bond_dev)
+ 	int res = 1;
+ 	struct ipv6hdr *ip6hdr;
+ 
++	/*
++	 * If we risk deadlock from transmitting this in the
++	 * netpoll path, tell netpoll to queue the frame for later
++	 *tx
++	 */
++	if (is_netpoll_tx_blocked(bond_dev))
++		return NETDEV_TX_BUSY;
++
+ 	ip_bcast = htonl(0xffffffff);
+ 	skb_reset_mac_header(skb);
+ 	eth_data = eth_hdr(skb);
+diff --git a/drivers/net/bonding/bond_main.c b/drivers/net/bonding/bond_main.c
+index e2c5c1d..5772942 100644
+--- a/drivers/net/bonding/bond_main.c
++++ b/drivers/net/bonding/bond_main.c
+@@ -58,6 +58,7 @@
+ #include <asm/uaccess.h>
+ #include <linux/errno.h>
+ #include <linux/netdevice.h>
++#include <linux/netpoll.h>
+ #include <linux/inetdevice.h>
+ #include <linux/igmp.h>
+ #include <linux/etherdevice.h>
+@@ -74,6 +75,7 @@
+ #include <linux/if_vlan.h>
+ #include <linux/if_bonding.h>
+ #include <linux/jiffies.h>
++#include <linux/preempt.h>
+ #include <net/route.h>
+ #include "bonding.h"
+ #include "bond_3ad.h"
+@@ -157,6 +159,10 @@ MODULE_PARM_DESC(debug, "Print debug messages; 0 for off (default), 1 for on");
+ 
+ /*----------------------------- Global variables ----------------------------*/
+ 
++#ifdef CONFIG_NET_POLL_CONTROLLER
++cpumask_t netpoll_block_tx = CPU_MASK_NONE;
++#endif
++
+ static const char * const version =
+ 	DRV_DESCRIPTION ": v" DRV_VERSION " (" DRV_RELDATE ")\n";
+ 
+@@ -300,6 +306,7 @@ static int bond_del_vlan(struct bonding *bond, unsigned short vlan_id)
+ 
+ 	dprintk("bond: %s, vlan id %d\n", bond->dev->name, vlan_id);
+ 
++	block_netpoll_tx();
+ 	write_lock_bh(&bond->lock);
+ 
+ 	list_for_each_entry(vlan, &bond->vlan_list, vlan_list) {
+@@ -336,6 +343,7 @@ static int bond_del_vlan(struct bonding *bond, unsigned short vlan_id)
+ 
+ out:
+ 	write_unlock_bh(&bond->lock);
++	unblock_netpoll_tx();
+ 	return res;
+ }
+ 
+@@ -436,7 +444,14 @@ int bond_dev_queue_xmit(struct bonding *bond, struct sk_buff *skb, struct net_de
+ 	}
+ 
+ 	skb->priority = 1;
+-	dev_queue_xmit(skb);
++#ifdef CONFIG_NET_POLL_CONTROLLER
++	if (unlikely(bond->dev->priv_flags & IFF_IN_NETPOLL)) {
++		struct netpoll *np = bond->dev->npinfo->netpoll;
++		slave_dev->npinfo = bond->dev->npinfo;
++		netpoll_send_skb_on_dev(np, skb, slave_dev);
++	} else
++#endif
++		dev_queue_xmit(skb);
+ 
+ 	return 0;
+ }
+@@ -1412,6 +1427,38 @@ static void bond_detach_slave(struct bonding *bond, struct slave *slave)
+ 	bond->slave_cnt--;
+ }
+ 
++#ifdef CONFIG_NET_POLL_CONTROLLER
++/*
++ * You must hold read lock on bond->lock before calling this.
++ */
++static bool slaves_support_netpoll(struct net_device *bond_dev)
++{
++	struct bonding *bond = netdev_priv(bond_dev);
++	struct slave *slave;
++	int i = 0;
++	bool ret = true;
++
++	bond_for_each_slave(bond, slave, i) {
++		if (slave->dev->priv_flags & IFF_DISABLE_NETPOLL) 
++			ret = false;
++	}
++	return i != 0 && ret;
++}
++
++static void bond_poll_controller(struct net_device *bond_dev)
++{
++	struct net_device *dev = bond_dev->npinfo->netpoll->real_dev;
++	if (dev != bond_dev)
++		netpoll_poll_dev(dev);
++}
++#else
++
++static void bond_netpoll_cleanup(struct net_device *bond_dev)
++{
++}
++
++#endif
++
+ /*---------------------------------- IOCTL ----------------------------------*/
+ 
+ static int bond_sethwaddr(struct net_device *bond_dev,
+@@ -1844,6 +1891,18 @@ int bond_enslave(struct net_device *bond_dev, struct net_device *slave_dev)
+ 
+ 	bond_set_carrier(bond);
+ 
++#ifdef CONFIG_NET_POLL_CONTROLLER
++	if (slaves_support_netpoll(bond_dev)) {
++		bond_dev->priv_flags &= ~IFF_DISABLE_NETPOLL;
++		if (bond_dev->npinfo)
++			slave_dev->npinfo = bond_dev->npinfo;
++	} else if (!(bond_dev->priv_flags & IFF_DISABLE_NETPOLL)) {
++		bond_dev->priv_flags |= IFF_DISABLE_NETPOLL;
++		pr_info("New slave device %s does not support netpoll\n",
++			slave_dev->name);
++		pr_info("Disabling netpoll support for %s\n", bond_dev->name);
++	}
++#endif
+ 	read_unlock(&bond->lock);
+ 
+ 	res = bond_create_slave_symlinks(bond_dev, slave_dev);
+@@ -1914,6 +1973,7 @@ int bond_release(struct net_device *bond_dev, struct net_device *slave_dev)
+ 	}
+ 
+ 	write_lock_bh(&bond->lock);
++	block_netpoll_tx();
+ 
+ 	slave = bond_get_slave_by_dev(bond, slave_dev);
+ 	if (!slave) {
+@@ -1921,6 +1981,7 @@ int bond_release(struct net_device *bond_dev, struct net_device *slave_dev)
+ 		printk(KERN_INFO DRV_NAME
+ 		       ": %s: %s not enslaved\n",
+ 		       bond_dev->name, slave_dev->name);
++		unblock_netpoll_tx();
+ 		write_unlock_bh(&bond->lock);
+ 		return -EINVAL;
+ 	}
+@@ -1984,9 +2045,11 @@ int bond_release(struct net_device *bond_dev, struct net_device *slave_dev)
+ 		 * has been cleared (if our_slave == old_current),
+ 		 * but before a new active slave is selected.
+ 		 */
++		unblock_netpoll_tx();
+ 		write_unlock_bh(&bond->lock);
+ 		bond_alb_deinit_slave(bond, slave);
+ 		write_lock_bh(&bond->lock);
++		block_netpoll_tx();
+ 	}
+ 
+ 	if (oldcurrent == slave) {
+@@ -1995,15 +2058,19 @@ int bond_release(struct net_device *bond_dev, struct net_device *slave_dev)
+ 		 * is no concern that another slave add/remove event
+ 		 * will interfere.
+ 		 */
++		unblock_netpoll_tx();
+ 		write_unlock_bh(&bond->lock);
+ 		read_lock(&bond->lock);
+ 		write_lock_bh(&bond->curr_slave_lock);
++		block_netpoll_tx();
+ 
+ 		bond_select_active_slave(bond);
+ 
++		unblock_netpoll_tx();
+ 		write_unlock_bh(&bond->curr_slave_lock);
+ 		read_unlock(&bond->lock);
+ 		write_lock_bh(&bond->lock);
++		block_netpoll_tx();
+ 	}
+ 
+ 	if (bond->slave_cnt == 0) {
+@@ -2036,6 +2103,7 @@ int bond_release(struct net_device *bond_dev, struct net_device *slave_dev)
+ 		bond_dev->features &= ~NETIF_F_VLAN_CHALLENGED;
+ 	}
+ 
++	unblock_netpoll_tx();
+ 	write_unlock_bh(&bond->lock);
+ 
+ 	/* must do this from outside any spinlocks */
+@@ -2066,6 +2134,14 @@ int bond_release(struct net_device *bond_dev, struct net_device *slave_dev)
+ 
+ 	netdev_set_master(slave_dev, NULL);
+ 
++#ifdef CONFIG_NET_POLL_CONTROLLER
++	read_lock_bh(&bond->lock);
++	if (slaves_support_netpoll(bond_dev))
++		bond_dev->priv_flags &= ~IFF_DISABLE_NETPOLL;
++	read_unlock_bh(&bond->lock);
++	slave_dev->npinfo = NULL;
++#endif
++
+ 	/* close slave before restoring its mac address */
+ 	dev_close(slave_dev);
+ 
+@@ -2299,9 +2375,11 @@ static int bond_ioctl_change_active(struct net_device *bond_dev, struct net_devi
+ 	    (old_active) &&
+ 	    (new_active->link == BOND_LINK_UP) &&
+ 	    IS_UP(new_active->dev)) {
++		block_netpoll_tx();
+ 		write_lock_bh(&bond->curr_slave_lock);
+ 		bond_change_active_slave(bond, new_active);
+ 		write_unlock_bh(&bond->curr_slave_lock);
++		unblock_netpoll_tx();
+ 	} else {
+ 		res = -EINVAL;
+ 	}
+@@ -2555,9 +2633,11 @@ static void bond_miimon_commit(struct bonding *bond)
+ 
+ do_failover:
+ 		ASSERT_RTNL();
++		block_netpoll_tx();
+ 		write_lock_bh(&bond->curr_slave_lock);
+ 		bond_select_active_slave(bond);
+ 		write_unlock_bh(&bond->curr_slave_lock);
++		unblock_netpoll_tx();
+ 	}
+ 
+ 	bond_set_carrier(bond);
+@@ -3001,11 +3081,13 @@ void bond_loadbalance_arp_mon(void *work_data)
+ 	}
+ 
+ 	if (do_failover) {
++		block_netpoll_tx();
+ 		write_lock_bh(&bond->curr_slave_lock);
+ 
+ 		bond_select_active_slave(bond);
+ 
+ 		write_unlock_bh(&bond->curr_slave_lock);
++		unblock_netpoll_tx();
+ 	}
+ 
+ re_arm:
+@@ -3156,9 +3238,11 @@ static void bond_ab_arp_commit(struct bonding *bond, int delta_in_ticks)
+ 
+ do_failover:
+ 		ASSERT_RTNL();
++		block_netpoll_tx();
+ 		write_lock_bh(&bond->curr_slave_lock);
+ 		bond_select_active_slave(bond);
+ 		write_unlock_bh(&bond->curr_slave_lock);
++		unblock_netpoll_tx();
+ 	}
+ 
+ 	bond_set_carrier(bond);
+@@ -3444,6 +3528,8 @@ static void bond_info_show_slave(struct seq_file *seq, const struct slave *slave
+ 	seq_printf(seq, "\nSlave Interface: %s\n", slave->dev->name);
+ 	seq_printf(seq, "MII Status: %s\n",
+ 		   (slave->link == BOND_LINK_UP) ?  "up" : "down");
++	seq_printf(seq, "Speed: %d Mbps\n", slave->speed);
++	seq_printf(seq, "Duplex: %s\n", slave->duplex ? "full" : "half");
+ 	seq_printf(seq, "Link Failure Count: %u\n",
+ 		   slave->link_failure_count);
+ 
+@@ -4392,6 +4478,13 @@ static int bond_xmit_roundrobin(struct sk_buff *skb, struct net_device *bond_dev
+ 	int i, slave_no, res = 1;
+ 	struct iphdr *iph = ip_hdr(skb);
+ 
++	/*
++	 * If we risk deadlock from transmitting this in the
++	 * netpoll path, tell netpoll to queue the frame for later tx
++	 */
++	if (is_netpoll_tx_blocked(bond_dev))
++		return NETDEV_TX_BUSY;
++	
+ 	if (TX_QUEUE_OVERRIDE(bond)) {
+ 		if (!bond_slave_override(bond, skb))
+ 			return NETDEV_TX_OK;
+@@ -4463,6 +4556,13 @@ static int bond_xmit_activebackup(struct sk_buff *skb, struct net_device *bond_d
+ 	struct bonding *bond = bond_dev->priv;
+ 	int res = 1;
+ 
++	/*
++	 * If we risk deadlock from transmitting this in the
++	 * netpoll path, tell netpoll to queue the frame for later tx
++	 */
++	if (is_netpoll_tx_blocked(bond_dev))
++		return NETDEV_TX_BUSY;
++
+ 	if (TX_QUEUE_OVERRIDE(bond)) {
+ 		if (!bond_slave_override(bond, skb))
+ 			return NETDEV_TX_OK;
+@@ -4503,6 +4603,13 @@ static int bond_xmit_xor(struct sk_buff *skb, struct net_device *bond_dev)
+ 	int i;
+ 	int res = 1;
+ 
++	/*
++	 * If we risk deadlock from transmitting this in the
++	 * netpoll path, tell netpoll to queue the frame for later tx
++	 */
++	if (is_netpoll_tx_blocked(bond_dev))
++		return NETDEV_TX_BUSY;
++
+ 	read_lock(&bond->lock);
+ 
+ 	if (!BOND_IS_OK(bond)) {
+@@ -4549,6 +4656,13 @@ static int bond_xmit_broadcast(struct sk_buff *skb, struct net_device *bond_dev)
+ 	int i;
+ 	int res = 1;
+ 
++	/*
++	 * If we risk deadlock from transmitting this in the
++	 * netpoll path, tell netpoll to queue the frame for later tx
++	 */
++	if (is_netpoll_tx_blocked(bond_dev))
++		return NETDEV_TX_BUSY;
++
+ 	read_lock(&bond->lock);
+ 
+ 	if (!BOND_IS_OK(bond)) {
+@@ -4754,6 +4868,10 @@ static int bond_init(struct net_device *bond_dev, struct bond_params *params)
+ 	bond_dev->change_mtu = bond_change_mtu;
+ 	bond_dev->set_mac_address = bond_set_mac_address;
+ 
++#ifdef CONFIG_NET_POLL_CONTROLLER
++	bond_dev->poll_controller = bond_poll_controller;
++#endif
++
+ 	bond_set_mode_ops(bond, bond->params.mode);
+ 
+ 	bond_dev->destructor = bond_destructor;
+@@ -5360,6 +5478,7 @@ static int __init bonding_init(void)
+ 	if (res)
+ 		goto err;
+ 
++
+ 	register_netdevice_notifier(&bond_netdev_notifier);
+ 	register_inetaddr_notifier(&bond_inetaddr_notifier);
+ 	bond_register_ipv6_notifier();
+diff --git a/drivers/net/bonding/bond_sysfs.c b/drivers/net/bonding/bond_sysfs.c
+index 8512082..6ffcdc6 100644
+--- a/drivers/net/bonding/bond_sysfs.c
++++ b/drivers/net/bonding/bond_sysfs.c
+@@ -1136,6 +1136,7 @@ static ssize_t bonding_store_primary(struct class_device *cd, const char *buf, s
+ out:
+ 	write_unlock_bh(&bond->curr_slave_lock);
+ 	read_unlock(&bond->lock);
++	unblock_netpoll_tx();
+ 	rtnl_unlock();
+ 
+ 	return count;
+@@ -1179,11 +1180,13 @@ static ssize_t bonding_store_primary_reselect(struct class_device *cd,
+ 	       bond->dev->name, pri_reselect_tbl[new_value].modename,
+ 	       new_value);
+ 
++	block_netpoll_tx();
+ 	read_lock(&bond->lock);
+ 	write_lock_bh(&bond->curr_slave_lock);
+ 	bond_select_active_slave(bond);
+ 	write_unlock_bh(&bond->curr_slave_lock);
+ 	read_unlock(&bond->lock);
++	unblock_netpoll_tx();
+ out:
+ 	rtnl_unlock();
+ 	return ret;
+@@ -1315,6 +1318,8 @@ static ssize_t bonding_store_active_slave(struct class_device *cd, const char *b
+ out:
+ 	write_unlock_bh(&bond->curr_slave_lock);
+ 	read_unlock(&bond->lock);
++	unblock_netpoll_tx();
++
+ 	rtnl_unlock();
+ 
+ 	return count;
+diff --git a/drivers/net/bonding/bonding.h b/drivers/net/bonding/bonding.h
+index 6528dcd..3733fca 100644
+--- a/drivers/net/bonding/bonding.h
++++ b/drivers/net/bonding/bonding.h
+@@ -19,6 +19,7 @@
+ #include <linux/proc_fs.h>
+ #include <linux/if_bonding.h>
+ #include <linux/kobject.h>
++#include <linux/cpumask.h>
+ #include <linux/in6.h>
+ #include "bond_3ad.h"
+ #include "bond_alb.h"
+@@ -124,6 +125,35 @@ extern int debug;
+ 		bond_for_each_slave_from(bond, pos, cnt, (bond)->first_slave)
+ 
+ 
++#ifdef CONFIG_NET_POLL_CONTROLLER
++extern cpumask_t netpoll_block_tx;
++
++static inline void block_netpoll_tx(void)
++{
++	preempt_disable();
++	BUG_ON(cpu_test_and_set(smp_processor_id(),
++					netpoll_block_tx));
++}
++
++static inline void unblock_netpoll_tx(void)
++{
++	cpu_clear(smp_processor_id(),
++		  netpoll_block_tx);
++	preempt_enable();
++}
++
++static inline int is_netpoll_tx_blocked(struct net_device *dev)
++{
++	if (unlikely(dev->priv_flags & IFF_IN_NETPOLL))
++		return cpu_isset(smp_processor_id(), netpoll_block_tx);
++	return 0;
++}
++#else
++#define block_netpoll_tx()
++#define unblock_netpoll_tx()
++#define is_netpoll_tx_blocked(dev)
++#endif
++
+ struct bond_params {
+ 	int mode;
+ 	int xmit_policy;
+diff --git a/include/linux/if.h b/include/linux/if.h
+index 2b1704d..4e0b850 100644
+--- a/include/linux/if.h
++++ b/include/linux/if.h
+@@ -64,6 +64,9 @@
+ #define IFF_EXTENDED	0x80		/* Extended data available	*/
+ #define IFF_MASTER_ARPMON 0x100		/* bonding master, ARP mon in use */
+ 
++#define IFF_IN_NETPOLL 0x1000          	/* whether we are processing netpoll */
++#define IFF_DISABLE_NETPOLL    0x2000  	/* disable netpoll at run-time */
++
+ #define IF_GET_IFACE	0x0001		/* for querying only */
+ #define IF_GET_PROTO	0x0002
+ 
+diff --git a/include/linux/netpoll.h b/include/linux/netpoll.h
+index 5e3a929..0539e10 100644
+--- a/include/linux/netpoll.h
++++ b/include/linux/netpoll.h
+@@ -22,6 +22,9 @@ struct netpoll {
+ 	u32 local_ip, remote_ip;
+ 	u16 local_port, remote_port;
+ 	unsigned char local_mac[6], remote_mac[6];
++#ifndef __GENKSYMS__
++	struct net_device *real_dev;
++#endif
+ };
+ 
+ struct netpoll_info {
+@@ -32,8 +35,12 @@ struct netpoll_info {
+ 	spinlock_t rx_lock;
+ 	struct netpoll *rx_np; /* netpoll that registered an rx_hook */
+ 	struct sk_buff_head arp_tx; /* list of arp requests to reply to */
++#ifndef __GENKSYMS__
++	struct netpoll *netpoll;
++#endif
+ };
+ 
++void netpoll_poll_dev (struct net_device *dev);
+ void netpoll_poll(struct netpoll *np);
+ void netpoll_send_udp(struct netpoll *np, const char *msg, int len);
+ int netpoll_parse_options(struct netpoll *np, char *opt);
+@@ -43,6 +50,9 @@ void netpoll_set_trap(int trap);
+ void netpoll_cleanup(struct netpoll *np);
+ int __netpoll_rx(struct sk_buff *skb);
+ void netpoll_queue(struct sk_buff *skb);
++void netpoll_send_skb(struct netpoll *np, struct sk_buff *skb);
++void netpoll_send_skb_on_dev(struct netpoll *np, struct sk_buff *skb,
++			     struct net_device *dev);
+ 
+ #ifdef CONFIG_NETPOLL
+ static inline int netpoll_rx(struct sk_buff *skb)
+diff --git a/include/linux/notifier.h b/include/linux/notifier.h
+index d3ef3f6..f807d20 100644
+--- a/include/linux/notifier.h
++++ b/include/linux/notifier.h
+@@ -154,6 +154,7 @@ static inline int notifier_to_errno(int ret)
+ #define NETDEV_FEAT_CHANGE	0x000B
+ #define NETDEV_BONDING_FAILOVER 0x000C
+ #define NETDEV_PRE_UP		0x000D
++#define NETDEV_BONDING_DESLAVE  0x0012
+ 
+ #define SYS_DOWN	0x0001	/* Notify of system down */
+ #define SYS_RESTART	SYS_DOWN
+diff --git a/net/core/netpoll.c b/net/core/netpoll.c
+index 2a5a0a3..74ca84e 100644
+--- a/net/core/netpoll.c
++++ b/net/core/netpoll.c
+@@ -160,18 +160,6 @@ static int poll_one_napi(struct netpoll_info *npinfo,
+ 	return budget;
+ }
+ 
+-static void poll_napi(struct netpoll *np)
+-{
+-	struct netpoll_info *npinfo = np->dev->npinfo;
+-	int budget = 16;
+-
+-	if (npinfo->poll_owner != smp_processor_id() &&
+-	    spin_trylock(&npinfo->poll_lock)) {
+-		budget = poll_one_napi(npinfo, np->dev, budget);
+-		spin_unlock(&npinfo->poll_lock);
+-	}
+-}
+-
+ static void service_arp_queue(struct netpoll_info *npi)
+ {
+ 	struct sk_buff *skb;
+@@ -188,21 +176,35 @@ static void service_arp_queue(struct netpoll_info *npi)
+ 	return;
+ }
+ 
+-void netpoll_poll(struct netpoll *np)
++void netpoll_poll_dev(struct net_device *dev)
+ {
+-	if(!np->dev || !netif_running(np->dev) || !np->dev->poll_controller)
++
++	if (!dev || !netif_running(dev))
++		return;
++
++	if (dev->poll_controller)
+ 		return;
+ 
+-	/* Process pending work on NIC */
+-	np->dev->poll_controller(np->dev);
+-	if (np->dev->poll)
+-		poll_napi(np);
++	dev->poll_controller(dev);
++
++	if (dev->poll) {
++		if (dev->npinfo->poll_owner != smp_processor_id() &&
++		    spin_trylock(&dev->npinfo->poll_lock)) {
++			poll_one_napi(dev->npinfo, dev, 16);
++			spin_unlock(&dev->npinfo->poll_lock);
++		}
++	}
+ 
+-	service_arp_queue(np->dev->npinfo);
++	service_arp_queue(dev->npinfo);
+ 
+ 	zap_completion_queue();
+ }
+ 
++void netpoll_poll(struct netpoll *np)
++{
++	netpoll_poll_dev(np->dev);
++}
++
+ static void refill_skbs(void)
+ {
+ 	struct sk_buff *skb;
+@@ -286,17 +288,18 @@ repeat:
+ 	return skb;
+ }
+ 
+-static void netpoll_send_skb(struct netpoll *np, struct sk_buff *skb)
++void netpoll_send_skb_on_dev(struct netpoll *np, struct sk_buff *skb,
++			     struct net_device *dev)
+ {
+ 	int status;
+ 	struct netpoll_info *npinfo;
+ 
+-	if (!np || !np->dev || !netif_running(np->dev)) {
++	if (!np || !dev || !netif_running(dev)) {
+ 		__kfree_skb(skb);
+ 		return;
+ 	}
+ 
+-	npinfo = np->dev->npinfo;
++	npinfo = dev->npinfo;
+ 
+ 	/* avoid recursion */
+ 	if (npinfo->poll_owner == smp_processor_id() ||
+@@ -310,17 +313,20 @@ static void netpoll_send_skb(struct netpoll *np, struct sk_buff *skb)
+ 
+ 	do {
+ 		npinfo->tries--;
+-		netif_tx_lock(np->dev);
++		netif_tx_lock(dev);
+ 
+ 		/*
+ 		 * network drivers do not expect to be called if the queue is
+ 		 * stopped.
+ 		 */
+ 		status = NETDEV_TX_BUSY;
+-		if (!netif_queue_stopped(np->dev))
+-			status = np->dev->hard_start_xmit(skb, np->dev);
++		if (!netif_queue_stopped(dev)) {
++			dev->priv_flags |= IFF_IN_NETPOLL;
++			status = dev->hard_start_xmit(skb, dev);
++			dev->priv_flags &= ~IFF_IN_NETPOLL;
++		}
+ 
+-		netif_tx_unlock(np->dev);
++		netif_tx_unlock(dev);
+ 
+ 		/* success */
+ 		if(!status) {
+@@ -329,11 +335,16 @@ static void netpoll_send_skb(struct netpoll *np, struct sk_buff *skb)
+ 		}
+ 
+ 		/* transmit busy */
+-		netpoll_poll(np);
++		netpoll_poll_dev(dev);
+ 		udelay(50);
+ 	} while (npinfo->tries > 0);
+ }
+ 
++void netpoll_send_skb(struct netpoll *np, struct sk_buff *skb)
++{
++	netpoll_send_skb_on_dev(np, skb, np->dev);
++}
++
+ void netpoll_send_udp(struct netpoll *np, const char *msg, int len)
+ {
+ 	int total_len, eth_len, ip_len, udp_len;
+@@ -388,6 +399,8 @@ void netpoll_send_udp(struct netpoll *np, const char *msg, int len)
+ 
+ 	skb->dev = np->dev;
+ 
++	skb_set_network_header(skb, ETH_HLEN);
++
+ 	netpoll_send_skb(np, skb);
+ }
+ 
+@@ -693,6 +706,7 @@ int netpoll_setup(struct netpoll *np)
+ 		npinfo->tries = MAX_RETRIES;
+ 		spin_lock_init(&npinfo->rx_lock);
+ 		skb_queue_head_init(&npinfo->arp_tx);
++		npinfo->netpoll = np;
+ 	} else
+ 		npinfo = ndev->npinfo;
+ 
+@@ -799,6 +813,7 @@ void netpoll_cleanup(struct netpoll *np)
+ 			spin_lock_irqsave(&npinfo->rx_lock, flags);
+ 			npinfo->rx_np = NULL;
+ 			npinfo->rx_flags &= ~NETPOLL_RX_ENABLED;
++			npinfo->netpoll = NULL;
+ 			spin_unlock_irqrestore(&npinfo->rx_lock, flags);
+ 		}
+ 		dev_put(np->dev);
+@@ -820,11 +835,14 @@ void netpoll_set_trap(int trap)
+ 		atomic_dec(&trapped);
+ }
+ 
++EXPORT_SYMBOL(netpoll_send_skb_on_dev);
++EXPORT_SYMBOL(netpoll_send_skb);
+ EXPORT_SYMBOL(netpoll_set_trap);
+ EXPORT_SYMBOL(netpoll_trap);
+ EXPORT_SYMBOL(netpoll_parse_options);
+ EXPORT_SYMBOL(netpoll_setup);
+ EXPORT_SYMBOL(netpoll_cleanup);
+ EXPORT_SYMBOL(netpoll_send_udp);
++EXPORT_SYMBOL(netpoll_poll_dev);
+ EXPORT_SYMBOL(netpoll_poll);
+ EXPORT_SYMBOL(netpoll_queue);

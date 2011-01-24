@@ -1,0 +1,27 @@
+From: Doug Ledford <dledford@redhat.com>
+Date: Tue, 1 Dec 2009 19:33:22 -0500
+Subject: [net] cxgb3: correct hex/decimal error
+Message-id: <1259696003-21028-8-git-send-email-dledford@redhat.com>
+Patchwork-id: 21592
+O-Subject: [Patch RHEL5.5] [cxgb3] Correct hex/decimal error
+Bugzilla: 516948
+RH-Acked-by: David S. Miller <davem@redhat.com>
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+Firmware version check should be against decimal 101, not hex 0x101.
+
+Signed-off-by: Doug Ledford <dledford@redhat.com>
+
+diff --git a/drivers/net/cxgb3/aq100x.c b/drivers/net/cxgb3/aq100x.c
+index b0efd8e..462f399 100644
+--- a/drivers/net/cxgb3/aq100x.c
++++ b/drivers/net/cxgb3/aq100x.c
+@@ -309,7 +309,7 @@ int t3_aq100x_phy_prep(struct cphy *phy, struct adapter *adapter, int phy_addr,
+ 
+ 	/* Firmware version check. */
+ 	(void) mdio_read(phy, MDIO_DEV_VEND1, AQ_FW_VERSION, &v);
+-	if (v != 0x101)
++	if (v != 101)
+ 		CH_WARN(adapter, "PHY%d: unsupported firmware %d\n",
+ 			phy_addr, v);
+ 

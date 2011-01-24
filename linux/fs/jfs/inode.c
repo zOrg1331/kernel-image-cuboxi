@@ -4,16 +4,16 @@
  *
  *   This program is free software;  you can redistribute it and/or modify
  *   it under the terms of the GNU General Public License as published by
- *   the Free Software Foundation; either version 2 of the License, or
+ *   the Free Software Foundation; either version 2 of the License, or 
  *   (at your option) any later version.
- *
+ * 
  *   This program is distributed in the hope that it will be useful,
  *   but WITHOUT ANY WARRANTY;  without even the implied warranty of
  *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See
  *   the GNU General Public License for more details.
  *
  *   You should have received a copy of the GNU General Public License
- *   along with this program;  if not, write to the Free Software
+ *   along with this program;  if not, write to the Free Software 
  *   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
  */
 
@@ -22,7 +22,6 @@
 #include <linux/buffer_head.h>
 #include <linux/pagemap.h>
 #include <linux/quotaops.h>
-#include <linux/writeback.h>
 #include "jfs_incore.h"
 #include "jfs_inode.h"
 #include "jfs_filsys.h"
@@ -32,21 +31,11 @@
 #include "jfs_debug.h"
 
 
-struct inode *jfs_iget(struct super_block *sb, unsigned long ino)
+void jfs_read_inode(struct inode *inode)
 {
-	struct inode *inode;
-	int ret;
-
-	inode = iget_locked(sb, ino);
-	if (!inode)
-		return ERR_PTR(-ENOMEM);
-	if (!(inode->i_state & I_NEW))
-		return inode;
-
-	ret = diRead(inode);
-	if (ret < 0) {
-		iget_failed(inode);
-		return ERR_PTR(ret);
+	if (diRead(inode)) { 
+		make_bad_inode(inode);
+		return;
 	}
 
 	if (S_ISREG(inode->i_mode)) {
@@ -60,20 +49,13 @@ struct inode *jfs_iget(struct super_block *sb, unsigned long ino)
 		if (inode->i_size >= IDATASIZE) {
 			inode->i_op = &page_symlink_inode_operations;
 			inode->i_mapping->a_ops = &jfs_aops;
-		} else {
+		} else
 			inode->i_op = &jfs_symlink_inode_operations;
-			/*
-			 * The inline data should be null-terminated, but
-			 * don't let on-disk corruption crash the kernel
-			 */
-			JFS_IP(inode)->i_inline[inode->i_size] = '\0';
-		}
 	} else {
 		inode->i_op = &jfs_file_inode_operations;
 		init_special_inode(inode, inode->i_mode, inode->i_rdev);
 	}
-	unlock_new_inode(inode);
-	return inode;
+	jfs_set_inode_flags(inode);
 }
 
 /*
@@ -121,10 +103,8 @@ int jfs_commit_inode(struct inode *inode, int wait)
 	return rc;
 }
 
-int jfs_write_inode(struct inode *inode, struct writeback_control *wbc)
+int jfs_write_inode(struct inode *inode, int wait)
 {
-	int wait = wbc->sync_mode == WB_SYNC_ALL;
-
 	if (test_cflag(COMMIT_Nolink, inode))
 		return 0;
 	/*
@@ -161,9 +141,9 @@ void jfs_delete_inode(struct inode *inode)
 		/*
 		 * Free the inode from the quota allocation.
 		 */
-		vfs_dq_init(inode);
-		vfs_dq_free_inode(inode);
-		vfs_dq_drop(inode);
+		DQUOT_INIT(inode);
+		DQUOT_FREE_INODE(inode);
+		DQUOT_DROP(inode);
 	}
 
 	clear_inode(inode);
@@ -202,9 +182,9 @@ int jfs_get_block(struct inode *ip, sector_t lblock,
 	 * Take appropriate lock on inode
 	 */
 	if (create)
-		IWRITE_LOCK(ip, RDWRLOCK_NORMAL);
+		IWRITE_LOCK(ip);
 	else
-		IREAD_LOCK(ip, RDWRLOCK_NORMAL);
+		IREAD_LOCK(ip);
 
 	if (((lblock64 << ip->i_sb->s_blocksize_bits) < ip->i_size) &&
 	    (!xtLookup(ip, lblock64, xlen, &xflag, &xaddr, &xlen, 0)) &&
@@ -247,7 +227,7 @@ int jfs_get_block(struct inode *ip, sector_t lblock,
 #ifdef _JFS_4K
 	if ((rc = extHint(ip, lblock64 << ip->i_sb->s_blocksize_bits, &xad)))
 		goto unlock;
-	rc = extAlloc(ip, xlen, lblock64, &xad, false);
+	rc = extAlloc(ip, xlen, lblock64, &xad, FALSE);
 	if (rc)
 		goto unlock;
 
@@ -276,7 +256,7 @@ int jfs_get_block(struct inode *ip, sector_t lblock,
 
 static int jfs_writepage(struct page *page, struct writeback_control *wbc)
 {
-	return block_write_full_page(page, jfs_get_block, wbc);
+	return nobh_writepage(page, jfs_get_block, wbc);
 }
 
 static int jfs_writepages(struct address_space *mapping,
@@ -296,12 +276,10 @@ static int jfs_readpages(struct file *file, struct address_space *mapping,
 	return mpage_readpages(mapping, pages, nr_pages, jfs_get_block);
 }
 
-static int jfs_write_begin(struct file *file, struct address_space *mapping,
-				loff_t pos, unsigned len, unsigned flags,
-				struct page **pagep, void **fsdata)
+static int jfs_prepare_write(struct file *file,
+			     struct page *page, unsigned from, unsigned to)
 {
-	return nobh_write_begin(file, mapping, pos, len, flags, pagep, fsdata,
-				jfs_get_block);
+	return nobh_prepare_write(page, from, to, jfs_get_block);
 }
 
 static sector_t jfs_bmap(struct address_space *mapping, sector_t block)
@@ -325,8 +303,8 @@ const struct address_space_operations jfs_aops = {
 	.writepage	= jfs_writepage,
 	.writepages	= jfs_writepages,
 	.sync_page	= block_sync_page,
-	.write_begin	= jfs_write_begin,
-	.write_end	= nobh_write_end,
+	.prepare_write	= jfs_prepare_write,
+	.commit_write	= nobh_commit_write,
 	.bmap		= jfs_bmap,
 	.direct_IO	= jfs_direct_IO,
 };
@@ -379,9 +357,9 @@ void jfs_truncate(struct inode *ip)
 {
 	jfs_info("jfs_truncate: size = 0x%lx", (ulong) ip->i_size);
 
-	nobh_truncate_page(ip->i_mapping, ip->i_size, jfs_get_block);
+	nobh_truncate_page(ip->i_mapping, ip->i_size);
 
-	IWRITE_LOCK(ip, RDWRLOCK_NORMAL);
+	IWRITE_LOCK(ip);
 	jfs_truncate_nolock(ip, ip->i_size);
 	IWRITE_UNLOCK(ip);
 }

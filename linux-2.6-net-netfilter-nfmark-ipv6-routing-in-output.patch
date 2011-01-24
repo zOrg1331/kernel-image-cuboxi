@@ -1,0 +1,62 @@
+From: Anton Arapov <aarapov@redhat.com>
+Date: Tue, 24 Mar 2009 12:24:34 +0100
+Subject: [net] netfilter: nfmark IPV6 routing in OUTPUT
+Message-id: 20090324112434.GD3853@redhat.com
+O-Subject: [PATCH RHEL5.4] BZ470059: netfilter: nfmark IPV6 routing in OUTPUT, mangle, NFQUEUE
+Bugzilla: 470059
+RH-Acked-by: Thomas Graf <tgraf@redhat.com>
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+RH-Acked-by: David Miller <davem@redhat.com>
+RH-Acked-by: Jiri Pirko <jpirko@redhat.com>
+
+bugzilla:
+https://bugzilla.redhat.com/show_bug.cgi?id=470059
+
+description: (cut from git)
+  This patch let nfmark to be evaluated for routing decision for OUTPUT
+  packet, in mangle table, when process paquet in NFQUEUE. This patch is
+  an IPv6 port of Laurent Licour IPv4 one.
+
+upstream status:
+  commit 9f40ac713c49fb6ca655550b620edc85c445d743
+
+test status:
+  built successfully in brew
+  reproduced the hw environment with described rules - problem has been fixed
+
+notice:
+  waited for extra-test from customer who reported the issue,
+  but still not have any feedback.
+
+==
+
+diff --git a/net/ipv6/netfilter.c b/net/ipv6/netfilter.c
+index f039de6..72fff3d 100644
+--- a/net/ipv6/netfilter.c
++++ b/net/ipv6/netfilter.c
+@@ -53,6 +53,7 @@ EXPORT_SYMBOL(ip6_route_me_harder);
+ struct ip6_rt_info {
+ 	struct in6_addr daddr;
+ 	struct in6_addr saddr;
++	u_int32_t mark;
+ };
+ 
+ static void nf_ip6_saveroute(const struct sk_buff *skb, struct nf_info *info)
+@@ -64,6 +65,7 @@ static void nf_ip6_saveroute(const struct sk_buff *skb, struct nf_info *info)
+ 
+ 		rt_info->daddr = iph->daddr;
+ 		rt_info->saddr = iph->saddr;
++		rt_info->mark = skb->nfmark;
+ 	}
+ }
+ 
+@@ -74,7 +76,8 @@ static int nf_ip6_reroute(struct sk_buff **pskb, const struct nf_info *info)
+ 	if (info->hook == NF_IP6_LOCAL_OUT) {
+ 		struct ipv6hdr *iph = (*pskb)->nh.ipv6h;
+ 		if (!ipv6_addr_equal(&iph->daddr, &rt_info->daddr) ||
+-		    !ipv6_addr_equal(&iph->saddr, &rt_info->saddr))
++		    !ipv6_addr_equal(&iph->saddr, &rt_info->saddr) ||
++		    (*pskb)->nfmark != rt_info->mark)
+ 			return ip6_route_me_harder(*pskb);
+ 	}
+ 	return 0;

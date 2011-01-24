@@ -284,9 +284,6 @@ int __init dnfb_init(void)
 {
 	int ret;
 
-	if (!MACH_IS_APOLLO)
-		return -ENODEV;
-
 	if (fb_get_options("dnfb", NULL))
 		return -ENODEV;
 

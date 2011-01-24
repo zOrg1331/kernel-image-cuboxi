@@ -1,0 +1,28 @@
+--- linux-2.6.17.noarch/fs/squashfs/inode.c~	2006-07-12 13:54:31.000000000 -0400
++++ linux-2.6.17.noarch/fs/squashfs/inode.c	2006-07-12 13:54:53.000000000 -0400
+@@ -607,7 +607,6 @@ static struct inode *squashfs_iget(struc
+ 			i->i_fop = &generic_ro_fops;
+ 			i->i_mode |= S_IFREG;
+ 			i->i_blocks = ((i->i_size - 1) >> 9) + 1;
+-			i->i_blksize = PAGE_CACHE_SIZE;
+ 			SQUASHFS_I(i)->u.s1.fragment_start_block = frag_blk;
+ 			SQUASHFS_I(i)->u.s1.fragment_size = frag_size;
+ 			SQUASHFS_I(i)->u.s1.fragment_offset = inodep->offset;
+@@ -660,7 +659,6 @@ static struct inode *squashfs_iget(struc
+ 			i->i_fop = &generic_ro_fops;
+ 			i->i_mode |= S_IFREG;
+ 			i->i_blocks = ((i->i_size - 1) >> 9) + 1;
+-			i->i_blksize = PAGE_CACHE_SIZE;
+ 			SQUASHFS_I(i)->u.s1.fragment_start_block = frag_blk;
+ 			SQUASHFS_I(i)->u.s1.fragment_size = frag_size;
+ 			SQUASHFS_I(i)->u.s1.fragment_offset = inodep->offset;
+--- linux-2.6.17.noarch/fs/squashfs/squashfs2_0.c~	2006-07-12 13:55:43.000000000 -0400
++++ linux-2.6.17.noarch/fs/squashfs/squashfs2_0.c	2006-07-12 13:55:46.000000000 -0400
+@@ -228,7 +228,6 @@ static struct inode *squashfs_iget_2(str
+ 			i->i_atime.tv_sec = inodep->mtime;
+ 			i->i_ctime.tv_sec = inodep->mtime;
+ 			i->i_blocks = ((i->i_size - 1) >> 9) + 1;
+-			i->i_blksize = PAGE_CACHE_SIZE;
+ 			SQUASHFS_I(i)->u.s1.fragment_start_block = frag_blk;
+ 			SQUASHFS_I(i)->u.s1.fragment_size = frag_size;
+ 			SQUASHFS_I(i)->u.s1.fragment_offset = inodep->offset;

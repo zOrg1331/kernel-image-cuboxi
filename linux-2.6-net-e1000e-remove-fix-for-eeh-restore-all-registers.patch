@@ -1,0 +1,80 @@
+From: Jesse Larrew <jlarrew@redhat.com>
+Date: Fri, 21 Nov 2008 16:44:53 -0500
+Subject: [net] e1000e: remove fix for EEH restore all registers
+Message-id: 20081121214453.21552.21897.sendpatchset@manic8ball.ltc.austin.ibm.com
+O-Subject: [PATCH RHEL5.3 1/2 BZ470580, BZ470582] Remove e1000e-specific fix for EEH restore all registers
+Bugzilla: 470580
+RH-Acked-by: Andy Gospodarek <gospo@redhat.com>
+
+RHBZ#:
+======
+https://bugzilla.redhat.com/show_bug.cgi?id=470580
+https://bugzilla.redhat.com/show_bug.cgi?id=470582
+
+Description:
+===========
+This is a bugfix for all archs that compile the e1000e driver.
+
+In the e1000e driver, not all of the registers will be correctly restored
+after an EEH event. This can leave the adapters in an unreliable state after
+EEH.  At that point if you try to change the ip or anything like it, further
+EEH errors occur.
+
+This patch removes a fix specific to the e1000e driver, and instead uses
+a generic fix in pci_save_state() to properly save/restore the pcie registers.
+By moving the fix to PCI code, all drivers can benifit from it without
+the need to implement driver-specific workarounds (see patch #2).
+
+RHEL Version Found:
+================
+RHEL 5.3
+
+kABI Status:
+============
+No symbols were harmed.
+
+Brew:
+=====
+Built on all platforms.
+https://brewweb.devel.redhat.com/taskinfo?taskID=1577345
+
+Upstream Status:
+================
+These patches are not needed upstream, because the upstream kernel
+does not need the calls to {save|restore}_pcie_reg to restore all of the
+registers.
+
+===============================================================
+
+Jesse Larrew
+IBM Onsite Partner
+978-392-3183
+jlarrew@redhat.com
+
+Proposed Patch:
+===============
+This patch is based on kernel 2.6.18-123.el5
+
+diff --git a/drivers/net/e1000e/netdev.c b/drivers/net/e1000e/netdev.c
+index 8d24642..51bcd09 100644
+--- a/drivers/net/e1000e/netdev.c
++++ b/drivers/net/e1000e/netdev.c
+@@ -4604,8 +4604,7 @@ static pci_ers_result_t e1000_io_slot_reset(struct pci_dev *pdev)
+ 		return PCI_ERS_RESULT_DISCONNECT;
+ 	}
+ 	pci_set_master(pdev);
+-	restore_pcie_reg(pdev);
+-	pci_restore_msi_state(pdev);
++	pci_restore_state(pdev);
+ 
+ 	pci_enable_wake(pdev, PCI_D3hot, 0);
+ 	pci_enable_wake(pdev, PCI_D3cold, 0);
+@@ -4750,7 +4749,7 @@ static int __devinit e1000_probe(struct pci_dev *pdev,
+ 		goto err_pci_reg;
+ 
+ 	pci_set_master(pdev);
+-	save_pcie_reg(pdev);
++	pci_save_state(pdev);
+ 
+ 	err = -ENOMEM;
+ 	netdev = alloc_etherdev(sizeof(struct e1000_adapter));

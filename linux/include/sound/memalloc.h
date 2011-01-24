@@ -1,5 +1,5 @@
 /*
- *  Copyright (c) by Jaroslav Kysela <perex@perex.cz>
+ *  Copyright (c) by Jaroslav Kysela <perex@suse.cz>
  *                   Takashi Iwai <tiwai@suse.de>
  * 
  *  Generic memory allocators
@@ -37,6 +37,7 @@ struct snd_dma_device {
 #ifndef snd_dma_pci_data
 #define snd_dma_pci_data(pci)	(&(pci)->dev)
 #define snd_dma_isa_data()	NULL
+#define snd_dma_sbus_data(sbus)	((struct device *)(sbus))
 #define snd_dma_continuous_data(x)	((struct device *)(unsigned long)(x))
 #endif
 
@@ -47,11 +48,8 @@ struct snd_dma_device {
 #define SNDRV_DMA_TYPE_UNKNOWN		0	/* not defined */
 #define SNDRV_DMA_TYPE_CONTINUOUS	1	/* continuous no-DMA memory */
 #define SNDRV_DMA_TYPE_DEV		2	/* generic device continuous */
-#ifdef CONFIG_SND_DMA_SGBUF
 #define SNDRV_DMA_TYPE_DEV_SG		3	/* generic device SG-buffer */
-#else
-#define SNDRV_DMA_TYPE_DEV_SG	SNDRV_DMA_TYPE_DEV /* no SG-buf support */
-#endif
+#define SNDRV_DMA_TYPE_SBUS		4	/* SBUS continuous */
 
 /*
  * info for buffer allocation
@@ -64,15 +62,9 @@ struct snd_dma_buffer {
 	void *private_data;	/* private for allocator; don't touch */
 };
 
-#ifdef CONFIG_SND_DMA_SGBUF
 /*
  * Scatter-Gather generic device pages
  */
-void *snd_malloc_sgbuf_pages(struct device *device,
-			     size_t size, struct snd_dma_buffer *dmab,
-			     size_t *res_size);
-int snd_free_sgbuf_pages(struct snd_dma_buffer *dmab);
-
 struct snd_sg_page {
 	void *buf;
 	dma_addr_t addr;
@@ -100,19 +92,9 @@ static inline unsigned int snd_sgbuf_aligned_pages(size_t size)
  */
 static inline dma_addr_t snd_sgbuf_get_addr(struct snd_sg_buf *sgbuf, size_t offset)
 {
-	dma_addr_t addr = sgbuf->table[offset >> PAGE_SHIFT].addr;
-	addr &= PAGE_MASK;
-	return addr + offset % PAGE_SIZE;
+	return sgbuf->table[offset >> PAGE_SHIFT].addr + offset % PAGE_SIZE;
 }
 
-/*
- * return the virtual address at the corresponding offset
- */
-static inline void *snd_sgbuf_get_ptr(struct snd_sg_buf *sgbuf, size_t offset)
-{
-	return sgbuf->table[offset >> PAGE_SHIFT].buf + offset % PAGE_SIZE;
-}
-#endif /* CONFIG_SND_DMA_SGBUF */
 
 /* allocate/release a buffer */
 int snd_dma_alloc_pages(int type, struct device *dev, size_t size,

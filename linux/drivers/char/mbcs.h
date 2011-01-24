@@ -537,17 +537,17 @@ struct mbcs_soft {
 	atomic_t dmawrite_done;
 	atomic_t dmaread_done;
 	atomic_t algo_done;
-	struct mutex dmawritelock;
-	struct mutex dmareadlock;
-	struct mutex algolock;
+	struct semaphore dmawritelock;
+	struct semaphore dmareadlock;
+	struct semaphore algolock;
 };
 
-static int mbcs_open(struct inode *ip, struct file *fp);
-static ssize_t mbcs_sram_read(struct file *fp, char __user *buf, size_t len,
+extern int mbcs_open(struct inode *ip, struct file *fp);
+extern ssize_t mbcs_sram_read(struct file *fp, char __user *buf, size_t len,
 			      loff_t * off);
-static ssize_t mbcs_sram_write(struct file *fp, const char __user *buf, size_t len,
+extern ssize_t mbcs_sram_write(struct file *fp, const char __user *buf, size_t len,
 			       loff_t * off);
-static loff_t mbcs_sram_llseek(struct file *filp, loff_t off, int whence);
-static int mbcs_gscr_mmap(struct file *fp, struct vm_area_struct *vma);
+extern loff_t mbcs_sram_llseek(struct file *filp, loff_t off, int whence);
+extern int mbcs_gscr_mmap(struct file *fp, struct vm_area_struct *vma);
 
 #endif				// __MBCS_H__

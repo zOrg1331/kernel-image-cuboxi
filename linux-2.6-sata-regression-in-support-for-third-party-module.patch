@@ -1,0 +1,311 @@
+From: Jeff Garzik <jgarzik@redhat.com>
+Subject: Re: [RHEL5.1] SATA patch update
+Date: Thu, 19 Jul 2007 16:41:03 -0400
+Bugzilla: 248382
+Message-Id: <20070719204103.GD20801@devserv.devel.redhat.com>
+Changelog: [sata] regression in support for third party modules
+
+
+The easiest is to replace the two members added to struct device:
+
+
+diff -urp ../kernel-2.6.18.orig/linux-2.6.18.i686/drivers/base/core.c linux-2.6.18.i686/drivers/base/core.c
+--- ../kernel-2.6.18.orig/linux-2.6.18.i686/drivers/base/core.c	2007-07-19 15:09:29.000000000 -0400
++++ linux-2.6.18.i686/drivers/base/core.c	2007-07-19 15:24:21.000000000 -0400
+@@ -271,8 +271,6 @@ void device_initialize(struct device *de
+ 	INIT_LIST_HEAD(&dev->dma_pools);
+ 	INIT_LIST_HEAD(&dev->node);
+ 	init_MUTEX(&dev->sem);
+-	spin_lock_init(&dev->devres_lock);
+-	INIT_LIST_HEAD(&dev->devres_head);
+ 	device_init_wakeup(dev, 0);
+ }
+ 
+diff -urp ../kernel-2.6.18.orig/linux-2.6.18.i686/drivers/base/dd.c linux-2.6.18.i686/drivers/base/dd.c
+--- ../kernel-2.6.18.orig/linux-2.6.18.i686/drivers/base/dd.c	2007-07-19 15:09:29.000000000 -0400
++++ linux-2.6.18.i686/drivers/base/dd.c	2007-07-19 15:24:17.000000000 -0400
+@@ -77,7 +77,6 @@ int driver_probe_device(struct device_dr
+ 
+ 	pr_debug("%s: Matched Device %s with Driver %s\n",
+ 		 drv->bus->name, dev->bus_id, drv->name);
+-	WARN_ON(!list_empty(&dev->devres_head));
+ 
+ 	dev->driver = drv;
+ 	if (dev->bus->probe) {
+diff -urp ../kernel-2.6.18.orig/linux-2.6.18.i686/drivers/base/devres.c linux-2.6.18.i686/drivers/base/devres.c
+--- ../kernel-2.6.18.orig/linux-2.6.18.i686/drivers/base/devres.c	2007-07-19 15:09:29.000000000 -0400
++++ linux-2.6.18.i686/drivers/base/devres.c	2007-07-19 16:26:22.000000000 -0400
+@@ -32,6 +32,66 @@ struct devres_group {
+ 	/* -- 8 pointers */
+ };
+ 
++struct devres_head_ent {
++	struct device			*dev;
++	struct list_head		devres_head;
++
++	struct list_head		devres_head_list_node;
++};
++
++static DEFINE_SPINLOCK(devres_lock);
++static LIST_HEAD(devres_head_list);
++
++/* all these called inside spin_lock_irqsave(devres_lock) */
++static struct devres_head_ent *dh_find_dev(struct device *dev)
++{
++	struct devres_head_ent *ent;
++	struct list_head *tmp;
++
++	list_for_each(tmp, &devres_head_list) {
++		ent = list_entry(tmp, struct devres_head_ent, 
++				 devres_head_list_node);
++		if (ent->dev == dev)
++			return ent;
++	}
++
++	return NULL;
++}
++
++static struct list_head *get_devres_head(struct device *dev)
++{
++	struct devres_head_ent *ent = dh_find_dev(dev);
++	if (ent)
++		goto out;
++
++	ent = kmalloc(sizeof(*ent), GFP_ATOMIC);
++	if (!ent)
++		return NULL;
++
++	ent->dev = dev;
++	INIT_LIST_HEAD(&ent->devres_head);
++	INIT_LIST_HEAD(&ent->devres_head_list_node);
++
++	list_add(&ent->devres_head_list_node, &devres_head_list);
++
++out:
++	return &ent->devres_head;
++}
++
++static void put_devres_head(struct device *dev)
++{
++	struct devres_head_ent *ent;
++
++	ent = dh_find_dev(dev);
++	if (!ent)
++		return;
++
++	list_del(&ent->devres_head_list_node);
++
++	ent->dev = NULL;
++	kfree(ent);
++}
++
+ #ifdef CONFIG_DEBUG_DEVRES
+ static int log_devres = 0;
+ module_param_named(log, log_devres, int, S_IRUGO | S_IWUSR);
+@@ -98,7 +158,7 @@ static void add_dr(struct device *dev, s
+ {
+ 	devres_log(dev, node, "ADD");
+ 	BUG_ON(!list_empty(&node->entry));
+-	list_add_tail(&node->entry, &dev->devres_head);
++	list_add_tail(&node->entry, get_devres_head(dev));
+ }
+ 
+ #ifdef CONFIG_DEBUG_DEVRES
+@@ -171,9 +231,9 @@ void devres_add(struct device *dev, void
+ 	struct devres *dr = container_of(res, struct devres, data);
+ 	unsigned long flags;
+ 
+-	spin_lock_irqsave(&dev->devres_lock, flags);
++	spin_lock_irqsave(&devres_lock, flags);
+ 	add_dr(dev, &dr->node);
+-	spin_unlock_irqrestore(&dev->devres_lock, flags);
++	spin_unlock_irqrestore(&devres_lock, flags);
+ }
+ EXPORT_SYMBOL_GPL(devres_add);
+ 
+@@ -182,7 +242,7 @@ static struct devres *find_dr(struct dev
+ {
+ 	struct devres_node *node;
+ 
+-	list_for_each_entry_reverse(node, &dev->devres_head, entry) {
++	list_for_each_entry_reverse(node, get_devres_head(dev), entry) {
+ 		struct devres *dr = container_of(node, struct devres, node);
+ 
+ 		if (node->release != release)
+@@ -215,9 +275,9 @@ void * devres_find(struct device *dev, d
+ 	struct devres *dr;
+ 	unsigned long flags;
+ 
+-	spin_lock_irqsave(&dev->devres_lock, flags);
++	spin_lock_irqsave(&devres_lock, flags);
+ 	dr = find_dr(dev, release, match, match_data);
+-	spin_unlock_irqrestore(&dev->devres_lock, flags);
++	spin_unlock_irqrestore(&devres_lock, flags);
+ 
+ 	if (dr)
+ 		return dr->data;
+@@ -246,14 +306,14 @@ void * devres_get(struct device *dev, vo
+ 	struct devres *dr;
+ 	unsigned long flags;
+ 
+-	spin_lock_irqsave(&dev->devres_lock, flags);
++	spin_lock_irqsave(&devres_lock, flags);
+ 	dr = find_dr(dev, new_dr->node.release, match, match_data);
+ 	if (!dr) {
+ 		add_dr(dev, &new_dr->node);
+ 		dr = new_dr;
+ 		new_dr = NULL;
+ 	}
+-	spin_unlock_irqrestore(&dev->devres_lock, flags);
++	spin_unlock_irqrestore(&devres_lock, flags);
+ 	devres_free(new_dr);
+ 
+ 	return dr->data;
+@@ -281,13 +341,13 @@ void * devres_remove(struct device *dev,
+ 	struct devres *dr;
+ 	unsigned long flags;
+ 
+-	spin_lock_irqsave(&dev->devres_lock, flags);
++	spin_lock_irqsave(&devres_lock, flags);
+ 	dr = find_dr(dev, release, match, match_data);
+ 	if (dr) {
+ 		list_del_init(&dr->node.entry);
+ 		devres_log(dev, &dr->node, "REM");
+ 	}
+-	spin_unlock_irqrestore(&dev->devres_lock, flags);
++	spin_unlock_irqrestore(&devres_lock, flags);
+ 
+ 	if (dr)
+ 		return dr->data;
+@@ -401,7 +461,7 @@ static int release_nodes(struct device *
+ 
+ 	cnt = remove_nodes(dev, first, end, &todo);
+ 
+-	spin_unlock_irqrestore(&dev->devres_lock, flags);
++	spin_unlock_irqrestore(&devres_lock, flags);
+ 
+ 	/* Release.  Note that both devres and devres_group are
+ 	 * handled as devres in the following loop.  This is safe.
+@@ -424,11 +484,23 @@ static int release_nodes(struct device *
+  */
+ int devres_release_all(struct device *dev)
+ {
++	struct list_head *head;
+ 	unsigned long flags;
++	int rc;
++
++	spin_lock_irqsave(&devres_lock, flags);
+ 
+-	spin_lock_irqsave(&dev->devres_lock, flags);
+-	return release_nodes(dev, dev->devres_head.next, &dev->devres_head,
++	head = get_devres_head(dev);
++	rc = release_nodes(dev, head->next, head,
+ 			     flags);
++
++	/* lock released in release_nodes() */
++
++	spin_lock_irqsave(&devres_lock, flags);
++	put_devres_head(dev);
++	spin_unlock_irqrestore(&devres_lock, flags);
++
++	return rc;
+ }
+ 
+ /**
+@@ -463,9 +535,9 @@ void * devres_open_group(struct device *
+ 	if (id)
+ 		grp->id = id;
+ 
+-	spin_lock_irqsave(&dev->devres_lock, flags);
++	spin_lock_irqsave(&devres_lock, flags);
+ 	add_dr(dev, &grp->node[0]);
+-	spin_unlock_irqrestore(&dev->devres_lock, flags);
++	spin_unlock_irqrestore(&devres_lock, flags);
+ 	return grp->id;
+ }
+ EXPORT_SYMBOL_GPL(devres_open_group);
+@@ -475,7 +547,7 @@ static struct devres_group * find_group(
+ {
+ 	struct devres_node *node;
+ 
+-	list_for_each_entry_reverse(node, &dev->devres_head, entry) {
++	list_for_each_entry_reverse(node, get_devres_head(dev), entry) {
+ 		struct devres_group *grp;
+ 
+ 		if (node->release != &group_open_release)
+@@ -506,7 +578,7 @@ void devres_close_group(struct device *d
+ 	struct devres_group *grp;
+ 	unsigned long flags;
+ 
+-	spin_lock_irqsave(&dev->devres_lock, flags);
++	spin_lock_irqsave(&devres_lock, flags);
+ 
+ 	grp = find_group(dev, id);
+ 	if (grp)
+@@ -514,7 +586,7 @@ void devres_close_group(struct device *d
+ 	else
+ 		WARN_ON(1);
+ 
+-	spin_unlock_irqrestore(&dev->devres_lock, flags);
++	spin_unlock_irqrestore(&devres_lock, flags);
+ }
+ EXPORT_SYMBOL_GPL(devres_close_group);
+ 
+@@ -532,7 +604,7 @@ void devres_remove_group(struct device *
+ 	struct devres_group *grp;
+ 	unsigned long flags;
+ 
+-	spin_lock_irqsave(&dev->devres_lock, flags);
++	spin_lock_irqsave(&devres_lock, flags);
+ 
+ 	grp = find_group(dev, id);
+ 	if (grp) {
+@@ -542,7 +614,7 @@ void devres_remove_group(struct device *
+ 	} else
+ 		WARN_ON(1);
+ 
+-	spin_unlock_irqrestore(&dev->devres_lock, flags);
++	spin_unlock_irqrestore(&devres_lock, flags);
+ 
+ 	kfree(grp);
+ }
+@@ -566,12 +638,12 @@ int devres_release_group(struct device *
+ 	unsigned long flags;
+ 	int cnt = 0;
+ 
+-	spin_lock_irqsave(&dev->devres_lock, flags);
++	spin_lock_irqsave(&devres_lock, flags);
+ 
+ 	grp = find_group(dev, id);
+ 	if (grp) {
+ 		struct list_head *first = &grp->node[0].entry;
+-		struct list_head *end = &dev->devres_head;
++		struct list_head *end = get_devres_head(dev);
+ 
+ 		if (!list_empty(&grp->node[1].entry))
+ 			end = grp->node[1].entry.next;
+@@ -579,7 +651,7 @@ int devres_release_group(struct device *
+ 		cnt = release_nodes(dev, first, end, flags);
+ 	} else {
+ 		WARN_ON(1);
+-		spin_unlock_irqrestore(&dev->devres_lock, flags);
++		spin_unlock_irqrestore(&devres_lock, flags);
+ 	}
+ 
+ 	return cnt;
+diff -urp ../kernel-2.6.18.orig/linux-2.6.18.i686/include/linux/device.h linux-2.6.18.i686/include/linux/device.h
+--- ../kernel-2.6.18.orig/linux-2.6.18.i686/include/linux/device.h	2007-07-19 15:09:29.000000000 -0400
++++ linux-2.6.18.i686/include/linux/device.h	2007-07-19 15:27:23.000000000 -0400
+@@ -375,11 +375,6 @@ struct device {
+ 	dev_t			devt;		/* dev_t, creates the sysfs "dev" */
+ 
+ 	void	(*release)(struct device * dev);
+-
+-#ifndef __GENKSYMS__
+-	spinlock_t		devres_lock;
+-	struct list_head	devres_head;
+-#endif
+ };
+ 
+ static inline void *
+

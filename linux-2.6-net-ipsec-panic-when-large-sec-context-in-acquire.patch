@@ -1,0 +1,53 @@
+From: James Morris <jmorris@redhat.com>
+Subject: [PATCH RHEL5] IPsec: kernel panic when large security contexts in  ACQUIRE
+Date: Tue, 17 Apr 2007 12:09:41 -0400 (EDT)
+Bugzilla: 235475
+Message-Id: <Pine.LNX.4.44.0704171205230.27955-100000@redline.boston.redhat.com>
+Changelog: [net] IPsec: panic when large security contexts in ACQUIRE
+
+
+
+It has been reviewed and merged upstream, and also tested in the lspp 
+kernel.
+
+Upstream commit:
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=661697f728d75302e1f661a58db2fcba71d5cbc9
+
+
+Please ACK.
+
+---
+
+diff -urpN linux-2.6.18.ppc64.orig/net/xfrm/xfrm_user.c linux-2.6.18.ppc64/net/xfrm/xfrm_user.c
+--- linux-2.6.18.ppc64.orig/net/xfrm/xfrm_user.c	2007-04-12 13:53:55.000000000 -0500
++++ linux-2.6.18.ppc64/net/xfrm/xfrm_user.c	2007-04-12 13:59:50.000000000 -0500
+@@ -236,9 +236,8 @@ static int attach_encap_tmpl(struct xfrm
+ }
+ 
+ 
+-static inline int xfrm_user_sec_ctx_size(struct xfrm_policy *xp)
++static inline int xfrm_user_sec_ctx_size(struct xfrm_sec_ctx *xfrm_ctx)
+ {
+-	struct xfrm_sec_ctx *xfrm_ctx = xp->security;
+ 	int len = 0;
+ 
+ 	if (xfrm_ctx) {
+@@ -1772,7 +1771,7 @@ static int xfrm_send_acquire(struct xfrm
+ 
+ 	len = RTA_SPACE(sizeof(struct xfrm_user_tmpl) * xp->xfrm_nr);
+ 	len += NLMSG_SPACE(sizeof(struct xfrm_user_acquire));
+-	len += RTA_SPACE(xfrm_user_sec_ctx_size(xp));
++	len += RTA_SPACE(xfrm_user_sec_ctx_size(x->security));
+ 	skb = alloc_skb(len, GFP_ATOMIC);
+ 	if (skb == NULL)
+ 		return -ENOMEM;
+@@ -1876,7 +1875,7 @@ static int xfrm_exp_policy_notify(struct
+ 
+ 	len = RTA_SPACE(sizeof(struct xfrm_user_tmpl) * xp->xfrm_nr);
+ 	len += NLMSG_SPACE(sizeof(struct xfrm_user_polexpire));
+-	len += RTA_SPACE(xfrm_user_sec_ctx_size(xp));
++	len += RTA_SPACE(xfrm_user_sec_ctx_size(xp->security));
+ 	skb = alloc_skb(len, GFP_ATOMIC);
+ 	if (skb == NULL)
+ 		return -ENOMEM;
+

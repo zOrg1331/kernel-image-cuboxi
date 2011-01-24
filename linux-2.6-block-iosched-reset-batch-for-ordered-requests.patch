@@ -1,0 +1,60 @@
+From: Jeff Moyer <jmoyer@redhat.com>
+Date: Tue, 15 Dec 2009 13:08:36 -0500
+Subject: [block] iosched: reset batch for ordered requests
+Message-id: <1260882517-14489-2-git-send-email-jmoyer@redhat.com>
+Patchwork-id: 21950
+O-Subject: [RHEL5 PATCH 1/2] Deadline iosched: Reset batch for ordered requests
+Bugzilla: 462472
+RH-Acked-by: Vivek Goyal <vgoyal@redhat.com>
+
+fixes bug 462472
+
+commit dfb3d72a9aa519672c9ae06f0d2f93eccb35482f
+Author: Aaron Carroll <aaronc@gelato.unsw.edu.au>
+Date:   Tue Oct 30 10:40:13 2007 +0100
+
+    Deadline iosched: Reset batch for ordered requests
+
+    The deadline I/O scheduler does not reset the batch count when starting
+    a new batch at a higher-sectored request.  This means the second and
+    subsequent batch in the same data direction will never exceed a single
+    request in size whenever higher-sectored requests are pending.
+
+    This patch gives new batches in the same data direction as old ones
+    their full quota of requests by resetting the batch count.
+
+    Signed-off-by: Aaron Carroll <aaronc@gelato.unsw.edu.au>
+    Signed-off-by: Jens Axboe <jens.axboe@oracle.com>
+Signed-off-by: Jeff Moyer <jmoyer@redhat.com>
+
+diff --git a/block/deadline-iosched.c b/block/deadline-iosched.c
+index c7ca9f0..fcf0482 100644
+--- a/block/deadline-iosched.c
++++ b/block/deadline-iosched.c
+@@ -522,12 +522,11 @@ dispatch_writes:
+ dispatch_find_request:
+ 	/*
+ 	 * we are not running a batch, find best request for selected data_dir
++	 * and start a new batch
+ 	 */
+ 	if (deadline_check_fifo(dd, data_dir)) {
+ 		/* An expired request exists - satisfy it */
+-		dd->batching = 0;
+ 		drq = list_entry_fifo(dd->fifo_list[data_dir].next);
+-		
+ 	} else if (dd->next_drq[data_dir]) {
+ 		/*
+ 		 * The last req was the same dir and we have a next request in
+@@ -540,10 +539,11 @@ dispatch_find_request:
+ 		 * higher-sectored requests. Go back to the lowest sectored
+ 		 * request (1 way elevator) and start a new batch.
+ 		 */
+-		dd->batching = 0;
+ 		drq = deadline_find_first_drq(dd, data_dir);
+ 	}
+ 
++	dd->batching = 0;
++
+ dispatch_request:
+ 	/*
+ 	 * drq is the selected appropriate request.

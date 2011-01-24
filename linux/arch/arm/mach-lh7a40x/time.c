@@ -13,9 +13,9 @@
 #include <linux/interrupt.h>
 #include <linux/irq.h>
 #include <linux/time.h>
-#include <linux/io.h>
 
-#include <mach/hardware.h>
+#include <asm/hardware.h>
+#include <asm/io.h>
 #include <asm/irq.h>
 #include <asm/leds.h>
 
@@ -39,17 +39,21 @@
 #endif
 
 static irqreturn_t
-lh7a40x_timer_interrupt(int irq, void *dev_id)
+lh7a40x_timer_interrupt(int irq, void *dev_id, struct pt_regs *regs)
 {
+	write_seqlock(&xtime_lock);
+
 	TIMER_EOI = 0;
-	timer_tick();
+	timer_tick(regs);
+
+	write_sequnlock(&xtime_lock);
 
 	return IRQ_HANDLED;
 }
 
 static struct irqaction lh7a40x_timer_irq = {
 	.name		= "LHA740x Timer Tick",
-	.flags		= IRQF_DISABLED | IRQF_TIMER | IRQF_IRQPOLL,
+	.flags		= IRQF_DISABLED | IRQF_TIMER,
 	.handler	= lh7a40x_timer_interrupt,
 };
 

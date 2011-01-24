@@ -4,6 +4,7 @@
 
 
 #include <linux/module.h>
+#include <linux/sched.h>
 #include <linux/kernel.h>
 #include <linux/mm.h>
 #include <linux/pci.h>
@@ -496,8 +497,8 @@ static int open_rx_first(struct atm_vcc *vcc)
 			vcc->qos.rxtp.max_sdu = 65464;
 			/* fix this - we may want to receive 64kB SDUs
 			   later */
-		cells = DIV_ROUND_UP(vcc->qos.rxtp.max_sdu + ATM_AAL5_TRAILER,
-				ATM_CELL_PAYLOAD);
+		cells = (vcc->qos.rxtp.max_sdu+ATM_AAL5_TRAILER+
+		    ATM_CELL_PAYLOAD-1)/ATM_CELL_PAYLOAD;
 		zatm_vcc->pool = pool_index(cells*ATM_CELL_PAYLOAD);
 	}
 	else {
@@ -602,8 +603,9 @@ static int start_rx(struct atm_dev *dev)
 DPRINTK("start_rx\n");
 	zatm_dev = ZATM_DEV(dev);
 	size = sizeof(struct atm_vcc *)*zatm_dev->chans;
-	zatm_dev->rx_map =  kzalloc(size,GFP_KERNEL);
+	zatm_dev->rx_map = (struct atm_vcc **) kmalloc(size,GFP_KERNEL);
 	if (!zatm_dev->rx_map) return -ENOMEM;
+	memset(zatm_dev->rx_map,0,size);
 	/* set VPI/VCI split (use all VCIs and give what's left to VPIs) */
 	zpokel(zatm_dev,(1 << dev->ci_range.vci_bits)-1,uPD98401_VRR);
 	/* prepare free buffer pools */
@@ -799,7 +801,6 @@ static int alloc_shaper(struct atm_dev *dev,int *pcr,int min,int max,int ubr)
 		i = m = 1;
 		zatm_dev->ubr_ref_cnt++;
 		zatm_dev->ubr = shaper;
-		*pcr = 0;
 	}
 	else {
 		if (min) {
@@ -820,7 +821,7 @@ static int alloc_shaper(struct atm_dev *dev,int *pcr,int min,int max,int ubr)
 			}
 			else {
 				i = 255;
-				m = DIV_ROUND_UP(ATM_OC3_PCR*255, max);
+				m = (ATM_OC3_PCR*255+max-1)/max;
 			}
 		}
 		if (i > m) {
@@ -915,7 +916,7 @@ static int open_tx_first(struct atm_vcc *vcc)
 	unsigned long flags;
 	u32 *loop;
 	unsigned short chan;
-	int unlimited;
+	int pcr,unlimited;
 
 	DPRINTK("open_tx_first\n");
 	zatm_dev = ZATM_DEV(vcc->dev);
@@ -936,8 +937,6 @@ static int open_tx_first(struct atm_vcc *vcc)
 	    vcc->qos.txtp.max_pcr >= ATM_OC3_PCR);
 	if (unlimited && zatm_dev->ubr != -1) zatm_vcc->shaper = zatm_dev->ubr;
 	else {
-		int uninitialized_var(pcr);
-
 		if (unlimited) vcc->qos.txtp.max_sdu = ATM_MAX_AAL5_PDU;
 		if ((zatm_vcc->shaper = alloc_shaper(vcc->dev,&pcr,
 		    vcc->qos.txtp.min_pcr,vcc->qos.txtp.max_pcr,unlimited))
@@ -952,8 +951,9 @@ static int open_tx_first(struct atm_vcc *vcc)
 	skb_queue_head_init(&zatm_vcc->tx_queue);
 	init_waitqueue_head(&zatm_vcc->tx_wait);
 	/* initialize ring */
-	zatm_vcc->ring = kzalloc(RING_SIZE,GFP_KERNEL);
+	zatm_vcc->ring = kmalloc(RING_SIZE,GFP_KERNEL);
 	if (!zatm_vcc->ring) return -ENOMEM;
+	memset(zatm_vcc->ring,0,RING_SIZE);
 	loop = zatm_vcc->ring+RING_ENTRIES*RING_WORDS;
 	loop[0] = uPD98401_TXPD_V;
 	loop[1] = loop[2] = 0;
@@ -997,7 +997,7 @@ static int start_tx(struct atm_dev *dev)
 
 	DPRINTK("start_tx\n");
 	zatm_dev = ZATM_DEV(dev);
-	zatm_dev->tx_map = kmalloc(sizeof(struct atm_vcc *)*
+	zatm_dev->tx_map = (struct atm_vcc **) kmalloc(sizeof(struct atm_vcc *)*
 	    zatm_dev->chans,GFP_KERNEL);
 	if (!zatm_dev->tx_map) return -ENOMEM;
 	zatm_dev->tx_bw = ATM_OC3_PCR;
@@ -1013,7 +1013,7 @@ static int start_tx(struct atm_dev *dev)
 /*------------------------------- interrupts --------------------------------*/
 
 
-static irqreturn_t zatm_int(int irq,void *dev_id)
+static irqreturn_t zatm_int(int irq,void *dev_id,struct pt_regs *regs)
 {
 	struct atm_dev *dev;
 	struct zatm_dev *zatm_dev;
@@ -1179,11 +1179,12 @@ static void __devinit eprom_get_esi(struct atm_dev *dev)
 /*--------------------------------- entries ---------------------------------*/
 
 
-static int __devinit zatm_init(struct atm_dev *dev)
+static int __init zatm_init(struct atm_dev *dev)
 {
 	struct zatm_dev *zatm_dev;
 	struct pci_dev *pci_dev;
 	unsigned short command;
+	unsigned char revision;
 	int error,i,last;
 	unsigned long t0,t1,t2;
 
@@ -1193,7 +1194,8 @@ static int __devinit zatm_init(struct atm_dev *dev)
 	pci_dev = zatm_dev->pci_dev;
 	zatm_dev->base = pci_resource_start(pci_dev, 0);
 	zatm_dev->irq = pci_dev->irq;
-	if ((error = pci_read_config_word(pci_dev,PCI_COMMAND,&command))) {
+	if ((error = pci_read_config_word(pci_dev,PCI_COMMAND,&command)) ||
+	    (error = pci_read_config_byte(pci_dev,PCI_REVISION_ID,&revision))) {
 		printk(KERN_ERR DEV_LABEL "(itf %d): init error 0x%02x\n",
 		    dev->number,error);
 		return -EINVAL;
@@ -1206,7 +1208,7 @@ static int __devinit zatm_init(struct atm_dev *dev)
 	}
 	eprom_get_esi(dev);
 	printk(KERN_NOTICE DEV_LABEL "(itf %d): rev.%d,base=0x%x,irq=%d,",
-	    dev->number,pci_dev->revision,zatm_dev->base,zatm_dev->irq);
+	    dev->number,revision,zatm_dev->base,zatm_dev->irq);
 	/* reset uPD98401 */
 	zout(0,SWR);
 	while (!(zin(GSR) & uPD98401_INT_IND));
@@ -1256,7 +1258,7 @@ static int __devinit zatm_init(struct atm_dev *dev)
 }
 
 
-static int __devinit zatm_start(struct atm_dev *dev)
+static int __init zatm_start(struct atm_dev *dev)
 {
 	struct zatm_dev *zatm_dev = ZATM_DEV(dev);
 	struct pci_dev *pdev = zatm_dev->pci_dev;
@@ -1517,7 +1519,7 @@ static int zatm_getsockopt(struct atm_vcc *vcc,int level,int optname,
 
 
 static int zatm_setsockopt(struct atm_vcc *vcc,int level,int optname,
-    void __user *optval,unsigned int optlen)
+    void __user *optval,int optlen)
 {
 	return -EINVAL;
 }
@@ -1590,7 +1592,7 @@ static int __devinit zatm_init_one(struct pci_dev *pci_dev,
 	struct zatm_dev *zatm_dev;
 	int ret = -ENOMEM;
 
-	zatm_dev = kmalloc(sizeof(*zatm_dev), GFP_KERNEL);
+	zatm_dev = (struct zatm_dev *) kmalloc(sizeof(*zatm_dev), GFP_KERNEL);
 	if (!zatm_dev) {
 		printk(KERN_EMERG "%s: memory shortage\n", DEV_LABEL);
 		goto out;

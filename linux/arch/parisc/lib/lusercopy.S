@@ -37,7 +37,6 @@
 	
 #include <asm/assembly.h>
 #include <asm/errno.h>
-#include <linux/linkage.h>
 
 	/*
 	 * get_sr gets the appropriate space value into
@@ -68,7 +67,8 @@
 	 *         otherwise strlen (i.e. excludes zero byte)
 	 */
 
-ENTRY(lstrncpy_from_user)
+	.export lstrncpy_from_user,code
+lstrncpy_from_user:
 	.proc
 	.callinfo NO_CALLS
 	.entry
@@ -87,7 +87,6 @@ $lsfu_exit:
 	bv          %r0(%r2)
 	nop
 	.exit
-ENDPROC(lstrncpy_from_user)
 
 	.section .fixup,"ax"
 3:      fixup_branch $lsfu_exit
@@ -95,8 +94,13 @@ ENDPROC(lstrncpy_from_user)
 	.previous
 
 	.section __ex_table,"aw"
-	ASM_ULONG_INSN 1b,3b
-	ASM_ULONG_INSN 2b,3b
+#ifdef __LP64__
+	.dword      1b,3b
+	.dword      2b,3b
+#else
+	.word       1b,3b
+	.word       2b,3b
+#endif
 	.previous
 
 	.procend
@@ -108,7 +112,8 @@ ENDPROC(lstrncpy_from_user)
 	 * otherwise, returns number of bytes not transferred.
 	 */
 
-ENTRY(lclear_user)
+	.export lclear_user,code
+lclear_user:
 	.proc
 	.callinfo NO_CALLS
 	.entry
@@ -122,7 +127,6 @@ $lclu_done:
 	bv          %r0(%r2)
 	copy        %r25,%r28
 	.exit
-ENDPROC(lclear_user)
 
 	.section .fixup,"ax"
 2:      fixup_branch $lclu_done
@@ -130,7 +134,11 @@ ENDPROC(lclear_user)
 	.previous
 
 	.section __ex_table,"aw"
-	ASM_ULONG_INSN 1b,2b
+#ifdef __LP64__
+	.dword      1b,2b
+#else
+	.word       1b,2b
+#endif
 	.previous
 
 	.procend
@@ -143,7 +151,8 @@ ENDPROC(lclear_user)
 	 *         else strlen + 1 (i.e. includes zero byte).
 	 */
 
-ENTRY(lstrnlen_user)
+	.export lstrnlen_user,code
+lstrnlen_user:
 	.proc
 	.callinfo NO_CALLS
 	.entry
@@ -163,7 +172,6 @@ $lslen_done:
 $lslen_nzero:
 	b           $lslen_done
 	ldo         1(%r26),%r26 /* special case for N == 0 */
-ENDPROC(lstrnlen_user)
 
 	.section .fixup,"ax"
 3:      fixup_branch $lslen_done
@@ -171,8 +179,13 @@ ENDPROC(lstrnlen_user)
 	.previous
 
 	.section __ex_table,"aw"
-	ASM_ULONG_INSN 1b,3b
-	ASM_ULONG_INSN 2b,3b
+#ifdef __LP64__
+	.dword      1b,3b
+	.dword      2b,3b
+#else
+	.word       1b,3b
+	.word       2b,3b
+#endif
 	.previous
 
 	.procend

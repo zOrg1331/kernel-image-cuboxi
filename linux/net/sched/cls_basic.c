@@ -12,11 +12,12 @@
 #include <linux/module.h>
 #include <linux/types.h>
 #include <linux/kernel.h>
+#include <linux/sched.h>
 #include <linux/string.h>
+#include <linux/mm.h>
 #include <linux/errno.h>
 #include <linux/rtnetlink.h>
 #include <linux/skbuff.h>
-#include <net/netlink.h>
 #include <net/act_api.h>
 #include <net/pkt_cls.h>
 
@@ -35,7 +36,7 @@ struct basic_filter
 	struct list_head	link;
 };
 
-static const struct tcf_ext_map basic_ext_map = {
+static struct tcf_ext_map basic_ext_map = {
 	.action = TCA_BASIC_ACT,
 	.police = TCA_BASIC_POLICE
 };
@@ -81,13 +82,6 @@ static void basic_put(struct tcf_proto *tp, unsigned long f)
 
 static int basic_init(struct tcf_proto *tp)
 {
-	struct basic_head *head;
-
-	head = kzalloc(sizeof(*head), GFP_KERNEL);
-	if (head == NULL)
-		return -ENOBUFS;
-	INIT_LIST_HEAD(&head->flist);
-	tp->root = head;
 	return 0;
 }
 
@@ -102,14 +96,13 @@ static inline void basic_delete_filter(struct tcf_proto *tp,
 
 static void basic_destroy(struct tcf_proto *tp)
 {
-	struct basic_head *head = tp->root;
+	struct basic_head *head = (struct basic_head *) xchg(&tp->root, NULL);
 	struct basic_filter *f, *n;
-
+	
 	list_for_each_entry_safe(f, n, &head->flist, link) {
 		list_del(&f->link);
 		basic_delete_filter(tp, f);
 	}
-	kfree(head);
 }
 
 static int basic_delete(struct tcf_proto *tp, unsigned long arg)
@@ -129,29 +122,28 @@ static int basic_delete(struct tcf_proto *tp, unsigned long arg)
 	return -ENOENT;
 }
 
-static const struct nla_policy basic_policy[TCA_BASIC_MAX + 1] = {
-	[TCA_BASIC_CLASSID]	= { .type = NLA_U32 },
-	[TCA_BASIC_EMATCHES]	= { .type = NLA_NESTED },
-};
-
 static inline int basic_set_parms(struct tcf_proto *tp, struct basic_filter *f,
-				  unsigned long base, struct nlattr **tb,
-				  struct nlattr *est)
+				  unsigned long base, struct rtattr **tb,
+				  struct rtattr *est)
 {
 	int err = -EINVAL;
 	struct tcf_exts e;
 	struct tcf_ematch_tree t;
 
+	if (tb[TCA_BASIC_CLASSID-1])
+		if (RTA_PAYLOAD(tb[TCA_BASIC_CLASSID-1]) < sizeof(u32))
+			return err;
+
 	err = tcf_exts_validate(tp, tb, est, &e, &basic_ext_map);
 	if (err < 0)
 		return err;
 
-	err = tcf_em_tree_validate(tp, tb[TCA_BASIC_EMATCHES], &t);
+	err = tcf_em_tree_validate(tp, tb[TCA_BASIC_EMATCHES-1], &t);
 	if (err < 0)
 		goto errout;
 
-	if (tb[TCA_BASIC_CLASSID]) {
-		f->res.classid = nla_get_u32(tb[TCA_BASIC_CLASSID]);
+	if (tb[TCA_BASIC_CLASSID-1]) {
+		f->res.classid = *(u32*)RTA_DATA(tb[TCA_BASIC_CLASSID-1]);
 		tcf_bind_filter(tp, &f->res, base);
 	}
 
@@ -165,28 +157,35 @@ errout:
 }
 
 static int basic_change(struct tcf_proto *tp, unsigned long base, u32 handle,
-			struct nlattr **tca, unsigned long *arg)
+		        struct rtattr **tca, unsigned long *arg)
 {
-	int err;
+	int err = -EINVAL;
 	struct basic_head *head = (struct basic_head *) tp->root;
-	struct nlattr *tb[TCA_BASIC_MAX + 1];
+	struct rtattr *tb[TCA_BASIC_MAX];
 	struct basic_filter *f = (struct basic_filter *) *arg;
 
-	if (tca[TCA_OPTIONS] == NULL)
+	if (tca[TCA_OPTIONS-1] == NULL)
 		return -EINVAL;
 
-	err = nla_parse_nested(tb, TCA_BASIC_MAX, tca[TCA_OPTIONS],
-			       basic_policy);
-	if (err < 0)
-		return err;
+	if (rtattr_parse_nested(tb, TCA_BASIC_MAX, tca[TCA_OPTIONS-1]) < 0)
+		return -EINVAL;
 
 	if (f != NULL) {
 		if (handle && f->handle != handle)
 			return -EINVAL;
-		return basic_set_parms(tp, f, base, tb, tca[TCA_RATE]);
+		return basic_set_parms(tp, f, base, tb, tca[TCA_RATE-1]);
 	}
 
 	err = -ENOBUFS;
+	if (head == NULL) {
+		head = kzalloc(sizeof(*head), GFP_KERNEL);
+		if (head == NULL)
+			goto errout;
+
+		INIT_LIST_HEAD(&head->flist);
+		tp->root = head;
+	}
+
 	f = kzalloc(sizeof(*f), GFP_KERNEL);
 	if (f == NULL)
 		goto errout;
@@ -195,7 +194,7 @@ static int basic_change(struct tcf_proto *tp, unsigned long base, u32 handle,
 	if (handle)
 		f->handle = handle;
 	else {
-		unsigned int i = 0x80000000;
+		int i = 0x80000000;
 		do {
 			if (++head->hgenerator == 0x7FFFFFFF)
 				head->hgenerator = 1;
@@ -209,7 +208,7 @@ static int basic_change(struct tcf_proto *tp, unsigned long base, u32 handle,
 		f->handle = head->hgenerator;
 	}
 
-	err = basic_set_parms(tp, f, base, tb, tca[TCA_RATE]);
+	err = basic_set_parms(tp, f, base, tb, tca[TCA_RATE-1]);
 	if (err < 0)
 		goto errout;
 
@@ -248,33 +247,33 @@ static int basic_dump(struct tcf_proto *tp, unsigned long fh,
 		      struct sk_buff *skb, struct tcmsg *t)
 {
 	struct basic_filter *f = (struct basic_filter *) fh;
-	struct nlattr *nest;
+	unsigned char *b = skb->tail;
+	struct rtattr *rta;
 
 	if (f == NULL)
 		return skb->len;
 
 	t->tcm_handle = f->handle;
 
-	nest = nla_nest_start(skb, TCA_OPTIONS);
-	if (nest == NULL)
-		goto nla_put_failure;
+	rta = (struct rtattr *) b;
+	RTA_PUT(skb, TCA_OPTIONS, 0, NULL);
 
 	if (f->res.classid)
-		NLA_PUT_U32(skb, TCA_BASIC_CLASSID, f->res.classid);
+		RTA_PUT(skb, TCA_BASIC_CLASSID, sizeof(u32), &f->res.classid);
 
 	if (tcf_exts_dump(skb, &f->exts, &basic_ext_map) < 0 ||
 	    tcf_em_tree_dump(skb, &f->ematches, TCA_BASIC_EMATCHES) < 0)
-		goto nla_put_failure;
+		goto rtattr_failure;
 
-	nla_nest_end(skb, nest);
+	rta->rta_len = (skb->tail - b);
 	return skb->len;
 
-nla_put_failure:
-	nla_nest_cancel(skb, nest);
+rtattr_failure:
+	skb_trim(skb, b - skb->data);
 	return -1;
 }
 
-static struct tcf_proto_ops cls_basic_ops __read_mostly = {
+static struct tcf_proto_ops cls_basic_ops = {
 	.kind		=	"basic",
 	.classify	=	basic_classify,
 	.init		=	basic_init,
@@ -293,7 +292,7 @@ static int __init init_basic(void)
 	return register_tcf_proto_ops(&cls_basic_ops);
 }
 
-static void __exit exit_basic(void)
+static void __exit exit_basic(void) 
 {
 	unregister_tcf_proto_ops(&cls_basic_ops);
 }

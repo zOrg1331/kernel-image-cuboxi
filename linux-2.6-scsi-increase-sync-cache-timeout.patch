@@ -1,0 +1,63 @@
+From: Mike Christie <mchristi@redhat.com>
+Date: Thu, 16 Sep 2010 01:32:38 -0400
+Subject: [scsi] increase sync cache timeout
+Message-id: <1284600758-29184-1-git-send-email-mchristi@redhat.com>
+Patchwork-id: 28251
+O-Subject: [PATCH RHEL 5.6]: scsi: increase sync cache timeout
+Bugzilla: 592322
+RH-Acked-by: Rob Evers <revers@redhat.com>
+RH-Acked-by: Tomas Henzl <thenzl@redhat.com>
+
+From: Mike Christie <mchristi@redhat.com>
+
+This is for bz 592322.
+
+>From the upstream commit:
+http://git.kernel.org/?p=linux/kernel/git/jejb/scsi-misc-2.6.git;a=commit;h=e3b3e6246726cd05950677ed843010b8e8c5884c
+
+	We have been seeing the flush request timeout with a wide
+	range of hardware from tgt+iser to FC targets from a major vendor.
+
+	After discussions about if the value should be configurable and
+	what the best value should be, this patch just increases the flush/sync
+	cache timeout to 1 minute. 2 minutes was determined to be too long, and
+	making it configurable was troublesome for users.
+
+I have tested the patch by doing writes and causing the
+flush (scsi sync cache) to be sent. I have not been
+able to replicate the user's problem here. For the specific
+problem in the bz we probably need to modify the target
+code. This patch will still help other setups like it
+did in RHEL 6 though.
+
+
+diff --git a/drivers/scsi/sd.c b/drivers/scsi/sd.c
+index 9252987..a8ab20a 100644
+--- a/drivers/scsi/sd.c
++++ b/drivers/scsi/sd.c
+@@ -101,6 +101,7 @@ MODULE_ALIAS_BLOCKDEV_MAJOR(SCSI_DISK15_MAJOR);
+  */
+ #define SD_TIMEOUT		(30 * HZ)
+ #define SD_MOD_TIMEOUT		(75 * HZ)
++#define SD_FLUSH_TIMEOUT	(60 * HZ)
+ 
+ /*
+  * Number of allowed retries
+@@ -843,7 +844,7 @@ static int sd_sync_cache(struct scsi_device *sdp)
+ 		 * flush everything.
+ 		 */
+ 		res = scsi_execute_req(sdp, cmd, DMA_NONE, NULL, 0, &sshdr,
+-				       SD_TIMEOUT, SD_MAX_RETRIES);
++				       SD_FLUSH_TIMEOUT, SD_MAX_RETRIES);
+ 		if (res == 0)
+ 			break;
+ 	}
+@@ -878,7 +879,7 @@ static void sd_prepare_flush(request_queue_t *q, struct request *rq)
+ {
+ 	memset(rq->cmd, 0, sizeof(rq->cmd));
+ 	rq->flags |= REQ_BLOCK_PC;
+-	rq->timeout = SD_TIMEOUT;
++	rq->timeout = SD_FLUSH_TIMEOUT;
+ 	rq->cmd[0] = SYNCHRONIZE_CACHE;
+ 	rq->cmd_len = 10;
+ }

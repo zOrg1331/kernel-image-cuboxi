@@ -25,6 +25,7 @@
  *
  */
 
+#include <sound/driver.h>
 #include <linux/time.h>
 #include <sound/core.h>
 #include <sound/emu10k1.h>

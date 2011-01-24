@@ -12,16 +12,17 @@
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/kernel.h>
+#include <linux/sched.h>
 #include <asm/uaccess.h>
 #include <asm/io.h>
 #include <linux/ioport.h>
 #include <linux/workqueue.h>
 #include <linux/pci.h>
+#include <linux/smp_lock.h>
 #include <linux/interrupt.h>
 #include <linux/list.h>
 #include <linux/poll.h>
 #include <linux/kmod.h>
-#include <linux/smp_lock.h>
 
 #include "platform.h"
 #undef ID_MASK
@@ -57,7 +58,8 @@ static char *DRIVERLNAME = "divas";
 static char *DEVNAME = "Divas";
 char *DRIVERRELEASE_DIVAS = "2.0";
 
-extern irqreturn_t diva_os_irq_wrapper(int irq, void *context);
+extern irqreturn_t diva_os_irq_wrapper(int irq, void *context,
+				struct pt_regs *regs);
 extern int create_divas_proc(void);
 extern void remove_divas_proc(void);
 extern void diva_get_vserial_number(PISDN_ADAPTER IoAdapter, char *buf);
@@ -184,7 +186,7 @@ void diva_log_info(unsigned char *format, ...)
 	unsigned char line[160];
 
 	va_start(args, format);
-	vsnprintf(line, sizeof(line), format, args);
+	vsprintf(line, format, args);
 	va_end(args);
 
 	printk(KERN_INFO "%s: %s\n", DRIVERLNAME, line);
@@ -394,7 +396,7 @@ void diva_free_dma_map(void *hdev, struct _diva_dma_map_entry *pmap)
 	dma_addr_t dma_handle;
 	void *addr_handle;
 
-	for (i = 0; (pmap != NULL); i++) {
+	for (i = 0; (pmap != 0); i++) {
 		diva_get_dma_map_entry(pmap, i, &cpu_addr, &phys_addr);
 		if (!cpu_addr) {
 			break;
@@ -581,7 +583,6 @@ xdi_copy_from_user(void *os_handle, void *dst, const void __user *src, int lengt
  */
 static int divas_open(struct inode *inode, struct file *file)
 {
-	cycle_kernel_lock();
 	return (0);
 }
 
@@ -663,7 +664,7 @@ static unsigned int divas_poll(struct file *file, poll_table * wait)
 	return (POLLIN | POLLRDNORM);
 }
 
-static const struct file_operations divas_fops = {
+static struct file_operations divas_fops = {
 	.owner   = THIS_MODULE,
 	.llseek  = no_llseek,
 	.read    = divas_read,
@@ -808,6 +809,7 @@ static int DIVA_INIT_FUNCTION divas_init(void)
 
 	if (!create_divas_proc()) {
 #ifdef MODULE
+		remove_divas_proc();
 		divas_unregister_chrdev();
 		divasfunc_exit();
 #endif

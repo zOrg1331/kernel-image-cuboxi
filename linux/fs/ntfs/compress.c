@@ -561,16 +561,6 @@ int ntfs_read_compressed_block(struct page *page)
 	read_unlock_irqrestore(&ni->size_lock, flags);
 	max_page = ((i_size + PAGE_CACHE_SIZE - 1) >> PAGE_CACHE_SHIFT) -
 			offset;
-	/* Is the page fully outside i_size? (truncate in progress) */
-	if (xpage >= max_page) {
-		kfree(bhs);
-		kfree(pages);
-		zero_user(page, 0, PAGE_CACHE_SIZE);
-		ntfs_debug("Compressed read outside i_size - truncated?");
-		SetPageUptodate(page);
-		unlock_page(page);
-		return 0;
-	}
 	if (nr_pages < max_page)
 		max_page = nr_pages;
 	for (i = 0; i < max_page; i++, offset++) {
@@ -610,7 +600,7 @@ do_next_cb:
 	rl = NULL;
 	for (vcn = start_vcn, start_vcn += cb_clusters; vcn < start_vcn;
 			vcn++) {
-		bool is_retry = false;
+		BOOL is_retry = FALSE;
 
 		if (!rl) {
 lock_retry_remap:
@@ -636,7 +626,7 @@ lock_retry_remap:
 				break;
 			if (is_retry || lcn != LCN_RL_NOT_MAPPED)
 				goto rl_err;
-			is_retry = true;
+			is_retry = TRUE;
 			/*
 			 * Attempt to map runlist, dropping lock for the
 			 * duration.
@@ -665,7 +655,7 @@ lock_retry_remap:
 	for (i = 0; i < nr_bhs; i++) {
 		struct buffer_head *tbh = bhs[i];
 
-		if (!trylock_buffer(tbh))
+		if (unlikely(test_set_buffer_locked(tbh)))
 			continue;
 		if (unlikely(buffer_uptodate(tbh))) {
 			unlock_buffer(tbh);

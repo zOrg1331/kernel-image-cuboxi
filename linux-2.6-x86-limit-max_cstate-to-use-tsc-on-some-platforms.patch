@@ -1,0 +1,108 @@
+From: Tony Camuso <tcamuso@redhat.com>
+Date: Wed, 25 Feb 2009 14:31:46 -0500
+Subject: [x86] limit max_cstate to use TSC on some platforms
+Message-id: 49A59CA2.8000501@redhat.com
+O-Subject: Re: [RHEL5.4 PATCH] Bug 470572 - RHEL5 kernel forces notsc on certain systems
+Bugzilla: 470572
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+RH-Acked-by: Bryn M. Reeves <bmr@redhat.com>
+RH-Acked-by: Peter Martuccelli <peterm@redhat.com>
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+RH-Acked-by: Brian Maly <bmaly@redhat.com>
+
+Here it is as an attachment.
+
+It should be ok, now.
+
+commit 9ac8541d68c777e9f6df07b25534dc7182030e8c
+Author: Tony Camuso <tony.camuso@hp.com>
+Date:   Thu Feb 19 07:38:36 2009 -0500
+
+    RHEL5 - Limit max_cstate to use TSC in some platforms
+
+    Problem
+    =======
+    Bugzilla 470572 RHEL5 kernel forces notsc on certain systems
+    https://bugzilla.redhat.com/show_bug.cgi?id=470572
+
+    In x86_64, if the kernel determined at init time that the
+    platform supports cstate > 1, then the kernel would use
+    HPET instead of TSC for getttimeofday(), because cstate > 1
+    causes TSC to become unreliable on some platforms.
+
+    This is problematic on busy systems since HPET is a shared
+    resource and would give inconsistant results for transactions
+    that occured in close together in time. In order to prevent
+    this, the user can add "processor.max_cstate=1" to the boot
+    line, and the code will use TSC.
+
+    Stat
+    ====
+    arch/i386/kernel/tsc.c    |   22 ++++++++++++++++------
+    arch/x86_64/kernel/time.c |    7 ++++---
+    2 files changed, 20 insertions(+), 9 deletions(-)
+
+    Tests
+    =====
+    brew build: http://brewweb.devel.redhat.com/brew/taskinfo?taskID=1699143
+
+    The patch was tested for functionality and regression in
+    32-bit and 64-bit x86 platforms.
+
+    Signed-off-by: Tony Camuso <tcamuso@redhat.com>
+
+diff --git a/arch/i386/kernel/tsc.c b/arch/i386/kernel/tsc.c
+index 16dbae7..839aba6 100644
+--- a/arch/i386/kernel/tsc.c
++++ b/arch/i386/kernel/tsc.c
+@@ -10,7 +10,7 @@
+ #include <linux/jiffies.h>
+ #include <linux/init.h>
+ #include <linux/dmi.h>
+-
++#include <linux/acpi.h>
+ #include <asm/delay.h>
+ #include <asm/tsc.h>
+ #include <asm/delay.h>
+@@ -451,12 +451,22 @@ out:
+  */
+ static __init int unsynchronized_tsc(void)
+ {
+-	/*
+-	 * Intel systems are normally all synchronized.
+-	 * Exceptions must mark TSC as unstable:
+-	 */
+-	if (boot_cpu_data.x86_vendor == X86_VENDOR_INTEL)
++	/* AMD systems with constant TSCs have synchronized clocks */
++	if ((boot_cpu_data.x86_vendor == X86_VENDOR_AMD) &&
++	    (boot_cpu_has(X86_FEATURE_CONSTANT_TSC)))
++		return 0;
++
++	/* Most intel systems have synchronized TSCs except for
++	   multi node systems */
++	if (boot_cpu_data.x86_vendor == X86_VENDOR_INTEL) {
++#ifdef CONFIG_ACPI
++		/* But TSC doesn't tick in C3 so don't use it there */
++		if (acpi_fadt.length > 0 && acpi_fadt.plvl3_lat < 1000 &&
++		    max_cstate > 1)
++			return 1;
++#endif
+  		return 0;
++	}
+ 
+ 	/* assume multi socket systems are not synchronized: */
+  	return num_possible_cpus() > 1;
+diff --git a/arch/x86_64/kernel/time.c b/arch/x86_64/kernel/time.c
+index 9635380..82ba6a8 100644
+--- a/arch/x86_64/kernel/time.c
++++ b/arch/x86_64/kernel/time.c
+@@ -1059,7 +1059,8 @@ __cpuinit int unsynchronized_tsc(void)
+  	if (boot_cpu_data.x86_vendor == X86_VENDOR_INTEL) {
+ #ifdef CONFIG_ACPI
+ 		/* But TSC doesn't tick in C3 so don't use it there */
+-		if (acpi_fadt.length > 0 && acpi_fadt.plvl3_lat < 1000)
++		if (acpi_fadt.length > 0 && acpi_fadt.plvl3_lat < 1000 &&
++		    max_cstate > 1)
+ 			return 1;
+ #endif
+  		return 0;

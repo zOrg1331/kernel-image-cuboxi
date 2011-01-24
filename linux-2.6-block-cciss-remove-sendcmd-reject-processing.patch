@@ -1,0 +1,215 @@
+From: Tomas Henzl <thenzl@redhat.com>
+Date: Sun, 29 Aug 2010 15:49:10 -0400
+Subject: [block] cciss: remove sendcmd reject processing
+Message-id: <1283097002-3341-12-git-send-email-thenzl@redhat.com>
+Patchwork-id: 27860
+O-Subject: [RHEL6 PATCH 11/63] cciss: Remove sendcmd reject processing
+Bugzilla: 568830
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+
+Remove sendcmd reject processing (the "marble bag") as now that the
+  SCSI error handling code operates with interrupts enabled it is no
+  longer needed.  Previously, when the scsi error handling routines
+  were active, interrupts were disabled, and while polling for completions,
+  completions from the block-side of the driver might be encountered.
+  Those completions had to be saved for later processing.  This is
+  no longer the case, so all the code to do that is removed.
+
+diff --git a/drivers/block/cciss.c b/drivers/block/cciss.c
+index 61716b9..96d1eac 100644
+--- a/drivers/block/cciss.c
++++ b/drivers/block/cciss.c
+@@ -2659,58 +2659,6 @@ static unsigned long pollcomplete(int ctlr)
+ 	return 1;
+ }
+ 
+-static int add_sendcmd_reject(__u8 cmd, int ctlr, unsigned long complete)
+-{
+-	/* We get in here if sendcmd() is polling for completions
+-	   and gets some command back that it wasn't expecting --
+-	   something other than that which it just sent down.
+-	   Ordinarily, that shouldn't happen, but it can happen when
+-	   the scsi tape stuff gets into error handling mode, and
+-	   starts using sendcmd() to try to abort commands and
+-	   reset tape drives.  In that case, sendcmd may pick up
+-	   completions of commands that were sent to logical drives
+-	   through the block i/o system, or cciss ioctls completing, etc.
+-	   In that case, we need to save those completions for later
+-	   processing by the interrupt handler.
+-	 */
+-
+-#ifdef CONFIG_CISS_SCSI_TAPE
+-	struct sendcmd_reject_list *srl = &hba[ctlr]->scsi_rejects;
+-
+-	/* If it's not the scsi tape stuff doing error handling, (abort */
+-	/* or reset) then we don't expect anything weird. */
+-	if (cmd != CCISS_RESET_MSG && cmd != CCISS_ABORT_MSG) {
+-#endif
+-		printk(KERN_WARNING "cciss cciss%d: SendCmd "
+-		       "Invalid command list address returned! (%lx)\n",
+-		       ctlr, complete);
+-		/* not much we can do. */
+-#ifdef CONFIG_CISS_SCSI_TAPE
+-		/* We might get notification of completion of commands
+-		 * which we never issued in this kernel if this boot is
+-		 * taking place after previous kernel's crash. Simply
+-		 * ignore the commands in this case.
+-		 */
+-		if (reset_devices)
+-			return 0;
+-		return 1;
+-	}
+-
+-	/* We've sent down an abort or reset, but something else
+-	   has completed */
+-	if (srl->ncompletions >= (hba[ctlr]->nr_cmds + 2)) {
+-		/* Uh oh.  No room to save it for later... */
+-		printk(KERN_WARNING "cciss%d: Sendcmd: Invalid command addr, "
+-		       "reject list overflow, command lost!\n", ctlr);
+-		return 1;
+-	}
+-	/* Save it for later */
+-	srl->complete[srl->ncompletions] = complete;
+-	srl->ncompletions++;
+-#endif
+-	return 0;
+-}
+-
+ /* Send command c to controller h and poll for it to complete.
+  * Turns interrupts off on the board.  Used at driver init time
+  * and during SCSI error recovery.
+@@ -2754,11 +2702,10 @@ resend_cmd1:
+ 			break;
+ 		}
+ 
+-		/* If it's not the cmd we're looking for, save it for later */
++		/* Make sure it's the command we're expecting. */
+ 		if ((complete & ~CISS_ERROR_BIT) != c->busaddr) {
+-			if (add_sendcmd_reject(c->Request.CDB[0],
+-				h->ctlr, complete) != 0)
+-				BUG(); /* we are hosed if we get here. */
++			printk(KERN_WARNING "cciss%d: Unexpected command "
++				"completion.\n", h->ctlr);
+ 			continue;
+ 		}
+ 
+@@ -2825,11 +2772,6 @@ cleanup1:
+ 	buff_dma_handle.val32.upper = c->SG[0].Addr.upper;
+ 	pci_unmap_single(h->pdev, (dma_addr_t) buff_dma_handle.val,
+ 			 c->SG[0].Len, PCI_DMA_BIDIRECTIONAL);
+-#ifdef CONFIG_CISS_SCSI_TAPE
+-	/* if we saved some commands for later, process them now. */
+-	if (h->scsi_rejects.ncompletions > 0)
+-		do_cciss_intr(0, h, NULL);
+-#endif
+ 	cmd_free(h, c, 1);
+ 	return status;
+ }
+@@ -3256,44 +3198,18 @@ startio:
+ 
+ static inline unsigned long get_next_completion(ctlr_info_t *h)
+ {
+-#ifdef CONFIG_CISS_SCSI_TAPE
+-	/* Any rejects from sendcmd() lying around? Process them first */
+-	if (h->scsi_rejects.ncompletions == 0)
+-		return h->access.command_completed(h);
+-	else {
+-		struct sendcmd_reject_list *srl;
+-		int n;
+-		srl = &h->scsi_rejects;
+-		n = --srl->ncompletions;
+-		/* printk("cciss%d: processing saved reject\n", h->ctlr); */
+-		printk("p");
+-		return srl->complete[n];
+-	}
+-#else
+ 	return h->access.command_completed(h);
+-#endif
+ }
+ 
+ static inline int interrupt_pending(ctlr_info_t *h)
+ {
+-#ifdef CONFIG_CISS_SCSI_TAPE
+-	return (h->access.intr_pending(h)
+-		|| (h->scsi_rejects.ncompletions > 0));
+-#else
+ 	return h->access.intr_pending(h);
+-#endif
+ }
+ 
+ static inline long interrupt_not_for_us(ctlr_info_t *h)
+ {
+-#ifdef CONFIG_CISS_SCSI_TAPE
+-	return (((h->access.intr_pending(h) == 0) ||
+-		 (h->interrupts_enabled == 0))
+-		&& (h->scsi_rejects.ncompletions == 0));
+-#else
+ 	return (((h->access.intr_pending(h) == 0) ||
+ 		 (h->interrupts_enabled == 0)));
+-#endif
+ }
+ 
+ static irqreturn_t do_cciss_intr(int irq, void *dev_id, struct pt_regs *regs)
+@@ -4111,15 +4027,6 @@ static int __devinit cciss_init_one(struct pci_dev *pdev,
+ 		printk(KERN_ERR "cciss: out of memory");
+ 		goto clean4;
+ 	}
+-#ifdef CONFIG_CISS_SCSI_TAPE
+-	hba[i]->scsi_rejects.complete =
+-	    kmalloc(sizeof(hba[i]->scsi_rejects.complete[0]) *
+-		    (hba[i]->nr_cmds + 5), GFP_KERNEL);
+-	if (hba[i]->scsi_rejects.complete == NULL) {
+-		printk(KERN_ERR "cciss: out of memory");
+-		goto clean4;
+-	}
+-#endif
+ 	spin_lock_init(&hba[i]->lock);
+ 
+ 	/* Initialize the pdev driver private data.
+@@ -4177,9 +4084,6 @@ static int __devinit cciss_init_one(struct pci_dev *pdev,
+ 	return 1;
+ 
+ clean4:
+-#ifdef CONFIG_CISS_SCSI_TAPE
+-	kfree(hba[i]->scsi_rejects.complete);
+-#endif
+ 	kfree(hba[i]->cmd_pool_bits);
+ 	if (hba[i]->cmd_pool)
+ 		pci_free_consistent(hba[i]->pdev,
+@@ -4298,9 +4202,6 @@ static void __devexit cciss_remove_one(struct pci_dev *pdev)
+ 	pci_free_consistent(hba[i]->pdev, hba[i]->nr_cmds * sizeof(ErrorInfo_struct),
+ 			    hba[i]->errinfo_pool, hba[i]->errinfo_pool_dhandle);
+ 	kfree(hba[i]->cmd_pool_bits);
+-#ifdef CONFIG_CISS_SCSI_TAPE
+-	kfree(hba[i]->scsi_rejects.complete);
+-#endif
+ 	/*
+ 	 * Deliberately omit pci_disable_device(): it does something nasty to
+ 	 * Smart Array controllers that pci_enable_device does not undo
+diff --git a/drivers/block/cciss.h b/drivers/block/cciss.h
+index 77052c5..74493c2 100644
+--- a/drivers/block/cciss.h
++++ b/drivers/block/cciss.h
+@@ -65,14 +65,6 @@ typedef struct _drive_info_struct
+ 				 */
+ } drive_info_struct;
+ 
+-#ifdef CONFIG_CISS_SCSI_TAPE
+-
+-struct sendcmd_reject_list {
+-	int ncompletions;
+-	unsigned long *complete; /* array of NR_CMDS tags */
+-};
+-
+-#endif
+ struct ctlr_info 
+ {
+ 	int	ctlr;
+@@ -139,7 +131,6 @@ struct ctlr_info
+ 	void *scsi_ctlr; /* ptr to structure containing scsi related stuff */
+ 	/* list of block side commands the scsi error handling sucked up */
+ 	/* and saved for later processing */
+-	struct sendcmd_reject_list scsi_rejects;
+ #endif
+ 	unsigned char alive;
+ 	struct completion *rescan_wait;

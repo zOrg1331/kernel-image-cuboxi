@@ -4,13 +4,13 @@
 
 #include <linux/capability.h>
 #include <linux/fs.h>
-#include <linux/mount.h>
 #include <linux/reiserfs_fs.h>
 #include <linux/time.h>
 #include <asm/uaccess.h>
 #include <linux/pagemap.h>
 #include <linux/smp_lock.h>
-#include <linux/compat.h>
+
+static int reiserfs_unpack(struct inode *inode, struct file *filp);
 
 /*
 ** reiserfs_ioctl - handler for ioctl for inode
@@ -24,7 +24,6 @@ int reiserfs_ioctl(struct inode *inode, struct file *filp, unsigned int cmd,
 		   unsigned long arg)
 {
 	unsigned int flags;
-	int err = 0;
 
 	switch (cmd) {
 	case REISERFS_IOC_UNPACK:
@@ -48,116 +47,59 @@ int reiserfs_ioctl(struct inode *inode, struct file *filp, unsigned int cmd,
 			if (!reiserfs_attrs(inode->i_sb))
 				return -ENOTTY;
 
-			err = mnt_want_write(filp->f_path.mnt);
-			if (err)
-				return err;
+			if (IS_RDONLY(inode))
+				return -EROFS;
 
-			if (!is_owner_or_cap(inode)) {
-				err = -EPERM;
-				goto setflags_out;
-			}
-			if (get_user(flags, (int __user *)arg)) {
-				err = -EFAULT;
-				goto setflags_out;
-			}
-			/*
-			 * Is it quota file? Do not allow user to mess with it
-			 */
-			if (IS_NOQUOTA(inode)) {
-				err = -EPERM;
-				goto setflags_out;
-			}
+			if ((current->fsuid != inode->i_uid)
+			    && !capable(CAP_FOWNER))
+				return -EPERM;
+
+			if (get_user(flags, (int __user *)arg))
+				return -EFAULT;
+
 			if (((flags ^ REISERFS_I(inode)->
 			      i_attrs) & (REISERFS_IMMUTABLE_FL |
 					  REISERFS_APPEND_FL))
-			    && !capable(CAP_LINUX_IMMUTABLE)) {
-				err = -EPERM;
-				goto setflags_out;
-			}
+			    && !capable(CAP_LINUX_IMMUTABLE))
+				return -EPERM;
+
 			if ((flags & REISERFS_NOTAIL_FL) &&
 			    S_ISREG(inode->i_mode)) {
 				int result;
 
 				result = reiserfs_unpack(inode, filp);
-				if (result) {
-					err = result;
-					goto setflags_out;
-				}
+				if (result)
+					return result;
 			}
 			sd_attrs_to_i_attrs(flags, inode);
 			REISERFS_I(inode)->i_attrs = flags;
 			inode->i_ctime = CURRENT_TIME_SEC;
 			mark_inode_dirty(inode);
-setflags_out:
-			mnt_drop_write(filp->f_path.mnt);
-			return err;
+			return 0;
 		}
 	case REISERFS_IOC_GETVERSION:
 		return put_user(inode->i_generation, (int __user *)arg);
 	case REISERFS_IOC_SETVERSION:
-		if (!is_owner_or_cap(inode))
+		if ((current->fsuid != inode->i_uid) && !capable(CAP_FOWNER))
 			return -EPERM;
-		err = mnt_want_write(filp->f_path.mnt);
-		if (err)
-			return err;
-		if (get_user(inode->i_generation, (int __user *)arg)) {
-			err = -EFAULT;
-			goto setversion_out;
-		}
+		if (IS_RDONLY(inode))
+			return -EROFS;
+		if (get_user(inode->i_generation, (int __user *)arg))
+			return -EFAULT;
 		inode->i_ctime = CURRENT_TIME_SEC;
 		mark_inode_dirty(inode);
-setversion_out:
-		mnt_drop_write(filp->f_path.mnt);
-		return err;
+		return 0;
 	default:
 		return -ENOTTY;
 	}
 }
 
-#ifdef CONFIG_COMPAT
-long reiserfs_compat_ioctl(struct file *file, unsigned int cmd,
-				unsigned long arg)
-{
-	struct inode *inode = file->f_path.dentry->d_inode;
-	int ret;
-
-	/* These are just misnamed, they actually get/put from/to user an int */
-	switch (cmd) {
-	case REISERFS_IOC32_UNPACK:
-		cmd = REISERFS_IOC_UNPACK;
-		break;
-	case REISERFS_IOC32_GETFLAGS:
-		cmd = REISERFS_IOC_GETFLAGS;
-		break;
-	case REISERFS_IOC32_SETFLAGS:
-		cmd = REISERFS_IOC_SETFLAGS;
-		break;
-	case REISERFS_IOC32_GETVERSION:
-		cmd = REISERFS_IOC_GETVERSION;
-		break;
-	case REISERFS_IOC32_SETVERSION:
-		cmd = REISERFS_IOC_SETVERSION;
-		break;
-	default:
-		return -ENOIOCTLCMD;
-	}
-	lock_kernel();
-	ret = reiserfs_ioctl(inode, file, cmd, (unsigned long) compat_ptr(arg));
-	unlock_kernel();
-	return ret;
-}
-#endif
-
-int reiserfs_commit_write(struct file *f, struct page *page,
-			  unsigned from, unsigned to);
-int reiserfs_prepare_write(struct file *f, struct page *page,
-			   unsigned from, unsigned to);
 /*
 ** reiserfs_unpack
 ** Function try to convert tail from direct item into indirect.
 ** It set up nopack attribute in the REISERFS_I(inode)->nopack
 */
-int reiserfs_unpack(struct inode *inode, struct file *filp)
+static int reiserfs_unpack(struct inode *inode, struct file *filp)
 {
 	int retval = 0;
 	int index;
@@ -189,7 +131,7 @@ int reiserfs_unpack(struct inode *inode, struct file *filp)
 	}
 
 	/* we unpack by finding the page with the tail, and calling
-	 ** reiserfs_prepare_write on that page.  This will force a
+	 ** reiserfs_prepare_write on that page.  This will force a 
 	 ** reiserfs_get_block to unpack the tail for us.
 	 */
 	index = inode->i_size >> PAGE_CACHE_SHIFT;
@@ -199,13 +141,15 @@ int reiserfs_unpack(struct inode *inode, struct file *filp)
 	if (!page) {
 		goto out;
 	}
-	retval = reiserfs_prepare_write(NULL, page, write_from, write_from);
+	retval =
+	    mapping->a_ops->prepare_write(NULL, page, write_from, write_from);
 	if (retval)
 		goto out_unlock;
 
 	/* conversion can change page contents, must flush */
 	flush_dcache_page(page);
-	retval = reiserfs_commit_write(NULL, page, write_from, write_from);
+	retval =
+	    mapping->a_ops->commit_write(NULL, page, write_from, write_from);
 	REISERFS_I(inode)->i_flags |= i_nopack_mask;
 
       out_unlock:

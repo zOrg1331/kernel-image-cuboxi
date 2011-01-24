@@ -10,7 +10,10 @@
 #ifndef OP_IMPL_H
 #define OP_IMPL_H 1
 
-extern int (*perf_irq)(void);
+struct pt_regs;
+
+extern int null_perf_irq(struct pt_regs *regs);
+extern int (*perf_irq)(struct pt_regs *regs);
 
 /* Per-counter configuration as set via oprofilefs.  */
 struct op_counter_config {
@@ -27,7 +30,7 @@ struct op_counter_config {
 /* Per-architecture configury and hooks.  */
 struct op_mips_model {
 	void (*reg_setup) (struct op_counter_config *);
-	void (*cpu_setup) (void *dummy);
+	void (*cpu_setup) (void * dummy);
 	int (*init)(void);
 	void (*exit)(void);
 	void (*cpu_start)(void *args);

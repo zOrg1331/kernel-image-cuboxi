@@ -25,7 +25,6 @@
 #include <linux/net.h>
 #include <linux/vfs.h>
 #include <linux/highuid.h>
-#include <linux/sched.h>
 #include <linux/smb_fs.h>
 #include <linux/smbno.h>
 #include <linux/smb_mount.h>
@@ -51,12 +50,12 @@ static void smb_put_super(struct super_block *);
 static int  smb_statfs(struct dentry *, struct kstatfs *);
 static int  smb_show_options(struct seq_file *, struct vfsmount *);
 
-static struct kmem_cache *smb_inode_cachep;
+static kmem_cache_t *smb_inode_cachep;
 
 static struct inode *smb_alloc_inode(struct super_block *sb)
 {
 	struct smb_inode_info *ei;
-	ei = (struct smb_inode_info *)kmem_cache_alloc(smb_inode_cachep, GFP_KERNEL);
+	ei = (struct smb_inode_info *)kmem_cache_alloc(smb_inode_cachep, SLAB_KERNEL);
 	if (!ei)
 		return NULL;
 	return &ei->vfs_inode;
@@ -67,20 +66,22 @@ static void smb_destroy_inode(struct inode *inode)
 	kmem_cache_free(smb_inode_cachep, SMB_I(inode));
 }
 
-static void init_once(void *foo)
+static void init_once(void * foo, kmem_cache_t * cachep, unsigned long flags)
 {
 	struct smb_inode_info *ei = (struct smb_inode_info *) foo;
+	unsigned long flagmask = SLAB_CTOR_VERIFY|SLAB_CTOR_CONSTRUCTOR;
 
-	inode_init_once(&ei->vfs_inode);
+	if ((flags & flagmask) == SLAB_CTOR_CONSTRUCTOR)
+		inode_init_once(&ei->vfs_inode);
 }
-
+ 
 static int init_inodecache(void)
 {
 	smb_inode_cachep = kmem_cache_create("smb_inode_cache",
 					     sizeof(struct smb_inode_info),
 					     0, (SLAB_RECLAIM_ACCOUNT|
 						SLAB_MEM_SPREAD),
-					     init_once);
+					     init_once, NULL);
 	if (smb_inode_cachep == NULL)
 		return -ENOMEM;
 	return 0;
@@ -88,7 +89,8 @@ static int init_inodecache(void)
 
 static void destroy_inodecache(void)
 {
-	kmem_cache_destroy(smb_inode_cachep);
+	if (kmem_cache_destroy(smb_inode_cachep))
+		printk(KERN_INFO "smb_inode_cache: not all structures were freed\n");
 }
 
 static int smb_remount(struct super_block *sb, int *flags, char *data)
@@ -97,7 +99,7 @@ static int smb_remount(struct super_block *sb, int *flags, char *data)
 	return 0;
 }
 
-static const struct super_operations smb_sops =
+static struct super_operations smb_sops =
 {
 	.alloc_inode	= smb_alloc_inode,
 	.destroy_inode	= smb_destroy_inode,
@@ -165,6 +167,7 @@ smb_get_inode_attr(struct inode *inode, struct smb_fattr *fattr)
 	fattr->f_mtime	= inode->i_mtime;
 	fattr->f_ctime	= inode->i_ctime;
 	fattr->f_atime	= inode->i_atime;
+	fattr->f_blksize= inode->i_blksize;
 	fattr->f_blocks	= inode->i_blocks;
 
 	fattr->attr	= SMB_I(inode)->attr;
@@ -198,6 +201,7 @@ smb_set_inode_attr(struct inode *inode, struct smb_fattr *fattr)
 	inode->i_uid	= fattr->f_uid;
 	inode->i_gid	= fattr->f_gid;
 	inode->i_ctime	= fattr->f_ctime;
+	inode->i_blksize= fattr->f_blksize;
 	inode->i_blocks = fattr->f_blocks;
 	inode->i_size	= fattr->f_size;
 	inode->i_mtime	= fattr->f_mtime;
@@ -459,16 +463,20 @@ smb_show_options(struct seq_file *s, struct vfsmount *m)
 static void
 smb_unload_nls(struct smb_sb_info *server)
 {
-	unload_nls(server->remote_nls);
-	unload_nls(server->local_nls);
+	if (server->remote_nls) {
+		unload_nls(server->remote_nls);
+		server->remote_nls = NULL;
+	}
+	if (server->local_nls) {
+		unload_nls(server->local_nls);
+		server->local_nls = NULL;
+	}
 }
 
 static void
 smb_put_super(struct super_block *sb)
 {
 	struct smb_sb_info *server = SMB_SB(sb);
-
-	lock_kernel();
 
 	smb_lock_server(server);
 	server->state = CONN_INVALID;
@@ -477,16 +485,13 @@ smb_put_super(struct super_block *sb)
 	smb_close_socket(server);
 
 	if (server->conn_pid)
-		kill_pid(server->conn_pid, SIGTERM, 1);
+		kill_proc(server->conn_pid, SIGTERM, 1);
 
 	kfree(server->ops);
 	smb_unload_nls(server);
 	sb->s_fs_info = NULL;
 	smb_unlock_server(server);
-	put_pid(server->conn_pid);
 	kfree(server);
-
-	unlock_kernel();
 }
 
 static int smb_fill_super(struct super_block *sb, void *raw_data, int silent)
@@ -498,13 +503,6 @@ static int smb_fill_super(struct super_block *sb, void *raw_data, int silent)
 	struct smb_fattr root;
 	int ver;
 	void *mem;
-	static int warn_count;
-
-	if (warn_count < 5) {
-		warn_count++;
-		printk(KERN_EMERG "smbfs is deprecated and will be removed"
-			" from the 2.6.27 kernel. Please migrate to cifs\n");
-	}
 
 	if (!raw_data)
 		goto out_no_data;
@@ -535,13 +533,13 @@ static int smb_fill_super(struct super_block *sb, void *raw_data, int silent)
 	INIT_LIST_HEAD(&server->xmitq);
 	INIT_LIST_HEAD(&server->recvq);
 	server->conn_error = 0;
-	server->conn_pid = NULL;
+	server->conn_pid = 0;
 	server->state = CONN_INVALID; /* no connection yet */
 	server->generation = 0;
 
 	/* Allocate the global temp buffer and some superblock helper structs */
 	/* FIXME: move these to the smb_sb_info struct */
-	VERBOSE("alloc chunk = %lu\n", sizeof(struct smb_ops) +
+	VERBOSE("alloc chunk = %d\n", sizeof(struct smb_ops) +
 		sizeof(struct smb_mount_data_kernel));
 	mem = kmalloc(sizeof(struct smb_ops) +
 		      sizeof(struct smb_mount_data_kernel), GFP_KERNEL);
@@ -584,7 +582,7 @@ static int smb_fill_super(struct super_block *sb, void *raw_data, int silent)
 		if (parse_options(mnt, raw_data))
 			goto out_bad_option;
 	}
-	mnt->mounted_uid = current_uid();
+	mnt->mounted_uid = current->uid;
 	smb_setcodepage(server, &mnt->codepage);
 
 	/*

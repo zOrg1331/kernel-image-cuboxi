@@ -1,0 +1,50 @@
+From: Steven Whitehouse <swhiteho@redhat.com>
+Date: Wed, 23 Jul 2008 20:08:26 +0100
+Subject: [gfs2] glock dumping missing out some glocks
+Message-id: 1216840106.17472.33.camel@localhost.localdomain
+O-Subject: [RHEL 5.2] [GFS2] glock dumping missing out some glocks
+Bugzilla: 456334
+RH-Acked-by: Bob Peterson <rpeterso@redhat.com>
+
+Hi,
+
+This is an upstream patch. The glock debugfs file has been missing out
+some glocks in certain cases. This patch fixes that issue so that we
+will dump all of the glocks. This fixes bz #456334,
+
+Steve.
+
+diff --git a/fs/gfs2/glock.c b/fs/gfs2/glock.c
+index aae1b90..730f97a 100644
+--- a/fs/gfs2/glock.c
++++ b/fs/gfs2/glock.c
+@@ -1835,15 +1835,17 @@ restart:
+ 	if (gl) {
+ 		gi->gl = hlist_entry(gl->gl_list.next,
+ 				     struct gfs2_glock, gl_list);
+-		if (gi->gl)
+-			gfs2_glock_hold(gi->gl);
++	} else {
++		gi->gl = hlist_entry(gl_hash_table[gi->hash].hb_list.first,
++				     struct gfs2_glock, gl_list);
+ 	}
++	if (gi->gl)
++		gfs2_glock_hold(gi->gl);
+ 	read_unlock(gl_lock_addr(gi->hash));
+ 	if (gl)
+ 		gfs2_glock_put(gl);
+-	if (gl && gi->gl == NULL)
+-		gi->hash++;
+ 	while (gi->gl == NULL) {
++		gi->hash++;
+ 		if (gi->hash >= GFS2_GL_HASH_SIZE)
+ 			return 1;
+ 		read_lock(gl_lock_addr(gi->hash));
+@@ -1852,7 +1854,6 @@ restart:
+ 		if (gi->gl)
+ 			gfs2_glock_hold(gi->gl);
+ 		read_unlock(gl_lock_addr(gi->hash));
+-		gi->hash++;
+ 	}
+ 
+ 	if (gi->sdp != gi->gl->gl_sbd)

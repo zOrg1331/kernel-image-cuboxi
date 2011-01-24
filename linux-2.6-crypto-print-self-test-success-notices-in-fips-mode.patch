@@ -1,0 +1,92 @@
+From: Jarod Wilson <jarod@redhat.com>
+Date: Mon, 4 May 2009 16:33:16 -0400
+Subject: [crypto] print self-test success notices in fips mode
+Message-id: 200905041633.17106.jarod@redhat.com
+O-Subject: [RHEL5.4 PATCH v2] crypto: print self-test success notices in fips mode
+Bugzilla: 497885
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+
+On Friday 01 May 2009 10:56:52 Jarod Wilson wrote:
+> Bugzilla #497885
+> https://bugzilla.redhat.com/show_bug.cgi?id=497885
+>
+>
+> Description
+> -----------
+> According to our FIPS CAVS testing lab guru, when we're in fips mode,
+> we must print out notices of successful self-test completion for
+> every alg to be compliant.
+>
+>
+> Test Status
+> -----------
+> When fips_enabled is set, the kernel happily spits out notices for every
+> alg self-test successfully completed.
+>
+>
+> Upstream Status
+> ---------------
+> This matches the second version posted upstream, which has yet to be
+> committed, but ought to make the cut.
+>
+> http://lkml.org/lkml/2009/4/30/521
+>
+>
+> Misc
+> ----
+> Note that this patch needs to be applied after the ctr(aes) no-test
+> warning suppression patch[1] posted earlier, as it touches code that
+> was moved around slightly by that patch.
+>
+> [1] Subject: [RHEL5.4 PATCH] crypto: suppress no-test warnings for
+>              untestable ctr(aes)
+>
+> Whitespace changes are intentional, to get everything lined up 100%
+> with the upstream cryptodev-2.6 tree.
+
+Updated version, necessary due to change in the dependent patch. The
+core change (add the printk) has been committed upstream, and the rest
+of the changes are simply to make us look identical to upstream here,
+but also provide the benefit of not printing out "no self test" with
+a "self-test successful" immediately after it (due to moving the
+notest label section).
+
+diff --git a/crypto/testmgr.c b/crypto/testmgr.c
+index 09c1573..32f077a 100644
+--- a/crypto/testmgr.c
++++ b/crypto/testmgr.c
+@@ -1459,7 +1459,7 @@ static int alg_find_test(const char *alg)
+ int alg_test(const char *driver, const char *alg, u32 type, u32 mask)
+ {
+ 	int i;
+-	int rc = 0;
++	int rc;
+ 
+ 	if ((type & CRYPTO_ALG_TYPE_MASK) == CRYPTO_ALG_TYPE_CIPHER) {
+ 		char nalg[CRYPTO_MAX_ALG_NAME];
+@@ -1482,14 +1482,19 @@ int alg_test(const char *driver, const char *alg, u32 type, u32 mask)
+ 
+ 	rc = alg_test_descs[i].test(alg_test_descs + i, driver,
+ 				      type, mask);
+-	goto test_done;
+-
+-notest:
+-	printk(KERN_INFO "alg: No test for %s (%s)\n", alg, driver);
+ test_done:
+ 	if (fips_enabled && rc)
+ 		panic("%s: %s alg test failed in fips mode!\n", driver, alg);
++
++	if (fips_enabled && !rc)
++		printk(KERN_INFO "alg: self-tests for %s (%s) passed\n",
++		       driver, alg);
++
+ 	return rc;
++
++notest:
++	printk(KERN_INFO "alg: No test for %s (%s)\n", alg, driver);
++	return 0;
+ }
+ EXPORT_SYMBOL_GPL(alg_test);
+ 

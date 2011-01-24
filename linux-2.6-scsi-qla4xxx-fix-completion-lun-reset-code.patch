@@ -1,0 +1,223 @@
+From: Marcus Barrow <mbarrow@redhat.com>
+Date: Wed, 19 Mar 2008 22:03:56 -0400
+Subject: [scsi] qla4xxx: fix completion, lun reset code
+Message-id: 20080320020356.881.46142.sendpatchset@shell.boston.redhat.com
+O-Subject: [rhel 5.2 bug] qla4xxx - Fix scsi completion, lun reset code
+Bugzilla: 438214
+
+BZ 438214 qla4xxx: Fix scsi completion, lun reset code
+
+The following patch corrects a problem with status returns
+and also handshaking with the HBA RISC processor. These problems
+would cause data corruption and blocking of I/O thru the HBA,
+respectively.
+
+Now make sure to check for trasport errors and completion
+in addition to HBA and SCSI errors.
+
+Also correctly issue marker command to prevent blocking of the
+device queues in HBA.
+
+Applied cleanly to 2.6.18-84.el5 and tested at QLogic.
+
+diff --git a/drivers/scsi/qla4xxx/ql4_glbl.h b/drivers/scsi/qla4xxx/ql4_glbl.h
+index 7d4d770..9e22ac7 100644
+--- a/drivers/scsi/qla4xxx/ql4_glbl.h
++++ b/drivers/scsi/qla4xxx/ql4_glbl.h
+@@ -80,6 +80,9 @@ int qla4xxx_process_ddb_changed(struct scsi_qla_host * ha,
+ void qla4xxx_free_pdu(struct scsi_qla_host * ha, struct pdu_entry * pdu);
+ int qla4xxx_mailbox_command(struct scsi_qla_host *ha, uint8_t inCount,
+                             uint8_t outCount, uint32_t *mbx_cmd, uint32_t *mbx_sts);
++int qla4xxx_send_marker_iocb(struct scsi_qla_host *ha,
++	struct ddb_entry *ddb_entry, int lun);
++
+ 
+ 
+ extern int extended_error_logging;
+diff --git a/drivers/scsi/qla4xxx/ql4_iocb.c b/drivers/scsi/qla4xxx/ql4_iocb.c
+index d45e4d0..02ff3a8 100644
+--- a/drivers/scsi/qla4xxx/ql4_iocb.c
++++ b/drivers/scsi/qla4xxx/ql4_iocb.c
+@@ -352,14 +352,6 @@ int qla4xxx_send_command_to_isp(struct scsi_qla_host *ha, struct srb * srb)
+ 	/* Get real lun and adapter */
+ 	ddb_entry = srb->ddb;
+ 
+-	/* Send marker(s) if needed. */
+-	if (ha->marker_needed == 1) {
+-		if (qla4xxx_send_marker_iocb(ha, ddb_entry,
+-					     cmd->device->lun) != QLA_SUCCESS)
+-			return QLA_ERROR;
+-
+-		ha->marker_needed = 0;
+-	}
+ 	tot_dsds = 0;
+ 
+ 	/* Acquire hardware specific lock */
+diff --git a/drivers/scsi/qla4xxx/ql4_isr.c b/drivers/scsi/qla4xxx/ql4_isr.c
+index 2244dd1..458f246 100644
+--- a/drivers/scsi/qla4xxx/ql4_isr.c
++++ b/drivers/scsi/qla4xxx/ql4_isr.c
+@@ -12,28 +12,6 @@
+ #include "ql4_inline.h"
+ 
+ /**
+- * qla2x00_process_completed_request() - Process a Fast Post response.
+- * @ha: SCSI driver HA context
+- * @index: SRB index
+- **/
+-static void qla4xxx_process_completed_request(struct scsi_qla_host *ha,
+-					      uint32_t index)
+-{
+-	struct srb *srb;
+-
+-	srb = qla4xxx_del_from_active_array(ha, index);
+-	if (srb) {
+-		/* Save ISP completion status */
+-		srb->cmd->result = DID_OK << 16;
+-		qla4xxx_srb_compl(ha, srb);
+-	} else {
+-		DEBUG2(printk("scsi%ld: Invalid ISP SCSI completion handle = "
+-			      "%d\n", ha->host_no, index));
+-		set_bit(DPC_RESET_HA, &ha->dpc_flags);
+-	}
+-}
+-
+-/**
+  * qla4xxx_status_entry - processes status IOCBs
+  * @ha: Pointer to host adapter structure.
+  * @sts_entry: Pointer to status entry structure.
+@@ -48,31 +26,19 @@ static void qla4xxx_status_entry(struct scsi_qla_host *ha,
+ 	uint32_t residual;
+ 	uint16_t sensebytecnt;
+ 
+-	if (sts_entry->completionStatus == SCS_COMPLETE &&
+-	    sts_entry->scsiStatus == 0) {
+-		qla4xxx_process_completed_request(ha,
+-						  le32_to_cpu(sts_entry->
+-							      handle));
+-		return;
+-	}
+-
+ 	srb = qla4xxx_del_from_active_array(ha, le32_to_cpu(sts_entry->handle));
+ 	if (!srb) {
+-		/* FIXMEdg: Don't we need to reset ISP in this case??? */
+-		DEBUG2(printk(KERN_WARNING "scsi%ld: %s: Status Entry invalid "
+-			      "handle 0x%x, sp=%p. This cmd may have already "
+-			      "been completed.\n", ha->host_no, __func__,
+-			      le32_to_cpu(sts_entry->handle), srb));
++		dev_warn(&ha->pdev->dev, "%s invalid status entry:"
++			" handle=0x%0x\n", __func__, sts_entry->handle);
++		set_bit(DPC_RESET_HA, &ha->dpc_flags);
++		return;
+ 	}
+ 
+ 	cmd = srb->cmd;
+ 	if (cmd == NULL) {
+-		DEBUG2(printk("scsi%ld: %s: Command already returned back to "
+-			      "OS pkt->handle=%d srb=%p srb->state:%d\n",
+-			      ha->host_no, __func__, sts_entry->handle,
+-			      srb, srb->state));
+-		dev_warn(&ha->pdev->dev, "Command is NULL:"
+-			" already returned to OS (srb=%p)\n", srb);
++		dev_warn(&ha->pdev->dev, "%s Command is NULL: srb=%p"
++			" sts_handle=0x%0x srb_state=0x%0x\n", __func__,
++			srb, sts_entry->handle, srb->state);
+ 		return;
+ 	}
+ 
+@@ -88,11 +54,6 @@ static void qla4xxx_status_entry(struct scsi_qla_host *ha,
+ 	scsi_status = sts_entry->scsiStatus;
+ 	switch (sts_entry->completionStatus) {
+ 	case SCS_COMPLETE:
+-		if (scsi_status == 0) {
+-			cmd->result = DID_OK << 16;
+-			break;
+-		}
+-
+ 		if (sts_entry->iscsiFlags & ISCSI_FLAG_RESIDUAL_OVER) {
+ 			cmd->result = DID_ERROR << 16;
+ 			break;
+@@ -433,7 +394,6 @@ static void qla4xxx_isr_decode_mailbox(struct scsi_qla_host * ha,
+ 					readl(&ha->reg->mailbox[i]);
+ 
+ 			set_bit(AF_MBOX_COMMAND_DONE, &ha->flags);
+-			wake_up(&ha->mailbox_wait_queue);
+ 		}
+ 	} else if (mbox_status >> 12 == MBOX_ASYNC_EVENT_STATUS) {
+ 		/* Immediately process the AENs that don't require much work.
+diff --git a/drivers/scsi/qla4xxx/ql4_mbx.c b/drivers/scsi/qla4xxx/ql4_mbx.c
+index c925fac..64d9783 100644
+--- a/drivers/scsi/qla4xxx/ql4_mbx.c
++++ b/drivers/scsi/qla4xxx/ql4_mbx.c
+@@ -33,7 +33,6 @@ int qla4xxx_mailbox_command(struct scsi_qla_host *ha, uint8_t inCount,
+ 	u_long wait_count;
+ 	uint32_t intr_status;
+ 	unsigned long flags = 0;
+-	DECLARE_WAITQUEUE(wait, current);
+ 
+ 	/* Make sure that pointers are valid */
+ 	if (!mbx_cmd || !mbx_sts) {
+@@ -90,10 +89,6 @@ int qla4xxx_mailbox_command(struct scsi_qla_host *ha, uint8_t inCount,
+ 	readl(&ha->reg->ctrl_status);
+ 	spin_unlock_irqrestore(&ha->hardware_lock, flags);
+ 
+-	/* Wait for completion */
+-	set_current_state(TASK_UNINTERRUPTIBLE);
+-	add_wait_queue(&ha->mailbox_wait_queue, &wait);
+-
+ 	/*
+ 	 * If we don't want status, don't wait for the mailbox command to
+ 	 * complete.  For example, MBOX_CMD_RESET_FW doesn't return status,
+@@ -101,10 +96,10 @@ int qla4xxx_mailbox_command(struct scsi_qla_host *ha, uint8_t inCount,
+ 	 */
+ 	if (outCount == 0) {
+ 		status = QLA_SUCCESS;
+-		set_current_state(TASK_RUNNING);
+-		remove_wait_queue(&ha->mailbox_wait_queue, &wait);
+ 		goto mbox_exit;
+ 	}
++	/* Wait for completion */
++	set_current_state(TASK_UNINTERRUPTIBLE);
+ 	/* Wait for command to complete */
+ 	wait_count = jiffies + MBOX_TOV * HZ;
+ 	while (test_bit(AF_MBOX_COMMAND_DONE, &ha->flags) == 0) {
+@@ -127,7 +122,6 @@ int qla4xxx_mailbox_command(struct scsi_qla_host *ha, uint8_t inCount,
+ 		msleep(10);
+ 	}
+ 	set_current_state(TASK_RUNNING);
+-	remove_wait_queue(&ha->mailbox_wait_queue, &wait);
+ 
+ 	/* Check for mailbox timeout. */
+ 	if (!test_bit(AF_MBOX_COMMAND_DONE, &ha->flags)) {
+diff --git a/drivers/scsi/qla4xxx/ql4_os.c b/drivers/scsi/qla4xxx/ql4_os.c
+index 2cdf9bc..169b7b4 100644
+--- a/drivers/scsi/qla4xxx/ql4_os.c
++++ b/drivers/scsi/qla4xxx/ql4_os.c
+@@ -1235,7 +1235,6 @@ static int __devinit qla4xxx_probe_adapter(struct pci_dev *pdev,
+ 	INIT_LIST_HEAD(&ha->free_srb_q);
+ 
+ 	mutex_init(&ha->mbox_sem);
+-	init_waitqueue_head(&ha->mailbox_wait_queue);
+ 
+ 	spin_lock_init(&ha->hardware_lock);
+ 	spin_lock_init(&ha->list_lock);
+@@ -1579,9 +1578,6 @@ static int qla4xxx_eh_device_reset(struct scsi_cmnd *cmd)
+ 		goto eh_dev_reset_done;
+ 	}
+ 
+-	/* Send marker. */
+-	ha->marker_needed = 1;
+-
+ 	/*
+ 	 * If we are coming down the EH path, wait for all commands to complete
+ 	 * for the device.
+@@ -1597,6 +1593,9 @@ static int qla4xxx_eh_device_reset(struct scsi_cmnd *cmd)
+ 			goto eh_dev_reset_done;
+ 		}
+ 	}
++	if (qla4xxx_send_marker_iocb(ha, ddb_entry, cmd->device->lun)
++		!= QLA_SUCCESS)
++		goto eh_dev_reset_done;
+ 
+ 	dev_info(&ha->pdev->dev,
+ 		   "scsi(%ld:%d:%d:%d): DEVICE RESET SUCCEEDED.\n",

@@ -1,0 +1,4157 @@
+From: Bhavna Sarathy <bnagendr@redhat.com>
+Date: Mon, 20 Apr 2009 12:58:05 -0400
+Subject: [xen] add AMD IOMMU Xen driver
+Message-id: 20090420165004.6359.92444.sendpatchset@allegro.boston.redhat.com
+O-Subject: [RHEL5.4 PATCH 1/3] Add AMD IOMMU Xen driver
+Bugzilla: 477261
+RH-Acked-by: Gerd Hoffmann <kraxel@redhat.com>
+
+Resolves BZ 477261
+
+Add support for AMD IOMMU driver.
+
+diff --git a/drivers/passthrough/Makefile b/drivers/passthrough/Makefile
+index 259497f..864949a 100644
+--- a/drivers/passthrough/Makefile
++++ b/drivers/passthrough/Makefile
+@@ -1,5 +1,7 @@
+ subdir-$(x86_32) += vtd
+ subdir-$(x86_64) += vtd
++subdir-$(x86_32) += amd
++subdir-$(x86_64) += amd
+ 
+ obj-y += iommu.o
+ obj-y += pci.o
+diff --git a/drivers/passthrough/amd/Makefile b/drivers/passthrough/amd/Makefile
+new file mode 100644
+index 0000000..48bd305
+--- /dev/null
++++ b/drivers/passthrough/amd/Makefile
+@@ -0,0 +1,6 @@
++obj-y += iommu_detect.o
++obj-y += iommu_init.o
++obj-y += iommu_map.o
++obj-y += pci_amd_iommu.o
++obj-y += iommu_acpi.o
++obj-y += iommu_intr.o
+diff --git a/drivers/passthrough/amd/iommu_acpi.c b/drivers/passthrough/amd/iommu_acpi.c
+new file mode 100644
+index 0000000..06f3b9f
+--- /dev/null
++++ b/drivers/passthrough/amd/iommu_acpi.c
+@@ -0,0 +1,983 @@
++/*
++ * Copyright (C) 2007 Advanced Micro Devices, Inc.
++ * Author: Leo Duran <leo.duran@amd.com>
++ * Author: Wei Wang <wei.wang2@amd.com> - adapted to xen
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 2 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program; if not, write to the Free Software
++ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307 USA
++ */
++
++#include <xen/config.h>
++#include <xen/errno.h>
++#include <asm/amd-iommu.h>
++#include <asm/hvm/svm/amd-iommu-proto.h>
++#include <asm/hvm/svm/amd-iommu-acpi.h>
++
++extern unsigned long amd_iommu_page_entries;
++extern unsigned short ivrs_bdf_entries;
++extern struct ivrs_mappings *ivrs_mappings;
++extern unsigned short last_bdf;
++
++static struct amd_iommu * __init find_iommu_from_bdf_cap(
++    u16 bdf, u8 cap_offset)
++{
++    struct amd_iommu *iommu;
++
++    for_each_amd_iommu ( iommu )
++        if ( (iommu->bdf == bdf) && (iommu->cap_offset == cap_offset) )
++            return iommu;
++
++    return NULL;
++}
++
++static void __init reserve_iommu_exclusion_range(
++    struct amd_iommu *iommu, uint64_t base, uint64_t limit)
++{
++    /* need to extend exclusion range? */
++    if ( iommu->exclusion_enable )
++    {
++        if ( iommu->exclusion_base < base )
++            base = iommu->exclusion_base;
++        if ( iommu->exclusion_limit > limit )
++            limit = iommu->exclusion_limit;
++    }
++
++    iommu->exclusion_enable = IOMMU_CONTROL_ENABLED;
++    iommu->exclusion_base = base;
++    iommu->exclusion_limit = limit;
++}
++
++static void __init reserve_iommu_exclusion_range_all(
++    struct amd_iommu *iommu,
++    unsigned long base, unsigned long limit)
++{
++    reserve_iommu_exclusion_range(iommu, base, limit);
++    iommu->exclusion_allow_all = IOMMU_CONTROL_ENABLED;
++}
++
++static void __init reserve_unity_map_for_device(
++    u16 bdf, unsigned long base,
++    unsigned long length, u8 iw, u8 ir)
++{
++    unsigned long old_top, new_top;
++
++    /* need to extend unity-mapped range? */
++    if ( ivrs_mappings[bdf].unity_map_enable )
++    {
++        old_top = ivrs_mappings[bdf].addr_range_start +
++            ivrs_mappings[bdf].addr_range_length;
++        new_top = base + length;
++        if ( old_top > new_top )
++            new_top = old_top;
++        if ( ivrs_mappings[bdf].addr_range_start < base )
++            base = ivrs_mappings[bdf].addr_range_start;
++        length = new_top - base;
++    }
++
++    /* extend r/w permissioms and keep aggregate */
++    ivrs_mappings[bdf].write_permission = iw;
++    ivrs_mappings[bdf].read_permission = ir;
++    ivrs_mappings[bdf].unity_map_enable = IOMMU_CONTROL_ENABLED;
++    ivrs_mappings[bdf].addr_range_start = base;
++    ivrs_mappings[bdf].addr_range_length = length;
++}
++
++static int __init register_exclusion_range_for_all_devices(
++    unsigned long base, unsigned long limit, u8 iw, u8 ir)
++{
++    unsigned long range_top, iommu_top, length;
++    struct amd_iommu *iommu;
++    u16 bdf;
++
++    /* is part of exclusion range inside of IOMMU virtual address space? */
++    /* note: 'limit' parameter is assumed to be page-aligned */
++    range_top = limit + PAGE_SIZE;
++    iommu_top = max_page * PAGE_SIZE;
++    if ( base < iommu_top )
++    {
++        if ( range_top > iommu_top )
++            range_top = iommu_top;
++        length = range_top - base;
++        /* reserve r/w unity-mapped page entries for devices */
++        /* note: these entries are part of the exclusion range */
++        for ( bdf = 0; bdf < ivrs_bdf_entries; bdf++ )
++            reserve_unity_map_for_device(bdf, base, length, iw, ir);
++        /* push 'base' just outside of virtual address space */
++        base = iommu_top;
++    }
++    /* register IOMMU exclusion range settings */
++    if ( limit >= iommu_top )
++    {
++        for_each_amd_iommu( iommu )
++            reserve_iommu_exclusion_range_all(iommu, base, limit);
++    }
++
++    return 0;
++}
++
++static int __init register_exclusion_range_for_device(
++    u16 bdf, unsigned long base, unsigned long limit, u8 iw, u8 ir)
++{
++    unsigned long range_top, iommu_top, length;
++    struct amd_iommu *iommu;
++    u16 bus, devfn, req;
++
++    bus = bdf >> 8;
++    devfn = bdf & 0xFF;
++    iommu = find_iommu_for_device(bus, devfn);
++    if ( !iommu )
++    {
++        amd_iov_error("IVMD Error: No IOMMU for Dev_Id 0x%x!\n", bdf);
++        return -ENODEV;
++    }
++    req = ivrs_mappings[bdf].dte_requestor_id;
++
++    /* note: 'limit' parameter is assumed to be page-aligned */
++    range_top = limit + PAGE_SIZE;
++    iommu_top = max_page * PAGE_SIZE;
++    if ( base < iommu_top )
++    {
++        if ( range_top > iommu_top )
++            range_top = iommu_top;
++        length = range_top - base;
++        /* reserve unity-mapped page entries for device */
++        /* note: these entries are part of the exclusion range */
++        reserve_unity_map_for_device(bdf, base, length, iw, ir);
++        reserve_unity_map_for_device(req, base, length, iw, ir);
++
++        /* push 'base' just outside of virtual address space */
++        base = iommu_top;
++    }
++
++    /* register IOMMU exclusion range settings for device */
++    if ( limit >= iommu_top  )
++    {
++        reserve_iommu_exclusion_range(iommu, base, limit);
++        ivrs_mappings[bdf].dte_allow_exclusion = IOMMU_CONTROL_ENABLED;
++        ivrs_mappings[req].dte_allow_exclusion = IOMMU_CONTROL_ENABLED;
++    }
++
++    return 0;
++}
++
++static int __init register_exclusion_range_for_iommu_devices(
++    struct amd_iommu *iommu,
++    unsigned long base, unsigned long limit, u8 iw, u8 ir)
++{
++    unsigned long range_top, iommu_top, length;
++    u16 bus, devfn, bdf, req;
++
++    /* is part of exclusion range inside of IOMMU virtual address space? */
++    /* note: 'limit' parameter is assumed to be page-aligned */
++    range_top = limit + PAGE_SIZE;
++    iommu_top = max_page * PAGE_SIZE;
++    if ( base < iommu_top )
++    {
++        if ( range_top > iommu_top )
++            range_top = iommu_top;
++        length = range_top - base;
++        /* reserve r/w unity-mapped page entries for devices */
++        /* note: these entries are part of the exclusion range */
++        for ( bdf = 0; bdf < ivrs_bdf_entries; bdf++ )
++        {
++            bus = bdf >> 8;
++            devfn = bdf & 0xFF;
++            if ( iommu == find_iommu_for_device(bus, devfn) )
++            {
++                reserve_unity_map_for_device(bdf, base, length, iw, ir);
++                req = ivrs_mappings[bdf].dte_requestor_id;
++                reserve_unity_map_for_device(req, base, length, iw, ir);
++            }
++        }
++
++        /* push 'base' just outside of virtual address space */
++        base = iommu_top;
++    }
++
++    /* register IOMMU exclusion range settings */
++    if ( limit >= iommu_top )
++        reserve_iommu_exclusion_range_all(iommu, base, limit);
++    return 0;
++}
++
++static int __init parse_ivmd_device_select(
++    struct acpi_ivmd_block_header *ivmd_block,
++    unsigned long base, unsigned long limit, u8 iw, u8 ir)
++{
++    u16 bdf;
++
++    bdf = ivmd_block->header.dev_id;
++    if ( bdf >= ivrs_bdf_entries )
++    {
++        amd_iov_error("IVMD Error: Invalid Dev_Id 0x%x\n", bdf);
++        return -ENODEV;
++    }
++
++    return register_exclusion_range_for_device(bdf, base, limit, iw, ir);
++}
++
++static int __init parse_ivmd_device_range(
++    struct acpi_ivmd_block_header *ivmd_block,
++    unsigned long base, unsigned long limit, u8 iw, u8 ir)
++{
++    u16 first_bdf, last_bdf, bdf;
++    int error;
++
++    first_bdf = ivmd_block->header.dev_id;
++    if ( first_bdf >= ivrs_bdf_entries )
++    {
++        amd_iov_error(
++            "IVMD Error: Invalid Range_First Dev_Id 0x%x\n", first_bdf);
++        return -ENODEV;
++    }
++
++    last_bdf = ivmd_block->last_dev_id;
++    if ( (last_bdf >= ivrs_bdf_entries) || (last_bdf <= first_bdf) )
++    {
++        amd_iov_error(
++            "IVMD Error: Invalid Range_Last Dev_Id 0x%x\n", last_bdf);
++        return -ENODEV;
++    }
++
++    for ( bdf = first_bdf, error = 0; (bdf <= last_bdf) && !error; bdf++ )
++        error = register_exclusion_range_for_device(
++            bdf, base, limit, iw, ir);
++
++    return error;
++}
++
++static int __init parse_ivmd_device_iommu(
++    struct acpi_ivmd_block_header *ivmd_block,
++    unsigned long base, unsigned long limit, u8 iw, u8 ir)
++{
++    struct amd_iommu *iommu;
++
++    /* find target IOMMU */
++    iommu = find_iommu_from_bdf_cap(ivmd_block->header.dev_id,
++                                    ivmd_block->cap_offset);
++    if ( !iommu )
++    {
++        amd_iov_error("IVMD Error: No IOMMU for Dev_Id 0x%x  Cap 0x%x\n",
++                ivmd_block->header.dev_id, ivmd_block->cap_offset);
++        return -ENODEV;
++    }
++
++    return register_exclusion_range_for_iommu_devices(
++        iommu, base, limit, iw, ir);
++}
++
++static int __init parse_ivmd_block(struct acpi_ivmd_block_header *ivmd_block)
++{
++    unsigned long start_addr, mem_length, base, limit;
++    u8 iw, ir;
++
++    if ( ivmd_block->header.length <
++         sizeof(struct acpi_ivmd_block_header) )
++    {
++        amd_iov_error("IVMD Error: Invalid Block Length!\n");
++        return -ENODEV;
++    }
++
++    start_addr = (unsigned long)ivmd_block->start_addr;
++    mem_length = (unsigned long)ivmd_block->mem_length;
++    base = start_addr & PAGE_MASK;
++    limit = (start_addr + mem_length - 1) & PAGE_MASK;
++
++    amd_iov_info("IVMD Block: Type 0x%x\n",ivmd_block->header.type);
++    amd_iov_info(" Start_Addr_Phys 0x%lx\n", start_addr);
++    amd_iov_info(" Mem_Length 0x%lx\n", mem_length);
++
++    if ( get_field_from_byte(ivmd_block->header.flags,
++                             AMD_IOMMU_ACPI_EXCLUSION_RANGE_MASK,
++                             AMD_IOMMU_ACPI_EXCLUSION_RANGE_SHIFT) )
++        iw = ir = IOMMU_CONTROL_ENABLED;
++    else if ( get_field_from_byte(ivmd_block->header.flags,
++                                  AMD_IOMMU_ACPI_UNITY_MAPPING_MASK,
++                                  AMD_IOMMU_ACPI_UNITY_MAPPING_SHIFT) )
++    {
++        iw = get_field_from_byte(ivmd_block->header.flags,
++                                 AMD_IOMMU_ACPI_IW_PERMISSION_MASK,
++                                 AMD_IOMMU_ACPI_IW_PERMISSION_SHIFT);
++        ir = get_field_from_byte(ivmd_block->header.flags,
++                                 AMD_IOMMU_ACPI_IR_PERMISSION_MASK,
++                                 AMD_IOMMU_ACPI_IR_PERMISSION_SHIFT);
++    }
++    else
++    {
++        amd_iov_error("IVMD Error: Invalid Flag Field!\n");
++        return -ENODEV;
++    }
++
++    switch( ivmd_block->header.type )
++    {
++    case AMD_IOMMU_ACPI_IVMD_ALL_TYPE:
++        return register_exclusion_range_for_all_devices(
++            base, limit, iw, ir);
++
++    case AMD_IOMMU_ACPI_IVMD_ONE_TYPE:
++        return parse_ivmd_device_select(ivmd_block,
++                                        base, limit, iw, ir);
++
++    case AMD_IOMMU_ACPI_IVMD_RANGE_TYPE:
++        return parse_ivmd_device_range(ivmd_block,
++                                       base, limit, iw, ir);
++
++    case AMD_IOMMU_ACPI_IVMD_IOMMU_TYPE:
++        return parse_ivmd_device_iommu(ivmd_block,
++                                       base, limit, iw, ir);
++
++    default:
++        amd_iov_error("IVMD Error: Invalid Block Type!\n");
++        return -ENODEV;
++    }
++}
++
++static u16 __init parse_ivhd_device_padding(
++    u16 pad_length, u16 header_length, u16 block_length)
++{
++    if ( header_length < (block_length + pad_length) )
++    {
++        amd_iov_error("IVHD Error: Invalid Device_Entry Length!\n");
++        return 0;
++    }
++
++    return pad_length;
++}
++
++static u16 __init parse_ivhd_device_select(
++    union acpi_ivhd_device *ivhd_device, struct amd_iommu *iommu)
++{
++    u16 bdf;
++
++    bdf = ivhd_device->header.dev_id;
++    if ( bdf >= ivrs_bdf_entries )
++    {
++        amd_iov_error("IVHD Error: Invalid Device_Entry Dev_Id 0x%x\n", bdf);
++        return 0;
++    }
++
++    /* override flags for device */
++    ivrs_mappings[bdf].dte_sys_mgt_enable =
++        get_field_from_byte(ivhd_device->header.flags,
++                            AMD_IOMMU_ACPI_SYS_MGT_MASK,
++                            AMD_IOMMU_ACPI_SYS_MGT_SHIFT);
++    ivrs_mappings[bdf].iommu = iommu;
++
++    return sizeof(struct acpi_ivhd_device_header);
++}
++
++static u16 __init parse_ivhd_device_range(
++    union acpi_ivhd_device *ivhd_device,
++    u16 header_length, u16 block_length, struct amd_iommu *iommu)
++{
++    u16 dev_length, first_bdf, last_bdf, bdf;
++    u8 sys_mgt;
++
++    dev_length = sizeof(struct acpi_ivhd_device_range);
++    if ( header_length < (block_length + dev_length) )
++    {
++        amd_iov_error("IVHD Error: Invalid Device_Entry Length!\n");
++        return 0;
++    }
++
++    if ( ivhd_device->range.trailer.type !=
++         AMD_IOMMU_ACPI_IVHD_DEV_RANGE_END )
++    {
++        amd_iov_error("IVHD Error: "
++                "Invalid Range: End_Type 0x%x\n",
++                ivhd_device->range.trailer.type);
++        return 0;
++    }
++
++    first_bdf = ivhd_device->header.dev_id;
++    if ( first_bdf >= ivrs_bdf_entries )
++    {
++        amd_iov_error(
++            "IVHD Error: Invalid Range: First Dev_Id 0x%x\n", first_bdf);
++        return 0;
++    }
++
++    last_bdf = ivhd_device->range.trailer.dev_id;
++    if ( (last_bdf >= ivrs_bdf_entries) || (last_bdf <= first_bdf) )
++    {
++        amd_iov_error(
++            "IVHD Error: Invalid Range: Last Dev_Id 0x%x\n", last_bdf);
++        return 0;
++    }
++
++    amd_iov_info(" Dev_Id Range: 0x%x -> 0x%x\n", first_bdf, last_bdf);
++
++    /* override flags for range of devices */
++    sys_mgt = get_field_from_byte(ivhd_device->header.flags,
++                                  AMD_IOMMU_ACPI_SYS_MGT_MASK,
++                                  AMD_IOMMU_ACPI_SYS_MGT_SHIFT);
++    for ( bdf = first_bdf; bdf <= last_bdf; bdf++ )
++    {
++        ivrs_mappings[bdf].dte_sys_mgt_enable = sys_mgt;
++        ivrs_mappings[bdf].iommu = iommu;
++    }
++
++    return dev_length;
++}
++
++static u16 __init parse_ivhd_device_alias(
++    union acpi_ivhd_device *ivhd_device,
++    u16 header_length, u16 block_length, struct amd_iommu *iommu)
++{
++    u16 dev_length, alias_id, bdf;
++
++    dev_length = sizeof(struct acpi_ivhd_device_alias);
++    if ( header_length < (block_length + dev_length) )
++    {
++        amd_iov_error("IVHD Error: Invalid Device_Entry Length!\n");
++        return 0;
++    }
++
++    bdf = ivhd_device->header.dev_id;
++    if ( bdf >= ivrs_bdf_entries )
++    {
++        amd_iov_error("IVHD Error: Invalid Device_Entry Dev_Id 0x%x\n", bdf);
++        return 0;
++    }
++
++    alias_id = ivhd_device->alias.dev_id;
++    if ( alias_id >= ivrs_bdf_entries )
++    {
++        amd_iov_error("IVHD Error: Invalid Alias Dev_Id 0x%x\n", alias_id);
++        return 0;
++    }
++
++    amd_iov_info(" Dev_Id Alias: 0x%x\n", alias_id);
++
++    /* override requestor_id and flags for device */
++    ivrs_mappings[bdf].dte_requestor_id = alias_id;
++    ivrs_mappings[bdf].dte_sys_mgt_enable =
++        get_field_from_byte(ivhd_device->header.flags,
++                            AMD_IOMMU_ACPI_SYS_MGT_MASK,
++                            AMD_IOMMU_ACPI_SYS_MGT_SHIFT);
++    ivrs_mappings[bdf].iommu = iommu;
++
++    ivrs_mappings[alias_id].dte_sys_mgt_enable =
++        ivrs_mappings[bdf].dte_sys_mgt_enable;
++    ivrs_mappings[alias_id].iommu = iommu;
++
++    return dev_length;
++}
++
++static u16 __init parse_ivhd_device_alias_range(
++    union acpi_ivhd_device *ivhd_device,
++    u16 header_length, u16 block_length, struct amd_iommu *iommu)
++{
++
++    u16 dev_length, first_bdf, last_bdf, alias_id, bdf;
++    u8 sys_mgt;
++
++    dev_length = sizeof(struct acpi_ivhd_device_alias_range);
++    if ( header_length < (block_length + dev_length) )
++    {
++        amd_iov_error("IVHD Error: Invalid Device_Entry Length!\n");
++        return 0;
++    }
++
++    if ( ivhd_device->alias_range.trailer.type !=
++         AMD_IOMMU_ACPI_IVHD_DEV_RANGE_END )
++    {
++        amd_iov_error("IVHD Error: "
++                "Invalid Range: End_Type 0x%x\n",
++                ivhd_device->alias_range.trailer.type);
++        return 0;
++    }
++
++    first_bdf = ivhd_device->header.dev_id;
++    if ( first_bdf >= ivrs_bdf_entries )
++    {
++        amd_iov_error(
++            "IVHD Error: Invalid Range: First Dev_Id 0x%x\n", first_bdf);
++        return 0;
++    }
++
++    last_bdf = ivhd_device->alias_range.trailer.dev_id;
++    if ( last_bdf >= ivrs_bdf_entries || last_bdf <= first_bdf )
++    {
++        amd_iov_error(
++            "IVHD Error: Invalid Range: Last Dev_Id 0x%x\n", last_bdf);
++        return 0;
++    }
++
++    alias_id = ivhd_device->alias_range.alias.dev_id;
++    if ( alias_id >= ivrs_bdf_entries )
++    {
++        amd_iov_error("IVHD Error: Invalid Alias Dev_Id 0x%x\n", alias_id);
++        return 0;
++    }
++
++    amd_iov_info(" Dev_Id Range: 0x%x -> 0x%x\n", first_bdf, last_bdf);
++    amd_iov_info(" Dev_Id Alias: 0x%x\n", alias_id);
++
++    /* override requestor_id and flags for range of devices */
++    sys_mgt = get_field_from_byte(ivhd_device->header.flags,
++                                  AMD_IOMMU_ACPI_SYS_MGT_MASK,
++                                  AMD_IOMMU_ACPI_SYS_MGT_SHIFT);
++    for ( bdf = first_bdf; bdf <= last_bdf; bdf++ )
++    {
++        ivrs_mappings[bdf].dte_requestor_id = alias_id;
++        ivrs_mappings[bdf].dte_sys_mgt_enable = sys_mgt;
++        ivrs_mappings[bdf].iommu = iommu;
++    }
++    ivrs_mappings[alias_id].dte_sys_mgt_enable = sys_mgt;
++    ivrs_mappings[alias_id].iommu = iommu;
++
++    return dev_length;
++}
++
++static u16 __init parse_ivhd_device_extended(
++    union acpi_ivhd_device *ivhd_device,
++    u16 header_length, u16 block_length, struct amd_iommu *iommu)
++{
++    u16 dev_length, bdf;
++
++    dev_length = sizeof(struct acpi_ivhd_device_extended);
++    if ( header_length < (block_length + dev_length) )
++    {
++        amd_iov_error("IVHD Error: Invalid Device_Entry Length!\n");
++        return 0;
++    }
++
++    bdf = ivhd_device->header.dev_id;
++    if ( bdf >= ivrs_bdf_entries )
++    {
++        amd_iov_error("IVHD Error: Invalid Device_Entry Dev_Id 0x%x\n", bdf);
++        return 0;
++    }
++
++    /* override flags for device */
++    ivrs_mappings[bdf].dte_sys_mgt_enable =
++        get_field_from_byte(ivhd_device->header.flags,
++                            AMD_IOMMU_ACPI_SYS_MGT_MASK,
++                            AMD_IOMMU_ACPI_SYS_MGT_SHIFT);
++    ivrs_mappings[bdf].iommu = iommu;
++
++    return dev_length;
++}
++
++static u16 __init parse_ivhd_device_extended_range(
++    union acpi_ivhd_device *ivhd_device,
++    u16 header_length, u16 block_length, struct amd_iommu *iommu)
++{
++    u16 dev_length, first_bdf, last_bdf, bdf;
++    u8 sys_mgt;
++
++    dev_length = sizeof(struct acpi_ivhd_device_extended_range);
++    if ( header_length < (block_length + dev_length) )
++    {
++        amd_iov_error("IVHD Error: Invalid Device_Entry Length!\n");
++        return 0;
++    }
++
++    if ( ivhd_device->extended_range.trailer.type !=
++         AMD_IOMMU_ACPI_IVHD_DEV_RANGE_END )
++    {
++        amd_iov_error("IVHD Error: "
++                "Invalid Range: End_Type 0x%x\n",
++                ivhd_device->extended_range.trailer.type);
++        return 0;
++    }
++
++    first_bdf = ivhd_device->header.dev_id;
++    if ( first_bdf >= ivrs_bdf_entries )
++    {
++        amd_iov_error(
++            "IVHD Error: Invalid Range: First Dev_Id 0x%x\n", first_bdf);
++        return 0;
++    }
++
++    last_bdf = ivhd_device->extended_range.trailer.dev_id;
++    if ( (last_bdf >= ivrs_bdf_entries) || (last_bdf <= first_bdf) )
++    {
++        amd_iov_error(
++            "IVHD Error: Invalid Range: Last Dev_Id 0x%x\n", last_bdf);
++        return 0;
++    }
++
++    amd_iov_info(" Dev_Id Range: 0x%x -> 0x%x\n",
++            first_bdf, last_bdf);
++
++    /* override flags for range of devices */
++    sys_mgt = get_field_from_byte(ivhd_device->header.flags,
++                                  AMD_IOMMU_ACPI_SYS_MGT_MASK,
++                                  AMD_IOMMU_ACPI_SYS_MGT_SHIFT);
++    for ( bdf = first_bdf; bdf <= last_bdf; bdf++ )
++    {
++        ivrs_mappings[bdf].dte_sys_mgt_enable = sys_mgt;
++        ivrs_mappings[bdf].iommu = iommu;
++    }
++
++    return dev_length;
++}
++
++static int __init parse_ivhd_block(struct acpi_ivhd_block_header *ivhd_block)
++{
++    union acpi_ivhd_device *ivhd_device;
++    u16 block_length, dev_length;
++    struct amd_iommu *iommu;
++
++    if ( ivhd_block->header.length <
++         sizeof(struct acpi_ivhd_block_header) )
++    {
++        amd_iov_error("IVHD Error: Invalid Block Length!\n");
++        return -ENODEV;
++    }
++
++    iommu = find_iommu_from_bdf_cap(ivhd_block->header.dev_id,
++                                    ivhd_block->cap_offset);
++    if ( !iommu )
++    {
++        amd_iov_error("IVHD Error: No IOMMU for Dev_Id 0x%x  Cap 0x%x\n",
++                ivhd_block->header.dev_id, ivhd_block->cap_offset);
++        return -ENODEV;
++    }
++
++    /* parse Device Entries */
++    block_length = sizeof(struct acpi_ivhd_block_header);
++    while ( ivhd_block->header.length >=
++            (block_length + sizeof(struct acpi_ivhd_device_header)) )
++    {
++        ivhd_device = (union acpi_ivhd_device *)
++            ((u8 *)ivhd_block + block_length);
++
++        amd_iov_info( "IVHD Device Entry:\n");
++        amd_iov_info( " Type 0x%x\n", ivhd_device->header.type);
++        amd_iov_info( " Dev_Id 0x%x\n", ivhd_device->header.dev_id);
++        amd_iov_info( " Flags 0x%x\n", ivhd_device->header.flags);
++
++        switch ( ivhd_device->header.type )
++        {
++        case AMD_IOMMU_ACPI_IVHD_DEV_U32_PAD:
++            dev_length = parse_ivhd_device_padding(
++                sizeof(u32),
++                ivhd_block->header.length, block_length);
++            break;
++        case AMD_IOMMU_ACPI_IVHD_DEV_U64_PAD:
++            dev_length = parse_ivhd_device_padding(
++                sizeof(u64),
++                ivhd_block->header.length, block_length);
++            break;
++        case AMD_IOMMU_ACPI_IVHD_DEV_SELECT:
++            dev_length = parse_ivhd_device_select(ivhd_device, iommu);
++            break;
++        case AMD_IOMMU_ACPI_IVHD_DEV_RANGE_START:
++            dev_length = parse_ivhd_device_range(
++                ivhd_device,
++                ivhd_block->header.length, block_length, iommu);
++            break;
++        case AMD_IOMMU_ACPI_IVHD_DEV_ALIAS_SELECT:
++            dev_length = parse_ivhd_device_alias(
++                ivhd_device,
++                ivhd_block->header.length, block_length, iommu);
++            break;
++        case AMD_IOMMU_ACPI_IVHD_DEV_ALIAS_RANGE:
++            dev_length = parse_ivhd_device_alias_range(
++                ivhd_device,
++                ivhd_block->header.length, block_length, iommu);
++            break;
++        case AMD_IOMMU_ACPI_IVHD_DEV_EXT_SELECT:
++            dev_length = parse_ivhd_device_extended(
++                ivhd_device,
++                ivhd_block->header.length, block_length, iommu);
++            break;
++        case AMD_IOMMU_ACPI_IVHD_DEV_EXT_RANGE:
++            dev_length = parse_ivhd_device_extended_range(
++                ivhd_device,
++                ivhd_block->header.length, block_length, iommu);
++            break;
++        default:
++            amd_iov_error("IVHD Error: Invalid Device Type!\n");
++            dev_length = 0;
++            break;
++        }
++
++        block_length += dev_length;
++        if ( !dev_length )
++            return -ENODEV;
++    }
++
++    return 0;
++}
++
++static int __init parse_ivrs_block(struct acpi_ivrs_block_header *ivrs_block)
++{
++    struct acpi_ivhd_block_header *ivhd_block;
++    struct acpi_ivmd_block_header *ivmd_block;
++
++    switch ( ivrs_block->type )
++    {
++    case AMD_IOMMU_ACPI_IVHD_TYPE:
++        ivhd_block = (struct acpi_ivhd_block_header *)ivrs_block;
++        return parse_ivhd_block(ivhd_block);
++
++    case AMD_IOMMU_ACPI_IVMD_ALL_TYPE:
++    case AMD_IOMMU_ACPI_IVMD_ONE_TYPE:
++    case AMD_IOMMU_ACPI_IVMD_RANGE_TYPE:
++    case AMD_IOMMU_ACPI_IVMD_IOMMU_TYPE:
++        ivmd_block = (struct acpi_ivmd_block_header *)ivrs_block;
++        return parse_ivmd_block(ivmd_block);
++
++    default:
++        amd_iov_error("IVRS Error: Invalid Block Type!\n");
++        return -ENODEV;
++    }
++
++    return 0;
++}
++
++static void __init dump_acpi_table_header(struct acpi_table_header *table)
++{
++#ifdef AMD_IOV_DEBUG
++    int i;
++
++    amd_iov_info("ACPI Table:\n");
++    amd_iov_info(" Signature ");
++    for ( i = 0; i < ACPI_NAME_SIZE; i++ )
++        printk("%c", table->signature[i]);
++    printk("\n");
++
++    amd_iov_info(" Length 0x%x\n", table->length);
++    amd_iov_info(" Revision 0x%x\n", table->revision);
++    amd_iov_info(" CheckSum 0x%x\n", table->checksum);
++
++    amd_iov_info(" OEM_Id ");
++    for ( i = 0; i < ACPI_OEM_ID_SIZE; i++ )
++        printk("%c", table->oem_id[i]);
++    printk("\n");
++
++    amd_iov_info(" OEM_Table_Id ");
++    for ( i = 0; i < ACPI_OEM_TABLE_ID_SIZE; i++ )
++        printk("%c", table->oem_table_id[i]);
++    printk("\n");
++
++    amd_iov_info(" OEM_Revision 0x%x\n", table->oem_revision);
++
++    amd_iov_info(" Creator_Id ");
++    for ( i = 0; i < ACPI_NAME_SIZE; i++ )
++        printk("%c", table->asl_compiler_id[i]);
++    printk("\n");
++
++    amd_iov_info(" Creator_Revision 0x%x\n",
++           table->asl_compiler_revision);
++#endif
++
++}
++
++static int __init parse_ivrs_table(unsigned long phys_addr,
++                                    unsigned long size)
++{
++    struct acpi_ivrs_block_header *ivrs_block;
++    unsigned long length;
++    int error = 0;
++    struct acpi_table_header *table;
++
++    table = (struct acpi_table_header *)__acpi_map_table(phys_addr, size);
++    if ( !table )
++    {
++        amd_iov_error("IVRS Error: Unable to map IVRS\n");
++        return -ENODEV;
++    }
++
++    dump_acpi_table_header(table);
++
++    /* parse IVRS blocks */
++    length = sizeof(struct acpi_ivrs_table_header);
++    while ( (error == 0) && (table->length > (length + sizeof(*ivrs_block))) )
++    {
++        ivrs_block = (struct acpi_ivrs_block_header *)
++            ((u8 *)table + length);
++
++        amd_iov_info("IVRS Block:\n");
++        amd_iov_info(" Type 0x%x\n", ivrs_block->type);
++        amd_iov_info(" Flags 0x%x\n", ivrs_block->flags);
++        amd_iov_info(" Length 0x%x\n", ivrs_block->length);
++        amd_iov_info(" Dev_Id 0x%x\n", ivrs_block->dev_id);
++
++        if ( table->length < (length + ivrs_block->length) )
++        {
++            amd_iov_error("IVRS Error: "
++                    "Table Length Exceeded: 0x%x -> 0x%lx\n",
++                    table->length,
++                    (length + ivrs_block->length));
++            return -ENODEV;
++        }
++
++        error = parse_ivrs_block(ivrs_block);
++        length += ivrs_block->length;
++    }
++
++    return error;
++}
++
++static int __init detect_iommu_acpi(unsigned long phys_addr,
++                                    unsigned long size)
++{
++    struct acpi_ivrs_block_header *ivrs_block;
++    struct acpi_table_header *table;
++    unsigned long i;
++    unsigned long length = sizeof(struct acpi_ivrs_table_header);
++    u8 checksum, *raw_table;
++
++    table = (struct acpi_table_header *)__acpi_map_table(phys_addr, size);
++    if ( !table )
++    {
++        amd_iov_error("IVRS Error: Unable to map IVRS\n");
++        return -ENODEV;
++    }
++
++    /* validate checksum: sum of entire table == 0 */
++    checksum = 0;
++    raw_table = (u8 *)table;
++    for ( i = 0; i < table->length; i++ )
++        checksum += raw_table[i];
++    if ( checksum )
++    {
++        amd_iov_error("IVRS Error: "
++                "Invalid Checksum 0x%x\n", checksum);
++        return -ENODEV;
++    }
++
++    while ( table->length > (length + sizeof(*ivrs_block)) )
++    {
++        ivrs_block = (struct acpi_ivrs_block_header *) ((u8 *)table + length);
++        if ( table->length < (length + ivrs_block->length) )
++            return -ENODEV;
++        if ( ivrs_block->type == AMD_IOMMU_ACPI_IVHD_TYPE )
++            if ( amd_iommu_detect_one_acpi((void*)ivrs_block) != 0 )
++                return -ENODEV;
++        length += ivrs_block->length;
++    }
++    return 0;
++}
++
++#define UPDATE_LAST_BDF(x) do {\
++   if ((x) > last_bdf) \
++       last_bdf = (x); \
++   } while(0);
++
++static int __init get_last_bdf_ivhd(void *ivhd)
++{
++    union acpi_ivhd_device *ivhd_device;
++    u16 block_length, dev_length;
++    struct acpi_ivhd_block_header *ivhd_block;
++
++    ivhd_block = (struct acpi_ivhd_block_header *)ivhd;
++
++    if ( ivhd_block->header.length <
++         sizeof(struct acpi_ivhd_block_header) )
++    {
++        amd_iov_error("IVHD Error: Invalid Block Length!\n");
++        return -ENODEV;
++    }
++
++    block_length = sizeof(struct acpi_ivhd_block_header);
++    while ( ivhd_block->header.length >=
++            (block_length + sizeof(struct acpi_ivhd_device_header)) )
++    {
++        ivhd_device = (union acpi_ivhd_device *)
++            ((u8 *)ivhd_block + block_length);
++
++        switch ( ivhd_device->header.type )
++        {
++        case AMD_IOMMU_ACPI_IVHD_DEV_U32_PAD:
++            dev_length = sizeof(u32);
++            break;
++        case AMD_IOMMU_ACPI_IVHD_DEV_U64_PAD:
++            dev_length = sizeof(u64);
++            break;
++        case AMD_IOMMU_ACPI_IVHD_DEV_SELECT:
++            UPDATE_LAST_BDF(ivhd_device->header.dev_id);
++            dev_length = sizeof(struct acpi_ivhd_device_header);
++            break;
++        case AMD_IOMMU_ACPI_IVHD_DEV_ALIAS_SELECT:
++            UPDATE_LAST_BDF(ivhd_device->header.dev_id);
++            dev_length = sizeof(struct acpi_ivhd_device_alias);
++            break;
++        case AMD_IOMMU_ACPI_IVHD_DEV_EXT_SELECT:
++            UPDATE_LAST_BDF(ivhd_device->header.dev_id);
++            dev_length = sizeof(struct acpi_ivhd_device_extended);
++            break;
++        case AMD_IOMMU_ACPI_IVHD_DEV_RANGE_START:
++            UPDATE_LAST_BDF(ivhd_device->range.trailer.dev_id);
++            dev_length = sizeof(struct acpi_ivhd_device_range);
++            break;
++        case AMD_IOMMU_ACPI_IVHD_DEV_ALIAS_RANGE:
++            UPDATE_LAST_BDF(ivhd_device->alias_range.trailer.dev_id)
++            dev_length = sizeof(struct acpi_ivhd_device_alias_range);
++            break;
++        case AMD_IOMMU_ACPI_IVHD_DEV_EXT_RANGE:
++            UPDATE_LAST_BDF(ivhd_device->extended_range.trailer.dev_id)
++            dev_length = sizeof(struct acpi_ivhd_device_extended_range);
++            break;
++        default:
++            amd_iov_error("IVHD Error: Invalid Device Type!\n");
++            dev_length = 0;
++            break;
++        }
++
++        block_length += dev_length;
++        if ( !dev_length )
++            return -ENODEV;
++    }
++
++    return 0;
++}
++
++
++static int __init get_last_bdf_acpi(unsigned long phys_addr, unsigned long size)
++{
++    struct acpi_ivrs_block_header *ivrs_block;
++    struct acpi_table_header *table;
++    unsigned long length = sizeof(struct acpi_ivrs_table_header);
++
++    table = (struct acpi_table_header *)__acpi_map_table(phys_addr, size);
++    if ( !table )
++    {
++        amd_iov_error("IVRS Error: Unable to map IVRS\n");
++        return -ENODEV;
++    }
++
++    while ( table->length > (length + sizeof(*ivrs_block)) )
++    {
++        ivrs_block = (struct acpi_ivrs_block_header *) ((u8 *)table + length);
++        if ( table->length < (length + ivrs_block->length) )
++            return -ENODEV;
++        if ( ivrs_block->type == AMD_IOMMU_ACPI_IVHD_TYPE )
++            if ( get_last_bdf_ivhd((void*)ivrs_block) != 0 )
++                return -ENODEV;
++        length += ivrs_block->length;
++    }
++   return 0;
++}
++
++int __init amd_iommu_detect_acpi(void)
++{
++    return acpi_table_parse(ACPI_IVRS, detect_iommu_acpi);
++}
++
++int __init amd_iommu_get_ivrs_dev_entries(void)
++{
++    acpi_table_parse(ACPI_IVRS, get_last_bdf_acpi);
++    return last_bdf + 1;
++}
++
++int __init amd_iommu_update_ivrs_mapping_acpi(void)
++{
++    return acpi_table_parse(ACPI_IVRS, parse_ivrs_table);
++}
+diff --git a/drivers/passthrough/amd/iommu_detect.c b/drivers/passthrough/amd/iommu_detect.c
+new file mode 100644
+index 0000000..9180de9
+--- /dev/null
++++ b/drivers/passthrough/amd/iommu_detect.c
+@@ -0,0 +1,159 @@
++/*
++ * Copyright (C) 2007 Advanced Micro Devices, Inc.
++ * Author: Leo Duran <leo.duran@amd.com>
++ * Author: Wei Wang <wei.wang2@amd.com> - adapted to xen
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 2 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program; if not, write to the Free Software
++ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307 USA
++ */
++
++#include <xen/config.h>
++#include <xen/errno.h>
++#include <xen/iommu.h>
++#include <xen/pci.h>
++#include <xen/pci_regs.h>
++#include <asm/amd-iommu.h>
++#include <asm/hvm/svm/amd-iommu-proto.h>
++#include <asm/hvm/svm/amd-iommu-acpi.h>
++
++extern struct list_head amd_iommu_head;
++unsigned short last_bdf = 0;
++
++static int __init get_iommu_msi_capabilities(u8 bus, u8 dev, u8 func,
++            struct amd_iommu *iommu)
++{
++    int cap_ptr, cap_id;
++    u32 cap_header;
++    u16 control;
++    int count = 0;
++
++    cap_ptr = pci_conf_read8(bus, dev, func,
++            PCI_CAPABILITY_LIST);
++
++    while ( cap_ptr >= PCI_MIN_CAP_OFFSET &&
++        count < PCI_MAX_CAP_BLOCKS )
++    {
++        cap_ptr &= PCI_CAP_PTR_MASK;
++        cap_header = pci_conf_read32(bus, dev, func, cap_ptr);
++        cap_id = get_field_from_reg_u32(cap_header,
++                PCI_CAP_ID_MASK, PCI_CAP_ID_SHIFT);
++
++        if ( cap_id == PCI_CAP_ID_MSI )
++        {
++            iommu->msi_cap = cap_ptr;
++            break;
++        }
++        cap_ptr = get_field_from_reg_u32(cap_header,
++                PCI_CAP_NEXT_PTR_MASK, PCI_CAP_NEXT_PTR_SHIFT);
++        count++;
++    }
++
++    if ( !iommu->msi_cap )
++        return -ENODEV;
++
++    amd_iov_info("Found MSI capability block \n");
++    control = pci_conf_read16(bus, dev, func,
++            iommu->msi_cap + PCI_MSI_FLAGS);
++    iommu->maskbit = control & PCI_MSI_FLAGS_MASKBIT;
++    return 0;
++}
++
++int __init get_iommu_capabilities(u8 bus, u8 dev, u8 func, u8 cap_ptr,
++                                  struct amd_iommu *iommu)
++{
++    u32 cap_header, cap_range, misc_info;
++
++    cap_header = pci_conf_read32(bus, dev, func, cap_ptr);
++    iommu->revision = get_field_from_reg_u32(
++        cap_header, PCI_CAP_REV_MASK, PCI_CAP_REV_SHIFT);
++    iommu->pte_not_present_cached = get_field_from_reg_u32(
++        cap_header, PCI_CAP_NP_CACHE_MASK, PCI_CAP_NP_CACHE_SHIFT);
++
++    cap_range = pci_conf_read32(bus, dev, func,
++                                cap_ptr + PCI_CAP_RANGE_OFFSET);
++    iommu->unit_id = get_field_from_reg_u32(
++        cap_range, PCI_CAP_UNIT_ID_MASK, PCI_CAP_UNIT_ID_SHIFT);
++
++    misc_info = pci_conf_read32(bus, dev, func,
++                                cap_ptr + PCI_MISC_INFO_OFFSET);
++    iommu->msi_number = get_field_from_reg_u32(
++        misc_info, PCI_CAP_MSI_NUMBER_MASK, PCI_CAP_MSI_NUMBER_SHIFT);
++
++    return 0;
++}
++
++int __init amd_iommu_detect_one_acpi(void *ivhd)
++{
++    struct amd_iommu *iommu;
++    u8 bus, dev, func;
++    struct acpi_ivhd_block_header *ivhd_block;
++
++    ivhd_block = (struct acpi_ivhd_block_header *)ivhd;
++
++    if ( ivhd_block->header.length < sizeof(struct acpi_ivhd_block_header) )
++    {
++        amd_iov_error("Invalid IVHD Block Length!\n");
++        return -ENODEV;
++    }
++
++    if ( !ivhd_block->header.dev_id ||
++        !ivhd_block->cap_offset || !ivhd_block->mmio_base)
++    {
++        amd_iov_error("Invalid IVHD Block!\n");
++        return -ENODEV;
++    }
++
++    iommu = (struct amd_iommu *) xmalloc(struct amd_iommu);
++    if ( !iommu )
++    {
++        amd_iov_error("Error allocating amd_iommu\n");
++        return -ENOMEM;
++    }
++    memset(iommu, 0, sizeof(struct amd_iommu));
++
++    spin_lock_init(&iommu->lock);
++
++    iommu->bdf = ivhd_block->header.dev_id;
++    iommu->cap_offset = ivhd_block->cap_offset;
++    iommu->mmio_base_phys = ivhd_block->mmio_base;
++
++    /* override IOMMU support flags */
++    iommu->coherent = get_field_from_byte(ivhd_block->header.flags,
++                        AMD_IOMMU_ACPI_COHERENT_MASK,
++                        AMD_IOMMU_ACPI_COHERENT_SHIFT);
++    iommu->iotlb_support = get_field_from_byte(ivhd_block->header.flags,
++                        AMD_IOMMU_ACPI_IOTLB_SUP_MASK,
++                        AMD_IOMMU_ACPI_IOTLB_SUP_SHIFT);
++    iommu->isochronous = get_field_from_byte(ivhd_block->header.flags,
++                        AMD_IOMMU_ACPI_ISOC_MASK,
++                        AMD_IOMMU_ACPI_ISOC_SHIFT);
++    iommu->res_pass_pw = get_field_from_byte(ivhd_block->header.flags,
++                        AMD_IOMMU_ACPI_RES_PASS_PW_MASK,
++                        AMD_IOMMU_ACPI_RES_PASS_PW_SHIFT);
++    iommu->pass_pw = get_field_from_byte(ivhd_block->header.flags,
++                        AMD_IOMMU_ACPI_PASS_PW_MASK,
++                        AMD_IOMMU_ACPI_PASS_PW_SHIFT);
++    iommu->ht_tunnel_enable = get_field_from_byte(ivhd_block->header.flags,
++                        AMD_IOMMU_ACPI_HT_TUN_ENB_MASK,
++                        AMD_IOMMU_ACPI_HT_TUN_ENB_SHIFT);
++    bus = iommu->bdf >> 8;
++    dev = PCI_SLOT(iommu->bdf & 0xFF);
++    func = PCI_FUNC(iommu->bdf & 0xFF);
++    get_iommu_capabilities(bus, dev, func, iommu->cap_offset, iommu);
++    get_iommu_msi_capabilities(bus, dev, func, iommu);
++
++    list_add_tail(&iommu->list, &amd_iommu_head);
++
++    return 0;
++}
+diff --git a/drivers/passthrough/amd/iommu_init.c b/drivers/passthrough/amd/iommu_init.c
+new file mode 100644
+index 0000000..1754418
+--- /dev/null
++++ b/drivers/passthrough/amd/iommu_init.c
+@@ -0,0 +1,743 @@
++/*
++ * Copyright (C) 2007 Advanced Micro Devices, Inc.
++ * Author: Leo Duran <leo.duran@amd.com>
++ * Author: Wei Wang <wei.wang2@amd.com> - adapted to xen
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 2 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program; if not, write to the Free Software
++ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307 USA
++ */
++
++#include <xen/config.h>
++#include <xen/errno.h>
++#include <xen/pci.h>
++#include <xen/pci_regs.h>
++#include <asm/amd-iommu.h>
++#include <asm/hvm/svm/amd-iommu-proto.h>
++#include <asm-x86/fixmap.h>
++
++static struct amd_iommu *vector_to_iommu[NR_VECTORS];
++static int nr_amd_iommus;
++static long amd_iommu_cmd_buffer_entries = IOMMU_CMD_BUFFER_DEFAULT_ENTRIES;
++static long amd_iommu_event_log_entries = IOMMU_EVENT_LOG_DEFAULT_ENTRIES;
++
++unsigned short ivrs_bdf_entries;
++struct ivrs_mappings *ivrs_mappings;
++struct list_head amd_iommu_head;
++struct table_struct device_table;
++
++/*
++ * Shifts for MSI data
++ */
++
++#define MSI_DATA_VECTOR_SHIFT		0
++#define  MSI_DATA_VECTOR_MASK		0x000000ff
++#define	 MSI_DATA_VECTOR(v)		(((v) << MSI_DATA_VECTOR_SHIFT) & MSI_DATA_VECTOR_MASK)
++
++#define MSI_DATA_DELIVERY_MODE_SHIFT	8
++#define  MSI_DATA_DELIVERY_FIXED	(0 << MSI_DATA_DELIVERY_MODE_SHIFT)
++#define  MSI_DATA_DELIVERY_LOWPRI	(1 << MSI_DATA_DELIVERY_MODE_SHIFT)
++
++#define MSI_DATA_LEVEL_SHIFT		14
++#define	 MSI_DATA_LEVEL_DEASSERT	(0 << MSI_DATA_LEVEL_SHIFT)
++#define	 MSI_DATA_LEVEL_ASSERT		(1 << MSI_DATA_LEVEL_SHIFT)
++
++#define MSI_DATA_TRIGGER_SHIFT		15
++#define  MSI_DATA_TRIGGER_EDGE		(0 << MSI_DATA_TRIGGER_SHIFT)
++#define  MSI_DATA_TRIGGER_LEVEL		(1 << MSI_DATA_TRIGGER_SHIFT)
++
++/*
++ * Shift/mask fields for msi address
++ */
++
++#define MSI_ADDR_BASE_HI	    	0
++#define MSI_ADDR_BASE_LO	    	0xfee00000
++#define MSI_ADDR_HEADER             MSI_ADDR_BASE_LO
++
++#define MSI_ADDR_DESTMODE_SHIFT     2
++#define MSI_ADDR_DESTMODE_PHYS      (0 << MSI_ADDR_DESTMODE_SHIFT)
++#define MSI_ADDR_DESTMODE_LOGIC     (1 << MSI_ADDR_DESTMODE_SHIFT)
++
++#define MSI_ADDR_REDIRECTION_SHIFT  3
++#define MSI_ADDR_REDIRECTION_CPU    (0 << MSI_ADDR_REDIRECTION_SHIFT)
++#define MSI_ADDR_REDIRECTION_LOWPRI (1 << MSI_ADDR_REDIRECTION_SHIFT)
++
++#define MSI_ADDR_DEST_ID_SHIFT		12
++#define	 MSI_ADDR_DEST_ID_MASK		0x00ffff0
++#define  MSI_ADDR_DEST_ID(dest)		(((dest) << MSI_ADDR_DEST_ID_SHIFT) & MSI_ADDR_DEST_ID_MASK)
++
++static int __init map_iommu_mmio_region(struct amd_iommu *iommu)
++{
++    unsigned long mfn;
++
++    if ( nr_amd_iommus > MAX_AMD_IOMMUS )
++    {
++        amd_iov_error("nr_amd_iommus %d > MAX_IOMMUS\n", nr_amd_iommus);
++        return -ENOMEM;
++    }
++
++    iommu->mmio_base = (void *)fix_to_virt(
++        FIX_IOMMU_MMIO_BASE_0 + nr_amd_iommus * MMIO_PAGES_PER_IOMMU);
++    mfn = (unsigned long)(iommu->mmio_base_phys >> PAGE_SHIFT);
++    map_pages_to_xen((unsigned long)iommu->mmio_base, mfn,
++                     MMIO_PAGES_PER_IOMMU, PAGE_HYPERVISOR_NOCACHE);
++
++    memset(iommu->mmio_base, 0, IOMMU_MMIO_REGION_LENGTH);
++
++    return 0;
++}
++
++static void __init unmap_iommu_mmio_region(struct amd_iommu *iommu)
++{
++    if ( iommu->mmio_base )
++    {
++        iounmap(iommu->mmio_base);
++        iommu->mmio_base = NULL;
++    }
++}
++
++static void __init register_iommu_dev_table_in_mmio_space(struct amd_iommu *iommu)
++{
++    u64 addr_64, addr_lo, addr_hi;
++    u32 entry;
++
++    addr_64 = (u64)virt_to_maddr(iommu->dev_table.buffer);
++    addr_lo = addr_64 & DMA_32BIT_MASK;
++    addr_hi = addr_64 >> 32;
++
++    set_field_in_reg_u32((u32)addr_lo >> PAGE_SHIFT, 0,
++                         IOMMU_DEV_TABLE_BASE_LOW_MASK,
++                         IOMMU_DEV_TABLE_BASE_LOW_SHIFT, &entry);
++    set_field_in_reg_u32((iommu->dev_table.alloc_size / PAGE_SIZE) - 1,
++                         entry, IOMMU_DEV_TABLE_SIZE_MASK,
++                         IOMMU_DEV_TABLE_SIZE_SHIFT, &entry);
++    writel(entry, iommu->mmio_base + IOMMU_DEV_TABLE_BASE_LOW_OFFSET);
++
++    set_field_in_reg_u32((u32)addr_hi, 0,
++                         IOMMU_DEV_TABLE_BASE_HIGH_MASK,
++                         IOMMU_DEV_TABLE_BASE_HIGH_SHIFT, &entry);
++    writel(entry, iommu->mmio_base + IOMMU_DEV_TABLE_BASE_HIGH_OFFSET);
++}
++
++static void __init register_iommu_cmd_buffer_in_mmio_space(struct amd_iommu *iommu)
++{
++    u64 addr_64, addr_lo, addr_hi;
++    u32 power_of2_entries;
++    u32 entry;
++
++    addr_64 = (u64)virt_to_maddr(iommu->cmd_buffer.buffer);
++    addr_lo = addr_64 & DMA_32BIT_MASK;
++    addr_hi = addr_64 >> 32;
++
++    set_field_in_reg_u32((u32)addr_lo >> PAGE_SHIFT, 0,
++                         IOMMU_CMD_BUFFER_BASE_LOW_MASK,
++                         IOMMU_CMD_BUFFER_BASE_LOW_SHIFT, &entry);
++    writel(entry, iommu->mmio_base + IOMMU_CMD_BUFFER_BASE_LOW_OFFSET);
++
++    power_of2_entries = get_order_from_bytes(iommu->cmd_buffer.alloc_size) +
++        IOMMU_CMD_BUFFER_POWER_OF2_ENTRIES_PER_PAGE;
++
++    set_field_in_reg_u32((u32)addr_hi, 0,
++                         IOMMU_CMD_BUFFER_BASE_HIGH_MASK,
++                         IOMMU_CMD_BUFFER_BASE_HIGH_SHIFT, &entry);
++    set_field_in_reg_u32(power_of2_entries, entry,
++                         IOMMU_CMD_BUFFER_LENGTH_MASK,
++                         IOMMU_CMD_BUFFER_LENGTH_SHIFT, &entry);
++    writel(entry, iommu->mmio_base+IOMMU_CMD_BUFFER_BASE_HIGH_OFFSET);
++}
++
++static void __init register_iommu_event_log_in_mmio_space(struct amd_iommu *iommu)
++{
++    u64 addr_64, addr_lo, addr_hi;
++    u32 power_of2_entries;
++    u32 entry;
++
++    addr_64 = (u64)virt_to_maddr(iommu->event_log.buffer);
++    addr_lo = addr_64 & DMA_32BIT_MASK;
++    addr_hi = addr_64 >> 32;
++
++    set_field_in_reg_u32((u32)addr_lo >> PAGE_SHIFT, 0,
++                         IOMMU_EVENT_LOG_BASE_LOW_MASK,
++                         IOMMU_EVENT_LOG_BASE_LOW_SHIFT, &entry);
++    writel(entry, iommu->mmio_base + IOMMU_EVENT_LOG_BASE_LOW_OFFSET);
++
++    power_of2_entries = get_order_from_bytes(iommu->event_log.alloc_size) +
++                        IOMMU_EVENT_LOG_POWER_OF2_ENTRIES_PER_PAGE;
++
++    set_field_in_reg_u32((u32)addr_hi, 0,
++                        IOMMU_EVENT_LOG_BASE_HIGH_MASK,
++                        IOMMU_EVENT_LOG_BASE_HIGH_SHIFT, &entry);
++    set_field_in_reg_u32(power_of2_entries, entry,
++                        IOMMU_EVENT_LOG_LENGTH_MASK,
++                        IOMMU_EVENT_LOG_LENGTH_SHIFT, &entry);
++    writel(entry, iommu->mmio_base+IOMMU_EVENT_LOG_BASE_HIGH_OFFSET);
++}
++
++static void __init set_iommu_translation_control(struct amd_iommu *iommu,
++                                                 int enable)
++{
++    u32 entry;
++
++    entry = readl(iommu->mmio_base + IOMMU_CONTROL_MMIO_OFFSET);
++
++    if ( enable )
++    {
++        set_field_in_reg_u32(iommu->ht_tunnel_support ? IOMMU_CONTROL_ENABLED :
++                         IOMMU_CONTROL_DISABLED, entry,
++                         IOMMU_CONTROL_HT_TUNNEL_TRANSLATION_MASK,
++                         IOMMU_CONTROL_HT_TUNNEL_TRANSLATION_SHIFT, &entry);
++        set_field_in_reg_u32(iommu->isochronous ? IOMMU_CONTROL_ENABLED :
++                         IOMMU_CONTROL_DISABLED, entry,
++                         IOMMU_CONTROL_ISOCHRONOUS_MASK,
++                         IOMMU_CONTROL_ISOCHRONOUS_SHIFT, &entry);
++        set_field_in_reg_u32(iommu->coherent ? IOMMU_CONTROL_ENABLED :
++                         IOMMU_CONTROL_DISABLED, entry,
++                         IOMMU_CONTROL_COHERENT_MASK,
++                         IOMMU_CONTROL_COHERENT_SHIFT, &entry);
++        set_field_in_reg_u32(iommu->res_pass_pw ? IOMMU_CONTROL_ENABLED :
++                         IOMMU_CONTROL_DISABLED, entry,
++                         IOMMU_CONTROL_RESP_PASS_POSTED_WRITE_MASK,
++                         IOMMU_CONTROL_RESP_PASS_POSTED_WRITE_SHIFT, &entry);
++        /* do not set PassPW bit */
++        set_field_in_reg_u32(IOMMU_CONTROL_DISABLED, entry,
++                         IOMMU_CONTROL_PASS_POSTED_WRITE_MASK,
++                         IOMMU_CONTROL_PASS_POSTED_WRITE_SHIFT, &entry);
++    }
++    set_field_in_reg_u32(enable ? IOMMU_CONTROL_ENABLED :
++                         IOMMU_CONTROL_DISABLED, entry,
++                         IOMMU_CONTROL_TRANSLATION_ENABLE_MASK,
++                         IOMMU_CONTROL_TRANSLATION_ENABLE_SHIFT, &entry);
++    writel(entry, iommu->mmio_base+IOMMU_CONTROL_MMIO_OFFSET);
++}
++
++static void __init set_iommu_command_buffer_control(struct amd_iommu *iommu,
++                                                    int enable)
++{
++    u32 entry;
++
++    entry = readl(iommu->mmio_base+IOMMU_CONTROL_MMIO_OFFSET);
++    set_field_in_reg_u32(enable ? IOMMU_CONTROL_ENABLED :
++                         IOMMU_CONTROL_DISABLED, entry,
++                         IOMMU_CONTROL_COMMAND_BUFFER_ENABLE_MASK,
++                         IOMMU_CONTROL_COMMAND_BUFFER_ENABLE_SHIFT, &entry);
++    writel(entry, iommu->mmio_base+IOMMU_CONTROL_MMIO_OFFSET);
++
++    /*reset head and tail pointer */
++    writel(0x0, iommu->mmio_base + IOMMU_CMD_BUFFER_HEAD_OFFSET);
++    writel(0x0, iommu->mmio_base + IOMMU_CMD_BUFFER_TAIL_OFFSET);
++}
++
++static void __init register_iommu_exclusion_range(struct amd_iommu *iommu)
++{
++    u64 addr_lo, addr_hi;
++    u32 entry;
++
++    addr_lo = iommu->exclusion_limit & DMA_32BIT_MASK;
++    addr_hi = iommu->exclusion_limit >> 32;
++
++    set_field_in_reg_u32((u32)addr_hi, 0,
++                         IOMMU_EXCLUSION_LIMIT_HIGH_MASK,
++                         IOMMU_EXCLUSION_LIMIT_HIGH_SHIFT, &entry);
++    writel(entry, iommu->mmio_base+IOMMU_EXCLUSION_LIMIT_HIGH_OFFSET);
++
++    set_field_in_reg_u32((u32)addr_lo >> PAGE_SHIFT, 0,
++                         IOMMU_EXCLUSION_LIMIT_LOW_MASK,
++                         IOMMU_EXCLUSION_LIMIT_LOW_SHIFT, &entry);
++    writel(entry, iommu->mmio_base+IOMMU_EXCLUSION_LIMIT_LOW_OFFSET);
++
++    addr_lo = iommu->exclusion_base & DMA_32BIT_MASK;
++    addr_hi = iommu->exclusion_base >> 32;
++
++    set_field_in_reg_u32((u32)addr_hi, 0,
++                         IOMMU_EXCLUSION_BASE_HIGH_MASK,
++                         IOMMU_EXCLUSION_BASE_HIGH_SHIFT, &entry);
++    writel(entry, iommu->mmio_base+IOMMU_EXCLUSION_BASE_HIGH_OFFSET);
++
++    set_field_in_reg_u32((u32)addr_lo >> PAGE_SHIFT, 0,
++                         IOMMU_EXCLUSION_BASE_LOW_MASK,
++                         IOMMU_EXCLUSION_BASE_LOW_SHIFT, &entry);
++
++    set_field_in_reg_u32(iommu->exclusion_allow_all, entry,
++                         IOMMU_EXCLUSION_ALLOW_ALL_MASK,
++                         IOMMU_EXCLUSION_ALLOW_ALL_SHIFT, &entry);
++
++    set_field_in_reg_u32(iommu->exclusion_enable, entry,
++                         IOMMU_EXCLUSION_RANGE_ENABLE_MASK,
++                         IOMMU_EXCLUSION_RANGE_ENABLE_SHIFT, &entry);
++    writel(entry, iommu->mmio_base+IOMMU_EXCLUSION_BASE_LOW_OFFSET);
++}
++
++static void __init set_iommu_event_log_control(struct amd_iommu *iommu,
++            int enable)
++{
++    u32 entry;
++
++    entry = readl(iommu->mmio_base+IOMMU_CONTROL_MMIO_OFFSET);
++    set_field_in_reg_u32(enable ? IOMMU_CONTROL_ENABLED :
++                         IOMMU_CONTROL_DISABLED, entry,
++                         IOMMU_CONTROL_EVENT_LOG_ENABLE_MASK,
++                         IOMMU_CONTROL_EVENT_LOG_ENABLE_SHIFT, &entry);
++    writel(entry, iommu->mmio_base+IOMMU_CONTROL_MMIO_OFFSET);
++
++    set_field_in_reg_u32(enable ? IOMMU_CONTROL_ENABLED :
++                         IOMMU_CONTROL_DISABLED, entry,
++                         IOMMU_CONTROL_EVENT_LOG_INT_MASK,
++                         IOMMU_CONTROL_EVENT_LOG_INT_SHIFT, &entry);
++    writel(entry, iommu->mmio_base+IOMMU_CONTROL_MMIO_OFFSET);
++
++    set_field_in_reg_u32(IOMMU_CONTROL_DISABLED, entry,
++                         IOMMU_CONTROL_COMP_WAIT_INT_MASK,
++                         IOMMU_CONTROL_COMP_WAIT_INT_SHIFT, &entry);
++    writel(entry, iommu->mmio_base+IOMMU_CONTROL_MMIO_OFFSET);
++
++    /*reset head and tail pointer */
++    writel(0x0, iommu->mmio_base + IOMMU_EVENT_LOG_HEAD_OFFSET);
++    writel(0x0, iommu->mmio_base + IOMMU_EVENT_LOG_TAIL_OFFSET);
++}
++
++static int amd_iommu_read_event_log(struct amd_iommu *iommu, u32 event[])
++{
++    u32 tail, head, *event_log;
++    int i;
++
++     BUG_ON( !iommu || !event );
++
++    /* make sure there's an entry in the log */
++    tail = get_field_from_reg_u32(
++                readl(iommu->mmio_base + IOMMU_EVENT_LOG_TAIL_OFFSET),
++                IOMMU_EVENT_LOG_TAIL_MASK,
++                IOMMU_EVENT_LOG_TAIL_SHIFT);
++    if ( tail != iommu->event_log_head )
++    {
++        /* read event log entry */
++        event_log = (u32 *)(iommu->event_log.buffer +
++                                        (iommu->event_log_head *
++                                        IOMMU_EVENT_LOG_ENTRY_SIZE));
++        for ( i = 0; i < IOMMU_EVENT_LOG_U32_PER_ENTRY; i++ )
++            event[i] = event_log[i];
++        if ( ++iommu->event_log_head == iommu->event_log.entries )
++            iommu->event_log_head = 0;
++
++        /* update head pointer */
++        set_field_in_reg_u32(iommu->event_log_head, 0,
++                             IOMMU_EVENT_LOG_HEAD_MASK,
++                             IOMMU_EVENT_LOG_HEAD_SHIFT, &head);
++        writel(head, iommu->mmio_base + IOMMU_EVENT_LOG_HEAD_OFFSET);
++        return 0;
++    }
++
++    return -EFAULT;
++}
++
++static void amd_iommu_msi_data_init(struct amd_iommu *iommu)
++{
++    u32 msi_data;
++    u8 bus = (iommu->bdf >> 8) & 0xff;
++    u8 dev = PCI_SLOT(iommu->bdf & 0xff);
++    u8 func = PCI_FUNC(iommu->bdf & 0xff);
++    int vector = iommu->vector;
++
++    msi_data = MSI_DATA_TRIGGER_EDGE |
++        MSI_DATA_LEVEL_ASSERT |
++        MSI_DATA_DELIVERY_FIXED |
++        MSI_DATA_VECTOR(vector);
++
++    pci_conf_write32(bus, dev, func,
++        iommu->msi_cap + PCI_MSI_DATA_64, msi_data);
++}
++
++static void amd_iommu_msi_addr_init(struct amd_iommu *iommu, int phy_cpu)
++{
++
++    int bus = (iommu->bdf >> 8) & 0xff;
++    int dev = PCI_SLOT(iommu->bdf & 0xff);
++    int func = PCI_FUNC(iommu->bdf & 0xff);
++
++    u32 address_hi = 0;
++    u32 address_lo = MSI_ADDR_HEADER |
++            MSI_ADDR_DESTMODE_PHYS |
++            MSI_ADDR_REDIRECTION_CPU |
++            MSI_ADDR_DEST_ID(phy_cpu);
++
++    pci_conf_write32(bus, dev, func,
++        iommu->msi_cap + PCI_MSI_ADDRESS_LO, address_lo);
++    pci_conf_write32(bus, dev, func,
++        iommu->msi_cap + PCI_MSI_ADDRESS_HI, address_hi);
++}
++
++static void amd_iommu_msi_enable(struct amd_iommu *iommu, int flag)
++{
++    u16 control;
++    int bus = (iommu->bdf >> 8) & 0xff;
++    int dev = PCI_SLOT(iommu->bdf & 0xff);
++    int func = PCI_FUNC(iommu->bdf & 0xff);
++
++    control = pci_conf_read16(bus, dev, func,
++        iommu->msi_cap + PCI_MSI_FLAGS);
++    control &= ~(1);
++    if ( flag )
++        control |= flag;
++    pci_conf_write16(bus, dev, func,
++        iommu->msi_cap + PCI_MSI_FLAGS, control);
++}
++
++static void iommu_msi_unmask(unsigned int vector)
++{
++    unsigned long flags;
++    struct amd_iommu *iommu = vector_to_iommu[vector];
++
++    /* FIXME: do not support mask bits at the moment */
++    if ( iommu->maskbit )
++        return;
++
++    spin_lock_irqsave(&iommu->lock, flags);
++    amd_iommu_msi_enable(iommu, IOMMU_CONTROL_ENABLED);
++    spin_unlock_irqrestore(&iommu->lock, flags);
++}
++
++static void iommu_msi_mask(unsigned int vector)
++{
++    unsigned long flags;
++    struct amd_iommu *iommu = vector_to_iommu[vector];
++
++    /* FIXME: do not support mask bits at the moment */
++    if ( iommu->maskbit )
++        return;
++
++    spin_lock_irqsave(&iommu->lock, flags);
++    amd_iommu_msi_enable(iommu, IOMMU_CONTROL_DISABLED);
++    spin_unlock_irqrestore(&iommu->lock, flags);
++}
++
++static unsigned int iommu_msi_startup(unsigned int vector)
++{
++    iommu_msi_unmask(vector);
++    return 0;
++}
++
++static void iommu_msi_end(unsigned int vector)
++{
++    iommu_msi_unmask(vector);
++    ack_APIC_irq();
++}
++
++static void iommu_msi_set_affinity(unsigned int vector, cpumask_t dest)
++{
++    struct amd_iommu *iommu = vector_to_iommu[vector];
++    amd_iommu_msi_addr_init(iommu, cpu_physical_id(first_cpu(dest)));
++}
++
++static struct hw_interrupt_type iommu_msi_type = {
++    .typename = "AMD_IOV_MSI",
++    .startup = iommu_msi_startup,
++    .shutdown = iommu_msi_mask,
++    .enable = iommu_msi_unmask,
++    .disable = iommu_msi_mask,
++    .ack = iommu_msi_mask,
++    .end = iommu_msi_end,
++    .set_affinity = iommu_msi_set_affinity,
++};
++
++static void parse_event_log_entry(u32 entry[])
++{
++    u16 domain_id, device_id;
++    u32 code;
++    u64 *addr;
++    char * event_str[] = {"ILLEGAL_DEV_TABLE_ENTRY",
++                          "IO_PAGE_FALT",
++                          "DEV_TABLE_HW_ERROR",
++                          "PAGE_TABLE_HW_ERROR",
++                          "ILLEGAL_COMMAND_ERROR",
++                          "COMMAND_HW_ERROR",
++                          "IOTLB_INV_TIMEOUT",
++                          "INVALID_DEV_REQUEST"};
++
++    code = get_field_from_reg_u32(entry[1], IOMMU_EVENT_CODE_MASK,
++                                            IOMMU_EVENT_CODE_SHIFT);
++
++    if ( (code > IOMMU_EVENT_INVALID_DEV_REQUEST) ||
++        (code < IOMMU_EVENT_ILLEGAL_DEV_TABLE_ENTRY) )
++    {
++        amd_iov_error("Invalid event log entry!\n");
++        return;
++    }
++
++    if ( code == IOMMU_EVENT_IO_PAGE_FALT )
++    {
++        device_id = get_field_from_reg_u32(entry[0],
++                                           IOMMU_EVENT_DEVICE_ID_MASK,
++                                           IOMMU_EVENT_DEVICE_ID_SHIFT);
++        domain_id = get_field_from_reg_u32(entry[1],
++                                           IOMMU_EVENT_DOMAIN_ID_MASK,
++                                           IOMMU_EVENT_DOMAIN_ID_SHIFT);
++        addr= (u64*) (entry + 2);
++        printk(XENLOG_ERR "AMD-Vi: "
++            "%s: domain:%d, device id:0x%x, fault address:0x%"PRIx64"\n",
++            event_str[code-1], domain_id, device_id, *addr);
++    }
++}
++
++static void amd_iommu_page_fault(int vector, void *dev_id,
++                             struct cpu_user_regs *regs)
++{
++    u32 event[4];
++    u32 entry;
++    unsigned long flags;
++    int ret = 0;
++    struct amd_iommu *iommu = dev_id;
++
++    spin_lock_irqsave(&iommu->lock, flags);
++    ret = amd_iommu_read_event_log(iommu, event);
++    /* reset interrupt status bit */
++    entry = readl(iommu->mmio_base + IOMMU_STATUS_MMIO_OFFSET);
++    set_field_in_reg_u32(IOMMU_CONTROL_ENABLED, entry,
++                         IOMMU_STATUS_EVENT_LOG_INT_MASK,
++                         IOMMU_STATUS_EVENT_LOG_INT_SHIFT, &entry);
++    writel(entry, iommu->mmio_base+IOMMU_STATUS_MMIO_OFFSET);
++    spin_unlock_irqrestore(&iommu->lock, flags);
++
++    if ( ret != 0 )
++        return;
++    parse_event_log_entry(event);
++}
++
++static int set_iommu_interrupt_handler(struct amd_iommu *iommu)
++{
++    int vector, ret;
++
++    vector = assign_irq_vector(AUTO_ASSIGN);
++
++    if ( !vector )
++    {
++        amd_iov_error("no vectors\n");
++        return 0;
++    }
++
++    vector_to_iommu[vector] = iommu;
++
++    /* make irq == vector */
++    irq_vector[vector] = vector;
++    vector_irq[vector] = vector;
++
++    irq_desc[vector].handler = &iommu_msi_type;
++    ret = request_irq(vector, amd_iommu_page_fault, 0, "amd_iommu", iommu);
++    if ( ret )
++    {
++        amd_iov_error("can't request irq\n");
++        return 0;
++    }
++    iommu->vector = vector;
++    return vector;
++}
++
++void __init enable_iommu(struct amd_iommu *iommu)
++{
++    unsigned long flags;
++
++    spin_lock_irqsave(&iommu->lock, flags);
++
++    if ( iommu->enabled )
++    {
++        spin_unlock_irqrestore(&iommu->lock, flags); 
++        return;
++    }
++
++    iommu->dev_table.alloc_size = device_table.alloc_size;
++    iommu->dev_table.entries = device_table.entries;
++    iommu->dev_table.buffer = device_table.buffer;
++
++    register_iommu_dev_table_in_mmio_space(iommu);
++    register_iommu_cmd_buffer_in_mmio_space(iommu);
++    register_iommu_event_log_in_mmio_space(iommu);
++    register_iommu_exclusion_range(iommu);
++
++    amd_iommu_msi_data_init (iommu);
++    amd_iommu_msi_addr_init(iommu, cpu_physical_id(first_cpu(cpu_online_map)));
++    amd_iommu_msi_enable(iommu, IOMMU_CONTROL_ENABLED);
++
++    set_iommu_command_buffer_control(iommu, IOMMU_CONTROL_ENABLED);
++    set_iommu_event_log_control(iommu, IOMMU_CONTROL_ENABLED);
++    set_iommu_translation_control(iommu, IOMMU_CONTROL_ENABLED);
++
++    printk("AMD-Vi: IOMMU %d Enabled.\n", nr_amd_iommus );
++    nr_amd_iommus++;
++
++    iommu->enabled = 1;
++    spin_unlock_irqrestore(&iommu->lock, flags);
++
++}
++
++static void __init deallocate_iommu_table_struct(
++    struct table_struct *table)
++{
++    int order = 0;
++    if ( table->buffer )
++    {
++        order = get_order_from_bytes(table->alloc_size);
++        __free_amd_iommu_tables(table->buffer, order);
++        table->buffer = NULL;
++    }
++}
++
++static void __init deallocate_iommu_tables(struct amd_iommu *iommu)
++{
++    deallocate_iommu_table_struct(&iommu->cmd_buffer);
++    deallocate_iommu_table_struct(&iommu->event_log);
++}
++
++static int __init allocate_iommu_table_struct(struct table_struct *table,
++                                              const char *name)
++{
++    int order = 0;
++    if ( table->buffer == NULL )
++    {
++        order = get_order_from_bytes(table->alloc_size);
++        table->buffer = __alloc_amd_iommu_tables(order);
++
++        if ( table->buffer == NULL )
++        {
++            amd_iov_error("Error allocating %s\n", name);
++            return -ENOMEM;
++        }
++        memset(table->buffer, 0, PAGE_SIZE * (1UL << order));
++    }
++    return 0;
++}
++
++static int __init allocate_iommu_tables(struct amd_iommu *iommu)
++{
++    /* allocate 'command buffer' in power of 2 increments of 4K */
++    iommu->cmd_buffer_tail = 0;
++    iommu->cmd_buffer.alloc_size = PAGE_SIZE << get_order_from_bytes(
++        PAGE_ALIGN(amd_iommu_cmd_buffer_entries * IOMMU_CMD_BUFFER_ENTRY_SIZE));
++    iommu->cmd_buffer.entries =
++        iommu->cmd_buffer.alloc_size / IOMMU_CMD_BUFFER_ENTRY_SIZE;
++
++    if ( allocate_iommu_table_struct(&iommu->cmd_buffer, "Command Buffer") != 0 )
++        goto error_out;
++
++    /* allocate 'event log' in power of 2 increments of 4K */
++    iommu->event_log_head = 0;
++    iommu->event_log.alloc_size = PAGE_SIZE << get_order_from_bytes(
++        PAGE_ALIGN(amd_iommu_event_log_entries * IOMMU_EVENT_LOG_ENTRY_SIZE));
++    iommu->event_log.entries =
++        iommu->event_log.alloc_size / IOMMU_EVENT_LOG_ENTRY_SIZE;
++
++    if ( allocate_iommu_table_struct(&iommu->event_log, "Event Log") != 0 )
++        goto error_out;
++
++    return 0;
++
++ error_out:
++    deallocate_iommu_tables(iommu);
++    return -ENOMEM;
++}
++
++int __init amd_iommu_init_one(struct amd_iommu *iommu)
++{
++
++    if ( allocate_iommu_tables(iommu) != 0 )
++        goto error_out;
++
++    if ( map_iommu_mmio_region(iommu) != 0 )
++        goto error_out;
++
++    if ( set_iommu_interrupt_handler(iommu) == 0 )
++        goto error_out;
++
++    enable_iommu(iommu);
++    return 0;
++
++error_out:
++    return -ENODEV;
++}
++
++void __init amd_iommu_init_cleanup(void)
++{
++    struct amd_iommu *iommu, *next;
++
++    list_for_each_entry_safe ( iommu, next, &amd_iommu_head, list )
++    {
++        list_del(&iommu->list);
++        if ( iommu->enabled )
++        {
++            deallocate_iommu_tables(iommu);
++            unmap_iommu_mmio_region(iommu);
++        }
++        xfree(iommu);
++    }
++}
++
++static int __init init_ivrs_mapping(void)
++{
++    int bdf;
++
++    BUG_ON( !ivrs_bdf_entries );
++
++    ivrs_mappings = xmalloc_array( struct ivrs_mappings, ivrs_bdf_entries);
++    if ( ivrs_mappings == NULL )
++    {
++        amd_iov_error("Error allocating IVRS Mappings table\n");
++        return -ENOMEM;
++    }
++    memset(ivrs_mappings, 0, ivrs_bdf_entries * sizeof(struct ivrs_mappings));
++
++    /* assign default values for device entries */
++    for ( bdf = 0; bdf < ivrs_bdf_entries; bdf++ )
++    {
++        ivrs_mappings[bdf].dte_requestor_id = bdf;
++        ivrs_mappings[bdf].dte_sys_mgt_enable =
++            IOMMU_DEV_TABLE_SYS_MGT_MSG_FORWARDED;
++        ivrs_mappings[bdf].dte_allow_exclusion = IOMMU_CONTROL_DISABLED;
++        ivrs_mappings[bdf].unity_map_enable = IOMMU_CONTROL_DISABLED;
++        ivrs_mappings[bdf].iommu = NULL;
++    }
++    return 0;
++}
++
++static int __init amd_iommu_setup_device_table(void)
++{
++    /* allocate 'device table' on a 4K boundary */
++    device_table.alloc_size = PAGE_SIZE << get_order_from_bytes(
++        PAGE_ALIGN(ivrs_bdf_entries * IOMMU_DEV_TABLE_ENTRY_SIZE));
++    device_table.entries = device_table.alloc_size / IOMMU_DEV_TABLE_ENTRY_SIZE;
++
++    return ( allocate_iommu_table_struct(&device_table, "Device Table") );
++}
++
++int __init amd_iommu_setup_shared_tables(void)
++{
++    BUG_ON( !ivrs_bdf_entries );
++
++    if (init_ivrs_mapping() != 0 )
++        goto error_out;
++
++    if ( amd_iommu_setup_device_table() != 0 )
++        goto error_out;
++
++    if ( amd_iommu_setup_intremap_table() != 0 )
++        goto error_out;
++
++    return 0;
++
++error_out:
++    deallocate_intremap_table();
++    deallocate_iommu_table_struct(&device_table);
++
++    if ( ivrs_mappings )
++    {
++        xfree(ivrs_mappings);
++        ivrs_mappings = NULL;
++    }
++    return -ENOMEM;
++}
+diff --git a/drivers/passthrough/amd/iommu_intr.c b/drivers/passthrough/amd/iommu_intr.c
+new file mode 100644
+index 0000000..c3a9dc8
+--- /dev/null
++++ b/drivers/passthrough/amd/iommu_intr.c
+@@ -0,0 +1,212 @@
++/*
++ * Copyright (C) 2007 Advanced Micro Devices, Inc.
++ * Author: Wei Wang <wei.wang2@amd.com>
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 2 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program; if not, write to the Free Software
++ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307 USA
++ */
++
++#include <xen/sched.h>
++#include <xen/hvm/iommu.h>
++#include <asm/amd-iommu.h>
++#include <asm/hvm/svm/amd-iommu-proto.h>
++
++#define INTREMAP_TABLE_ORDER    1
++static DEFINE_SPINLOCK(int_remap_table_lock);
++void *int_remap_table = NULL;
++
++static u8 *get_intremap_entry(u8 vector, u8 dm)
++{
++    u8 *table;
++    int offset = 0;
++    table = (u8*)int_remap_table;
++
++    BUG_ON( !table );
++    offset = (dm << INT_REMAP_INDEX_DM_SHIFT) & INT_REMAP_INDEX_DM_MASK;
++    offset |= (vector << INT_REMAP_INDEX_VECTOR_SHIFT ) & 
++        INT_REMAP_INDEX_VECTOR_MASK;
++
++    return (u8*) (table + offset);
++}
++
++static void update_intremap_entry(u32* entry, u8 vector, u8 int_type,
++    u8 dest_mode, u8 dest)
++{
++    set_field_in_reg_u32(IOMMU_CONTROL_ENABLED, 0,
++                            INT_REMAP_ENTRY_REMAPEN_MASK,
++                            INT_REMAP_ENTRY_REMAPEN_SHIFT, entry);
++    set_field_in_reg_u32(IOMMU_CONTROL_DISABLED, *entry,
++                            INT_REMAP_ENTRY_SUPIOPF_MASK,
++                            INT_REMAP_ENTRY_SUPIOPF_SHIFT, entry);
++    set_field_in_reg_u32(int_type, *entry,
++                            INT_REMAP_ENTRY_INTTYPE_MASK,
++                            INT_REMAP_ENTRY_INTTYPE_SHIFT, entry);
++    set_field_in_reg_u32(IOMMU_CONTROL_DISABLED, *entry,
++                            INT_REMAP_ENTRY_REQEOI_MASK,
++                            INT_REMAP_ENTRY_REQEOI_SHIFT, entry);
++    set_field_in_reg_u32((u32)dest_mode, *entry,
++                            INT_REMAP_ENTRY_DM_MASK,
++                            INT_REMAP_ENTRY_DM_SHIFT, entry);
++    set_field_in_reg_u32((u32)dest, *entry,
++                            INT_REMAP_ENTRY_DEST_MAST,
++                            INT_REMAP_ENTRY_DEST_SHIFT, entry);
++    set_field_in_reg_u32((u32)vector, *entry,
++                            INT_REMAP_ENTRY_VECTOR_MASK,
++                            INT_REMAP_ENTRY_VECTOR_SHIFT, entry);
++}
++
++void invalidate_interrupt_table(struct amd_iommu *iommu, u16 device_id)
++{
++    u32 cmd[4], entry;
++
++    cmd[3] = cmd[2] = 0;
++    set_field_in_reg_u32(device_id, 0,
++                         IOMMU_INV_INT_TABLE_DEVICE_ID_MASK,
++                         IOMMU_INV_INT_TABLE_DEVICE_ID_SHIFT, &entry);
++    cmd[0] = entry;
++    set_field_in_reg_u32(IOMMU_CMD_INVALIDATE_INT_TABLE, 0,
++                         IOMMU_CMD_OPCODE_MASK, IOMMU_CMD_OPCODE_SHIFT,
++                         &entry);
++    cmd[1] = entry;
++    send_iommu_command(iommu, cmd);
++}
++
++static void update_intremap_entry_from_ioapic(
++    struct IO_APIC_route_entry *ioapic_rte,
++    unsigned int rte_upper, unsigned int value)
++{
++    unsigned long flags;
++    u32* entry;
++    u8 delivery_mode, dest, vector, dest_mode;
++    struct IO_APIC_route_entry *rte = ioapic_rte;
++
++    spin_lock_irqsave(&int_remap_table_lock, flags);
++
++    if ( rte_upper )
++    {
++        dest = (value >> 24) & 0xFF;
++        delivery_mode = rte->delivery_mode;
++        vector = rte->vector;
++        dest_mode = rte->dest_mode;
++        entry = (u32*)get_intremap_entry((u8)rte->vector,
++                                        (u8)rte->delivery_mode);
++        update_intremap_entry(entry, vector, delivery_mode, dest_mode, dest);
++    }
++
++    spin_unlock_irqrestore(&int_remap_table_lock, flags);
++    return;
++}
++
++int __init amd_iommu_setup_intremap_table(void)
++{
++    if ( int_remap_table == NULL )
++    {
++        int_remap_table = __alloc_amd_iommu_tables(INTREMAP_TABLE_ORDER);
++        if ( int_remap_table == NULL )
++            return -ENOMEM;
++        memset(int_remap_table, 0, PAGE_SIZE * (1UL << INTREMAP_TABLE_ORDER));
++    }
++
++    return 0;
++}
++
++void amd_iommu_ioapic_update_ire(
++    unsigned int apic, unsigned int reg, unsigned int value)
++{
++    struct IO_APIC_route_entry ioapic_rte = { 0 };
++    unsigned int rte_upper = (reg & 1) ? 1 : 0;
++    int saved_mask;
++
++    *IO_APIC_BASE(apic) = reg;
++    *(IO_APIC_BASE(apic)+4) = value;
++
++    if ( int_remap_table == NULL )
++        return;
++    if ( !rte_upper )
++        return;
++
++    reg--;
++    /* read both lower and upper 32-bits of rte entry */
++    *IO_APIC_BASE(apic) = reg;
++    *(((u32 *)&ioapic_rte) + 0) = *(IO_APIC_BASE(apic)+4);
++    *IO_APIC_BASE(apic) = reg + 1;
++    *(((u32 *)&ioapic_rte) + 1) = *(IO_APIC_BASE(apic)+4);
++
++    /* mask the interrupt while we change the intremap table */
++    saved_mask = ioapic_rte.mask;
++    ioapic_rte.mask = 1;
++    *IO_APIC_BASE(apic) = reg;
++    *(IO_APIC_BASE(apic)+4) = *(((int *)&ioapic_rte)+0);
++    ioapic_rte.mask = saved_mask;
++
++    update_intremap_entry_from_ioapic(&ioapic_rte, rte_upper, value);
++
++    /* unmask the interrupt after we have updated the intremap table */
++    *IO_APIC_BASE(apic) = reg;
++    *(IO_APIC_BASE(apic)+4) = *(((u32 *)&ioapic_rte)+0);
++}
++
++static void update_intremap_entry_from_msi_msg(
++    struct amd_iommu *iommu, struct pci_dev *pdev, struct msi_msg *msg)
++{
++    unsigned long flags;
++    u32* entry;
++    u16 dev_id;
++
++    u8 delivery_mode, dest, vector, dest_mode;
++
++    dev_id = (pdev->bus << 8) | pdev->devfn;
++
++    spin_lock_irqsave(&int_remap_table_lock, flags);
++    dest_mode = (msg->address_lo >> MSI_ADDR_DESTMODE_SHIFT) & 0x1;
++    delivery_mode = (msg->data >> MSI_DATA_DELIVERY_MODE_SHIFT) & 0x1;
++    vector = (msg->data >> MSI_DATA_VECTOR_SHIFT) & MSI_DATA_VECTOR_MASK;
++    dest = (msg->address_lo >> MSI_ADDR_DEST_ID_SHIFT) & 0xff;
++
++    entry = (u32*)get_intremap_entry((u8)vector, (u8)delivery_mode);
++    update_intremap_entry(entry, vector, delivery_mode, dest_mode, dest);
++    spin_unlock_irqrestore(&int_remap_table_lock, flags);
++
++    spin_lock_irqsave(&iommu->lock, flags);
++    invalidate_interrupt_table(iommu, dev_id);
++    flush_command_buffer(iommu);
++    spin_unlock_irqrestore(&iommu->lock, flags);
++
++    return;
++}
++
++void amd_iommu_msi_msg_update_ire(
++    struct msi_desc *msi_desc, struct msi_msg *msg)
++{
++    struct pci_dev *pdev = msi_desc->dev;
++    struct amd_iommu *iommu = NULL;
++
++    iommu = find_iommu_for_device(pdev->bus, pdev->devfn);
++
++    if ( !iommu || !int_remap_table )
++        return;
++
++    update_intremap_entry_from_msi_msg(iommu, pdev, msg);
++}
++
++int __init deallocate_intremap_table(void)
++{
++    if ( int_remap_table )
++    {
++        __free_amd_iommu_tables(int_remap_table, INTREMAP_TABLE_ORDER);
++        int_remap_table = NULL;
++    }
++
++    return 0;
++}
+diff --git a/drivers/passthrough/amd/iommu_map.c b/drivers/passthrough/amd/iommu_map.c
+new file mode 100644
+index 0000000..d5ecf65
+--- /dev/null
++++ b/drivers/passthrough/amd/iommu_map.c
+@@ -0,0 +1,643 @@
++/*
++ * Copyright (C) 2007 Advanced Micro Devices, Inc.
++ * Author: Leo Duran <leo.duran@amd.com>
++ * Author: Wei Wang <wei.wang2@amd.com> - adapted to xen
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 2 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program; if not, write to the Free Software
++ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307 USA
++ */
++
++#include <xen/sched.h>
++#include <xen/hvm/iommu.h>
++#include <asm/amd-iommu.h>
++#include <asm/hvm/svm/amd-iommu-proto.h>
++
++long amd_iommu_poll_comp_wait = COMPLETION_WAIT_DEFAULT_POLLING_COUNT;
++
++static int queue_iommu_command(struct amd_iommu *iommu, u32 cmd[])
++{
++    u32 tail, head, *cmd_buffer;
++    int i;
++
++    tail = iommu->cmd_buffer_tail;
++    if ( ++tail == iommu->cmd_buffer.entries )
++        tail = 0;
++    head = get_field_from_reg_u32(
++        readl(iommu->mmio_base+IOMMU_CMD_BUFFER_HEAD_OFFSET),
++        IOMMU_CMD_BUFFER_HEAD_MASK,
++        IOMMU_CMD_BUFFER_HEAD_SHIFT);
++    if ( head != tail )
++    {
++        cmd_buffer = (u32 *)(iommu->cmd_buffer.buffer +
++                             (iommu->cmd_buffer_tail *
++                              IOMMU_CMD_BUFFER_ENTRY_SIZE));
++        for ( i = 0; i < IOMMU_CMD_BUFFER_U32_PER_ENTRY; i++ )
++            cmd_buffer[i] = cmd[i];
++
++        iommu->cmd_buffer_tail = tail;
++        return 1;
++    }
++
++    return 0;
++}
++
++static void commit_iommu_command_buffer(struct amd_iommu *iommu)
++{
++    u32 tail;
++
++    set_field_in_reg_u32(iommu->cmd_buffer_tail, 0,
++                         IOMMU_CMD_BUFFER_TAIL_MASK,
++                         IOMMU_CMD_BUFFER_TAIL_SHIFT, &tail);
++    writel(tail, iommu->mmio_base+IOMMU_CMD_BUFFER_TAIL_OFFSET);
++}
++
++int send_iommu_command(struct amd_iommu *iommu, u32 cmd[])
++{
++    if ( queue_iommu_command(iommu, cmd) )
++    {
++        commit_iommu_command_buffer(iommu);
++        return 1;
++    }
++
++    return 0;
++}
++
++static void invalidate_iommu_page(struct amd_iommu *iommu,
++                                  u64 io_addr, u16 domain_id)
++{
++    u64 addr_lo, addr_hi;
++    u32 cmd[4], entry;
++
++    addr_lo = io_addr & DMA_32BIT_MASK;
++    addr_hi = io_addr >> 32;
++
++    set_field_in_reg_u32(domain_id, 0,
++                         IOMMU_INV_IOMMU_PAGES_DOMAIN_ID_MASK,
++                         IOMMU_INV_IOMMU_PAGES_DOMAIN_ID_SHIFT, &entry);
++    set_field_in_reg_u32(IOMMU_CMD_INVALIDATE_IOMMU_PAGES, entry,
++                         IOMMU_CMD_OPCODE_MASK, IOMMU_CMD_OPCODE_SHIFT,
++                         &entry);
++    cmd[1] = entry;
++
++    set_field_in_reg_u32(IOMMU_CONTROL_DISABLED, 0,
++                         IOMMU_INV_IOMMU_PAGES_S_FLAG_MASK,
++                         IOMMU_INV_IOMMU_PAGES_S_FLAG_SHIFT, &entry);
++    set_field_in_reg_u32(IOMMU_CONTROL_DISABLED, entry,
++                         IOMMU_INV_IOMMU_PAGES_PDE_FLAG_MASK,
++                         IOMMU_INV_IOMMU_PAGES_PDE_FLAG_SHIFT, &entry);
++    set_field_in_reg_u32((u32)addr_lo >> PAGE_SHIFT, entry,
++                         IOMMU_INV_IOMMU_PAGES_ADDR_LOW_MASK,
++                         IOMMU_INV_IOMMU_PAGES_ADDR_LOW_SHIFT, &entry);
++    cmd[2] = entry;
++
++    set_field_in_reg_u32((u32)addr_hi, 0,
++                         IOMMU_INV_IOMMU_PAGES_ADDR_HIGH_MASK,
++                         IOMMU_INV_IOMMU_PAGES_ADDR_HIGH_SHIFT, &entry);
++    cmd[3] = entry;
++
++    cmd[0] = 0;
++    send_iommu_command(iommu, cmd);
++}
++
++void flush_command_buffer(struct amd_iommu *iommu)
++{
++    u32 cmd[4], status;
++    int loop_count, comp_wait;
++
++    /* clear 'ComWaitInt' in status register (WIC) */
++    set_field_in_reg_u32(IOMMU_CONTROL_ENABLED, 0,
++                         IOMMU_STATUS_COMP_WAIT_INT_MASK,
++                         IOMMU_STATUS_COMP_WAIT_INT_SHIFT, &status);
++    writel(status, iommu->mmio_base + IOMMU_STATUS_MMIO_OFFSET);
++
++    /* send an empty COMPLETION_WAIT command to flush command buffer */
++    cmd[3] = cmd[2] = 0;
++    set_field_in_reg_u32(IOMMU_CMD_COMPLETION_WAIT, 0,
++                         IOMMU_CMD_OPCODE_MASK,
++                         IOMMU_CMD_OPCODE_SHIFT, &cmd[1]);
++    set_field_in_reg_u32(IOMMU_CONTROL_ENABLED, 0,
++                         IOMMU_COMP_WAIT_I_FLAG_MASK,
++                         IOMMU_COMP_WAIT_I_FLAG_SHIFT, &cmd[0]);
++    send_iommu_command(iommu, cmd);
++
++    /* wait for 'ComWaitInt' to signal comp#endifletion? */
++    if ( amd_iommu_poll_comp_wait )
++    {
++        loop_count = amd_iommu_poll_comp_wait;
++        do {
++            status = readl(iommu->mmio_base +
++                           IOMMU_STATUS_MMIO_OFFSET);
++            comp_wait = get_field_from_reg_u32(
++                status,
++                IOMMU_STATUS_COMP_WAIT_INT_MASK,
++                IOMMU_STATUS_COMP_WAIT_INT_SHIFT);
++            --loop_count;
++        } while ( loop_count && !comp_wait );
++
++        if ( comp_wait )
++        {
++            /* clear 'ComWaitInt' in status register (WIC) */
++            status &= IOMMU_STATUS_COMP_WAIT_INT_MASK;
++            writel(status, iommu->mmio_base +
++                   IOMMU_STATUS_MMIO_OFFSET);
++        }
++        else
++        {
++            amd_iov_warning("Warning: ComWaitInt bit did not assert!\n");
++        }
++    }
++}
++
++static void clear_iommu_l1e_present(u64 l2e, unsigned long gfn)
++{
++    u32 *l1e;
++    int offset;
++    void *l1_table;
++
++    l1_table = map_domain_page(l2e >> PAGE_SHIFT);
++
++    offset = gfn & (~PTE_PER_TABLE_MASK);
++    l1e = (u32*)(l1_table + (offset * IOMMU_PAGE_TABLE_ENTRY_SIZE));
++
++    /* clear l1 entry */
++    l1e[0] = l1e[1] = 0;
++
++    unmap_domain_page(l1_table);
++}
++
++static void set_iommu_l1e_present(u64 l2e, unsigned long gfn,
++                                 u64 maddr, int iw, int ir)
++{
++    u64 addr_lo, addr_hi;
++    u32 entry;
++    void *l1_table;
++    int offset;
++    u32 *l1e;
++
++    l1_table = map_domain_page(l2e >> PAGE_SHIFT);
++
++    offset = gfn & (~PTE_PER_TABLE_MASK);
++    l1e = (u32*)((u8*)l1_table + (offset * IOMMU_PAGE_TABLE_ENTRY_SIZE));
++
++    addr_lo = maddr & DMA_32BIT_MASK;
++    addr_hi = maddr >> 32;
++
++    set_field_in_reg_u32((u32)addr_hi, 0,
++                         IOMMU_PTE_ADDR_HIGH_MASK,
++                         IOMMU_PTE_ADDR_HIGH_SHIFT, &entry);
++    set_field_in_reg_u32(iw ? IOMMU_CONTROL_ENABLED :
++                         IOMMU_CONTROL_DISABLED, entry,
++                         IOMMU_PTE_IO_WRITE_PERMISSION_MASK,
++                         IOMMU_PTE_IO_WRITE_PERMISSION_SHIFT, &entry);
++    set_field_in_reg_u32(ir ? IOMMU_CONTROL_ENABLED :
++                         IOMMU_CONTROL_DISABLED, entry,
++                         IOMMU_PTE_IO_READ_PERMISSION_MASK,
++                         IOMMU_PTE_IO_READ_PERMISSION_SHIFT, &entry);
++    l1e[1] = entry;
++
++    set_field_in_reg_u32((u32)addr_lo >> PAGE_SHIFT, 0,
++                         IOMMU_PTE_ADDR_LOW_MASK,
++                         IOMMU_PTE_ADDR_LOW_SHIFT, &entry);
++    set_field_in_reg_u32(IOMMU_PAGING_MODE_LEVEL_0, entry,
++                         IOMMU_PTE_NEXT_LEVEL_MASK,
++                         IOMMU_PTE_NEXT_LEVEL_SHIFT, &entry);
++    set_field_in_reg_u32(IOMMU_CONTROL_ENABLED, entry,
++                         IOMMU_PTE_PRESENT_MASK,
++                         IOMMU_PTE_PRESENT_SHIFT, &entry);
++    l1e[0] = entry;
++
++    unmap_domain_page(l1_table);
++}
++
++static void amd_iommu_set_page_directory_entry(u32 *pde, 
++                                               u64 next_ptr, u8 next_level)
++{
++    u64 addr_lo, addr_hi;
++    u32 entry;
++
++    addr_lo = next_ptr & DMA_32BIT_MASK;
++    addr_hi = next_ptr >> 32;
++
++    /* enable read/write permissions,which will be enforced at the PTE */
++    set_field_in_reg_u32((u32)addr_hi, 0,
++                         IOMMU_PDE_ADDR_HIGH_MASK,
++                         IOMMU_PDE_ADDR_HIGH_SHIFT, &entry);
++    set_field_in_reg_u32(IOMMU_CONTROL_ENABLED, entry,
++                         IOMMU_PDE_IO_WRITE_PERMISSION_MASK,
++                         IOMMU_PDE_IO_WRITE_PERMISSION_SHIFT, &entry);
++    set_field_in_reg_u32(IOMMU_CONTROL_ENABLED, entry,
++                         IOMMU_PDE_IO_READ_PERMISSION_MASK,
++                         IOMMU_PDE_IO_READ_PERMISSION_SHIFT, &entry);
++    pde[1] = entry;
++
++    /* mark next level as 'present' */
++    set_field_in_reg_u32((u32)addr_lo >> PAGE_SHIFT, 0,
++                         IOMMU_PDE_ADDR_LOW_MASK,
++                         IOMMU_PDE_ADDR_LOW_SHIFT, &entry);
++    set_field_in_reg_u32(next_level, entry,
++                         IOMMU_PDE_NEXT_LEVEL_MASK,
++                         IOMMU_PDE_NEXT_LEVEL_SHIFT, &entry);
++    set_field_in_reg_u32(IOMMU_CONTROL_ENABLED, entry,
++                         IOMMU_PDE_PRESENT_MASK,
++                         IOMMU_PDE_PRESENT_SHIFT, &entry);
++    pde[0] = entry;
++}
++
++void amd_iommu_set_dev_table_entry(u32 *dte, u64 root_ptr, u64 intremap_ptr,
++                                   u16 domain_id, u8 sys_mgt, u8 dev_ex,
++                                   u8 paging_mode)
++{
++    u64 addr_hi, addr_lo;
++    u32 entry;
++
++    dte[7] = dte[6] = 0;
++
++    addr_lo = intremap_ptr & DMA_32BIT_MASK;
++    addr_hi = intremap_ptr >> 32;
++
++    set_field_in_reg_u32((u32)addr_hi, 0,
++                        IOMMU_DEV_TABLE_INT_TABLE_PTR_HIGH_MASK,
++                        IOMMU_DEV_TABLE_INT_TABLE_PTR_HIGH_SHIFT, &entry);
++    set_field_in_reg_u32(IOMMU_CONTROL_ENABLED, entry,
++                        IOMMU_DEV_TABLE_INIT_PASSTHRU_MASK,
++                        IOMMU_DEV_TABLE_INIT_PASSTHRU_SHIFT, &entry);
++    set_field_in_reg_u32(IOMMU_CONTROL_ENABLED, entry,
++                        IOMMU_DEV_TABLE_EINT_PASSTHRU_MASK,
++                        IOMMU_DEV_TABLE_EINT_PASSTHRU_SHIFT, &entry);
++    set_field_in_reg_u32(IOMMU_CONTROL_ENABLED, entry,
++                        IOMMU_DEV_TABLE_NMI_PASSTHRU_MASK,
++                        IOMMU_DEV_TABLE_NMI_PASSTHRU_SHIFT, &entry);
++    /* Fixed and arbitrated interrupts remapepd */
++    set_field_in_reg_u32(2, entry,
++                        IOMMU_DEV_TABLE_INT_CONTROL_MASK,
++                        IOMMU_DEV_TABLE_INT_CONTROL_SHIFT, &entry);
++    set_field_in_reg_u32(IOMMU_CONTROL_ENABLED, entry,
++                        IOMMU_DEV_TABLE_LINT0_ENABLE_MASK,
++                        IOMMU_DEV_TABLE_LINT0_ENABLE_SHIFT, &entry);
++    set_field_in_reg_u32(IOMMU_CONTROL_ENABLED, entry,
++                        IOMMU_DEV_TABLE_LINT1_ENABLE_MASK,
++                        IOMMU_DEV_TABLE_LINT1_ENABLE_SHIFT, &entry);
++    dte[5] = entry;
++
++    set_field_in_reg_u32((u32)addr_lo >> 6, 0,
++                        IOMMU_DEV_TABLE_INT_TABLE_PTR_LOW_MASK,
++                        IOMMU_DEV_TABLE_INT_TABLE_PTR_LOW_SHIFT, &entry);
++    /* 2048 entries */
++    set_field_in_reg_u32(0xB, entry,
++                         IOMMU_DEV_TABLE_INT_TABLE_LENGTH_MASK,
++                         IOMMU_DEV_TABLE_INT_TABLE_LENGTH_SHIFT, &entry);
++    set_field_in_reg_u32(IOMMU_CONTROL_ENABLED, entry,
++                         IOMMU_DEV_TABLE_INT_VALID_MASK,
++                         IOMMU_DEV_TABLE_INT_VALID_SHIFT, &entry);
++    set_field_in_reg_u32(IOMMU_CONTROL_ENABLED, entry,
++                         IOMMU_DEV_TABLE_INT_TABLE_IGN_UNMAPPED_MASK,
++                         IOMMU_DEV_TABLE_INT_TABLE_IGN_UNMAPPED_SHIFT, &entry);
++    dte[4] = entry;
++
++    set_field_in_reg_u32(sys_mgt, 0,
++                         IOMMU_DEV_TABLE_SYS_MGT_MSG_ENABLE_MASK,
++                         IOMMU_DEV_TABLE_SYS_MGT_MSG_ENABLE_SHIFT, &entry);
++    set_field_in_reg_u32(dev_ex, entry,
++                         IOMMU_DEV_TABLE_ALLOW_EXCLUSION_MASK,
++                         IOMMU_DEV_TABLE_ALLOW_EXCLUSION_SHIFT, &entry);
++    dte[3] = entry;
++
++    set_field_in_reg_u32(domain_id, 0,
++                         IOMMU_DEV_TABLE_DOMAIN_ID_MASK,
++                         IOMMU_DEV_TABLE_DOMAIN_ID_SHIFT, &entry);
++    dte[2] = entry;
++
++    addr_lo = root_ptr & DMA_32BIT_MASK;
++    addr_hi = root_ptr >> 32;
++    set_field_in_reg_u32((u32)addr_hi, 0,
++                         IOMMU_DEV_TABLE_PAGE_TABLE_PTR_HIGH_MASK,
++                         IOMMU_DEV_TABLE_PAGE_TABLE_PTR_HIGH_SHIFT, &entry);
++    set_field_in_reg_u32(IOMMU_CONTROL_ENABLED, entry,
++                         IOMMU_DEV_TABLE_IO_WRITE_PERMISSION_MASK,
++                         IOMMU_DEV_TABLE_IO_WRITE_PERMISSION_SHIFT, &entry);
++    set_field_in_reg_u32(IOMMU_CONTROL_ENABLED, entry,
++                         IOMMU_DEV_TABLE_IO_READ_PERMISSION_MASK,
++                         IOMMU_DEV_TABLE_IO_READ_PERMISSION_SHIFT, &entry);
++    dte[1] = entry;
++
++    set_field_in_reg_u32((u32)addr_lo >> PAGE_SHIFT, 0,
++                         IOMMU_DEV_TABLE_PAGE_TABLE_PTR_LOW_MASK,
++                         IOMMU_DEV_TABLE_PAGE_TABLE_PTR_LOW_SHIFT, &entry);
++    set_field_in_reg_u32(paging_mode, entry,
++                         IOMMU_DEV_TABLE_PAGING_MODE_MASK,
++                         IOMMU_DEV_TABLE_PAGING_MODE_SHIFT, &entry);
++    set_field_in_reg_u32(IOMMU_CONTROL_ENABLED, entry,
++                         IOMMU_DEV_TABLE_TRANSLATION_VALID_MASK,
++                         IOMMU_DEV_TABLE_TRANSLATION_VALID_SHIFT, &entry);
++    set_field_in_reg_u32(IOMMU_CONTROL_ENABLED, entry,
++                         IOMMU_DEV_TABLE_VALID_MASK,
++                         IOMMU_DEV_TABLE_VALID_SHIFT, &entry);
++    dte[0] = entry;
++}
++
++u64 amd_iommu_get_next_table_from_pte(u32 *entry)
++{
++    u64 addr_lo, addr_hi, ptr;
++
++    addr_lo = get_field_from_reg_u32(
++        entry[0],
++        IOMMU_DEV_TABLE_PAGE_TABLE_PTR_LOW_MASK,
++        IOMMU_DEV_TABLE_PAGE_TABLE_PTR_LOW_SHIFT);
++
++    addr_hi = get_field_from_reg_u32(
++        entry[1],
++        IOMMU_DEV_TABLE_PAGE_TABLE_PTR_HIGH_MASK,
++        IOMMU_DEV_TABLE_PAGE_TABLE_PTR_HIGH_SHIFT);
++
++    ptr = (addr_hi << 32) | (addr_lo << PAGE_SHIFT);
++    return ptr;
++}
++
++static int amd_iommu_is_pte_present(u32 *entry)
++{
++    return (get_field_from_reg_u32(entry[0],
++                                   IOMMU_PDE_PRESENT_MASK,
++                                   IOMMU_PDE_PRESENT_SHIFT));
++}
++
++void invalidate_dev_table_entry(struct amd_iommu *iommu,
++                                u16 device_id)
++{
++    u32 cmd[4], entry;
++
++    cmd[3] = cmd[2] = 0;
++    set_field_in_reg_u32(device_id, 0,
++                         IOMMU_INV_DEVTAB_ENTRY_DEVICE_ID_MASK,
++                         IOMMU_INV_DEVTAB_ENTRY_DEVICE_ID_SHIFT, &entry);
++    cmd[0] = entry;
++
++    set_field_in_reg_u32(IOMMU_CMD_INVALIDATE_DEVTAB_ENTRY, 0,
++                         IOMMU_CMD_OPCODE_MASK, IOMMU_CMD_OPCODE_SHIFT,
++                         &entry);
++    cmd[1] = entry;
++
++    send_iommu_command(iommu, cmd);
++}
++
++int amd_iommu_is_dte_page_translation_valid(u32 *entry)
++{
++    return (get_field_from_reg_u32(entry[0],
++                                   IOMMU_DEV_TABLE_VALID_MASK,
++                                   IOMMU_DEV_TABLE_VALID_SHIFT) &&
++            get_field_from_reg_u32(entry[0],
++                                   IOMMU_DEV_TABLE_TRANSLATION_VALID_MASK,
++                                   IOMMU_DEV_TABLE_TRANSLATION_VALID_SHIFT));
++}
++
++static u64 iommu_l2e_from_pfn(struct page_info *table, int level,
++                              unsigned long io_pfn)
++{
++    unsigned long offset;
++    void *pde = NULL;
++    void *table_vaddr;
++    u64 next_table_maddr = 0;
++
++    BUG_ON( table == NULL || level == 0 );
++
++    while ( level > 1 )
++    {
++        offset = io_pfn >> ((PTE_PER_TABLE_SHIFT *
++                             (level - IOMMU_PAGING_MODE_LEVEL_1)));
++        offset &= ~PTE_PER_TABLE_MASK;
++
++        table_vaddr = map_domain_page(page_to_mfn(table));
++        pde = table_vaddr + (offset * IOMMU_PAGE_TABLE_ENTRY_SIZE);
++        next_table_maddr = amd_iommu_get_next_table_from_pte(pde);
++
++        if ( !amd_iommu_is_pte_present(pde) )
++        {
++            if ( next_table_maddr == 0 )
++            {
++                table = alloc_amd_iommu_pgtable();
++                if ( table == NULL )
++                    return 0;
++                next_table_maddr = page_to_maddr(table);
++                amd_iommu_set_page_directory_entry(
++                    (u32 *)pde, next_table_maddr, level - 1);
++            }
++            else /* should never reach here */
++                return 0;
++        }
++
++        unmap_domain_page(table_vaddr);
++        table = maddr_to_page(next_table_maddr);
++        level--;
++    }
++
++    return next_table_maddr;
++}
++
++int amd_iommu_map_page(struct domain *d, unsigned long gfn, unsigned long mfn)
++{
++    u64 iommu_l2e;
++    struct hvm_iommu *hd = domain_hvm_iommu(d);
++    int iw = IOMMU_IO_WRITE_ENABLED;
++    int ir = IOMMU_IO_READ_ENABLED;
++
++    BUG_ON( !hd->root_table );
++
++    spin_lock(&hd->mapping_lock);
++
++    if ( is_hvm_domain(d) && !hd->p2m_synchronized )
++        goto out;
++
++    iommu_l2e = iommu_l2e_from_pfn(hd->root_table, hd->paging_mode, gfn);
++    if ( iommu_l2e == 0 )
++    {
++        spin_unlock(&hd->mapping_lock);
++        amd_iov_error("Invalid IO pagetable entry gfn = %lx\n", gfn);
++        return -EFAULT;
++    }
++    set_iommu_l1e_present(iommu_l2e, gfn, (u64)mfn << PAGE_SHIFT, iw, ir);
++
++out:
++    spin_unlock(&hd->mapping_lock);
++    return 0;
++}
++
++int amd_iommu_unmap_page(struct domain *d, unsigned long gfn)
++{
++    u64 iommu_l2e;
++    unsigned long flags;
++    struct amd_iommu *iommu;
++    struct hvm_iommu *hd = domain_hvm_iommu(d);
++
++    BUG_ON( !hd->root_table );
++
++    spin_lock(&hd->mapping_lock);
++
++    if ( is_hvm_domain(d) && !hd->p2m_synchronized )
++    {
++        spin_unlock(&hd->mapping_lock);
++        return 0;
++    }
++
++    iommu_l2e = iommu_l2e_from_pfn(hd->root_table, hd->paging_mode, gfn);
++
++    if ( iommu_l2e == 0 )
++    {
++        spin_unlock(&hd->mapping_lock);
++        amd_iov_error("Invalid IO pagetable entry gfn = %lx\n", gfn);
++        return -EFAULT;
++    }
++
++    /* mark PTE as 'page not present' */
++    clear_iommu_l1e_present(iommu_l2e, gfn);
++    spin_unlock(&hd->mapping_lock);
++
++    /* send INVALIDATE_IOMMU_PAGES command */
++    for_each_amd_iommu ( iommu )
++    {
++        spin_lock_irqsave(&iommu->lock, flags);
++        invalidate_iommu_page(iommu, (u64)gfn << PAGE_SHIFT, hd->domain_id);
++        flush_command_buffer(iommu);
++        spin_unlock_irqrestore(&iommu->lock, flags);
++    }
++
++    return 0;
++}
++
++int amd_iommu_reserve_domain_unity_map(
++    struct domain *domain,
++    unsigned long phys_addr,
++    unsigned long size, int iw, int ir)
++{
++    u64 iommu_l2e;
++    unsigned long npages, i;
++    struct hvm_iommu *hd = domain_hvm_iommu(domain);
++
++    npages = region_to_pages(phys_addr, size);
++
++    spin_lock(&hd->mapping_lock);
++    for ( i = 0; i < npages; ++i )
++    {
++        iommu_l2e = iommu_l2e_from_pfn(
++            hd->root_table, hd->paging_mode, phys_addr >> PAGE_SHIFT);
++
++        if ( iommu_l2e == 0 )
++        {
++            spin_unlock(&hd->mapping_lock);
++            amd_iov_error("Invalid IO pagetable entry phys_addr = %lx\n",
++                          phys_addr);
++            return -EFAULT;
++        }
++
++        set_iommu_l1e_present(iommu_l2e,
++            (phys_addr >> PAGE_SHIFT), phys_addr, iw, ir);
++
++        phys_addr += PAGE_SIZE;
++    }
++    spin_unlock(&hd->mapping_lock);
++    return 0;
++}
++
++int amd_iommu_sync_p2m(struct domain *d)
++{
++    unsigned long mfn, gfn;
++    u64 iommu_l2e;
++    struct page_info *page;
++    struct hvm_iommu *hd;
++    int iw = IOMMU_IO_WRITE_ENABLED;
++    int ir = IOMMU_IO_READ_ENABLED;
++
++    if ( !is_hvm_domain(d) )
++        return 0;
++
++    hd = domain_hvm_iommu(d);
++
++    spin_lock(&hd->mapping_lock);
++
++    if ( hd->p2m_synchronized )
++        goto out;
++
++    spin_lock(&d->page_alloc_lock);
++
++    list_for_each_entry( page, &d->page_list, list )
++    {
++        mfn = page_to_mfn(page);
++        gfn = get_gpfn_from_mfn(mfn);
++
++        if ( gfn == INVALID_M2P_ENTRY )
++            continue;
++
++        iommu_l2e = iommu_l2e_from_pfn(hd->root_table, hd->paging_mode, gfn);
++
++        if ( iommu_l2e == 0 )
++        {
++            spin_unlock(&d->page_alloc_lock);
++            spin_unlock(&hd->mapping_lock);
++            amd_iov_error("Invalid IO pagetable entry gfn = %lx\n", gfn);
++            return -EFAULT;
++        }
++
++        set_iommu_l1e_present(iommu_l2e, gfn, (u64)mfn << PAGE_SHIFT, iw, ir);
++    }
++
++    spin_unlock(&d->page_alloc_lock);
++
++    hd->p2m_synchronized = 1;
++
++out:
++    spin_unlock(&hd->mapping_lock);
++    return 0;
++}
++
++void invalidate_all_iommu_pages(struct domain *d)
++{
++    u32 cmd[4], entry;
++    unsigned long flags;
++    struct amd_iommu *iommu;
++    int domain_id = d->domain_id;
++    u64 addr_lo = 0x7FFFFFFFFFFFF000ULL & DMA_32BIT_MASK;
++    u64 addr_hi = 0x7FFFFFFFFFFFF000ULL >> 32;
++
++    set_field_in_reg_u32(domain_id, 0,
++                         IOMMU_INV_IOMMU_PAGES_DOMAIN_ID_MASK,
++                         IOMMU_INV_IOMMU_PAGES_DOMAIN_ID_SHIFT, &entry);
++    set_field_in_reg_u32(IOMMU_CMD_INVALIDATE_IOMMU_PAGES, entry,
++                         IOMMU_CMD_OPCODE_MASK, IOMMU_CMD_OPCODE_SHIFT,
++                         &entry);
++    cmd[1] = entry;
++
++    set_field_in_reg_u32(IOMMU_CONTROL_ENABLED, 0,
++                         IOMMU_INV_IOMMU_PAGES_S_FLAG_MASK,
++                         IOMMU_INV_IOMMU_PAGES_S_FLAG_SHIFT, &entry);
++    set_field_in_reg_u32(IOMMU_CONTROL_ENABLED, entry,
++                         IOMMU_INV_IOMMU_PAGES_PDE_FLAG_MASK,
++                         IOMMU_INV_IOMMU_PAGES_PDE_FLAG_SHIFT, &entry);
++    set_field_in_reg_u32((u32)addr_lo >> PAGE_SHIFT, entry,
++                         IOMMU_INV_IOMMU_PAGES_ADDR_LOW_MASK,
++                         IOMMU_INV_IOMMU_PAGES_ADDR_LOW_SHIFT, &entry);
++    cmd[2] = entry;
++
++    set_field_in_reg_u32((u32)addr_hi, 0,
++                         IOMMU_INV_IOMMU_PAGES_ADDR_HIGH_MASK,
++                         IOMMU_INV_IOMMU_PAGES_ADDR_HIGH_SHIFT, &entry);
++    cmd[3] = entry;
++
++    cmd[0] = 0;
++
++    for_each_amd_iommu ( iommu )
++    {
++        spin_lock_irqsave(&iommu->lock, flags);
++        send_iommu_command(iommu, cmd);
++        flush_command_buffer(iommu);
++        spin_unlock_irqrestore(&iommu->lock, flags);
++    }
++}
+diff --git a/drivers/passthrough/amd/pci_amd_iommu.c b/drivers/passthrough/amd/pci_amd_iommu.c
+new file mode 100644
+index 0000000..1d842aa
+--- /dev/null
++++ b/drivers/passthrough/amd/pci_amd_iommu.c
+@@ -0,0 +1,434 @@
++/*
++ * Copyright (C) 2007 Advanced Micro Devices, Inc.
++ * Author: Leo Duran <leo.duran@amd.com>
++ * Author: Wei Wang <wei.wang2@amd.com> - adapted to xen
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 2 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program; if not, write to the Free Software
++ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307 USA
++ */
++
++#include <xen/sched.h>
++#include <xen/pci.h>
++#include <xen/pci_regs.h>
++#include <asm/amd-iommu.h>
++#include <asm/hvm/svm/amd-iommu-proto.h>
++
++extern unsigned short ivrs_bdf_entries;
++extern struct ivrs_mappings *ivrs_mappings;
++extern void *int_remap_table;
++
++int __init amd_iommu_init(void)
++{
++    struct amd_iommu *iommu;
++
++    BUG_ON( !iommu_found() );
++
++    ivrs_bdf_entries = amd_iommu_get_ivrs_dev_entries();
++
++    if ( !ivrs_bdf_entries )
++        goto error_out;
++
++    if ( amd_iommu_setup_shared_tables() != 0 )
++        goto error_out;
++
++    amd_iommu_update_ivrs_mapping_acpi();
++
++    for_each_amd_iommu ( iommu )
++        if ( amd_iommu_init_one(iommu) != 0 )
++            goto error_out;
++    return 0;
++
++error_out:
++    amd_iommu_init_cleanup();
++    return -ENODEV;
++}
++
++struct amd_iommu *find_iommu_for_device(int bus, int devfn)
++{
++    u16 bdf = (bus << 8) | devfn;
++    BUG_ON ( bdf >= ivrs_bdf_entries );
++    return ivrs_mappings[bdf].iommu;
++}
++
++static void amd_iommu_setup_domain_device(
++    struct domain *domain, struct amd_iommu *iommu, int bdf)
++{
++    void *dte;
++    unsigned long flags;
++    int req_id;
++    u8 sys_mgt, dev_ex;
++    struct hvm_iommu *hd = domain_hvm_iommu(domain);
++
++    BUG_ON( !hd->root_table || !hd->paging_mode || !int_remap_table );
++
++    /* get device-table entry */
++    req_id = ivrs_mappings[bdf].dte_requestor_id;
++    dte = iommu->dev_table.buffer + (req_id * IOMMU_DEV_TABLE_ENTRY_SIZE);
++
++    spin_lock_irqsave(&iommu->lock, flags);
++    if ( !amd_iommu_is_dte_page_translation_valid((u32 *)dte) )
++    {
++        /* bind DTE to domain page-tables */
++        sys_mgt = ivrs_mappings[req_id].dte_sys_mgt_enable;
++        dev_ex = ivrs_mappings[req_id].dte_allow_exclusion;
++
++        amd_iommu_set_dev_table_entry((u32 *)dte,
++                                      (u64)page_to_maddr(hd->root_table),
++                                      (u64)virt_to_maddr(int_remap_table),
++                                      hd->domain_id, sys_mgt, dev_ex,
++                                      hd->paging_mode);
++
++        invalidate_dev_table_entry(iommu, req_id);
++        invalidate_interrupt_table(iommu, req_id);
++        flush_command_buffer(iommu);
++        amd_iov_info("Enable DTE:0x%x, "
++                "root_table:%"PRIx64", interrupt_table:%"PRIx64", "
++                "domain_id:%d, paging_mode:%d\n",
++                req_id, (u64)page_to_maddr(hd->root_table),
++                (u64)virt_to_maddr(int_remap_table), hd->domain_id,
++                hd->paging_mode);
++    }
++    spin_unlock_irqrestore(&iommu->lock, flags);
++
++}
++
++static void amd_iommu_setup_dom0_devices(struct domain *d)
++{
++    struct amd_iommu *iommu;
++    struct pci_dev *pdev;
++    int bus, dev, func;
++    u32 l;
++    int bdf;
++
++    spin_lock(&pcidevs_lock);
++    for ( bus = 0; bus < 256; bus++ )
++    {
++        for ( dev = 0; dev < 32; dev++ )
++        {
++            for ( func = 0; func < 8; func++ )
++            {
++                l = pci_conf_read32(bus, dev, func, PCI_VENDOR_ID);
++                /* some broken boards return 0 or ~0 if a slot is empty: */
++                if ( (l == 0xffffffff) || (l == 0x00000000) ||
++                     (l == 0x0000ffff) || (l == 0xffff0000) )
++                    continue;
++
++                pdev = alloc_pdev(bus, PCI_DEVFN(dev, func));
++                pdev->domain = d;
++                list_add(&pdev->domain_list, &d->arch.pdev_list);
++
++                bdf = (bus << 8) | pdev->devfn;
++                /* supported device? */
++                iommu = (bdf < ivrs_bdf_entries) ?
++                    find_iommu_for_device(bus, pdev->devfn) : NULL;
++
++                if ( iommu )
++                    amd_iommu_setup_domain_device(d, iommu, bdf);
++            }
++        }
++    }
++    spin_unlock(&pcidevs_lock);
++}
++
++int amd_iov_detect(void)
++{
++    INIT_LIST_HEAD(&amd_iommu_head);
++
++    amd_iommu_detect_acpi();
++
++    if ( !iommu_found() )
++    {
++        printk("AMD-Vi: IOMMU not found!\n");
++        return -ENODEV;
++    }
++
++    if ( amd_iommu_init() != 0 )
++    {
++        printk ("AMD-Vi: Error initialization!\n");
++        return -ENODEV;
++    }
++    return 0;
++}
++
++static int allocate_domain_resources(struct hvm_iommu *hd)
++{
++    /* allocate root table */
++    spin_lock(&hd->mapping_lock);
++    if ( !hd->root_table )
++    {
++        hd->root_table = alloc_amd_iommu_pgtable();
++        if ( !hd->root_table )
++        {
++            spin_unlock(&hd->mapping_lock);
++            return -ENOMEM;
++        }
++    }
++    spin_unlock(&hd->mapping_lock);
++    return 0;
++}
++
++static int get_paging_mode(unsigned long entries)
++{
++    int level = 1;
++
++    BUG_ON(!max_page);
++
++    if ( entries > max_page )
++        entries = max_page;
++
++    while ( entries > PTE_PER_TABLE_SIZE )
++    {
++        entries = PTE_PER_TABLE_ALIGN(entries) >> PTE_PER_TABLE_SHIFT;
++        if ( ++level > 6 )
++            return -ENOMEM;
++    }
++
++    return level;
++}
++
++static int amd_iommu_domain_init(struct domain *domain)
++{
++    struct hvm_iommu *hd = domain_hvm_iommu(domain);
++
++    /* allocate page directroy */
++    if ( allocate_domain_resources(hd) != 0 )
++    {
++        if ( hd->root_table )
++            free_domheap_page(hd->root_table);
++        return -ENOMEM;
++    }
++
++    hd->paging_mode = is_hvm_domain(domain)?
++        IOMMU_PAGE_TABLE_LEVEL_4 : get_paging_mode(max_page);
++
++    if ( domain->domain_id == 0 )
++    {
++        unsigned long i; 
++       /* setup 1:1 page table for dom0 */
++        for ( i = 0; i < max_page; i++ )
++            amd_iommu_map_page(domain, i, i);
++
++        amd_iommu_setup_dom0_devices(domain);
++    }
++
++    hd->domain_id = domain->domain_id;
++
++    return 0;
++}
++
++static void amd_iommu_disable_domain_device(
++    struct domain *domain, struct amd_iommu *iommu, int bdf)
++{
++    void *dte;
++    unsigned long flags;
++    int req_id;
++
++    req_id = ivrs_mappings[bdf].dte_requestor_id;
++    dte = iommu->dev_table.buffer + (req_id * IOMMU_DEV_TABLE_ENTRY_SIZE);
++
++    spin_lock_irqsave(&iommu->lock, flags); 
++    if ( amd_iommu_is_dte_page_translation_valid((u32 *)dte) )
++    {
++        memset (dte, 0, IOMMU_DEV_TABLE_ENTRY_SIZE);
++        invalidate_dev_table_entry(iommu, req_id);
++        flush_command_buffer(iommu);
++        amd_iov_info("Disable DTE:0x%x,"
++                " domain_id:%d, paging_mode:%d\n",
++                req_id,  domain_hvm_iommu(domain)->domain_id,
++                domain_hvm_iommu(domain)->paging_mode);
++    }
++    spin_unlock_irqrestore(&iommu->lock, flags);
++}
++
++static int reassign_device( struct domain *source, struct domain *target,
++                            u8 bus, u8 devfn)
++{
++    struct pci_dev *pdev;
++    struct amd_iommu *iommu;
++    int bdf;
++
++    ASSERT(spin_is_locked(&pcidevs_lock));
++    pdev = pci_get_pdev_by_domain(source, bus, devfn);
++    if ( !pdev )
++        return -ENODEV;
++
++    bdf = (bus << 8) | devfn;
++    /* supported device? */
++    iommu = (bdf < ivrs_bdf_entries) ?
++    find_iommu_for_device(bus, pdev->devfn) : NULL;
++
++    if ( !iommu )
++    {
++        amd_iov_error("Fail to find iommu."
++            " %x:%x.%x cannot be assigned to domain %d\n", 
++            bus, PCI_SLOT(devfn), PCI_FUNC(devfn), target->domain_id);
++        return -ENODEV;
++    }
++
++    amd_iommu_disable_domain_device(source, iommu, bdf);
++
++    list_move(&pdev->domain_list, &target->arch.pdev_list);
++    pdev->domain = target;
++
++    amd_iommu_setup_domain_device(target, iommu, bdf);
++    amd_iov_info("reassign %x:%x.%x domain %d -> domain %d\n",
++                 bus, PCI_SLOT(devfn), PCI_FUNC(devfn),
++                 source->domain_id, target->domain_id);
++
++    return 0;
++}
++
++static int amd_iommu_assign_device(struct domain *d, u8 bus, u8 devfn)
++{
++    int bdf = (bus << 8) | devfn;
++    int req_id = ivrs_mappings[bdf].dte_requestor_id;
++
++    amd_iommu_sync_p2m(d);
++
++    if ( ivrs_mappings[req_id].unity_map_enable )
++    {
++        amd_iommu_reserve_domain_unity_map(
++            d,
++            ivrs_mappings[req_id].addr_range_start,
++            ivrs_mappings[req_id].addr_range_length,
++            ivrs_mappings[req_id].write_permission,
++            ivrs_mappings[req_id].read_permission);
++    }
++
++    return reassign_device(dom0, d, bus, devfn);
++}
++
++static void deallocate_next_page_table(struct page_info* pg, int level)
++{
++    void *table_vaddr, *pde;
++    u64 next_table_maddr;
++    int index;
++
++    table_vaddr = map_domain_page(page_to_mfn(pg));
++
++    if ( level > 1 )
++    {
++        for ( index = 0; index < PTE_PER_TABLE_SIZE; index++ )
++        {
++            pde = table_vaddr + (index * IOMMU_PAGE_TABLE_ENTRY_SIZE);
++            next_table_maddr = amd_iommu_get_next_table_from_pte(pde);
++            if ( next_table_maddr != 0 )
++            {
++                deallocate_next_page_table(
++                    maddr_to_page(next_table_maddr), level - 1);
++            }
++        }
++    }
++
++    unmap_domain_page(table_vaddr);
++    free_amd_iommu_pgtable(pg);
++}
++
++static void deallocate_iommu_page_tables(struct domain *d)
++{
++    struct hvm_iommu *hd  = domain_hvm_iommu(d);
++
++    spin_lock(&hd->mapping_lock);
++    if ( hd->root_table )
++    {
++        deallocate_next_page_table(hd->root_table, hd->paging_mode);
++        hd->root_table = NULL;
++    }
++    spin_unlock(&hd->mapping_lock);
++}
++
++
++static void amd_iommu_domain_destroy(struct domain *d)
++{
++    deallocate_iommu_page_tables(d);
++    invalidate_all_iommu_pages(d);
++}
++
++static int amd_iommu_return_device(
++    struct domain *s, struct domain *t, u8 bus, u8 devfn)
++{
++    return reassign_device(s, t, bus, devfn);
++}
++
++static int amd_iommu_add_device(struct pci_dev *pdev)
++{
++    struct amd_iommu *iommu;
++    u16 bdf;
++    if ( !pdev->domain )
++        return -EINVAL;
++
++    bdf = (pdev->bus << 8) | pdev->devfn;
++    iommu = (bdf < ivrs_bdf_entries) ?
++    find_iommu_for_device(pdev->bus, pdev->devfn) : NULL;
++
++    if ( !iommu )
++    {
++        amd_iov_error("Fail to find iommu."
++            " %x:%x.%x cannot be assigned to domain %d\n", 
++            pdev->bus, PCI_SLOT(pdev->devfn),
++            PCI_FUNC(pdev->devfn), pdev->domain->domain_id);
++        return -ENODEV;
++    }
++
++    amd_iommu_setup_domain_device(pdev->domain, iommu, bdf);
++    return 0;
++}
++
++static int amd_iommu_remove_device(struct pci_dev *pdev)
++{
++    struct amd_iommu *iommu;
++    u16 bdf;
++    if ( !pdev->domain )
++        return -EINVAL;
++
++    bdf = (pdev->bus << 8) | pdev->devfn;
++    iommu = (bdf < ivrs_bdf_entries) ?
++    find_iommu_for_device(pdev->bus, pdev->devfn) : NULL;
++
++    if ( !iommu )
++    {
++        amd_iov_error("Fail to find iommu."
++            " %x:%x.%x cannot be removed from domain %d\n", 
++            pdev->bus, PCI_SLOT(pdev->devfn),
++            PCI_FUNC(pdev->devfn), pdev->domain->domain_id);
++        return -ENODEV;
++    }
++
++    amd_iommu_disable_domain_device(pdev->domain, iommu, bdf);
++    return 0;
++}
++
++static int amd_iommu_group_id(u8 bus, u8 devfn)
++{
++    int rt;
++    int bdf = (bus << 8) | devfn;
++    rt = ( bdf < ivrs_bdf_entries ) ?
++        ivrs_mappings[bdf].dte_requestor_id :
++        bdf;
++    return rt;
++}
++
++struct iommu_ops amd_iommu_ops = {
++    .init = amd_iommu_domain_init,
++    .add_device = amd_iommu_add_device,
++    .remove_device = amd_iommu_remove_device,
++    .assign_device  = amd_iommu_assign_device,
++    .teardown = amd_iommu_domain_destroy,
++    .map_page = amd_iommu_map_page,
++    .unmap_page = amd_iommu_unmap_page,
++    .reassign_device = amd_iommu_return_device,
++    .get_device_group_id = amd_iommu_group_id,
++    .update_ire_from_apic = amd_iommu_ioapic_update_ire,
++    .update_ire_from_msi = amd_iommu_msi_msg_update_ire,
++};
+diff --git a/include/asm-x86/amd-iommu.h b/include/asm-x86/amd-iommu.h
+new file mode 100644
+index 0000000..cdc99dd
+--- /dev/null
++++ b/include/asm-x86/amd-iommu.h
+@@ -0,0 +1,96 @@
++/*
++ * Copyright (C) 2007 Advanced Micro Devices, Inc.
++ * Author: Leo Duran <leo.duran@amd.com>
++ * Author: Wei Wang <wei.wang2@amd.com> - adapted to xen
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 2 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program; if not, write to the Free Software
++ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307 USA
++ */
++#ifndef _ASM_X86_64_AMD_IOMMU_H
++#define _ASM_X86_64_AMD_IOMMU_H
++
++#include <xen/init.h>
++#include <xen/types.h>
++#include <xen/list.h>
++#include <xen/spinlock.h>
++#include <asm/hvm/svm/amd-iommu-defs.h>
++
++#define iommu_found()           (!list_empty(&amd_iommu_head))
++
++extern struct list_head amd_iommu_head;
++
++extern int __init amd_iov_detect(void);
++
++struct table_struct {
++    void *buffer;
++    unsigned long entries;
++    unsigned long alloc_size;
++};
++
++struct amd_iommu {
++    struct list_head list;
++    spinlock_t lock; /* protect iommu */
++
++    u16 bdf;
++    u8  cap_offset;
++    u8  revision;
++    u8  unit_id;
++    u8  msi_number;
++
++    u8 pte_not_present_cached;
++    u8 ht_tunnel_support;
++    u8 iotlb_support;
++
++    u8 isochronous;
++    u8 coherent;
++    u8 res_pass_pw;
++    u8 pass_pw;
++    u8 ht_tunnel_enable;
++
++    int last_downstream_bus;
++    int downstream_bus_present[PCI_MAX_BUS_COUNT];
++
++    void *mmio_base;
++    unsigned long mmio_base_phys;
++
++    struct table_struct dev_table;
++    struct table_struct cmd_buffer;
++    u32 cmd_buffer_tail;
++    struct table_struct event_log;
++    u32 event_log_head;
++
++    int exclusion_enable;
++    int exclusion_allow_all;
++    uint64_t exclusion_base;
++    uint64_t exclusion_limit;
++
++    int msi_cap;
++    int maskbit;
++
++    int enabled;
++    int vector;
++};
++
++struct ivrs_mappings {
++    u16 dte_requestor_id;
++    u8 dte_sys_mgt_enable;
++    u8 dte_allow_exclusion;
++    u8 unity_map_enable;
++    u8 write_permission;
++    u8 read_permission;
++    unsigned long addr_range_start;
++    unsigned long addr_range_length;
++    struct amd_iommu *iommu;
++};
++#endif /* _ASM_X86_64_AMD_IOMMU_H */
+diff --git a/include/asm-x86/hvm/svm/amd-iommu-acpi.h b/include/asm-x86/hvm/svm/amd-iommu-acpi.h
+new file mode 100644
+index 0000000..440d520
+--- /dev/null
++++ b/include/asm-x86/hvm/svm/amd-iommu-acpi.h
+@@ -0,0 +1,176 @@
++/*
++ * Copyright (C) 2007 Advanced Micro Devices, Inc.
++ * Author: Leo Duran <leo.duran@amd.com>
++ * Author: Wei Wang <wei.wang2@amd.com> - adapted to xen
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 2 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program; if not, write to the Free Software
++ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307 USA
++ */
++
++#ifndef _ASM_X86_64_AMD_IOMMU_ACPI_H
++#define _ASM_X86_64_AMD_IOMMU_ACPI_H
++
++#include <xen/acpi.h>
++
++/* I/O Virtualization Reporting Structure */
++#define AMD_IOMMU_ACPI_IVRS_SIG            "IVRS"
++#define AMD_IOMMU_ACPI_IVHD_TYPE       0x10
++#define AMD_IOMMU_ACPI_IVMD_ALL_TYPE       0x20
++#define AMD_IOMMU_ACPI_IVMD_ONE_TYPE       0x21
++#define AMD_IOMMU_ACPI_IVMD_RANGE_TYPE     0x22
++#define AMD_IOMMU_ACPI_IVMD_IOMMU_TYPE     0x23
++
++/* 4-byte Device Entries */
++#define AMD_IOMMU_ACPI_IVHD_DEV_U32_PAD        0
++#define AMD_IOMMU_ACPI_IVHD_DEV_SELECT     2
++#define AMD_IOMMU_ACPI_IVHD_DEV_RANGE_START    3
++#define AMD_IOMMU_ACPI_IVHD_DEV_RANGE_END  4
++
++/* 8-byte Device Entries */
++#define AMD_IOMMU_ACPI_IVHD_DEV_U64_PAD        64
++#define AMD_IOMMU_ACPI_IVHD_DEV_ALIAS_SELECT   66
++#define AMD_IOMMU_ACPI_IVHD_DEV_ALIAS_RANGE    67
++#define AMD_IOMMU_ACPI_IVHD_DEV_EXT_SELECT 70
++#define AMD_IOMMU_ACPI_IVHD_DEV_EXT_RANGE  71
++
++/* IVHD IOMMU Flags */
++#define AMD_IOMMU_ACPI_COHERENT_MASK       0x20
++#define AMD_IOMMU_ACPI_COHERENT_SHIFT      5
++#define AMD_IOMMU_ACPI_IOTLB_SUP_MASK      0x10
++#define AMD_IOMMU_ACPI_IOTLB_SUP_SHIFT     4
++#define AMD_IOMMU_ACPI_ISOC_MASK       0x08
++#define AMD_IOMMU_ACPI_ISOC_SHIFT      3
++#define AMD_IOMMU_ACPI_RES_PASS_PW_MASK        0x04
++#define AMD_IOMMU_ACPI_RES_PASS_PW_SHIFT   2
++#define AMD_IOMMU_ACPI_PASS_PW_MASK        0x02
++#define AMD_IOMMU_ACPI_PASS_PW_SHIFT       1
++#define AMD_IOMMU_ACPI_HT_TUN_ENB_MASK     0x01
++#define AMD_IOMMU_ACPI_HT_TUN_ENB_SHIFT        0
++
++/* IVHD Device Flags */
++#define AMD_IOMMU_ACPI_LINT1_PASS_MASK     0x80
++#define AMD_IOMMU_ACPI_LINT1_PASS_SHIFT        7
++#define AMD_IOMMU_ACPI_LINT0_PASS_MASK     0x40
++#define AMD_IOMMU_ACPI_LINT0_PASS_SHIFT        6
++#define AMD_IOMMU_ACPI_SYS_MGT_MASK        0x30
++#define AMD_IOMMU_ACPI_SYS_MGT_SHIFT       4
++#define AMD_IOMMU_ACPI_NMI_PASS_MASK       0x04
++#define AMD_IOMMU_ACPI_NMI_PASS_SHIFT      2
++#define AMD_IOMMU_ACPI_EINT_PASS_MASK      0x02
++#define AMD_IOMMU_ACPI_EINT_PASS_SHIFT     1
++#define AMD_IOMMU_ACPI_INIT_PASS_MASK      0x01
++#define AMD_IOMMU_ACPI_INIT_PASS_SHIFT     0
++
++/* IVHD Device Extended Flags */
++#define AMD_IOMMU_ACPI_ATS_DISABLED_MASK   0x80000000
++#define AMD_IOMMU_ACPI_ATS_DISABLED_SHIFT  31
++
++/* IVMD Device Flags */
++#define AMD_IOMMU_ACPI_EXCLUSION_RANGE_MASK    0x08
++#define AMD_IOMMU_ACPI_EXCLUSION_RANGE_SHIFT   3
++#define AMD_IOMMU_ACPI_IW_PERMISSION_MASK  0x04
++#define AMD_IOMMU_ACPI_IW_PERMISSION_SHIFT 2
++#define AMD_IOMMU_ACPI_IR_PERMISSION_MASK  0x02
++#define AMD_IOMMU_ACPI_IR_PERMISSION_SHIFT 1
++#define AMD_IOMMU_ACPI_UNITY_MAPPING_MASK  0x01
++#define AMD_IOMMU_ACPI_UNITY_MAPPING_SHIFT 0
++
++#define ACPI_OEM_ID_SIZE                6
++#define ACPI_OEM_TABLE_ID_SIZE          8
++
++#pragma pack(1)
++struct acpi_ivrs_table_header {
++   struct acpi_table_header acpi_header;
++   u32 io_info;
++   u8  reserved[8];
++};
++
++struct acpi_ivrs_block_header {
++   u8  type;
++   u8  flags;
++   u16 length;
++   u16 dev_id;
++};
++
++struct acpi_ivhd_block_header {
++   struct acpi_ivrs_block_header header;
++   u16 cap_offset;
++   u64 mmio_base;
++   u16 pci_segment;
++   u16 iommu_info;
++   u8 reserved[4];
++};
++
++struct acpi_ivhd_device_header {
++   u8  type;
++   u16 dev_id;
++   u8  flags;
++};
++
++struct acpi_ivhd_device_trailer {
++   u8  type;
++   u16 dev_id;
++   u8  reserved;
++};
++
++struct acpi_ivhd_device_range {
++   struct acpi_ivhd_device_header header;
++   struct acpi_ivhd_device_trailer trailer;
++};
++
++struct acpi_ivhd_device_alias {
++   struct acpi_ivhd_device_header header;
++   u8  reserved1;
++   u16 dev_id;
++   u8  reserved2;
++};
++
++struct acpi_ivhd_device_alias_range {
++   struct acpi_ivhd_device_alias alias;
++   struct acpi_ivhd_device_trailer trailer;
++};
++
++struct acpi_ivhd_device_extended {
++   struct acpi_ivhd_device_header header;
++   u32 ext_flags;
++};
++
++struct acpi_ivhd_device_extended_range {
++   struct acpi_ivhd_device_extended extended;
++   struct acpi_ivhd_device_trailer trailer;
++};
++
++union acpi_ivhd_device {
++   struct acpi_ivhd_device_header header;
++   struct acpi_ivhd_device_range range;
++   struct acpi_ivhd_device_alias alias;
++   struct acpi_ivhd_device_alias_range alias_range;
++   struct acpi_ivhd_device_extended extended;
++   struct acpi_ivhd_device_extended_range extended_range;
++};
++
++struct acpi_ivmd_block_header {
++   struct acpi_ivrs_block_header header;
++   union {
++       u16 last_dev_id;
++       u16 cap_offset;
++       u16 reserved1;
++   };
++   u64 reserved2;
++   u64 start_addr;
++   u64 mem_length;
++};
++#pragma pack()
++
++#endif /* _ASM_X86_64_AMD_IOMMU_ACPI_H */
+diff --git a/include/asm-x86/hvm/svm/amd-iommu-defs.h b/include/asm-x86/hvm/svm/amd-iommu-defs.h
+new file mode 100644
+index 0000000..be801b7
+--- /dev/null
++++ b/include/asm-x86/hvm/svm/amd-iommu-defs.h
+@@ -0,0 +1,464 @@
++/*
++ * Copyright (C) 2007 Advanced Micro Devices, Inc.
++ * Author: Leo Duran <leo.duran@amd.com>
++ * Author: Wei Wang <wei.wang2@amd.com> - adapted to xen
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 2 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program; if not, write to the Free Software
++ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307 USA
++ */
++
++#ifndef _ASM_X86_64_AMD_IOMMU_DEFS_H
++#define _ASM_X86_64_AMD_IOMMU_DEFS_H
++
++/* Reserve some non-mapped pages to handle error conditions.
++ * 'bad_dma_address' will point to these reserved pages, and
++ * the mapping funtions will return 'bad_dma_address' if there
++ * are not enough page table entries available.
++ */
++#define IOMMU_RESERVED_BASE_ADDR	0
++#define IOMMU_RESERVED_PAGES		32
++
++/* IOMMU ComWaitInt polling after issuing a COMPLETION_WAIT command */
++#define COMPLETION_WAIT_DEFAULT_POLLING_COUNT	10
++
++/* IOMMU Command Buffer entries: in power of 2 increments, minimum of 256 */
++#define IOMMU_CMD_BUFFER_DEFAULT_ENTRIES	512
++
++/* IOMMU Event Log entries: in power of 2 increments, minimum of 256 */
++#define IOMMU_EVENT_LOG_DEFAULT_ENTRIES     512
++
++#define BITMAP_ENTRIES_PER_BYTE		8
++
++#define PTE_PER_TABLE_SHIFT		9
++#define PTE_PER_TABLE_SIZE		(1 << PTE_PER_TABLE_SHIFT)
++#define PTE_PER_TABLE_MASK		(~(PTE_PER_TABLE_SIZE - 1))
++#define PTE_PER_TABLE_ALIGN(entries) 	\
++	(((entries) + PTE_PER_TABLE_SIZE - 1) & PTE_PER_TABLE_MASK)
++#define PTE_PER_TABLE_ALLOC(entries)	\
++	PAGE_SIZE * (PTE_PER_TABLE_ALIGN(entries) >> PTE_PER_TABLE_SHIFT)
++
++/* 0-based aperture order (represents virtual address space for DMA mappings */
++#define APERTURE_ORDER_FOR_32B_APERTURE		0
++#define APERTURE_ORDER_FOR_64MB_APERTURE	1
++#define APERTURE_ORDER_FOR_128MB_APERTURE	2
++#define APERTURE_ORDER_FOR_256MB_APERTURE	3
++#define APERTURE_ORDER_FOR_512MB_APERTURE	4
++#define APERTURE_ORDER_FOR_1GB_APERTURE		5
++#define APERTURE_ORDER_FOR_MAX_APERTURE		APERTURE_ORDER_FOR_1GB_APERTURE
++
++/* The minimum 32MB aperture requires 2**13 level-1 page table entries */
++#define SHIFT_FOR_MIN_APERTURE		13
++#define PAGES_FROM_APERTURE_ORDER(order)	\
++	((1 << (order)) << SHIFT_FOR_MIN_APERTURE)
++#define ORDER_FROM_APERTURE_PAGES(pages)	\
++	get_order(((pages) * PAGE_SIZE) >> SHIFT_FOR_MIN_APERTURE)
++
++/*
++ * PCI config-space
++ */
++#define VALID_PCI_VENDOR_ID(id)		(((id) != 0) && ((id) != 0xFFFF))
++#define IS_PCI_MULTI_FUNCTION(hdr)	((hdr) & 0x80)
++#define IS_PCI_TYPE0_HEADER(hdr)	(((hdr) & 0x7f) == 0)
++#define IS_PCI_TYPE1_HEADER(hdr)	(((hdr) & 0x7f) == 1)
++
++#define PCI_MAX_BUS_COUNT	256
++#define PCI_MAX_DEV_COUNT	32
++#define PCI_MAX_FUNC_COUNT	8
++#define PCI_MIN_DEVFN		0
++#define PCI_MAX_DEVFN		0xFF
++
++/*
++ * Capability blocks are 4-byte aligned, and must start at >= offset 0x40,
++ * for a max of 48 possible cap_blocks (256 - 0x40 = 192; 192 / 4 = 48)
++ * The lower 2 bits of each pointer are reserved, and must be masked off.
++ */
++#define PCI_MIN_CAP_OFFSET	0x40
++#define PCI_MAX_CAP_BLOCKS	48
++#define PCI_CAP_PTR_MASK	0xFC
++
++/* IOMMU Capability */
++#define PCI_CAP_ID_MASK		0x000000FF
++#define PCI_CAP_ID_SHIFT	0
++#define PCI_CAP_NEXT_PTR_MASK	0x0000FF00
++#define PCI_CAP_NEXT_PTR_SHIFT	8
++#define PCI_CAP_TYPE_MASK	0x00070000
++#define PCI_CAP_TYPE_SHIFT	16
++#define PCI_CAP_REV_MASK	0x00F80000
++#define PCI_CAP_REV_SHIFT	19
++#define PCI_CAP_IOTLB_MASK	0x01000000
++#define PCI_CAP_IOTLB_SHIFT	24
++#define PCI_CAP_HT_TUNNEL_MASK	0x02000000
++#define PCI_CAP_HT_TUNNEL_SHIFT	25
++#define PCI_CAP_NP_CACHE_MASK	0x04000000
++#define PCI_CAP_NP_CACHE_SHIFT	26
++#define PCI_CAP_RESET_MASK	0x80000000
++#define PCI_CAP_RESET_SHIFT	31
++
++#define PCI_CAP_ID_SECURE_DEVICE	0x0F
++#define PCI_CAP_TYPE_IOMMU		0x3
++
++#define PCI_CAP_MMIO_BAR_LOW_OFFSET	0x04
++#define PCI_CAP_MMIO_BAR_HIGH_OFFSET	0x08
++#define PCI_CAP_MMIO_BAR_LOW_MASK	0xFFFFC000
++#define IOMMU_MMIO_REGION_LENGTH	0x4000
++
++#define PCI_CAP_RANGE_OFFSET		0x0C
++#define PCI_CAP_BUS_NUMBER_MASK		0x0000FF00
++#define PCI_CAP_BUS_NUMBER_SHIFT	8
++#define PCI_CAP_FIRST_DEVICE_MASK	0x00FF0000
++#define PCI_CAP_FIRST_DEVICE_SHIFT	16
++#define PCI_CAP_LAST_DEVICE_MASK	0xFF000000
++#define PCI_CAP_LAST_DEVICE_SHIFT	24
++
++#define PCI_CAP_UNIT_ID_MASK    0x0000001F
++#define PCI_CAP_UNIT_ID_SHIFT   0
++#define PCI_MISC_INFO_OFFSET    0x10
++#define PCI_CAP_MSI_NUMBER_MASK     0x0000001F
++#define PCI_CAP_MSI_NUMBER_SHIFT    0
++
++/* Device Table */
++#define IOMMU_DEV_TABLE_BASE_LOW_OFFSET		0x00
++#define IOMMU_DEV_TABLE_BASE_HIGH_OFFSET	0x04
++#define IOMMU_DEV_TABLE_BASE_LOW_MASK		0xFFFFF000
++#define IOMMU_DEV_TABLE_BASE_LOW_SHIFT		12
++#define IOMMU_DEV_TABLE_BASE_HIGH_MASK		0x000FFFFF
++#define IOMMU_DEV_TABLE_BASE_HIGH_SHIFT		0
++#define IOMMU_DEV_TABLE_SIZE_MASK		0x000001FF
++#define IOMMU_DEV_TABLE_SIZE_SHIFT		0
++
++#define IOMMU_DEV_TABLE_ENTRIES_PER_BUS		256
++#define IOMMU_DEV_TABLE_ENTRY_SIZE		32
++#define IOMMU_DEV_TABLE_U32_PER_ENTRY		(IOMMU_DEV_TABLE_ENTRY_SIZE / 4)
++
++#define IOMMU_DEV_TABLE_SYS_MGT_DMA_ABORTED	0x0
++#define IOMMU_DEV_TABLE_SYS_MGT_MSG_FORWARDED	0x1
++#define IOMMU_DEV_TABLE_SYS_MGT_INT_FORWARDED	0x2
++#define IOMMU_DEV_TABLE_SYS_MGT_DMA_FORWARDED	0x3
++
++#define IOMMU_DEV_TABLE_IO_CONTROL_ABORTED	0x0
++#define IOMMU_DEV_TABLE_IO_CONTROL_FORWARDED	0x1
++#define IOMMU_DEV_TABLE_IO_CONTROL_TRANSLATED	0x2
++
++#define IOMMU_DEV_TABLE_INT_CONTROL_ABORTED	0x0
++#define IOMMU_DEV_TABLE_INT_CONTROL_FORWARDED	0x1
++#define IOMMU_DEV_TABLE_INT_CONTROL_TRANSLATED	0x2
++
++/* DeviceTable Entry[31:0] */
++#define IOMMU_DEV_TABLE_VALID_MASK			0x00000001
++#define IOMMU_DEV_TABLE_VALID_SHIFT			0
++#define IOMMU_DEV_TABLE_TRANSLATION_VALID_MASK		0x00000002
++#define IOMMU_DEV_TABLE_TRANSLATION_VALID_SHIFT		1
++#define IOMMU_DEV_TABLE_PAGING_MODE_MASK		0x00000E00
++#define IOMMU_DEV_TABLE_PAGING_MODE_SHIFT		9
++#define IOMMU_DEV_TABLE_PAGE_TABLE_PTR_LOW_MASK		0xFFFFF000
++#define IOMMU_DEV_TABLE_PAGE_TABLE_PTR_LOW_SHIFT	12
++
++/* DeviceTable Entry[63:32] */
++#define IOMMU_DEV_TABLE_PAGE_TABLE_PTR_HIGH_MASK	0x000FFFFF
++#define IOMMU_DEV_TABLE_PAGE_TABLE_PTR_HIGH_SHIFT	0
++#define IOMMU_DEV_TABLE_IO_READ_PERMISSION_MASK		0x20000000
++#define IOMMU_DEV_TABLE_IO_READ_PERMISSION_SHIFT	29
++#define IOMMU_DEV_TABLE_IO_WRITE_PERMISSION_MASK	0x40000000
++#define IOMMU_DEV_TABLE_IO_WRITE_PERMISSION_SHIFT	30
++
++/* DeviceTable Entry[95:64] */
++#define IOMMU_DEV_TABLE_DOMAIN_ID_MASK	0x0000FFFF
++#define IOMMU_DEV_TABLE_DOMAIN_ID_SHIFT	0
++
++/* DeviceTable Entry[127:96] */
++#define IOMMU_DEV_TABLE_IOTLB_SUPPORT_MASK		0x00000001
++#define IOMMU_DEV_TABLE_IOTLB_SUPPORT_SHIFT		0
++#define IOMMU_DEV_TABLE_SUPRESS_LOGGED_PAGES_MASK	0x00000002
++#define IOMMU_DEV_TABLE_SUPRESS_LOGGED_PAGES_SHIFT	1
++#define IOMMU_DEV_TABLE_SUPRESS_ALL_PAGES_MASK		0x00000004
++#define IOMMU_DEV_TABLE_SUPRESS_ALL_PAGES_SHIFT		2
++#define IOMMU_DEV_TABLE_IO_CONTROL_MASK			0x00000018
++#define IOMMU_DEV_TABLE_IO_CONTROL_SHIFT		3
++#define IOMMU_DEV_TABLE_IOTLB_CACHE_HINT_MASK		0x00000020
++#define IOMMU_DEV_TABLE_IOTLB_CACHE_HINT_SHIFT		5
++#define IOMMU_DEV_TABLE_SNOOP_DISABLE_MASK		0x00000040
++#define IOMMU_DEV_TABLE_SNOOP_DISABLE_SHIFT		6
++#define IOMMU_DEV_TABLE_ALLOW_EXCLUSION_MASK		0x00000080
++#define IOMMU_DEV_TABLE_ALLOW_EXCLUSION_SHIFT		7
++#define IOMMU_DEV_TABLE_SYS_MGT_MSG_ENABLE_MASK		0x00000300
++#define IOMMU_DEV_TABLE_SYS_MGT_MSG_ENABLE_SHIFT	8
++
++/* DeviceTable Entry[159:128] */
++#define IOMMU_DEV_TABLE_INT_VALID_MASK          0x00000001
++#define IOMMU_DEV_TABLE_INT_VALID_SHIFT         0
++#define IOMMU_DEV_TABLE_INT_TABLE_LENGTH_MASK       0x0000001E
++#define IOMMU_DEV_TABLE_INT_TABLE_LENGTH_SHIFT      1
++#define IOMMU_DEV_TABLE_INT_TABLE_IGN_UNMAPPED_MASK      0x0000000020
++#define IOMMU_DEV_TABLE_INT_TABLE_IGN_UNMAPPED_SHIFT      5
++#define IOMMU_DEV_TABLE_INT_TABLE_PTR_LOW_MASK      0xFFFFFFC0
++#define IOMMU_DEV_TABLE_INT_TABLE_PTR_LOW_SHIFT     6
++
++/* DeviceTable Entry[191:160] */
++#define IOMMU_DEV_TABLE_INT_TABLE_PTR_HIGH_MASK     0x000FFFFF
++#define IOMMU_DEV_TABLE_INT_TABLE_PTR_HIGH_SHIFT    0
++#define IOMMU_DEV_TABLE_INIT_PASSTHRU_MASK      0x01000000
++#define IOMMU_DEV_TABLE_INIT_PASSTHRU_SHIFT     24
++#define IOMMU_DEV_TABLE_EINT_PASSTHRU_MASK      0x02000000
++#define IOMMU_DEV_TABLE_EINT_PASSTHRU_SHIFT     25
++#define IOMMU_DEV_TABLE_NMI_PASSTHRU_MASK       0x04000000
++#define IOMMU_DEV_TABLE_NMI_PASSTHRU_SHIFT      26
++#define IOMMU_DEV_TABLE_INT_CONTROL_MASK        0x30000000
++#define IOMMU_DEV_TABLE_INT_CONTROL_SHIFT       28
++#define IOMMU_DEV_TABLE_LINT0_ENABLE_MASK       0x40000000
++#define IOMMU_DEV_TABLE_LINT0_ENABLE_SHIFT      30
++#define IOMMU_DEV_TABLE_LINT1_ENABLE_MASK       0x80000000
++#define IOMMU_DEV_TABLE_LINT1_ENABLE_SHIFT      31
++
++/* Command Buffer */
++#define IOMMU_CMD_BUFFER_BASE_LOW_OFFSET	0x08
++#define IOMMU_CMD_BUFFER_BASE_HIGH_OFFSET	0x0C
++#define IOMMU_CMD_BUFFER_HEAD_OFFSET		0x2000
++#define IOMMU_CMD_BUFFER_TAIL_OFFSET		0x2008
++#define IOMMU_CMD_BUFFER_BASE_LOW_MASK		0xFFFFF000
++#define IOMMU_CMD_BUFFER_BASE_LOW_SHIFT		12
++#define IOMMU_CMD_BUFFER_BASE_HIGH_MASK		0x000FFFFF
++#define IOMMU_CMD_BUFFER_BASE_HIGH_SHIFT	0
++#define IOMMU_CMD_BUFFER_LENGTH_MASK		0x0F000000
++#define IOMMU_CMD_BUFFER_LENGTH_SHIFT		24
++#define IOMMU_CMD_BUFFER_HEAD_MASK		0x0007FFF0
++#define IOMMU_CMD_BUFFER_HEAD_SHIFT		4
++#define IOMMU_CMD_BUFFER_TAIL_MASK		0x0007FFF0
++#define IOMMU_CMD_BUFFER_TAIL_SHIFT		4
++
++#define IOMMU_CMD_BUFFER_ENTRY_SIZE			16
++#define IOMMU_CMD_BUFFER_POWER_OF2_ENTRIES_PER_PAGE	8
++#define IOMMU_CMD_BUFFER_U32_PER_ENTRY 	(IOMMU_CMD_BUFFER_ENTRY_SIZE / 4)
++
++#define IOMMU_CMD_OPCODE_MASK			0xF0000000
++#define IOMMU_CMD_OPCODE_SHIFT			28
++#define IOMMU_CMD_COMPLETION_WAIT		0x1
++#define IOMMU_CMD_INVALIDATE_DEVTAB_ENTRY	0x2
++#define IOMMU_CMD_INVALIDATE_IOMMU_PAGES	0x3
++#define IOMMU_CMD_INVALIDATE_IOTLB_PAGES	0x4
++#define IOMMU_CMD_INVALIDATE_INT_TABLE		0x5
++
++/* COMPLETION_WAIT command */
++#define IOMMU_COMP_WAIT_DATA_BUFFER_SIZE	8
++#define IOMMU_COMP_WAIT_DATA_BUFFER_ALIGNMENT	8
++#define IOMMU_COMP_WAIT_S_FLAG_MASK		0x00000001
++#define IOMMU_COMP_WAIT_S_FLAG_SHIFT		0
++#define IOMMU_COMP_WAIT_I_FLAG_MASK		0x00000002
++#define IOMMU_COMP_WAIT_I_FLAG_SHIFT		1
++#define IOMMU_COMP_WAIT_F_FLAG_MASK		0x00000004
++#define IOMMU_COMP_WAIT_F_FLAG_SHIFT		2
++#define IOMMU_COMP_WAIT_ADDR_LOW_MASK		0xFFFFFFF8
++#define IOMMU_COMP_WAIT_ADDR_LOW_SHIFT		3
++#define IOMMU_COMP_WAIT_ADDR_HIGH_MASK		0x000FFFFF
++#define IOMMU_COMP_WAIT_ADDR_HIGH_SHIFT		0
++
++/* INVALIDATE_IOMMU_PAGES command */
++#define IOMMU_INV_IOMMU_PAGES_DOMAIN_ID_MASK	0x0000FFFF
++#define IOMMU_INV_IOMMU_PAGES_DOMAIN_ID_SHIFT	0
++#define IOMMU_INV_IOMMU_PAGES_S_FLAG_MASK	0x00000001
++#define IOMMU_INV_IOMMU_PAGES_S_FLAG_SHIFT	0
++#define IOMMU_INV_IOMMU_PAGES_PDE_FLAG_MASK	0x00000002
++#define IOMMU_INV_IOMMU_PAGES_PDE_FLAG_SHIFT	1
++#define IOMMU_INV_IOMMU_PAGES_ADDR_LOW_MASK	0xFFFFF000
++#define IOMMU_INV_IOMMU_PAGES_ADDR_LOW_SHIFT	12
++#define IOMMU_INV_IOMMU_PAGES_ADDR_HIGH_MASK	0xFFFFFFFF
++#define IOMMU_INV_IOMMU_PAGES_ADDR_HIGH_SHIFT	0
++
++/* INVALIDATE_DEVTAB_ENTRY command */
++#define IOMMU_INV_DEVTAB_ENTRY_DEVICE_ID_MASK   0x0000FFFF
++#define IOMMU_INV_DEVTAB_ENTRY_DEVICE_ID_SHIFT  0
++
++/* INVALIDATE_INTERRUPT_TABLE command */
++#define IOMMU_INV_INT_TABLE_DEVICE_ID_MASK   0x0000FFFF
++#define IOMMU_INV_INT_TABLE_DEVICE_ID_SHIFT  0
++
++/* Event Log */
++#define IOMMU_EVENT_LOG_BASE_LOW_OFFSET		0x10
++#define IOMMU_EVENT_LOG_BASE_HIGH_OFFSET	0x14
++#define IOMMU_EVENT_LOG_HEAD_OFFSET		0x2010
++#define IOMMU_EVENT_LOG_TAIL_OFFSET		0x2018
++#define IOMMU_EVENT_LOG_BASE_LOW_MASK		0xFFFFF000
++#define IOMMU_EVENT_LOG_BASE_LOW_SHIFT		12
++#define IOMMU_EVENT_LOG_BASE_HIGH_MASK		0x000FFFFF
++#define IOMMU_EVENT_LOG_BASE_HIGH_SHIFT		0
++#define IOMMU_EVENT_LOG_LENGTH_MASK		0x0F000000
++#define IOMMU_EVENT_LOG_LENGTH_SHIFT		24
++#define IOMMU_EVENT_LOG_HEAD_MASK		0x0007FFF0
++#define IOMMU_EVENT_LOG_HEAD_SHIFT		4
++#define IOMMU_EVENT_LOG_TAIL_MASK		0x0007FFF0
++#define IOMMU_EVENT_LOG_TAIL_SHIFT		4
++
++#define IOMMU_EVENT_LOG_ENTRY_SIZE 			16
++#define IOMMU_EVENT_LOG_POWER_OF2_ENTRIES_PER_PAGE	8
++#define IOMMU_EVENT_LOG_U32_PER_ENTRY	(IOMMU_EVENT_LOG_ENTRY_SIZE / 4)
++
++#define IOMMU_EVENT_CODE_MASK			0xF0000000
++#define IOMMU_EVENT_CODE_SHIFT			28
++#define IOMMU_EVENT_ILLEGAL_DEV_TABLE_ENTRY	0x1
++#define IOMMU_EVENT_IO_PAGE_FALT		0x2
++#define IOMMU_EVENT_DEV_TABLE_HW_ERROR		0x3
++#define IOMMU_EVENT_PAGE_TABLE_HW_ERROR		0x4
++#define IOMMU_EVENT_ILLEGAL_COMMAND_ERROR	0x5
++#define IOMMU_EVENT_COMMAND_HW_ERROR		0x6
++#define IOMMU_EVENT_IOTLB_INV_TIMEOUT		0x7
++#define IOMMU_EVENT_INVALID_DEV_REQUEST		0x8
++
++#define IOMMU_EVENT_DOMAIN_ID_MASK           0x0000FFFF
++#define IOMMU_EVENT_DOMAIN_ID_SHIFT          0
++#define IOMMU_EVENT_DEVICE_ID_MASK           0x0000FFFF
++#define IOMMU_EVENT_DEVICE_ID_SHIFT          0
++
++/* Control Register */
++#define IOMMU_CONTROL_MMIO_OFFSET			0x18
++#define IOMMU_CONTROL_TRANSLATION_ENABLE_MASK		0x00000001
++#define IOMMU_CONTROL_TRANSLATION_ENABLE_SHIFT		0
++#define IOMMU_CONTROL_HT_TUNNEL_TRANSLATION_MASK	0x00000002
++#define IOMMU_CONTROL_HT_TUNNEL_TRANSLATION_SHIFT	1
++#define IOMMU_CONTROL_EVENT_LOG_ENABLE_MASK		0x00000004
++#define IOMMU_CONTROL_EVENT_LOG_ENABLE_SHIFT		2
++#define IOMMU_CONTROL_EVENT_LOG_INT_MASK		0x00000008
++#define IOMMU_CONTROL_EVENT_LOG_INT_SHIFT		3
++#define IOMMU_CONTROL_COMP_WAIT_INT_MASK		0x00000010
++#define IOMMU_CONTROL_COMP_WAIT_INT_SHIFT		4
++#define IOMMU_CONTROL_TRANSLATION_CHECK_DISABLE_MASK	0x00000020
++#define IOMMU_CONTROL_TRANSLATION_CHECK_DISABLE_SHIFT	5
++#define IOMMU_CONTROL_INVALIDATION_TIMEOUT_MASK		0x000000C0
++#define IOMMU_CONTROL_INVALIDATION_TIMEOUT_SHIFT	6
++#define IOMMU_CONTROL_PASS_POSTED_WRITE_MASK		0x00000100
++#define IOMMU_CONTROL_PASS_POSTED_WRITE_SHIFT		8
++#define IOMMU_CONTROL_RESP_PASS_POSTED_WRITE_MASK	0x00000200
++#define IOMMU_CONTROL_RESP_PASS_POSTED_WRITE_SHIFT	9
++#define IOMMU_CONTROL_COHERENT_MASK			0x00000400
++#define IOMMU_CONTROL_COHERENT_SHIFT			10
++#define IOMMU_CONTROL_ISOCHRONOUS_MASK			0x00000800
++#define IOMMU_CONTROL_ISOCHRONOUS_SHIFT			11
++#define IOMMU_CONTROL_COMMAND_BUFFER_ENABLE_MASK	0x00001000
++#define IOMMU_CONTROL_COMMAND_BUFFER_ENABLE_SHIFT	12
++#define IOMMU_CONTROL_RESTART_MASK			0x80000000
++#define IOMMU_CONTROL_RESTART_SHIFT			31
++
++/* Exclusion Register */
++#define IOMMU_EXCLUSION_BASE_LOW_OFFSET		0x20
++#define IOMMU_EXCLUSION_BASE_HIGH_OFFSET	0x24
++#define IOMMU_EXCLUSION_LIMIT_LOW_OFFSET	0x28
++#define IOMMU_EXCLUSION_LIMIT_HIGH_OFFSET	0x2C
++#define IOMMU_EXCLUSION_BASE_LOW_MASK		0xFFFFF000
++#define IOMMU_EXCLUSION_BASE_LOW_SHIFT		12
++#define IOMMU_EXCLUSION_BASE_HIGH_MASK		0xFFFFFFFF
++#define IOMMU_EXCLUSION_BASE_HIGH_SHIFT		0
++#define IOMMU_EXCLUSION_RANGE_ENABLE_MASK	0x00000001
++#define IOMMU_EXCLUSION_RANGE_ENABLE_SHIFT	0
++#define IOMMU_EXCLUSION_ALLOW_ALL_MASK		0x00000002
++#define IOMMU_EXCLUSION_ALLOW_ALL_SHIFT		1
++#define IOMMU_EXCLUSION_LIMIT_LOW_MASK		0xFFFFF000
++#define IOMMU_EXCLUSION_LIMIT_LOW_SHIFT		12
++#define IOMMU_EXCLUSION_LIMIT_HIGH_MASK		0xFFFFFFFF
++#define IOMMU_EXCLUSION_LIMIT_HIGH_SHIFT	0
++
++/* Status Register*/
++#define IOMMU_STATUS_MMIO_OFFSET		0x2020
++#define IOMMU_STATUS_EVENT_OVERFLOW_MASK	0x00000001
++#define IOMMU_STATUS_EVENT_OVERFLOW_SHIFT	0
++#define IOMMU_STATUS_EVENT_LOG_INT_MASK		0x00000002
++#define IOMMU_STATUS_EVENT_LOG_INT_SHIFT	1
++#define IOMMU_STATUS_COMP_WAIT_INT_MASK		0x00000004
++#define IOMMU_STATUS_COMP_WAIT_INT_SHIFT	2
++#define IOMMU_STATUS_EVENT_LOG_RUN_MASK		0x00000008
++#define IOMMU_STATUS_EVENT_LOG_RUN_SHIFT	3
++#define IOMMU_STATUS_CMD_BUFFER_RUN_MASK	0x00000010
++#define IOMMU_STATUS_CMD_BUFFER_RUN_SHIFT	4
++
++/* I/O Page Table */
++#define IOMMU_PAGE_TABLE_ENTRY_SIZE	8
++#define IOMMU_PAGE_TABLE_U32_PER_ENTRY	(IOMMU_PAGE_TABLE_ENTRY_SIZE / 4)
++#define IOMMU_PAGE_TABLE_ALIGNMENT	4096
++
++#define IOMMU_PTE_PRESENT_MASK			0x00000001
++#define IOMMU_PTE_PRESENT_SHIFT			0
++#define IOMMU_PTE_NEXT_LEVEL_MASK		0x00000E00
++#define IOMMU_PTE_NEXT_LEVEL_SHIFT		9
++#define IOMMU_PTE_ADDR_LOW_MASK			0xFFFFF000
++#define IOMMU_PTE_ADDR_LOW_SHIFT		12
++#define IOMMU_PTE_ADDR_HIGH_MASK		0x000FFFFF
++#define IOMMU_PTE_ADDR_HIGH_SHIFT		0
++#define IOMMU_PTE_U_MASK			0x08000000
++#define IOMMU_PTE_U_SHIFT			7
++#define IOMMU_PTE_FC_MASK			0x10000000
++#define IOMMU_PTE_FC_SHIFT			28
++#define IOMMU_PTE_IO_READ_PERMISSION_MASK	0x20000000
++#define IOMMU_PTE_IO_READ_PERMISSION_SHIFT	29
++#define IOMMU_PTE_IO_WRITE_PERMISSION_MASK	0x40000000
++#define IOMMU_PTE_IO_WRITE_PERMISSION_SHIFT	30
++
++/* I/O Page Directory */
++#define IOMMU_PAGE_DIRECTORY_ENTRY_SIZE		8
++#define IOMMU_PAGE_DIRECTORY_ALIGNMENT		4096
++#define IOMMU_PDE_PRESENT_MASK			0x00000001
++#define IOMMU_PDE_PRESENT_SHIFT			0
++#define IOMMU_PDE_NEXT_LEVEL_MASK		0x00000E00
++#define IOMMU_PDE_NEXT_LEVEL_SHIFT		9
++#define IOMMU_PDE_ADDR_LOW_MASK			0xFFFFF000
++#define IOMMU_PDE_ADDR_LOW_SHIFT		12
++#define IOMMU_PDE_ADDR_HIGH_MASK		0x000FFFFF
++#define IOMMU_PDE_ADDR_HIGH_SHIFT		0
++#define IOMMU_PDE_IO_READ_PERMISSION_MASK	0x20000000
++#define IOMMU_PDE_IO_READ_PERMISSION_SHIFT	29
++#define IOMMU_PDE_IO_WRITE_PERMISSION_MASK	0x40000000
++#define IOMMU_PDE_IO_WRITE_PERMISSION_SHIFT	30
++
++/* Paging modes */
++#define IOMMU_PAGING_MODE_DISABLED	0x0
++#define IOMMU_PAGING_MODE_LEVEL_0	0x0
++#define IOMMU_PAGING_MODE_LEVEL_1	0x1
++#define IOMMU_PAGING_MODE_LEVEL_2	0x2
++#define IOMMU_PAGING_MODE_LEVEL_3	0x3
++#define IOMMU_PAGING_MODE_LEVEL_4	0x4
++#define IOMMU_PAGING_MODE_LEVEL_5	0x5
++#define IOMMU_PAGING_MODE_LEVEL_6	0x6
++#define IOMMU_PAGING_MODE_LEVEL_7	0x7
++
++/* Flags */
++#define IOMMU_CONTROL_DISABLED	0
++#define IOMMU_CONTROL_ENABLED	1
++
++#define MMIO_PAGES_PER_IOMMU        (IOMMU_MMIO_REGION_LENGTH / PAGE_SIZE_4K)
++#define IOMMU_PAGES                 (MMIO_PAGES_PER_IOMMU * MAX_AMD_IOMMUS)
++#define DEFAULT_DOMAIN_ADDRESS_WIDTH    48
++#define MAX_AMD_IOMMUS                  32
++#define IOMMU_PAGE_TABLE_LEVEL_3        3
++#define IOMMU_PAGE_TABLE_LEVEL_4        4
++#define IOMMU_IO_WRITE_ENABLED          1
++#define IOMMU_IO_READ_ENABLED           1
++#define HACK_BIOS_SETTINGS                  0
++
++/* interrupt remapping table */
++#define INT_REMAP_INDEX_DM_MASK         0x1C00
++#define INT_REMAP_INDEX_DM_SHIFT        10
++#define INT_REMAP_INDEX_VECTOR_MASK     0x3FC
++#define INT_REMAP_INDEX_VECTOR_SHIFT    2
++#define INT_REMAP_ENTRY_REMAPEN_MASK    0x00000001
++#define INT_REMAP_ENTRY_REMAPEN_SHIFT   0
++#define INT_REMAP_ENTRY_SUPIOPF_MASK    0x00000002
++#define INT_REMAP_ENTRY_SUPIOPF_SHIFT   1
++#define INT_REMAP_ENTRY_INTTYPE_MASK    0x0000001C
++#define INT_REMAP_ENTRY_INTTYPE_SHIFT   2
++#define INT_REMAP_ENTRY_REQEOI_MASK     0x00000020
++#define INT_REMAP_ENTRY_REQEOI_SHIFT    5
++#define INT_REMAP_ENTRY_DM_MASK         0x00000040
++#define INT_REMAP_ENTRY_DM_SHIFT        6
++#define INT_REMAP_ENTRY_DEST_MAST       0x0000FF00
++#define INT_REMAP_ENTRY_DEST_SHIFT      8
++#define INT_REMAP_ENTRY_VECTOR_MASK     0x00FF0000
++#define INT_REMAP_ENTRY_VECTOR_SHIFT    16
++
++#endif /* _ASM_X86_64_AMD_IOMMU_DEFS_H */
+diff --git a/include/asm-x86/hvm/svm/amd-iommu-proto.h b/include/asm-x86/hvm/svm/amd-iommu-proto.h
+new file mode 100644
+index 0000000..4dc1577
+--- /dev/null
++++ b/include/asm-x86/hvm/svm/amd-iommu-proto.h
+@@ -0,0 +1,151 @@
++/*
++ * Copyright (C) 2007 Advanced Micro Devices, Inc.
++ * Author: Leo Duran <leo.duran@amd.com>
++ * Author: Wei Wang <wei.wang2@amd.com> - adapted to xen
++ *
++ * This program is free software; you can redistribute it and/or modify
++ * it under the terms of the GNU General Public License as published by
++ * the Free Software Foundation; either version 2 of the License, or
++ * (at your option) any later version.
++ *
++ * This program is distributed in the hope that it will be useful,
++ * but WITHOUT ANY WARRANTY; without even the implied warranty of
++ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
++ * GNU General Public License for more details.
++ *
++ * You should have received a copy of the GNU General Public License
++ * along with this program; if not, write to the Free Software
++ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307 USA
++ */
++
++#ifndef _ASM_X86_64_AMD_IOMMU_PROTO_H
++#define _ASM_X86_64_AMD_IOMMU_PROTO_H
++
++#include <xen/sched.h>
++#include <asm/amd-iommu.h>
++#include <xen/domain_page.h>
++
++#define for_each_amd_iommu(amd_iommu) \
++    list_for_each_entry(amd_iommu, \
++        &amd_iommu_head, list)
++
++#define DMA_32BIT_MASK  0x00000000ffffffffULL
++#define PAGE_ALIGN(addr)    (((addr) + PAGE_SIZE - 1) & PAGE_MASK)
++
++#ifdef AMD_IOV_DEBUG
++#define amd_iov_info(fmt, args...) \
++    printk(XENLOG_INFO "AMD-Vi: " fmt, ## args)
++#define amd_iov_warning(fmt, args...) \
++    printk(XENLOG_WARNING "AMD-Vi: " fmt, ## args)
++#define amd_iov_error(fmt, args...) \
++    printk(XENLOG_ERR "AMD-Vi: %s:%d: " fmt, __FILE__ , __LINE__ , ## args)
++#else
++#define amd_iov_info(fmt, args...)
++#define amd_iov_warning(fmt, args...)
++#define amd_iov_error(fmt, args...)
++#endif
++
++/* amd-iommu-detect functions */
++int __init amd_iommu_get_ivrs_dev_entries(void);
++int __init amd_iommu_detect_one_acpi(void *ivhd);
++int __init amd_iommu_detect_acpi(void);
++
++/* amd-iommu-init functions */
++int __init amd_iommu_init(void);
++int __init amd_iommu_init_one(struct amd_iommu *iommu);
++int __init amd_iommu_update_ivrs_mapping_acpi(void);
++void __init amd_iommu_init_cleanup(void);
++int __init amd_iommu_setup_shared_tables(void);
++
++/* mapping functions */
++int amd_iommu_map_page(struct domain *d, unsigned long gfn, unsigned long mfn);
++int amd_iommu_unmap_page(struct domain *d, unsigned long gfn);
++u64 amd_iommu_get_next_table_from_pte(u32 *entry);
++int amd_iommu_reserve_domain_unity_map(struct domain *domain,
++        unsigned long phys_addr, unsigned long size, int iw, int ir);
++int amd_iommu_sync_p2m(struct domain *d);
++void invalidate_all_iommu_pages(struct domain *d);
++
++/* device table functions */
++void amd_iommu_set_dev_table_entry(u32 *dte, u64 root_ptr, u64 intremap_ptr,
++        u16 domain_id, u8 sys_mgt, u8 dev_ex, u8 paging_mode);
++int amd_iommu_is_dte_page_translation_valid(u32 *entry);
++void invalidate_dev_table_entry(struct amd_iommu *iommu, u16 devic_id);
++
++/* send cmd to iommu */
++int send_iommu_command(struct amd_iommu *iommu, u32 cmd[]);
++void flush_command_buffer(struct amd_iommu *iommu);
++
++/* find iommu for bdf */
++struct amd_iommu *find_iommu_for_device(int bus, int devfn);
++
++/*interrupt remapping */
++int __init amd_iommu_setup_intremap_table(void);
++int __init deallocate_intremap_table(void);
++void invalidate_interrupt_table(struct amd_iommu *iommu, u16 device_id);
++void amd_iommu_ioapic_update_ire(unsigned int apic, unsigned int reg, unsigned
++                                int value);
++void amd_iommu_msi_msg_update_ire(struct msi_desc *msi_desc, struct msi_msg *msg);
++
++static inline u32 get_field_from_reg_u32(u32 reg_value, u32 mask, u32 shift)
++{
++    u32 field;
++    field = (reg_value & mask) >> shift;
++    return field;
++}
++
++static inline u32 set_field_in_reg_u32(u32 field, u32 reg_value,
++        u32 mask, u32 shift, u32 *reg)
++{
++    reg_value &= ~mask;
++    reg_value |= (field << shift) & mask;
++    if (reg)
++        *reg = reg_value;
++    return reg_value;
++}
++
++static inline u8 get_field_from_byte(u8 value, u8 mask, u8 shift)
++{
++    u8 field;
++    field = (value & mask) >> shift;
++    return field;
++}
++
++static inline unsigned long region_to_pages(unsigned long addr, unsigned long size)
++{
++    return (PAGE_ALIGN(addr + size) - (addr & PAGE_MASK)) >> PAGE_SHIFT;
++}
++
++static inline struct page_info* alloc_amd_iommu_pgtable(void)
++{
++    struct page_info *pg;
++    void *vaddr;
++
++    pg = alloc_domheap_page(NULL);
++    vaddr = map_domain_page(page_to_mfn(pg));
++    if ( !vaddr )
++        return 0;
++    memset(vaddr, 0, PAGE_SIZE);
++    unmap_domain_page(vaddr);
++    return pg;
++}
++
++static inline void free_amd_iommu_pgtable(struct page_info *pg)
++{
++    if ( pg != 0 )
++        free_domheap_page(pg);
++}
++
++static inline void* __alloc_amd_iommu_tables(int order)
++{
++    void *buf;
++    buf = alloc_xenheap_pages(order);
++    return buf;
++}
++
++static inline void __free_amd_iommu_tables(void *table, int order)
++{
++    free_xenheap_pages(table, order);
++}
++
++#endif /* _ASM_X86_64_AMD_IOMMU_PROTO_H */

@@ -18,9 +18,6 @@
  *	duplex (MicroWire) controllers.  Provide chipslect() and txrx_bufs(),
  *	and custom setup()/cleanup() methods.
  */
-
-#include <linux/workqueue.h>
-
 struct spi_bitbang {
 	struct workqueue_struct	*workqueue;
 	struct work_struct	work;
@@ -28,8 +25,8 @@ struct spi_bitbang {
 	spinlock_t		lock;
 	struct list_head	queue;
 	u8			busy;
+	u8			shutdown;
 	u8			use_dma;
-	u8			flags;		/* extra spi->mode support */
 
 	struct spi_master	*master;
 
@@ -58,7 +55,7 @@ struct spi_bitbang {
  * methods, if you like.
  */
 extern int spi_bitbang_setup(struct spi_device *spi);
-extern void spi_bitbang_cleanup(struct spi_device *spi);
+extern void spi_bitbang_cleanup(const struct spi_device *spi);
 extern int spi_bitbang_transfer(struct spi_device *spi, struct spi_message *m);
 extern int spi_bitbang_setup_transfer(struct spi_device *spi,
 				      struct spi_transfer *t);
@@ -82,13 +79,6 @@ extern int spi_bitbang_stop(struct spi_bitbang *spi);
  *  void setmosi(struct spi_device *, int is_on);
  *  int getmiso(struct spi_device *);
  *  void spidelay(unsigned);
- *
- * setsck()'s is_on parameter is a zero/nonzero boolean.
- *
- * setmosi()'s is_on parameter is a zero/nonzero boolean.
- *
- * getmiso() is required to return 0 or 1 only. Any other value is invalid
- * and will result in improper operation.
  *
  * A non-inlined routine would call bitbang_txrx_*() routines.  The
  * main loop could easily compile down to a handful of instructions,

@@ -14,7 +14,7 @@
 
 struct naca_struct {
 	/* Kernel only data - undefined for user space */
-	const void *xItVpdAreas;	/* VPD Data                  0x00 */
+	void *xItVpdAreas;              /* VPD Data                  0x00 */
 	void *xRamDisk;                 /* iSeries ramdisk           0x08 */
 	u64   xRamDiskSize;		/* In pages                  0x10 */
 };

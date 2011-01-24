@@ -1,0 +1,68 @@
+From: Pete Zaitcev <zaitcev@redhat.com>
+Date: Tue, 11 May 2010 22:43:47 -0400
+Subject: [usb] uhci: fix oops in uhci_scan_schedule
+Message-id: <20100511164347.452f4a52@redhat.com>
+Patchwork-id: 25016
+O-Subject: [RHEL 5 patch] Fix oops in uhci_scan_schedule
+Bugzilla: 516851
+RH-Acked-by: Jaroslav Kysela <jkysela@redhat.com>
+RH-Acked-by: Stanislaw Gruszka <sgruszka@redhat.com>
+
+Bug #516851 deals with a crash that happens when Stratus testers hot-remove
+a HC (Host Controller). If an interrupt is being serviced at the same time,
+the interrupt handler may crash the box hard. Here's the tell-tale trace:
+
+    ACPI: PCI interrupt for device 0000:7c:00.1 disabled
+    Trying to free nonexistent resource <00000000a8000000-00000000afffffff>
+    Trying to free nonexistent resource <00000000a4800000-00000000a480ffff>
+    uhci_hcd 0000:7e:1d.0: remove, state 1
+    usb usb2: USB disconnect, address 1
+    usb 2-1: USB disconnect, address 2
+    Unable to handle kernel paging request at 0000000000100100 RIP:
+     [<ffffffff88021950>] :uhci_hcd:uhci_scan_schedule+0xa2/0x89c
+    ...........
+     #4 [ffff81011de17e50] uhci_scan_schedule at ffffffff88021918
+     #5 [ffff81011de17ed0] uhci_irq at ffffffff88023cb8
+     #6 [ffff81011de17f10] usb_hcd_irq at ffffffff801f1c1f
+     #7 [ffff81011de17f20] handle_IRQ_event at ffffffff8001123b
+     #8 [ffff81011de17f50] __do_IRQ at ffffffff800ba749
+
+The driver already does the right thing, mostly, by disabling interrupts
+and quescing the controller before it's removed, but it's just a tiny bit
+not sufficient. So, the fix is to add a call to wait out the interrupts
+before proceeding.
+
+I built a kernel for Stratus to test and they verified that it works.
+
+Upstream agreed with my fix (d23356da714595b888686d22cd19061323c09190).
+
+Note that the patch includes a printout that I intended to use
+to monitor if my fix was complete. Upstream does not have it.
+I am posting it as-is because there will be no log flood from it,
+and it's the patch that Stratus actually tested with my Brew-build
+kernels, so it's safe to leave it in.
+
+I consider this patch very safe.
+
+Please ack.
+
+-- Pete
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/usb/host/uhci-hcd.c b/drivers/usb/host/uhci-hcd.c
+index 4151f61..78c24c0 100644
+--- a/drivers/usb/host/uhci-hcd.c
++++ b/drivers/usb/host/uhci-hcd.c
+@@ -673,6 +673,11 @@ static void uhci_stop(struct usb_hcd *hcd)
+ 		uhci_hc_died(uhci);
+ 	uhci_scan_schedule(uhci, NULL);
+ 	spin_unlock_irq(&uhci->lock);
++	synchronize_irq(hcd->irq);
++	if (!uhci->dead) {
++		printk("uhci %d not dead on stop, flags 0x%lx\n",
++		    hcd->self.busnum, (long)hcd->flags);
++	}
+ 
+ 	del_timer_sync(&uhci->fsbr_timer);
+ 	release_uhci(uhci);

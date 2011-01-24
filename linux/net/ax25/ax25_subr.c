@@ -14,6 +14,7 @@
 #include <linux/socket.h>
 #include <linux/in.h>
 #include <linux/kernel.h>
+#include <linux/sched.h>
 #include <linux/timer.h>
 #include <linux/string.h>
 #include <linux/sockios.h>
@@ -55,7 +56,7 @@ void ax25_frames_acked(ax25_cb *ax25, unsigned short nr)
 	 */
 	if (ax25->va != nr) {
 		while (skb_peek(&ax25->ack_queue) != NULL && ax25->va != nr) {
-			skb = skb_dequeue(&ax25->ack_queue);
+		        skb = skb_dequeue(&ax25->ack_queue);
 			kfree_skb(skb);
 			ax25->va = (ax25->va + 1) % ax25->modulus;
 		}
@@ -64,15 +65,20 @@ void ax25_frames_acked(ax25_cb *ax25, unsigned short nr)
 
 void ax25_requeue_frames(ax25_cb *ax25)
 {
-	struct sk_buff *skb;
+        struct sk_buff *skb, *skb_prev = NULL;
 
 	/*
 	 * Requeue all the un-ack-ed frames on the output queue to be picked
 	 * up by ax25_kick called from the timer. This arrangement handles the
 	 * possibility of an empty output queue.
 	 */
-	while ((skb = skb_dequeue_tail(&ax25->ack_queue)) != NULL)
-		skb_queue_head(&ax25->write_queue, skb);
+	while ((skb = skb_dequeue(&ax25->ack_queue)) != NULL) {
+		if (skb_prev == NULL)
+			skb_queue_head(&ax25->write_queue, skb);
+		else
+			skb_append(skb_prev, skb, &ax25->write_queue);
+		skb_prev = skb;
+	}
 }
 
 /*
@@ -157,7 +163,7 @@ void ax25_send_control(ax25_cb *ax25, int frametype, int poll_bit, int type)
 
 	skb_reserve(skb, ax25->ax25_dev->dev->hard_header_len);
 
-	skb_reset_network_header(skb);
+	skb->nh.raw = skb->data;
 
 	/* Assume a response - address structure for DTE */
 	if (ax25->modulus == AX25_MODULUS) {
@@ -200,7 +206,7 @@ void ax25_return_dm(struct net_device *dev, ax25_address *src, ax25_address *des
 		return;	/* Next SABM will get DM'd */
 
 	skb_reserve(skb, dev->hard_header_len);
-	skb_reset_network_header(skb);
+	skb->nh.raw = skb->data;
 
 	ax25_digi_invert(digi, &retdigi);
 
@@ -274,7 +280,6 @@ void ax25_disconnect(ax25_cb *ax25, int reason)
 	ax25_link_failed(ax25, reason);
 
 	if (ax25->sk != NULL) {
-		local_bh_disable();
 		bh_lock_sock(ax25->sk);
 		ax25->sk->sk_state     = TCP_CLOSE;
 		ax25->sk->sk_err       = reason;
@@ -284,6 +289,5 @@ void ax25_disconnect(ax25_cb *ax25, int reason)
 			sock_set_flag(ax25->sk, SOCK_DEAD);
 		}
 		bh_unlock_sock(ax25->sk);
-		local_bh_enable();
 	}
 }

@@ -1,0 +1,56 @@
+From: Larry Woodman <lwoodman@redhat.com>
+Subject: [RHEL5.1 patch] remove incorrect BUG_ON() in ppc specific hugetlb_get_unmapped_area()
+Date: Mon, 09 Apr 2007 16:35:15 -0400
+Bugzilla: 222926
+Message-Id: <461AA383.70401@redhat.com>
+Changelog: [ppc64] remove BUG_ON() in hugetlb_get_unmapped_area()
+
+
+The powerpc specific version of hugetlb_get_unmapped_area() makes some
+incorrect assumptions about what parameter checks have been made by 
+its callers.  This will cause a BUG_ON() in hugetlb_get_unmapped_area()
+if a 32-bit process attempts to make a hugepage mapping which extends 
+above TASK_SIZE (4GB).
+
+The attached upstream PPC patch fixes by checking and returning errors
+rather than causing the BUG_ON.  This problem and BZ 222926.
+
+
+
+
+
+
+
+
+--- linux-2.6.18.noarch/arch/powerpc/mm/hugetlbpage.c.orig
++++ linux-2.6.18.noarch/arch/powerpc/mm/hugetlbpage.c
+@@ -738,7 +738,8 @@ static int htlb_check_hinted_area(unsign
+ 	struct vm_area_struct *vma;
+ 
+ 	vma = find_vma(current->mm, addr);
+-	if (!vma || ((addr + len) <= vma->vm_start))
++	if ((TASK_SIZE - len >= addr) && 
++		(!vma || ((addr + len) <= vma->vm_start)))
+ 		return 0;
+ 
+ 	return -ENOMEM;
+@@ -809,6 +810,8 @@ unsigned long hugetlb_get_unmapped_area(
+ 		return -EINVAL;
+ 	if (len & ~HPAGE_MASK)
+ 		return -EINVAL;
++	if (len > TASK_SIZE)
++		return -ENOMEM;
+ 
+ 	if (!cpu_has_feature(CPU_FTR_16M_PAGE))
+ 		return -EINVAL;
+@@ -817,9 +820,6 @@ unsigned long hugetlb_get_unmapped_area(
+ 	BUG_ON((addr + len)  < addr);
+ 
+ 	if (test_thread_flag(TIF_32BIT)) {
+-		/* Paranoia, caller should have dealt with this */
+-		BUG_ON((addr + len) > 0x100000000UL);
+-
+ 		curareas = current->mm->context.low_htlb_areas;
+ 
+ 		/* First see if we can use the hint address */
+

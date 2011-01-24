@@ -1,0 +1,78 @@
+From: Larry Woodman <lwoodman@redhat.com>
+Date: Tue, 11 Mar 2008 13:21:55 -0500
+Subject: [docs] add oom_adj and oom_score use to proc.txt
+Message-id: 47D6CDC3.2050000@redhat.com
+O-Subject: [RHEL5 patch] Add documentation of oom_adj and oom_score to Documantation/filesystems/proc.txt
+Bugzilla: 277151
+
+We have a Feature request to add a user replacable OOM killer to RHEL5-U2,
+"BZ 277151 FEAT: RHEL 5.2 replaceable OOM killer".  Since that feature
+would be far to complicated and invasive for RHEL5, I convinced the
+requester to experiment around with /proc/<pid>/oom_score and
+/proc/<pid>/oom_adj.
+They verified that adjusting these parameters were adequate to satisfy
+the prioritizing
+and ordering of which process would get OOM killed first when the system
+starts
+OOM killing.   Since there is no documentation for these parameters in
+RHEL5, I
+requested release notes and requested kbase articles.  In addition, the
+following
+patch adds the upstream oom_score and oom_adj documentation as well as
+examples
+to the Documantation/filesystems/proc.txt file.
+
+Satisfies BZ 277151 and fixes BZ 239313.
+
+Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+Acked-by: Rik van Riel <riel@redhat.com>
+
+diff --git a/Documentation/filesystems/proc.txt b/Documentation/filesystems/proc.txt
+index cd0e692..558d6bb 100644
+--- a/Documentation/filesystems/proc.txt
++++ b/Documentation/filesystems/proc.txt
+@@ -40,6 +40,8 @@ Table of Contents
+   2.10	IPX
+   2.11	/proc/sys/fs/mqueue - POSIX message queues filesystem
+   2.12	/proc/<pid>/coredump_filter - Core dump filtering settings
++  2.13	/proc/<pid>/oom_adj - Adjust the oom-killer score
++  2.14	/proc/<pid>/oom_score - Display current oom-killer score
+ 
+ 
+ ------------------------------------------------------------------------------
+@@ -1997,6 +1999,35 @@ For example:
+   $ echo 0x7 > /proc/self/coredump_filter
+   $ ./some_program
+ 
+++2.13 /proc/<pid>/oom_adj - Adjust the oom-killer score
++------------------------------------------------------
++This file can be used to adjust the score used to select which processes shall
++be killed in an out-of-memory situation.  Giving a process a high score,
++increase the likelihood of this process being killed by the oom-killer. Valid
++values are in the range [-16:15], plus the special value '-17', which disables
++oom-killing that process altogether.
++
++Example: "echo 15 > proc/<pid>/oom_adj" significantly increase the likelyhood
++                                        that process <pid> will be OOM killed.
++
++Example: "echo -16 > proc/<pid>/oom_adj" significantly decrease the likelyhood
++					 that process <pid> will be OOM killed.
++
++Example: "echo -17 > /proc/<pid>/oom_adj" will disable OOM killing for process
++					  <pid> totally.
++
++Note, the oom score is passed from parent process to child process durring
++fork() operations.
++
++2.14 /proc/<pid>/oom_score - Display current oom-killer score
++-------------------------------------------------------------
++This file can be used to check what the current score used by the oom-killer
++for any given <pid>. Use it together with /proc/<pid>/oom_adj to tune which
++process will be killed in an out-of-memory situation.
++
++Example: "cat /proc/<pid>/oom_score" will display the current OOM score for
++process <pid>.
++
+ ------------------------------------------------------------------------------
+ Summary
+ ------------------------------------------------------------------------------

@@ -3,7 +3,7 @@
  *
  * Copyright (C) 2002, Linus Torvalds
  *
- * 11Jan2003	Andrew Morton
+ * 11Jan2003	akpm@digeo.com
  *		Initial version.
  */
 
@@ -24,7 +24,7 @@
  * POSIX_FADV_WILLNEED could set PG_Referenced, and POSIX_FADV_NOREUSE could
  * deactivate the pages and clear PG_Referenced.
  */
-SYSCALL_DEFINE(fadvise64_64)(int fd, loff_t offset, loff_t len, int advice)
+asmlinkage long sys_fadvise64_64(int fd, loff_t offset, loff_t len, int advice)
 {
 	struct file *file = fget(fd);
 	struct address_space *mapping;
@@ -38,7 +38,7 @@ SYSCALL_DEFINE(fadvise64_64)(int fd, loff_t offset, loff_t len, int advice)
 	if (!file)
 		return -EBADF;
 
-	if (S_ISFIFO(file->f_path.dentry->d_inode->i_mode)) {
+	if (S_ISFIFO(file->f_dentry->d_inode->i_mode)) {
 		ret = -ESPIPE;
 		goto out;
 	}
@@ -49,21 +49,9 @@ SYSCALL_DEFINE(fadvise64_64)(int fd, loff_t offset, loff_t len, int advice)
 		goto out;
 	}
 
-	if (mapping->a_ops->get_xip_mem) {
-		switch (advice) {
-		case POSIX_FADV_NORMAL:
-		case POSIX_FADV_RANDOM:
-		case POSIX_FADV_SEQUENTIAL:
-		case POSIX_FADV_WILLNEED:
-		case POSIX_FADV_NOREUSE:
-		case POSIX_FADV_DONTNEED:
-			/* no bad return value, but ignore advice */
-			break;
-		default:
-			ret = -EINVAL;
-		}
+	if (mapping->a_ops->get_xip_page)
+		/* no bad return value, but ignore advice */
 		goto out;
-	}
 
 	/* Careful about overflows. Len == 0 means "as much as possible" */
 	endbyte = offset + len;
@@ -77,20 +65,12 @@ SYSCALL_DEFINE(fadvise64_64)(int fd, loff_t offset, loff_t len, int advice)
 	switch (advice) {
 	case POSIX_FADV_NORMAL:
 		file->f_ra.ra_pages = bdi->ra_pages;
-		spin_lock(&file->f_lock);
-		file->f_mode &= ~FMODE_RANDOM;
-		spin_unlock(&file->f_lock);
 		break;
 	case POSIX_FADV_RANDOM:
-		spin_lock(&file->f_lock);
-		file->f_mode |= FMODE_RANDOM;
-		spin_unlock(&file->f_lock);
+		file->f_ra.ra_pages = 0;
 		break;
 	case POSIX_FADV_SEQUENTIAL:
 		file->f_ra.ra_pages = bdi->ra_pages * 2;
-		spin_lock(&file->f_lock);
-		file->f_mode &= ~FMODE_RANDOM;
-		spin_unlock(&file->f_lock);
 		break;
 	case POSIX_FADV_WILLNEED:
 		if (!mapping->a_ops->readpage) {
@@ -109,7 +89,7 @@ SYSCALL_DEFINE(fadvise64_64)(int fd, loff_t offset, loff_t len, int advice)
 		
 		ret = force_page_cache_readahead(mapping, file,
 				start_index,
-				nrpages);
+				max_sane_readahead(nrpages));
 		if (ret > 0)
 			ret = 0;
 		break;
@@ -134,26 +114,12 @@ out:
 	fput(file);
 	return ret;
 }
-#ifdef CONFIG_HAVE_SYSCALL_WRAPPERS
-asmlinkage long SyS_fadvise64_64(long fd, loff_t offset, loff_t len, long advice)
-{
-	return SYSC_fadvise64_64((int) fd, offset, len, (int) advice);
-}
-SYSCALL_ALIAS(sys_fadvise64_64, SyS_fadvise64_64);
-#endif
 
 #ifdef __ARCH_WANT_SYS_FADVISE64
 
-SYSCALL_DEFINE(fadvise64)(int fd, loff_t offset, size_t len, int advice)
+asmlinkage long sys_fadvise64(int fd, loff_t offset, size_t len, int advice)
 {
 	return sys_fadvise64_64(fd, offset, len, advice);
 }
-#ifdef CONFIG_HAVE_SYSCALL_WRAPPERS
-asmlinkage long SyS_fadvise64(long fd, loff_t offset, long len, long advice)
-{
-	return SYSC_fadvise64((int) fd, offset, (size_t)len, (int)advice);
-}
-SYSCALL_ALIAS(sys_fadvise64, SyS_fadvise64);
-#endif
 
 #endif

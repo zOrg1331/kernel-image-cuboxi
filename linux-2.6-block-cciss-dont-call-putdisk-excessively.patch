@@ -1,0 +1,43 @@
+From: Tomas Henzl <thenzl@redhat.com>
+Date: Sun, 29 Aug 2010 15:49:26 -0400
+Subject: [block] cciss: dont call putdisk excessively
+Message-id: <1283097002-3341-28-git-send-email-thenzl@redhat.com>
+Patchwork-id: 27883
+O-Subject: [RHEL6 PATCH 27/63] cciss: dont call putdisk excessively
+Bugzilla: 568830
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+
+don't call putdisk excessively
+Fix bug that free_hba was calling put_disk for all gendisk[]
+pointers -- all 1024 of them -- regardless of whether the were
+used or not (NULL).  This bug could cause rmmod to oops if logical
+drives had been deleted during the driver's lifetime.
+
+diff --git a/drivers/block/cciss.c b/drivers/block/cciss.c
+index eb82a20..8436470 100644
+--- a/drivers/block/cciss.c
++++ b/drivers/block/cciss.c
+@@ -3828,15 +3828,16 @@ Enomem:
+ 	return -1;
+ }
+ 
+-static void free_hba(int i)
++static void free_hba(int n)
+ {
+-	ctlr_info_t *p = hba[i];
+-	int n;
++	ctlr_info_t *h = hba[n];
++	int i;
+ 
+-	hba[i] = NULL;
+-	for (n = 0; n < CISS_MAX_LUN; n++)
+-		put_disk(p->gendisk[n]);
+-	kfree(p);
++	hba[n] = NULL;
++	for (i = 0; i < h->highest_lun + 1; i++)
++		if (h->gendisk[i] != NULL)
++			put_disk(h->gendisk[i]);
++	kfree(h);
+ }
+ 
+ /* Send a message CDB to the firmware. */

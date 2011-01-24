@@ -1,0 +1,128 @@
+From: Mike Christie <mchristi@redhat.com>
+Date: Thu, 8 Apr 2010 18:05:54 -0400
+Subject: [iscsi] fix slow failover times
+Message-id: <1270749954-32750-1-git-send-email-mchristi@redhat.com>
+Patchwork-id: 24049
+O-Subject: [PATCH RHEL 5.5] iscsi: Fix slow failover times (Take 2)
+Bugzilla: 570681
+RH-Acked-by: Tomas Henzl <thenzl@redhat.com>
+
+From: Mike Christie <mchristi@redhat.com>
+
+This is for BZ 570681.
+
+This patch fixes 3 problems. Combined they fix the issue
+where in RHEL 5.3 failover times began taking minutes instead
+of seconds.
+
+1. If we are trying to log out of a iscsi connection and close the
+socket at the same time there was a problem with the connection
+(someone pulled a cable, switch died, etc), and while lots of IO
+was being sent by the iscsi layer, then the network code could be
+waiting in sk_stream_wait_memory. This
+http://git.kernel.org/?p=linux/kernel/git/jejb/scsi-misc-2.6.git;a=commit;h=b64e77f70b8c11766e967e3485331a9e6ef01390
+patch adds a wake_up on the sock so we do not have to wait the full
+sk_sndtimeo secs.
+
+2. The iscsi layer was always retrying the send operation.
+We do not want to do this when using dm-multipath because
+that prevents us from getting the IO on a new path.
+http://git.kernel.org/?p=linux/kernel/git/jejb/scsi-misc-2.6.git;a=commit;h=32382492eb18e8e20be382a1743d0c08469d1e84
+
+3. There is a race where the xmit or scsi eh thread can reset
+the session->state while the recovery code thread is trying
+to clean up the session resources. This upstream here:
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commit;h=4ae0a6c15efcc37e94e3f30e3533bdec03c53126
+
+Changes in V2 of this patch:
+
+4. I thought the bug in #1 would be more controlled and we
+would have been in the waitqueue wait when we get there,
+but there are cases where we can be entering that wait
+when we are closing the iscsi connection, so we do not
+want to run the wait queue active check. I have sent
+a patch to fix this up here:
+http://marc.info/?l=linux-scsi&m=127006425722598&w=2
+
+I can replicate the problem here and this patch fixes the problem.
+
+diff --git a/drivers/scsi/iscsi_tcp.c b/drivers/scsi/iscsi_tcp.c
+index 5c39369..34e508d 100644
+--- a/drivers/scsi/iscsi_tcp.c
++++ b/drivers/scsi/iscsi_tcp.c
+@@ -254,8 +254,6 @@ static int iscsi_sw_tcp_xmit_segment(struct iscsi_tcp_conn *tcp_conn,
+ 
+ 		if (r < 0) {
+ 			iscsi_tcp_segment_unmap(segment);
+-			if (copied || r == -EAGAIN)
+-				break;
+ 			return r;
+ 		}
+ 		copied += r;
+@@ -276,11 +274,17 @@ static int iscsi_sw_tcp_xmit(struct iscsi_conn *conn)
+ 
+ 	while (1) {
+ 		rc = iscsi_sw_tcp_xmit_segment(tcp_conn, segment);
+-		if (rc < 0) {
++		/*
++		 * We may not have been able to send data because the conn
++		 * is getting stopped. libiscsi will know so propogate err
++		 * for it to do the right thing.
++		 */
++		if (rc == -EAGAIN)
++			return rc;
++		else if (rc < 0) {
+ 			rc = ISCSI_ERR_XMIT_FAILED;
+ 			goto error;
+-		}
+-		if (rc == 0)
++		} else if (rc == 0)
+ 			break;
+ 
+ 		consumed += rc;
+@@ -561,9 +565,10 @@ static void iscsi_sw_tcp_conn_stop(struct iscsi_cls_conn *cls_conn, int flag)
+ 	struct iscsi_conn *conn = cls_conn->dd_data;
+ 	struct iscsi_tcp_conn *tcp_conn = conn->dd_data;
+ 	struct iscsi_sw_tcp_conn *tcp_sw_conn = tcp_conn->dd_data;
++	struct socket *sock = tcp_sw_conn->sock;
+ 
+ 	/* userspace may have goofed up and not bound us */
+-	if (!tcp_sw_conn->sock)
++	if (!sock)
+ 		return;
+ 	/*
+ 	 * Make sure our recv side is stopped.
+@@ -574,6 +579,11 @@ static void iscsi_sw_tcp_conn_stop(struct iscsi_cls_conn *cls_conn, int flag)
+ 	set_bit(ISCSI_SUSPEND_BIT, &conn->suspend_rx);
+ 	write_unlock_bh(&tcp_sw_conn->sock->sk->sk_callback_lock);
+ 
++	if (sock->sk->sk_sleep) {
++		sock->sk->sk_err = EIO;
++		wake_up_interruptible(sock->sk->sk_sleep);
++	}
++
+ 	iscsi2_conn_stop(cls_conn, flag);
+ 	iscsi_sw_tcp_release_conn(conn);
+ }
+diff --git a/drivers/scsi/libiscsi2.c b/drivers/scsi/libiscsi2.c
+index 61abdf9..262617e 100644
+--- a/drivers/scsi/libiscsi2.c
++++ b/drivers/scsi/libiscsi2.c
+@@ -2657,14 +2657,15 @@ static void iscsi_start_session_recovery(struct iscsi_session *session,
+ 		session->state = ISCSI_STATE_TERMINATE;
+ 	else if (conn->stop_stage != STOP_CONN_RECOVER)
+ 		session->state = ISCSI_STATE_IN_RECOVERY;
++
++	old_stop_stage = conn->stop_stage;
++	conn->stop_stage = flag;
+ 	spin_unlock_bh(&session->lock);
+ 
+ 	del_timer_sync(&conn->transport_timer);
+ 	iscsi2_suspend_tx(conn);
+ 
+ 	spin_lock_bh(&session->lock);
+-	old_stop_stage = conn->stop_stage;
+-	conn->stop_stage = flag;
+ 	conn->c_stage = ISCSI_CONN_STOPPED;
+ 	spin_unlock_bh(&session->lock);
+ 

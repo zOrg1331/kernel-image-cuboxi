@@ -73,7 +73,7 @@ EXPORT_SYMBOL(gsc_alloc_irq);
 EXPORT_SYMBOL(gsc_claim_irq);
 
 /* Common interrupt demultiplexer used by Asp, Lasi & Wax.  */
-irqreturn_t gsc_asic_intr(int gsc_asic_irq, void *dev)
+irqreturn_t gsc_asic_intr(int gsc_asic_irq, void *dev, struct pt_regs *regs)
 {
 	unsigned long irr;
 	struct gsc_asic *gsc_asic = dev;
@@ -87,7 +87,7 @@ irqreturn_t gsc_asic_intr(int gsc_asic_irq, void *dev)
 	do {
 		int local_irq = __ffs(irr);
 		unsigned int irq = gsc_asic->global_irq[local_irq];
-		__do_IRQ(irq);
+		__do_IRQ(irq, regs);
 		irr &= ~(1 << local_irq);
 	} while (irr);
 
@@ -108,12 +108,11 @@ int gsc_find_local_irq(unsigned int irq, int *global_irqs, int limit)
 
 static void gsc_asic_disable_irq(unsigned int irq)
 {
-	struct irq_desc *desc = irq_to_desc(irq);
-	struct gsc_asic *irq_dev = desc->chip_data;
+	struct gsc_asic *irq_dev = irq_desc[irq].chip_data;
 	int local_irq = gsc_find_local_irq(irq, irq_dev->global_irq, 32);
 	u32 imr;
 
-	DEBPRINTK(KERN_DEBUG "%s(%d) %s: IMR 0x%x\n", __func__, irq,
+	DEBPRINTK(KERN_DEBUG "%s(%d) %s: IMR 0x%x\n", __FUNCTION__, irq,
 			irq_dev->name, imr);
 
 	/* Disable the IRQ line by clearing the bit in the IMR */
@@ -124,12 +123,11 @@ static void gsc_asic_disable_irq(unsigned int irq)
 
 static void gsc_asic_enable_irq(unsigned int irq)
 {
-	struct irq_desc *desc = irq_to_desc(irq);
-	struct gsc_asic *irq_dev = desc->chip_data;
+	struct gsc_asic *irq_dev = irq_desc[irq].chip_data;
 	int local_irq = gsc_find_local_irq(irq, irq_dev->global_irq, 32);
 	u32 imr;
 
-	DEBPRINTK(KERN_DEBUG "%s(%d) %s: IMR 0x%x\n", __func__, irq,
+	DEBPRINTK(KERN_DEBUG "%s(%d) %s: IMR 0x%x\n", __FUNCTION__, irq,
 			irq_dev->name, imr);
 
 	/* Enable the IRQ line by setting the bit in the IMR */
@@ -148,7 +146,7 @@ static unsigned int gsc_asic_startup_irq(unsigned int irq)
 	return 0;
 }
 
-static struct irq_chip gsc_asic_interrupt_type = {
+static struct hw_interrupt_type gsc_asic_interrupt_type = {
 	.typename =	"GSC-ASIC",
 	.startup =	gsc_asic_startup_irq,
 	.shutdown =	gsc_asic_disable_irq,
@@ -158,17 +156,15 @@ static struct irq_chip gsc_asic_interrupt_type = {
 	.end =		no_end_irq,
 };
 
-int gsc_assign_irq(struct irq_chip *type, void *data)
+int gsc_assign_irq(struct hw_interrupt_type *type, void *data)
 {
 	static int irq = GSC_IRQ_BASE;
-	struct irq_desc *desc;
 
 	if (irq > GSC_IRQ_MAX)
 		return NO_IRQ;
 
-	desc = irq_to_desc(irq);
-	desc->chip = type;
-	desc->chip_data = data;
+	irq_desc[irq].chip = type;
+	irq_desc[irq].chip_data = data;
 	return irq++;
 }
 
@@ -186,34 +182,29 @@ void gsc_asic_assign_irq(struct gsc_asic *asic, int local_irq, int *irqp)
 	*irqp = irq;
 }
 
-struct gsc_fixup_struct {
-	void (*choose_irq)(struct parisc_device *, void *);
-	void *ctrl;
-};
-
-static int gsc_fixup_irqs_callback(struct device *dev, void *data)
+static struct device *next_device(struct klist_iter *i)
 {
-	struct parisc_device *padev = to_parisc_device(dev);
-	struct gsc_fixup_struct *gf = data;
-
-	/* work-around for 715/64 and others which have parent
-	   at path [5] and children at path [5/0/x] */
-	if (padev->id.hw_type == HPHW_FAULTY)
-		gsc_fixup_irqs(padev, gf->ctrl, gf->choose_irq);
-	gf->choose_irq(padev, gf->ctrl);
-
-	return 0;
+	struct klist_node * n = klist_next(i);
+	return n ? container_of(n, struct device, knode_parent) : NULL;
 }
 
 void gsc_fixup_irqs(struct parisc_device *parent, void *ctrl,
 			void (*choose_irq)(struct parisc_device *, void *))
 {
-	struct gsc_fixup_struct data = {
-		.choose_irq	= choose_irq,
-		.ctrl		= ctrl,
-	};
+	struct device *dev;
+	struct klist_iter i;
 
-	device_for_each_child(&parent->dev, &data, gsc_fixup_irqs_callback);
+	klist_iter_init(&parent->dev.klist_children, &i);
+	while ((dev = next_device(&i))) {
+		struct parisc_device *padev = to_parisc_device(dev);
+
+		/* work-around for 715/64 and others which have parent 
+		   at path [5] and children at path [5/0/x] */
+		if (padev->id.hw_type == HPHW_FAULTY)
+			return gsc_fixup_irqs(padev, ctrl, choose_irq);
+		choose_irq(padev, ctrl);
+	}
+	klist_iter_exit(&i);
 }
 
 int gsc_common_setup(struct parisc_device *parent, struct gsc_asic *gsc_asic)

@@ -3,7 +3,7 @@
  *
  * OProfile support for SH7750/SH7750S Performance Counters
  *
- * Copyright (C) 2003 - 2008  Paul Mundt
+ * Copyright (C) 2003, 2004  Paul Mundt
  *
  * This file is subject to the terms and conditions of the GNU General Public
  * License.  See the file "COPYING" in the main directory of this archive
@@ -15,16 +15,20 @@
 #include <linux/init.h>
 #include <linux/errno.h>
 #include <linux/interrupt.h>
-#include <linux/io.h>
 #include <linux/fs.h>
-#include "op_impl.h"
+#include <linux/notifier.h>
+#include <asm/uaccess.h>
+#include <asm/io.h>
 
 #define PM_CR_BASE	0xff000084	/* 16-bit */
 #define PM_CTR_BASE	0xff100004	/* 32-bit */
 
-#define PMCR(n)		(PM_CR_BASE + ((n) * 0x04))
-#define PMCTRH(n)	(PM_CTR_BASE + 0x00 + ((n) * 0x08))
-#define PMCTRL(n)	(PM_CTR_BASE + 0x04 + ((n) * 0x08))
+#define PMCR1		(PM_CR_BASE  + 0x00)
+#define PMCR2		(PM_CR_BASE  + 0x04)
+#define PMCTR1H		(PM_CTR_BASE + 0x00)
+#define PMCTR1L		(PM_CTR_BASE + 0x04)
+#define PMCTR2H		(PM_CTR_BASE + 0x08)
+#define PMCTR2L		(PM_CTR_BASE + 0x0c)
 
 #define PMCR_PMM_MASK	0x0000003f
 
@@ -33,15 +37,27 @@
 #define PMCR_PMST	0x00004000
 #define PMCR_PMEN	0x00008000
 
-struct op_sh_model op_model_sh7750_ops;
+#define PMCR_ENABLE	(PMCR_PMST | PMCR_PMEN)
 
+/*
+ * SH7750/SH7750S have 2 perf counters
+ */
 #define NR_CNTRS	2
 
-static struct sh7750_ppc_register_config {
-	unsigned int ctrl;
-	unsigned long cnt_hi;
-	unsigned long cnt_lo;
-} regcache[NR_CNTRS];
+extern const char *get_cpu_subtype(void);
+
+struct op_counter_config {
+	unsigned long enabled;
+	unsigned long event;
+	unsigned long count;
+
+	/* Dummy values for userspace tool compliance */
+	unsigned long kernel;
+	unsigned long user;
+	unsigned long unit_mask;
+};
+
+static struct op_counter_config ctr[NR_CNTRS];
 
 /*
  * There are a number of events supported by each counter (33 in total).
@@ -95,16 +111,25 @@ static struct sh7750_ppc_register_config {
  * behavior.
  */
 
-static int sh7750_timer_notify(struct pt_regs *regs)
+static int sh7750_timer_notify(struct notifier_block *self,
+			       unsigned long val, void *regs)
 {
-	oprofile_add_sample(regs, 0);
+	oprofile_add_sample((struct pt_regs *)regs, 0);
 	return 0;
 }
 
+static struct notifier_block sh7750_timer_notifier = {
+	.notifier_call		= sh7750_timer_notify,
+};
+
 static u64 sh7750_read_counter(int counter)
 {
-	return (u64)((u64)(__raw_readl(PMCTRH(counter)) & 0xffff) << 32) |
-			   __raw_readl(PMCTRL(counter));
+	u32 hi, lo;
+
+	hi = (counter == 0) ? ctrl_inl(PMCTR1H) : ctrl_inl(PMCTR2H);
+	lo = (counter == 0) ? ctrl_inl(PMCTR1L) : ctrl_inl(PMCTR2L);
+
+	return (u64)((u64)(hi & 0xffff) << 32) | lo;
 }
 
 /*
@@ -117,7 +142,7 @@ static u64 sh7750_read_counter(int counter)
  */
 static inline int to_counter(struct file *file)
 {
-	const unsigned char *name = file->f_path.dentry->d_parent->d_name.name;
+	const unsigned char *name = file->f_dentry->d_parent->d_name.name;
 
 	return (int)simple_strtol(name, NULL, 10);
 }
@@ -153,103 +178,104 @@ static ssize_t sh7750_write_count(struct file *file, const char __user *buf,
 	 */
 	WARN_ON(val != 0);
 
-	__raw_writew(__raw_readw(PMCR(counter)) | PMCR_PMCLR, PMCR(counter));
+	if (counter == 0) {
+		ctrl_outw(ctrl_inw(PMCR1) | PMCR_PMCLR, PMCR1);
+	} else {
+		ctrl_outw(ctrl_inw(PMCR2) | PMCR_PMCLR, PMCR2);
+	}
 
 	return count;
 }
 
-static const struct file_operations count_fops = {
+static struct file_operations count_fops = {
 	.read		= sh7750_read_count,
 	.write		= sh7750_write_count,
 };
 
-static int sh7750_ppc_create_files(struct super_block *sb, struct dentry *dir)
+static int sh7750_perf_counter_create_files(struct super_block *sb, struct dentry *root)
 {
-	return oprofilefs_create_file(sb, dir, "count", &count_fops);
-}
-
-static void sh7750_ppc_reg_setup(struct op_counter_config *ctr)
-{
-	unsigned int counters = op_model_sh7750_ops.num_counters;
 	int i;
 
-	for (i = 0; i < counters; i++) {
-		regcache[i].ctrl	= 0;
-		regcache[i].cnt_hi	= 0;
-		regcache[i].cnt_lo	= 0;
+	for (i = 0; i < NR_CNTRS; i++) {
+		struct dentry *dir;
+		char buf[4];
 
-		if (!ctr[i].enabled)
-			continue;
+		snprintf(buf, sizeof(buf), "%d", i);
+		dir = oprofilefs_mkdir(sb, root, buf);
 
-		regcache[i].ctrl |= ctr[i].event | PMCR_PMEN | PMCR_PMST;
-		regcache[i].cnt_hi = (unsigned long)((ctr->count >> 32) & 0xffff);
-		regcache[i].cnt_lo = (unsigned long)(ctr->count & 0xffffffff);
+		oprofilefs_create_ulong(sb, dir, "enabled", &ctr[i].enabled);
+		oprofilefs_create_ulong(sb, dir, "event", &ctr[i].event);
+		oprofilefs_create_file(sb, dir, "count", &count_fops);
+
+		/* Dummy entries */
+		oprofilefs_create_ulong(sb, dir, "kernel", &ctr[i].kernel);
+		oprofilefs_create_ulong(sb, dir, "user", &ctr[i].user);
+		oprofilefs_create_ulong(sb, dir, "unit_mask", &ctr[i].unit_mask);
 	}
+
+	return 0;
 }
 
-static void sh7750_ppc_cpu_setup(void *args)
+static int sh7750_perf_counter_start(void)
 {
-	unsigned int counters = op_model_sh7750_ops.num_counters;
-	int i;
+	u16 pmcr;
 
-	for (i = 0; i < counters; i++) {
-		__raw_writew(0, PMCR(i));
-		__raw_writel(regcache[i].cnt_hi, PMCTRH(i));
-		__raw_writel(regcache[i].cnt_lo, PMCTRL(i));
+	/* Enable counter 1 */
+	if (ctr[0].enabled) {
+		pmcr = ctrl_inw(PMCR1);
+		WARN_ON(pmcr & PMCR_PMEN);
+
+		pmcr &= ~PMCR_PMM_MASK;
+		pmcr |= ctr[0].event;
+		ctrl_outw(pmcr | PMCR_ENABLE, PMCR1);
 	}
+
+	/* Enable counter 2 */
+	if (ctr[1].enabled) {
+		pmcr = ctrl_inw(PMCR2);
+		WARN_ON(pmcr & PMCR_PMEN);
+
+		pmcr &= ~PMCR_PMM_MASK;
+		pmcr |= ctr[1].event;
+		ctrl_outw(pmcr | PMCR_ENABLE, PMCR2);
+	}
+
+	return register_profile_notifier(&sh7750_timer_notifier);
 }
 
-static void sh7750_ppc_cpu_start(void *args)
+static void sh7750_perf_counter_stop(void)
 {
-	unsigned int counters = op_model_sh7750_ops.num_counters;
-	int i;
+	ctrl_outw(ctrl_inw(PMCR1) & ~PMCR_PMEN, PMCR1);
+	ctrl_outw(ctrl_inw(PMCR2) & ~PMCR_PMEN, PMCR2);
 
-	for (i = 0; i < counters; i++)
-		__raw_writew(regcache[i].ctrl, PMCR(i));
+	unregister_profile_notifier(&sh7750_timer_notifier);
 }
 
-static void sh7750_ppc_cpu_stop(void *args)
-{
-	unsigned int counters = op_model_sh7750_ops.num_counters;
-	int i;
+static struct oprofile_operations sh7750_perf_counter_ops = {
+	.create_files	= sh7750_perf_counter_create_files,
+	.start		= sh7750_perf_counter_start,
+	.stop		= sh7750_perf_counter_stop,
+};
 
-	/* Disable the counters */
-	for (i = 0; i < counters; i++)
-		__raw_writew(__raw_readw(PMCR(i)) & ~PMCR_PMEN, PMCR(i));
-}
-
-static inline void sh7750_ppc_reset(void)
+int __init oprofile_arch_init(struct oprofile_operations **ops)
 {
-	unsigned int counters = op_model_sh7750_ops.num_counters;
-	int i;
+	if (!(cpu_data->flags & CPU_HAS_PERF_COUNTER))
+		return -ENODEV;
+
+	sh7750_perf_counter_ops.cpu_type = (char *)get_cpu_subtype();
+	*ops = &sh7750_perf_counter_ops;
+
+	printk(KERN_INFO "oprofile: using SH-4 (%s) performance monitoring.\n",
+	       sh7750_perf_counter_ops.cpu_type);
 
 	/* Clear the counters */
-	for (i = 0; i < counters; i++)
-		__raw_writew(__raw_readw(PMCR(i)) | PMCR_PMCLR, PMCR(i));
+	ctrl_outw(ctrl_inw(PMCR1) | PMCR_PMCLR, PMCR1);
+	ctrl_outw(ctrl_inw(PMCR2) | PMCR_PMCLR, PMCR2);
+
+	return 0;
 }
 
-static int sh7750_ppc_init(void)
+void oprofile_arch_exit(void)
 {
-	sh7750_ppc_reset();
-
-	return register_timer_hook(sh7750_timer_notify);
 }
 
-static void sh7750_ppc_exit(void)
-{
-	unregister_timer_hook(sh7750_timer_notify);
-
-	sh7750_ppc_reset();
-}
-
-struct op_sh_model op_model_sh7750_ops = {
-	.cpu_type	= "sh/sh7750",
-	.num_counters	= NR_CNTRS,
-	.reg_setup	= sh7750_ppc_reg_setup,
-	.cpu_setup	= sh7750_ppc_cpu_setup,
-	.cpu_start	= sh7750_ppc_cpu_start,
-	.cpu_stop	= sh7750_ppc_cpu_stop,
-	.init		= sh7750_ppc_init,
-	.exit		= sh7750_ppc_exit,
-	.create_files	= sh7750_ppc_create_files,
-};

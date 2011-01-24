@@ -78,22 +78,18 @@ alphabook1_init_arch(void)
  * example, sound boards seem to like using IRQ 9.
  *
  * This is NOT how we should do it. PIRQ0-X should have
- * their own IRQs, the way intel uses the IO-APIC IRQs.
+ * their own IRQ's, the way intel uses the IO-APIC irq's.
  */
 
 static void __init
 sio_pci_route(void)
 {
-	unsigned int orig_route_tab;
-
-	/* First, ALWAYS read and print the original setting. */
-	pci_bus_read_config_dword(pci_isa_hose->bus, PCI_DEVFN(7, 0), 0x60,
-				  &orig_route_tab);
-	printk("%s: PIRQ original 0x%x new 0x%x\n", __func__,
-	       orig_route_tab, alpha_mv.sys.sio.route_tab);
-
 #if defined(ALPHA_RESTORE_SRM_SETUP)
-	saved_config.orig_route_tab = orig_route_tab;
+	/* First, read and save the original setting. */
+	pci_bus_read_config_dword(pci_isa_hose->bus, PCI_DEVFN(7, 0), 0x60,
+				  &saved_config.orig_route_tab);
+	printk("%s: PIRQ original 0x%x new 0x%x\n", __FUNCTION__,
+	       saved_config.orig_route_tab, alpha_mv.sys.sio.route_tab);
 #endif
 
 	/* Now override with desired setting. */
@@ -338,7 +334,7 @@ struct alpha_machine_vector avanti_mv __initmv = {
 	.pci_swizzle		= common_swizzle,
 
 	.sys = { .sio = {
-		.route_tab	= 0x0b0a050f, /* leave 14 for IDE, 9 for SND */
+		.route_tab	= 0x0b0a0e0f,
 	}}
 };
 ALIAS_MV(avanti)
