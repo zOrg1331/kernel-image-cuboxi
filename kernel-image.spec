@@ -1,6 +1,6 @@
 Name: kernel-image-un-def
 Version: 2.6.36
-Release: alt3
+Release: alt3.1
 epoch:1 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -587,6 +587,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %exclude %modules_dir/kernel/drivers/staging/lirc/
 
 %changelog
+* Tue Jan 25 2011 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.36-alt3.1
+- fix boot on i586
+
 * Tue Jan 11 2011 Anton V. Boyarshinov <boyarsh@altlinux.ru> 1:2.6.36-alt3
 - 2.6.36.3
 
