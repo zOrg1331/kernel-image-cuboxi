@@ -147,6 +147,7 @@ static unsigned long __init xen_set_identity(const struct e820map *e820)
 {
 	phys_addr_t last = xen_initial_domain() ? 0 : ISA_END_ADDRESS;
 	phys_addr_t start_pci = last;
+	phys_addr_t ram_end = last;
 	int i;
 	unsigned long identity = 0;
 
@@ -169,9 +170,25 @@ static unsigned long __init xen_set_identity(const struct e820map *e820)
 			if (start > start_pci)
 				identity += set_phys_range_identity(
 					PFN_UP(start_pci), PFN_DOWN(start));
-			start_pci = end;
-			last = end;
+
+			start_pci = last = ram_end = end;
 			continue;
+		}
+		/* Gap found right after the 1st RAM region. Skip over it.
+		 * Why? That is b/c we if we pass in dom0_mem=max:512MB and
+		 * have in reality 1GB, the E820 is clipped at 512MB. Ok?
+		 * In xen_set_pte_init we end up calling xen_set_domain_pte
+		 * which asks Xen hypervisor to alter the ownership of the MFN
+		 * to DOMID_IO. We would try to set that on PFNs from 512MB
+		 * up to the next System RAM region (likely from 0x20000->
+		 * 0x100000). But changing the ownership on "real" RAM regions
+		 * will infuriate Xen hypervisor and we would fail.
+		 * So instead of trying to set IDENTITY mapping on the gap
+		 * between the System RAM and the first non-RAM E820 region
+		 * we start at the non-RAM E820 region.*/
+		if (ram_end && start >= ram_end) {
+			start_pci = start;
+			ram_end = 0;
 		}
 		start_pci = min(start, start_pci);
 		last = end;
@@ -179,6 +196,7 @@ static unsigned long __init xen_set_identity(const struct e820map *e820)
 	if (last > start_pci)
 		identity += set_phys_range_identity(
 					PFN_UP(start_pci), PFN_DOWN(last));
+
 	return identity;
 }
 /**
