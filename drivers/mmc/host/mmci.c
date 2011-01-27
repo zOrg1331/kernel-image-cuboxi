@@ -298,22 +298,6 @@ mmci_data_irq(struct mmci_host *host, struct mmc_data *data,
 			host->data_xfered = success;
 			data->error = -EIO;
 		}
-
-		/*
-		 * We hit an error condition.  Ensure that any data
-		 * partially written to a page is properly coherent.
-		 */
-		if (data->flags & MMC_DATA_READ) {
-			struct sg_mapping_iter *sg_miter = &host->sg_miter;
-			unsigned long flags;
-
-			local_irq_save(flags);
-			if (sg_miter_next(sg_miter)) {
-				flush_dcache_page(sg_miter->page);
-				sg_miter_stop(sg_miter);
-			}
-			local_irq_restore(flags);
-		}
 	}
 
 	if (status & MCI_DATABLOCKEND)
@@ -496,9 +480,6 @@ static irqreturn_t mmci_pio_irq(int irq, void *dev_id)
 
 		if (remain)
 			break;
-
-		if (status & MCI_RXACTIVE)
-			flush_dcache_page(sg_miter->page);
 
 		status = readl(base + MMCISTATUS);
 	} while (1);
