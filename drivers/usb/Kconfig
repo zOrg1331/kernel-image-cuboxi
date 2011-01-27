@@ -141,6 +141,8 @@ source "drivers/usb/storage/Kconfig"
 
 source "drivers/usb/image/Kconfig"
 
+source "drivers/usb/usbip/Kconfig"
+
 comment "USB port drivers"
 	depends on USB
 

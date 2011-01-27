@@ -32,6 +32,8 @@ obj-$(CONFIG_USB_C67X00_HCD)	+= c67x00/
 
 obj-$(CONFIG_USB_WUSB)		+= wusbcore/
 
+obj-y				+= usbip/
+
 obj-$(CONFIG_USB_ACM)		+= class/
 obj-$(CONFIG_USB_PRINTER)	+= class/
 obj-$(CONFIG_USB_WDM)		+= class/
