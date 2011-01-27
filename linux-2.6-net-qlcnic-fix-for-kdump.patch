@@ -1,0 +1,48 @@
+From: Chad Dupuis <cdupuis@redhat.com>
+Date: Mon, 29 Nov 2010 15:55:28 -0500
+Subject: [net] qlcnic: fix for kdump
+Message-id: <20101129155527.4428.53083.sendpatchset@localhost.localdomain>
+Patchwork-id: 29655
+O-Subject: [RHEL 5.6 PATCH 2/3] qlcnic: Fix for kdump
+Bugzilla: 656008
+RH-Acked-by: David S. Miller <davem@redhat.com>
+
+Bugzilla
+--------
+
+Bug 656008 (https://bugzilla.redhat.com/show_bug.cgi?id=656008)
+
+Upstream Status
+---------------
+
+linux-netdev posting: http://www.spinics.net/lists/netdev/msg147097.html
+
+Description
+-----------
+
+>From ffc71b34716a21785cf806fc67dc1f1eb3290863 Mon Sep 17 00:00:00 2001
+From: Rajesh Borundia <rajesh.borundia@qlogic.com>
+Date: Tue, 16 Nov 2010 14:08:06 +0000
+Subject: [PATCH 1/2] qlcnic: Fix for kdump
+
+In case of kdump environment the function may be in unknown state.
+Reset the function using PCI FLR before initializing it.
+
+Signed-off-by: Rajesh Borundia <rajesh.borundia@qlogic.com>
+Signed-off-by: Anirban Chakraborty <anirban.chakraborty@qlogic.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+
+diff --git a/drivers/net/qlcnic/qlcnic_ctx.c b/drivers/net/qlcnic/qlcnic_ctx.c
+index cc5d861..ac604fe 100644
+--- a/drivers/net/qlcnic/qlcnic_ctx.c
++++ b/drivers/net/qlcnic/qlcnic_ctx.c
+@@ -480,6 +480,9 @@ int qlcnic_fw_create_ctx(struct qlcnic_adapter *adapter)
+ {
+ 	int err;
+ 
++	if (reset_devices)
++		pci_reset_function(adapter->pdev);
++
+ 	err = qlcnic_fw_cmd_create_rx_ctx(adapter);
+ 	if (err)
+ 		return err;

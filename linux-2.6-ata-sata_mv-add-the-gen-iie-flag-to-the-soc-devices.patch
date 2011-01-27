@@ -1,0 +1,32 @@
+From: David Milburn <dmilburn@redhat.com>
+Date: Wed, 18 Aug 2010 23:59:43 -0400
+Subject: [ata] sata_mv: add the Gen IIE flag to the SoC devices
+Message-id: <1282175987-21696-6-git-send-email-dmilburn@redhat.com>
+Patchwork-id: 27691
+O-Subject: [RHEL5.6 PATCH 5/9] BZ 554872 sata_mv: add the Gen IIE flag to the
+	SoC devices
+Bugzilla: 554872
+RH-Acked-by: Jeff Garzik <jgarzik@redhat.com>
+
+commit eb3a55a9f43f0f8e770c2abf70e65bdda2d5ff1e
+Author: Saeed Bishara <saeed@marvell.com>
+Date:   Mon Aug 4 00:52:55 2008 -1100
+
+    sata_mv: add the Gen IIE flag to the SoC devices.
+
+BZ 554872
+
+diff --git a/drivers/ata/sata_mv.c b/drivers/ata/sata_mv.c
+index d1815be..e0f0ea3 100644
+--- a/drivers/ata/sata_mv.c
++++ b/drivers/ata/sata_mv.c
+@@ -3022,7 +3022,8 @@ static int mv_chip_id(struct ata_host *host, unsigned int board_idx)
+ 		break;
+ 	case chip_soc:
+ 		hpriv->ops = &mv_soc_ops;
+-		hp_flags |= MV_HP_FLAG_SOC | MV_HP_ERRATA_60X1C0;
++		hp_flags |= MV_HP_FLAG_SOC | MV_HP_GEN_IIE |
++			MV_HP_ERRATA_60X1C0;
+ 		break;
+ 
+ 	default:

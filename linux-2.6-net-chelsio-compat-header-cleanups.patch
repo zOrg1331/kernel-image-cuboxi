@@ -1,0 +1,42 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Date: Mon, 28 Jun 2010 19:30:37 -0400
+Subject: [net] chelsio: compat header cleanups
+Message-id: <4C28F85D.4060403@redhat.com>
+Patchwork-id: 26599
+O-Subject: Re: [RHEL5 PATCH 3/27] compat.h cleanup: chelsio driver chagnes
+Bugzilla: 546740
+RH-Acked-by: Andy Gospodarek <gospo@redhat.com>
+
+> Based on the definition of sge_napi_schedule_prep I cannot see why it
+> could not be completely replaced with netif_rx_schedule_prep (this is
+> RHEL5, after-all).  I'm not even sure why it is critical to warn of a
+> NAPI scheduling failure (which might not even be a fair estimate of what
+> happened), so that entire if() could probably be be simply replaced with
+> a netif_rx_schedule.
+>
+
+New patch with gospo and ivecera's changes.
+
+Subject: [PATCH] chelsio driver changes
+
+Resolves 546740.
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/net/chelsio/sge.c b/drivers/net/chelsio/sge.c
+index 61b3754..4183e8f 100644
+--- a/drivers/net/chelsio/sge.c
++++ b/drivers/net/chelsio/sge.c
+@@ -1241,11 +1241,7 @@ static irqreturn_t t1_interrupt_napi(int irq, void *data, struct pt_regs *regs)
+ 		if (e->GenerationBit == q->genbit) {
+ 			if (e->DataValid ||
+ 			    process_pure_responses(adapter, e)) {
+-				if (likely(napi_schedule_prep(sge->netdev)))
+-					__netif_rx_schedule(sge->netdev);
+-				else
+-					printk(KERN_CRIT
+-					       "NAPI schedule failure!\n");
++				netif_rx_schedule(sge->netdev);
+ 			} else
+ 			writel(q->cidx, adapter->regs + A_SG_SLEEPING);
+ 			handled = 1;

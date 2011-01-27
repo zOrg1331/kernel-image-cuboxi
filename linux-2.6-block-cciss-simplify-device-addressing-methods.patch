@@ -1,0 +1,408 @@
+From: Tomas Henzl <thenzl@redhat.com>
+Date: Sun, 29 Aug 2010 15:49:06 -0400
+Subject: [block] cciss: simplify device addressing methods
+Message-id: <1283097002-3341-8-git-send-email-thenzl@redhat.com>
+Patchwork-id: 27859
+O-Subject: [RHEL6 PATCH 07/63] cciss: simplify device addressing methods
+Bugzilla: 568830
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+
+simplify device addressing methods
+Now sendcmd and sendcmd_withirq provide only one addressing method instead
+of three.  Only the scsi3addr method is used.  There is a new helper function
+log_unit_to_scsi3addr to deal with logical unit addressing.
+
+diff --git a/drivers/block/cciss.c b/drivers/block/cciss.c
+index bf4044d..3850e0a 100644
+--- a/drivers/block/cciss.c
++++ b/drivers/block/cciss.c
+@@ -177,11 +177,9 @@ static void __devinit cciss_interrupt_mode(ctlr_info_t *, struct pci_dev *,
+ 					   __u32);
+ static void start_io(ctlr_info_t *h);
+ static int sendcmd(__u8 cmd, int ctlr, void *buff, size_t size,
+-		   unsigned int use_unit_num, unsigned int log_unit,
+ 		   __u8 page_code, unsigned char *scsi3addr, int cmd_type);
+ static int sendcmd_withirq(__u8 cmd, int ctlr, void *buff, size_t size,
+-			   unsigned int use_unit_num, unsigned int log_unit,
+-			   __u8 page_code, int cmd_type);
++		__u8 page_code, unsigned char scsi3addr[], int cmd_type);
+ 
+ static void fail_all_cmds(unsigned long ctlr);
+ static void cciss_shutdown(struct pci_dev *);
+@@ -239,6 +237,15 @@ static inline void removeQ(CommandList_struct *c)
+ 	hlist_del_init(&c->list);
+ }
+ 
++static void log_unit_to_scsi3addr(ctlr_info_t *h, unsigned char scsi3addr[],
++	uint32_t log_unit)
++{
++	log_unit = h->drv[log_unit].LunID & 0x03fff;
++	memset(&scsi3addr[4], 0, 4);
++	memcpy(&scsi3addr[0], &log_unit, 4);
++	scsi3addr[3] |= 0x40;
++}
++
+ #include "cciss_scsi.c"		/* For SCSI tape support */
+ 
+ #ifdef CONFIG_PROC_FS
+@@ -1586,6 +1593,7 @@ static void cciss_get_device_descr(int ctlr, int logvol, int withirq,
+ {
+ 	int rc;
+ 	InquiryData_struct *inq_buf;
++	unsigned char scsi3addr[8];
+ 
+ 	*vendor = '\0';
+ 	*model = '\0';
+@@ -1595,14 +1603,13 @@ static void cciss_get_device_descr(int ctlr, int logvol, int withirq,
+ 	if (!inq_buf)
+ 		return;
+ 
++	log_unit_to_scsi3addr(hba[ctlr], scsi3addr, logvol);
+ 	if (withirq)
+-		rc = sendcmd_withirq(CISS_INQUIRY, ctlr, inq_buf,
+-				     sizeof(InquiryData_struct), 1, logvol,
+-				     0, TYPE_CMD);
++		rc = sendcmd_withirq(CISS_INQUIRY, ctlr,
++			inq_buf, sizeof(*inq_buf), 0, scsi3addr, TYPE_CMD);
+ 	else
+ 		rc = sendcmd(CISS_INQUIRY, ctlr, inq_buf,
+-			     sizeof(InquiryData_struct), 1, logvol, 0, NULL,
+-			     TYPE_CMD);
++			sizeof(*inq_buf), 0, scsi3addr, TYPE_CMD);
+ 	if (rc == IO_OK) {
+ 		memcpy(vendor, &inq_buf->data_byte[8], VENDOR_LEN);
+ 		vendor[VENDOR_LEN] = '\0';
+@@ -1627,6 +1634,7 @@ static void cciss_get_uid(int ctlr, int logvol, int withirq,
+ #define PAGE_83_INQ_BYTES 64
+ 	int rc;
+ 	unsigned char *buf;
++	unsigned char scsi3addr[8];
+ 
+ 	if (buflen > 16)
+ 		buflen = 16;
+@@ -1635,12 +1643,13 @@ static void cciss_get_uid(int ctlr, int logvol, int withirq,
+ 	if (!buf)
+ 		return;
+ 	memset(uid, 0, buflen);
++	log_unit_to_scsi3addr(hba[ctlr], scsi3addr, logvol);
+ 	if (withirq)
+ 		rc = sendcmd_withirq(CISS_INQUIRY, ctlr, buf,
+-			PAGE_83_INQ_BYTES, 1, logvol, 0x83, TYPE_CMD);
++			PAGE_83_INQ_BYTES, 0x83, scsi3addr, TYPE_CMD);
+ 	else
+ 		rc = sendcmd(CISS_INQUIRY, ctlr, buf,
+-			PAGE_83_INQ_BYTES, 1, logvol, 0x83, NULL, TYPE_CMD);
++			PAGE_83_INQ_BYTES, 0x83, scsi3addr, TYPE_CMD);
+ 	if (rc == IO_OK)
+ 		memcpy(uid, &buf[8], buflen);
+ 	kfree(buf);
+@@ -1963,7 +1972,7 @@ static int rebuild_lun_table(ctlr_info_t *h, int first_time)
+  
+  	return_code = sendcmd_withirq(CISS_REPORT_LOG, ctlr, ld_buff,
+  				      sizeof(ReportLunData_struct), 0,
+- 				      0, 0, TYPE_CMD);
++ 				      CTLR_LUNID, TYPE_CMD);
+  
+  	if (return_code == IO_OK)
+  		listlength = be32_to_cpu(*(__be32 *) ld_buff->LUNListLength);
+@@ -2173,11 +2182,8 @@ static int deregister_disk(ctlr_info_t *h, int drv_index,
+ 	return 0;
+ }
+ 
+-static int fill_cmd(CommandList_struct *c, __u8 cmd, int ctlr, void *buff, size_t size, unsigned int use_unit_num,	/* 0: address the controller,
+-															   1: address logical volume log_unit,
+-															   2: periph device address is scsi3addr */
+-		    unsigned int log_unit, __u8 page_code,
+-		    unsigned char *scsi3addr, int cmd_type)
++static int fill_cmd(CommandList_struct *c, __u8 cmd, int ctlr, void *buff,
++	size_t size, __u8 page_code, unsigned char *scsi3addr, int cmd_type)
+ {
+ 	ctlr_info_t *h = hba[ctlr];
+ 	u64bit buff_dma_handle;
+@@ -2193,27 +2199,12 @@ static int fill_cmd(CommandList_struct *c, __u8 cmd, int ctlr, void *buff, size_
+ 		c->Header.SGTotal = 0;
+ 	}
+ 	c->Header.Tag.lower = c->busaddr;
++	memcpy(c->Header.LUN.LunAddrBytes, scsi3addr, 8);
+ 
+ 	c->Request.Type.Type = cmd_type;
+ 	if (cmd_type == TYPE_CMD) {
+ 		switch (cmd) {
+ 		case CISS_INQUIRY:
+-			/* If the logical unit number is 0 then, this is going
+-			   to controller so It's a physical command
+-			   mode = 0 target = 0.  So we have nothing to write.
+-			   otherwise, if use_unit_num == 1,
+-			   mode = 1(volume set addressing) target = LUNID
+-			   otherwise, if use_unit_num == 2,
+-			   mode = 0(periph dev addr) target = scsi3addr */
+-			if (use_unit_num == 1) {
+-				c->Header.LUN.LogDev.VolId =
+-				    h->drv[log_unit].LunID;
+-				c->Header.LUN.LogDev.Mode = 1;
+-			} else if (use_unit_num == 2) {
+-				memcpy(c->Header.LUN.LunAddrBytes, scsi3addr,
+-				       8);
+-				c->Header.LUN.LogDev.Mode = 0;
+-			}
+ 			/* are we trying to read a vital product page */
+ 			if (page_code != 0) {
+ 				c->Request.CDB[1] = 0x01;
+@@ -2243,8 +2234,6 @@ static int fill_cmd(CommandList_struct *c, __u8 cmd, int ctlr, void *buff, size_
+ 			break;
+ 
+ 		case CCISS_READ_CAPACITY:
+-			c->Header.LUN.LogDev.VolId = h->drv[log_unit].LunID;
+-			c->Header.LUN.LogDev.Mode = 1;
+ 			c->Request.CDBLen = 10;
+ 			c->Request.Type.Attribute = ATTR_SIMPLE;
+ 			c->Request.Type.Direction = XFER_READ;
+@@ -2252,8 +2241,6 @@ static int fill_cmd(CommandList_struct *c, __u8 cmd, int ctlr, void *buff, size_
+ 			c->Request.CDB[0] = cmd;
+ 			break;
+ 		case CCISS_READ_CAPACITY_16:
+-			c->Header.LUN.LogDev.VolId = h->drv[log_unit].LunID;
+-			c->Header.LUN.LogDev.Mode = 1;
+ 			c->Request.CDBLen = 16;
+ 			c->Request.Type.Attribute = ATTR_SIMPLE;
+ 			c->Request.Type.Direction = XFER_READ;
+@@ -2276,7 +2263,6 @@ static int fill_cmd(CommandList_struct *c, __u8 cmd, int ctlr, void *buff, size_
+ 			c->Request.CDB[6] = BMIC_CACHE_FLUSH;
+ 			break;
+ 		case TEST_UNIT_READY:
+-			memcpy(c->Header. LUN.LunAddrBytes, scsi3addr, 8);
+ 			c->Request.CDBLen = 6;
+ 			c->Request.Type.Attribute = ATTR_SIMPLE;
+ 			c->Request.Type.Direction = XFER_NONE;
+@@ -2300,7 +2286,6 @@ static int fill_cmd(CommandList_struct *c, __u8 cmd, int ctlr, void *buff, size_
+ 			memcpy(&c->Request.CDB[4], buff, 8);
+ 			break;
+ 		case 1:	/* RESET message */
+-			memcpy(c->Header.LUN.LunAddrBytes, scsi3addr, 8);
+ 			c->Request.CDBLen = 16;
+ 			c->Request.Type.Attribute = ATTR_SIMPLE;
+ 			c->Request.Type.Direction = XFER_NONE;
+@@ -2387,6 +2372,8 @@ resend_cmd2:
+ 
+ 			if ((sense_key == 0x0) || (sense_key == 0x1))
+ 				return_status = IO_OK;
++			printk(KERN_WARNING "sense key = 0x%02x\n",
++				0xf & c->err_info->SenseInfo[2]);
+  			break;
+ 		case 0x18:  /* Reserve Conflict */
+ 			return_status = IO_ERROR;
+@@ -2396,7 +2383,7 @@ resend_cmd2:
+ 			printk(KERN_WARNING "cciss%d: "
+ 				"cmd has SCSI Status  = %x\n", h->ctlr,
+ 				c->err_info->ScsiStatus);
+- 		}
++		}
+ 		break;
+ 	case CMD_DATA_UNDERRUN:
+ 	case CMD_DATA_OVERRUN:
+@@ -2463,12 +2450,10 @@ command_done:
+          return return_status;
+ }
+ 
+-static int sendcmd_withirq(__u8	cmd,
+-			   int ctlr,
+-			   void *buff,
+-			   size_t size,
+-			   unsigned int use_unit_num,
+-			   unsigned int log_unit, __u8 page_code, int cmd_type)
++static int sendcmd_withirq(__u8 cmd, int ctlr, void *buff, size_t size,
++			__u8 page_code, unsigned char scsi3addr[],
++			int cmd_type)
++
+ {
+ 	ctlr_info_t *h = hba[ctlr];
+ 	CommandList_struct *c;
+@@ -2477,8 +2462,8 @@ static int sendcmd_withirq(__u8	cmd,
+ 	c = cmd_alloc(h, 0);
+ 	if (!c)
+ 		return -ENOMEM;
+-	return_status = fill_cmd(c, cmd, ctlr, buff, size, use_unit_num,
+-		log_unit, page_code, NULL, cmd_type);
++	return_status = fill_cmd(c, cmd, ctlr, buff, size, page_code,
++		scsi3addr, cmd_type);
+ 	if (return_status == IO_OK)
+ 		return_status = sendcmd_withirq_core(h, c);
+ 	cmd_free(h, c, 0);
+@@ -2493,16 +2478,16 @@ static void cciss_geometry_inquiry(int ctlr, int logvol,
+ {
+ 	int return_code;
+ 	unsigned long t;
++	unsigned char scsi3addr[8];
+ 
+ 	memset(inq_buff, 0, sizeof(InquiryData_struct));
++	log_unit_to_scsi3addr(hba[ctlr], scsi3addr, logvol);
+ 	if (withirq)
+ 		return_code = sendcmd_withirq(CISS_INQUIRY, ctlr,
+-					      inq_buff, sizeof(*inq_buff), 1,
+-					      logvol, 0xC1, TYPE_CMD);
++			inq_buff, sizeof(*inq_buff), 0xC1, scsi3addr, TYPE_CMD);
+ 	else
+ 		return_code = sendcmd(CISS_INQUIRY, ctlr, inq_buff,
+-				      sizeof(*inq_buff), 1, logvol, 0xC1, NULL,
+-				      TYPE_CMD);
++			sizeof(*inq_buff), 0xC1, scsi3addr, TYPE_CMD);
+ 	if (return_code == IO_OK) {
+ 		if (inq_buff->data_byte[8] == 0xFF) {
+ 			printk(KERN_WARNING
+@@ -2540,21 +2525,23 @@ cciss_read_capacity(int ctlr, int logvol, int withirq, sector_t *total_size,
+ {
+ 	ReadCapdata_struct *buf;
+ 	int return_code;
++	unsigned char scsi3addr[8];
++
+ 	buf = kmalloc(sizeof(ReadCapdata_struct), GFP_KERNEL);
+ 	if (buf == NULL) {
+ 		printk(KERN_WARNING "cciss: out of memory\n");
+ 		return;
+ 	}
+ 	memset(buf, 0, sizeof(ReadCapdata_struct));
+-
++	log_unit_to_scsi3addr(hba[ctlr], scsi3addr, logvol);
+ 	if (withirq)
+ 		return_code = sendcmd_withirq(CCISS_READ_CAPACITY,
+ 			ctlr, buf, sizeof(ReadCapdata_struct),
+-				1, logvol, 0, TYPE_CMD);
++				0, scsi3addr, TYPE_CMD);
+ 	else
+ 		return_code = sendcmd(CCISS_READ_CAPACITY,
+ 			ctlr, buf, sizeof(ReadCapdata_struct),
+-				1, logvol, 0, NULL, TYPE_CMD);
++				0, scsi3addr, TYPE_CMD);
+ 	if (return_code == IO_OK) {
+ 		*total_size = be32_to_cpu(*(__u32 *) buf->total_size);
+ 		*block_size = be32_to_cpu(*(__u32 *) buf->block_size);
+@@ -2572,22 +2559,23 @@ cciss_read_capacity_16(int ctlr, int logvol, int withirq, sector_t *total_size,
+ {
+ 	ReadCapdata_struct_16 *buf;
+ 	int return_code;
++	unsigned char scsi3addr[8];
++
+ 	buf = kmalloc(sizeof(ReadCapdata_struct_16), GFP_KERNEL);
+ 	if (buf == NULL) {
+ 		printk(KERN_WARNING "cciss: out of memory\n");
+ 		return;
+ 	}
+ 	memset(buf, 0, sizeof(ReadCapdata_struct_16));
+-	if (withirq) {
++	log_unit_to_scsi3addr(hba[ctlr], scsi3addr, logvol);
++	if (withirq)
+ 		return_code = sendcmd_withirq(CCISS_READ_CAPACITY_16,
+ 			ctlr, buf, sizeof(ReadCapdata_struct_16),
+-				1, logvol, 0, TYPE_CMD);
+-	}
+-	else {
++				0, scsi3addr, TYPE_CMD);
++	else
+ 		return_code = sendcmd(CCISS_READ_CAPACITY_16,
+ 			ctlr, buf, sizeof(ReadCapdata_struct_16),
+-				1, logvol, 0, NULL, TYPE_CMD);
+-	}
++				0, scsi3addr, TYPE_CMD);
+ 	if (return_code == IO_OK) {
+ 		*total_size = be64_to_cpu(*(__u64 *) buf->total_size);
+ 		*block_size = be32_to_cpu(*(__u32 *) buf->block_size);
+@@ -2846,10 +2834,6 @@ cleanup1:
+  * Only used at init time, and during SCSI error recovery.
+  */
+ static int sendcmd(__u8 cmd, int ctlr, void *buff, size_t size,
+-	unsigned int use_unit_num, /* 0: address the controller,
+-				      1: address logical volume log_unit,
+-				      2: periph device address is scsi3addr */
+-	unsigned int log_unit,
+ 	__u8 page_code, unsigned char *scsi3addr, int cmd_type)
+ {
+ 	CommandList_struct *c;
+@@ -2860,8 +2844,8 @@ static int sendcmd(__u8 cmd, int ctlr, void *buff, size_t size,
+ 		printk(KERN_WARNING "cciss: unable to get memory");
+ 		return IO_ERROR;
+ 	}
+-	status = fill_cmd(c, cmd, ctlr, buff, size, use_unit_num,
+-		log_unit, page_code, scsi3addr, cmd_type);
++	status = fill_cmd(c, cmd, ctlr, buff, size, page_code,
++		scsi3addr, cmd_type);
+ 	if (status == IO_OK)
+ 		status = sendcmd_core(hba[ctlr], c);
+ 	cmd_free(hba[ctlr], c, 1);
+@@ -4163,7 +4147,7 @@ static int __devinit cciss_init_one(struct pci_dev *pdev,
+         }
+ 
+ 	return_code = sendcmd_withirq(CISS_INQUIRY, i, inq_buff, 
+-		sizeof(InquiryData_struct), 0, 0 ,0, TYPE_CMD);
++		sizeof(InquiryData_struct), 0, CTLR_LUNID, TYPE_CMD);
+ 	if (return_code == IO_OK) {
+ 		hba[i]->firm_ver[0] = inq_buff->data_byte[32];
+ 		hba[i]->firm_ver[1] = inq_buff->data_byte[33];
+@@ -4243,7 +4227,7 @@ static void cciss_shutdown(struct pci_dev *pdev)
+ 	/* sendcmd will turn off interrupt, and send the flush...
+ 	 * To write all data in the battery backed cache to disks */
+ 	memset(flush_buf, 0, 4);
+-	return_code = sendcmd(CCISS_CACHE_FLUSH, i, flush_buf, 4, 0, 0, 0, NULL,
++	return_code = sendcmd(CCISS_CACHE_FLUSH, i, flush_buf, 4, 0, CTLR_LUNID,
+ 			      TYPE_CMD);
+ 	if (return_code == IO_OK) {
+ 		printk(KERN_INFO "Completed flushing cache on controller %d\n", i);
+diff --git a/drivers/block/cciss_scsi.c b/drivers/block/cciss_scsi.c
+index b0d47b8..8125c75 100644
+--- a/drivers/block/cciss_scsi.c
++++ b/drivers/block/cciss_scsi.c
+@@ -45,26 +45,9 @@
+ #define CCISS_ABORT_MSG 0x00
+ #define CCISS_RESET_MSG 0x01
+ 
+-/* some prototypes... */ 
+-static int sendcmd(
+-	__u8	cmd,
+-	int	ctlr,
+-	void	*buff,
+-	size_t	size,
+-	unsigned int use_unit_num, /* 0: address the controller,
+-				      1: address logical volume log_unit, 
+-				      2: address is in scsi3addr */
+-	unsigned int log_unit,
+-	__u8	page_code,
+-	unsigned char *scsi3addr,
+-	int cmd_type);
+-
+ static int fill_cmd(CommandList_struct *c, __u8 cmd, int ctlr, void *buff,
+ 	size_t size,
+-	unsigned int use_unit_num, /* 0: address the controller,
+-				      1: address logical volume log_unit,
+-				      2: periph device address is scsi3addr */
+-	unsigned int log_unit, __u8 page_code, unsigned char *scsi3addr,
++	__u8 page_code, unsigned char *scsi3addr,
+ 	int cmd_type);
+ 
+ static int sendcmd_core(ctlr_info_t *h, CommandList_struct *c);
+@@ -1492,7 +1475,7 @@ static int wait_for_device_to_become_ready(ctlr_info_t *h,
+ 			waittime = waittime * 2;
+ 
+ 		/* Send the Test Unit Ready */
+-		rc = fill_cmd(c, TEST_UNIT_READY, h->ctlr, NULL, 0, 0, 0, 0,
++		rc = fill_cmd(c, TEST_UNIT_READY, h->ctlr, NULL, 0, 0,
+ 			lunaddr, TYPE_CMD);
+ 		if (rc == 0) {
+ 			rc = sendcmd_core(h, c);
+@@ -1556,7 +1539,7 @@ static int cciss_eh_device_reset_handler(struct scsi_cmnd *scsicmd)
+ 		return FAILED;
+ 	memcpy(lunaddr, &cmd_in_trouble->Header.LUN.LunAddrBytes[0], 8);
+ 	/* send a reset to the SCSI LUN which the command was sent to */
+-	rc = sendcmd(CCISS_RESET_MSG, ctlr, NULL, 0, 2, 0, 0, lunaddr,
++	rc = sendcmd(CCISS_RESET_MSG, ctlr, NULL, 0, 0, lunaddr,
+ 		TYPE_MSG);
+ 	/* sendcmd turned off interrputs on the board, turn 'em back on. */
+ 	(*c)->access.set_intr_mask(*c, CCISS_INTR_ON);
+@@ -1584,8 +1567,7 @@ static int  cciss_eh_abort_handler(struct scsi_cmnd *scsicmd)
+ 	cmd_to_abort = (CommandList_struct *) scsicmd->host_scribble;
+ 	if (cmd_to_abort == NULL) /* paranoia */
+ 		return FAILED;
+-	rc = sendcmd(CCISS_ABORT_MSG, ctlr, &cmd_to_abort->Header.Tag, 
+-		0, 2, 0, 0, 
++	rc = sendcmd(CCISS_ABORT_MSG, ctlr, &cmd_to_abort->Header.Tag, 0, 0,
+ 		(unsigned char *) &cmd_to_abort->Header.LUN.LunAddrBytes[0], 
+ 		TYPE_MSG);
+ 	/* sendcmd turned off interrputs on the board, turn 'em back on. */

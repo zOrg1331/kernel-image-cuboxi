@@ -16,7 +16,7 @@ diff -up ./kernel/hung_task.c.hungtsk ./kernel/hung_task.c
  
  unsigned long __read_mostly sysctl_hung_task_warnings = 10;
  
-@@ -142,17 +142,19 @@ static void check_hung_uninterruptible_t
+@@ -142,7 +142,7 @@ static void check_hung_uninterruptible_t
  		return;
  
  	rcu_read_lock();
@@ -25,11 +25,7 @@ diff -up ./kernel/hung_task.c.hungtsk ./kernel/hung_task.c
  		if (!--max_count)
  			goto unlock;
  		if (!--batch_count) {
- 			batch_count = HUNG_TASK_BATCHING;
- 			rcu_lock_break(g, t);
-+			if (t->exit_state || g->exit_state)
-+				goto unlock;
- 		}
+@@ -152,7 +152,7 @@ static void check_hung_uninterruptible_t
  		/* use "==" to skip the TASK_KILLABLE tasks waiting on NFS */
  		if (t->state == TASK_UNINTERRUPTIBLE)
  			check_hung_task(t, timeout);

@@ -1,0 +1,53 @@
+From: Danny Feng <dfeng@redhat.com>
+Date: Thu, 3 Dec 2009 09:50:09 -0500
+Subject: [net] tun: check supplemental groups in TUN/TAP driver
+Message-id: <20091203094945.8192.67128.sendpatchset@dhcp-65-180.nay.redhat.com>
+Patchwork-id: 21663
+O-Subject: [PATCH RHEL5.5] tun: Check supplemental groups in TUN/TAP driver
+Bugzilla: 540786
+RH-Acked-by: Dean Nelson <dnelson@redhat.com>
+RH-Acked-by: Jarod Wilson <jarod@redhat.com>
+
+backport of upstream commit 1bded71:
+
+    tun: Check supplemental groups in TUN/TAP driver.
+
+    Michael Tokarev wrote:
+    []
+    > 2, and this is the main one: How about supplementary groups?
+    >
+    > Here I have a valid usage case: a group of testers running various
+    > versions of windows using KVM (kernel virtual machine), 1 at a time,
+    > to test some software.  kvm is set up to use bridge with a tap device
+    > (there should be a way to connect to the machine).  Anyone on that group
+    > has to be able to start/stop the virtual machines.
+    >
+    > My first attempt - pretty obvious when I saw -g option of tunctl - is
+    > to add group ownership for the tun device and add a supplementary group
+    > to each user (their primary group should be different).  But that fails,
+    > since kernel only checks for egid, not any other group ids.
+    >
+    > What's the reasoning to not allow supplementary groups and to only check
+    > for egid?
+
+    Signed-off-by: Michael Tokarev <mjt@tls.msk.ru>
+    Signed-off-by: David S. Miller <davem@davemloft.net>
+
+brew build:
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=2120272
+
+resolves bz#540786
+
+diff --git a/drivers/net/tun.c b/drivers/net/tun.c
+index 8dd6048..4df9ef0 100644
+--- a/drivers/net/tun.c
++++ b/drivers/net/tun.c
+@@ -668,7 +668,7 @@ static int tun_set_iff(struct file *file, struct ifreq *ifr)
+ 		if (((tun->owner != -1 &&
+ 		      current->euid != tun->owner) ||
+ 		     (tun->group != -1 &&
+-		      current->egid != tun->group)) &&
++		      !in_egroup_p(tun->group))) &&
+ 		     !capable(CAP_NET_ADMIN))
+ 			return -EPERM;
+ 	} 

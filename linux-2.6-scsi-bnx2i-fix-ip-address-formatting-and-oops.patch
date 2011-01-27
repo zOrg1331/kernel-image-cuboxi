@@ -1,0 +1,68 @@
+From: Mike Christie <mchristi@redhat.com>
+Date: Tue, 26 Oct 2010 02:21:02 -0400
+Subject: [scsi] bnx2i: fix ip address formatting and oops
+Message-id: <1288059662-7634-1-git-send-email-mchristi@redhat.com>
+Patchwork-id: 28909
+O-Subject: [PATCH RHEL 5.6]: bnx2i fix ip address formatting and oops
+Bugzilla: 646708
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+
+From: Mike Christie <mchristi@redhat.com>
+
+This is for bz 646708.
+
+The iscsi drivers implement a function where userspace
+requests that the iscsi port return its ip address.
+Upstream the kernel uses I4/I6 to format the ip address
+but we do not have support for this in rhel5. So when
+running bnx2i_host_get_param you will get garbage.
+
+Also if the port is not completely setup the csk pointer may be null
+so this patch adds a check to avoid a null pointer oops.
+
+Patch was tested by broadcom and myself.
+
+The workaround for the missing I4/I6 support is of course
+not upstream. A patch to check for a valid csk is being sent
+now.
+
+diff --git a/drivers/scsi/bnx2i/bnx2i_iscsi.c b/drivers/scsi/bnx2i/bnx2i_iscsi.c
+index 4e7384b..8cbdec0 100644
+--- a/drivers/scsi/bnx2i/bnx2i_iscsi.c
++++ b/drivers/scsi/bnx2i/bnx2i_iscsi.c
+@@ -1524,10 +1524,31 @@ static int bnx2i_host_get_param(struct Scsi_Host *shost,
+ 						    struct bnx2i_endpoint,
+ 						    link);
+ 			csk = bnx2i_ep->cm_sk;
+-			if (test_bit(SK_F_IPV6, &csk->flags))
+-				len = sprintf(buf, "%pI6\n", csk->src_ip);
+-			else
+-				len = sprintf(buf, "%pI4\n", csk->src_ip);
++			if (csk) {
++				if (test_bit(SK_F_IPV6, &csk->flags)) {
++					u16 *ip = (u16 *) &csk->src_ip[0];
++
++					/* RHEL5.x does not support I6 */
++					len = sprintf(buf,
++						      "%04x:%04x:%04x:%04x:"
++						      "%04x:%04x:%04x:%04x\n",
++						      htons(ip[0]),
++						      htons(ip[1]),
++						      htons(ip[2]),
++						      htons(ip[3]),
++						      htons(ip[4]),
++						      htons(ip[5]),
++						      htons(ip[6]),
++						      htons(ip[7]));
++				} else {
++					u8 *ip = (u8 *) &csk->src_ip[0];
++
++					/* RHEL5.x does not support I4 */
++					len = sprintf(buf, "%d.%d.%d.%d\n",
++						      ip[0], ip[1], ip[2],
++						      ip[3]);
++				}
++			}
+ 		}
+ 		read_unlock_bh(&hba->ep_rdwr_lock);
+ 		break;

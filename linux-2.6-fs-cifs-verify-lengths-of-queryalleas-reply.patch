@@ -1,0 +1,102 @@
+From: Jeff Layton <jlayton@redhat.com>
+Date: Tue, 8 Jun 2010 12:26:17 -0400
+Subject: [fs] cifs: verify lengths of QueryAllEAs reply
+Message-id: <1275999978-20705-6-git-send-email-jlayton@redhat.com>
+Patchwork-id: 26028
+O-Subject: [RHEL5.6 PATCH 5/6] BZ#527268: cifs: verify lengths of QueryAllEAs
+	reply
+Bugzilla: 527268
+RH-Acked-by: Steve Dickson <SteveD@redhat.com>
+
+Make sure the lengths in a QUERY_ALL_EAS reply don't make the parser walk
+off the end of the SMB.
+
+Signed-off-by: Jeff Layton <jlayton@redhat.com>
+Signed-off-by: Steve French <sfrench@us.ibm.com>
+
+diff --git a/fs/cifs/cifssmb.c b/fs/cifs/cifssmb.c
+index 6bb9779..bcfe5ef 100644
+--- a/fs/cifs/cifssmb.c
++++ b/fs/cifs/cifssmb.c
+@@ -5313,6 +5313,7 @@ CIFSSMBQAllEAs(const int xid, struct cifsTconInfo *tcon,
+ 	struct fealist *ea_response_data;
+ 	struct fea *temp_fea;
+ 	char *temp_ptr;
++	char *end_of_smb;
+ 	__u16 params, byte_count, data_offset;
+ 
+ 	cFYI(1, ("In Query All EAs path %s", searchName));
+@@ -5396,22 +5397,47 @@ QAllEAsRetry:
+ 		goto QAllEAsOut;
+ 	}
+ 
++	/* make sure list_len doesn't go past end of SMB */
++	end_of_smb = (char *)pByteArea(&pSMBr->hdr) + BCC(&pSMBr->hdr);
++	if ((char *)ea_response_data + list_len > end_of_smb) {
++		cFYI(1, ("EA list appears to go beyond SMB"));
++		rc = -EIO;
++		goto QAllEAsOut;
++	}
++
+ 	/* account for ea list len */
+ 	list_len -= 4;
+ 	temp_fea = ea_response_data->list;
+ 	temp_ptr = (char *)temp_fea;
+ 	while (list_len > 0) {
++		__u8 name_len;
+ 		__u16 value_len;
++
+ 		list_len -= 4;
+ 		temp_ptr += 4;
+-		rc += temp_fea->name_len;
++		/* make sure we can read name_len and value_len */
++		if (list_len < 0) {
++			cFYI(1, ("EA entry goes beyond length of list"));
++			rc = -EIO;
++			goto QAllEAsOut;
++		}
++
++		name_len = temp_fea->name_len;
++		value_len = le16_to_cpu(temp_fea->value_len);
++		list_len -= name_len + 1 + value_len;
++		if (list_len < 0) {
++			cFYI(1, ("EA entry goes beyond length of list"));
++			rc = -EIO;
++			goto QAllEAsOut;
++		}
++
+ 		/* account for prefix user. and trailing null */
+-		rc = rc + 5 + 1;
++		rc += (5 + 1 + name_len);
+ 		if (rc < (int) buf_size) {
+ 			memcpy(EAData, "user.", 5);
+ 			EAData += 5;
+-			memcpy(EAData, temp_ptr, temp_fea->name_len);
+-			EAData += temp_fea->name_len;
++			memcpy(EAData, temp_ptr, name_len);
++			EAData += name_len;
+ 			/* null terminate name */
+ 			*EAData = 0;
+ 			++EAData;
+@@ -5422,20 +5448,7 @@ QAllEAsRetry:
+ 			rc = -ERANGE;
+ 			break;
+ 		}
+-		list_len -= temp_fea->name_len;
+-		temp_ptr += temp_fea->name_len;
+-		/* account for trailing null */
+-		list_len--;
+-		temp_ptr++;
+-		value_len = le16_to_cpu(temp_fea->value_len);
+-		list_len -= value_len;
+-		temp_ptr += value_len;
+-		/* BB check that temp_ptr is still
+-		      within the SMB BB*/
+-
+-		/* no trailing null to account for
+-		   in value len */
+-		/* go on to next EA */
++		temp_ptr += name_len + 1 + value_len;
+ 		temp_fea = (struct fea *)temp_ptr;
+ 	}
+ 

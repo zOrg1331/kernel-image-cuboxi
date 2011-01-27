@@ -1,0 +1,48 @@
+From: Chad Dupuis <cdupuis@redhat.com>
+Date: Tue, 3 Aug 2010 13:50:29 -0400
+Subject: [net] netxen: fix tx timeout recovery for NX2031 chip
+Message-id: <20100803134745.2239.71134.sendpatchset@localhost.localdomain>
+Patchwork-id: 27325
+O-Subject: [RHEL 5.6 PATCH 23/44] netxen: fix tx timeout recovery for NX2031 chip
+Bugzilla: 562937
+RH-Acked-by: David S. Miller <davem@redhat.com>
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+
+Bugzilla
+========
+
+562937
+
+Upstream Status
+===============
+
+net-2.6 commit id 41f3e0b1f524c47908e944a7e55f11c371ddddec
+
+Description
+===========
+
+>From b42bf318d9ff53a2fe4da094911d92c92c10bf10 Mon Sep 17 00:00:00 2001
+From: Amit Kumar Salecha <amit.salecha@qlogic.com>
+Date: Tue, 2 Feb 2010 04:16:20 +0000
+Subject: [PATCH] netxen: fix tx timeout recovery for NX2031 chip
+
+For NX2031, first try to scrub interrupt before requesting firmware
+reset. Return statement was missing after scrubbbing interrupt.
+
+Signed-off-by: Vernon Mauery <vernux@us.ibm.com>
+Signed-off-by: Amit Kumar Salecha <amit.salecha@qlogic.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+
+diff --git a/drivers/net/netxen/netxen_nic_main.c b/drivers/net/netxen/netxen_nic_main.c
+index 4d02f0d..a82bb8c 100644
+--- a/drivers/net/netxen/netxen_nic_main.c
++++ b/drivers/net/netxen/netxen_nic_main.c
+@@ -2035,7 +2035,7 @@ static void netxen_tx_timeout_task(void *data)
+ 		netif_wake_queue(adapter->netdev);
+ 
+ 		clear_bit(__NX_RESETTING, &adapter->state);
+-
++		return;
+ 	} else {
+ 		clear_bit(__NX_RESETTING, &adapter->state);
+ 		if (!netxen_nic_reset_context(adapter)) {

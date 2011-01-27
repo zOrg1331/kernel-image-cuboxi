@@ -1,0 +1,188 @@
+From: Steve Dickson <SteveD@redhat.com>
+Date: Wed, 27 Oct 2010 19:29:55 -0400
+Subject: [fs] nfs: allow different protocol mounts to same server
+Message-id: <1288207795-5343-1-git-send-email-steved@redhat.com>
+Patchwork-id: 28955
+O-Subject: [RHEL5.6 PATCH] [bz 460659] Allow different protocols on mounts to
+	same server (take 2)
+Bugzilla: 460659
+RH-Acked-by: Jeff Layton <jlayton@redhat.com>
+
+Currently when a RHEL5 client mounts two different mount points
+to the same server on different network transports, both
+mount points end up using the first network transport
+
+This patch correct that behavior by making each
+mount point use the transport that was specified,
+which is how it works in upstream.
+
+Signed-off-by: Steve Dickson <steved@redhat.com>
+
+diff --git a/fs/nfs/callback.c b/fs/nfs/callback.c
+index be11beb..9431a56 100644
+--- a/fs/nfs/callback.c
++++ b/fs/nfs/callback.c
+@@ -177,7 +177,7 @@ static int nfs_callback_authenticate(struct svc_rqst *rqstp)
+ 	struct nfs_client *clp;
+ 
+ 	/* Don't talk to strangers */
+-	clp = nfs_find_client(addr, 4);
++	clp = nfs_find_client(addr, IPPROTO_TCP, 4);
+ 	if (clp == NULL)
+ 		return SVC_DROP;
+ 	dprintk("%s: %u.%u.%u.%u NFSv4 callback!\n", __FUNCTION__, NIPQUAD(addr->sin_addr));
+diff --git a/fs/nfs/callback_proc.c b/fs/nfs/callback_proc.c
+index 97cf8f7..d4423b9 100644
+--- a/fs/nfs/callback_proc.c
++++ b/fs/nfs/callback_proc.c
+@@ -23,7 +23,7 @@ unsigned nfs4_callback_getattr(struct cb_getattrargs *args, struct cb_getattrres
+ 	
+ 	res->bitmap[0] = res->bitmap[1] = 0;
+ 	res->status = htonl(NFS4ERR_BADHANDLE);
+-	clp = nfs_find_client(args->addr, 4);
++	clp = nfs_find_client(args->addr, IPPROTO_TCP, 4);
+ 	if (clp == NULL)
+ 		goto out;
+ 	inode = nfs_delegation_find_inode(clp, &args->fh);
+@@ -62,7 +62,7 @@ unsigned nfs4_callback_recall(struct cb_recallargs *args, void *dummy)
+ 	unsigned res;
+ 	
+ 	res = htonl(NFS4ERR_BADHANDLE);
+-	clp = nfs_find_client(args->addr, 4);
++	clp = nfs_find_client(args->addr, IPPROTO_TCP, 4);
+ 	if (clp == NULL)
+ 		goto out;
+ 	inode = nfs_delegation_find_inode(clp, &args->fh);
+diff --git a/fs/nfs/client.c b/fs/nfs/client.c
+index d35246a..1b61e86 100644
+--- a/fs/nfs/client.c
++++ b/fs/nfs/client.c
+@@ -100,6 +100,7 @@ struct rpc_program		nfsacl_program = {
+  */
+ static struct nfs_client *nfs_alloc_client(const char *hostname,
+ 					   const struct sockaddr_in *addr,
++					   int proto,
+ 					   int nfsversion)
+ {
+ 	struct nfs_client *clp;
+@@ -127,6 +128,7 @@ static struct nfs_client *nfs_alloc_client(const char *hostname,
+ 
+ 	clp->cl_nfsversion = nfsversion;
+ 	memcpy(&clp->cl_addr, addr, sizeof(clp->cl_addr));
++	clp->cl_proto = proto;
+ 
+ 	if (hostname) {
+ 		clp->cl_hostname = kstrdup(hostname, GFP_KERNEL);
+@@ -226,7 +228,8 @@ void nfs_put_client(struct nfs_client *clp)
+  * Find a client by address
+  * - caller must hold nfs_client_lock
+  */
+-static struct nfs_client *__nfs_find_client(const struct sockaddr_in *addr, int nfsversion, int match_port)
++static struct nfs_client *__nfs_find_client(const struct sockaddr_in *addr,
++				int proto, int nfsversion, int match_port)
+ {
+ 	struct nfs_client *clp;
+ 
+@@ -243,6 +246,9 @@ static struct nfs_client *__nfs_find_client(const struct sockaddr_in *addr, int
+ 			   sizeof(clp->cl_addr.sin_addr)) != 0)
+ 			continue;
+ 
++		if (clp->cl_proto != proto)
++			continue;
++
+ 		if (!match_port || clp->cl_addr.sin_port == addr->sin_port)
+ 			goto found;
+ 	}
+@@ -258,12 +264,13 @@ found:
+  * Find a client by IP address and protocol version
+  * - returns NULL if no such client
+  */
+-struct nfs_client *nfs_find_client(const struct sockaddr_in *addr, int nfsversion)
++struct nfs_client *nfs_find_client(const struct sockaddr_in *addr,
++				int proto, int nfsversion)
+ {
+ 	struct nfs_client *clp;
+ 
+ 	spin_lock(&nfs_client_lock);
+-	clp = __nfs_find_client(addr, nfsversion, 0);
++	clp = __nfs_find_client(addr, proto, nfsversion, 0);
+ 	spin_unlock(&nfs_client_lock);
+ 	if (clp != NULL && clp->cl_cons_state != NFS_CS_READY) {
+ 		nfs_put_client(clp);
+@@ -279,6 +286,7 @@ struct nfs_client *nfs_find_client(const struct sockaddr_in *addr, int nfsversio
+  */
+ static struct nfs_client *nfs_get_client(const char *hostname,
+ 					 const struct sockaddr_in *addr,
++					 int proto,
+ 					 int nfsversion)
+ {
+ 	struct nfs_client *clp, *new = NULL;
+@@ -292,7 +300,7 @@ static struct nfs_client *nfs_get_client(const char *hostname,
+ 	do {
+ 		spin_lock(&nfs_client_lock);
+ 
+-		clp = __nfs_find_client(addr, nfsversion, 1);
++		clp = __nfs_find_client(addr, proto, nfsversion, 1);
+ 		if (clp)
+ 			goto found_client;
+ 		if (new)
+@@ -300,7 +308,7 @@ static struct nfs_client *nfs_get_client(const char *hostname,
+ 
+ 		spin_unlock(&nfs_client_lock);
+ 
+-		new = nfs_alloc_client(hostname, addr, nfsversion);
++		new = nfs_alloc_client(hostname, addr, proto, nfsversion);
+ 	} while (new);
+ 
+ 	return ERR_PTR(-ENOMEM);
+@@ -564,6 +572,7 @@ static int nfs_init_server(struct nfs_server *server, const struct nfs_mount_dat
+ {
+ 	struct nfs_client *clp;
+ 	int error, nfsvers = 2;
++	int proto = data->flags & NFS_MOUNT_TCP ? IPPROTO_TCP : IPPROTO_UDP;
+ 
+ 	dprintk("--> nfs_init_server()\n");
+ 
+@@ -573,7 +582,7 @@ static int nfs_init_server(struct nfs_server *server, const struct nfs_mount_dat
+ #endif
+ 
+ 	/* Allocate or find a client reference we can use */
+-	clp = nfs_get_client(data->hostname, &data->addr, nfsvers);
++	clp = nfs_get_client(data->hostname, &data->addr, proto, nfsvers);
+ 	if (IS_ERR(clp)) {
+ 		dprintk("<-- nfs_init_server() = error %ld\n", PTR_ERR(clp));
+ 		return PTR_ERR(clp);
+@@ -907,7 +916,7 @@ static int nfs4_set_client(struct nfs_server *server,
+ 	dprintk("--> nfs4_set_client()\n");
+ 
+ 	/* Allocate or find a client reference we can use */
+-	clp = nfs_get_client(hostname, addr, 4);
++	clp = nfs_get_client(hostname, addr, proto, 4);
+ 	if (IS_ERR(clp)) {
+ 		error = PTR_ERR(clp);
+ 		goto error;
+diff --git a/fs/nfs/internal.h b/fs/nfs/internal.h
+index e9db77d..d6e60d6 100644
+--- a/fs/nfs/internal.h
++++ b/fs/nfs/internal.h
+@@ -60,7 +60,7 @@ struct nfs_clone_mount {
+ extern struct rpc_program nfs_program;
+ 
+ extern void nfs_put_client(struct nfs_client *);
+-extern struct nfs_client *nfs_find_client(const struct sockaddr_in *, int);
++extern struct nfs_client *nfs_find_client(const struct sockaddr_in *, int, int);
+ extern struct nfs_server *nfs_create_server(const struct nfs_mount_data *,
+ 					    struct nfs_fh *);
+ extern struct nfs_server *nfs4_create_server(const struct nfs4_mount_data *,
+diff --git a/include/linux/nfs_fs_sb.h b/include/linux/nfs_fs_sb.h
+index 8cdb1cf..0f2dfaf 100644
+--- a/include/linux/nfs_fs_sb.h
++++ b/include/linux/nfs_fs_sb.h
+@@ -30,6 +30,7 @@ struct nfs_client {
+ 	struct list_head	cl_superblocks;	/* List of nfs_server structs */
+ 
+ 	struct rpc_clnt *	cl_rpcclient;
++	int			cl_proto;	/* transport protocol */
+ 	const struct nfs_rpc_ops *rpc_ops;	/* NFS protocol vector */
+ 	unsigned long		retrans_timeo;	/* retransmit timeout */
+ 	unsigned int		retrans_count;	/* number of retransmit tries */

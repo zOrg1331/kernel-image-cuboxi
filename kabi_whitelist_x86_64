@@ -820,6 +820,14 @@
 	slhc_toss
 	slhc_uncompress
 	unregister_pppox_proto
+[rhel5_drivers_net_u6]
+	lro_flush_all
+	lro_receive_frags
+	lro_vlan_hwaccel_receive_frags
+	napi_get_frags
+	napi_gro_frags
+	napi_gro_flush
+	vlan_gro_frags
 [rhel5_drivers_net_phy_ga]
 	genphy_config_aneg
 	genphy_read_status
@@ -953,6 +961,16 @@
 	pcie_mch_quirk
 [rhel5_drivers_pci_u4]
 	pcie_set_readrq
+[rhel5_drivers_pci_u6]
+	pci_cleanup_aer_uncorrect_error_status
+	pci_disable_pcie_error_reporting
+	pci_disable_sriov
+	pci_enable_device_mem
+	pci_enable_pcie_error_reporting
+	pci_enable_sriov
+	pci_release_selected_regions
+	pci_request_selected_regions
+	pci_select_bars
 [rhel5_drivers_pci_hotplug_ga]
 	acpiphp_register_attention
 	acpiphp_unregister_attention
@@ -1170,6 +1188,39 @@
 	scsi_nl_add_driver
 	scsi_nl_remove_driver
 	scsi_nl_send_vendor_msg
+[rhel5_drivers_scsi_u6]
+	fc_cpu_mask
+	fc_elsct_send
+	fc_exch_mgr_add
+	_fc_frame_alloc
+	fc_frame_alloc_fill
+	fc_lport_flogi_resp
+	fc_lport_logo_resp
+	fc_vport_create
+	fc_vport_setlink
+	iscsi2_add_session
+	iscsi2_alloc_session
+	iscsi2_block_session
+	iscsi2_conn_error_event
+	iscsi2_conn_setup
+	iscsi2_conn_start
+	iscsi2_create_conn
+	iscsi2_create_endpoint
+	iscsi2_destroy_conn
+	iscsi2_destroy_endpoint
+	iscsi2_free_session
+	iscsi2_host_alloc
+	iscsi2_lookup_endpoint
+	iscsi2_recv_pdu
+	iscsi2_register_transport
+	iscsi2_remove_session
+	iscsi2_session_setup
+	iscsi2_session_teardown
+	iscsi2_unblock_session
+	iscsi2_unregister_transport
+	libfc_vport_create
+	scsi_build_sense_buffer
+	scsilun_to_int
 [rhel5_drivers_scsi_lib_dma_u5]
 	scsi_dma_map
 	scsi_dma_unmap
@@ -1785,6 +1836,8 @@
 	proc_root_fs
 	proc_symlink
 	remove_proc_entry
+[rhel5_fs_proc_u6]
+	proc_create
 [rhel5_fs_sysfs_ga]
 	sysfs_create_bin_file
 	sysfs_create_file
@@ -2226,6 +2279,8 @@
 	radix_tree_preload
 [rhel5_lib_u3]
 	vscnprintf
+[rhel5_lib_u6]
+	__bitmap_shift_left
 [rhel5_lib_reed_solomon_ga]
 	decode_rs16
 	free_rs

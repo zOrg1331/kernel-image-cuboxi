@@ -1,0 +1,82 @@
+From: Steve Best <sbest@redhat.com>
+Date: Thu, 18 Nov 2010 16:15:12 -0500
+Subject: [scsi] ipr: fix lun assignment and comparison
+Message-id: <20101118161004.26372.12896.sendpatchset@squad5-lp1.lab.bos.redhat.com>
+Patchwork-id: 29490
+O-Subject: [PATCH RHEL5.6 BZ654446 1/2] ipr: fix lun assignment and comparison
+Bugzilla: 654446
+RH-Acked-by: David Howells <dhowells@redhat.com>
+
+RHBZ#:
+------
+https://bugzilla.redhat.com/show_bug.cgi?id=654446
+
+Description:
+------------
+The lun value was not getting set up correctly for all devices attached to the
+new 64 bit adapters.  The fix is to move the logic to earlier in the
+ipr_init_res_entry routine such that the value does get set correctly for all
+devices.
+
+Then the ipr_is_same_device comparison function was using the wrong lun value
+in the logic for the new adapters.  Change this to use the correct lun value.
+
+Signed-off-by: Wayne Boyer <wayneb@linux.vnet.ibm.com>
+Acked-by: Brian King <brking@linux.vnet.ibm.com>
+
+RHEL Version Found:
+-------------------
+5.6
+
+Brew:
+-----
+Built on all platforms. All patches brewed together.
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=2900437
+
+Upstream Status:
+----------------
+posted here
+http://marc.info/?l=linux-scsi&m=128888856411306&w=2
+
+---------------------------------------
+
+Steve Best
+IBM on-site partner
+
+Proposed Patch:
+---------------
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/scsi/ipr.c b/drivers/scsi/ipr.c
+index 1cfa525..8fbe978 100644
+--- a/drivers/scsi/ipr.c
++++ b/drivers/scsi/ipr.c
+@@ -1046,6 +1046,8 @@ static void ipr_init_res_entry(struct ipr_resource_entry *res,
+ 			sizeof(res->res_path));
+ 
+ 		res->bus = 0;
++		memcpy(&res->dev_lun.scsi_lun, &cfgtew->u.cfgte64->lun,
++			sizeof(res->dev_lun.scsi_lun));
+ 		res->lun = scsilun_to_int(&res->dev_lun);
+ 
+ 		if (res->type == IPR_RES_TYPE_GENERIC_SCSI) {
+@@ -1061,9 +1063,6 @@ static void ipr_init_res_entry(struct ipr_resource_entry *res,
+ 								  ioa_cfg->max_devs_supported);
+ 				set_bit(res->target, ioa_cfg->target_ids);
+ 			}
+-
+-			memcpy(&res->dev_lun.scsi_lun, &cfgtew->u.cfgte64->lun,
+-				sizeof(res->dev_lun.scsi_lun));
+ 		} else if (res->type == IPR_RES_TYPE_IOAFP) {
+ 			res->bus = IPR_IOAFP_VIRTUAL_BUS;
+ 			res->target = 0;
+@@ -1114,7 +1113,7 @@ static int ipr_is_same_device(struct ipr_resource_entry *res,
+ 	if (res->ioa_cfg->sis64) {
+ 		if (!memcmp(&res->dev_id, &cfgtew->u.cfgte64->dev_id,
+ 					sizeof(cfgtew->u.cfgte64->dev_id)) &&
+-			!memcmp(&res->lun, &cfgtew->u.cfgte64->lun,
++			!memcmp(&res->dev_lun.scsi_lun, &cfgtew->u.cfgte64->lun,
+ 					sizeof(cfgtew->u.cfgte64->lun))) {
+ 			return 1;
+ 		}

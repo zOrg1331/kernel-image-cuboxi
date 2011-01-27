@@ -1,0 +1,50 @@
+From: Amit Shah <amit.shah@redhat.com>
+Date: Sat, 7 Aug 2010 07:16:47 -0400
+Subject: [virtio] more neatening of virtio_ring macros
+Message-id: <f0a77123205c5e0a027cbc8477fe41e59bc140c9.1281129816.git.amit.shah@redhat.com>
+Patchwork-id: 27463
+O-Subject: [RHEL5.6 PATCH 2/9] virtio: more neatening of virtio_ring macros.
+Bugzilla: 620037
+RH-Acked-by: Jes Sorensen <Jes.Sorensen@redhat.com>
+
+From: Rusty Russell <rusty@rustcorp.com.au>
+
+Impact: cleanup
+
+Roel Kluin drew attention to these macros with his patch: here I
+neaten them a little further:
+1) Add a comment on what START_USE and END_USE are checking,
+2) Brackets around _vq in BAD_RING,
+3) Neaten formatting for START_USE so it's less than 80 cols.
+
+Signed-off-by: Rusty Russell <rusty@rustcorp.com.au>
+(cherry picked from commit c5f841f1780dad7efb7eca092f60742d47f47d25)
+
+(rhel5: picked up as this code is touched by future patches. And this is
+just a cleanup.)
+
+Signed-off-by: Amit Shah <amit.shah@redhat.com>
+
+diff --git a/drivers/virtio/virtio_ring.c b/drivers/virtio/virtio_ring.c
+index 7f6eff6..c834961 100644
+--- a/drivers/virtio/virtio_ring.c
++++ b/drivers/virtio/virtio_ring.c
+@@ -25,9 +25,15 @@
+ #ifdef DEBUG
+ /* For development, we want to crash whenever the ring is screwed. */
+ #define BAD_RING(_vq, fmt...)			\
+-	do { dev_err(&_vq->vq.vdev->dev, fmt); BUG(); } while(0)
+-#define START_USE(_vq) \
+-	do { if ((_vq)->in_use) panic("in_use = %i\n", (_vq)->in_use); (_vq)->in_use = __LINE__; mb(); } while(0)
++	do { dev_err(&(_vq)->vq.vdev->dev, fmt); BUG(); } while(0)
++/* Caller is supposed to guarantee no reentry. */
++#define START_USE(_vq)						\
++	do {							\
++		if ((_vq)->in_use)				\
++			panic("in_use = %i\n", (_vq)->in_use);	\
++		(_vq)->in_use = __LINE__;			\
++		mb();						\
++	} while(0)
+ #define END_USE(_vq) \
+ 	do { BUG_ON(!(_vq)->in_use); (_vq)->in_use = 0; mb(); } while(0)
+ #else

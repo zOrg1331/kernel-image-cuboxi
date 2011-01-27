@@ -1,0 +1,78 @@
+From: Pete Zaitcev <zaitcev@redhat.com>
+Date: Mon, 12 Apr 2010 19:34:46 -0400
+Subject: [misc] permit larger than 2TB USB and FW drives
+Message-id: <20100412133446.7ea8a066@redhat.com>
+Patchwork-id: 24104
+O-Subject: [RHEL 5 patch] Permit more than 2TB on USB and FW
+Bugzilla: 503864
+RH-Acked-by: Jay Fenlason <fenlason@redhat.com>
+RH-Acked-by: Bryn M. Reeves <bmr@redhat.com>
+
+This patch fixes bz#503864, a report that bigger drives cannot be
+used on RHEL 5. It was around for a while without an IT ticket, with
+customer interest dubious, but I got around to fixing it, so please
+ack on technical grounds.
+
+The backport is surprisingly small, we already have all the functio-
+nality in our SCSI stack. So, only USB and FW code is affected.
+
+I built a test kernel and had a customer test it for function.
+
+I'm certain the USB side is safe, because I know that we always
+had 16-byte buffers. On FW side I am not so sure, but it looks
+like we're safe from overrunning anything.
+
+-- Pete
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/firewire/fw-sbp2.c b/drivers/firewire/fw-sbp2.c
+index d4e3c1d..c58d45e 100644
+--- a/drivers/firewire/fw-sbp2.c
++++ b/drivers/firewire/fw-sbp2.c
+@@ -190,6 +190,12 @@ struct sbp2_target {
+ #define SBP2_RETRY_LIMIT		0xf		/* 15 retries */
+ #define SBP2_CYCLE_LIMIT		(0xc8 << 12)	/* 200 125us cycles */
+ 
++/*
++ * There is no transport protocol limit to the CDB length,  but we implement
++ * a fixed length only.  16 bytes is enough for disks larger than 2 TB.
++ */
++#define SBP2_MAX_CDB_SIZE		16
++
+ /* Unit directory keys */
+ #define SBP2_CSR_UNIT_CHARACTERISTICS	0x3a
+ #define SBP2_CSR_FIRMWARE_REVISION	0x3c
+@@ -295,7 +301,7 @@ struct sbp2_command_orb {
+ 		struct sbp2_pointer next;
+ 		struct sbp2_pointer data_descriptor;
+ 		__be32 misc;
+-		u8 command_block[12];
++		u8 command_block[SBP2_MAX_CDB_SIZE];
+ 	} request;
+ 	struct scsi_cmnd *cmd;
+ 	scsi_done_fn_t done;
+@@ -1133,6 +1139,8 @@ static int sbp2_probe(struct device *dev)
+ 	if (fw_device_enable_phys_dma(device) < 0)
+ 		goto fail_shost_put;
+ 
++	shost->max_cmd_len = SBP2_MAX_CDB_SIZE;
++
+ 	if (scsi_add_host(shost, &unit->device) < 0)
+ 		goto fail_shost_put;
+ 
+diff --git a/drivers/usb/storage/usb.c b/drivers/usb/storage/usb.c
+index 8d7bdcb..47d00bb 100644
+--- a/drivers/usb/storage/usb.c
++++ b/drivers/usb/storage/usb.c
+@@ -957,6 +957,10 @@ static int storage_probe(struct usb_interface *intf,
+ 		return -ENOMEM;
+ 	}
+ 
++	/*
++	 * Allow 16-byte CDBs and thus > 2TB
++	 */
++	host->max_cmd_len = 16;
+ 	us = host_to_us(host);
+ 	memset(us, 0, sizeof(struct us_data));
+ 	mutex_init(&(us->dev_mutex));

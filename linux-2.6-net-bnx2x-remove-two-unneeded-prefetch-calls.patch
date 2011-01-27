@@ -1,0 +1,43 @@
+From: Michal Schmidt <mschmidt@redhat.com>
+Date: Fri, 3 Sep 2010 16:43:08 -0400
+Subject: [net] bnx2x: remove two unneeded prefetch calls
+Message-id: <20100903164307.25415.48707.stgit@brian.englab.brq.redhat.com>
+Patchwork-id: 28099
+O-Subject: [RHEL5.6 BZ572012 PATCH 24/46] bnx2x: Remove two prefetch()
+Bugzilla: 572012
+RH-Acked-by: David S. Miller <davem@redhat.com>
+RH-Acked-by: Stanislaw Gruszka <sgruszka@redhat.com>
+
+1) Even on 64bit arches, sizeof(struct sk_buff) < 256
+2) No need to prefetch same pointer twice.
+
+Signed-off-by: Eric Dumazet <eric.dumazet@gmail.com>
+Acked-by: Eilon Greenstein <eilong@broadcom.com>
+Acked-by: Eliezer Tamir <eliezer@tamir.org.il>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+(cherry picked from commit 214f1c87bd86f9061fedbae929bc4a7a7089ee75)
+
+Conflicts:
+
+	drivers/net/bnx2x_main.c
+
+diff --git a/drivers/net/bnx2x_main.c b/drivers/net/bnx2x_main.c
+index fa45f62..b8a5431 100644
+--- a/drivers/net/bnx2x_main.c
++++ b/drivers/net/bnx2x_main.c
+@@ -1613,7 +1613,6 @@ static int bnx2x_rx_int(struct bnx2x_fastpath *fp, int budget)
+ 			rx_buf = &fp->rx_buf_ring[bd_cons];
+ 			skb = rx_buf->skb;
+ 			prefetch(skb);
+-			prefetch((u8 *)skb + 256);
+ 			len = le16_to_cpu(cqe->fast_path_cqe.pkt_len);
+ 			pad = cqe->fast_path_cqe.placement_offset;
+ 
+@@ -1664,7 +1663,6 @@ static int bnx2x_rx_int(struct bnx2x_fastpath *fp, int budget)
+ 					pci_unmap_addr(rx_buf, mapping),
+ 						       pad + RX_COPY_THRESH,
+ 						       PCI_DMA_FROMDEVICE);
+-			prefetch(skb);
+ 			prefetch(((char *)(skb)) + 128);
+ 
+ 			/* is this an error packet? */

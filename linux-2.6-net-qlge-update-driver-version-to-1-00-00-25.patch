@@ -1,0 +1,42 @@
+From: Chad Dupuis <cdupuis@redhat.com>
+Date: Fri, 6 Aug 2010 14:23:16 -0400
+Subject: [net] qlge: update driver version to 1.00.00.25
+Message-id: <20100806142003.2774.27903.sendpatchset@localhost.localdomain>
+Patchwork-id: 27452
+O-Subject: [RHEL 5.6 PATCH 10/10] qlge: Update driver version to 1.00.00.25.
+Bugzilla: 567402
+
+Bugzilla
+========
+
+567402
+
+Upstream Status
+===============
+
+RHEL 5 specific
+
+Description
+===========
+
+qlge: Update driver version to 1.00.00.25.
+
+Signed-off-by: Jitendra Kalsaria <jitendra.kalsaria@qlogic.com>
+
+diff --git a/drivers/net/qlge/qlge.h b/drivers/net/qlge/qlge.h
+index 0654219..5729d73 100644
+--- a/drivers/net/qlge/qlge.h
++++ b/drivers/net/qlge/qlge.h
+@@ -35,9 +35,9 @@
+  */
+ #define DRV_NAME	"qlge"
+ #define DRV_STRING	"QLogic 10 Gigabit PCI-E Ethernet Driver "
+-#define DRV_VERSION	"1.00.00.24"
+-#define DIS_VERSION	"2.6.16-2.6.18-p24"
+-#define REL_DATE	"100617"
++#define DRV_VERSION	"1.00.00.25"
++#define DIS_VERSION	"2.6.16-2.6.18-p25"
++#define REL_DATE	"100706"
+ 
+ #define PFX "qlge: "
+ #define QPRINTK(qdev, nlevel, klevel, fmt, args...) \

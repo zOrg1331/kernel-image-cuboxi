@@ -1,0 +1,321 @@
+From: Chad Dupuis <cdupuis@redhat.com>
+Date: Tue, 20 Jul 2010 15:31:59 -0400
+Subject: [net] qlcnic: add interrupt diagnostic test
+Message-id: <20100720153105.2978.35958.sendpatchset@localhost.localdomain>
+Patchwork-id: 26966
+O-Subject: [RHEL 5.6 PATCH 7/16] qlcnic: add interrupt diagnostic test
+Bugzilla: 562723
+RH-Acked-by: David S. Miller <davem@redhat.com>
+
+Bugzilla
+========
+
+562723
+
+Upstream Status
+===============
+
+net-2.6 commit id 7eb9855d68faabe0004ed18c2af1f0974d3c2c63
+
+Description
+===========
+
+>From 2d5678e8180f3c69515b566b9d85645e3df17c27 Mon Sep 17 00:00:00 2001
+From: Amit Kumar Salecha <amit.salecha@qlogic.com>
+Date: Mon, 1 Feb 2010 05:24:59 +0000
+Subject: [PATCH] qlcnic: add interrupt diagnostic test
+
+Interrupt test (offline) added in ethtool self test.
+Register a temporary interrupt handler and then send command to fw
+to raise an interrupt.
+
+Signed-off-by: Sucheta Chakraborty <sucheta.chakraborty@qlogic.com>
+Signed-off-by: Amit Kumar Salecha <amit.salecha@qlogic.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/net/qlcnic/qlcnic.h b/drivers/net/qlcnic/qlcnic.h
+index 6d70e1b..9a1cb9e 100644
+--- a/drivers/net/qlcnic/qlcnic.h
++++ b/drivers/net/qlcnic/qlcnic.h
+@@ -563,6 +563,8 @@ struct qlcnic_recv_context {
+ /*
+  * Context state
+  */
++#define QLCHAL_VERSION	1
++
+ #define QLCNIC_HOST_CTX_STATE_ACTIVE	2
+ 
+ /*
+@@ -897,6 +899,8 @@ struct qlcnic_mac_req {
+ #define __QLCNIC_RESETTING		2
+ #define __QLCNIC_START_FW 		4
+ 
++#define QLCNIC_INTERRUPT_TEST		1
++
+ struct qlcnic_adapter {
+ 	struct qlcnic_hardware_context ahw;
+ 
+@@ -949,9 +953,10 @@ struct qlcnic_adapter {
+ 	u32 heartbit;
+ 
+ 	u8 dev_state;
++	u8 diag_test;
++	u8 diag_cnt;
+ 	u8 rsrd1;
+-	u32 rsrd2;
+-
++	u16 rsrd2;
+ 
+ 	u8 mac_addr[ETH_ALEN];
+ 
+@@ -1069,6 +1074,10 @@ int qlcnic_get_mac_addr(struct qlcnic_adapter *adapter, u64 *mac);
+ 
+ /* Functions from qlcnic_main.c */
+ int qlcnic_reset_context(struct qlcnic_adapter *);
++u32 qlcnic_issue_cmd(struct qlcnic_adapter *adapter,
++	u32 pci_fn, u32 version, u32 arg1, u32 arg2, u32 arg3, u32 cmd);
++void qlcnic_diag_free_res(struct net_device *netdev, int max_sds_rings);
++int qlcnic_diag_alloc_res(struct net_device *netdev, int test);
+ 
+ /*
+  * QLOGIC Board information
+diff --git a/drivers/net/qlcnic/qlcnic_ctx.c b/drivers/net/qlcnic/qlcnic_ctx.c
+index 71c16a1..0a6a399 100644
+--- a/drivers/net/qlcnic/qlcnic_ctx.c
++++ b/drivers/net/qlcnic/qlcnic_ctx.c
+@@ -24,8 +24,6 @@
+ 
+ #include "qlcnic.h"
+ 
+-#define QLCHAL_VERSION	1
+-
+ static u32
+ qlcnic_poll_rsp(struct qlcnic_adapter *adapter)
+ {
+@@ -45,7 +43,7 @@ qlcnic_poll_rsp(struct qlcnic_adapter *adapter)
+ 	return rsp;
+ }
+ 
+-static u32
++u32
+ qlcnic_issue_cmd(struct qlcnic_adapter *adapter,
+ 	u32 pci_fn, u32 version, u32 arg1, u32 arg2, u32 arg3, u32 cmd)
+ {
+diff --git a/drivers/net/qlcnic/qlcnic_ethtool.c b/drivers/net/qlcnic/qlcnic_ethtool.c
+index 55a2718..d34d5be 100644
+--- a/drivers/net/qlcnic/qlcnic_ethtool.c
++++ b/drivers/net/qlcnic/qlcnic_ethtool.c
+@@ -65,7 +65,8 @@ static const struct qlcnic_stats qlcnic_gstrings_stats[] = {
+ 
+ static const char qlcnic_gstrings_test[][ETH_GSTRING_LEN] = {
+ 	"Register_Test_on_offline",
+-	"Link_Test_on_offline"
++	"Link_Test_on_offline",
++	"Interrupt_Test_offline"
+ };
+ 
+ #define QLCNIC_TEST_LEN	ARRAY_SIZE(qlcnic_gstrings_test)
+@@ -606,12 +607,50 @@ static int qlcnic_diag_test_count(struct net_device *dev)
+ 	return QLCNIC_TEST_LEN;
+ }
+ 
++static int qlcnic_irq_test(struct net_device *netdev)
++{
++	struct qlcnic_adapter *adapter = netdev_priv(netdev);
++	int max_sds_rings = adapter->max_sds_rings;
++	int ret;
++
++	if (test_and_set_bit(__QLCNIC_RESETTING, &adapter->state))
++		return -EIO;
++
++	ret = qlcnic_diag_alloc_res(netdev, QLCNIC_INTERRUPT_TEST);
++	if (ret)
++		goto clear_it;
++
++	adapter->diag_cnt = 0;
++	ret = qlcnic_issue_cmd(adapter, adapter->ahw.pci_func,
++			QLCHAL_VERSION, adapter->portnum, 0, 0, 0x00000011);
++	if (ret)
++		goto done;
++
++	msleep(10);
++
++	ret = !adapter->diag_cnt;
++
++done:
++	qlcnic_diag_free_res(netdev, max_sds_rings);
++
++clear_it:
++	adapter->max_sds_rings = max_sds_rings;
++	clear_bit(__QLCNIC_RESETTING, &adapter->state);
++	return ret;
++}
++
+ static void
+ qlcnic_diag_test(struct net_device *dev, struct ethtool_test *eth_test,
+ 		     u64 *data)
+ {
+ 	memset(data, 0, sizeof(u64) * QLCNIC_TEST_LEN);
+ 
++	if (eth_test->flags == ETH_TEST_FL_OFFLINE) {
++		data[2] = qlcnic_irq_test(dev);
++		if (data[2])
++			eth_test->flags |= ETH_TEST_FL_FAILED;
++	}
++
+ 	data[0] = qlcnic_reg_test(dev);
+ 	if (data[0])
+ 		eth_test->flags |= ETH_TEST_FL_FAILED;
+diff --git a/drivers/net/qlcnic/qlcnic_main.c b/drivers/net/qlcnic/qlcnic_main.c
+index d04b2d5..70b821e 100644
+--- a/drivers/net/qlcnic/qlcnic_main.c
++++ b/drivers/net/qlcnic/qlcnic_main.c
+@@ -88,6 +88,7 @@ static void qlcnic_remove_diag_entries(struct qlcnic_adapter *adapter);
+ static void qlcnic_clr_all_drv_state(struct qlcnic_adapter *adapter);
+ static int qlcnic_can_start_firmware(struct qlcnic_adapter *adapter);
+ 
++static irqreturn_t qlcnic_tmp_intr(int irq, void *data, struct pt_regs *regs);
+ static irqreturn_t qlcnic_intr(int irq, void *data, struct pt_regs *regs);
+ static irqreturn_t qlcnic_msi_intr(int irq, void *data, struct pt_regs *regs);
+ static irqreturn_t qlcnic_msix_intr(int irq, void *data, struct pt_regs *regs);
+@@ -717,13 +718,20 @@ qlcnic_request_irq(struct qlcnic_adapter *adapter)
+ 	struct net_device *netdev = adapter->netdev;
+ 	struct qlcnic_recv_context *recv_ctx = &adapter->recv_ctx;
+ 
+-	if (adapter->flags & QLCNIC_MSIX_ENABLED)
+-		handler = qlcnic_msix_intr;
+-	else if (adapter->flags & QLCNIC_MSI_ENABLED)
+-		handler = qlcnic_msi_intr;
+-	else {
+-		flags |= IRQF_SHARED;
+-		handler = qlcnic_intr;
++	if (adapter->diag_test == QLCNIC_INTERRUPT_TEST) {
++		handler = qlcnic_tmp_intr;
++		if (!QLCNIC_IS_MSI_FAMILY(adapter))
++			flags |= IRQF_SHARED;
++
++	} else {
++		if (adapter->flags & QLCNIC_MSIX_ENABLED)
++			handler = qlcnic_msix_intr;
++		else if (adapter->flags & QLCNIC_MSI_ENABLED)
++			handler = qlcnic_msi_intr;
++		else {
++			flags |= IRQF_SHARED;
++			handler = qlcnic_intr;
++		}
+ 	}
+ 	adapter->irq = netdev->irq;
+ 
+@@ -920,6 +928,60 @@ qlcnic_detach(struct qlcnic_adapter *adapter)
+ 	adapter->is_up = 0;
+ }
+ 
++void qlcnic_diag_free_res(struct net_device *netdev, int max_sds_rings)
++{
++	struct qlcnic_adapter *adapter = netdev_priv(netdev);
++	struct qlcnic_host_sds_ring *sds_ring;
++	int ring;
++
++	for (ring = 0; ring < adapter->max_sds_rings; ring++) {
++		sds_ring = &adapter->recv_ctx.sds_rings[ring];
++		qlcnic_disable_int(sds_ring);
++	}
++
++	qlcnic_detach(adapter);
++
++	adapter->diag_test = 0;
++	adapter->max_sds_rings = max_sds_rings;
++
++	if (qlcnic_attach(adapter))
++		return;
++
++	if (netif_running(netdev))
++		__qlcnic_up(adapter, netdev);
++
++	netif_device_attach(netdev);
++}
++
++int qlcnic_diag_alloc_res(struct net_device *netdev, int test)
++{
++	struct qlcnic_adapter *adapter = netdev_priv(netdev);
++	struct qlcnic_host_sds_ring *sds_ring;
++	int ring;
++	int ret;
++
++	netif_device_detach(netdev);
++
++	if (netif_running(netdev))
++		__qlcnic_down(adapter, netdev);
++
++	qlcnic_detach(adapter);
++
++	adapter->max_sds_rings = 1;
++	adapter->diag_test = test;
++
++	ret = qlcnic_attach(adapter);
++	if (ret)
++		return ret;
++
++	for (ring = 0; ring < adapter->max_sds_rings; ring++) {
++		sds_ring = &adapter->recv_ctx.sds_rings[ring];
++		qlcnic_enable_int(sds_ring);
++	}
++
++	return 0;
++}
++
+ int
+ qlcnic_reset_context(struct qlcnic_adapter *adapter)
+ {
+@@ -1698,10 +1760,8 @@ static struct net_device_stats *qlcnic_get_stats(struct net_device *netdev)
+ 	return stats;
+ }
+ 
+-static irqreturn_t qlcnic_intr(int irq, void *data, struct pt_regs *regs)
++static irqreturn_t qlcnic_clear_legacy_intr(struct qlcnic_adapter *adapter)
+ {
+-	struct qlcnic_host_sds_ring *sds_ring = data;
+-	struct qlcnic_adapter *adapter = sds_ring->adapter;
+ 	u32 status;
+ 
+ 	status = readl(adapter->isr_int_vec);
+@@ -1719,6 +1779,38 @@ static irqreturn_t qlcnic_intr(int irq, void *data, struct pt_regs *regs)
+ 	readl(adapter->isr_int_vec);
+ 	readl(adapter->isr_int_vec);
+ 
++	return IRQ_HANDLED;
++}
++
++static irqreturn_t qlcnic_tmp_intr(int irq, void *data, struct pt_regs *regs)
++{
++	struct qlcnic_host_sds_ring *sds_ring = data;
++	struct qlcnic_adapter *adapter = sds_ring->adapter;
++
++	if (adapter->flags & QLCNIC_MSIX_ENABLED)
++		goto done;
++	else if (adapter->flags & QLCNIC_MSI_ENABLED) {
++		writel(0xffffffff, adapter->tgt_status_reg);
++		goto done;
++	}
++
++	if (qlcnic_clear_legacy_intr(adapter) == IRQ_NONE)
++		return IRQ_NONE;
++
++done:
++	adapter->diag_cnt++;
++	qlcnic_enable_int(sds_ring);
++	return IRQ_HANDLED;
++}
++
++static irqreturn_t qlcnic_intr(int irq, void *data, struct pt_regs *regs)
++{
++	struct qlcnic_host_sds_ring *sds_ring = data;
++	struct qlcnic_adapter *adapter = sds_ring->adapter;
++
++	if (qlcnic_clear_legacy_intr(adapter) == IRQ_NONE)
++		return IRQ_NONE;
++
+ 	netif_rx_schedule(sds_ring->napi_dev);
+ 
+ 	return IRQ_HANDLED;

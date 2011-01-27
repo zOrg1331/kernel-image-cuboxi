@@ -1,0 +1,41 @@
+From: Thomas Graf <tgraf@redhat.com>
+Date: Fri, 23 Jul 2010 15:36:00 -0400
+Subject: [net] tcp: increase Vegas default alpha and beta params
+Message-id: <20100723153600.GL14925@lsx.localdomain>
+Patchwork-id: 27070
+O-Subject: [RHEL5.6 PATCH 10/14] tcp: Increase Vegas default alpha to 2 and
+	beta to 4.
+Bugzilla: 612709
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+RH-Acked-by: David S. Miller <davem@redhat.com>
+
+commit d2e4bdc8704b0e711c5046a430bfd1681b0bd5a9
+Author: David S. Miller <davem@sunset.davemloft.net>
+Date:   Tue Nov 28 14:37:38 2006 -0800
+
+    [TCP] Vegas: Increase default alpha to 2 and beta to 4.
+
+    This helps Vegas cope better with delayed ACKs, see
+    analysis at:
+
+    http://www.cs.caltech.edu/%7Eweixl/technical/ns2linux/known_linux/index.html#vegas
+
+    Signed-off-by: David S. Miller <davem@davemloft.net>
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/net/ipv4/tcp_vegas.c b/net/ipv4/tcp_vegas.c
+index 490360b..2caa10a 100644
+--- a/net/ipv4/tcp_vegas.c
++++ b/net/ipv4/tcp_vegas.c
+@@ -42,8 +42,8 @@
+  * with V_PARAM_SHIFT bits to the right of the binary point.
+  */
+ #define V_PARAM_SHIFT 1
+-static int alpha = 1<<V_PARAM_SHIFT;
+-static int beta  = 3<<V_PARAM_SHIFT;
++static int alpha = 2<<V_PARAM_SHIFT;
++static int beta  = 4<<V_PARAM_SHIFT;
+ static int gamma = 1<<V_PARAM_SHIFT;
+ 
+ module_param(alpha, int, 0644);

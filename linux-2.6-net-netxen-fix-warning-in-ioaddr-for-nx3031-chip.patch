@@ -1,0 +1,60 @@
+From: Chad Dupuis <cdupuis@redhat.com>
+Date: Tue, 3 Aug 2010 13:50:53 -0400
+Subject: [net] netxen: fix warning in ioaddr for NX3031 chip
+Message-id: <20100803134809.2239.40389.sendpatchset@localhost.localdomain>
+Patchwork-id: 27329
+O-Subject: [RHEL 5.6 PATCH 27/44] netxen: fix warning in ioaddr for NX3031 chip
+Bugzilla: 562937
+RH-Acked-by: David S. Miller <davem@redhat.com>
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+
+Bugzilla
+========
+
+562937
+
+Upstream Status
+===============
+
+net-2.6 commit id 77c553900c58c3e4f475e233ad4ff6aeb282deb4
+
+Description
+===========
+
+>From bc2acffd425c9015ee8bb7e8647f8ecfd612f1fe Mon Sep 17 00:00:00 2001
+From: Amit Kumar Salecha <amit.salecha@qlogic.com>
+Date: Fri, 26 Mar 2010 00:30:08 +0000
+Subject: [PATCH] netxen: fix warning in ioaddr for NX3031 chip
+
+Signed-off-by: Amit Kumar Salecha <amit.salecha@qlogic.com>
+
+crb_intr_mask/crb_sts_consumer is predefined for NX2031 not for
+NX3031. For NX3031, these values get defined in rx context creation.
+Signed-off-by: David S. Miller <davem@davemloft.net>
+
+diff --git a/drivers/net/netxen/netxen_nic_ctx.c b/drivers/net/netxen/netxen_nic_ctx.c
+index 2a8ef5f..f26e547 100644
+--- a/drivers/net/netxen/netxen_nic_ctx.c
++++ b/drivers/net/netxen/netxen_nic_ctx.c
+@@ -669,13 +669,15 @@ int netxen_alloc_hw_resources(struct netxen_adapter *adapter)
+ 		}
+ 		sds_ring->desc_head = (struct status_desc *)addr;
+ 
+-		sds_ring->crb_sts_consumer =
+-			netxen_get_ioaddr(adapter,
+-			recv_crb_registers[port].crb_sts_consumer[ring]);
++		if (NX_IS_REVISION_P2(adapter->ahw.revision_id)) {
++			sds_ring->crb_sts_consumer =
++				netxen_get_ioaddr(adapter,
++				recv_crb_registers[port].crb_sts_consumer[ring]);
+ 
+-		sds_ring->crb_intr_mask =
+-			netxen_get_ioaddr(adapter,
+-			recv_crb_registers[port].sw_int_mask[ring]);
++			sds_ring->crb_intr_mask =
++				netxen_get_ioaddr(adapter,
++				recv_crb_registers[port].sw_int_mask[ring]);
++		}
+ 	}
+ 
+ 

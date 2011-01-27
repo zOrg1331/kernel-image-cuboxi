@@ -1,0 +1,110 @@
+From: John Feeney <jfeeney@redhat.com>
+Date: Fri, 17 Dec 2010 20:53:51 -0500
+Subject: [net] bnx2: remove extra call to pci_map_page
+Message-id: <4D0BCDDF.4020607@redhat.com>
+Patchwork-id: 30669
+O-Subject: [RHEL5.6 PATCH] bnx2: remove extra call to pci_map_page
+Bugzilla: 663509
+RH-Acked-by: Andy Gospodarek <gospo@redhat.com>
+RH-Acked-by: David S. Miller <davem@redhat.com>
+RH-Acked-by: Don Zickus <dzickus@redhat.com>
+
+bz663509
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=663509
+bnx2: calling pci_map_page() twice in tx path
+
+Description of problem:
+With IOMMU enabled, such as with PowerPC, error messages,
+similar to the following, are written to the error log.
+
+>bnx2 0003:01:00.1: iommu_alloc failed, tbl c000000001747b00 vaddr
+> c000000393537000 npages 1
+>
+
+Upon review, it was noted that bnx2_start_xmit() was calling
+pci_map_page() twice.
+
+Solution:
+In the RHEL5.4 time frame, code was added (bz475567) to mimic
+skb_dma_map() which wasn't in RHEL5. This patch added a call to
+pci_map_page(). It doesn't appear to me that this patch was
+upstream.
+
+During the RHEL5.6 update for bz568601, an upstream patch ("bnx2:
+remove skb_dma_map/unmap calls from driver" Duyck commit:
+e95524a726904a1d2b91552f0577838f67d53c6c) added a call to
+pci_map_page(), too.
+
+Hence we have two pci_map_page() calls in bnx2_start_xmit().
+The solution is to remove the code added for RHEL5.4 and make
+RHEL5.6 equivalent to upstream.
+
+It should be noted that the RHEL5.4 patch added a variable
+called dma_maps. The posted patch removes all references
+to dma_maps upon the recommendation of the Broadcom bnx2
+maintainer.
+
+Upstream commit: n/a
+
+Brew:
+Successfully built in Brew for all architectures (task_2982677).
+
+Testing:
+Given that this is a RHEL5.6 show stopper for them, IBM is testing
+this on PPC and reports success. Refer to the bz for specific
+testing results, if desired.
+
+Acks would be appreciated. Thanks.
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/net/bnx2.c b/drivers/net/bnx2.c
+index 6974301..472385d 100644
+--- a/drivers/net/bnx2.c
++++ b/drivers/net/bnx2.c
+@@ -6395,7 +6395,6 @@ static int
+ bnx2_start_xmit(struct sk_buff *skb, struct net_device *dev)
+ {
+ 	struct bnx2 *bp = netdev_priv(dev);
+-	dma_addr_t dma_maps[MAX_SKB_FRAGS + 1];
+ 	dma_addr_t mapping;
+ 	struct tx_bd *txbd;
+ 	struct sw_bd *tx_buf;
+@@ -6466,21 +6465,7 @@ bnx2_start_xmit(struct sk_buff *skb, struct net_device *dev)
+ 	if (pci_dma_mapping_error(mapping))
+ 		goto error;
+ 
+-	dma_maps[0] = mapping;
+-
+ 	last_frag = skb_shinfo(skb)->nr_frags;
+-
+-	for (i = 0; i < last_frag; i++) {
+-		skb_frag_t *fp = &skb_shinfo(skb)->frags[i];
+-
+-		mapping = pci_map_page(bp->pdev, fp->page, fp->page_offset,
+-				       fp->size, PCI_DMA_TODEVICE);
+-		if (pci_dma_mapping_error(mapping))
+-			goto map_unwind;
+-		dma_maps[i + 1] = mapping;
+-	}
+-
+-	mapping = dma_maps[0];
+ 	tx_buf = &txr->tx_buf_ring[ring_prod];
+ 	tx_buf->skb = skb;
+ 	tx_buf->nr_frags = last_frag;
+@@ -6543,15 +6528,6 @@ bnx2_start_xmit(struct sk_buff *skb, struct net_device *dev)
+ 
+ 	return NETDEV_TX_OK;
+ 
+-map_unwind:
+-	while (--i >= 0) {
+-		skb_frag_t *fp = &skb_shinfo(skb)->frags[i];
+-
+-		pci_unmap_page(bp->pdev, dma_maps[i + 1], fp->size,
+-			       PCI_DMA_TODEVICE);
+-	}
+-	pci_unmap_single(bp->pdev, dma_maps[0], skb_headlen(skb),
+-			 PCI_DMA_TODEVICE);
+ error:
+ 	dev_kfree_skb(skb);
+ 	return NETDEV_TX_OK;

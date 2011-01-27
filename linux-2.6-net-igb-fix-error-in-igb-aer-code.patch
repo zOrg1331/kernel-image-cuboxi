@@ -1,0 +1,44 @@
+From: Stefan Assmann <sassmann@redhat.com>
+Date: Thu, 8 Jul 2010 10:15:03 -0400
+Subject: [net] igb: fix error in igb AER code
+Message-id: <4C35A527.8060704@redhat.com>
+Patchwork-id: 26759
+O-Subject: [RHEL 5.6 PATCH] igb: fix error in igb AER code
+Bugzilla: 612212
+RH-Acked-by: Jiri Pirko <jpirko@redhat.com>
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+RH-Acked-by: Dean Nelson <dnelson@redhat.com>
+RH-Acked-by: Andy Gospodarek <gospo@redhat.com>
+
+Bugzilla:
+https://bugzilla.redhat.com/show_bug.cgi?id=612212
+
+Description:
+There's a small mistake in the AER code for igb in RHEL5, so this patch
+addresses that. Fix to get in sync with upstream commit
+40a914fa72abdb9193ecad7dd82e48d952ab9d24.
+
+Upstream Status:
+Not an upstream bug.
+
+Brew Build:
+https://brewweb.devel.redhat.com/taskinfo?taskID=2581556
+
+Test Status:
+Tested by myself.
+
+  Stefan
+
+diff --git a/drivers/net/igb/igb_main.c b/drivers/net/igb/igb_main.c
+index f61d609..fc9e5b8 100644
+--- a/drivers/net/igb/igb_main.c
++++ b/drivers/net/igb/igb_main.c
+@@ -5202,7 +5202,7 @@ static pci_ers_result_t igb_io_slot_reset(struct pci_dev *pdev)
+ 
+ 		igb_reset(adapter);
+ 		wr32(E1000_WUS, ~0);
+-		return PCI_ERS_RESULT_RECOVERED;
++		result = PCI_ERS_RESULT_RECOVERED;
+ 	}
+ 	pci_cleanup_aer_uncorrect_error_status(pdev);
+ 

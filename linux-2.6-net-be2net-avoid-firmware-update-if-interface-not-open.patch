@@ -1,0 +1,55 @@
+From: Ivan Vecera <ivecera@redhat.com>
+Date: Thu, 25 Nov 2010 15:09:09 -0500
+Subject: [net] be2net: avoid firmware update if interface not open
+Message-id: <1290697749-10885-1-git-send-email-ivecera@redhat.com>
+Patchwork-id: 29628
+O-Subject: [RHEL5.6 PATCH] be2net: Avoid firmware update when interface is not
+	open.
+Bugzilla: 651948
+RH-Acked-by: David S. Miller <davem@redhat.com>
+RH-Acked-by: Andy Gospodarek <gospo@redhat.com>
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+BZ:
+#651948 - [Emulex 5.6 bug] be2net: error when flashing firmware
+
+Description:
+Attempting a firmware update operation when interface is down could lead
+to failure of operation. This fix fails the request if the interface is not
+running.
+
+Upstream commits:
+d9efd2a be2net: Fix to avoid firmware update when interface is not open.
+
+Signed-off-by: Ivan Vecera <ivecera@redhat.com>
+
+diff --git a/drivers/net/benet/be.h b/drivers/net/benet/be.h
+index 151b4ea..094a145 100644
+--- a/drivers/net/benet/be.h
++++ b/drivers/net/benet/be.h
+@@ -34,7 +34,7 @@
+ 
+ #include "be_hw.h"
+ 
+-#define DRV_VER			"2.102.512r"
++#define DRV_VER			"2.102.518r"
+ #define DRV_NAME		"be2net"
+ #define BE_NAME			"ServerEngines BladeEngine2 10Gbps NIC"
+ #define BE3_NAME		"ServerEngines BladeEngine3 10Gbps NIC"
+diff --git a/drivers/net/benet/be_main.c b/drivers/net/benet/be_main.c
+index 1c9740c..bd99df1 100644
+--- a/drivers/net/benet/be_main.c
++++ b/drivers/net/benet/be_main.c
+@@ -2177,6 +2177,12 @@ int be_load_fw(struct be_adapter *adapter, u8 *func)
+ 	int status, i = 0, num_imgs = 0;
+ 	const u8 *p;
+ 
++	if (!netif_running(adapter->netdev)) {
++		dev_err(&adapter->pdev->dev,
++			"Firmware load not allowed (interface is down)\n");
++		return -EPERM;
++	}
++
+ 	strcpy(fw_file, func);
+ 
+ 	status = request_firmware(&fw, fw_file, &adapter->pdev->dev);

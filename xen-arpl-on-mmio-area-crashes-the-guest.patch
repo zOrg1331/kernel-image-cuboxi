@@ -1,13 +1,15 @@
 From: Paolo Bonzini <pbonzini@redhat.com>
-Date: Thu,  8 Apr 2010 12:52:05 +0200
+Date: Thu, 8 Apr 2010 10:52:05 -0400
 Subject: [xen] arpl on MMIO area crashes the guest
 Message-id: <1270723925-32730-1-git-send-email-pbonzini@redhat.com>
-O-Subject: [kernel team] [RHEL5.5.z/5.6 EMBARGOED PATCH v2] CVE-2010-0730: arpl on MMIO area crashes the guest
-Bugzilla: 572979
+Patchwork-id: 4339
+O-Subject: [kernel team] [RHEL5.5.z/5.6 EMBARGOED PATCH v2] CVE-2010-0730:
+	arpl on MMIO area crashes the guest
+Bugzilla: 572982
+CVE: CVE-2010-0730
 RH-Acked-by: Miroslav Rezanina <mrezanin@redhat.com>
 RH-Acked-by: Don Dutile <ddutile@redhat.com>
 RH-Acked-by: Chris Lalancette <clalance@redhat.com>
-RH-Acked-by: Andrew Jones <drjones@redhat.com>
 
 Bugzilla: 572971
 
@@ -33,6 +35,8 @@ Signed-off-by: Paolo Bonzini <pbonzini@redhat.com>
  arch/x86/hvm/platform.c |    4 +++-
  1 files changed, 3 insertions(+), 1 deletions(-)
 
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
 diff --git a/arch/x86/hvm/platform.c b/arch/x86/hvm/platform.c
 index 3d69e9c..86c478d 100644
 --- a/arch/x86/hvm/platform.c
@@ -48,6 +52,3 @@ index 3d69e9c..86c478d 100644
      }
  
      regs->eip += inst_len; /* advance %eip */
--- 
-1.6.6.1
-

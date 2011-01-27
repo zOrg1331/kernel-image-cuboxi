@@ -1,0 +1,72 @@
+From: Glauber Costa <glommer@redhat.com>
+Date: Thu, 1 Jul 2010 19:45:35 -0400
+Subject: [time] fix softlockups in RHEL5 virt guests
+Message-id: <1278013535-12710-3-git-send-email-glommer@redhat.com>
+Patchwork-id: 26668
+O-Subject: [RHEL5.6 PATCH 2/2] fix softlockups with RHEL5 guests
+Bugzilla: 607443
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+RH-Acked-by: Jes Sorensen <Jes.Sorensen@redhat.com>
+RH-Acked-by: Marcelo Tosatti <mtosatti@redhat.com>
+RH-Acked-by: Jarod Wilson <jarod@redhat.com>
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+RH-Author: Glauber Costa <glommer@redhat.com>
+RH-Bugzilla: 607443
+RH-Upstream-status: N/A.
+
+Because we may account many jiffies at once with the tick divider code,
+the watchdog may be fooled, and fire.
+
+We can't touch the watchdog at the end of ticks accounting, since the
+code in do_timer_jiffy() has an implicit watchdog poking that can trigger
+it while we're still accounting lost ticks.
+
+So everytime we reach a certain amount of iterations, this patch touches
+the watchdog.
+
+Signed-off-by: Glauber Costa <glommer@redhat.com>
+
+diff --git a/arch/x86_64/kernel/time.c b/arch/x86_64/kernel/time.c
+index dfe9ec6..ed86e23 100644
+--- a/arch/x86_64/kernel/time.c
++++ b/arch/x86_64/kernel/time.c
+@@ -493,7 +493,7 @@ static void do_timer_account_lost_ticks(struct pt_regs *regs)
+ static void do_timer_tsc_timekeeping(struct pt_regs *regs)
+ {
+ 	int i;
+-	cycles_t tsc, tsc_accounted, tsc_not_accounted;
++	cycles_t tsc, tsc_accounted, tsc_not_accounted, tsc_wd;
+ 	unsigned long *last = NULL;
+ 
+ 
+@@ -512,11 +512,17 @@ static void do_timer_tsc_timekeeping(struct pt_regs *regs)
+ 
+ 	tsc_not_accounted = tsc - tsc_accounted;
+ 
++	tsc_wd = 0;
+ 	while (tsc_not_accounted >= cycles_per_tick) {
++		if (tsc_wd > cycles_per_tick) {
++			touch_all_softlockup_watchdogs();
++			tsc_wd = 0;
++		}
+ 		for (i = 0; i < tick_divider; i++)
+ 			do_timer_jiffy(regs);
+ 		tsc_not_accounted -= cycles_per_tick;
+ 		tsc_accounted += cycles_per_tick;
++		tsc_wd += cycles_per_tick;
+ 	}
+ 
+ 	if (use_kvm_time) {
+@@ -1449,9 +1455,9 @@ void __init time_init(void)
+ 			cycles_per_tick = get_hypervisor_cycles_per_tick();
+ 		/*
+ 		 * The maximum cycles we will account per
+-		 * timer interrupt is 10 minutes.
++		 * timer interrupt is 10 seconds.
+ 		 */
+-		cycles_accounted_limit = cycles_per_tick * REAL_HZ * 60 * 10;
++		cycles_accounted_limit = cycles_per_tick * REAL_HZ * 10;
+ 		tick_nsec = NSEC_PER_SEC / HZ;
+ 		printk(KERN_INFO
+ 			"time.c: Using tsc for timekeeping HZ %d\n", HZ);

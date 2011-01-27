@@ -1,0 +1,80 @@
+From: Oleg Nesterov <oleg@redhat.com>
+Date: Sun, 30 May 2010 16:20:39 -0400
+Subject: [misc] workqueue: implement wait_on_work
+Message-id: <20100530162039.GE9577@redhat.com>
+Patchwork-id: 25907
+O-Subject: [RHEL5 PATCH 4/7] bz#596626:  workqueues: implement wait_on_work()
+Bugzilla: 596626
+RH-Acked-by: Stanislaw Gruszka <sgruszka@redhat.com>
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+Implement wait_on_work().
+
+Unlike upstream, we do not use barries but rely on cwq->work_done wait queue.
+
+And. cancel_ pathes must never take mutex_lock(workqueue_mutex), otherwise
+we can deadlock with flush_workqueue() if cancel_work_sync(work) is called
+under some LOCK which could be taken by unrelated work on the same wq.
+
+But, without workqueue_mutex wait_on_work() has to use for_each_possible_cpu(),
+that is why cwq_basic_init() initializes cwq->lock and cwq->current_work on
+any possible CPU.
+
+We can't race with cpu-hotplug. run_workqueue() doesn't check
+kthread_should_stop() and it always returns with cwq->current_work == NULL.
+This means that if wait_on_cpu_work() sees cwq->current_work == work under
+cwq->lock, it is safe to assume this CPU is still online, although it is
+possible that it is going to die.
+
+Signed-off-by: Oleg Nesterov <oleg@redhat.com>
+
+diff --git a/kernel/workqueue.c b/kernel/workqueue.c
+index 080fc3e..c267e8e 100644
+--- a/kernel/workqueue.c
++++ b/kernel/workqueue.c
+@@ -367,6 +367,45 @@ void fastcall flush_workqueue(struct workqueue_struct *wq)
+ }
+ EXPORT_SYMBOL_GPL(flush_workqueue);
+ 
++static void wait_on_cpu_work(struct cpu_workqueue_struct *cwq,
++				struct work_struct *work)
++{
++	DEFINE_WAIT(wait);
++
++	spin_lock_irq(&cwq->lock);
++	while (unlikely(cwq->current_work == work)) {
++		prepare_to_wait(&cwq->work_done, &wait, TASK_UNINTERRUPTIBLE);
++		spin_unlock_irq(&cwq->lock);
++		schedule();
++		spin_lock_irq(&cwq->lock);
++	}
++	finish_wait(&cwq->work_done, &wait);
++	spin_unlock_irq(&cwq->lock);
++}
++
++static void wait_on_work(struct work_struct *work)
++{
++	struct cpu_workqueue_struct *cwq;
++	struct workqueue_struct *wq;
++	int cpu;
++
++	might_sleep();
++
++	cwq = get_wq_data(work);
++	if (!cwq)
++		return;
++
++	wq = cwq->wq;
++
++	if (is_single_threaded(wq)) {
++		wait_on_cpu_work(per_cpu_ptr(wq->cpu_wq, singlethread_cpu),
++					work);
++	} else {
++		for_each_possible_cpu(cpu)
++			wait_on_cpu_work(per_cpu_ptr(wq->cpu_wq, cpu), work);
++	}
++}
++
+ static inline void cwq_basic_init(struct workqueue_struct *wq, int cpu)
+ {
+ 	struct cpu_workqueue_struct *cwq = per_cpu_ptr(wq->cpu_wq, cpu);

@@ -1,0 +1,45 @@
+From: David Milburn <dmilburn@redhat.com>
+Date: Thu, 18 Nov 2010 20:40:55 -0500
+Subject: [misc] another LPC Controller ID for Intel Patsburg PCH
+Message-id: <1290112856-1796-9-git-send-email-dmilburn@redhat.com>
+Patchwork-id: 29503
+O-Subject: [RHEL5.6 PATCH 8/9] BZ 570868 additional LPC Controller DeviceID for
+	Intel Patsburg PCH
+Bugzilla: 570868
+RH-Acked-by: Stanislaw Gruszka <sgruszka@redhat.com>
+RH-Acked-by: Ivan Vecera <ivecera@redhat.com>
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+RH-Acked-by: Michal Schmidt <mschmidt@redhat.com>
+
+http://marc.info/?l=linux-kernel&m=129002169719224&w=2
+
+BZ 570868
+
+diff --git a/arch/i386/pci/irq.c b/arch/i386/pci/irq.c
+index 74c0c6d..01e33b7 100644
+--- a/arch/i386/pci/irq.c
++++ b/arch/i386/pci/irq.c
+@@ -555,7 +555,8 @@ static __init int intel_router_probe(struct irq_router *r, struct pci_dev *route
+ 		case PCI_DEVICE_ID_INTEL_ICH10_1:
+ 		case PCI_DEVICE_ID_INTEL_ICH10_2:
+ 		case PCI_DEVICE_ID_INTEL_ICH10_3:
+-		case PCI_DEVICE_ID_INTEL_PATSBURG_LPC:
++		case PCI_DEVICE_ID_INTEL_PATSBURG_LPC_0:
++		case PCI_DEVICE_ID_INTEL_PATSBURG_LPC_1:
+ 			r->name = "PIIX/ICH";
+ 			r->get = pirq_piix_get;
+ 			r->set = pirq_piix_set;
+diff --git a/include/linux/pci_ids.h b/include/linux/pci_ids.h
+index 6d95ea9..49ae95f 100644
+--- a/include/linux/pci_ids.h
++++ b/include/linux/pci_ids.h
+@@ -2221,7 +2221,8 @@
+ #define PCI_DEVICE_ID_INTEL_CPT_LPC_MIN	0x1c41
+ #define PCI_DEVICE_ID_INTEL_CPT_LPC_MAX	0x1c5f
+ #define PCI_DEVICE_ID_INTEL_PATSBURG_SMBUS	0x1d22
+-#define PCI_DEVICE_ID_INTEL_PATSBURG_LPC	0x1d40
++#define PCI_DEVICE_ID_INTEL_PATSBURG_LPC_0	0x1d40
++#define PCI_DEVICE_ID_INTEL_PATSBURG_LPC_1	0x1d41
+ #define PCI_DEVICE_ID_INTEL_82801AA_0	0x2410
+ #define PCI_DEVICE_ID_INTEL_82801AA_1	0x2411
+ #define PCI_DEVICE_ID_INTEL_82801AA_3	0x2413

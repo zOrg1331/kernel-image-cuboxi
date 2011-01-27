@@ -1,0 +1,91 @@
+From: Michal Novotny <minovotn@redhat.com>
+Date: Thu, 19 Aug 2010 12:28:36 -0400
+Subject: [xen] vmx: fix handling of FS/GS base MSRs
+Message-id: <1282220916-6537-1-git-send-email-minovotn@redhat.com>
+Patchwork-id: 27717
+O-Subject: [RHEL 5.6 Xen PATCH] vmx: Fix handling of FS/GS base MSRs
+Bugzilla: 613187
+RH-Acked-by: Rik van Riel <riel@redhat.com>
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+RH-Acked-by: Andrew Jones <drjones@redhat.com>
+
+Bugzilla: 613187
+
+Upstream: xen-unstable.hg c/s 19953
+
+Brew build: https://brewweb.devel.redhat.com/taskinfo?taskID=2589194
+
+This is the patch for FS/GS base MSRs implementation in vmx.c for x86
+CPUs to make Cygwin bash not crash on Intel CPUs.  It's the backport of
+xen-unstable.hg c/s 19953.
+
+Tested by me.
+
+Michal
+---
+ arch/x86/hvm/vmx/vmx.c |   23 +++++++----------------
+ 1 files changed, 7 insertions(+), 16 deletions(-)
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/arch/x86/hvm/vmx/vmx.c b/arch/x86/hvm/vmx/vmx.c
+index d5b6002..09d2ff9 100644
+--- a/arch/x86/hvm/vmx/vmx.c
++++ b/arch/x86/hvm/vmx/vmx.c
+@@ -190,20 +190,14 @@ static int long_mode_do_msr_read(struct cpu_user_regs *regs)
+ 
+     case MSR_FS_BASE:
+         msr_content = __vmread(GUEST_FS_BASE);
+-        goto check_long_mode;
++        break;
+ 
+     case MSR_GS_BASE:
+         msr_content = __vmread(GUEST_GS_BASE);
+-        goto check_long_mode;
++        break;
+ 
+     case MSR_SHADOW_GS_BASE:
+-        msr_content = v->arch.hvm_vmx.shadow_gs;
+-    check_long_mode:
+-        if ( !(vmx_long_mode_enabled(v)) )
+-        {
+-            vmx_inject_hw_exception(v, TRAP_gp_fault, 0);
+-            return 0;
+-        }
++        rdmsrl(MSR_SHADOW_GS_BASE, msr_content);
+         break;
+ 
+     case MSR_STAR:
+@@ -288,9 +282,6 @@ static int long_mode_do_msr_write(struct cpu_user_regs *regs)
+     case MSR_FS_BASE:
+     case MSR_GS_BASE:
+     case MSR_SHADOW_GS_BASE:
+-        if ( !vmx_long_mode_enabled(v) )
+-            goto gp_fault;
+-
+         if ( !is_canonical_address(msr_content) )
+             goto uncanonical_address;
+ 
+@@ -299,10 +290,7 @@ static int long_mode_do_msr_write(struct cpu_user_regs *regs)
+         else if ( ecx == MSR_GS_BASE )
+             __vmwrite(GUEST_GS_BASE, msr_content);
+         else
+-        {
+-            v->arch.hvm_vmx.shadow_gs = msr_content;
+             wrmsrl(MSR_SHADOW_GS_BASE, msr_content);
+-        }
+ 
+         break;
+ 
+@@ -360,7 +348,10 @@ static void vmx_restore_host_msrs(void)
+ 
+ static void vmx_save_guest_msrs(struct vcpu *v)
+ {
+-    /* MSR_SHADOW_GS_BASE may have been changed by swapgs instruction. */
++    /*
++     * We cannot cache SHADOW_GS_BASE while the VCPU runs, as it can
++     * be updated at any time via SWAPGS, which we cannot trap.
++     */
+     rdmsrl(MSR_SHADOW_GS_BASE, v->arch.hvm_vmx.shadow_gs);
+ }
+ 

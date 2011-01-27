@@ -42,7 +42,7 @@ Tested by me.
 Signed-off-by: Jarod Wilson <jarod@redhat.com>
 
 diff --git a/arch/x86/hvm/vmx/vmcs.c b/arch/x86/hvm/vmx/vmcs.c
-index 015e2be..091f049 100644
+index 895084d..6a5e838 100644
 --- a/arch/x86/hvm/vmx/vmcs.c
 +++ b/arch/x86/hvm/vmx/vmcs.c
 @@ -685,65 +685,142 @@ void vmx_do_resume(struct vcpu *v)

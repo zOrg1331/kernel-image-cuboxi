@@ -1,0 +1,53 @@
+From: Tomas Henzl <thenzl@redhat.com>
+Date: Sun, 29 Aug 2010 15:49:28 -0400
+Subject: [block] cciss: add raid_level attribute to logical drives
+Message-id: <1283097002-3341-30-git-send-email-thenzl@redhat.com>
+Patchwork-id: 27890
+O-Subject: [RHEL6 PATCH 29/63] cciss: Add raid_level attribute to logical drives
+	in /sys
+Bugzilla: 568830
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+
+Add raid_level attribute to logical drives in /sys
+
+diff --git a/drivers/block/cciss.c b/drivers/block/cciss.c
+index de6ae68..e2c9e32 100644
+--- a/drivers/block/cciss.c
++++ b/drivers/block/cciss.c
+@@ -604,12 +604,36 @@ static ssize_t cciss_show_lunid(struct device *dev,
+ }
+ DEVICE_ATTR(lunid, S_IRUGO, cciss_show_lunid, NULL);
+ 
++static ssize_t cciss_show_raid_level(struct device *dev,
++				     struct device_attribute *attr, char *buf)
++{
++	drive_info_struct *drv = dev_get_drvdata(dev);
++	struct ctlr_info *h = to_hba(drv->dev->parent);
++	int raid;
++	unsigned long flags;
++
++	spin_lock_irqsave(CCISS_LOCK(h->ctlr), flags);
++	if (h->busy_configuring) {
++		spin_unlock_irqrestore(CCISS_LOCK(h->ctlr), flags);
++		return -EBUSY;
++	}
++	raid = drv->raid_level;
++	spin_unlock_irqrestore(CCISS_LOCK(h->ctlr), flags);
++	if (raid < 0 || raid > 5)
++		raid = RAID_UNKNOWN;
++
++	return snprintf(buf, strlen(raid_label[raid]) + 7, "RAID %s\n",
++			raid_label[raid]);
++}
++DEVICE_ATTR(raid_level, S_IRUGO | S_IWUSR, cciss_show_raid_level, NULL);
++
+ struct device_attribute *cciss_dev_attrs[] = {
+ 	&dev_attr_unique_id,
+ 	&dev_attr_vendor,
+ 	&dev_attr_model,
+ 	&dev_attr_rev,
+ 	&dev_attr_lunid,
++	&dev_attr_raid_level,
+ 	NULL,
+ };
+ 

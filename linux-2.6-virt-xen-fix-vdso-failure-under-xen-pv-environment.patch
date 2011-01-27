@@ -1,0 +1,50 @@
+From: Danny Feng <dfeng@redhat.com>
+Date: Thu, 21 Oct 2010 15:19:20 -0400
+Subject: [virt] xen: fix vdso failure under xen pv environment
+Message-id: <20101021151920.29951.63834.sendpatchset@danny.redhat>
+Patchwork-id: 28892
+O-Subject: [PATCH RHEL5.6] fix vdso failure under xen pv environment
+Bugzilla: 644860
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+RH-Acked-by: Don Dutile <ddutile@redhat.com>
+
+RHBZ#:
+https://bugzilla.redhat.com/show_bug.cgi?id=644860
+
+Description:
+randomization test failed on RHEL5.6 Alpha in paravirtualized environment.
+But The test passes in all other virtualized environments:
+	x86_64 Xen full virt guest runs fine
+	x86_64 KVM virtualized guest runs fine
+
+Upstream status:
+rhel xen kernel only, not upstream
+
+Fix:
+The reason is that when I implement x86_64 vdso feature, I forgot
+to change some xen specific file. Which makes xen pv kernel doesn't
+have vdso area..
+
+Brew build:
+https://brewweb.devel.redhat.com/taskinfo?taskID=2838045
+
+Test status:
+Jan confirmed that "The test PASSes now when running on kernel-xen-2.6.18-228.el5.vdso_xen"
+
+diff --git a/arch/x86_64/mm/init-xen.c b/arch/x86_64/mm/init-xen.c
+index a1f8ae8..23bffaa 100644
+--- a/arch/x86_64/mm/init-xen.c
++++ b/arch/x86_64/mm/init-xen.c
+@@ -1274,3 +1274,12 @@ int in_gate_area_no_task(unsigned long addr)
+ {
+ 	return (addr >= VSYSCALL_START) && (addr < VSYSCALL_END);
+ }
++
++const char *arch_vma_name(struct vm_area_struct *vma)
++{
++        if (vma->vm_mm && vma->vm_start == (long)vma->vm_mm->context.vdso)
++                return "[vdso]";
++        if (vma == &gate_vma)
++                return "[vsyscall]";
++        return NULL;
++}

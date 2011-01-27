@@ -1,0 +1,123 @@
+From: Steve Best <sbest@redhat.com>
+Date: Mon, 27 Sep 2010 13:34:23 -0400
+Subject: [scsi] fix write buffer length in scsi_req_map_sg
+Message-id: <20100927132158.25067.47090.sendpatchset@squad5-lp1.lab.bos.redhat.com>
+Patchwork-id: 28416
+O-Subject: [PATCH RHEL5.6 BZ637235] [SCSI] fix write buffer length in
+	scsi_req_map_sg()
+Bugzilla: 637235
+RH-Acked-by: David Howells <dhowells@redhat.com>
+RH-Acked-by: Mike Christie <mchristi@redhat.com>
+
+RHBZ#:
+------
+https://bugzilla.redhat.com/show_bug.cgi?id=637235
+
+Description:
+------------
+iprconfig microcode download operation fails to download combined images (Vega
+chipset + SSD) with Blue Darter cards.
+
+Messages logged on syslog:
+
+iprconfig[20223]: 17:0:0:0: Updating device microcode using
+/usr/lib/microcode/V1-Sand.A1700D99.2232SA04 from 5A386630 (Z8f0) to 00002232 (
+iprconfig[20223]: Write buffer failed on sd device . No such file or directory
+iprconfig[20223]: 17:0:0:0: Write buffer using sg device failed.
+rc=1, SK: 5 ASC: 26 ASCQ: 0
+iprconfig[20223]: 17:0:0:0: Not setting up mode page 0x00 for unknown device.
+
+and the problem is caused by sg's may have setup the buffer with a different
+length than the transfer length so we should be using the bufflen passed
+in as the request's data len.
+
+Signed-off-by: Mike Christie <michaelc@cs.wisc.edu>
+Signed-off-by: James Bottomley <James.Bottomley@SteelEye.com>
+
+RHEL Version Found:
+-------------------
+RHEL 5.5
+
+Brew:
+-----
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=2779440
+
+Upstream:
+---------
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;
+a=commit;h=bd441deaf341c524b28fd72831ebf6fef88f1c41
+
+Test Status:
+------------
+
+Machine Type = P7 (CHRP IBM,8202-E4B)
+
+---Steps to Reproduce---
+# iprconfig --debug -c update-ucode sdb
+/usr/lib/microcode/V1-Sand.A1700D99.Z829SA3B
+
+The download fails when the disk is formatted as Advanced Function (AFD), but
+it completes
+successfully when the disk is formatted as Physical Disk (JBOD).
+
+Download fails with firmware version 3038334E (083N) and kernel 2.6.18-211.el5.
+
+Backported SCSI layer patch fixes this issue.
+
+Kleber Sacilotto de Souza @ IBM helped me test this patch.
+
+---------------------------------------------------------------
+Steve Best
+IBM on-site partner
+
+Proposed Patch:
+---------------
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/scsi/scsi_lib.c b/drivers/scsi/scsi_lib.c
+index 7a26d25..e8c8031 100644
+--- a/drivers/scsi/scsi_lib.c
++++ b/drivers/scsi/scsi_lib.c
+@@ -373,7 +373,7 @@ static int scsi_req_map_sg(struct request *rq, struct scatterlist *sgl,
+ {
+ 	struct request_queue *q = rq->q;
+ 	int nr_pages = (bufflen + sgl[0].offset + PAGE_SIZE - 1) >> PAGE_SHIFT;
+-	unsigned int data_len = 0, len, bytes, off;
++	unsigned int data_len = bufflen, len, bytes, off;
+ 	struct page *page;
+ 	struct bio *bio = NULL;
+ 	int i, err, nr_vecs = 0;
+@@ -382,10 +382,15 @@ static int scsi_req_map_sg(struct request *rq, struct scatterlist *sgl,
+ 		page = sgl[i].page;
+ 		off = sgl[i].offset;
+ 		len = sgl[i].length;
+-		data_len += len;
+ 
+-		while (len > 0) {
++		while (len > 0 && data_len > 0) {
++			/*
++			 * sg sends a scatterlist that is larger than
++			 * the data_len it wants transferred for certain
++			 * IO sizes
++			 */
+ 			bytes = min_t(unsigned int, len, PAGE_SIZE - off);
++			bytes = min(bytes, data_len);
+ 
+ 			if (!bio) {
+ 				nr_vecs = min_t(int, BIO_MAX_PAGES, nr_pages);
+@@ -417,12 +422,13 @@ static int scsi_req_map_sg(struct request *rq, struct scatterlist *sgl,
+ 
+ 			page++;
+ 			len -= bytes;
++			data_len -=bytes;
+ 			off = 0;
+ 		}
+ 	}
+ 
+ 	rq->buffer = rq->data = NULL;
+-	rq->data_len = data_len;
++	rq->data_len = bufflen;
+ 	return 0;
+ 
+ free_bios:

@@ -1,0 +1,52 @@
+From: Jeff Layton <jlayton@redhat.com>
+Date: Mon, 14 Jun 2010 13:20:25 -0400
+Subject: [fs] cifs: don't try busy-file rename unless in same dir
+Message-id: <1276521625-26149-1-git-send-email-jlayton@redhat.com>
+Patchwork-id: 26114
+O-Subject: [RHEL5.6 PATCH] BZ#603706: cifs: don't attempt busy-file rename
+	unless it's in same directory
+Bugzilla: 603706
+RH-Acked-by: Steve Dickson <SteveD@redhat.com>
+
+Older windows SMB servers typically refuse to allow files that are open
+to be renamed as the underlying filesystem doesn't support it. If you
+rename by filehandle however, you can generally rename files as long as
+that doesn't cross directories.
+
+The CIFS code is set up to try to rename by filehandle when renaming
+by name fails, but it doesn't properly limit that code to renames
+within the same directory. When that is attempted, the file is generally
+renamed to the target name, but stays within the same directory.
+
+The following patch is being pushed upstream for 2.6.35 and into stable
+trees. It just prevents the busy-file rename code from being attempted
+when the source and target have different parent directories.
+
+----------------------[snip]---------------------
+
+Busy-file renames don't actually work across directories, so we need
+to limit this code to renames within the same dir.
+
+This fixes the bug detailed here:
+
+    https://bugzilla.redhat.com/show_bug.cgi?id=591938
+
+Signed-off-by: Jeff Layton <jlayton@redhat.com>
+CC: Stable <stable@kernel.org>
+Signed-off-by: Steve French <sfrench@us.ibm.com>
+
+diff --git a/fs/cifs/inode.c b/fs/cifs/inode.c
+index 2e61150..10754a1 100644
+--- a/fs/cifs/inode.c
++++ b/fs/cifs/inode.c
+@@ -1358,6 +1358,10 @@ cifs_do_rename(int xid, struct dentry *from_dentry, const char *fromPath,
+ 	if (rc == 0 || rc != -ETXTBSY)
+ 		return rc;
+ 
++	/* open-file renames don't work across directories */
++	if (to_dentry->d_parent != from_dentry->d_parent)
++		return rc;
++
+ 	/* open the file to be renamed -- we need DELETE perms */
+ 	rc = CIFSSMBOpen(xid, pTcon, fromPath, FILE_OPEN, DELETE,
+ 			 CREATE_NOT_DIR, &srcfid, &oplock, NULL,

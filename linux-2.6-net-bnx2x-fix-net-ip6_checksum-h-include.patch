@@ -1,0 +1,29 @@
+From: Michal Schmidt <mschmidt@redhat.com>
+Date: Fri, 3 Sep 2010 16:44:33 -0400
+Subject: [net] bnx2x: fix net/ip6_checksum.h include
+Message-id: <20100903164433.25415.20865.stgit@brian.englab.brq.redhat.com>
+Patchwork-id: 28114
+O-Subject: [RHEL5.6 BZ572012 PATCH 40/46] bnx2x: bnx2x_cmn.c needs
+	net/ip6_checksum.h for csum_ipv6_magic
+Bugzilla: 572012
+RH-Acked-by: David S. Miller <davem@redhat.com>
+RH-Acked-by: Stanislaw Gruszka <sgruszka@redhat.com>
+
+From: Stephen Rothwell <sfr@canb.auug.org.au>
+
+Signed-off-by: Stephen Rothwell <sfr@canb.auug.org.au>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+(cherry picked from commit 7f3e01fee41a322747db2d7574516d9fbd3785c0)
+
+diff --git a/drivers/net/bnx2x/bnx2x_cmn.c b/drivers/net/bnx2x/bnx2x_cmn.c
+index 552738e..3679841 100644
+--- a/drivers/net/bnx2x/bnx2x_cmn.c
++++ b/drivers/net/bnx2x/bnx2x_cmn.c
+@@ -20,6 +20,7 @@
+ #include <linux/ethtool.h>
+ #include <linux/ip.h>
+ #include <linux/ipv6.h>
++#include <net/ip6_checksum.h>
+ #include "bnx2x_cmn.h"
+ 
+ #ifdef BCM_VLAN

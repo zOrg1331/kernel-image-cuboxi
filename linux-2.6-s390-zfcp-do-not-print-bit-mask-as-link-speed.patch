@@ -1,0 +1,65 @@
+From: Hendrik Brueckner <brueckner@redhat.com>
+Date: Wed, 4 Aug 2010 10:03:01 -0400
+Subject: [s390] zfcp: Do not print bit mask as link speed
+Message-id: <1280916181-27024-9-git-send-email-brueckner@redhat.com>
+Patchwork-id: 27373
+O-Subject: [RHEL5.6 PATCH 8/8] [s390x] zfcp: Do not print bit mask as link speed
+Bugzilla: 619857
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+
+Description
+-----------
+The message indicating the adapter properties displays a
+wrong value for higher link speeds.
+
+Up to 4Gb/s the value used for encoding the speed is
+the same as the numeric link speed. For 8Gb/s the
+encoding is 0x10. Since zfcp uses this value directly in
+the "adapter characteristics" message, it prints the wrong
+output "16 Gb/s".
+
+Since the message has been removed from future kernel
+versions and the translation code from the bit encoding to
+a correct string is private to the FC transport class,
+simply remove the link speed from the message. The link
+speed is still available through the FC sysfs and lsscsi.
+
+Bugzilla
+--------
+BZ 619857
+https://bugzilla.redhat.com/show_bug.cgi?id=619857
+
+Upstream status of the patch
+----------------------------
+The patch is not applicable to the upstream kernel.
+In the upstream kernel the message has been removed with
+a zfcp driver clean-up:
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=553448f6c4838a1e4bed2bc9301c748278d7d9ce
+
+Test status
+-----------
+The patch has been tested and fixes the problem.
+The fix has been verified by the IBM test department.
+
+diff --git a/drivers/s390/scsi/zfcp_fsf.c b/drivers/s390/scsi/zfcp_fsf.c
+index 646cfa6..2da6458 100644
+--- a/drivers/s390/scsi/zfcp_fsf.c
++++ b/drivers/s390/scsi/zfcp_fsf.c
+@@ -1969,15 +1969,13 @@ zfcp_fsf_exchange_config_evaluate(struct zfcp_fsf_req *fsf_req, int xchg_ok)
+ 			"WWPN 0x%016Lx, "
+ 			"S_ID 0x%08x,\n"
+ 			"adapter version 0x%x, "
+-			"LIC version 0x%x, "
+-			"FC link speed %d Gb/s\n",
++			"LIC version 0x%x\n",
+ 			zfcp_get_busid_by_adapter(adapter),
+ 			(wwn_t) fc_host_node_name(shost),
+ 			(wwn_t) fc_host_port_name(shost),
+ 			fc_host_port_id(shost),
+ 			adapter->hydra_version,
+-			adapter->fsf_lic_version,
+-			fc_host_speed(shost));
++			adapter->fsf_lic_version);
+ 	if (ZFCP_QTCB_VERSION < bottom->low_qtcb_version) {
+ 		ZFCP_LOG_NORMAL("error: the adapter %s "
+ 				"only supports newer control block "

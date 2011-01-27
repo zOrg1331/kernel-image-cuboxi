@@ -1,0 +1,49 @@
+From: Pete Zaitcev <zaitcev@redhat.com>
+Date: Mon, 12 Apr 2010 18:26:39 -0400
+Subject: [usb] input: fix keyboard LEDs on all the time
+Message-id: <20100412122639.7d4ad985@redhat.com>
+Patchwork-id: 24102
+O-Subject: [RHEL 5 patch] Keyboard has LEDs on all the time
+Bugzilla: 513934
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+RH-Acked-by: Andy Gospodarek <gospo@redhat.com>
+RH-Acked-by: Jiri Pirko <jpirko@redhat.com>
+
+As reported in bz#513934, some keyboards have their LEDs on improperly
+when a debug kernel is in use. This does not seem like a big deal but
+it's annoying and confusing to our QE and it clearly is a bug, so
+I fixed it. The root cause is, the SLAB poisoning used in the debug
+kernel leaks into the control messages and keyboard gets very confused.
+
+I am quite certain that the fix is safe.
+
+I tested the fix for function by giving a test build to QE and by
+using a local keyboard that reproduces the issue (IBM Ultranav).
+Also, I reviewed the actual messages that various kernels produce,
+in case of regressions.
+
+Upstream and RHEL 6 are practically not vulnerable. In theory they still
+do not do the right thing, but in reality I never heard of the devices
+that failed. So, I am not going to change RHEL 6, unless there's a
+confirmed report of a failure. I worked with the maintainer to admit
+the fix I developed for RHEL 5 into upstream, so we'll see it in RHEL 7,
+I suppose.
+
+Please ack.
+
+-- Pete
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/usb/input/hid-core.c b/drivers/usb/input/hid-core.c
+index 3deb026..03d1def 100644
+--- a/drivers/usb/input/hid-core.c
++++ b/drivers/usb/input/hid-core.c
+@@ -1838,6 +1838,7 @@ static int hid_alloc_buffers(struct usb_device *dev, struct hid_device *hid)
+ 		return -1;
+ 	if (!(hid->ctrlbuf = usb_buffer_alloc(dev, hid->bufsize, SLAB_ATOMIC, &hid->ctrlbuf_dma)))
+ 		return -1;
++	memset(hid->ctrlbuf, 0, hid->bufsize);
+ 
+ 	return 0;
+ }

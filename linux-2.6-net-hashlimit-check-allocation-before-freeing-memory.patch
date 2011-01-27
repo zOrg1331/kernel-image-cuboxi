@@ -1,0 +1,35 @@
+From: Wade Mealing <wmealing@redhat.com>
+Date: Wed, 21 Jul 2010 05:46:14 -0400
+Subject: [net] hashlimit: check allocation before freeing memory
+Message-id: <1279691174-15801-3-git-send-email-wmealing@redhat.com>
+Patchwork-id: 26986
+O-Subject: [PATCH 2/2] [RHEL 5.6] BZ 615229 Netfilter ipt_hashlimit - check
+	allocation correct before freeing memory.
+Bugzilla: 615229
+RH-Acked-by: David S. Miller <davem@redhat.com>
+RH-Acked-by: Jiri Olsa <jolsa@redhat.com>
+RH-Acked-by: Jiri Pirko <jpirko@redhat.com>
+
+Red Hat Bugzilla: 615229
+Upstream Commit:  55e0d7cf279177dfe320f54816320558bc370f24
+
+This is a backport of Eric Dumazets patch to fix netfilter when attempting
+to free an allocation which may have never been allocated.
+
+The upstream patch references net/netfilter/xt_hashlimit.c which was
+net/ipv4/netfilter/ipt_hashlimit.c in the RHEL 5 kernel tree.
+
+diff --git a/net/ipv4/netfilter/ipt_hashlimit.c b/net/ipv4/netfilter/ipt_hashlimit.c
+index 3bd2368..c77e482 100644
+--- a/net/ipv4/netfilter/ipt_hashlimit.c
++++ b/net/ipv4/netfilter/ipt_hashlimit.c
+@@ -586,7 +586,8 @@ static void dl_seq_stop(struct seq_file *s, void *v)
+ 	struct ipt_hashlimit_htable *htable = pde->data;
+ 	unsigned int *bucket = (unsigned int *)v;
+ 
+-	kfree(bucket);
++	if (!IS_ERR(bucket))
++		kfree(bucket);
+ 
+ 	spin_unlock_bh(&htable->lock);
+ }

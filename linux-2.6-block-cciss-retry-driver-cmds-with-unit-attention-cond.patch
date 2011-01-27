@@ -1,0 +1,25 @@
+From: Tomas Henzl <thenzl@redhat.com>
+Date: Sun, 29 Aug 2010 15:49:35 -0400
+Subject: [block] cciss: retry driver cmds with unit attention cond
+Message-id: <1283097002-3341-37-git-send-email-thenzl@redhat.com>
+Patchwork-id: 27882
+O-Subject: [RHEL6 PATCH 36/63] cciss: Retry driver initiated cmds with unit
+	attention condition
+Bugzilla: 568830
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+
+Retry driver initiated cmds with unit attention condition
+
+diff --git a/drivers/block/cciss.c b/drivers/block/cciss.c
+index 981931e..16fd60b 100644
+--- a/drivers/block/cciss.c
++++ b/drivers/block/cciss.c
+@@ -2568,6 +2568,8 @@ static int check_target_status(ctlr_info_t *h, CommandList_struct *c)
+ 		case 0: return IO_OK; /* no sense */
+ 		case 1: return IO_OK; /* recovered error */
+ 		default:
++			if (check_for_unit_attention(h, c))
++				return IO_NEEDS_RETRY;
+ 			printk(KERN_WARNING "cciss%d: cmd 0x%02x "
+ 				"check condition, sense key = 0x%02x\n",
+ 				h->ctlr, c->Request.CDB[0],

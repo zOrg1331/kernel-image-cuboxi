@@ -1,0 +1,43 @@
+From: John Linville <linville@redhat.com>
+Date: Mon, 12 Jul 2010 18:26:47 -0400
+Subject: [wireless] Kconfig: select WIRELESS_COMPAT as needed
+Message-id: <20100712182646.GC1913@redhat.com>
+Patchwork-id: 26821
+O-Subject: [RHEL5 PATCH] wireless Kconfig: select WIRELESS_COMPAT as needed
+Bugzilla: 583767
+RH-Acked-by: Stanislaw Gruszka <sgruszka@redhat.com>
+
+BZ583767
+
+Someone building his own kernels reported that CONFIG_WIRELESS_COMPAT
+didn't always get set when it was needed.
+
+No comment from the OP, but this patch seems to resolve the issue
+for me.
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/net/rfkill/Kconfig b/net/rfkill/Kconfig
+index 61463b8..73c1e46 100644
+--- a/net/rfkill/Kconfig
++++ b/net/rfkill/Kconfig
+@@ -3,6 +3,7 @@
+ #
+ menuconfig RFKILL
+ 	tristate "RF switch subsystem support"
++	select WIRELESS_COMPAT
+ 	help
+ 	  Say Y here if you want to have control over RF switches
+ 	  found on many WiFi and Bluetooth cards.
+diff --git a/net/wireless/Kconfig b/net/wireless/Kconfig
+index 30f4cd8..80a6fb3 100644
+--- a/net/wireless/Kconfig
++++ b/net/wireless/Kconfig
+@@ -1,6 +1,7 @@
+ config CFG80211
+ 	tristate "Improved wireless configuration API"
+ 	depends on RFKILL || !RFKILL
++	select WIRELESS_COMPAT
+ 
+ config CFG80211_REG_DEBUG
+ 	bool "cfg80211 regulatory debugging"

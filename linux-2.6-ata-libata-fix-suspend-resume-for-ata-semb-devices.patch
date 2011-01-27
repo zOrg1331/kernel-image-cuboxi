@@ -1,0 +1,50 @@
+From: David Milburn <dmilburn@redhat.com>
+Date: Mon, 9 Aug 2010 18:29:51 -0400
+Subject: [ata] libata: fix suspend/resume for ATA SEMB devices
+Message-id: <20100809182951.GA25456@localhost.localdomain>
+Patchwork-id: 27479
+O-Subject: [RHEL5.6 PATCH] BZ 622559 libata: fix suspend/resume for ATA SEMB
+	devices
+Bugzilla: 622559
+RH-Acked-by: John Feeney <jfeeney@redhat.com>
+
+This resolves BZ 622559, I do not have a drive to verify this
+fix, so I have compile tested only (brew taskID=2654769).
+This fix is already in RHEL6 and upstream.
+
+commit f0d0613dedda4891ecb1977e4d02bf9be93882a3
+Author: Borislav Petkov <petkovbb@gmail.com>
+Date:   Sun Apr 26 16:33:34 2009 +0200
+
+    libata: fix suspend/resume for ATA SEMB devices
+
+    79b42babbac2a5a522b8e269fb2811b6e1063030 fixed identifying ATA devices
+    reporting 3c/c3 signature which belongs to SEMB devices now. However,
+    suspending the machine with such device (WDC WD2500AAJS-6 01.0) fails
+    with the following:
+
+Please review and ACK.
+
+Thanks,
+David
+
+ drivers/ata/libata-core.c |    4 +++-
+ 1 files changed, 3 insertions(+), 1 deletions(-)
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/ata/libata-core.c b/drivers/ata/libata-core.c
+index bafc513..7ae8d45 100644
+--- a/drivers/ata/libata-core.c
++++ b/drivers/ata/libata-core.c
+@@ -3842,7 +3842,9 @@ int ata_dev_revalidate(struct ata_device *dev, unsigned int new_class,
+ 
+ 	/* fail early if !ATA && !ATAPI to avoid issuing [P]IDENTIFY to PMP */
+ 	if (ata_class_enabled(new_class) &&
+-	    new_class != ATA_DEV_ATA && new_class != ATA_DEV_ATAPI) {
++	    new_class != ATA_DEV_ATA &&
++	    new_class != ATA_DEV_ATAPI &&
++	    new_class != ATA_DEV_SEMB) {
+ 		ata_dev_printk(dev, KERN_INFO, "class mismatch %u != %u\n",
+ 			       dev->class, new_class);
+ 		rc = -ENODEV;

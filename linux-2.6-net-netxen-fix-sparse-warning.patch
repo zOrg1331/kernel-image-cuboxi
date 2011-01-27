@@ -1,0 +1,44 @@
+From: Chad Dupuis <cdupuis@redhat.com>
+Date: Tue, 3 Aug 2010 13:50:23 -0400
+Subject: [net] netxen: fix sparse warning
+Message-id: <20100803134739.2239.41976.sendpatchset@localhost.localdomain>
+Patchwork-id: 27324
+O-Subject: [RHEL 5.6 PATCH 22/44] netxen: fix sparse warning
+Bugzilla: 562937
+RH-Acked-by: David S. Miller <davem@redhat.com>
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+
+Bugzilla
+========
+
+562937
+
+Upstream Status
+===============
+
+net-2.6 commit id 1954dc11776ef8c06263ba4cd21bf4d25c79a19c
+
+Description
+===========
+
+>From 77fe6e2252aff4b1fcda3acedaf91d9713d98fe2 Mon Sep 17 00:00:00 2001
+From: Amit Kumar Salecha <amit.salecha@qlogic.com>
+Date: Thu, 14 Jan 2010 01:53:24 +0000
+Subject: [PATCH] netxen: fix sparse warning
+
+Signed-off-by: Amit Kumar Salecha <amit.salecha@qlogic.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+
+diff --git a/drivers/net/netxen/netxen_nic_main.c b/drivers/net/netxen/netxen_nic_main.c
+index e1d2455..4d02f0d 100644
+--- a/drivers/net/netxen/netxen_nic_main.c
++++ b/drivers/net/netxen/netxen_nic_main.c
+@@ -2645,7 +2645,7 @@ netxen_sysfs_read_mem(struct kobject *kobj,
+ 	return size;
+ }
+ 
+-ssize_t netxen_sysfs_write_mem(struct kobject *kobj,
++static ssize_t netxen_sysfs_write_mem(struct kobject *kobj,
+ 		char *buf, loff_t offset, size_t size)
+ {
+ 	struct device *dev = container_of(kobj, struct device, kobj);

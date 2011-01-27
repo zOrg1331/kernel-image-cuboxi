@@ -1,0 +1,55 @@
+From: Rob Evers <revers@redhat.com>
+Date: Tue, 5 Oct 2010 14:24:47 -0400
+Subject: [scsi] lpfc: fix a Clear Virtual Link recovery failure
+Message-id: <1286288695-20754-16-git-send-email-revers@redhat.com>
+Patchwork-id: 28591
+O-Subject: [RHEL5.6 PATCH 15/23] Fixed failure to recover from back-to-back
+	Clear Virtual Link with a single FCF (CR: 104974)
+Bugzilla: 619917
+RH-Acked-by: Tomas Henzl <thenzl@redhat.com>
+
+Fixed failure to recover from back-to-back Clear Virtual Link with a single FCF (CR: 104974)
+
+From: Rob Evers on behalf of Emulex <revers@redhat.com>
+
+https://bugzilla.redhat.com/show_bug.cgi?id=619917
+
+diff --git a/drivers/scsi/lpfc/lpfc_els.c b/drivers/scsi/lpfc/lpfc_els.c
+index 0cf47e9..d919b3d 100644
+--- a/drivers/scsi/lpfc/lpfc_els.c
++++ b/drivers/scsi/lpfc/lpfc_els.c
+@@ -2937,6 +2937,17 @@ lpfc_els_retry(struct lpfc_hba *phba, struct lpfc_iocbq *cmdiocb,
+ 		retry = 0;
+ 
+ 	if (retry) {
++		if ((cmd == ELS_CMD_PLOGI) || (cmd == ELS_CMD_FDISC)) {
++			/* Stop retrying PLOGI and FDISC if in FCF discovery */
++			if (phba->fcf.fcf_flag & FCF_DISCOVERY) {
++				lpfc_printf_vlog(vport, KERN_INFO, LOG_ELS,
++						 "2849 Stop retry ELS command "
++						 "x%x to remote NPORT x%x, "
++						 "Data: x%x x%x\n", cmd, did,
++						 cmdiocb->retry, delay);
++				return 0;
++			}
++		}
+ 
+ 		/* Retry ELS command <elsCmd> to remote NPORT <did> */
+ 		lpfc_printf_vlog(vport, KERN_INFO, LOG_ELS,
+diff --git a/drivers/scsi/lpfc/lpfc_init.c b/drivers/scsi/lpfc/lpfc_init.c
+index b2c3113..c82a735 100644
+--- a/drivers/scsi/lpfc/lpfc_init.c
++++ b/drivers/scsi/lpfc/lpfc_init.c
+@@ -3376,10 +3376,10 @@ lpfc_sli4_perform_vport_cvl(struct lpfc_vport *vport)
+ 		if (!ndlp)
+ 			return 0;
+ 	}
+-	if (phba->pport->port_state <= LPFC_FLOGI)
++	if (phba->pport->port_state < LPFC_FLOGI)
+ 		return NULL;
+ 	/* If virtual link is not yet instantiated ignore CVL */
+-	if (vport->port_state <= LPFC_FDISC)
++	if ((vport != phba->pport) && (vport->port_state < LPFC_FDISC))
+ 		return NULL;
+ 	shost = lpfc_shost_from_vport(vport);
+ 	if (!shost)

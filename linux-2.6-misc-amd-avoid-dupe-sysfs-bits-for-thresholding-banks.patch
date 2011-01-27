@@ -1,0 +1,57 @@
+From: Bhavna Sarathy <bnagendr@redhat.com>
+Date: Thu, 2 Sep 2010 17:05:44 -0400
+Subject: [misc] amd: avoid dupe sysfs bits for thresholding banks
+Message-id: <20100902171144.18123.49232.sendpatchset@localhost.localdomain>
+Patchwork-id: 28018
+O-Subject: [RHEL5.6 PATCH 2/5] Avoid duplicate sysfs links/files for
+	thresholding banks
+Bugzilla: 610199
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+Avoid duplicate sysfs links/files for thresholding banks
+
+Resolves BZ 610199, please review and ACK.
+
+>From 8265742992b19f4af47df1acd520e321f32a1578 Mon Sep 17 00:00:00 2001
+From: Andreas Herrmann <andreas.herrmann3@amd.com>
+Date: Wed, 1 Sep 2010 17:52:10 +0200
+Subject: [PATCH 2/5] x86, mcheck: Avoid duplicate sysfs links/files for thresholding banks
+
+From: Andreas Herrmann <andreas.herrmann3@amd.com>
+
+kobject_add_internal failed for threshold_bank2 with -EEXIST, don't
+    try to register things with the same name in the same directory.
+  Pid: 1, comm: swapper Tainted: G        W  2.6.31 #1
+  Call Trace:
+  [<ffffffff81161b07>] ? kobject_add_internal+0x156/0x180
+  [<ffffffff81161cc0>] ? kobject_add+0x66/0x6b
+  [<ffffffff81161793>] ? kobject_init+0x42/0x82
+  [<ffffffff81161cf9>] ? kobject_create_and_add+0x34/0x63
+  [<ffffffff81393963>] ? threshold_create_bank+0x14f/0x259
+  [<ffffffff8139310a>] ? mce_create_device+0x8d/0x1b8
+  [<ffffffff81646497>] ? threshold_init_device+0x3f/0x80
+  [<ffffffff81646458>] ? threshold_init_device+0x0/0x80
+  [<ffffffff81009050>] ? do_one_initcall+0x4f/0x143
+  [<ffffffff816413a0>] ? kernel_init+0x14c/0x1a2
+  [<ffffffff8100c8da>] ? child_rip+0xa/0x20
+  [<ffffffff81641254>] ? kernel_init+0x0/0x1a2
+  [<ffffffff8100c8d0>] ? child_rip+0x0/0x20
+  kobject_create_and_add: kobject_add error: -17
+
+(Probably the for_each_cpu loop should be entirely removed.)
+
+Signed-off-by: Andreas Herrmann <andreas.herrmann3@amd.com>
+
+diff --git a/arch/x86_64/kernel/mce_amd.c b/arch/x86_64/kernel/mce_amd.c
+index d6ee879..5d4122b 100644
+--- a/arch/x86_64/kernel/mce_amd.c
++++ b/arch/x86_64/kernel/mce_amd.c
+@@ -498,7 +498,7 @@ static __cpuinit int threshold_create_bank(unsigned int cpu, unsigned int bank)
+ #ifndef CONFIG_SMP
+ 	b->cpus = CPU_MASK_ALL;
+ #else
+-	b->cpus = c->llc_shared_map;
++	cpu_set(cpu, b->cpus);
+ #endif
+ 	err = kobject_register(&b->kobj);
+ 	if (err)

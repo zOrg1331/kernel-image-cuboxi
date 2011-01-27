@@ -1,0 +1,30 @@
+From: Matthew Garrett <mjg@redhat.com>
+Date: Thu, 1 Jul 2010 18:42:22 -0400
+Subject: [acpi] intel: avoid skipping ARB_DISABLE on model 0x0e
+Message-id: <1278009742-1425-1-git-send-email-mjg@redhat.com>
+Patchwork-id: 26663
+O-Subject: [PATCH] [RHEL5.6 PATCH] Avoid skipping ARB_DISABLE on Intel model 0x0e
+Bugzilla: 602846
+RH-Acked-by: Stefan Assmann <sassmann@redhat.com>
+RH-Acked-by: Danny Feng <dfeng@redhat.com>
+RH-Acked-by: Dean Nelson <dnelson@redhat.com>
+
+bz: #602846
+
+We currently skip ARB_DISABLE on Intel CPUs with a model of 14 or greater.
+This can cause problems on model 14 CPUs, so bump the check. Backport of
+upstream commit 03a05ed1152944000151d57b71000de287a1eb02
+
+diff --git a/arch/i386/kernel/acpi/cstate.c b/arch/i386/kernel/acpi/cstate.c
+index 0dedac9..0fe83ee 100644
+--- a/arch/i386/kernel/acpi/cstate.c
++++ b/arch/i386/kernel/acpi/cstate.c
+@@ -48,7 +48,7 @@ void acpi_processor_power_init_bm_check(struct acpi_processor_flags *flags,
+ 	 * P4, Core and beyond CPUs
+ 	 */
+ 	if (c->x86_vendor == X86_VENDOR_INTEL &&
+-	    (c->x86 > 0x6 || (c->x86 == 6 && c->x86_model >= 14)))
++	    (c->x86 > 0x6 || (c->x86 == 6 && c->x86_model >= 0x0f)))
+ 			flags->bm_control = 0;
+ }
+ 

@@ -1,102 +1,72 @@
 From: Robert S Peterson <rpeterso@redhat.com>
-Date: Tue, 30 Nov 2010 21:22:01 -0000
+Date: Wed, 10 Nov 2010 13:41:18 -0500
 Subject: [fs] gfs2: fix race in unlinked inode deallocation
-Message-id: <302599278.857621291152121972.JavaMail.root@zmail06.collab.prod.int.phx2.redhat.com>
-Patchwork-id: 29756
-O-Subject: [GFS2 Patch 5.5.z] GFS2: BUG_ON kernel panic in gfs2_glock_hold on
-	2.6.18-226 - bz 651811
-Bugzilla: 651811
+Message-id: <1852740922.2240421289396478504.JavaMail.root@zmail06.collab.prod.int.phx2.redhat.com>
+Patchwork-id: 29132
+O-Subject: [RHEL 5.6 REPOST] GFS2: Fix race in unlinked inode deallocation (bz
+	#643165)
+Bugzilla: 643165
 RH-Acked-by: Steven Whitehouse <swhiteho@redhat.com>
 
 Hi,
 
-This patch is a back-port of the 5.6 patch for bug #643165,
-cross-written to 5.5.z.  Since I cross-wrote the patch from
-upstream, it is fitting that I do the same for the z-stream.
+This revision of the previously posted patch has the formatting issue fixed.
+(BTW, the formatting issue seems to be in my original RHEL5 crosswrite.  Oops!)
 
-The code has diverged slightly since 5.5, so I've had to make
-minor changes to the patch in function gfs2_inplace_reserve_i.
-In particular, the newer code has a new parameter that does
-not exist in more recent code.  The rest of the 5.6 patch
-applied cleanly with git cherry-pick.  The revised patch,
-complete with the original commit text, is given below.
+I've verified it against Ben Marzinski's previous post and Steve Whitehouse's
+original upstream patch and it looks correct.  So a brief history of the patch:
+
+1. Steve Whitehouse wrote the original for upstream
+2. Bob ported it to RHEL5, then found a problem during testing
+3. Ben debugged the problem, fixed it and posted a replacement
+4. I found a minor formatting issue and am re-posting this replacement.
+
+Here is Steve's original patch description:
+
+This area of the code has always been a bit delicate due to the
+subtleties of lock ordering. The problem is that for "normal"
+alloc/dealloc, we always grab the inode locks first and the rgrp lock
+later.
+
+In order to ensure no races in looking up the unlinked, but still
+allocated inodes, we need to hold the rgrp lock when we do the lookup,
+which means that we can't take the inode glock.
+
+The solution is to borrow the technique already used by NFS to solve
+what is essentially the same problem (given an inode number, look up
+the inode carefully, checking that it really is in the expected
+state).
+
+We cannot do that directly from the allocation code (lock ordering
+again) so we give the job to the pre-existing delete workqueue and
+carry on with the allocation as normal.
+
+If we find there is no space, we do a journal flush (required anyway
+if space from a deallocation is to be released) which should block
+against the pending deallocations, so we should always get the space
+back.
 
 Regards,
 
 Bob Peterson
+Red Hat File Systems
+
 Signed-off-by: Bob Peterson <rpeterso@redhat.com>
 --
-commit 3a3babc06ab65138d2df4ee31588ab9e526986c7
-Author: Robert S Peterson <rpeterso@redhat.com>
-Date:   Wed Nov 10 13:41:18 2010 -0500
+ fs/gfs2/glock.c      |   20 +++----
+ fs/gfs2/inode.c      |  153 +++++++++++--------------------------------------
+ fs/gfs2/inode.h      |    4 +-
+ fs/gfs2/ops_export.c |   49 +---------------
+ fs/gfs2/rgrp.c       |   91 +++++++++++++++---------------
+ 5 files changed, 97 insertions(+), 220 deletions(-)
 
-    [fs] gfs2: fix race in unlinked inode deallocation
-    
-    Message-id: <1852740922.2240421289396478504.JavaMail.root@zmail06.collab.prod.int.phx2.redhat.com>
-    Patchwork-id: 29132
-    O-Subject: [RHEL 5.6 REPOST] GFS2: Fix race in unlinked inode deallocation (bz
-    	#643165)
-    Bugzilla: 643165
-    RH-Acked-by: Steven Whitehouse <swhiteho@redhat.com>
-    
-    Hi,
-    
-    This revision of the previously posted patch has the formatting issue fixed.
-    (BTW, the formatting issue seems to be in my original RHEL5 crosswrite.  Oops!)
-    
-    I've verified it against Ben Marzinski's previous post and Steve Whitehouse's
-    original upstream patch and it looks correct.  So a brief history of the patch:
-    
-    1. Steve Whitehouse wrote the original for upstream
-    2. Bob ported it to RHEL5, then found a problem during testing
-    3. Ben debugged the problem, fixed it and posted a replacement
-    4. I found a minor formatting issue and am re-posting this replacement.
-    
-    Here is Steve's original patch description:
-    
-    This area of the code has always been a bit delicate due to the
-    subtleties of lock ordering. The problem is that for "normal"
-    alloc/dealloc, we always grab the inode locks first and the rgrp lock
-    later.
-    
-    In order to ensure no races in looking up the unlinked, but still
-    allocated inodes, we need to hold the rgrp lock when we do the lookup,
-    which means that we can't take the inode glock.
-    
-    The solution is to borrow the technique already used by NFS to solve
-    what is essentially the same problem (given an inode number, look up
-    the inode carefully, checking that it really is in the expected
-    state).
-    
-    We cannot do that directly from the allocation code (lock ordering
-    again) so we give the job to the pre-existing delete workqueue and
-    carry on with the allocation as normal.
-    
-    If we find there is no space, we do a journal flush (required anyway
-    if space from a deallocation is to be released) which should block
-    against the pending deallocations, so we should always get the space
-    back.
-    
-    Regards,
-    
-    Bob Peterson
-    Red Hat File Systems
-    
-    Signed-off-by: Bob Peterson <rpeterso@redhat.com>
-    --
-     fs/gfs2/glock.c      |   20 +++----
-     fs/gfs2/inode.c      |  153 +++++++++++--------------------------------------
-     fs/gfs2/inode.h      |    4 +-
-     fs/gfs2/ops_export.c |   49 +---------------
-     fs/gfs2/rgrp.c       |   91 +++++++++++++++---------------
-     5 files changed, 97 insertions(+), 220 deletions(-)
-    
-    Signed-off-by: Jarod Wilson <jarod@redhat.com>
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
 diff --git a/fs/gfs2/glock.c b/fs/gfs2/glock.c
-index 444fb3d..a93813a 100644
+index b55d3c1..22a0d7b 100644
 --- a/fs/gfs2/glock.c
 +++ b/fs/gfs2/glock.c
-@@ -736,21 +736,19 @@ static void delete_work_func(void *data)
+@@ -737,21 +737,19 @@ static void delete_work_func(void *data)
  {
  	struct gfs2_glock *gl = (struct gfs2_glock *)data;
  	struct gfs2_sbd *sdp = gl->gl_sbd;
@@ -403,7 +373,7 @@ index b6a139d..d45765d 100644
  
  const struct export_operations gfs2_export_ops = {
 diff --git a/fs/gfs2/rgrp.c b/fs/gfs2/rgrp.c
-index ca2800e..2fa4ee9 100644
+index 8da06d7..1ab6269 100644
 --- a/fs/gfs2/rgrp.c
 +++ b/fs/gfs2/rgrp.c
 @@ -892,16 +892,17 @@ static int try_rgrp_fit(struct gfs2_rgrpd *rgd, struct gfs2_alloc *al)
@@ -521,7 +491,7 @@ index ca2800e..2fa4ee9 100644
  			break;
  
  		case GLR_TRYFAILED:
-@@ -1206,42 +1215,34 @@ int gfs2_inplace_reserve_i(struct gfs2_inode *ip, char *file, unsigned int line)
+@@ -1207,12 +1216,12 @@ int gfs2_inplace_reserve_i(struct gfs2_inode *ip, int hold_rindex,
  	struct gfs2_sbd *sdp = GFS2_SB(&ip->i_inode);
  	struct gfs2_alloc *al = ip->i_alloc;
  	int error = 0;
@@ -533,30 +503,33 @@ index ca2800e..2fa4ee9 100644
  		return -EINVAL;
  
 -try_again:
- 	/* We need to hold the rindex unless the inode we're using is
- 	   the rindex itself, in which case it's already held. */
- 	if (ip != GFS2_I(sdp->sd_rindex))
- 		error = gfs2_rindex_hold(sdp, &al->al_ri_gh);
- 	else if (!sdp->sd_rgrps) /* We may not have the rindex read in, so: */
- 		error = gfs2_ri_update_special(ip);
--
- 	if (error)
- 		return error;
+ 	if (hold_rindex) {
+ 		/* We need to hold the rindex unless the inode we're using is
+ 		   the rindex itself, in which case it's already held. */
+@@ -1221,31 +1230,23 @@ try_again:
+ 		else if (!sdp->sd_rgrps) /* We may not have the rindex read
+ 					    in, so: */
+ 			error = gfs2_ri_update_special(ip);
++		if (error)
++			return error;
+ 	}
  
--	/* Find an rgrp suitable for allocation.  If it encounters any unlinked
--	   dinodes along the way, error will equal -EAGAIN and unlinked will
--	   contains it block address. We then need to look up that inode and
--	   try to free it, and try the allocation again. */
--	error = get_local_rgrp(ip, &unlinked, &last_unlinked);
+-	if (error)
+-		return error;
 +	do {
 +		error = get_local_rgrp(ip, &last_unlinked);
 +		/* If there is no space, flushing the log may release some */
 +		if (error)
 +			gfs2_log_flush(sdp, NULL);
 +	} while (error && tries++ < 3);
-+
+ 
+-	/* Find an rgrp suitable for allocation.  If it encounters any unlinked
+-	   dinodes along the way, error will equal -EAGAIN and unlinked will
+-	   contains it block address. We then need to look up that inode and
+-	   try to free it, and try the allocation again. */
+-	error = get_local_rgrp(ip, &unlinked, &last_unlinked);
  	if (error) {
- 		if (ip != GFS2_I(sdp->sd_rindex))
+ 		if (hold_rindex && ip != GFS2_I(sdp->sd_rindex))
  			gfs2_glock_dq_uninit(&al->al_ri_gh);
 -		if (error != -EAGAIN)
 -			return error;

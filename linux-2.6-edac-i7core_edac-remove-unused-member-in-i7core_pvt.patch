@@ -1,0 +1,29 @@
+From: Mauro Carvalho Chehab <mchehab@redhat.com>
+Date: Tue, 23 Nov 2010 17:34:01 -0500
+Subject: [edac] i7core_edac: remove unused member in i7core_pvt
+Message-id: <20101123153401.542e158c@pedra>
+Patchwork-id: 29578
+O-Subject: [PATCH RHEL5 23/29] BZ#:651869 i7core_edac: Remove unused member
+	channels in i7core_pvt
+Bugzilla: 651869
+RH-Acked-by: Aristeu Rozanski <aris@redhat.com>
+
+Changeset: 21b6806a8cbda694eb1bed8d5b60bd7c322ad343
+
+Signed-off-by: Hidetoshi Seto <seto.hidetoshi@jp.fujitsu.com>
+Signed-off-by: Mauro Carvalho Chehab <mchehab@redhat.com>
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/edac/i7core_edac.c b/drivers/edac/i7core_edac.c
+index 05e0f1e..80541a6 100644
+--- a/drivers/edac/i7core_edac.c
++++ b/drivers/edac/i7core_edac.c
+@@ -243,8 +243,6 @@ struct i7core_pvt {
+ 	struct i7core_inject	inject;
+ 	struct i7core_channel	channel[NUM_CHANS];
+ 
+-	int		channels; /* Number of active channels */
+-
+ 	int		ce_count_available;
+ 	int 		csrow_map[NUM_CHANS][MAX_DIMMS];
+ 

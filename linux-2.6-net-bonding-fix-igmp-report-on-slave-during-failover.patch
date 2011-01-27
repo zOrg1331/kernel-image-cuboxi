@@ -1,20 +1,17 @@
 From: Flavio Leitner <fbl@redhat.com>
-Date: Thu, 7 Oct 2010 19:23:05 -0300
+Date: Wed, 6 Oct 2010 18:41:24 -0400
 Subject: [net] bonding: fix IGMP report on slave during failover
-Message-id: <20101007222305.GG2730@redhat.com>
-O-Subject: [RHEL5.5.z patch v2] BZ640973 [net] bonding: fix IGMP report on slave during failover
-Bugzilla: 640973
-RH-Acked-by: Cong Wang <amwang@redhat.com>
-RH-Acked-by: Andy Gospodarek <gospo@redhat.com>
+Message-id: <20101006184124.GB2730@redhat.com>
+Patchwork-id: 28631
+O-Subject: [PATCH RHEL5.6 v2] bonding: interface doesn't issue IGMP report on
+	slave interface during failover
+Bugzilla: 637764
 RH-Acked-by: David S. Miller <davem@redhat.com>
+RH-Acked-by: Andy Gospodarek <gospo@redhat.com>
+RH-Acked-by: Amerigo Wang <amwang@redhat.com>
 RH-Acked-by: Jiri Pirko <jpirko@redhat.com>
 
-This is pretty much the same patch but z-stream tree
-doesn't provide either pr_warning/pr_err or vlan_group_get_device() 
-
-I have retested this one too.
-
-RHBZ: 640973 Bonded interface doesn't issue IGMP report (join)
+RHBZ: 637764 Bonded interface doesn't issue IGMP report (join)
       on slave interface during failover
 
 This is a backport of three commits applied on net-next-2.6
@@ -23,67 +20,79 @@ to fix the issue:
 commit: 5a37e8ca8536c47871d46c82211f399adf06fd44
 
    bonding: rejoin multicast groups on VLANs
-   
+
    During a failover, the IGMP membership is sent to update
    the switch restoring the traffic, but it misses groups added
    to VLAN devices running on top of bonding devices.
-   
+
    This patch changes it to iterate over all VLAN devices
    on top of it sending IGMP memberships too.
-   
+
    Signed-off-by: Flavio Leitner <fleitner@redhat.com>
    Signed-off-by: David S. Miller <davem@davemloft.net>
-   
+
 commit: e12b453904c54bbdc515778ff664d87a7f9473af
-   
+
    bonding: fix to rejoin multicast groups immediately
-   
+
    The IGMP specs states that if the system receives a
    membership report, it shouldn't send another for the
    next minute. However, if a link failure happens right
    after that, the backup slave and the switch connected
    to this slave will not know about the multicast and
    the traffic will hang for about a minute.
-   
+
    This patch fixes it to rejoin multicast groups immediately
    after a failover restoring the multicast traffic.
-   
+
    Signed-off-by: Flavio Leitner <fleitner@redhat.com>
    Signed-off-by: David S. Miller <davem@davemloft.net>
-   
+
 commit: c2952c314b4fe61820ba8fd6c949eed636140d52
 
    bonding: add retransmit membership reports tunable
-   
+
    Allow sysadmins to configure the number of multicast
    membership report sent on a link failure event.
-   
+
    Signed-off-by: Flavio Leitner <fleitner@redhat.com>
    Signed-off-by: David S. Miller <davem@davemloft.net>
 
 Test Build:
-http://brewweb.devel.redhat.com/brew/taskinfo?taskID=2809482
+https://brewweb.devel.redhat.com/taskinfo?taskID=2804683
 
 Testing Status:
 Successfully tested by myself while reproducing the issues.
 
-The proposed patch below is based on 2.6.18-194.20.1.el5
+The proposed patch below is based on 2.6.18-225.el5
 
 Signed-off-by: Flavio Leitner <fleitner@redhat.com>
----
- Documentation/networking/bonding.txt |    8 +++
- drivers/net/bonding/bond_main.c      |   77 +++++++++++++++++++++++++++++------
- drivers/net/bonding/bond_sysfs.c     |   43 +++++++++++++++++++
- drivers/net/bonding/bonding.h        |    3 +
- include/linux/if_bonding.h           |    2 
- net/ipv4/igmp.c                      |   16 +++----
- 6 files changed, 129 insertions(+), 20 deletions(-)
 
-Index: linux-2.6.18.x86_64/drivers/net/bonding/bond_main.c
-===================================================================
---- linux-2.6.18.x86_64.orig/drivers/net/bonding/bond_main.c
-+++ linux-2.6.18.x86_64/drivers/net/bonding/bond_main.c
-@@ -102,6 +102,7 @@ static char *arp_ip_target[BOND_MAX_ARP_
+
+diff --git a/Documentation/networking/bonding.txt b/Documentation/networking/bonding.txt
+index a4237e0..f945a30 100644
+--- a/Documentation/networking/bonding.txt
++++ b/Documentation/networking/bonding.txt
+@@ -684,6 +684,14 @@ xmit_hash_policy
+ 	does not exist, and the layer2 policy is the only policy.  The
+ 	layer2+3 value was added for bonding version 3.2.2.
+ 
++resend_igmp
++
++	Specifies the number of IGMP membership reports to be issued after
++	a failover event. One membership report is issued immediately after
++	the failover, subsequent packets are sent in each 200ms interval.
++
++	The valid range is 0 - 255; the default value is 1. This option
++	was added for bonding version 3.7.0.
+ 
+ 3. Configuring Bonding Devices
+ ==============================
+diff --git a/drivers/net/bonding/bond_main.c b/drivers/net/bonding/bond_main.c
+index cddd517..e2c5c1d 100644
+--- a/drivers/net/bonding/bond_main.c
++++ b/drivers/net/bonding/bond_main.c
+@@ -102,6 +102,7 @@ static char *arp_ip_target[BOND_MAX_ARP_TARGETS] = { NULL, };
  static char *arp_validate = NULL;
  static char *fail_over_mac = NULL;
  struct bond_params bonding_defaults;
@@ -100,7 +109,7 @@ Index: linux-2.6.18.x86_64/drivers/net/bonding/bond_main.c
  module_param(debug, int, 0);
  MODULE_PARM_DESC(debug, "Print debug messages; 0 for off (default), 1 for on");
  
-@@ -899,18 +902,13 @@ static void bond_mc_delete(struct bondin
+@@ -901,18 +904,13 @@ static void bond_mc_delete(struct bonding *bond, void *addr, int alen)
  }
  
  
@@ -121,7 +130,7 @@ Index: linux-2.6.18.x86_64/drivers/net/bonding/bond_main.c
  	if (in_dev) {
  		for (im = in_dev->mc_list; im; im = im->next) {
  			ip_mc_rejoin_group(im);
-@@ -920,6 +918,43 @@ static void bond_resend_igmp_join_reques
+@@ -922,6 +920,44 @@ static void bond_resend_igmp_join_requests(struct bonding *bond)
  	rcu_read_unlock();
  }
  
@@ -144,7 +153,8 @@ Index: linux-2.6.18.x86_64/drivers/net/bonding/bond_main.c
 +	/* rejoin all groups on vlan devices */
 +	if (bond->vlgrp) {
 +		list_for_each_entry(vlan, &bond->vlan_list, vlan_list) {
-+			vlan_dev = bond->vlgrp->vlan_devices[vlan->vlan_id];
++			vlan_dev = vlan_group_get_device(bond->vlgrp,
++							 vlan->vlan_id);
 +			if (vlan_dev)
 +				__bond_resend_igmp_join_requests(vlan_dev);
 +		}
@@ -165,7 +175,7 @@ Index: linux-2.6.18.x86_64/drivers/net/bonding/bond_main.c
  /*
   * Totally destroys the mc_list in bond
   */
-@@ -1027,7 +1062,6 @@ static void bond_mc_swap(struct bonding 
+@@ -1029,7 +1065,6 @@ static void bond_mc_swap(struct bonding *bond, struct slave *new_active, struct
  		for (dmi = bond->dev->mc_list; dmi; dmi = dmi->next) {
  			dev_mc_add(new_active->dev, dmi->dmi_addr, dmi->dmi_addrlen, 0);
  		}
@@ -173,7 +183,7 @@ Index: linux-2.6.18.x86_64/drivers/net/bonding/bond_main.c
  	}
  }
  
-@@ -1274,10 +1308,13 @@ void bond_change_active_slave(struct bon
+@@ -1276,10 +1311,13 @@ void bond_change_active_slave(struct bonding *bond, struct slave *new_active)
  		}
  	}
  
@@ -191,7 +201,7 @@ Index: linux-2.6.18.x86_64/drivers/net/bonding/bond_main.c
  }
  
  /**
-@@ -3846,6 +3883,8 @@ static int bond_open(struct net_device *
+@@ -3866,6 +3904,8 @@ static int bond_open(struct net_device *bond_dev)
  
  	bond->kill_timers = 0;
  
@@ -200,7 +210,7 @@ Index: linux-2.6.18.x86_64/drivers/net/bonding/bond_main.c
  	if ((bond->params.mode == BOND_MODE_TLB) ||
  	    (bond->params.mode == BOND_MODE_ALB)) {
  		/* bond_alb_initialize must be called before the timer
-@@ -3932,6 +3971,8 @@ static int bond_close(struct net_device 
+@@ -3952,6 +3992,8 @@ static int bond_close(struct net_device *bond_dev)
  		break;
  	}
  
@@ -209,7 +219,7 @@ Index: linux-2.6.18.x86_64/drivers/net/bonding/bond_main.c
  
  	if ((bond->params.mode == BOND_MODE_TLB) ||
  	    (bond->params.mode == BOND_MODE_ALB)) {
-@@ -4709,6 +4750,9 @@ static void bond_work_cancel_all(struct 
+@@ -4774,6 +4816,9 @@ static void bond_work_cancel_all(struct bonding *bond)
  	if (bond->params.mode == BOND_MODE_8023AD &&
  	    delayed_work_pending(&bond->ad_work))
  		cancel_delayed_work(&bond->ad_work);
@@ -219,13 +229,12 @@ Index: linux-2.6.18.x86_64/drivers/net/bonding/bond_main.c
  }
  
  /* De-initialize device specific data.
-@@ -4902,6 +4946,14 @@ static int bond_check_params(struct bond
+@@ -4967,6 +5012,13 @@ static int bond_check_params(struct bond_params *params)
  		}
  	}
  
 +	if (resend_igmp < 0 || resend_igmp > 255) {
-+		printk(KERN_WARNING DRV_NAME
-+			   ": Warning: resend_igmp (%d) should be between "
++		pr_warning("Warning: resend_igmp (%d) should be between "
 +			   "0 and 255, resetting to %d\n",
 +			   resend_igmp, BOND_DEFAULT_RESEND_IGMP);
 +		resend_igmp = BOND_DEFAULT_RESEND_IGMP;
@@ -234,7 +243,7 @@ Index: linux-2.6.18.x86_64/drivers/net/bonding/bond_main.c
  	/* reset values for TLB/ALB */
  	if ((bond_mode == BOND_MODE_TLB) ||
  	    (bond_mode == BOND_MODE_ALB)) {
-@@ -5114,6 +5166,7 @@ static int bond_check_params(struct bond
+@@ -5179,6 +5231,7 @@ static int bond_check_params(struct bond_params *params)
  	params->primary[0] = 0;
  	params->primary_reselect = primary_reselect_value;
  	params->fail_over_mac = fail_over_mac_value;
@@ -242,12 +251,12 @@ Index: linux-2.6.18.x86_64/drivers/net/bonding/bond_main.c
  
  	if (primary) {
  		strncpy(params->primary, primary, IFNAMSIZ);
-Index: linux-2.6.18.x86_64/drivers/net/bonding/bond_sysfs.c
-===================================================================
---- linux-2.6.18.x86_64.orig/drivers/net/bonding/bond_sysfs.c
-+++ linux-2.6.18.x86_64/drivers/net/bonding/bond_sysfs.c
-@@ -1439,6 +1439,48 @@ static CLASS_DEVICE_ATTR(ad_partner_mac,
- 
+diff --git a/drivers/net/bonding/bond_sysfs.c b/drivers/net/bonding/bond_sysfs.c
+index 977ae5a..8512082 100644
+--- a/drivers/net/bonding/bond_sysfs.c
++++ b/drivers/net/bonding/bond_sysfs.c
+@@ -1467,6 +1467,46 @@ static CLASS_DEVICE_ATTR(mark_steering, S_IWUSR | S_IRUGO, bonding_show_mark_ste
+ 			 bonding_store_mark_steering);
  
  
 +/*
@@ -267,22 +276,20 @@ Index: linux-2.6.18.x86_64/drivers/net/bonding/bond_sysfs.c
 +	struct bonding *bond = to_bond(d);
 +
 +	if (sscanf(buf, "%d", &new_value) != 1) {
-+		printk(KERN_INFO DRV_NAME
-+		       ": %s: no resend_igmp value specified.\n",
++		pr_err("%s: no resend_igmp value specified.\n",
 +		       bond->dev->name);
 +		ret = -EINVAL;
 +		goto out;
 +	}
 +
 +	if (new_value < 0) {
-+		printk(KERN_INFO DRV_NAME
-+		       ": %s: Invalid resend_igmp value %d not in range 0-255; rejected.\n",
++		pr_err("%s: Invalid resend_igmp value %d not in range 0-255; rejected.\n",
 +		       bond->dev->name, new_value);
 +		ret = -EINVAL;
 +		goto out;
 +	}
 +
-+	printk(KERN_INFO DRV_NAME ": %s: Setting resend_igmp to %d.\n",
++	pr_info("%s: Setting resend_igmp to %d.\n",
 +		bond->dev->name, new_value);
 +	bond->params.resend_igmp = new_value;
 +out:
@@ -295,19 +302,19 @@ Index: linux-2.6.18.x86_64/drivers/net/bonding/bond_sysfs.c
  static struct attribute *per_bond_attrs[] = {
  	&class_device_attr_slaves.attr,
  	&class_device_attr_mode.attr,
-@@ -1463,6 +1505,7 @@ static struct attribute *per_bond_attrs[
- 	&class_device_attr_ad_actor_key.attr,
+@@ -1492,6 +1532,7 @@ static struct attribute *per_bond_attrs[] = {
  	&class_device_attr_ad_partner_key.attr,
  	&class_device_attr_ad_partner_mac.attr,
+ 	&class_device_attr_mark_steering.attr,
 +	&class_device_attr_resend_igmp.attr,
  	NULL,
  };
  
-Index: linux-2.6.18.x86_64/drivers/net/bonding/bonding.h
-===================================================================
---- linux-2.6.18.x86_64.orig/drivers/net/bonding/bonding.h
-+++ linux-2.6.18.x86_64/drivers/net/bonding/bonding.h
-@@ -138,6 +138,7 @@ struct bond_params {
+diff --git a/drivers/net/bonding/bonding.h b/drivers/net/bonding/bonding.h
+index cddc6d4..64425ea 100644
+--- a/drivers/net/bonding/bonding.h
++++ b/drivers/net/bonding/bonding.h
+@@ -140,6 +140,7 @@ struct bond_params {
  	char primary[IFNAMSIZ];
  	int primary_reselect;
  	__be32 arp_targets[BOND_MAX_ARP_TARGETS];
@@ -315,7 +322,7 @@ Index: linux-2.6.18.x86_64/drivers/net/bonding/bonding.h
  };
  
  struct bond_parm_tbl {
-@@ -205,6 +206,7 @@ struct bonding {
+@@ -208,6 +209,7 @@ struct bonding {
  	s32      slave_cnt; /* never change this value outside the attach/detach wrappers */
  	rwlock_t lock;
  	rwlock_t curr_slave_lock;
@@ -323,7 +330,7 @@ Index: linux-2.6.18.x86_64/drivers/net/bonding/bonding.h
  	s8       kill_timers;
  	s8	 send_grat_arp;
  	s8	 send_unsol_na;
-@@ -231,6 +233,7 @@ struct bonding {
+@@ -234,6 +236,7 @@ struct bonding {
  	struct   work_struct arp_work;
  	struct   work_struct alb_work;
  	struct   work_struct ad_work;
@@ -331,10 +338,10 @@ Index: linux-2.6.18.x86_64/drivers/net/bonding/bonding.h
  #if defined(CONFIG_IPV6) || defined(CONFIG_IPV6_MODULE)
  	struct   in6_addr master_ipv6;
  #endif
-Index: linux-2.6.18.x86_64/include/linux/if_bonding.h
-===================================================================
---- linux-2.6.18.x86_64.orig/include/linux/if_bonding.h
-+++ linux-2.6.18.x86_64/include/linux/if_bonding.h
+diff --git a/include/linux/if_bonding.h b/include/linux/if_bonding.h
+index 65c2d24..eea8a25 100644
+--- a/include/linux/if_bonding.h
++++ b/include/linux/if_bonding.h
 @@ -83,6 +83,8 @@
  
  #define BOND_DEFAULT_MAX_BONDS  1   /* Default maximum number of devices to support */
@@ -344,11 +351,11 @@ Index: linux-2.6.18.x86_64/include/linux/if_bonding.h
  /* hashing types */
  #define BOND_XMIT_POLICY_LAYER2		0 /* layer 2 (MAC only), default */
  #define BOND_XMIT_POLICY_LAYER34	1 /* layer 3+4 (IP ^ (TCP || UDP)) */
-Index: linux-2.6.18.x86_64/net/ipv4/igmp.c
-===================================================================
---- linux-2.6.18.x86_64.orig/net/ipv4/igmp.c
-+++ linux-2.6.18.x86_64/net/ipv4/igmp.c
-@@ -1261,14 +1261,14 @@ void ip_mc_rejoin_group(struct ip_mc_lis
+diff --git a/net/ipv4/igmp.c b/net/ipv4/igmp.c
+index 15f9b10..9224b8a 100644
+--- a/net/ipv4/igmp.c
++++ b/net/ipv4/igmp.c
+@@ -1261,14 +1261,14 @@ void ip_mc_rejoin_group(struct ip_mc_list *im)
  	if (im->multiaddr == IGMP_ALL_HOSTS)
  		return;
  
@@ -371,23 +378,3 @@ Index: linux-2.6.18.x86_64/net/ipv4/igmp.c
  #endif
  }
  
-Index: linux-2.6.18.x86_64/Documentation/networking/bonding.txt
-===================================================================
---- linux-2.6.18.x86_64.orig/Documentation/networking/bonding.txt
-+++ linux-2.6.18.x86_64/Documentation/networking/bonding.txt
-@@ -684,6 +684,14 @@ xmit_hash_policy
- 	does not exist, and the layer2 policy is the only policy.  The
- 	layer2+3 value was added for bonding version 3.2.2.
- 
-+resend_igmp
-+
-+	Specifies the number of IGMP membership reports to be issued after
-+	a failover event. One membership report is issued immediately after
-+	the failover, subsequent packets are sent in each 200ms interval.
-+
-+	The valid range is 0 - 255; the default value is 1. This option
-+	was added for bonding version 3.7.0.
- 
- 3. Configuring Bonding Devices
- ==============================
-

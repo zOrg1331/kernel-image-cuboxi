@@ -1,0 +1,61 @@
+From: Chad Dupuis <cdupuis@redhat.com>
+Date: Tue, 3 Aug 2010 13:48:32 -0400
+Subject: [net] netxen: fix napi intr enable check
+Message-id: <20100803134548.2239.63369.sendpatchset@localhost.localdomain>
+Patchwork-id: 27306
+O-Subject: [RHEL 5.6 PATCH 4/44] netxen: fix napi intr enable check
+Bugzilla: 562937
+RH-Acked-by: David S. Miller <davem@redhat.com>
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+
+Bugzilla
+========
+
+562937
+
+Upstream Status
+===============
+
+net-2.6 commit id f2251f668e9527b87c9ba7256e7497cb49abbc20
+
+Description
+===========
+
+>From 28d909f24de82711dd16e211cdabdf5a5af59b89 Mon Sep 17 00:00:00 2001
+From: Amit Kumar Salecha <amit.salecha@qlogic.com>
+Date: Sat, 5 Dec 2009 12:23:55 +0000
+Subject: [PATCH] netxen:fix napi intr enable check
+
+o netif_running() check for enabling interrupt at end of napi poll is
+  not enough to cover firmwar recovery. Instead test __NX_DEV_UP bit.
+o Avoid re-entry into to netxen_nic_down() with __NX_DEV_UP bit check.
+
+Acked-by: Dhananjay Phadke <dhananjay.phadke@qlogic.com>
+Signed-off-by: Amit Kumar Salecha <amit.salecha@qlogic.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+
+diff --git a/drivers/net/netxen/netxen_nic_main.c b/drivers/net/netxen/netxen_nic_main.c
+index 436a30c..d85e010 100644
+--- a/drivers/net/netxen/netxen_nic_main.c
++++ b/drivers/net/netxen/netxen_nic_main.c
+@@ -1023,8 +1023,10 @@ __netxen_nic_down(struct netxen_adapter *adapter, struct net_device *netdev)
+ 	if (adapter->is_up != NETXEN_ADAPTER_UP_MAGIC)
+ 		return;
+ 
+-	clear_bit(__NX_DEV_UP, &adapter->state);
++	if (!test_and_clear_bit(__NX_DEV_UP, &adapter->state))
++		return;
+ 
++	smp_mb();
+ 	spin_lock(&adapter->tx_clean_lock);
+ 	netif_carrier_off(netdev);
+ 	netif_tx_disable(netdev);
+@@ -2088,7 +2090,7 @@ static int netxen_nic_poll(struct net_device *netdev, int *budget)
+ 
+ 	if ((work_done < work_to_do) && tx_complete) {
+ 		netif_rx_complete(sds_ring->napi_dev);
+-		if (netif_running(adapter->netdev))
++		if (test_bit(__NX_DEV_UP, &adapter->state))
+ 			netxen_nic_enable_int(sds_ring);
+ 		return 0;
+ 	}

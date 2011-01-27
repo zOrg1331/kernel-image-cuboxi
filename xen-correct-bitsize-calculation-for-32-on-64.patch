@@ -1,0 +1,117 @@
+From: Andrew Jones <drjones@redhat.com>
+Date: Mon, 26 Jul 2010 13:59:57 -0400
+Subject: [xen] correct bitsize calculation for 32-on-64
+Message-id: <1280152797-23756-1-git-send-email-drjones@redhat.com>
+Patchwork-id: 27097
+O-Subject: [RHEL 5.6 PATCH] xen: 32-on-64 correct bitsize calculation
+Bugzilla: 616827
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+RH-Acked-by: Don Dutile <ddutile@redhat.com>
+
+bugzilla: https://bugzilla.redhat.com/show_bug.cgi?id=616827
+
+Xen's heap allocator always starts with the highest addresses
+available and works down. In the case of guest domains that have
+limits on what they can access (32-on-64), the starting address
+is clamped by the domain state d->arch.physaddr_bitsize. The
+calculation of this state was wrong as it mistakenly used PAGE_SIZE
+instead of PAGE_SHIFT.
+
+Upstream patched this with changeset 17783 and further improved it
+with 17836. This patch is a backport of both of those.
+
+Tested by me on a machine with 256G of memory. For best results
+sharing the machine with HVM and 64b PV guests, NUMA must be off
+(which is the default) and dom0 ballooning should also be off
+(dom0-min-mem 0) in /etc/xen/xend-config.sxp.
+
+brew: https://brewweb.devel.redhat.com/taskinfo?taskID=2624838
+---
+ arch/x86/domain.c       |   16 +++++++++++++---
+ arch/x86/domain_build.c |    6 +++---
+ arch/x86/x86_64/mm.c    |    2 +-
+ include/asm-x86/mm.h    |    2 ++
+ 4 files changed, 19 insertions(+), 7 deletions(-)
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/arch/x86/domain.c b/arch/x86/domain.c
+index aa2dc35..9d17b46 100644
+--- a/arch/x86/domain.c
++++ b/arch/x86/domain.c
+@@ -266,6 +266,18 @@ static void release_compat_l4(struct vcpu *v)
+     v->arch.guest_table_user = pagetable_null();
+ }
+ 
++void domain_set_alloc_bitsize(struct domain *d)
++{
++    if ( !is_pv_32on64_domain(d) ||
++         (MACH2PHYS_COMPAT_NR_ENTRIES(d) >= max_page) )
++        return;
++    d->arch.physaddr_bitsize =
++        /* 2^n entries can be contained in guest's p2m mapping space */
++        fls(MACH2PHYS_COMPAT_NR_ENTRIES(d)) - 1
++        /* 2^n pages -> 2^(n+PAGE_SHIFT) bits */
++        + PAGE_SHIFT;
++}
++
+ static inline int may_switch_mode(struct domain *d)
+ {
+     return (!is_hvm_domain(d) && (d->tot_pages == 0));
+@@ -314,9 +326,7 @@ int switch_compat(struct domain *d)
+             goto undo_and_fail;
+     }
+ 
+-    d->arch.physaddr_bitsize =
+-        fls((1UL << 32) - HYPERVISOR_COMPAT_VIRT_START(d)) - 1
+-        + (PAGE_SIZE - 2);
++    domain_set_alloc_bitsize(d);
+ 
+     return 0;
+ 
+diff --git a/arch/x86/domain_build.c b/arch/x86/domain_build.c
+index f8e464d..454026c 100644
+--- a/arch/x86/domain_build.c
++++ b/arch/x86/domain_build.c
+@@ -359,9 +359,9 @@ int __init construct_dom0(
+ #ifdef CONFIG_COMPAT
+         HYPERVISOR_COMPAT_VIRT_START(d) =
+             max_t(unsigned int, m2p_compat_vstart, value);
+-        d->arch.physaddr_bitsize =
+-            fls((1UL << 32) - HYPERVISOR_COMPAT_VIRT_START(d)) - 1
+-            + (PAGE_SIZE - 2);
++
++        domain_set_alloc_bitsize(d);
++
+         if ( value > (!is_pv_32on64_domain(d) ?
+                       HYPERVISOR_VIRT_START :
+                       __HYPERVISOR_COMPAT_VIRT_START) )
+diff --git a/arch/x86/x86_64/mm.c b/arch/x86/x86_64/mm.c
+index 2c6d462..ec7946b 100644
+--- a/arch/x86/x86_64/mm.c
++++ b/arch/x86/x86_64/mm.c
+@@ -428,7 +428,7 @@ int check_descriptor(const struct domain *dom, struct desc_struct *d)
+ 
+ unsigned int domain_clamp_alloc_bitsize(struct domain *d, unsigned int bits)
+ {
+-    if ( (d == NULL) || !is_pv_32on64_domain(d) )
++    if ( (d == NULL) || (d->arch.physaddr_bitsize == 0) )
+         return bits;
+     return min(d->arch.physaddr_bitsize, bits);
+ }
+diff --git a/include/asm-x86/mm.h b/include/asm-x86/mm.h
+index 65420bf..e1eb11b 100644
+--- a/include/asm-x86/mm.h
++++ b/include/asm-x86/mm.h
+@@ -448,9 +448,11 @@ int map_ldt_shadow_page(unsigned int);
+ 
+ #ifdef CONFIG_COMPAT
+ int setup_arg_xlat_area(struct vcpu *, l4_pgentry_t *);
++void domain_set_alloc_bitsize(struct domain *d);
+ unsigned int domain_clamp_alloc_bitsize(struct domain *d, unsigned int bits);
+ #else
+ # define setup_arg_xlat_area(vcpu, l4tab) 0
++# define domain_set_alloc_bitsize(d) ((void)0)
+ # define domain_clamp_alloc_bitsize(d, b) (b)
+ #endif
+ 

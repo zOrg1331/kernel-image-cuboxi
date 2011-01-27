@@ -1,0 +1,51 @@
+From: Rob Evers <revers@redhat.com>
+Date: Wed, 27 Oct 2010 15:23:16 -0400
+Subject: [scsi] lpfc: replace some spin_lock_irqs w/spin_locks
+Message-id: <1288192999-24221-25-git-send-email-revers@redhat.com>
+Patchwork-id: 28949
+O-Subject: [RHEL5.6 PATCH 24/27] lpfc: Replace un-needed spin_lock_irqs w/
+	spin_locks
+Bugzilla: 639028
+
+From: Rob Evers on behalf of Emulex <revers@redhat.com>
+
+https://bugzilla.redhat.com/show_bug.cgi?id=636289
+Merged revisions 9117 via svnmerge from http://blsvn.ma.emulex.com/svndata/lpfc-repos/branches/kernel-sync
+
+diff --git a/drivers/scsi/lpfc/lpfc_sli.c b/drivers/scsi/lpfc/lpfc_sli.c
+index 307fab9..4c52674 100644
+--- a/drivers/scsi/lpfc/lpfc_sli.c
++++ b/drivers/scsi/lpfc/lpfc_sli.c
+@@ -8565,7 +8565,7 @@ lpfc_sli_intr_handler(int irq, void *dev_id, struct pt_regs *regs)
+ 	 * If there is deferred error attention, do not check for any interrupt.
+ 	 */
+ 	if (unlikely(phba->hba_flag & DEFER_ERATT)) {
+-		spin_unlock_irq(&phba->hbalock);
++		spin_unlock(&phba->hbalock);
+ 		return IRQ_NONE;
+ 	}
+ 
+@@ -12944,9 +12944,9 @@ lpfc_cleanup_pending_mbox(struct lpfc_vport *vport)
+ 			ndlp = (struct lpfc_nodelist *) mb->context2;
+ 			mb->context2 = NULL;
+ 			if (ndlp) {
+-				spin_lock_irq(shost->host_lock);
++				spin_lock(shost->host_lock);
+ 				ndlp->nlp_flag &= ~NLP_IGNR_REG_CMPL;
+-				spin_unlock_irq(shost->host_lock);
++				spin_unlock(shost->host_lock);
+ 				lpfc_nlp_put(ndlp);
+ 			}
+ 		}
+@@ -12955,9 +12955,9 @@ lpfc_cleanup_pending_mbox(struct lpfc_vport *vport)
+ 
+ 	/* Release the ndlp with the cleaned-up active mailbox command */
+ 	if (act_mbx_ndlp) {
+-		spin_lock_irq(shost->host_lock);
++		spin_lock(shost->host_lock);
+ 		act_mbx_ndlp->nlp_flag &= ~NLP_IGNR_REG_CMPL;
+-		spin_unlock_irq(shost->host_lock);
++		spin_unlock(shost->host_lock);
+ 		lpfc_nlp_put(act_mbx_ndlp);
+ 	}
+ }

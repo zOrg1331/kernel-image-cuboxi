@@ -1,0 +1,325 @@
+From: Stanislaw Gruszka <sgruszka@redhat.com>
+Date: Wed, 14 Jul 2010 08:12:58 -0400
+Subject: [wireless] use cancel_work_sync in mac80211 and core
+Message-id: <20100714081253.4740.93872.send-patch@dhcp-lab-109.englab.brq.redhat.com>
+Patchwork-id: 26876
+O-Subject: [RHEL5 PATCH 2/7] mac80211,cfg80211: use cancel_work_sync
+Bugzilla: 582191
+RH-Acked-by: John Linville <linville@redhat.com>
+RH-Acked-by: Andy Gospodarek <gospo@redhat.com>
+RH-Acked-by: Jiri Pirko <jpirko@redhat.com>
+RH-Acked-by: Jarod Wilson <jarod@redhat.com>
+
+
+diff --git a/net/mac80211/ibss.c b/net/mac80211/ibss.c
+index 8c60e82..a39abdd 100644
+--- a/net/mac80211/ibss.c
++++ b/net/mac80211/ibss.c
+@@ -790,14 +790,9 @@ static void ieee80211_ibss_timer(unsigned long data)
+ #ifdef CONFIG_PM
+ void ieee80211_ibss_quiesce(struct ieee80211_sub_if_data *sdata)
+ {
+-	struct ieee80211_local *local = sdata->local;
+ 	struct ieee80211_if_ibss *ifibss = &sdata->u.ibss;
+ 
+-#if 0 /* Not in RHEL5... */
+ 	cancel_work_sync(&ifibss->work);
+-#else
+-	ieee80211_cancel_work(&local->hw, &ifibss->work);
+-#endif
+ 	if (del_timer_sync(&ifibss->timer))
+ 		ifibss->timer_running = true;
+ }
+@@ -927,16 +922,11 @@ int ieee80211_ibss_join(struct ieee80211_sub_if_data *sdata,
+ 
+ int ieee80211_ibss_leave(struct ieee80211_sub_if_data *sdata)
+ {
+-	struct ieee80211_local *local = sdata->local;
+ 	struct sk_buff *skb;
+ 
+ 	del_timer_sync(&sdata->u.ibss.timer);
+ 	clear_bit(IEEE80211_IBSS_REQ_RUN, &sdata->u.ibss.request);
+-#if 0 /* Not in RHEL5... */
+ 	cancel_work_sync(&sdata->u.ibss.work);
+-#else
+-	ieee80211_cancel_work(&local->hw, &sdata->u.ibss.work);
+-#endif
+ 	clear_bit(IEEE80211_IBSS_REQ_RUN, &sdata->u.ibss.request);
+ 
+ 	sta_info_flush(sdata->local, sdata);
+diff --git a/net/mac80211/iface.c b/net/mac80211/iface.c
+index 7521883..baa4d9e 100644
+--- a/net/mac80211/iface.c
++++ b/net/mac80211/iface.c
+@@ -410,11 +410,7 @@ static int ieee80211_stop(struct net_device *dev)
+ 	ieee80211_configure_filter(local);
+ 
+ 	del_timer_sync(&local->dynamic_ps_timer);
+-#if 0 /* Not in RHEL5... */
+ 	cancel_work_sync(&local->dynamic_ps_enable_work);
+-#else
+-	ieee80211_cancel_work(&local->hw, &local->dynamic_ps_enable_work);
+-#endif
+ 
+ 	/* APs need special treatment */
+ 	if (sdata->vif.type == NL80211_IFTYPE_AP) {
+@@ -477,15 +473,10 @@ static int ieee80211_stop(struct net_device *dev)
+ 		 * whether the interface is running, which, at this point,
+ 		 * it no longer is.
+ 		 */
+-#if 0 /* Not in RHEL5... */
+ 		cancel_work_sync(&sdata->u.mgd.work);
+ 		cancel_work_sync(&sdata->u.mgd.chswitch_work);
+ 		cancel_work_sync(&sdata->u.mgd.monitor_work);
+ 		cancel_work_sync(&sdata->u.mgd.beacon_loss_work);
+-#else
+-		/* could call ieee80211_cancel_work multiple times instead... */
+-		flush_workqueue(local->workqueue);
+-#endif
+ 
+ 		/*
+ 		 * When we get here, the interface is marked down.
+@@ -499,11 +490,7 @@ static int ieee80211_stop(struct net_device *dev)
+ 	case NL80211_IFTYPE_ADHOC:
+ 		if (sdata->vif.type == NL80211_IFTYPE_ADHOC) {
+ 			del_timer_sync(&sdata->u.ibss.timer);
+-#if 0 /* Not in RHEL5... */
+ 			cancel_work_sync(&sdata->u.ibss.work);
+-#else
+-			ieee80211_cancel_work(&local->hw, &sdata->u.ibss.work);
+-#endif
+ 			synchronize_rcu();
+ 			skb_queue_purge(&sdata->u.ibss.skb_queue);
+ 		}
+diff --git a/net/mac80211/main.c b/net/mac80211/main.c
+index e8bf15c..151f93e 100644
+--- a/net/mac80211/main.c
++++ b/net/mac80211/main.c
+@@ -965,11 +965,7 @@ void ieee80211_unregister_hw(struct ieee80211_hw *hw)
+ 
+ 	rtnl_unlock();
+ 
+-#if 0 /* Not in RHEL5... */
+ 	cancel_work_sync(&local->reconfig_filter);
+-#else
+-	ieee80211_cancel_work(&local->hw, &local->reconfig_filter);
+-#endif
+ 
+ 	ieee80211_clear_tx_pending(local);
+ 	sta_info_stop(local);
+diff --git a/net/mac80211/mesh.c b/net/mac80211/mesh.c
+index 68f4565..bfa6909 100644
+--- a/net/mac80211/mesh.c
++++ b/net/mac80211/mesh.c
+@@ -455,11 +455,7 @@ void ieee80211_mesh_quiesce(struct ieee80211_sub_if_data *sdata)
+ 	struct ieee80211_if_mesh *ifmsh = &sdata->u.mesh;
+ 
+ 	/* might restart the timer but that doesn't matter */
+-#if 0 /* Not in RHEL5... */
+ 	cancel_work_sync(&ifmsh->work);
+-#else
+-	ieee80211_cancel_work(&local->hw, &ifmsh->work);
+-#endif
+ 
+ 	/* use atomic bitops in case both timers fire at the same time */
+ 
+@@ -505,11 +501,7 @@ void ieee80211_stop_mesh(struct ieee80211_sub_if_data *sdata)
+ 	 * whether the interface is running, which, at this point,
+ 	 * it no longer is.
+ 	 */
+-#if 0 /* Not in RHEL5... */
+ 	cancel_work_sync(&sdata->u.mesh.work);
+-#else
+-	ieee80211_cancel_work(&local->hw, &sdata->u.mesh.work);
+-#endif
+ 
+ 	/*
+ 	 * When we get here, the interface is marked down.
+diff --git a/net/mac80211/mlme.c b/net/mac80211/mlme.c
+index b661901..a4b3bc6 100644
+--- a/net/mac80211/mlme.c
++++ b/net/mac80211/mlme.c
+@@ -670,12 +670,7 @@ static void ieee80211_change_ps(struct ieee80211_local *local)
+ 		conf->flags &= ~IEEE80211_CONF_PS;
+ 		ieee80211_hw_config(local, IEEE80211_CONF_CHANGE_PS);
+ 		del_timer_sync(&local->dynamic_ps_timer);
+-#if 0 /* Not in RHEL5... */
+ 		cancel_work_sync(&local->dynamic_ps_enable_work);
+-#else
+-		ieee80211_cancel_work(&local->hw,
+-					&local->dynamic_ps_enable_work);
+-#endif
+ 	}
+ }
+ 
+@@ -1099,11 +1094,7 @@ static void ieee80211_set_disassoc(struct ieee80211_sub_if_data *sdata,
+ 	local->power_constr_level = 0;
+ 
+ 	del_timer_sync(&local->dynamic_ps_timer);
+-#if 0 /* Not in RHEL5... */
+ 	cancel_work_sync(&local->dynamic_ps_enable_work);
+-#else
+-	ieee80211_cancel_work(&local->hw, &local->dynamic_ps_enable_work);
+-#endif
+ 
+ 	if (local->hw.conf.flags & IEEE80211_CONF_PS) {
+ 		local->hw.conf.flags &= ~IEEE80211_CONF_PS;
+@@ -2298,7 +2289,6 @@ static void ieee80211_restart_sta_timer(struct ieee80211_sub_if_data *sdata)
+ #ifdef CONFIG_PM
+ void ieee80211_sta_quiesce(struct ieee80211_sub_if_data *sdata)
+ {
+-	struct ieee80211_local *local = sdata->local;
+ 	struct ieee80211_if_managed *ifmgd = &sdata->u.mgd;
+ 
+ 	/*
+@@ -2307,28 +2297,17 @@ void ieee80211_sta_quiesce(struct ieee80211_sub_if_data *sdata)
+ 	 * time -- the code here is properly synchronised.
+ 	 */
+ 
+-#if 0 /* Not in RHEL5... */
+ 	cancel_work_sync(&ifmgd->work);
+ 	cancel_work_sync(&ifmgd->beacon_loss_work);
+-#else
+-	flush_workqueue(local->workqueue);
+-#endif
+ 	if (del_timer_sync(&ifmgd->timer))
+ 		set_bit(TMR_RUNNING_TIMER, &ifmgd->timers_running);
+ 
+-#if 0 /* Not in RHEL5... */
+ 	cancel_work_sync(&ifmgd->chswitch_work);
+-#else
+-	ieee80211_cancel_work(&local->hw, &ifmgd->chswitch_work);
+-#endif
+ 	if (del_timer_sync(&ifmgd->chswitch_timer))
+ 		set_bit(TMR_RUNNING_CHANSW, &ifmgd->timers_running);
+ 
+-#if 0 /* Not in RHEL5... */
+ 	cancel_work_sync(&ifmgd->monitor_work);
+-#else
+-	ieee80211_cancel_work(&local->hw, &ifmgd->monitor_work);
+-#endif
++
+ 	/* these will just be re-established on connection */
+ 	del_timer_sync(&ifmgd->conn_mon_timer);
+ 	del_timer_sync(&ifmgd->bcn_mon_timer);
+diff --git a/net/mac80211/pm.c b/net/mac80211/pm.c
+index 7f3ef25..933f9bb 100644
+--- a/net/mac80211/pm.c
++++ b/net/mac80211/pm.c
+@@ -38,11 +38,7 @@ int __ieee80211_suspend(struct ieee80211_hw *hw)
+ 	 * restarted at resume.
+ 	 */
+ 	del_timer_sync(&local->dynamic_ps_timer);
+-#if 0 /* Not in RHEL5... */
+ 	cancel_work_sync(&local->dynamic_ps_enable_work);
+-#else
+-	ieee80211_cancel_work(&local->hw, &local->dynamic_ps_enable_work);
+-#endif
+ 
+ 	/* disable keys */
+ 	list_for_each_entry(sdata, &local->interfaces, list)
+diff --git a/net/mac80211/scan.c b/net/mac80211/scan.c
+index 1ca2f98..78b65d3 100644
+--- a/net/mac80211/scan.c
++++ b/net/mac80211/scan.c
+@@ -202,11 +202,7 @@ static void ieee80211_scan_ps_enable(struct ieee80211_sub_if_data *sdata)
+ 	/* FIXME: what to do when local->pspolling is true? */
+ 
+ 	del_timer_sync(&local->dynamic_ps_timer);
+-#if 0 /* Not in RHEL5... */
+ 	cancel_work_sync(&local->dynamic_ps_enable_work);
+-#else
+-	ieee80211_cancel_work(&local->hw, &local->dynamic_ps_enable_work);
+-#endif
+ 
+ 	if (local->hw.conf.flags & IEEE80211_CONF_PS) {
+ 		local->scan_ps_enabled = true;
+@@ -765,12 +761,7 @@ void ieee80211_scan_cancel(struct ieee80211_local *local)
+ {
+ 	bool abortscan;
+ 
+-#if 0 /* Not in RHEL5... */
+ 	cancel_delayed_work_sync(&local->scan_work);
+-#else
+-	if (delayed_work_pending(&local->scan_work))
+-		cancel_rearming_delayed_work(&local->scan_work);
+-#endif
+ 
+ 	/*
+ 	 * Only call this function when a scan can't be
+diff --git a/net/mac80211/sta_info.c b/net/mac80211/sta_info.c
+index c256b9b..594f231 100644
+--- a/net/mac80211/sta_info.c
++++ b/net/mac80211/sta_info.c
+@@ -734,11 +734,7 @@ void sta_info_stop(struct ieee80211_local *local)
+ 	 * whether it ran or not since we're going to flush all STAs
+ 	 * anyway.
+ 	 */
+-#if 0 /* Not in RHEL5... */
+ 	cancel_work_sync(&local->sta_debugfs_add);
+-#else
+-	flush_scheduled_work();
+-#endif
+ #endif
+ 
+ 	sta_info_flush(local, NULL);
+diff --git a/net/mac80211/util.c b/net/mac80211/util.c
+index a7ccf02..0eb2ba4 100644
+--- a/net/mac80211/util.c
++++ b/net/mac80211/util.c
+@@ -1036,11 +1036,7 @@ void ieee80211_stop_device(struct ieee80211_local *local)
+ {
+ 	ieee80211_led_radio(local, false);
+ 
+-#if 0 /* Not in RHEL5... */
+ 	cancel_work_sync(&local->reconfig_filter);
+-#else
+-	ieee80211_cancel_work(&local->hw, &local->reconfig_filter);
+-#endif
+ 	drv_stop(local);
+ 
+ 	flush_workqueue(local->workqueue);
+diff --git a/net/wireless/core.c b/net/wireless/core.c
+index 911909d..7d7a227 100644
+--- a/net/wireless/core.c
++++ b/net/wireless/core.c
+@@ -750,7 +750,6 @@ static int cfg80211_netdev_notifier_call(struct notifier_block * nb,
+ #endif
+ 		break;
+ 	case NETDEV_UP:
+-#if 0 /* Not in RHEL5... */
+ 		/*
+ 		 * If we have a really quick DOWN/UP succession we may
+ 		 * have this work still pending ... cancel it and see
+@@ -763,15 +762,6 @@ static int cfg80211_netdev_notifier_call(struct notifier_block * nb,
+ 			mutex_unlock(&rdev->devlist_mtx);
+ 			dev_put(dev);
+ 		}
+-#else
+-		/*
+-		 * Due to lack of infrastructure in RHEL5, simply insist
+-		 * that cleanup_work (now on it's own workqueue) has
+-		 * finished before we proceed.
+-		 */
+-		if (test_bit(0, &wdev->cleanup_work.pending))
+-			flush_workqueue(workqueue);
+-#endif
+ #ifdef CONFIG_WIRELESS_EXT
+ 		cfg80211_lock_rdev(rdev);
+ 		mutex_lock(&rdev->devlist_mtx);
+diff --git a/net/wireless/reg.c b/net/wireless/reg.c
+index e24e9de..c071361 100644
+--- a/net/wireless/reg.c
++++ b/net/wireless/reg.c
+@@ -2363,11 +2363,7 @@ void regulatory_exit(void)
+ 	struct regulatory_request *reg_request, *tmp;
+ 	struct reg_beacon *reg_beacon, *btmp;
+ 
+-#if 0 /* Not in RHEL5... */
+ 	cancel_work_sync(&reg_work);
+-#else
+-	flush_scheduled_work();
+-#endif
+ 
+ 	mutex_lock(&cfg80211_mutex);
+ 	mutex_lock(&reg_mutex);

@@ -1,0 +1,159 @@
+From: Michal Schmidt <mschmidt@redhat.com>
+Date: Thu, 2 Sep 2010 23:24:00 -0400
+Subject: [misc] netdevice: add printk helpers for net drivers
+Message-id: <20100902232400.10621.76383.stgit@brian.englab.brq.redhat.com>
+Patchwork-id: 28040
+O-Subject: [RHEL5.6 BZ629634 PATCH 5/5] netdevice.h: add printk helpers for net
+	drivers
+Bugzilla: 629634
+RH-Acked-by: David S. Miller <davem@redhat.com>
+RH-Acked-by: Jiri Pirko <jpirko@redhat.com>
+RH-Acked-by: Stanislaw Gruszka <sgruszka@redhat.com>
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+Add netdev_* and netif_* printk helpers.
+They will be used by later driver backports.
+
+from upstream commits:
+
+ 571ba42303813106d533bf6bda929d8e289f51bf
+ netdevice.h: Add netdev_printk helpers like dev_printk
+
+ b3d95c5c93d4b57eaea0ad3f582b08a6b5fb3eb1
+ include/linux/netdevice.h: Add netif_printk helpers
+
+ f45f4321d2c977c9eff77e5a5225f3cd2140eb20
+ netdevice.h: Change netif_<level> macros to call netdev_<level> functions
+
+ b29253437ad972e2af8223b64e82dd6fb55850c0
+ net: Fix definition of netif_vdbg() when VERBOSE_DEBUG is not defined
+
+ bcfcc450baaaa44afc1d3c51ef96a53338ff0eb2
+ net: Fix definition of netif_vdbg() when VERBOSE_DEBUG is defined
+
+diff --git a/include/linux/netdevice.h b/include/linux/netdevice.h
+index dbc7553..4b6c2f3 100644
+--- a/include/linux/netdevice.h
++++ b/include/linux/netdevice.h
+@@ -1295,6 +1295,121 @@ static inline int skb_bond_should_drop(struct sk_buff *skb)
+ 
+ #define to_net_dev(class) container_of(class, struct net_device, class_dev)
+ 
++/* Logging, debugging and troubleshooting/diagnostic helpers. */
++
++/* netdev_printk helpers, similar to dev_printk */
++
++static inline const char *netdev_name(const struct net_device *dev)
++{
++	if (dev->reg_state != NETREG_REGISTERED)
++		return "(unregistered net_device)";
++	return dev->name;
++}
++
++#define netdev_printk(level, netdev, format, args...)		\
++	dev_printk(level, (netdev)->class_dev.dev,		\
++		   "%s: " format,				\
++		   netdev_name(netdev), ##args)
++
++#define netdev_emerg(dev, format, args...)			\
++	netdev_printk(KERN_EMERG, dev, format, ##args)
++#define netdev_alert(dev, format, args...)			\
++	netdev_printk(KERN_ALERT, dev, format, ##args)
++#define netdev_crit(dev, format, args...)			\
++	netdev_printk(KERN_CRIT, dev, format, ##args)
++#define netdev_err(dev, format, args...)			\
++	netdev_printk(KERN_ERR, dev, format, ##args)
++#define netdev_warn(dev, format, args...)			\
++	netdev_printk(KERN_WARNING, dev, format, ##args)
++#define netdev_notice(dev, format, args...)			\
++	netdev_printk(KERN_NOTICE, dev, format, ##args)
++#define netdev_info(dev, format, args...)			\
++	netdev_printk(KERN_INFO, dev, format, ##args)
++
++#if defined(DEBUG)
++#define netdev_dbg(__dev, format, args...)			\
++	netdev_printk(KERN_DEBUG, __dev, format, ##args)
++#else
++#define netdev_dbg(__dev, format, args...)			\
++({								\
++	if (0)							\
++		netdev_printk(KERN_DEBUG, __dev, format, ##args); \
++	0;							\
++})
++#endif
++
++#if defined(VERBOSE_DEBUG)
++#define netdev_vdbg	netdev_dbg
++#else
++
++#define netdev_vdbg(dev, format, args...)			\
++({								\
++	if (0)							\
++		netdev_printk(KERN_DEBUG, dev, format, ##args);	\
++	0;							\
++})
++#endif
++
++/*
++ * netdev_WARN() acts like dev_printk(), but with the key difference
++ * of using a WARN/WARN_ON to get the message out, including the
++ * file/line information and a backtrace.
++ */
++#define netdev_WARN(dev, format, args...)			\
++	WARN(1, "netdevice: %s\n" format, netdev_name(dev), ##args);
++
++/* netif printk helpers, similar to netdev_printk */
++
++#define netif_printk(priv, type, level, dev, fmt, args...)	\
++do {					  			\
++	if (netif_msg_##type(priv))				\
++		netdev_printk(level, (dev), fmt, ##args);	\
++} while (0)
++
++#define netif_level(level, priv, type, dev, fmt, args...)	\
++do {								\
++	if (netif_msg_##type(priv))				\
++		netdev_##level(dev, fmt, ##args);		\
++} while (0)
++
++#define netif_emerg(priv, type, dev, fmt, args...)		\
++	netif_level(emerg, priv, type, dev, fmt, ##args)
++#define netif_alert(priv, type, dev, fmt, args...)		\
++	netif_level(alert, priv, type, dev, fmt, ##args)
++#define netif_crit(priv, type, dev, fmt, args...)		\
++	netif_level(crit, priv, type, dev, fmt, ##args)
++#define netif_err(priv, type, dev, fmt, args...)		\
++	netif_level(err, priv, type, dev, fmt, ##args)
++#define netif_warn(priv, type, dev, fmt, args...)		\
++	netif_level(warn, priv, type, dev, fmt, ##args)
++#define netif_notice(priv, type, dev, fmt, args...)		\
++	netif_level(notice, priv, type, dev, fmt, ##args)
++#define netif_info(priv, type, dev, fmt, args...)		\
++	netif_level(info, priv, type, dev, fmt, ##args)
++
++#if defined(DEBUG)
++#define netif_dbg(priv, type, dev, format, args...)		\
++	netif_printk(priv, type, KERN_DEBUG, dev, format, ##args)
++#else
++#define netif_dbg(priv, type, dev, format, args...)			\
++({									\
++	if (0)								\
++		netif_printk(priv, type, KERN_DEBUG, dev, format, ##args); \
++	0;								\
++})
++#endif
++
++#if defined(VERBOSE_DEBUG)
++#define netif_vdbg	netif_dbg
++#else
++#define netif_vdbg(priv, type, dev, format, args...)		\
++({								\
++	if (0)							\
++		netif_printk(priv, type, KERN_DEBUG, dev, format, ##args); \
++	0;							\
++})
++#endif
++
+ #endif /* __KERNEL__ */
+ 
+ #endif	/* _LINUX_DEV_H */

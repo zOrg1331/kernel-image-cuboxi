@@ -1,0 +1,134 @@
+From: Rob Evers <revers@redhat.com>
+Date: Wed, 27 Oct 2010 15:23:12 -0400
+Subject: [scsi] lpfc: unreg all rpi mbox command before unreg vpi
+Message-id: <1288192999-24221-21-git-send-email-revers@redhat.com>
+Patchwork-id: 28946
+O-Subject: [RHEL5.6 PATCH 20/27] lpfc: Added unreg all rpi mailbox command
+	before unreg vpi.
+Bugzilla: 639028
+
+From: Rob Evers on behalf of Emulex <revers@redhat.com>
+
+https://bugzilla.redhat.com/show_bug.cgi?id=636289
+
+diff --git a/drivers/scsi/lpfc/lpfc_crtn.h b/drivers/scsi/lpfc/lpfc_crtn.h
+index 022e037..b5c2cfd 100644
+--- a/drivers/scsi/lpfc/lpfc_crtn.h
++++ b/drivers/scsi/lpfc/lpfc_crtn.h
+@@ -50,6 +50,8 @@ int lpfc_reg_rpi(struct lpfc_hba *, uint16_t, uint32_t, uint8_t *,
+ void lpfc_set_var(struct lpfc_hba *, LPFC_MBOXQ_t *, uint32_t, uint32_t);
+ void lpfc_unreg_login(struct lpfc_hba *, uint16_t, uint32_t, LPFC_MBOXQ_t *);
+ void lpfc_unreg_did(struct lpfc_hba *, uint16_t, uint32_t, LPFC_MBOXQ_t *);
++void lpfc_sli4_unreg_all_rpis(struct lpfc_vport *);
++
+ void lpfc_reg_vpi(struct lpfc_vport *, LPFC_MBOXQ_t *);
+ void lpfc_register_new_vport(struct lpfc_hba *, struct lpfc_vport *,
+ 			struct lpfc_nodelist *);
+diff --git a/drivers/scsi/lpfc/lpfc_els.c b/drivers/scsi/lpfc/lpfc_els.c
+index 15a0af8..d50d217 100644
+--- a/drivers/scsi/lpfc/lpfc_els.c
++++ b/drivers/scsi/lpfc/lpfc_els.c
+@@ -581,6 +581,10 @@ lpfc_cmpl_els_flogi_fabric(struct lpfc_vport *vport, struct lpfc_nodelist *ndlp,
+ 			lpfc_unreg_rpi(vport, np);
+ 		}
+ 		lpfc_cleanup_pending_mbox(vport);
++
++		if (phba->sli_rev == LPFC_SLI_REV4)
++			lpfc_sli4_unreg_all_rpis(vport);
++
+ 		if (phba->sli3_options & LPFC_SLI3_NPIV_ENABLED) {
+ 			lpfc_mbx_unreg_vpi(vport);
+ 			spin_lock_irq(shost->host_lock);
+@@ -6622,6 +6626,8 @@ lpfc_cmpl_reg_new_vport(struct lpfc_hba *phba, LPFC_MBOXQ_t *pmb)
+ 
+ 		default:
+ 			/* Try to recover from this error */
++			if (phba->sli_rev == LPFC_SLI_REV4)
++				lpfc_sli4_unreg_all_rpis(vport);
+ 			lpfc_mbx_unreg_vpi(vport);
+ 			spin_lock_irq(shost->host_lock);
+ 			vport->fc_flag |= FC_VPORT_NEEDS_REG_VPI;
+@@ -6909,6 +6915,10 @@ lpfc_cmpl_els_fdisc(struct lpfc_hba *phba, struct lpfc_iocbq *cmdiocb,
+ 			lpfc_unreg_rpi(vport, np);
+ 		}
+ 		lpfc_cleanup_pending_mbox(vport);
++
++		if (phba->sli_rev == LPFC_SLI_REV4)
++			lpfc_sli4_unreg_all_rpis(vport);
++
+ 		lpfc_mbx_unreg_vpi(vport);
+ 		spin_lock_irq(shost->host_lock);
+ 		vport->fc_flag |= FC_VPORT_NEEDS_REG_VPI;
+diff --git a/drivers/scsi/lpfc/lpfc_hbadisc.c b/drivers/scsi/lpfc/lpfc_hbadisc.c
+index f1cd00a..a95dcfd 100644
+--- a/drivers/scsi/lpfc/lpfc_hbadisc.c
++++ b/drivers/scsi/lpfc/lpfc_hbadisc.c
+@@ -837,6 +837,8 @@ lpfc_cleanup_rpis(struct lpfc_vport *vport, int remove)
+ 					     : NLP_EVT_DEVICE_RECOVERY);
+ 	}
+ 	if (phba->sli3_options & LPFC_SLI3_VPORT_TEARDOWN) {
++		if (phba->sli_rev == LPFC_SLI_REV4)
++			lpfc_sli4_unreg_all_rpis(vport);
+ 		rc = lpfc_mbx_unreg_vpi(vport);
+ 		spin_lock_irq(shost->host_lock);
+ 		vport->fc_flag |= FC_VPORT_NEEDS_REG_VPI;
+@@ -4071,6 +4073,11 @@ lpfc_unreg_all_rpis(struct lpfc_vport *vport)
+ 	LPFC_MBOXQ_t     *mbox;
+ 	int rc;
+ 
++	if (phba->sli_rev == LPFC_SLI_REV4) {
++		lpfc_sli4_unreg_all_rpis(vport);
++		return;
++	}
++
+ 	mbox = mempool_alloc(phba->mbox_mem_pool, GFP_KERNEL);
+ 	if (mbox) {
+ 		lpfc_unreg_login(phba, vport->vpi, 0xffff, mbox);
+@@ -5449,6 +5456,8 @@ lpfc_unregister_fcf_prep(struct lpfc_hba *phba)
+ 			if (ndlp)
+ 				lpfc_cancel_retry_delay_tmo(vports[i], ndlp);
+ 			lpfc_cleanup_pending_mbox(vports[i]);
++			if (phba->sli_rev == LPFC_SLI_REV4)
++				lpfc_sli4_unreg_all_rpis(vports[i]);
+ 			lpfc_mbx_unreg_vpi(vports[i]);
+ 			shost = lpfc_shost_from_vport(vports[i]);
+ 			spin_lock_irq(shost->host_lock);
+diff --git a/drivers/scsi/lpfc/lpfc_mbox.c b/drivers/scsi/lpfc/lpfc_mbox.c
+index 2ab7ec1..4793483 100644
+--- a/drivers/scsi/lpfc/lpfc_mbox.c
++++ b/drivers/scsi/lpfc/lpfc_mbox.c
+@@ -797,6 +797,34 @@ lpfc_unreg_login(struct lpfc_hba *phba, uint16_t vpi, uint32_t rpi,
+ }
+ 
+ /**
++ * lpfc_sli4_unreg_all_rpis - unregister all RPIs for a vport on SLI4 HBA.
++ * @vport: pointer to a vport object.
++ *
++ * This routine sends mailbox command to unregister all active RPIs for
++ * a vport.
++ **/
++void
++lpfc_sli4_unreg_all_rpis(struct lpfc_vport *vport)
++{
++	struct lpfc_hba  *phba  = vport->phba;
++	LPFC_MBOXQ_t     *mbox;
++	int rc;
++
++	mbox = mempool_alloc(phba->mbox_mem_pool, GFP_KERNEL);
++	if (mbox) {
++		lpfc_unreg_login(phba, vport->vpi,
++			vport->vpi + phba->vpi_base, mbox);
++		mbox->u.mb.un.varUnregLogin.rsvd1 = 0x4000 ;
++		mbox->vport = vport;
++		mbox->mbox_cmpl = lpfc_sli_def_mbox_cmpl;
++		mbox->context1 = NULL;
++		rc = lpfc_sli_issue_mbox(phba, mbox, MBX_NOWAIT);
++		if (rc == MBX_NOT_FINISHED)
++			mempool_free(mbox, phba->mbox_mem_pool);
++	}
++}
++
++/**
+  * lpfc_reg_vpi - Prepare a mailbox command for registering vport identifier
+  * @phba: pointer to lpfc hba data structure.
+  * @vpi: virtual N_Port identifier.

@@ -1,0 +1,497 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Date: Fri, 14 May 2010 12:42:10 -0400
+Subject: [net] benet: compat header cleanups, part 1
+Message-id: <4BED4522.1020302@redhat.com>
+Patchwork-id: 25084
+O-Subject: Re: [RHEL5 PATCH 1/27] compat.h cleanup: benet driver changes
+Bugzilla: 546740
+
+Clean up benet driver's use of compat headers.
+
+Bugzilla #546740.
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/net/benet/Makefile b/drivers/net/benet/Makefile
+index 691e22f..e939e1a 100644
+--- a/drivers/net/benet/Makefile
++++ b/drivers/net/benet/Makefile
+@@ -4,4 +4,4 @@
+ 
+ obj-$(CONFIG_BE2NET) += be2net.o
+ 
+-be2net-y :=  be_cmds.o be_compat.o be_main.o be_ethtool.o
++be2net-y :=  be_cmds.o be_main.o be_ethtool.o
+diff --git a/drivers/net/benet/be.h b/drivers/net/benet/be.h
+index 1af489e..1bad166 100644
+--- a/drivers/net/benet/be.h
++++ b/drivers/net/benet/be.h
+@@ -30,7 +30,6 @@
+ #include <linux/interrupt.h>
+ #include <linux/firmware.h>
+ #include <linux/ethtool.h>
+-#include "be_compat.h"
+ 
+ #include "be_hw.h"
+ 
+@@ -295,8 +294,6 @@ extern struct ethtool_ops be_ethtool_ops;
+ 
+ #define drvr_stats(adapter)		(&adapter->stats.drvr_stats)
+ 
+-#define BE_SET_NETDEV_OPS(netdev, ops)	be_netdev_ops_init(netdev, ops)
+-
+ static inline unsigned int be_pci_func(struct be_adapter *adapter)
+ {
+ 	return PCI_FUNC(adapter->pdev->devfn);
+diff --git a/drivers/net/benet/be_compat.c b/drivers/net/benet/be_compat.c
+deleted file mode 100644
+index 610d997..0000000
+--- a/drivers/net/benet/be_compat.c
++++ /dev/null
+@@ -1,57 +0,0 @@
+-/*
+- * Copyright (C) 2005 - 2009 ServerEngines
+- * All rights reserved.
+- *
+- * This program is free software; you can redistribute it and/or
+- * modify it under the terms of the GNU General Public License version 2
+- * as published by the Free Software Foundation.  The full GNU General
+- * Public License is included in this distribution in the file called COPYING.
+- *
+- * Contact Information:
+- * linux-drivers@serverengines.com
+- *
+- * ServerEngines
+- * 209 N. Fair Oaks Ave
+- * Sunnyvale, CA 94085
+- */
+-
+-#include "be.h"
+-
+-/* new netdev backport */
+-void be_netdev_ops_init(struct net_device *netdev, struct net_device_ops *ops)
+-{
+-	netdev->open = ops->ndo_open;
+-	netdev->stop = ops->ndo_stop;
+-	netdev->hard_start_xmit = ops->ndo_start_xmit;
+-	netdev->set_mac_address = ops->ndo_set_mac_address;
+-	netdev->get_stats = ops->ndo_get_stats;
+-	netdev->set_multicast_list = ops->ndo_set_rx_mode;
+-	netdev->change_mtu = ops->ndo_change_mtu;
+-	netdev->vlan_rx_register = ops->ndo_vlan_rx_register;
+-	netdev->vlan_rx_add_vid = ops->ndo_vlan_rx_add_vid;
+-	netdev->vlan_rx_kill_vid = ops->ndo_vlan_rx_kill_vid;
+-#ifdef CONFIG_NET_POLL_CONTROLLER
+-	netdev->poll_controller = ops->ndo_poll_controller;
+-#endif
+-}
+-
+-int eth_validate_addr(struct net_device *netdev)
+-{
+-	return 1;
+-}
+-
+-/* New NAPI backport */
+-int be_poll_compat(struct net_device *netdev, int *budget)
+-{
+-	struct be_adapter *adapter = netdev_priv(netdev);
+-	u32 work_done, can_do;
+-	can_do = min(*budget, netdev->quota);
+-	work_done = be_poll(&adapter->napi, can_do);
+-	*budget -= work_done;
+-	netdev->quota -= work_done;
+-	if (work_done < can_do)
+-		return 0;
+-	else
+-		return 1;
+-}
+-
+diff --git a/drivers/net/benet/be_compat.h b/drivers/net/benet/be_compat.h
+deleted file mode 100644
+index 697c5e7..0000000
+--- a/drivers/net/benet/be_compat.h
++++ /dev/null
+@@ -1,155 +0,0 @@
+-/*
+- * Copyright (C) 2005 - 2009 ServerEngines
+- * All rights reserved.
+- *
+- * This program is free software; you can redistribute it and/or
+- * modify it under the terms of the GNU General Public License version 2
+- * as published by the Free Software Foundation.  The full GNU General
+- * Public License is included in this distribution in the file called COPYING.
+- *
+- * Contact Information:
+- * linux-drivers@serverengines.com
+- *
+- * ServerEngines
+- * 209 N. Fair Oaks Ave
+- * Sunnyvale, CA 94085
+- */
+-
+-#ifndef BE_COMPAT_H
+-#define BE_COMPAT_H
+-
+-
+-#define ETH_FCS_LEN			4
+-
+-#define DEFINE_PCI_DEVICE_TABLE(_table) struct pci_device_id _table[] 	\
+-						__devinitdata
+-
+-/* Backport of request_irq */
+-typedef irqreturn_t(*backport_irq_handler_t) (int, void *);
+-static inline int
+-backport_request_irq(unsigned int irq, irqreturn_t(*handler) (int, void *),
+-		unsigned long flags, const char *dev_name, void *dev_id)
+-{
+-	return request_irq(irq,
+-			(irqreturn_t(*) (int, void *, struct pt_regs *))handler,
+-			flags, dev_name, dev_id);
+-}
+-#define request_irq 			backport_request_irq
+-
+-/*
+- * Backport of netdev ops struct
+- */
+-struct net_device_ops {
+-	int	(*ndo_init)(struct net_device *dev);
+-	void	(*ndo_uninit)(struct net_device *dev);
+-	int	(*ndo_open)(struct net_device *dev);
+-	int	(*ndo_stop)(struct net_device *dev);
+-	int	(*ndo_start_xmit) (struct sk_buff *skb, struct net_device *dev);
+-	u16	(*ndo_select_queue)(struct net_device *dev,
+-				    struct sk_buff *skb);
+-	void	(*ndo_change_rx_flags)(struct net_device *dev, int flags);
+-	void	(*ndo_set_rx_mode)(struct net_device *dev);
+-	void	(*ndo_set_multicast_list)(struct net_device *dev);
+-	int	(*ndo_set_mac_address)(struct net_device *dev, void *addr);
+-	int	(*ndo_validate_addr)(struct net_device *dev);
+-	int	(*ndo_do_ioctl)(struct net_device *dev,
+-				struct ifreq *ifr, int cmd);
+-	int	(*ndo_set_config)(struct net_device *dev, struct ifmap *map);
+-	int	(*ndo_change_mtu)(struct net_device *dev, int new_mtu);
+-	int	(*ndo_neigh_setup)(struct net_device *dev,
+-				struct neigh_parms *);
+-	void	(*ndo_tx_timeout) (struct net_device *dev);
+-
+-	struct net_device_stats* (*ndo_get_stats)(struct net_device *dev);
+-
+-	void	(*ndo_vlan_rx_register)(struct net_device *dev,
+-				struct vlan_group *grp);
+-	void	(*ndo_vlan_rx_add_vid)(struct net_device *dev,
+-			       unsigned short vid);
+-	void	(*ndo_vlan_rx_kill_vid)(struct net_device *dev,
+-				unsigned short vid);
+-#ifdef CONFIG_NET_POLL_CONTROLLER
+-#define HAVE_NETDEV_POLL
+-	void	(*ndo_poll_controller)(struct net_device *dev);
+-#endif
+-};
+-extern void be_netdev_ops_init(struct net_device *netdev,
+-			struct net_device_ops *ops);
+-extern int eth_validate_addr(struct net_device *);
+-
+-/*
+- * Back port of new NAPI: simulate polling on multiple napi instances
+- * using tasklets
+- */
+-
+-extern int be_poll(struct napi_struct *, int);
+-extern int be_poll_compat(struct net_device *netdev, int *budget);
+-
+-static inline void napi_schedule(struct napi_struct *napi)
+-{
+-	netif_rx_schedule(napi->dev);
+-}
+-
+-static inline void netif_napi_add(struct net_device *netdev,
+-		  struct napi_struct *napi,
+-		  int (*poll) (struct napi_struct *, int), int weight)
+-{
+-	netdev->weight = weight;
+-	netdev->poll = be_poll_compat;
+-
+-	napi->dev = netdev;
+-}
+-
+-static inline void napi_enable(struct napi_struct *napi)
+-{
+-	netif_poll_enable(napi->dev);
+-}
+-
+-static inline void napi_disable(struct napi_struct *napi)
+-{
+-	netif_poll_disable(napi->dev);
+-}
+-
+-static inline void vlan_group_set_device(struct vlan_group *vg,
+-					u16 vlan_id,
+-					struct net_device *dev)
+-{
+-	struct net_device **array;
+-	if (!vg)
+-		return;
+-	array = vg->vlan_devices;
+-	array[vlan_id] = dev;
+-}
+-
+-
+-/************** Backport of Delayed work queues interface ****************/
+-struct delayed_work {
+-	struct work_struct work;
+-};
+-
+-#define INIT_DELAYED_WORK(_work, _func)				\
+-		INIT_WORK(&(_work)->work, (void (*)(void *))_func, &(_work)->work)
+-
+-static inline int backport_cancel_delayed_work_sync(struct delayed_work *work)
+-{
+-	cancel_rearming_delayed_work(&work->work);
+-	return 0;
+-}
+-#define cancel_delayed_work_sync backport_cancel_delayed_work_sync
+-
+-static inline int backport_schedule_delayed_work(struct delayed_work *work,
+-		unsigned long delay)
+-{
+-	if (unlikely(!delay))
+-		return schedule_work(&work->work);
+-	else
+-		return schedule_delayed_work(&work->work, delay);
+-}
+-#define schedule_delayed_work backport_schedule_delayed_work
+-/* backport delayed workqueue */
+-
+-#if !defined(NETIF_F_IPV6_CSUM)
+-#define NETIF_F_IPV6_CSUM       NETIF_F_HW_CSUM
+-#endif
+-
+-#endif				/* BE_COMPAT_H */
+diff --git a/drivers/net/benet/be_main.c b/drivers/net/benet/be_main.c
+index ee84af2..8c54003 100644
+--- a/drivers/net/benet/be_main.c
++++ b/drivers/net/benet/be_main.c
+@@ -1300,7 +1300,7 @@ static inline int be_evt_bit_get(struct be_adapter *adapter, u32 eq_id)
+ 	return eq_id - 8 * be_pci_func(adapter);
+ }
+ 
+-static irqreturn_t be_intx(int irq, void *dev)
++static irqreturn_t be_intx(int irq, void *dev, struct pt_regs *pt_regs)
+ {
+ 	struct be_adapter *adapter = dev;
+ 	int isr;
+@@ -1310,13 +1310,12 @@ static irqreturn_t be_intx(int irq, void *dev)
+ 	if (!isr)
+ 		return IRQ_NONE;
+ 
+-	napi_schedule(&adapter->napi);
+-
++	netif_rx_schedule(adapter->netdev);
+ 	return IRQ_HANDLED;
+ }
+ 
+ 
+-static irqreturn_t be_msix(int irq, void *dev)
++static irqreturn_t be_msix(int irq, void *dev, struct pt_regs *regs)
+ {
+ 	struct be_adapter *adapter = dev;
+ 	struct be_eq_obj *eq_obj = &adapter->be_eq;
+@@ -1326,7 +1325,7 @@ static irqreturn_t be_msix(int irq, void *dev)
+ 	be_eq_notify(adapter, eq_obj->q.id, false, true, 0);
+ 
+ 	if (entry->evt)
+-		napi_schedule(&adapter->napi);
++		netif_rx_schedule(adapter->netdev);
+ 	else
+ 		be_eq_notify(adapter, eq_obj->q.id, true, true, 0);
+ 
+@@ -1411,10 +1410,9 @@ int be_poll_tx(struct be_adapter *adapter, int budget)
+ 	return num_cmpl;
+ }
+ 
+-int be_poll(struct napi_struct *napi, int budget)
++int be_poll(struct net_device *dev, int *budget)
+ {
+-	struct be_adapter *adapter =
+-				container_of(napi, struct be_adapter, napi);
++	struct be_adapter *adapter = netdev_priv(dev);
+ 	struct be_eq_obj *eq_obj = &adapter->be_eq;
+ 	u16 num = 0;
+ 	u32 tx_work, rx_work;
+@@ -1422,15 +1420,15 @@ int be_poll(struct napi_struct *napi, int budget)
+ 	while (event_get(eq_obj))
+ 		num++;
+ 
+-	tx_work = be_poll_tx(adapter, budget);
+-	rx_work = be_poll_rx(adapter, budget);
++	tx_work = be_poll_tx(adapter, *budget);
++	rx_work = be_poll_rx(adapter, *budget);
+ 	be_process_mcc(adapter);
+ 
+ 	drvr_stats(adapter)->be_num_events += num;
+ 
+ 	/* All consumed */
+-	if (rx_work < budget) {
+-		napi_complete(napi);
++	if (rx_work < *budget) {
++		napi_complete(&adapter->napi);
+ 		be_eq_notify(adapter, eq_obj->q.id, true, false, num);
+ 	} else
+ 		be_eq_notify(adapter, eq_obj->q.id, false, false, num);
+@@ -1438,8 +1436,9 @@ int be_poll(struct napi_struct *napi, int budget)
+ 	return rx_work;
+ }
+ 
+-static void be_worker(struct work_struct *work)
++static void be_worker(void *data)
+ {
++	struct work_struct *work = data;
+ 	struct be_adapter *adapter =
+ 		container_of(work, struct be_adapter, work.work);
+ 	int status;
+@@ -1460,7 +1459,7 @@ static void be_worker(struct work_struct *work)
+ 		be_post_rx_frags(adapter);
+ 	}
+ 
+-	schedule_delayed_work(&adapter->work, msecs_to_jiffies(1000));
++	schedule_delayed_work(&adapter->work.work, msecs_to_jiffies(1000));
+ }
+ 
+ static void be_msix_disable(struct be_adapter *adapter)
+@@ -1583,7 +1582,7 @@ static int be_open(struct net_device *netdev)
+ 	/* First time posting */
+ 	be_post_rx_frags(adapter);
+ 
+-	napi_enable(&adapter->napi);
++	netif_poll_enable(netdev);
+ 
+ 	be_irq_register(adapter);
+ 
+@@ -1613,7 +1612,7 @@ static int be_open(struct net_device *netdev)
+ 	if (status)
+ 		goto ret_sts;
+ 
+-	schedule_delayed_work(&adapter->work, msecs_to_jiffies(100));
++	schedule_delayed_work(&adapter->work.work, msecs_to_jiffies(100));
+ ret_sts:
+ 	return status;
+ }
+@@ -1736,7 +1735,7 @@ static int be_close(struct net_device *netdev)
+ 	}
+ 	be_irq_unregister(adapter);
+ 
+-	napi_disable(&adapter->napi);
++	netif_poll_disable(netdev);
+ 
+ 	/* Wait for all pending tx completions to arrive so that
+ 	 * all tx skbs are freed.
+@@ -1757,7 +1756,7 @@ static void be_netpoll(struct net_device *netdev)
+ 	be_eq_notify(adapter, eq_obj->q.id, false, true, 0);
+ 
+ 	if (entry->evt)
+-		napi_schedule(&adapter->napi);
++		netif_rx_schedule(adapter->netdev);
+ 	else
+ 		be_eq_notify(adapter, eq_obj->q.id, true, true, 0);
+ 
+@@ -1979,26 +1978,10 @@ fw_exit:
+ 	return status;
+ }
+ 
+-static struct net_device_ops be_netdev_ops = {
+-	.ndo_open		= be_open,
+-	.ndo_stop		= be_close,
+-	.ndo_start_xmit		= be_xmit,
+-	.ndo_get_stats		= be_get_stats,
+-	.ndo_set_rx_mode	= be_set_multicast_list,
+-	.ndo_set_mac_address	= be_mac_addr_set,
+-	.ndo_change_mtu		= be_change_mtu,
+-	.ndo_validate_addr	= eth_validate_addr,
+-	.ndo_vlan_rx_register	= be_vlan_register,
+-	.ndo_vlan_rx_add_vid	= be_vlan_add_vid,
+-	.ndo_vlan_rx_kill_vid	= be_vlan_rem_vid,
+-#ifdef CONFIG_NET_POLL_CONTROLLER
+-	.ndo_poll_controller	= be_netpoll,
+-#endif
+-};
+-
+-static void be_netdev_init(struct net_device *netdev)
++static int be_netdev_init(struct net_device *netdev)
+ {
+ 	struct be_adapter *adapter = netdev_priv(netdev);
++	struct net_device *napi_nd;
+ 
+ 	netdev->features |= NETIF_F_SG | NETIF_F_HW_VLAN_RX | NETIF_F_TSO |
+ 		NETIF_F_HW_VLAN_TX | NETIF_F_HW_VLAN_FILTER | NETIF_F_HW_CSUM |
+@@ -2012,15 +1995,36 @@ static void be_netdev_init(struct net_device *netdev)
+ 	adapter->rx_fc = true;
+ 	adapter->tx_fc = true;
+ 
+-	BE_SET_NETDEV_OPS(netdev, &be_netdev_ops);
++	netdev->open = be_open;
++	netdev->stop = be_close;
++	netdev->hard_start_xmit = be_xmit;
++	netdev->get_stats = be_get_stats;
++	netdev->set_multicast_list = be_set_multicast_list;
++	netdev->set_mac_address = be_mac_addr_set;
++	netdev->change_mtu = be_change_mtu;
++	netdev->vlan_rx_register = be_vlan_register;
++	netdev->vlan_rx_add_vid = be_vlan_add_vid;
++	netdev->vlan_rx_kill_vid = be_vlan_rem_vid;
++#ifdef CONFIG_NET_POLL_CONTROLLER
++	netdev->poll_controller = be_netpoll;
++#endif
+ 
+ 	SET_ETHTOOL_OPS(netdev, &be_ethtool_ops);
+ 
+-	netif_napi_add(netdev, &adapter->napi, be_poll,
+-		BE_NAPI_WEIGHT);
++	napi_nd = alloc_netdev(0, "", ether_setup);
++	if (!napi_nd)
++		return -ENOMEM;
++
++	napi_nd->priv = adapter;
++	napi_nd->weight = BE_NAPI_WEIGHT;
++	napi_nd->poll = be_poll;
++	set_bit(__LINK_STATE_START, &napi_nd->state);
++	adapter->napi.dev = napi_nd;
+ 
+ 	netif_carrier_off(netdev);
+ 	netif_stop_queue(netdev);
++
++	return 0;
+ }
+ 
+ static void be_unmap_pci_bars(struct be_adapter *adapter)
+@@ -2207,6 +2211,9 @@ static void __devexit be_remove(struct pci_dev *pdev)
+ 
+ 	be_ctrl_cleanup(adapter);
+ 
++	free_netdev(adapter->napi.dev);
++	adapter->napi.dev = NULL;
++
+ 	be_msix_disable(adapter);
+ 
+ 	pci_set_drvdata(pdev, NULL);
+@@ -2279,7 +2286,8 @@ static int __devinit be_probe(struct pci_dev *pdev,
+ 	adapter->pdev = pdev;
+ 	pci_set_drvdata(pdev, adapter);
+ 	adapter->netdev = netdev;
+-	be_netdev_init(netdev);
++	if (be_netdev_init(netdev))
++		goto rel_drvdata;
+ 	SET_NETDEV_DEV(netdev, &pdev->dev);
+ 
+ 	be_msix_enable(adapter);
+@@ -2345,8 +2353,11 @@ stats_clean:
+ ctrl_clean:
+ 	be_ctrl_cleanup(adapter);
+ free_netdev:
++	free_netdev(adapter->napi.dev);
++	adapter->napi.dev = NULL;
+ 	be_msix_disable(adapter);
+ 	free_netdev(adapter->netdev);
++rel_drvdata:
+ 	pci_set_drvdata(pdev, NULL);
+ rel_reg:
+ 	pci_release_regions(pdev);

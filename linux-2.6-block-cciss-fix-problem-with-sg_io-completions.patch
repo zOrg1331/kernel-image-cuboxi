@@ -1,0 +1,105 @@
+From: Tomas Henzl <thenzl@redhat.com>
+Date: Sun, 29 Aug 2010 15:49:13 -0400
+Subject: [block] cciss: fix problem with SG_IO completions
+Message-id: <1283097002-3341-15-git-send-email-thenzl@redhat.com>
+Patchwork-id: 27861
+O-Subject: [RHEL6 PATCH 14/63] cciss: fix problem with SG_IO completions
+Bugzilla: 568830
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+
+ix problem with SG_IO completions
+Fix the problem with the main i/o path and SG_IO.  For block_fs_requests,
+we now call complete_fs_buffers, which does thing more or less as before.
+For block_pc_requests, loop through the bios, completing requests up to
+nr_bytes (as computed by blk_rq_bytes()).
+
+diff --git a/drivers/block/cciss.c b/drivers/block/cciss.c
+index 0592519..8aa237d 100644
+--- a/drivers/block/cciss.c
++++ b/drivers/block/cciss.c
+@@ -1485,15 +1485,33 @@ static int cciss_ioctl(struct inode *inode, struct file *filep,
+ 	}
+ }
+ 
+-static inline void complete_buffers(struct bio *bio, int status)
++static inline void complete_pc_buffers(struct bio *bio, unsigned int nr_bytes, int status)
+ {
++	unsigned int bytes_remaining = nr_bytes;
++
+ 	while (bio) {
+ 		struct bio *xbh = bio->bi_next;
+-		int nr_sectors = bio_sectors(bio);
++		unsigned int bytes_in_this_bio = bio_sectors(bio) << 9;
++
++		if (bytes_in_this_bio > bytes_remaining)
++			bytes_in_this_bio = bytes_remaining;
+ 
+ 		bio->bi_next = NULL;
+-		blk_finished_io(len);
+-		bio_endio(bio, nr_sectors << 9, status);
++		bio_endio(bio, bytes_in_this_bio, status ? 0 : -EIO);
++		bio = xbh;
++
++		bytes_remaining -= bytes_in_this_bio;
++	}
++}
++
++static inline void complete_fs_buffers(struct bio *bio, int status)
++{
++	while (bio) {
++		struct bio *xbh = bio->bi_next;
++		unsigned int nr_bytes = bio_sectors(bio) << 9;
++ 
++		bio->bi_next = NULL;
++		bio_endio(bio, nr_bytes, status ? 0 : -EIO);
+ 		bio = xbh;
+ 	}
+ }
+@@ -1545,10 +1563,28 @@ static void cciss_check_queues(ctlr_info_t *h)
+ 	}
+ }
+ 
++/**
++ * blk_rq_bytes - Returns bytes left to complete in the entire request
++ * @rq: the request being processed
++ * this function is copied from later kernels (2.6.29-ish), where it is
++ * normally defined in blk/blk-core.c
++ * Slightly modified for older kernels.
++ **/
++static unsigned int blk_rq_bytes(struct request *rq)
++{
++	int nr_sectors = bio_sectors(rq->bio);
++
++	if (blk_fs_request(rq))
++		return nr_sectors << 9;
++
++	return rq->data_len;
++}
++
+ static void cciss_softirq_done(struct request *rq)
+ {
+ 	CommandList_struct *cmd = rq->completion_data;
+ 	ctlr_info_t *h = hba[cmd->ctlr];
++	unsigned int nr_bytes;
+ 	unsigned long flags;
+ 	u64bit temp64;
+ 	int i, ddir;
+@@ -1565,12 +1601,13 @@ static void cciss_softirq_done(struct request *rq)
+ 		temp64.val32.upper = cmd->SG[i].Addr.upper;
+ 		pci_unmap_page(h->pdev, temp64.val, cmd->SG[i].Len, ddir);
+ 	}
+-
+-	complete_buffers(rq->bio, rq->errors);
+-
+-	if (blk_fs_request(rq)) {
++	if (blk_pc_request(rq)) {
++		nr_bytes = blk_rq_bytes(rq);
++		complete_pc_buffers(rq->bio, nr_bytes, rq->errors);
++		rq->data_len = cmd->err_info->ResidualCnt;
++	} else {
+ 		const int rw = rq_data_dir(rq);
+-
++		complete_fs_buffers(rq->bio, (rq->errors == 0));
+ 		all_stat_add(rq->rq_disk, sectors[rw],
+ 			     rq->nr_sectors, rq->sector);
+ 	}

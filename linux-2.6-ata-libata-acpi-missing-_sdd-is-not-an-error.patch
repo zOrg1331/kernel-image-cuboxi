@@ -1,0 +1,83 @@
+From: David Milburn <dmilburn@redhat.com>
+Date: Tue, 2 Feb 2010 21:36:08 -0500
+Subject: [ata] libata-acpi: missing _SDD is not an error
+Message-id: <20100202213608.GA5973@dhcp-210.hsv.redhat.com>
+Patchwork-id: 23108
+O-Subject: [RHEL5.6 PATCH] libata-acpi: missing _SDD is not an error
+Bugzilla: 559815
+RH-Acked-by: Tomas Henzl <thenzl@redhat.com>
+RH-Acked-by: Matthew Garrett <mjg@redhat.com>
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+The _SDD (Set Device Data) may not exist under a SATA
+port device object, this should not be treated as an
+error.
+
+Upstream commit:
+
+commit f2406770a2f62a3d3c0a6f45c2f397b368af668d
+Author: Tejun Heo <tj@kernel.org>
+Date:   Wed Nov 18 22:24:21 2009 +0900
+
+    libata-acpi: missing _SDD is not an error
+
+    Missing _SDD is not an error.  Don't treat it as one.
+
+This resolves BZ 559815, reporter has verified a patched
+-185.el5 test kernel, please review and ACK.
+
+Thanks,
+David
+
+ drivers/ata/libata-acpi.c |   15 +++++++++------
+ 1 files changed, 9 insertions(+), 6 deletions(-)
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/ata/libata-acpi.c b/drivers/ata/libata-acpi.c
+index 6033b8c..9d65cb6 100644
+--- a/drivers/ata/libata-acpi.c
++++ b/drivers/ata/libata-acpi.c
+@@ -877,12 +877,11 @@ static int ata_acpi_exec_tfs(struct ata_device *dev, int *nr_executed)
+  * EH context.
+  *
+  * RETURNS:
+- * 0 on success, -errno on failure.
++ * 0 on success, -ENOENT if _SDD doesn't exist, -errno on failure.
+  */
+ static int ata_acpi_push_id(struct ata_device *dev)
+ {
+ 	struct ata_port *ap = dev->link->ap;
+-	int err;
+ 	acpi_status status;
+ 	struct acpi_object_list input;
+ 	union acpi_object in_params[1];
+@@ -905,12 +904,16 @@ static int ata_acpi_push_id(struct ata_device *dev)
+ 	status = acpi_evaluate_object(dev->acpi_handle, "_SDD", &input, NULL);
+ 	swap_buf_le16(dev->id, ATA_ID_WORDS);
+ 
+-	err = ACPI_FAILURE(status) ? -EIO : 0;
+-	if (err < 0)
++	if (status == AE_NOT_FOUND)
++		return -ENOENT;
++
++	if (ACPI_FAILURE(status)) {
+ 		ata_dev_printk(dev, KERN_WARNING,
+ 			       "ACPI _SDD failed (AE 0x%x)\n", status);
++		return -EIO;
++	}
+ 
+-	return err;
++	return 0;
+ }
+ 
+ /**
+@@ -1041,7 +1044,7 @@ int ata_acpi_on_devcfg(struct ata_device *dev)
+ 	/* do _SDD if SATA */
+ 	if (acpi_sata) {
+ 		rc = ata_acpi_push_id(dev);
+-		if (rc)
++		if (rc && rc != -ENOENT)
+ 			goto acpi_err;
+ 	}
+ 

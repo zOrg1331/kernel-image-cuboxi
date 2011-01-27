@@ -1,0 +1,1281 @@
+From: Rob Evers <revers@redhat.com>
+Date: Thu, 17 Jun 2010 20:52:02 -0400
+Subject: [scsi] lpfc: update from 8.2.0.73.1p to 8.2.0.76.1p
+Message-id: <20100617204845.19097.84141.sendpatchset@localhost.localdomain>
+Patchwork-id: 26294
+O-Subject: [RHEL5.6 PATCH] lpfc: update driver from 8.2.0.73.1p to 8.2.0.76.1p
+Bugzilla: 591674
+RH-Acked-by: Tomas Henzl <thenzl@redhat.com>
+
+https://bugzilla.redhat.com/show_bug.cgi?id=591674
+
+Provided by Emulex
+
+Equivalent posted upstream by James Smart on May 12, 2010 9:30 AM, See below.
+
+Testing done by Emulex, Sanity testing in progress.
+
+Brew in progress:
+
+	http://brewweb.devel.redhat.com/brew/taskinfo?taskID=2527432
+	built x86_64
+
+Patch to update Emulex lpfc driver to 8.2.0.76.1p (applies on top of
+	8.2.0.73.1p, see Bug 571862).
+
+This patch addresses bug fixes.
+
+These are the changes included in this patch:
+	* Changed version number to 8.2.0.76.1p
+	* Fixed locking hang on copy user failure
+	* Add PCI-ID for Gb PCIe Shared I/O Fibre Channel Adapter
+	* Only send ADISCs to Targets (CR 101933)
+	* Add support for SLER errors
+	* Fixed SLI4 RPI leaks (CR 102369)
+	* Fix memory leak when iotag allocation fail (CR 102354)
+	* Remove unused Interrupt Notification Block Code
+	* Change default FCF max receive size (CR 102087)
+	* Fix lpfc_sli_issue_wait call to put iocb on txcmpq that should have been
+	  removed
+	  * Fixed Illegal State Transition (CR 10202)
+	* Additional check-in for high vport fix (CR 99636)
+	* Changed version number to 8.2.0.75.1p
+	* Check whether index is within bounds before testing vport
+	* Change positive error return into negative
+	* Fixed Illegal State Transition after devloss tmo (CR 102025)
+	* Fixed Illegal State Transition (CR 10202)
+	* Fixed heartbeat timeout failure (CR 10142)
+	* Changed version number to 8.2.0.74.1p
+	* Fix hang on SGI ia64 platform
+	* Reduce hba_queue_depth of SLI4 HBAs to account for XRIs reserved for ELS
+	  commands
+	  * Fixed hang on hba resets (CR 100032)
+
+	The corresponding upstream LPFC driver patchset was submitted upstream on
+	5/12/10:
+	...
+	From: linux-scsi-owner@vger.kernel.org
+	[mailto:linux-scsi-owner@vger.kernel.org] On Behalf Of Smart, James
+	Sent: Wednesday, May 12, 2010 9:30 AM
+	To: linux-scsi@vger.kernel.org
+	Subject: [PATCH 0/7] lpfc 8.3.13: Update lpfc to revision 8.3.13
+
+	This patch set updates the lpfc driver to revision 8.3.13
+
+	The patches for 8.3.13 contain:
+	- FC Discovery Fixes and enhancements.
+	- Initialization code clean up and fixes.
+	- SCSI specific changes
+	- Misc fixes.
+	- BSG management fixes.
+	- Add TX Queue Support for SLI4 ELS commands.
+	- Update Driver Version to 8.3.13
+
+	The bugfixes were cut against scsi-misc-2.6.
+
+	-- james s
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/scsi/lpfc/lpfc.h b/drivers/scsi/lpfc/lpfc.h
+index 4233dd3..cb53d08 100644
+--- a/drivers/scsi/lpfc/lpfc.h
++++ b/drivers/scsi/lpfc/lpfc.h
+@@ -493,6 +493,7 @@ struct lpfc_vport {
+ #define WORKER_FABRIC_BLOCK_TMO        0x400	/* hba: fabric block timout */
+ #define WORKER_RAMP_DOWN_QUEUE         0x800	/* hba: Decrease Q depth */
+ #define WORKER_RAMP_UP_QUEUE           0x1000	/* hba: Increase Q depth */
++#define WORKER_SERVICE_TXQ             0x2000	/* hba: IOCBs on the txq */
+ 
+ 	struct timer_list fc_fdmitmo;
+ 	struct timer_list els_tmofunc;
+@@ -674,9 +675,6 @@ struct lpfc_hba {
+ 	uint32_t fcp_ring_in_use; /* When polling test if intr-hndlr active*/
+ 
+ 	MAILBOX_t *mbox;
+-	uint32_t *inb_ha_copy;
+-	uint32_t *inb_counter;
+-	uint32_t inb_last_counter;
+ 	uint32_t ha_copy;
+ 	struct _PCB *pcb;
+ 	struct _IOCB *IOCBs;
+@@ -743,6 +741,7 @@ struct lpfc_hba {
+ 	uint32_t cfg_hostmem_hgp;
+ 	uint32_t cfg_log_verbose;
+ 	uint32_t cfg_aer_support;
++	uint32_t cfg_iocb_cnt;
+ 	uint32_t cfg_suppress_link_up;
+ #define LPFC_INITIALIZE_LINK              0	/* do normal init_link mbox */
+ #define LPFC_DELAY_INIT_LINK              1	/* layered driver hold off */
+@@ -921,6 +920,8 @@ struct lpfc_hba {
+ 	uint8_t valid_vlan;
+ 	uint16_t vlan_id;
+ 	struct list_head fcf_conn_rec_list;
++	uint32_t iocb_cnt;
++	uint32_t iocb_max;
+ };
+ 
+ static inline struct Scsi_Host *
+diff --git a/drivers/scsi/lpfc/lpfc_attr.c b/drivers/scsi/lpfc/lpfc_attr.c
+index 8704331..e723cf2 100644
+--- a/drivers/scsi/lpfc/lpfc_attr.c
++++ b/drivers/scsi/lpfc/lpfc_attr.c
+@@ -27,6 +27,7 @@
+ #if defined(CONFIG_PCIEAER)
+ #include <linux/aer.h>
+ #endif
++#include <linux/gfp.h>
+ 
+ #include <scsi/scsi.h>
+ #include <scsi/scsi_device.h>
+@@ -2173,6 +2174,58 @@ static CLASS_DEVICE_ATTR(lpfc_enable_npiv, S_IRUGO,
+ LPFC_ATTR_R(suppress_link_up, LPFC_INITIALIZE_LINK, LPFC_INITIALIZE_LINK,
+ 		LPFC_DELAY_INIT_LINK_INDEFINITELY,
+ 		"Suppress Link Up at initialization");
++/*
++# lpfc_cnt: Number of IOCBs allocated for ELS, CT, and ABTS
++#       1 - (1024)
++#       2 - (2048)
++#       3 - (3072)
++#       4 - (4096)
++#       5 - (5120)
++*/
++static ssize_t
++lpfc_iocb_hw_show(struct class_device *cdev, char *buf)
++{
++	struct Scsi_Host  *shost = class_to_shost(cdev);
++	struct lpfc_hba   *phba = ((struct lpfc_vport *) shost->hostdata)->phba;
++
++	return snprintf(buf, PAGE_SIZE, "%d\n", phba->iocb_max);
++}
++
++static CLASS_DEVICE_ATTR(iocb_hw, S_IRUGO,
++			 lpfc_iocb_hw_show, NULL);
++static ssize_t
++lpfc_txq_hw_show(struct class_device *cdev, char *buf)
++{
++	struct Scsi_Host  *shost = class_to_shost(cdev);
++	struct lpfc_hba   *phba = ((struct lpfc_vport *) shost->hostdata)->phba;
++
++	return snprintf(buf, PAGE_SIZE, "%d\n",
++		phba->sli.ring[LPFC_ELS_RING].txq_max);
++}
++
++static CLASS_DEVICE_ATTR(txq_hw, S_IRUGO,
++			 lpfc_txq_hw_show, NULL);
++static ssize_t
++lpfc_txcmplq_hw_show(struct class_device *cdev, char *buf)
++{
++	struct Scsi_Host  *shost = class_to_shost(cdev);
++	struct lpfc_hba   *phba = ((struct lpfc_vport *) shost->hostdata)->phba;
++
++	return snprintf(buf, PAGE_SIZE, "%d\n",
++		phba->sli.ring[LPFC_ELS_RING].txcmplq_max);
++}
++
++static CLASS_DEVICE_ATTR(txcmplq_hw, S_IRUGO,
++			 lpfc_txcmplq_hw_show, NULL);
++
++int lpfc_iocb_cnt = 2;
++module_param(lpfc_iocb_cnt, int, 1);
++MODULE_PARM_DESC(lpfc_iocb_cnt,
++	"Number of IOCBs alloc for ELS, CT, and ABTS: 1k to 5k IOCBs");
++lpfc_param_show(iocb_cnt);
++lpfc_param_init(iocb_cnt, 2, 1, 5);
++static CLASS_DEVICE_ATTR(lpfc_iocb_cnt, S_IRUGO,
++			 lpfc_iocb_cnt_show, NULL);
+ 
+ /*
+ # lpfc_nodev_tmo: If set, it will hold all I/O errors on devices that disappear
+@@ -3714,6 +3767,10 @@ struct class_device_attribute *lpfc_hba_attrs[] = {
+ 	&class_device_attr_lpfc_aer_support,
+ 	&class_device_attr_lpfc_aer_state_cleanup,
+ 	&class_device_attr_lpfc_suppress_link_up,
++	&class_device_attr_lpfc_iocb_cnt,
++	&class_device_attr_iocb_hw,
++	&class_device_attr_txq_hw,
++	&class_device_attr_txcmplq_hw,
+ 	NULL,
+ };
+ 
+@@ -4878,7 +4935,6 @@ sysfs_mbox_read(struct kobject *kobj, char *buf, loff_t off, size_t count)
+ 		}
+ 
+ 		if (lpfc_copy_sli4_bde_touser(phba, sysfs_mbox)) {
+-			spin_lock_irq(&phba->hbalock);
+ 			sysfs_mbox_idle(phba, sysfs_mbox);
+ 			spin_unlock_irq(&phba->hbalock);
+ 			return  -EACCES;
+@@ -5678,6 +5734,7 @@ lpfc_get_cfgparam(struct lpfc_hba *phba)
+ 	lpfc_hba_log_verbose_init(phba, lpfc_log_verbose);
+ 	lpfc_aer_support_init(phba, lpfc_aer_support);
+ 	lpfc_suppress_link_up_init(phba, lpfc_suppress_link_up);
++	lpfc_iocb_cnt_init(phba, lpfc_iocb_cnt);
+ 	return;
+ }
+ 
+diff --git a/drivers/scsi/lpfc/lpfc_crtn.h b/drivers/scsi/lpfc/lpfc_crtn.h
+index e4ffa0f..e8dfb60 100644
+--- a/drivers/scsi/lpfc/lpfc_crtn.h
++++ b/drivers/scsi/lpfc/lpfc_crtn.h
+@@ -456,3 +456,11 @@ u32 random32(void);
+ void srandom32(u32);
+ int random32_init(void);
+ int random32_reseed(void);
++
++void __lpfc_sli_ringtx_put(struct lpfc_hba *, struct lpfc_sli_ring *,
++	struct lpfc_iocbq *);
++struct lpfc_iocbq *lpfc_sli_ringtx_get(struct lpfc_hba *,
++	struct lpfc_sli_ring *);
++int __lpfc_sli_issue_iocb(struct lpfc_hba *, uint32_t,
++	struct lpfc_iocbq *, uint32_t);
++uint32_t lpfc_drain_txq(struct lpfc_hba *);
+diff --git a/drivers/scsi/lpfc/lpfc_ct.c b/drivers/scsi/lpfc/lpfc_ct.c
+index 7f2b65a..128c26c 100644
+--- a/drivers/scsi/lpfc/lpfc_ct.c
++++ b/drivers/scsi/lpfc/lpfc_ct.c
+@@ -25,6 +25,7 @@
+ #include <linux/blkdev.h>
+ #include <linux/pci.h>
+ #include <linux/interrupt.h>
++#include <linux/slab.h>
+ #include <linux/utsname.h>
+ 
+ #include <scsi/scsi.h>
+diff --git a/drivers/scsi/lpfc/lpfc_debugfs.c b/drivers/scsi/lpfc/lpfc_debugfs.c
+index adee5d0..4cfe19f 100644
+--- a/drivers/scsi/lpfc/lpfc_debugfs.c
++++ b/drivers/scsi/lpfc/lpfc_debugfs.c
+@@ -24,6 +24,7 @@
+ #include <linux/idr.h>
+ #include <linux/interrupt.h>
+ #include <linux/kthread.h>
++#include <linux/slab.h>
+ #include <linux/pci.h>
+ #include <linux/spinlock.h>
+ #include <linux/ctype.h>
+diff --git a/drivers/scsi/lpfc/lpfc_disc.h b/drivers/scsi/lpfc/lpfc_disc.h
+index 9b83853..45fb66d 100644
+--- a/drivers/scsi/lpfc/lpfc_disc.h
++++ b/drivers/scsi/lpfc/lpfc_disc.h
+@@ -122,6 +122,8 @@ struct lpfc_nodelist {
+ } ;
+ 
+ /* Defines for nlp_flag (uint32) */
++#define NLP_IGNR_REG_CMPL  0x00000001 /* Rcvd rscn before we cmpl reg login */
++#define NLP_REG_LOGIN_SEND 0x00000002   /* sent reglogin to adapter */
+ #define NLP_PLOGI_SND      0x00000020	/* sent PLOGI request for this entry */
+ #define NLP_PRLI_SND       0x00000040	/* sent PRLI request for this entry */
+ #define NLP_ADISC_SND      0x00000080	/* sent ADISC request for this entry */
+diff --git a/drivers/scsi/lpfc/lpfc_els.c b/drivers/scsi/lpfc/lpfc_els.c
+index 1d80b2d..2c03197 100644
+--- a/drivers/scsi/lpfc/lpfc_els.c
++++ b/drivers/scsi/lpfc/lpfc_els.c
+@@ -21,6 +21,7 @@
+ /* See Fibre Channel protocol T11 FC-LS for details */
+ #include <linux/blkdev.h>
+ #include <linux/pci.h>
++#include <linux/slab.h>
+ #include <linux/interrupt.h>
+ 
+ #include <scsi/scsi.h>
+@@ -1509,8 +1510,12 @@ lpfc_cmpl_els_plogi(struct lpfc_hba *phba, struct lpfc_iocbq *cmdiocb,
+ 			}
+ 			goto out;
+ 		}
+-		/* PLOGI failed */
+-		lpfc_printf_vlog(vport, KERN_ERR, LOG_ELS,
++		/* PLOGI failed Don't print the vport to vport rjts */
++		if (irsp->ulpStatus != IOSTAT_LS_RJT ||
++			(((irsp->un.ulpWord[4]) >> 16 != LSRJT_INVALID_CMD) &&
++			((irsp->un.ulpWord[4]) >> 16 != LSRJT_UNABLE_TPC)) ||
++			(phba)->pport->cfg_log_verbose & LOG_ELS)
++			lpfc_printf_vlog(vport, KERN_ERR, LOG_ELS,
+ 				 "2753 PLOGI failure DID:%06X Status:x%x/x%x\n",
+ 				 ndlp->nlp_DID, irsp->ulpStatus,
+ 				 irsp->un.ulpWord[4]);
+@@ -5194,6 +5199,7 @@ lpfc_els_timeout(unsigned long ptr)
+ 	return;
+ }
+ 
++
+ /**
+  * lpfc_els_timeout_handler - Process an els timeout event
+  * @vport: pointer to a virtual N_Port data structure.
+@@ -5214,13 +5220,19 @@ lpfc_els_timeout_handler(struct lpfc_vport *vport)
+ 	uint32_t els_command = 0;
+ 	uint32_t timeout;
+ 	uint32_t remote_ID = 0xffffffff;
++	LIST_HEAD(txcmplq_completions);
++	LIST_HEAD(abort_list);
++
+ 
+-	spin_lock_irq(&phba->hbalock);
+ 	timeout = (uint32_t)(phba->fc_ratov << 1);
+ 
+ 	pring = &phba->sli.ring[LPFC_ELS_RING];
+ 
+-	list_for_each_entry_safe(piocb, tmp_iocb, &pring->txcmplq, list) {
++	spin_lock_irq(&phba->hbalock);
++	list_splice_init(&pring->txcmplq, &txcmplq_completions);
++	spin_unlock_irq(&phba->hbalock);
++
++	list_for_each_entry_safe(piocb, tmp_iocb, &txcmplq_completions, list) {
+ 		cmd = &piocb->iocb;
+ 
+ 		if ((piocb->iocb_flag & LPFC_IO_LIBDFC) != 0 ||
+@@ -5257,13 +5269,22 @@ lpfc_els_timeout_handler(struct lpfc_vport *vport)
+ 			if (ndlp && NLP_CHK_NODE_ACT(ndlp))
+ 				remote_ID = ndlp->nlp_DID;
+ 		}
++		list_add_tail(&piocb->dlist, &abort_list);
++	}
++	spin_lock_irq(&phba->hbalock);
++	list_splice(&txcmplq_completions, &pring->txcmplq);
++	spin_unlock_irq(&phba->hbalock);
++
++	list_for_each_entry_safe(piocb, tmp_iocb, &abort_list, dlist) {
+ 		lpfc_printf_vlog(vport, KERN_ERR, LOG_ELS,
+-				 "0127 ELS timeout Data: x%x x%x x%x "
+-				 "x%x\n", els_command,
+-				 remote_ID, cmd->ulpCommand, cmd->ulpIoTag);
++			 "0127 ELS timeout Data: x%x x%x x%x "
++			 "x%x\n", els_command,
++			 remote_ID, cmd->ulpCommand, cmd->ulpIoTag);
++		spin_lock_irq(&phba->hbalock);
++		list_del_init(&piocb->dlist);
+ 		lpfc_sli_issue_abort_iotag(phba, pring, piocb);
++		spin_unlock_irq(&phba->hbalock);
+ 	}
+-	spin_unlock_irq(&phba->hbalock);
+ 
+ 	if (phba->sli.ring[LPFC_ELS_RING].txcmplq_cnt)
+ 		mod_timer(&vport->els_tmofunc, jiffies + HZ * timeout);
+diff --git a/drivers/scsi/lpfc/lpfc_hbadisc.c b/drivers/scsi/lpfc/lpfc_hbadisc.c
+index e0611ab..5764e0f 100644
+--- a/drivers/scsi/lpfc/lpfc_hbadisc.c
++++ b/drivers/scsi/lpfc/lpfc_hbadisc.c
+@@ -20,6 +20,7 @@
+  *******************************************************************/
+ 
+ #include <linux/blkdev.h>
++#include <linux/slab.h>
+ #include <linux/pci.h>
+ #include <linux/kthread.h>
+ #include <linux/interrupt.h>
+@@ -347,7 +348,8 @@ lpfc_dev_loss_tmo_handler(struct lpfc_nodelist *ndlp)
+ 	if (!(vport->load_flag & FC_UNLOADING) &&
+ 	    !(ndlp->nlp_flag & NLP_DELAY_TMO) &&
+ 	    !(ndlp->nlp_flag & NLP_NPR_2B_DISC) &&
+-	    (ndlp->nlp_state != NLP_STE_UNMAPPED_NODE))
++	    (ndlp->nlp_state != NLP_STE_UNMAPPED_NODE) &&
++	    (ndlp->nlp_state != NLP_STE_REG_LOGIN_ISSUE))
+ 		lpfc_disc_state_machine(vport, ndlp, NULL, NLP_EVT_DEVICE_RM);
+ 
+ 	lpfc_unregister_unused_fcf(phba);
+@@ -695,6 +697,8 @@ lpfc_work_done(struct lpfc_hba *phba)
+ 							(status &
+ 							 HA_RXMASK));
+ 		}
++		if (phba->pport->work_port_events & WORKER_SERVICE_TXQ)
++			lpfc_drain_txq(phba);
+ 		/*
+ 		 * Turn on Ring interrupts
+ 		 */
+@@ -2848,11 +2852,35 @@ lpfc_mbx_cmpl_reg_login(struct lpfc_hba *phba, LPFC_MBOXQ_t *pmb)
+ 	struct lpfc_vport  *vport = pmb->vport;
+ 	struct lpfc_dmabuf *mp = (struct lpfc_dmabuf *) (pmb->context1);
+ 	struct lpfc_nodelist *ndlp = (struct lpfc_nodelist *) pmb->context2;
++	struct Scsi_Host  *shost = lpfc_shost_from_vport(vport);
+ 
+ 	pmb->context1 = NULL;
+ 
+-	/* Good status, call state machine */
+-	lpfc_disc_state_machine(vport, ndlp, pmb, NLP_EVT_CMPL_REG_LOGIN);
++	if (ndlp->nlp_flag & NLP_REG_LOGIN_SEND)
++		ndlp->nlp_flag &= ~NLP_REG_LOGIN_SEND;
++
++	if (ndlp->nlp_flag &  NLP_IGNR_REG_CMPL ||
++		ndlp->nlp_state != NLP_STE_REG_LOGIN_ISSUE) {
++		/* We rcvd a rscn after issuing this
++		 * mbox reg login, we may have cycled
++		 * back through the state and be
++		 * back at reg login state so this
++		 * mbox needs to be ignored becase
++		 * there is another reg login in
++		 * proccess.
++		 */
++		spin_lock_irq(shost->host_lock);
++		ndlp->nlp_flag &= ~NLP_IGNR_REG_CMPL;
++		spin_unlock_irq(shost->host_lock);
++		if (phba->sli_rev == LPFC_SLI_REV4)
++			lpfc_sli4_free_rpi(phba,
++				pmb->u.mb.un.varRegLogin.rpi);
++
++	} else
++		/* Good status, call state machine */
++		lpfc_disc_state_machine(vport, ndlp, pmb,
++				NLP_EVT_CMPL_REG_LOGIN);
++
+ 	lpfc_mbuf_free(phba, mp->virt, mp->phys);
+ 	kfree(mp);
+ 	mempool_free(pmb, phba->mbox_mem_pool);
+@@ -3974,6 +4002,9 @@ lpfc_cleanup_node(struct lpfc_vport *vport, struct lpfc_nodelist *ndlp)
+ 				kfree(mp);
+ 			}
+ 			list_del(&mb->list);
++			if (phba->sli_rev == LPFC_SLI_REV4)
++				lpfc_sli4_free_rpi(phba,
++					 mb->u.mb.un.varRegLogin.rpi);
+ 			mempool_free(mb, phba->mbox_mem_pool);
+ 			/* We shall not invoke the lpfc_nlp_put to decrement
+ 			 * the ndlp reference count as we are in the process
+@@ -4019,6 +4050,7 @@ lpfc_nlp_remove(struct lpfc_vport *vport, struct lpfc_nodelist *ndlp)
+ 
+ 	lpfc_cancel_retry_delay_tmo(vport, ndlp);
+ 	if ((ndlp->nlp_flag & NLP_DEFER_RM) &&
++		!(ndlp->nlp_flag & NLP_REG_LOGIN_SEND) &&
+ 	    !(ndlp->nlp_flag & NLP_RPI_VALID)) {
+ 		/* For this case we need to cleanup the default rpi
+ 		 * allocated by the firmware.
+diff --git a/drivers/scsi/lpfc/lpfc_hw.h b/drivers/scsi/lpfc/lpfc_hw.h
+index 329c5bb..4ea03bd 100644
+--- a/drivers/scsi/lpfc/lpfc_hw.h
++++ b/drivers/scsi/lpfc/lpfc_hw.h
+@@ -1195,6 +1195,7 @@ typedef struct {
+ #define PCI_DEVICE_ID_TIGERSHARK    0x0704
+ #define PCI_DEVICE_ID_TOMCAT        0x0714
+ #define PCI_DEVICE_ID_FALCON        0xf180
++#define PCI_DEVICE_ID_BALIUS        0xe131
+ 
+ #define JEDEC_ID_ADDRESS            0x0080001c
+ #define FIREFLY_JEDEC_ID            0x1ACC
+@@ -3064,6 +3065,14 @@ typedef struct {
+ #define IOERR_BUFFER_SHORTAGE         0x28
+ #define IOERR_DEFAULT                 0x29
+ #define IOERR_CNT                     0x2A
++#define IOERR_SLER_FAILURE            0x46
++#define IOERR_SLER_CMD_RCV_FAILURE    0x47
++#define IOERR_SLER_REC_RJT_ERR        0x48
++#define IOERR_SLER_REC_SRR_RETRY_ERR  0x49
++#define IOERR_SLER_SRR_RJT_ERR        0x4A
++#define IOERR_SLER_RRQ_RJT_ERR        0x4C
++#define IOERR_SLER_RRQ_RETRY_ERR      0x4D
++#define IOERR_SLER_ABTS_ERR           0x4E
+ 
+ #define IOERR_DRVR_MASK               0x100
+ #define IOERR_SLI_DOWN                0x101  /* ulpStatus  - Driver defined */
+diff --git a/drivers/scsi/lpfc/lpfc_init.c b/drivers/scsi/lpfc/lpfc_init.c
+index 42ed451..a36c589 100644
+--- a/drivers/scsi/lpfc/lpfc_init.c
++++ b/drivers/scsi/lpfc/lpfc_init.c
+@@ -32,6 +32,7 @@
+ #if defined(CONFIG_PCIEAER)
+ #include <linux/aer.h>
+ #endif
++#include <linux/slab.h>
+ 
+ #include <scsi/scsi.h>
+ #include <scsi/scsi_device.h>
+@@ -1861,6 +1862,10 @@ lpfc_get_hba_model_desc(struct lpfc_hba *phba, uint8_t *mdp, uint8_t *descp)
+ 		m = (typeof(m)){"LPSe12002-ML1-E", "PCIe",
+ 				"EmulexSecure Fibre"};
+ 		break;
++	case PCI_DEVICE_ID_BALIUS:
++		m = (typeof(m)){"LPVe12002", "PCIe Shared I/O",
++				"Fibre Channel Adapter"};
++		break;
+ 	default:
+ 		m = (typeof(m)){"Unknown", "", ""};
+ 		break;
+@@ -2333,10 +2338,32 @@ static void
+ lpfc_block_mgmt_io(struct lpfc_hba * phba)
+ {
+ 	unsigned long iflag;
++	uint8_t actcmd = MBX_HEARTBEAT;
++	unsigned long timeout;
++
+ 
+ 	spin_lock_irqsave(&phba->hbalock, iflag);
+ 	phba->sli.sli_flag |= LPFC_BLOCK_MGMT_IO;
++	if (phba->sli.mbox_active)
++		actcmd = phba->sli.mbox_active->u.mb.mbxCommand;
+ 	spin_unlock_irqrestore(&phba->hbalock, iflag);
++	/* Determine how long we might wait for the active mailbox
++	 * command to be gracefully completed by firmware.
++	 */
++	timeout = msecs_to_jiffies(lpfc_mbox_tmo_val(phba, actcmd) * 1000) +
++			jiffies;
++	/* Wait for the outstnading mailbox command to complete */
++	while (phba->sli.mbox_active) {
++		/* Check active mailbox complete status every 2ms */
++		msleep(2);
++		if (time_after(jiffies, timeout)) {
++			lpfc_printf_log(phba, KERN_ERR, LOG_SLI,
++				"2813 Mgmt IO is Blocked %x "
++				"- mbox cmd %x still active\n",
++				phba->sli.sli_flag, actcmd);
++			break;
++		}
++	}
+ }
+ 
+ /**
+@@ -5083,9 +5110,13 @@ lpfc_sli_pci_mem_setup(struct lpfc_hba *phba)
+ 		pdev = phba->pcidev;
+ 
+ 	/* Set the device DMA mask size */
+-	if (pci_set_dma_mask(pdev, DMA_BIT_MASK(64)) != 0)
+-		if (pci_set_dma_mask(pdev, DMA_BIT_MASK(32)) != 0)
++	if (pci_set_dma_mask(pdev, DMA_BIT_MASK(64)) != 0
++	 || pci_set_consistent_dma_mask(pdev,DMA_BIT_MASK(64)) != 0) {
++		if (pci_set_dma_mask(pdev, DMA_BIT_MASK(32)) != 0
++		 || pci_set_consistent_dma_mask(pdev,DMA_BIT_MASK(32)) != 0) {
+ 			return error;
++		}
++	}
+ 
+ 	/* Get the bus address of Bar0 and Bar2 and the number of bytes
+ 	 * required by each mapping.
+@@ -5554,9 +5585,12 @@ lpfc_sli4_read_config(struct lpfc_hba *phba)
+ 	mempool_free(pmb, phba->mbox_mem_pool);
+ 
+ 	/* Reset the DFT_HBA_Q_DEPTH to the max xri  */
+-	if (phba->cfg_hba_queue_depth > (phba->sli4_hba.max_cfg_param.max_xri))
++	if (phba->cfg_hba_queue_depth >
++		(phba->sli4_hba.max_cfg_param.max_xri -
++			lpfc_sli4_get_els_iocb_cnt(phba)))
+ 		phba->cfg_hba_queue_depth =
+-				phba->sli4_hba.max_cfg_param.max_xri;
++			phba->sli4_hba.max_cfg_param.max_xri -
++				lpfc_sli4_get_els_iocb_cnt(phba);
+ 	return rc;
+ }
+ 
+@@ -6607,9 +6641,13 @@ lpfc_sli4_pci_mem_setup(struct lpfc_hba *phba)
+ 		pdev = phba->pcidev;
+ 
+ 	/* Set the device DMA mask size */
+-	if (pci_set_dma_mask(pdev, DMA_BIT_MASK(64)) != 0)
+-		if (pci_set_dma_mask(pdev, DMA_BIT_MASK(32)) != 0)
++	if (pci_set_dma_mask(pdev, DMA_BIT_MASK(64)) != 0
++	 || pci_set_consistent_dma_mask(pdev,DMA_BIT_MASK(64)) != 0) {
++		if (pci_set_dma_mask(pdev, DMA_BIT_MASK(32)) != 0
++		 || pci_set_consistent_dma_mask(pdev,DMA_BIT_MASK(32)) != 0) {
+ 			return error;
++		}
++	}
+ 
+ 	/* Get the bus address of SLI4 device Bar0, Bar1, and Bar2 and the
+ 	 * number of bytes required by each mapping. They are actually
+@@ -8212,8 +8250,12 @@ lpfc_pci_probe_one_s4(struct pci_dev *pdev, const struct pci_device_id *pid)
+ 	}
+ 
+ 	/* Initialize and populate the iocb list per host */
+-	error = lpfc_init_iocb_list(phba,
+-			phba->sli4_hba.max_cfg_param.max_xri);
++
++	lpfc_printf_log(phba, KERN_INFO, LOG_INIT,
++			"2821 initialize iocb list %d.\n",
++			phba->cfg_iocb_cnt*1024);
++	error = lpfc_init_iocb_list(phba, phba->cfg_iocb_cnt*1024);
++
+ 	if (error) {
+ 		lpfc_printf_log(phba, KERN_ERR, LOG_INIT,
+ 				"1413 Failed to initialize iocb list.\n");
+@@ -8940,6 +8982,8 @@ static struct pci_device_id lpfc_id_table[] = {
+ 		PCI_ANY_ID, PCI_ANY_ID, },
+ 	{PCI_VENDOR_ID_EMULEX, PCI_DEVICE_ID_FALCON,
+ 		PCI_ANY_ID, PCI_ANY_ID, },
++	{PCI_VENDOR_ID_EMULEX, PCI_DEVICE_ID_BALIUS,
++		PCI_ANY_ID, PCI_ANY_ID, },
+ 	{ 0 }
+ };
+ 
+diff --git a/drivers/scsi/lpfc/lpfc_ioctl.c b/drivers/scsi/lpfc/lpfc_ioctl.c
+index 880afc5..6202fd0 100644
+--- a/drivers/scsi/lpfc/lpfc_ioctl.c
++++ b/drivers/scsi/lpfc/lpfc_ioctl.c
+@@ -505,9 +505,11 @@ lpfc_ioctl_send_els(struct lpfc_hba * phba,
+ 		if (copy_to_user((void __user *)cip->lpfc_arg3,
+ 				 (uint8_t *)&rspsize, sizeof(uint32_t)))
+ 			rc = EIO;
+-	} else {
++
++	} else if (rc == IOCB_BUSY)
++		rc = EAGAIN;
++	else
+ 		rc = EIO;
+-	}
+ 
+ 	if (pbuflist) {
+ 		dfc_cmd_data_free(phba, pcmdext);
+@@ -799,6 +801,11 @@ lpfc_ioctl_send_mgmt_cmd(struct lpfc_hba * phba,
+ 		goto send_mgmt_cmd_free_pndl_exit;
+ 	}
+ 
++	if (rc == IOCB_BUSY) {
++		rc = EAGAIN;
++		goto send_mgmt_cmd_free_outdmp;
++	}
++
+ 	if (rc != IOCB_SUCCESS) {
+ 		rc = EACCES;
+ 		goto send_mgmt_cmd_free_outdmp;
+diff --git a/drivers/scsi/lpfc/lpfc_mbox.c b/drivers/scsi/lpfc/lpfc_mbox.c
+index 40f6a17..5096289 100644
+--- a/drivers/scsi/lpfc/lpfc_mbox.c
++++ b/drivers/scsi/lpfc/lpfc_mbox.c
+@@ -21,6 +21,7 @@
+ 
+ #include <linux/blkdev.h>
+ #include <linux/pci.h>
++#include <linux/slab.h>
+ #include <linux/interrupt.h>
+ 
+ #include <scsi/scsi_device.h>
+diff --git a/drivers/scsi/lpfc/lpfc_mem.c b/drivers/scsi/lpfc/lpfc_mem.c
+index 6a94f40..8d36a2c 100644
+--- a/drivers/scsi/lpfc/lpfc_mem.c
++++ b/drivers/scsi/lpfc/lpfc_mem.c
+@@ -20,6 +20,7 @@
+  *******************************************************************/
+ 
+ #include <linux/mempool.h>
++#include <linux/slab.h>
+ #include <linux/pci.h>
+ #include <linux/interrupt.h>
+ 
+diff --git a/drivers/scsi/lpfc/lpfc_nportdisc.c b/drivers/scsi/lpfc/lpfc_nportdisc.c
+index 0b35af7..bccc9c6 100644
+--- a/drivers/scsi/lpfc/lpfc_nportdisc.c
++++ b/drivers/scsi/lpfc/lpfc_nportdisc.c
+@@ -21,6 +21,7 @@
+ 
+ #include <linux/blkdev.h>
+ #include <linux/pci.h>
++#include <linux/slab.h>
+ #include <linux/interrupt.h>
+ 
+ #include <scsi/scsi.h>
+@@ -189,6 +190,7 @@ lpfc_check_elscmpl_iocb(struct lpfc_hba *phba, struct lpfc_iocbq *cmdiocb,
+ }
+ 
+ 
++
+ /*
+  * Free resources / clean up outstanding I/Os
+  * associated with a LPFC_NODELIST entry. This
+@@ -198,13 +200,15 @@ int
+ lpfc_els_abort(struct lpfc_hba *phba, struct lpfc_nodelist *ndlp)
+ {
+ 	LIST_HEAD(completions);
++	LIST_HEAD(txcmplq_completions);
++	LIST_HEAD(abort_list);
+ 	struct lpfc_sli  *psli = &phba->sli;
+ 	struct lpfc_sli_ring *pring = &psli->ring[LPFC_ELS_RING];
+ 	struct lpfc_iocbq *iocb, *next_iocb;
+ 
+ 	/* Abort outstanding I/O on NPort <nlp_DID> */
+ 	lpfc_printf_vlog(ndlp->vport, KERN_INFO, LOG_DISCOVERY,
+-			 "0205 Abort outstanding I/O on NPort x%x "
++			 "2819 Abort outstanding I/O on NPort x%x "
+ 			 "Data: x%x x%x x%x\n",
+ 			 ndlp->nlp_DID, ndlp->nlp_flag, ndlp->nlp_state,
+ 			 ndlp->nlp_rpi);
+@@ -223,14 +227,25 @@ lpfc_els_abort(struct lpfc_hba *phba, struct lpfc_nodelist *ndlp)
+ 	}
+ 
+ 	/* Next check the txcmplq */
+-	list_for_each_entry_safe(iocb, next_iocb, &pring->txcmplq, list) {
++	list_splice_init(&pring->txcmplq, &txcmplq_completions);
++	spin_unlock_irq(&phba->hbalock);
++
++	list_for_each_entry_safe(iocb, next_iocb, &txcmplq_completions, list) {
+ 		/* Check to see if iocb matches the nport we are looking for */
+-		if (lpfc_check_sli_ndlp(phba, pring, iocb, ndlp)) {
+-			lpfc_sli_issue_abort_iotag(phba, pring, iocb);
+-		}
++		if (lpfc_check_sli_ndlp(phba, pring, iocb, ndlp))
++			list_add_tail(&iocb->dlist, &abort_list);
+ 	}
++	spin_lock_irq(&phba->hbalock);
++	list_splice(&txcmplq_completions, &pring->txcmplq);
+ 	spin_unlock_irq(&phba->hbalock);
+ 
++	list_for_each_entry_safe(iocb, next_iocb, &abort_list, dlist) {
++			spin_lock_irq(&phba->hbalock);
++			list_del_init(&iocb->dlist);
++			lpfc_sli_issue_abort_iotag(phba, pring, iocb);
++			spin_unlock_irq(&phba->hbalock);
++	}
++
+ 	/* Cancel all the IOCBs from the completions list */
+ 	lpfc_sli_cancel_iocbs(phba, &completions, IOSTAT_LOCAL_REJECT,
+ 			      IOERR_SLI_ABORTED);
+@@ -625,7 +640,8 @@ lpfc_disc_set_adisc(struct lpfc_vport *vport, struct lpfc_nodelist *ndlp)
+ 	if (!(vport->fc_flag & FC_PT2PT)) {
+ 		/* Check config parameter use-adisc or FCP-2 */
+ 		if ((vport->cfg_use_adisc && (vport->fc_flag & FC_RSCN_MODE)) ||
+-		    ndlp->nlp_fcp_info & NLP_FCP_2_DEVICE) {
++		    ((ndlp->nlp_fcp_info & NLP_FCP_2_DEVICE) &&
++		     (ndlp->nlp_type & NLP_FCP_TARGET))) {
+ 			spin_lock_irq(shost->host_lock);
+ 			ndlp->nlp_flag |= NLP_NPR_ADISC;
+ 			spin_unlock_irq(shost->host_lock);
+@@ -961,6 +977,7 @@ lpfc_cmpl_plogi_plogi_issue(struct lpfc_vport *vport,
+ 			mbox->mbox_cmpl = lpfc_mbx_cmpl_fdmi_reg_login;
+ 			break;
+ 		default:
++			ndlp->nlp_flag |= NLP_REG_LOGIN_SEND;
+ 			mbox->mbox_cmpl = lpfc_mbx_cmpl_reg_login;
+ 		}
+ 		mbox->context2 = lpfc_nlp_get(ndlp);
+@@ -971,6 +988,8 @@ lpfc_cmpl_plogi_plogi_issue(struct lpfc_vport *vport,
+ 					   NLP_STE_REG_LOGIN_ISSUE);
+ 			return ndlp->nlp_state;
+ 		}
++		if (ndlp->nlp_flag & NLP_REG_LOGIN_SEND)
++			ndlp->nlp_flag &= ~NLP_REG_LOGIN_SEND;
+ 		/* decrement node reference count to the failed mbox
+ 		 * command
+ 		 */
+@@ -1457,6 +1476,7 @@ lpfc_device_recov_reglogin_issue(struct lpfc_vport *vport,
+ 	ndlp->nlp_prev_state = NLP_STE_REG_LOGIN_ISSUE;
+ 	lpfc_nlp_set_state(vport, ndlp, NLP_STE_NPR_NODE);
+ 	spin_lock_irq(shost->host_lock);
++	ndlp->nlp_flag |= NLP_IGNR_REG_CMPL;
+ 	ndlp->nlp_flag &= ~(NLP_NODEV_REMOVE | NLP_NPR_2B_DISC);
+ 	spin_unlock_irq(shost->host_lock);
+ 	lpfc_disc_set_adisc(vport, ndlp);
+diff --git a/drivers/scsi/lpfc/lpfc_scsi.c b/drivers/scsi/lpfc/lpfc_scsi.c
+index bb8bcd1..c13d6fc 100644
+--- a/drivers/scsi/lpfc/lpfc_scsi.c
++++ b/drivers/scsi/lpfc/lpfc_scsi.c
+@@ -20,6 +20,7 @@
+  *******************************************************************/
+ 
+ #include <linux/pci.h>
++#include <linux/slab.h>
+ #include <linux/interrupt.h>
+ #include <linux/delay.h>
+ 
+@@ -697,6 +698,8 @@ lpfc_new_scsi_buf_s4(struct lpfc_vport *vport, int num_to_alloc)
+ 		/* Allocate iotag for psb->cur_iocbq. */
+ 		iotag = lpfc_sli_next_iotag(phba, &psb->cur_iocbq);
+ 		if (iotag == 0) {
++			pci_pool_free(phba->lpfc_scsi_dma_buf_pool,
++				psb->data, psb->dma_handle);
+ 			kfree(psb);
+ 			break;
+ 		}
+@@ -1586,7 +1589,8 @@ lpfc_scsi_cmd_iocb_cmpl(struct lpfc_hba *phba, struct lpfc_iocbq *pIocbIn,
+ 		case IOSTAT_LOCAL_REJECT:
+ 			if (lpfc_cmd->result == IOERR_INVALID_RPI ||
+ 			    lpfc_cmd->result == IOERR_NO_RESOURCES ||
+-			    lpfc_cmd->result == IOERR_ABORT_REQUESTED) {
++			    lpfc_cmd->result == IOERR_ABORT_REQUESTED ||
++			    lpfc_cmd->result == IOERR_SLER_CMD_RCV_FAILURE) {
+ 				cmd->result = ScsiResult(DID_REQUEUE, 0);
+ 				break;
+ 			} /* else: fall through */
+@@ -2426,7 +2430,9 @@ lpfc_send_taskmgmt(struct lpfc_vport *vport, struct lpfc_rport_data *rdata,
+ 			 lpfc_taskmgmt_name(task_mgmt_cmd),
+ 			 tgt_id, lun_id, iocbqrsp->iocb.ulpStatus,
+ 			 iocbqrsp->iocb.un.ulpWord[4]);
+-	} else
++	} else if (status == IOCB_BUSY)
++		ret = FAILED;
++	else
+ 		ret = SUCCESS;
+ 
+ 	lpfc_sli_release_iocbq(phba, iocbqrsp);
+diff --git a/drivers/scsi/lpfc/lpfc_sli.c b/drivers/scsi/lpfc/lpfc_sli.c
+index 7da8fac..d66cc6c 100644
+--- a/drivers/scsi/lpfc/lpfc_sli.c
++++ b/drivers/scsi/lpfc/lpfc_sli.c
+@@ -23,6 +23,7 @@
+ #include <linux/pci.h>
+ #include <linux/interrupt.h>
+ #include <linux/delay.h>
++#include <linux/slab.h>
+ 
+ #include <scsi/scsi.h>
+ #include <scsi/scsi_cmnd.h>
+@@ -447,6 +448,11 @@ __lpfc_sli_get_iocbq(struct lpfc_hba *phba)
+ 	struct lpfc_iocbq * iocbq = NULL;
+ 
+ 	list_remove_head(lpfc_iocb_list, iocbq, struct lpfc_iocbq, list);
++
++	if (iocbq)
++		phba->iocb_cnt++;
++	if (phba->iocb_cnt > phba->iocb_max)
++		phba->iocb_max = phba->iocb_cnt;
+ 	return iocbq;
+ }
+ 
+@@ -567,7 +573,8 @@ __lpfc_sli_release_iocbq_s4(struct lpfc_hba *phba, struct lpfc_iocbq *iocbq)
+ {
+ 	struct lpfc_sglq *sglq;
+ 	size_t start_clean = offsetof(struct lpfc_iocbq, iocb);
+-	unsigned long iflag;
++	unsigned long iflag = 0;
++	struct lpfc_sli_ring *pring = &phba->sli.ring[LPFC_ELS_RING];
+ 
+ 	if (iocbq->sli4_xritag == NO_XRI)
+ 		sglq = NULL;
+@@ -585,6 +592,17 @@ __lpfc_sli_release_iocbq_s4(struct lpfc_hba *phba, struct lpfc_iocbq *iocbq)
+ 		} else {
+ 			sglq->state = SGL_FREED;
+ 			list_add(&sglq->list, &phba->sli4_hba.lpfc_sgl_list);
++
++			/* Check if TXQ queue needs to be serviced */
++			if (pring->txq_cnt) {
++				spin_lock_irqsave(
++					&phba->pport->work_port_lock, iflag);
++				phba->pport->work_port_events |=
++					WORKER_SERVICE_TXQ;
++				lpfc_worker_wake_up(phba);
++				spin_unlock_irqrestore(
++					&phba->pport->work_port_lock, iflag);
++			}
+ 		}
+ 	}
+ 
+@@ -597,6 +615,7 @@ __lpfc_sli_release_iocbq_s4(struct lpfc_hba *phba, struct lpfc_iocbq *iocbq)
+ 	list_add_tail(&iocbq->list, &phba->lpfc_iocb_list);
+ }
+ 
++
+ /**
+  * __lpfc_sli_release_iocbq_s3 - Release iocb to the iocb pool
+  * @phba: Pointer to HBA context object.
+@@ -634,6 +653,7 @@ static void
+ __lpfc_sli_release_iocbq(struct lpfc_hba *phba, struct lpfc_iocbq *iocbq)
+ {
+ 	phba->__lpfc_sli_release_iocbq(phba, iocbq);
++	phba->iocb_cnt--;
+ }
+ 
+ /**
+@@ -864,7 +884,11 @@ lpfc_sli_ringtxcmpl_put(struct lpfc_hba *phba, struct lpfc_sli_ring *pring,
+ 			struct lpfc_iocbq *piocb)
+ {
+ 	list_add_tail(&piocb->list, &pring->txcmplq);
++	piocb->iocb_flag |= LPFC_IO_ON_Q;
+ 	pring->txcmplq_cnt++;
++	if (pring->txcmplq_cnt > pring->txcmplq_max)
++		pring->txcmplq_max = pring->txcmplq_cnt;
++
+ 	if ((unlikely(pring->ringno == LPFC_ELS_RING)) &&
+ 	   (piocb->iocb.ulpCommand != CMD_ABORT_XRI_CN) &&
+ 	   (piocb->iocb.ulpCommand != CMD_CLOSE_XRI_CN)) {
+@@ -889,7 +913,7 @@ lpfc_sli_ringtxcmpl_put(struct lpfc_hba *phba, struct lpfc_sli_ring *pring,
+  * the txq, the function returns first iocb in the list after
+  * removing the iocb from the list, else it returns NULL.
+  **/
+-static struct lpfc_iocbq *
++struct lpfc_iocbq *
+ lpfc_sli_ringtx_get(struct lpfc_hba *phba, struct lpfc_sli_ring *pring)
+ {
+ 	struct lpfc_iocbq *cmd_iocb;
+@@ -2130,7 +2154,10 @@ lpfc_sli_iocbq_lookup(struct lpfc_hba *phba,
+ 	if (iotag != 0 && iotag <= phba->sli.last_iotag) {
+ 		cmd_iocb = phba->sli.iocbq_lookup[iotag];
+ 		list_del_init(&cmd_iocb->list);
+-		pring->txcmplq_cnt--;
++		if (cmd_iocb->iocb_flag & LPFC_IO_ON_Q) {
++			pring->txcmplq_cnt--;
++			cmd_iocb->iocb_flag &= ~LPFC_IO_ON_Q;
++		}
+ 		return cmd_iocb;
+ 	}
+ 
+@@ -2163,7 +2190,10 @@ lpfc_sli_iocbq_lookup_by_tag(struct lpfc_hba *phba,
+ 	if (iotag != 0 && iotag <= phba->sli.last_iotag) {
+ 		cmd_iocb = phba->sli.iocbq_lookup[iotag];
+ 		list_del_init(&cmd_iocb->list);
+-		pring->txcmplq_cnt--;
++		if (cmd_iocb->iocb_flag & LPFC_IO_ON_Q) {
++			cmd_iocb->iocb_flag &= ~LPFC_IO_ON_Q;
++			pring->txcmplq_cnt--;
++		}
+ 		return cmd_iocb;
+ 	}
+ 
+@@ -3834,7 +3864,7 @@ lpfc_sli_hbq_setup(struct lpfc_hba *phba)
+ 					pmbox->mbxStatus, hbqno);
+ 			phba->link_state = LPFC_HBA_ERROR;
+ 			mempool_free(pmb, phba->mbox_mem_pool);
+-			return ENXIO;
++			return -ENXIO;
+ 		}
+ 	}
+ 	phba->hbq_count = hbq_count;
+@@ -3966,12 +3996,8 @@ lpfc_sli_config_port(struct lpfc_hba *phba, int sli_mode)
+ 			phba->sli3_options |= LPFC_SLI3_HBQ_ENABLED;
+ 
+ 		phba->hbq_get = phba->mbox->us.s3_pgp.hbq_get;
+-		phba->inb_ha_copy = NULL;
+-		phba->inb_counter = NULL;
+ 	} else {
+ 		phba->hbq_get = NULL;
+-		phba->inb_ha_copy = NULL;
+-		phba->inb_counter = NULL;
+ 		phba->max_vpi = 0;
+ 	}
+ 
+@@ -5623,7 +5649,7 @@ lpfc_mbox_api_table_setup(struct lpfc_hba *phba, uint8_t dev_grp)
+  * iocb to the txq when SLI layer cannot submit the command iocb
+  * to the ring.
+  **/
+-static void
++void
+ __lpfc_sli_ringtx_put(struct lpfc_hba *phba, struct lpfc_sli_ring *pring,
+ 		    struct lpfc_iocbq *piocb)
+ {
+@@ -6243,7 +6269,6 @@ __lpfc_sli_issue_iocb_s4(struct lpfc_hba *phba, uint32_t ring_number,
+ 			 struct lpfc_iocbq *piocb, uint32_t flag)
+ {
+ 	struct lpfc_sglq *sglq;
+-	uint16_t xritag;
+ 	union lpfc_wqe wqe;
+ 	struct lpfc_sli_ring *pring = &phba->sli.ring[ring_number];
+ 
+@@ -6252,10 +6277,26 @@ __lpfc_sli_issue_iocb_s4(struct lpfc_hba *phba, uint32_t ring_number,
+ 		    piocb->iocb.ulpCommand == CMD_CLOSE_XRI_CN)
+ 			sglq = NULL;
+ 		else {
++			if (pring->txq_cnt) {
++				if (!(flag & SLI_IOCB_RET_IOCB)) {
++					__lpfc_sli_ringtx_put(phba,
++						pring, piocb);
++					return IOCB_SUCCESS;
++				} else {
++					return IOCB_BUSY;
++				}
++			} else {
+ 			sglq = __lpfc_sli_get_sglq(phba);
+-			if (!sglq)
+-				return IOCB_ERROR;
+-			piocb->sli4_xritag = sglq->sli4_xritag;
++				if (!sglq) {
++					if (!(flag & SLI_IOCB_RET_IOCB)) {
++						__lpfc_sli_ringtx_put(phba,
++								pring,
++								piocb);
++						return IOCB_SUCCESS;
++					} else
++						return IOCB_BUSY;
++				}
++			}
+ 		}
+ 	} else if (piocb->iocb_flag &  LPFC_IO_FCP) {
+ 		sglq = NULL; /* These IO's already have an XRI and
+@@ -6271,8 +6312,9 @@ __lpfc_sli_issue_iocb_s4(struct lpfc_hba *phba, uint32_t ring_number,
+ 	}
+ 
+ 	if (sglq) {
+-		xritag = lpfc_sli4_bpl2sgl(phba, piocb, sglq);
+-		if (xritag != sglq->sli4_xritag)
++		piocb->sli4_xritag = sglq->sli4_xritag;
++
++		if (NO_XRI == lpfc_sli4_bpl2sgl(phba, piocb, sglq))
+ 			return IOCB_ERROR;
+ 	}
+ 
+@@ -6312,7 +6354,7 @@ __lpfc_sli_issue_iocb_s4(struct lpfc_hba *phba, uint32_t ring_number,
+  * 	IOCB_SUCCESS - Success
+  * 	IOCB_BUSY - Busy
+  **/
+-static inline int
++int
+ __lpfc_sli_issue_iocb(struct lpfc_hba *phba, uint32_t ring_number,
+ 		struct lpfc_iocbq *piocb, uint32_t flag)
+ {
+@@ -7128,13 +7170,6 @@ lpfc_sli_abort_els_cmpl(struct lpfc_hba *phba, struct lpfc_iocbq *cmdiocb,
+ 			 */
+ 			abort_iocb = phba->sli.iocbq_lookup[abort_context];
+ 
+-		lpfc_printf_log(phba, KERN_INFO, LOG_ELS | LOG_SLI,
+-				"0327 Cannot abort els iocb %p "
+-				"with tag %x context %x, abort status %x, "
+-				"abort code %x\n",
+-				abort_iocb, abort_iotag, abort_context,
+-				irsp->ulpStatus, irsp->un.ulpWord[4]);
+-
+ 		/*
+ 		 *  If the iocb is not found in Firmware queue the iocb
+ 		 *  might have completed already. Do not free it again.
+@@ -7153,6 +7188,13 @@ lpfc_sli_abort_els_cmpl(struct lpfc_hba *phba, struct lpfc_iocbq *cmdiocb,
+ 			if (abort_iocb && phba->sli_rev == LPFC_SLI_REV4)
+ 				abort_context = abort_iocb->iocb.ulpContext;
+ 		}
++
++		lpfc_printf_log(phba, KERN_WARNING, LOG_ELS | LOG_SLI,
++				"0327 Cannot abort els iocb %p "
++				"with tag %x context %x, abort status %x, "
++				"abort code %x\n",
++				abort_iocb, abort_iotag, abort_context,
++				irsp->ulpStatus, irsp->un.ulpWord[4]);
+ 		/*
+ 		 * make sure we have the right iocbq before taking it
+ 		 * off the txcmplq and try to call completion routine.
+@@ -7170,7 +7212,10 @@ lpfc_sli_abort_els_cmpl(struct lpfc_hba *phba, struct lpfc_iocbq *cmdiocb,
+ 			 * following abort XRI from the HBA.
+ 			 */
+ 			list_del_init(&abort_iocb->list);
+-			pring->txcmplq_cnt--;
++			if (abort_iocb->iocb_flag & LPFC_IO_ON_Q) {
++				abort_iocb->iocb_flag &= ~LPFC_IO_ON_Q;
++				pring->txcmplq_cnt--;
++			}
+ 
+ 			/* Firmware could still be in progress of DMAing
+ 			 * payload, so don't free data buffer till after
+@@ -7305,8 +7350,9 @@ lpfc_sli_issue_abort_iotag(struct lpfc_hba *phba, struct lpfc_sli_ring *pring,
+ 	lpfc_printf_vlog(vport, KERN_INFO, LOG_SLI,
+ 			 "0339 Abort xri x%x, original iotag x%x, "
+ 			 "abort cmd iotag x%x\n",
++			 iabt->un.acxri.abortIoTag,
+ 			 iabt->un.acxri.abortContextTag,
+-			 iabt->un.acxri.abortIoTag, abtsiocbp->iotag);
++			 abtsiocbp->iotag);
+ 	retval = __lpfc_sli_issue_iocb(phba, pring->ringno, abtsiocbp, 0);
+ 
+ 	if (retval)
+@@ -7639,7 +7685,7 @@ lpfc_sli_issue_iocb_wait(struct lpfc_hba *phba,
+ 	long timeleft, timeout_req = 0;
+ 	int retval = IOCB_SUCCESS;
+ 	uint32_t creg_val;
+-
++	struct lpfc_sli_ring *pring = &phba->sli.ring[LPFC_ELS_RING];
+ 	/*
+ 	 * If the caller has provided a response iocbq buffer, then context2
+ 	 * is NULL or its an error.
+@@ -7661,7 +7707,8 @@ lpfc_sli_issue_iocb_wait(struct lpfc_hba *phba,
+ 		readl(phba->HCregaddr); /* flush */
+ 	}
+ 
+-	retval = lpfc_sli_issue_iocb(phba, ring_number, piocb, 0);
++	retval = lpfc_sli_issue_iocb(phba, ring_number, piocb,
++				     SLI_IOCB_RET_IOCB);
+ 	if (retval == IOCB_SUCCESS) {
+ 		timeout_req = timeout * HZ;
+ 		timeleft = wait_event_timeout(done_q,
+@@ -7683,6 +7730,11 @@ lpfc_sli_issue_iocb_wait(struct lpfc_hba *phba,
+ 					timeout, (timeleft / jiffies));
+ 			retval = IOCB_TIMEDOUT;
+ 		}
++	} else if (retval == IOCB_BUSY) {
++		lpfc_printf_log(phba, KERN_INFO, LOG_SLI,
++			"2818 Max IOCBs %d txq cnt %d txcmplq cnt %d\n",
++			phba->iocb_cnt, pring->txq_cnt, pring->txcmplq_cnt);
++		return retval;
+ 	} else {
+ 		lpfc_printf_log(phba, KERN_INFO, LOG_SLI,
+ 				"0332 IOCB wait issue failed, Data x%x\n",
+@@ -8835,12 +8887,17 @@ lpfc_sli4_sp_handle_els_wcqe(struct lpfc_hba *phba,
+ {
+ 	struct lpfc_iocbq *irspiocbq;
+ 	unsigned long iflags;
++	struct lpfc_sli_ring *pring = &phba->sli.ring[LPFC_FCP_RING];
+ 
+ 	/* Get an irspiocbq for later ELS response processing use */
+ 	irspiocbq = lpfc_sli_get_iocbq(phba);
+ 	if (!irspiocbq) {
+ 		lpfc_printf_log(phba, KERN_ERR, LOG_SLI,
+-				"0387 Failed to allocate an iocbq\n");
++			"0387 NO IOCBQ data: txq_cnt=%d iocb_cnt=%d "
++			"fcp_txcmplq_cnt=%d, els_txcmplq_cnt=%d\n",
++			pring->txq_cnt, phba->iocb_cnt,
++			phba->sli.ring[LPFC_FCP_RING].txcmplq_cnt,
++			phba->sli.ring[LPFC_ELS_RING].txcmplq_cnt);
+ 		return false;
+ 	}
+ 
+@@ -9254,6 +9311,7 @@ lpfc_sli4_fp_handle_wcqe(struct lpfc_hba *phba, struct lpfc_queue *cq,
+ {
+ 	struct lpfc_wcqe_release wcqe;
+ 	bool workposted = false;
++	unsigned long iflag;
+ 
+ 	/* Copy the work queue CQE and convert endian order if needed */
+ 	lpfc_sli_pcimem_bcopy(cqe, &wcqe, sizeof(struct lpfc_cqe));
+@@ -9262,6 +9320,9 @@ lpfc_sli4_fp_handle_wcqe(struct lpfc_hba *phba, struct lpfc_queue *cq,
+ 	switch (bf_get(lpfc_wcqe_c_code, &wcqe)) {
+ 	case CQE_CODE_COMPL_WQE:
+ 		/* Process the WQ complete event */
++		spin_lock_irqsave(&phba->hbalock, iflag);
++		phba->last_completion_time = jiffies;
++		spin_unlock_irqrestore(&phba->hbalock, iflag);
+ 		lpfc_sli4_fp_handle_fcp_wcqe(phba,
+ 				(struct lpfc_wcqe_complete *)&wcqe);
+ 		break;
+@@ -12909,3 +12970,90 @@ int random32_reseed(void)
+ 	}
+ 	return 0;
+ }
++
++/**
++ * lpfc_drain_txq - Drain the txq
++ * @phba: Pointer to HBA context object.
++ *
++ * This function attempt to submit IOCBs on the txq
++ * to the adapter.  For SLI4 adapters, the txq contains
++ * ELS IOCBs that have been deferred because the there
++ * are no SGLs.  This congestion can occur with large
++ * vport counts during node discovery.
++ **/
++
++uint32_t
++lpfc_drain_txq(struct lpfc_hba *phba)
++{
++	LIST_HEAD(completions);
++	struct lpfc_sli_ring *pring = &phba->sli.ring[LPFC_ELS_RING];
++	struct lpfc_iocbq *piocbq = 0;
++	unsigned long iflags = 0;
++	char *fail_msg = NULL;
++	struct lpfc_sglq *sglq;
++	union lpfc_wqe wqe;
++
++	spin_lock_irqsave(&phba->hbalock, iflags);
++	if (pring->txq_cnt > pring->txq_max)
++		pring->txq_max = pring->txq_cnt;
++
++	spin_unlock_irqrestore(&phba->hbalock, iflags);
++
++	while (pring->txq_cnt) {
++		spin_lock_irqsave(&phba->hbalock, iflags);
++
++		sglq = __lpfc_sli_get_sglq(phba);
++		if (!sglq) {
++			spin_unlock_irqrestore(&phba->hbalock, iflags);
++			break;
++		} else {
++			piocbq = lpfc_sli_ringtx_get(phba, pring);
++			if (!piocbq) {
++				/* The txq_cnt out of sync. This should
++				 * never happen
++				 */
++				sglq = __lpfc_clear_active_sglq(phba,
++						 sglq->sli4_xritag);
++				spin_unlock_irqrestore(&phba->hbalock, iflags);
++				lpfc_printf_log(phba, KERN_ERR, LOG_SLI,
++					"2823 txq empty and txq_cnt is %d\n ",
++					pring->txq_cnt);
++				break;
++			}
++		}
++
++		/* The xri and iocb resources secured,
++		 * attempt to issue request
++		 */
++		piocbq->sli4_xritag = sglq->sli4_xritag;
++		if (NO_XRI == lpfc_sli4_bpl2sgl(phba, piocbq, sglq))
++			fail_msg = "to convert bpl to sgl";
++		else if (lpfc_sli4_iocb2wqe(phba, piocbq, &wqe))
++			fail_msg = "to convert iocb to wqe";
++		else if (lpfc_sli4_wq_put(phba->sli4_hba.els_wq, &wqe))
++			fail_msg = " - Wq is full";
++		else
++			lpfc_sli_ringtxcmpl_put(phba, pring, piocbq);
++
++		if (fail_msg) {
++			/* Failed means we can't issue and need to cancel */
++			lpfc_printf_log(phba, KERN_ERR, LOG_SLI,
++					"2822 IOCB failed %s iotag 0x%x "
++					"xri 0x%x\n",
++					fail_msg,
++					piocbq->iotag, piocbq->sli4_xritag);
++			list_add_tail(&piocbq->list, &completions);
++		}
++		spin_unlock_irqrestore(&phba->hbalock, iflags);
++	}
++
++	spin_lock_irqsave(&phba->pport->work_port_lock, iflags);
++	phba->pport->work_port_events &= ~WORKER_SERVICE_TXQ;
++	spin_unlock_irqrestore(&phba->pport->work_port_lock, iflags);
++
++	/* Cancel all the IOCBs that cannot be issued */
++	lpfc_sli_cancel_iocbs(phba, &completions, IOSTAT_LOCAL_REJECT,
++				IOERR_SLI_ABORTED);
++
++	return pring->txq_cnt;
++}
+diff --git a/drivers/scsi/lpfc/lpfc_sli.h b/drivers/scsi/lpfc/lpfc_sli.h
+index bc471b0..1382e37 100644
+--- a/drivers/scsi/lpfc/lpfc_sli.h
++++ b/drivers/scsi/lpfc/lpfc_sli.h
+@@ -48,6 +48,7 @@ struct lpfc_iocbq {
+ 	/* lpfc_iocbqs are used in double linked lists */
+ 	struct list_head list;
+ 	struct list_head clist;
++	struct list_head dlist;
+ 	uint16_t iotag;         /* pre-assigned IO tag */
+ 	uint16_t sli4_xritag;   /* pre-assigned XRI, (OXID) tag. */
+ 	struct lpfc_cq_event cq_event;
+@@ -64,6 +65,7 @@ struct lpfc_iocbq {
+ #define LPFC_EXCHANGE_BUSY	0x40    /* SLI4 hba reported XB in response */
+ #define LPFC_USE_FCPWQIDX	0x80    /* Submit to specified FCPWQ index */
+ #define DSS_SECURITY_OP		0x100	/* security IO */
++#define LPFC_IO_ON_Q		0x200	/* The IO is still on the TXCMPLQ */
+ 
+ #define LPFC_FIP_ELS_ID_MASK	0xc000	/* ELS_ID range 0-3, non-shifted mask */
+ #define LPFC_FIP_ELS_ID_SHIFT	14
+diff --git a/drivers/scsi/lpfc/lpfc_sli4.h b/drivers/scsi/lpfc/lpfc_sli4.h
+index c7801b9..ac3120d 100644
+--- a/drivers/scsi/lpfc/lpfc_sli4.h
++++ b/drivers/scsi/lpfc/lpfc_sli4.h
+@@ -58,7 +58,7 @@
+ #define LPFC_FCOE_FCF_MAP0	0x0E
+ #define LPFC_FCOE_FCF_MAP1	0xFC
+ #define LPFC_FCOE_FCF_MAP2	0x00
+-#define LPFC_FCOE_MAX_RCV_SIZE	0x5AC
++#define LPFC_FCOE_MAX_RCV_SIZE	0x800
+ #define LPFC_FCOE_FKA_ADV_PER	0
+ #define LPFC_FCOE_FIP_PRIORITY	0x80
+ 
+diff --git a/drivers/scsi/lpfc/lpfc_version.h b/drivers/scsi/lpfc/lpfc_version.h
+index c1ee2e9..02b403d 100644
+--- a/drivers/scsi/lpfc/lpfc_version.h
++++ b/drivers/scsi/lpfc/lpfc_version.h
+@@ -18,7 +18,7 @@
+  * included with this package.                                     *
+  *******************************************************************/
+ 
+-#define LPFC_DRIVER_VERSION "8.2.0.73.1p"
++#define LPFC_DRIVER_VERSION "8.2.0.76.1p"
+ 
+ #define LPFC_DRIVER_NAME		"lpfc"
+ #define LPFC_SP_DRIVER_HANDLER_NAME	"lpfc:sp"
+diff --git a/drivers/scsi/lpfc/lpfc_vport.c b/drivers/scsi/lpfc/lpfc_vport.c
+index 7dc660d..3bb05c1 100644
+--- a/drivers/scsi/lpfc/lpfc_vport.c
++++ b/drivers/scsi/lpfc/lpfc_vport.c
+@@ -26,6 +26,7 @@
+ #include <linux/interrupt.h>
+ #include <linux/kthread.h>
+ #include <linux/pci.h>
++#include <linux/slab.h>
+ #include <linux/spinlock.h>
+ 
+ #include <scsi/scsi.h>
+@@ -746,7 +747,7 @@ lpfc_create_vport_work_array(struct lpfc_hba *phba)
+ 	spin_lock_irq(&phba->hbalock);
+ 	list_for_each_entry(port_iterator, &phba->port_list, listentry) {
+ 		if (!scsi_host_get(lpfc_shost_from_vport(port_iterator))) {
+-			if (!port_iterator->load_flag & FC_UNLOADING)
++			if (!(port_iterator->load_flag & FC_UNLOADING))
+ 				lpfc_printf_vlog(port_iterator, KERN_ERR,
+ 					 LOG_VPORT,
+ 					 "1801 Create vport work array FAILED: "
+@@ -765,7 +766,7 @@ lpfc_destroy_vport_work_array(struct lpfc_hba *phba, struct lpfc_vport **vports)
+ 	int i;
+ 	if (vports == NULL)
+ 		return;
+-	for (i = 0; vports[i] != NULL && i <= phba->max_vports; i++)
++	for (i = 0; i <= phba->max_vports && vports[i] != NULL; i++)
+ 		scsi_host_put(lpfc_shost_from_vport(vports[i]));
+ 	kfree(vports);
+ }

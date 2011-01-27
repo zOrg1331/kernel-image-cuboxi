@@ -1,0 +1,30 @@
+From: Mauro Carvalho Chehab <mchehab@redhat.com>
+Date: Tue, 23 Nov 2010 17:33:48 -0500
+Subject: [edac] edac_core: print debug messages at release calls
+Message-id: <20101123153348.7a078fee@pedra>
+Patchwork-id: 29564
+O-Subject: [PATCH RHEL5 08/29] BZ#:651869 edac_core: Print debug messages at
+	release calls
+Bugzilla: 651869
+RH-Acked-by: Aristeu Rozanski <aris@redhat.com>
+
+Changeset: bbc560ae677c0f4d7ff8404a21409c99f35b297b
+
+This is important to track a nasty bug at the free logic.
+
+Signed-off-by: Mauro Carvalho Chehab <mchehab@redhat.com>
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/edac/i7core_edac.c b/drivers/edac/i7core_edac.c
+index c8dbeba..8efced5 100644
+--- a/drivers/edac/i7core_edac.c
++++ b/drivers/edac/i7core_edac.c
+@@ -2072,7 +2072,7 @@ static void __devexit i7core_remove(struct pci_dev *pdev)
+ 			edac_mce_unregister(&pvt->edac_mce);
+ 			pvt->i7core_pci = NULL;
+ 
+-			/* Free data */
++			debugf1("%s: free mci struct\n", mci->ctl_name);
+ 			kfree(mci->ctl_name);
+ 			edac_mc_free(mci);
+ 

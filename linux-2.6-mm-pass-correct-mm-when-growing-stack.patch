@@ -5,6 +5,7 @@ Message-id: <1282217317-11853-6-git-send-email-jpirko@redhat.com>
 Patchwork-id: 27714
 O-Subject: [PATCH RHEL5.6 5/5] mm: pass correct mm when growing stack
 Bugzilla: 607858
+CVE: CVE-2010-2240
 RH-Acked-by: Rik van Riel <riel@redhat.com>
 RH-Acked-by: Jarod Wilson <jarod@redhat.com>
 

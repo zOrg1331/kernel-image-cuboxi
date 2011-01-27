@@ -1,0 +1,53 @@
+From: Don Zickus <dzickus@redhat.com>
+Date: Thu, 23 Sep 2010 03:48:01 -0400
+Subject: [usb] serial/pl2303: add id for HP LD220-HP POS display
+Message-id: <1285213681-8529-1-git-send-email-dzickus@redhat.com>
+Patchwork-id: 28356
+O-Subject: [RHEL5 PATCH] [usb] pl2303: add id for HP LD220-HP POS pole display
+Bugzilla: 580698
+RH-Acked-by: Dean Nelson <dnelson@redhat.com>
+RH-Acked-by: Bob Picco <bpicco@redhat.com>
+
+https://bugzilla.redhat.com/show_bug.cgi?id=580698
+
+Simple straight forward requested cherry-pick from upstream:
+af4b8514aafd53d97b05a0a30b7d4cfd2cbb7b81
+
+	USB: pl2303: add id for Hewlett-Packard LD220-HP POS pole display
+
+	Add id for the Hewlett-Packard LD220-HP POS pole display.
+
+	Bus 002 Device 002: ID 03f0:3524 Hewlett-Packard
+
+	Signed-off-by: Mike Provencher <mike.provencher@hp.com>
+	Signed-off-by: Greg Kroah-Hartman <gregkh@suse.de>
+
+Compile tested only.
+
+Cheers,
+Don
+
+diff --git a/drivers/usb/serial/pl2303.c b/drivers/usb/serial/pl2303.c
+index 65e4d04..0e45e7a 100644
+--- a/drivers/usb/serial/pl2303.c
++++ b/drivers/usb/serial/pl2303.c
+@@ -81,6 +81,7 @@ static struct usb_device_id id_table [] = {
+ 	{ USB_DEVICE(SPEEDDRAGON_VENDOR_ID, SPEEDDRAGON_PRODUCT_ID) },
+ 	{ USB_DEVICE(DATAPILOT_U2_VENDOR_ID, DATAPILOT_U2_PRODUCT_ID) },
+ 	{ USB_DEVICE(BELKIN_VENDOR_ID, BELKIN_PRODUCT_ID) },
++	{ USB_DEVICE(HP_VENDOR_ID, HP_LD220_PRODUCT_ID) },
+ 	{ }					/* Terminating entry */
+ };
+ 
+diff --git a/drivers/usb/serial/pl2303.h b/drivers/usb/serial/pl2303.h
+index 55195e7..6011f57 100644
+--- a/drivers/usb/serial/pl2303.h
++++ b/drivers/usb/serial/pl2303.h
+@@ -89,3 +89,7 @@
+ /* Belkin "F5U257" Serial Adapter */
+ #define BELKIN_VENDOR_ID	0x050d
+ #define BELKIN_PRODUCT_ID	0x0257
++
++/* Hewlett-Packard LD220-HP POS Pole Display */
++#define HP_VENDOR_ID		0x03f0
++#define HP_LD220_PRODUCT_ID	0x3524

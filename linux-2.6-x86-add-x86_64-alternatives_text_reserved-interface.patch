@@ -1,0 +1,91 @@
+From: Masami Hiramatsu <mhiramat@redhat.com>
+Date: Tue, 18 May 2010 18:15:00 -0400
+Subject: [x86] add x86_64 alternatives_text_reserved interface
+Message-id: <20100518181500.22097.85271.stgit@dhcp-100-3-82.bos.redhat.com>
+Patchwork-id: 25214
+O-Subject: [RHEL5.6 PATCH 3/4] BZ516313 Add x86_64 alternatives_text_reserved()
+	interface
+Bugzilla: 516313
+RH-Acked-by: Dave Anderson <anderson@redhat.com>
+
+Add x86_64 alternatives_text_reserved() interface for checking
+confliction between kprobes and alternatives on x86_64.
+
+This patch includes below commits.
+
+4554dbcb85a4ed2abaa2b6fa15649b796699ec89
+076dc4a65a6d99a16979e2c7917e669fb8c91ee5
+2cfa19780d61740f65790c5bae363b759d7c96fa
+
+Signed-off-by: Masami Hiramatsu <mhiramat@redhat.com>
+
+diff --git a/arch/i386/kernel/alternative.c b/arch/i386/kernel/alternative.c
+index e597feb..7fed37a 100644
+--- a/arch/i386/kernel/alternative.c
++++ b/arch/i386/kernel/alternative.c
+@@ -348,6 +348,29 @@ void alternatives_smp_switch(int smp)
+ 	spin_unlock_irqrestore(&smp_alt, flags);
+ }
+ 
++/* Return 1 if the address range is reserved for smp-alternatives */
++int alternatives_text_reserved(void *start, void *end)
++{
++	struct alt_instr *a;
++	struct smp_alt_module *mod;
++	u8 **ptr;
++	u8 *text_start = start;
++	u8 *text_end = end;
++
++	for (a = __smp_alt_instructions; a < __smp_alt_instructions_end; a++)
++		if (start <= a->instr && end >= a->instr + a->instrlen)
++			return 1;
++
++	list_for_each_entry(mod, &smp_alt_modules, next) {
++		if (mod->text > text_end || mod->text_end < text_start)
++			continue;
++		for (ptr = mod->locks; ptr < mod->locks_end; ptr++)
++			if (text_start <= *ptr && text_end >= *ptr)
++				return 1;
++	}
++
++	return 0;
++}
+ #endif
+ 
+ void __init alternative_instructions(void)
+diff --git a/arch/x86_64/kernel/kprobes.c b/arch/x86_64/kernel/kprobes.c
+index f865b31..939cb74 100644
+--- a/arch/x86_64/kernel/kprobes.c
++++ b/arch/x86_64/kernel/kprobes.c
+@@ -333,6 +333,9 @@ static void __kprobes arch_copy_kprobe(struct kprobe *p)
+ 
+ int __kprobes arch_prepare_kprobe(struct kprobe *p)
+ {
++	if (alternatives_text_reserved(p->addr, p->addr))
++		return -EINVAL;
++
+ 	if (!can_probe((unsigned long)p->addr))
+ 		return -EILSEQ;
+ 	/* insn: must be on special executable page on x86. */
+diff --git a/include/asm-x86_64/alternative.h b/include/asm-x86_64/alternative.h
+index a584826..d47fbe2 100644
+--- a/include/asm-x86_64/alternative.h
++++ b/include/asm-x86_64/alternative.h
+@@ -25,12 +25,17 @@ extern void alternatives_smp_module_add(struct module *mod, char *name,
+ 					void *text, void *text_end);
+ extern void alternatives_smp_module_del(struct module *mod);
+ extern void alternatives_smp_switch(int smp);
++extern int alternatives_text_reserved(void *start, void *end);
+ #else
+ static inline void alternatives_smp_module_add(struct module *mod, char *name,
+ 					void *locks, void *locks_end,
+ 					void *text, void *text_end) {}
+ static inline void alternatives_smp_module_del(struct module *mod) {}
+ static inline void alternatives_smp_switch(int smp) {}
++static inline int alternatives_text_reserved(void *start, void *end)
++{
++	return 0;
++}
+ #endif
+ 
+ #endif

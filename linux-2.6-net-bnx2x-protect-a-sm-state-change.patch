@@ -1,0 +1,74 @@
+From: Michal Schmidt <mschmidt@redhat.com>
+Date: Fri, 3 Sep 2010 16:43:23 -0400
+Subject: [net] bnx2x: protect a SM state change
+Message-id: <20100903164323.25415.38813.stgit@brian.englab.brq.redhat.com>
+Patchwork-id: 28102
+O-Subject: [RHEL5.6 BZ572012 PATCH 27/46] bnx2x: Protect a SM state change
+Bugzilla: 572012
+RH-Acked-by: David S. Miller <davem@redhat.com>
+RH-Acked-by: Stanislaw Gruszka <sgruszka@redhat.com>
+
+Bug fix: Protect the statistics state machine state update with a
+spinlock.  Otherwise there was a race condition that would cause the
+statistics to stay enabled despite the fact that they were disabled in
+the LINK_DOWN event handler.
+
+Signed-off-by: Vladislav Zolotarov <vladz@broadcom.com>
+Signed-off-by: Dmitry Kravkov <dmitry@broadcom.com>
+Signed-off-by: Eilon Greenstein <eilong@broadcom.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+(cherry picked from commit a13773a53faa28cf79982601b6fc9ddb0ca45f36)
+
+Conflicts:
+
+	drivers/net/bnx2x.h
+
+diff --git a/drivers/net/bnx2x.h b/drivers/net/bnx2x.h
+index 3743b71..71f7e35 100644
+--- a/drivers/net/bnx2x.h
++++ b/drivers/net/bnx2x.h
+@@ -1067,6 +1067,9 @@ struct bnx2x {
+ 	int			stats_state;
+ 	struct net_device_stats net_stats;
+ 
++	/* used for synchronization of concurrent threads statistics handling */
++	spinlock_t		stats_lock;
++
+ 	/* used by dmae command loader */
+ 	struct dmae_command	stats_dmae;
+ 	int			executer_idx;
+diff --git a/drivers/net/bnx2x_main.c b/drivers/net/bnx2x_main.c
+index a87e0bf..bc00d84 100644
+--- a/drivers/net/bnx2x_main.c
++++ b/drivers/net/bnx2x_main.c
+@@ -4848,16 +4848,18 @@ static const struct {
+ 
+ static void bnx2x_stats_handle(struct bnx2x *bp, enum bnx2x_stats_event event)
+ {
+-	enum bnx2x_stats_state state = bp->stats_state;
++	enum bnx2x_stats_state state;
+ 
+ 	if (unlikely(bp->panic))
+ 		return;
+ 
+-	bnx2x_stats_stm[state][event].action(bp);
++	/* Protect a state change flow */
++	spin_lock_bh(&bp->stats_lock);
++	state = bp->stats_state;
+ 	bp->stats_state = bnx2x_stats_stm[state][event].next_state;
++	spin_unlock_bh(&bp->stats_lock);
+ 
+-	/* Make sure the state has been "changed" */
+-	smp_wmb();
++	bnx2x_stats_stm[state][event].action(bp);
+ 
+ 	if ((event != STATS_EVENT_UPDATE) || netif_msg_timer(bp))
+ 		DP(BNX2X_MSG_STATS, "state %d -> event %d -> state %d\n",
+@@ -9925,6 +9927,7 @@ static int __devinit bnx2x_init_bp(struct bnx2x *bp)
+ 
+ 	mutex_init(&bp->port.phy_mutex);
+ 	mutex_init(&bp->fw_mb_mutex);
++	spin_lock_init(&bp->stats_lock);
+ #ifdef BCM_CNIC
+ 	mutex_init(&bp->cnic_mutex);
+ #endif

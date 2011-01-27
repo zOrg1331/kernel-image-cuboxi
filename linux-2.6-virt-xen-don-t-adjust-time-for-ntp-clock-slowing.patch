@@ -1,0 +1,47 @@
+From: Bretislav Kabele <bkabele@redhat.com>
+Date: Thu, 26 Aug 2010 13:20:45 -0400
+Subject: [virt] xen: don't adjust time for ntp clock slowing
+Message-id: <1282828845-4066-1-git-send-email-bkabele@redhat.com>
+Patchwork-id: 27828
+O-Subject: [RHEL5.6 PATCH] xen: don't adjust time for ntp clock slowing
+Bugzilla: 553407
+RH-Acked-by: Radim Krcmar <rkrcmar@redhat.com>
+RH-Acked-by: Andrew Jones <drjones@redhat.com>
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+
+Bugzilla: https://bugzilla.redhat.com/show_bug.cgi?id=553407
+
+Xen's gettimeofday sacrifices accuracy when attempting to adjust for
+NTP clock slowing. This causes strange behavior that can be seen with
+nanosleep. Upstream changeset 68 fixed this by dropping the special
+handling of NTP clock slowing. Backport this changeset to correct RHEL.
+
+Brew: http://brewweb.devel.redhat.com/brew/taskinfo?taskID=2711507
+
+Tested by me using the bug's reproducer.
+
+diff --git a/arch/i386/kernel/time-xen.c b/arch/i386/kernel/time-xen.c
+index 8809ff8..abdea83 100644
+--- a/arch/i386/kernel/time-xen.c
++++ b/arch/i386/kernel/time-xen.c
+@@ -394,19 +394,7 @@ void do_gettimeofday(struct timeval *tv)
+ 		usec = get_usec_offset(shadow);
+ 		lost = jiffies - wall_jiffies;
+ 
+-		/*
+-		 * If time_adjust is negative then NTP is slowing the clock
+-		 * so make sure not to go into next possible interval.
+-		 * Better to lose some accuracy than have time go backwards..
+-		 */
+-		if (unlikely(time_adjust < 0)) {
+-			max_ntp_tick = (USEC_PER_SEC / HZ) - tickadj;
+-			usec = min(usec, max_ntp_tick);
+-
+-			if (lost)
+-				usec += lost * max_ntp_tick;
+-		}
+-		else if (unlikely(lost))
++		if (unlikely(lost))
+ 			usec += lost * (USEC_PER_SEC / HZ);
+ 
+ 		sec = xtime.tv_sec;

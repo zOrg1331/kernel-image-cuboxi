@@ -1,0 +1,53 @@
+From: Thomas Graf <tgraf@redhat.com>
+Date: Fri, 23 Jul 2010 15:32:31 -0400
+Subject: [net] tcp: set Cubic and BIC default thresholds to zero
+Message-id: <20100723153231.GF14925@lsx.localdomain>
+Patchwork-id: 27064
+O-Subject: [RHEL5.6 PATCH 4/14] tcp: Set initial_ssthresh default to zero in
+	Cubic and BIC.
+Bugzilla: 612709
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+RH-Acked-by: David S. Miller <davem@redhat.com>
+
+commit 66e1e3b20cbbf99da63e6c1af0fc6d39c2ed099a
+Author: David S. Miller <davem@sunset.davemloft.net>
+Date:   Wed Jun 13 01:03:53 2007 -0700
+
+    [TCP]: Set initial_ssthresh default to zero in Cubic and BIC.
+
+    Because of the current default of 100, Cubic and BIC perform very
+    poorly compared to standard Reno.
+
+    In the worst case, this change makes Cubic and BIC as aggressive as
+    Reno.  So this change should be very safe.
+
+    Signed-off-by: David S. Miller <davem@davemloft.net>
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/net/ipv4/tcp_bic.c b/net/ipv4/tcp_bic.c
+index b0134ab..3be84b1 100644
+--- a/net/ipv4/tcp_bic.c
++++ b/net/ipv4/tcp_bic.c
+@@ -29,7 +29,7 @@ static int fast_convergence = 1;
+ static int max_increment = 16;
+ static int low_window = 14;
+ static int beta = 819;		/* = 819/1024 (BICTCP_BETA_SCALE) */
+-static int initial_ssthresh = 100;
++static int initial_ssthresh;
+ static int smooth_part = 20;
+ 
+ module_param(fast_convergence, int, 0644);
+diff --git a/net/ipv4/tcp_cubic.c b/net/ipv4/tcp_cubic.c
+index c3b01b5..7ae00ae 100644
+--- a/net/ipv4/tcp_cubic.c
++++ b/net/ipv4/tcp_cubic.c
+@@ -29,7 +29,7 @@
+ static int fast_convergence = 1;
+ static int max_increment = 16;
+ static int beta = 819;		/* = 819/1024 (BICTCP_BETA_SCALE) */
+-static int initial_ssthresh = 100;
++static int initial_ssthresh;
+ static int bic_scale = 41;
+ static int tcp_friendliness = 1;
+ 

@@ -1,0 +1,33 @@
+From: Mauro Carvalho Chehab <mchehab@redhat.com>
+Date: Tue, 28 Sep 2010 14:34:10 -0400
+Subject: [edac] i7300_edac: fix MTR x4/x8 detection logic
+Message-id: <20100928113410.73253e98@pedra>
+Patchwork-id: 28474
+O-Subject: [PATCH RHEL5 15/27] i7300_edac: Fix MTR x4/x8 detection logic
+Bugzilla: 487428
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+Signed-off-by: Mauro Carvalho Chehab <mchehab@redhat.com>
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/edac/i7300_edac.c b/drivers/edac/i7300_edac.c
+index 218d463..a4f47fd 100644
+--- a/drivers/edac/i7300_edac.c
++++ b/drivers/edac/i7300_edac.c
+@@ -583,14 +583,14 @@ static int decode_mtr(struct i7300_pvt *pvt,
+ 		debugf2("\t\tECC code is 8-byte-over-32-byte SECDED+ code\n");
+ 	} else {
+ 		debugf2("\t\tECC code is on Lockstep mode\n");
+-		if (MTR_DRAM_WIDTH(mtr))
++		if (MTR_DRAM_WIDTH(mtr) == 8)
+ 			p_csrow->edac_mode = EDAC_S8ECD8ED;
+ 		else
+ 			p_csrow->edac_mode = EDAC_S4ECD4ED;
+ 	}
+ 
+ 	/* ask what device type on this row */
+-	if (MTR_DRAM_WIDTH(mtr)) {
++	if (MTR_DRAM_WIDTH(mtr) == 8) {
+ 		debugf2("\t\tScrub algorithm for x8 is on %s mode\n",
+ 			IS_SCRBALGO_ENHANCED(pvt->mc_settings) ?
+ 					    "enhanced" : "normal");

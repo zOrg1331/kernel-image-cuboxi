@@ -1,0 +1,124 @@
+From: Jiri Olsa <jolsa@redhat.com>
+Date: Mon, 4 Oct 2010 13:17:45 -0400
+Subject: [misc] oprofile: add backtraces for compat mode processes
+Message-id: <1286198265-6220-1-git-send-email-jolsa@redhat.com>
+Patchwork-id: 28571
+O-Subject: [PATCH RHEL5] BZ 622024 oprofile,
+	x86: adding backtrace dump for 32bit process in compat mode
+Bugzilla: 622024
+RH-Acked-by: Don Zickus <dzickus@redhat.com>
+
+Bugzilla: 622024
+https://bugzilla.redhat.com/show_bug.cgi?id=622024
+
+Description:
+============
+This patch implements the oprofile backtrace  generation for 32 bit
+applications running in the 64bit environment (compat mode).
+
+With this change it's possible to get backtrace for 32bits applications
+under the 64bits environment using oprofile's callgraph options.
+
+Upstream status:
+================
+patch was accepted upstream, it's in oprofile tree
+git://git.kernel.org/pub/scm/linux/kernel/git/rric/oprofile.git
+
+- oprofile, x86: Using struct stack_frame for 64bit processes dump
+  commit f6dedecc37164a58bb80ae2ed9d204669ffc4850
+  Author: Jiri Olsa <jolsa@redhat.com>
+
+Brew:
+=====
+https://brewweb.devel.redhat.com/taskinfo?taskID=2794979
+
+Tested:
+=======
+verified on 32-bit binary, oprofile generated stack report
+
+wbr,
+jirka
+
+diff --git a/arch/i386/oprofile/backtrace.c b/arch/i386/oprofile/backtrace.c
+index c049ce4..ea6c0a8 100644
+--- a/arch/i386/oprofile/backtrace.c
++++ b/arch/i386/oprofile/backtrace.c
+@@ -13,6 +13,7 @@
+ #include <linux/mm.h>
+ #include <asm/ptrace.h>
+ #include <asm/uaccess.h>
++#include <linux/compat.h>
+ 
+ struct frame_head {
+ 	struct frame_head * ebp;
+@@ -32,6 +33,60 @@ dump_kernel_backtrace(struct frame_head * head)
+ 	return head->ebp;
+ }
+ 
++#ifdef CONFIG_COMPAT
++struct stack_frame_ia32 {
++	u32 next_frame;
++	u32 return_address;
++};
++
++static struct stack_frame_ia32 *
++dump_user_backtrace_32(struct stack_frame_ia32 *head)
++{
++	struct stack_frame_ia32 bufhead[2];
++	struct stack_frame_ia32 *fp;
++
++	/* Also check accessibility of one struct frame_head beyond */
++	if (!access_ok(VERIFY_READ, head, sizeof(bufhead)))
++		return NULL;
++	if (__copy_from_user_inatomic(bufhead, head, sizeof(bufhead)))
++		return NULL;
++
++	fp = (struct stack_frame_ia32 *) compat_ptr(bufhead[0].next_frame);
++
++	oprofile_add_trace(bufhead[0].return_address);
++
++	/* frame pointers should strictly progress back up the stack
++	* (towards higher addresses) */
++	if (head >= fp)
++		return NULL;
++
++	return fp;
++}
++
++static inline int
++x86_backtrace_32(struct pt_regs * const regs, unsigned int depth)
++{
++	struct stack_frame_ia32 *head;
++
++	/* User process is 32-bit */
++	if (!current || !test_thread_flag(TIF_IA32))
++		return 0;
++
++	head = (struct stack_frame_ia32 *) regs->rbp;
++	while (depth-- && head)
++		head = dump_user_backtrace_32(head);
++
++	return 1;
++}
++
++#else
++static inline int
++x86_backtrace_32(struct pt_regs * const regs, unsigned int depth)
++{
++	return 0;
++}
++#endif /* CONFIG_COMPAT */
++
+ static struct frame_head *
+ dump_user_backtrace(struct frame_head * head)
+ {
+@@ -122,6 +177,9 @@ x86_backtrace(struct pt_regs * const regs, unsigned int depth)
+ 		return;
+ 	}
+ 
++	if (x86_backtrace_32(regs, depth))
++		return;
++
+ 	while (depth-- && head)
+ 		head = dump_user_backtrace(head);
+ }

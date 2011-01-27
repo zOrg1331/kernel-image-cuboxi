@@ -1,0 +1,380 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Date: Wed, 8 Sep 2010 15:46:39 -0400
+Subject: [virt] update VMWare TSC code
+Message-id: <4C87AFDF.2030207@redhat.com>
+Patchwork-id: 28177
+O-Subject: Re: [RHEL5.6 BZ 538022 PATCH] Update VMWare TSC code
+Bugzilla: 538022
+RH-Acked-by: Don Zickus <dzickus@redhat.com>
+
+VMWare has reported a bug with the way futex is handled in a VMWare environment.
+
+Basically, FUTEX_WAIT is called with a hours long timeout, and the timeout
+fires much later than it actually should.  This happened because of an
+issue with RHEL5 commit 6ea73e0703c5508f255c28e7429a191faa720830.
+
+The issue is that it is possible for a long timeout to "skip" timer ticks.
+When this happens poll timeouts (like FUTEX_WAIT) being delayed.
+
+This patch was developed by clalance & Alok Kataria @ VMWare, and tested by
+VMWare.  It resolves their issues.
+
+I also did a close review of the overflow handling, and updated the patch to
+the most recent RHEL5 build.  This patch has been signed-off by Alok @ VMWare.
+
+Successfully brew built for 32 and 64 bit x86 by me.
+
+https://brewweb.devel.redhat.com/taskinfo?taskID=2734116
+https://brewweb.devel.redhat.com/taskinfo?taskID=2734118
+
+Resolves BZ 538022.
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/arch/i386/kernel/cpu/hypervisor.c b/arch/i386/kernel/cpu/hypervisor.c
+index 9700158..227ec9d 100644
+--- a/arch/i386/kernel/cpu/hypervisor.c
++++ b/arch/i386/kernel/cpu/hypervisor.c
+@@ -50,7 +50,7 @@ unsigned long get_hypervisor_tsc_freq(void)
+ 	return 0;
+ }
+ 
+-unsigned long get_hypervisor_cycles_per_tick(void)
++cycles_t get_hypervisor_cycles_per_tick(void)
+ {
+ 	return (cpu_khz * 1000) / REAL_HZ;
+ }
+@@ -64,6 +64,32 @@ hypervisor_set_feature_bits(struct cpuinfo_x86 *c)
+ 	}
+ }
+ 
++extern cycles_t cycles_per_tick, cycles_accounted_limit, last_tsc_accounted;
++extern int timekeeping_use_tsc;
++
++void init_tsc_timer(void)
++{
++	if (timekeeping_use_tsc) {
++#ifdef CONFIG_X86
++		extern int enable_tsc_timer;
++		enable_tsc_timer = 1;
++		rdtscll(last_tsc_accounted);
++#else
++		tick_nsec = NSEC_PER_SEC / HZ;
++#endif
++		if (use_kvm_time) /* KVM time is already in nanoseconds units */
++			cycles_per_tick = 1000000000 / REAL_HZ;
++		else
++			cycles_per_tick = get_hypervisor_cycles_per_tick();
++		/*
++		 * The maximum cycles we will account per
++		 * timer interrupt is 1 minute.
++		 */
++		cycles_accounted_limit = cycles_per_tick * REAL_HZ * 60;
++		printk(KERN_INFO "Using TSC for driving interrupts\n");
++	}
++}
++
+ void __cpuinit init_hypervisor(struct cpuinfo_x86 *c)
+ {
+ 	detect_hypervisor_vendor(c);
+diff --git a/arch/i386/kernel/cpu/vmware.c b/arch/i386/kernel/cpu/vmware.c
+index 6a039f2..6fd9331 100644
+--- a/arch/i386/kernel/cpu/vmware.c
++++ b/arch/i386/kernel/cpu/vmware.c
+@@ -23,10 +23,13 @@
+ 
+ #include <linux/dmi.h>
+ #include <linux/init.h>
++#include <linux/jiffies.h>
+ #include <asm/div64.h>
+ #include <asm/vmware.h>
++#include <asm/timer.h>
+ 
+ extern int __initdata nosoftlockup;
++extern unsigned long preset_lpj;
+ 
+ #define CPUID_VMWARE_INFO_LEAF	0x40000000
+ #define VMWARE_HYPERVISOR_MAGIC	0x564D5868
+@@ -98,9 +101,12 @@ int vmware_platform(void)
+ 	return 0;
+ }
+ 
++extern int timekeeping_use_tsc;
++
+ unsigned long vmware_get_tsc_khz(void)
+ {
+ 	unsigned long vm_tsc_khz;
++	uint64_t lpj;
+ 
+ 	BUG_ON(!vmware_platform());
+ 
+@@ -112,9 +118,6 @@ unsigned long vmware_get_tsc_khz(void)
+ 	 */
+ 	vm_tsc_khz = __vmware_get_tsc_khz();
+ 
+-#ifdef CONFIG_X86_64
+-	{
+-	extern int timekeeping_use_tsc;
+ 
+ 	if (vm_tsc_khz && timekeeping_use_tsc >= 0) {
+ 		if (vmware_enable_lazy_timer_emulation()) {
+@@ -134,16 +137,12 @@ unsigned long vmware_get_tsc_khz(void)
+ 			timekeeping_use_tsc = 0;
+ 		}
+ 	}
++
++	if (!preset_lpj) {
++		lpj = ((u64)vm_tsc_khz * 1000);
++		do_div(lpj, HZ);
++		preset_lpj = lpj;
+ 	}
+-#else
+-	if (vm_tsc_khz) {
+-		if (!vmware_enable_lazy_timer_emulation())
+-			printk(KERN_WARNING
+-			       "time.c: failed to enable lazy timer "
+-			       "emulation. Disabling tsc based "
+-			       "timekeeping\n");
+-	}
+-#endif
+ 
+ 	return vm_tsc_khz;
+ }
+diff --git a/arch/i386/kernel/time.c b/arch/i386/kernel/time.c
+index 444a42f..be5461c 100644
+--- a/arch/i386/kernel/time.c
++++ b/arch/i386/kernel/time.c
+@@ -145,6 +145,43 @@ unsigned long profile_pc(struct pt_regs *regs)
+ EXPORT_SYMBOL(profile_pc);
+ #endif
+ 
++int enable_tsc_timer, timekeeping_use_tsc;
++cycles_t cycles_per_tick, cycles_accounted_limit, last_tsc_accounted;
++
++void do_timer_tsc_timekeeping(struct pt_regs *regs)
++{
++	cycles_t tsc, tsc_not_accounted, tsc_accounted, tsc_wd;
++
++	rdtscll(tsc);
++	tsc_accounted = last_tsc_accounted;
++
++	if (unlikely(tsc < tsc_accounted))
++		return;
++
++	tsc_not_accounted = tsc - tsc_accounted;
++
++	if (tsc_not_accounted > cycles_accounted_limit) {
++		/* Be extra safe and limit the loop below. */
++		tsc_accounted = tsc_not_accounted - cycles_accounted_limit;
++		tsc_not_accounted = cycles_accounted_limit;
++	}
++
++	tsc_wd = 0;
++	while (tsc_not_accounted >= cycles_per_tick) {
++		do_timer_jiffy(regs);
++		if (tsc_wd > cycles_per_tick) {
++			touch_all_softlockup_watchdogs();
++			tsc_wd = 0;
++		}
++		tsc_not_accounted -= cycles_per_tick;
++		tsc_accounted += cycles_per_tick;
++		tsc_wd += cycles_per_tick;
++	}
++
++	last_tsc_accounted = tsc_accounted;
++
++}
++
+ /*
+  * This is the same as the above, except we _also_ save the current
+  * Time Stamp Counter value at the time of the timer interrupt, so that
+@@ -309,6 +346,7 @@ static int timer_resume(struct sys_device *dev)
+ 	wall_jiffies += sleep_length;
+ 	write_sequnlock_irqrestore(&xtime_lock, flags);
+ 	touch_softlockup_watchdog();
++	rdtscll(last_tsc_accounted);
+ 	return 0;
+ }
+ 
+diff --git a/arch/i386/kernel/tsc.c b/arch/i386/kernel/tsc.c
+index b36d838..22bb1d5 100644
+--- a/arch/i386/kernel/tsc.c
++++ b/arch/i386/kernel/tsc.c
+@@ -823,6 +823,9 @@ static int __init init_tsc_clocksource(void)
+ 			clocksource_tsc.rating = 50;
+ 
+ 		init_timer(&verify_tsc_freq_timer);
++#ifndef CONFIG_XEN
++		init_tsc_timer();
++#endif
+ 		verify_tsc_freq_timer.function = verify_tsc_freq;
+ 		verify_tsc_freq_timer.expires =
+ 			jiffies + msecs_to_jiffies(TSC_FREQ_CHECK_INTERVAL);
+diff --git a/arch/x86_64/kernel/time.c b/arch/x86_64/kernel/time.c
+index 20ee974..830c7d6 100644
+--- a/arch/x86_64/kernel/time.c
++++ b/arch/x86_64/kernel/time.c
+@@ -107,8 +107,6 @@ int timekeeping_use_tsc;
+ /* 0=>disabled, 1=>enabled (default) */
+ static unsigned int pmtimer_fine_grained = 1;
+ 
+-static cycles_t cycles_per_tick, cycles_accounted_limit;
+-
+ /*
+  * do_gettimeoffset() returns nanoseconds since last timer interrupt was
+  * triggered by hardware. A memory read of HPET is slower than a register read
+@@ -518,6 +516,9 @@ static void do_timer_account_lost_ticks(struct pt_regs *regs)
+ /*
+  * Measure time based on the TSC, rather than counting interrupts.
+  */
++
++int enable_tsc_timer = 0;
++cycles_t cycles_per_tick = 0, cycles_accounted_limit = 0, last_tsc_accounted;
+ static void do_timer_tsc_timekeeping(struct pt_regs *regs)
+ {
+ 	int i;
+@@ -1495,20 +1496,7 @@ void __init time_init(void)
+ 	lpj_fine = ((unsigned long)tsc_khz * 1000)/HZ;
+ 
+ 	/* Keep time based on the TSC rather than by counting interrupts. */
+-	if (timekeeping_use_tsc > 0) {
+-		if (use_kvm_time) /* KVM time is already in nanoseconds units */
+-			cycles_per_tick = 1000000000 / REAL_HZ;
+-		else
+-			cycles_per_tick = get_hypervisor_cycles_per_tick();
+-		/*
+-		 * The maximum cycles we will account per
+-		 * timer interrupt is 10 seconds.
+-		 */
+-		cycles_accounted_limit = cycles_per_tick * REAL_HZ * 10;
+-		tick_nsec = NSEC_PER_SEC / HZ;
+-		printk(KERN_INFO
+-			"time.c: Using tsc for timekeeping HZ %d\n", HZ);
+-	}
++	init_tsc_timer();
+ 
+ 	vxtime.mode = VXTIME_TSC;
+ 	vxtime.quot = (NSEC_PER_SEC << NS_SCALE) / vxtime_hz;
+diff --git a/include/asm-i386/generic-hypervisor.h b/include/asm-i386/generic-hypervisor.h
+index 369f5c5..8b166a1 100644
+--- a/include/asm-i386/generic-hypervisor.h
++++ b/include/asm-i386/generic-hypervisor.h
+@@ -22,5 +22,6 @@
+ 
+ extern unsigned long get_hypervisor_tsc_freq(void);
+ extern void init_hypervisor(struct cpuinfo_x86 *c);
++extern void init_tsc_timer(void);
+ 
+ #endif
+diff --git a/include/asm-i386/mach-default/do_timer.h b/include/asm-i386/mach-default/do_timer.h
+index e73f1e4..39d4a4d 100644
+--- a/include/asm-i386/mach-default/do_timer.h
++++ b/include/asm-i386/mach-default/do_timer.h
+@@ -2,19 +2,9 @@
+ 
+ #include <asm/apic.h>
+ #include <asm/i8259.h>
++#include <asm/timer.h>
+ 
+-/**
+- * do_timer_interrupt_hook - hook into timer tick
+- * @regs:	standard registers from interrupt
+- *
+- * Description:
+- *	This hook is called immediately after the timer interrupt is ack'd.
+- *	It's primary purpose is to allow architectures that don't possess
+- *	individual per CPU clocks (like the CPU APICs supply) to broadcast the
+- *	timer interrupt as a means of triggering reschedules etc.
+- **/
+-
+-static inline void do_timer_interrupt_hook(struct pt_regs *regs)
++static void do_timer_jiffy(struct pt_regs *regs)
+ {
+ 	int i;
+ 	for (i = 0; i < tick_divider; i++) {
+@@ -35,6 +25,26 @@ static inline void do_timer_interrupt_hook(struct pt_regs *regs)
+ 	if (!using_apic_timer)
+ 		smp_local_timer_interrupt(regs);
+ #endif
++
++}
++
++/**
++ * do_timer_interrupt_hook - hook into timer tick
++ * @regs:	standard registers from interrupt
++ *
++ * Description:
++ *	This hook is called immediately after the timer interrupt is ack'd.
++ *	It's primary purpose is to allow architectures that don't possess
++ *	individual per CPU clocks (like the CPU APICs supply) to broadcast the
++ *	timer interrupt as a means of triggering reschedules etc.
++ **/
++
++static inline void do_timer_interrupt_hook(struct pt_regs *regs)
++{
++	if (enable_tsc_timer)
++		do_timer_tsc_timekeeping(regs);
++	else
++		do_timer_jiffy(regs);
+ }
+ 
+ 
+diff --git a/include/asm-i386/timer.h b/include/asm-i386/timer.h
+index d0ebd05..12262b2 100644
+--- a/include/asm-i386/timer.h
++++ b/include/asm-i386/timer.h
+@@ -2,6 +2,7 @@
+ #define _ASMi386_TIMER_H
+ #include <linux/init.h>
+ #include <linux/pm.h>
++#include <asm/tsc.h>
+ 
+ #define TICK_SIZE (tick_nsec / 1000)
+ void setup_pit_timer(void);
+@@ -10,4 +11,8 @@ extern int pit_latch_buggy;
+ extern int timer_ack;
+ extern int recalibrate_cpu_khz(void);
+ 
++extern void do_timer_tsc_timekeeping(struct pt_regs *regs);
++extern int enable_tsc_timer;
++extern cycles_t cycles_per_tick, cycles_accounted_limit, last_tsc_accounted;
++
+ #endif
+diff --git a/include/asm-i386/vmware.h b/include/asm-i386/vmware.h
+index c11b7e1..851a45f 100644
+--- a/include/asm-i386/vmware.h
++++ b/include/asm-i386/vmware.h
+@@ -23,5 +23,6 @@
+ extern unsigned long vmware_get_tsc_khz(void);
+ extern int vmware_platform(void);
+ extern void vmware_set_feature_bits(struct cpuinfo_x86 *c);
++extern void vmware_init_tsc_timer(void);
+ 
+ #endif
+diff --git a/include/asm-x86_64/generic-hypervisor.h b/include/asm-x86_64/generic-hypervisor.h
+index dcdfb4a..3d80ec7 100644
+--- a/include/asm-x86_64/generic-hypervisor.h
++++ b/include/asm-x86_64/generic-hypervisor.h
+@@ -21,7 +21,8 @@
+ #define ASM_X86__HYPERVISOR_H
+ 
+ extern unsigned long get_hypervisor_tsc_freq(void);
+-extern unsigned long get_hypervisor_cycles_per_tick(void);
++extern cycles_t get_hypervisor_cycles_per_tick(void);
+ extern void init_hypervisor(struct cpuinfo_x86 *c);
++extern void init_tsc_timer(void);
+ 
+ #endif
+diff --git a/include/asm-x86_64/timer.h b/include/asm-x86_64/timer.h
+new file mode 100644
+index 0000000..454ebdb
+--- /dev/null
++++ b/include/asm-x86_64/timer.h
+@@ -0,0 +1,7 @@
++#ifndef _ASM_X86_64_TIMER_H
++#define _ASM_X86_64_TIMER_H
++extern int timekeeping_use_tsc;
++
++extern int enable_tsc_timer;
++extern cycles_t cycles_per_tick, cycles_accounted_limit, last_tsc_accounted;
++#endif

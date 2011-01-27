@@ -1,0 +1,53 @@
+From: Tomas Henzl <thenzl@redhat.com>
+Date: Mon, 26 Apr 2010 12:19:34 -0400
+Subject: [cciss] remove extraneous printk
+Message-id: <4BD584D6.6020701@redhat.com>
+Patchwork-id: 24614
+O-Subject: [RHEL5.6 PATCH] cciss: remove extraneous printk
+Bugzilla: 582465
+RH-Acked-by: David Milburn <dmilburn@redhat.com>
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+RH-Acked-by: Bryn M. Reeves <bmr@redhat.com>
+
+This is for bz#582465
+
+Since upgrade to RHEL5.5 extraneous cciss messages are printed in the logs.
+The messages are triggered by ioctl() from HP hardware monitoring tool
+hpacucli. These messages confuse customer's  logs monitoring tool which falsely
+reports hardware problems. They cannot change how the log monitoring tools
+behave.
+cciss_geometry_inquiry() is not entered in 2.6.18-128 if the disk
+is in use, this has been changed in 2.6.18-164. This explains why the message
+is printed with the new kernel but not with the old one.
+
+Upstream - http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=983333cb0c445c56808502461bbb34876c63eb2b
+
+Brew - https://brewweb.devel.redhat.com/taskinfo?taskID=2401270
+
+Tomas
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/block/cciss.c b/drivers/block/cciss.c
+index 2543472..87f5df8 100644
+--- a/drivers/block/cciss.c
++++ b/drivers/block/cciss.c
+@@ -2491,8 +2491,6 @@ static void cciss_geometry_inquiry(int ctlr, int logvol,
+ 	} else {		/* Get geometry failed */
+ 		printk(KERN_WARNING "cciss: reading geometry failed\n");
+ 	}
+-	printk(KERN_INFO "      heads= %d, sectors= %d, cylinders= %d\n\n",
+-	       drv->heads, drv->sectors, drv->cylinders);
+ }
+ 
+ static void
+@@ -2524,9 +2522,6 @@ cciss_read_capacity(int ctlr, int logvol, int withirq, sector_t *total_size,
+ 		*total_size = 0;
+ 		*block_size = BLOCK_SIZE;
+ 	}
+-	if (*total_size != 0)
+-		printk(KERN_INFO "      blocks= %lld block_size= %d\n",
+-		       (unsigned long long)*total_size+1, *block_size);
+ 	kfree(buf);
+ 	return;
+ }

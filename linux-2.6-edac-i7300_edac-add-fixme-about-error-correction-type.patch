@@ -1,0 +1,33 @@
+From: Mauro Carvalho Chehab <mchehab@redhat.com>
+Date: Tue, 28 Sep 2010 14:34:00 -0400
+Subject: [edac] i7300_edac: Add FIXME about error correction type
+Message-id: <20100928113400.7c2f1aa1@pedra>
+Patchwork-id: 28463
+O-Subject: [PATCH RHEL5 04/27] i7300_edac: Add a FIXME note about the error
+	correction type
+Bugzilla: 487428
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+Signed-off-by: Mauro Carvalho Chehab <mchehab@redhat.com>
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/edac/i7300_edac.c b/drivers/edac/i7300_edac.c
+index 7e035b6..36265e2 100644
+--- a/drivers/edac/i7300_edac.c
++++ b/drivers/edac/i7300_edac.c
+@@ -841,6 +841,15 @@ static int decode_mtr(struct i7300_pvt *pvt,
+ 	p_csrow->grain = 8;
+ 	p_csrow->nr_pages = dinfo->megabytes << 8;
+ 	p_csrow->mtype = MEM_FB_DDR2;
++
++	/*
++	 * FIXME: the type of error detection actually depends of the
++	 * mode of operation. When it is just one single memory chip, at
++	 * socket 0, channel 0, it uses  8-byte-over-32-byte SECDED+ code.
++	 * In normal or mirrored mode, it uses Single Device Data correction,
++	 * with the possibility of using an extended algorithm for x8 memories
++	 * See datasheet Sections 7.3.6 to 7.3.8
++	 */
+ 	p_csrow->edac_mode = EDAC_S8ECD8ED;
+ 
+ 	/* ask what device type on this row */

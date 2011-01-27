@@ -1,0 +1,51 @@
+From: Oleg Nesterov <oleg@redhat.com>
+Date: Sun, 30 May 2010 16:21:50 -0400
+Subject: [misc] workqueue: implement cancel_work_sync
+Message-id: <20100530162150.GH9577@redhat.com>
+Patchwork-id: 25910
+O-Subject: [RHEL5 PATCH 7/7] bz#596626:  workqueues: implement cancel_work_sync()
+Bugzilla: 596626
+RH-Acked-by: Stanislaw Gruszka <sgruszka@redhat.com>
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+Finally we can implement cancel_work_sync().
+
+Note that, unlike in upstream, we do not need a separate logic for
+cancel_delayed_work_sync(). Every work (delayed or not) has work->timer,
+and INIT_WORK/DECLARE_WORK initializes this timer correctly. This means
+that cancel_delayed_work_sync() will be a trivial wrapper on top of
+cancel_work_sync().
+
+Note: the patch do not change include/linux/workqueue.h to avoid the
+conflicts with Prarit's compat work, we we all the necessary declarations
+later.
+
+Signed-off-by: Oleg Nesterov <oleg@redhat.com>
+
+diff --git a/kernel/workqueue.c b/kernel/workqueue.c
+index 6d91710..fb1fc3f 100644
+--- a/kernel/workqueue.c
++++ b/kernel/workqueue.c
+@@ -461,6 +461,22 @@ static void wait_on_work(struct work_struct *work)
+ 	}
+ }
+ 
++int cancel_work_sync(struct work_struct *work)
++{
++	int ret;
++
++	do {
++		ret = del_timer(&work->timer);
++		if (!ret)
++			ret = try_to_grab_pending(work);
++		wait_on_work(work);
++	} while (unlikely(ret < 0));
++
++	work->pending = 0; /* clears both "pending" and "valid" bits */
++	return ret;
++}
++EXPORT_SYMBOL(cancel_work_sync);
++
+ static inline void cwq_basic_init(struct workqueue_struct *wq, int cpu)
+ {
+ 	struct cpu_workqueue_struct *cwq = per_cpu_ptr(wq->cpu_wq, cpu);

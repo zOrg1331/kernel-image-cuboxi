@@ -1,0 +1,56 @@
+From: Don Dugger <ddugger@redhat.com>
+Date: Thu, 2 Sep 2010 20:43:38 -0400
+Subject: [xen] oprofile: force use of architectural perfmon
+Message-id: <201009022043.o82KhcBU005696@sobek.n0ano.com>
+Patchwork-id: 28032
+O-Subject: [RHEL 5.6 PATCH 3/3] BZ 538564: xenoprof: force use of architectural
+	perfmon
+Bugzilla: 538564
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+
+Force use of architectural perfmon instead of the CPU
+specific event set, which may be not supported by oprofile user space
+tool yet.
+
+Signed-off-by: Yang Zhang <yang.zhang@intel.com>
+Signed-off-by: Yang Xiaowei <xiaowei.yang@intel.com>
+
+Upstream status: CS 58ef1439ca98
+
+Signed-off-by: Don Dugger <donald.d.dugger@intel.com>
+---
+ arch/x86/oprofile/nmi_int.c |   15 +++++++++++++++
+ 1 files changed, 15 insertions(+), 0 deletions(-)
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/arch/x86/oprofile/nmi_int.c b/arch/x86/oprofile/nmi_int.c
+index 5002098..6a3d52a 100644
+--- a/arch/x86/oprofile/nmi_int.c
++++ b/arch/x86/oprofile/nmi_int.c
+@@ -291,10 +291,25 @@ static int __init p4_init(char ** cpu_type)
+ }
+ 
+ 
++static int force_arch_perfmon;
++static int force_cpu_type(const char *str)
++{
++	if (!strcmp(str, "arch_perfmon")) {
++		force_arch_perfmon = 1;
++		printk(KERN_INFO "oprofile: forcing architectural perfmon\n");
++	}
++
++	return 0;
++}
++custom_param("cpu_type", force_cpu_type);
++
+ static int __init ppro_init(char ** cpu_type)
+ {
+ 	__u8 cpu_model = current_cpu_data.x86_model;
+ 
++	if (force_arch_perfmon && cpu_has_arch_perfmon)
++		return 0;
++
+ 	switch (cpu_model) {
+ 	case 0 ... 2:
+ 		*cpu_type = "i386/ppro";

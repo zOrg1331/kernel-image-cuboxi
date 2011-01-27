@@ -1,0 +1,84 @@
+From: Mike Christie <mchristi@redhat.com>
+Date: Fri, 13 Aug 2010 09:46:32 -0400
+Subject: [scsi] bnx2i: fine tune misc destroy timeout values
+Message-id: <1281692802-2810-5-git-send-email-mchristi@redhat.com>
+Patchwork-id: 27541
+O-Subject: [RHEL5.6 PATCH 04/14] BNX2I: Fine tuned conn destroy and context
+	destroy timeout values
+Bugzilla: 568606
+
+From: Eddie Wai <eddie.wai@broadcom.com>
+
+For bz 568606.
+
+Added variables to separate the fine tuned timeout values for
+connection destroy and context destroy for both 1g and 10g devices.
+
+Extended the 5771X disconnect timeout from 10s to 20s as the firmware
+has a retransmission timeout of 16s.  This fixes one of the iscsi_endpoint
+leak issues when the target is slow or non-responsive to our TCP FIN.
+
+http://git.kernel.org/?p=linux/kernel/git/jejb/scsi-misc-2.6.git;a=commit;h=e37d2c4791480e27c2e2e4a556e4d2ba1d353ff8
+
+diff --git a/drivers/scsi/bnx2i/bnx2i.h b/drivers/scsi/bnx2i/bnx2i.h
+index e5eccf4..65425b3 100644
+--- a/drivers/scsi/bnx2i/bnx2i.h
++++ b/drivers/scsi/bnx2i/bnx2i.h
+@@ -310,6 +310,8 @@ struct iscsi_cid_queue {
+  * @dummy_buf_dma:         DMA address of 'dummy_buffer' memory buffer
+  * @lock:              	   lock to synchonize access to hba structure
+  * @hba_shutdown_tmo:      Timeout value to shutdown each connection
++ * @conn_teardown_tmo:     Timeout value to tear down each connection
++ * @conn_ctx_destroy_tmo:  Timeout value to destroy context of each connection
+  * @pci_did:               PCI device ID
+  * @pci_vid:               PCI vendor ID
+  * @pci_sdid:              PCI subsystem device ID
+@@ -389,6 +391,8 @@ struct bnx2i_hba {
+ 	struct mutex net_dev_lock;/* sync net device access */
+ 
+ 	int hba_shutdown_tmo;
++	int conn_teardown_tmo;
++	int conn_ctx_destroy_tmo;
+ 	/*
+ 	 * PCI related info.
+ 	 */
+diff --git a/drivers/scsi/bnx2i/bnx2i_iscsi.c b/drivers/scsi/bnx2i/bnx2i_iscsi.c
+index ed25a61..20a4004 100644
+--- a/drivers/scsi/bnx2i/bnx2i_iscsi.c
++++ b/drivers/scsi/bnx2i/bnx2i_iscsi.c
+@@ -853,10 +853,15 @@ struct bnx2i_hba *bnx2i_alloc_hba(struct cnic_dev *cnic)
+ 	spin_lock_init(&hba->lock);
+ 	mutex_init(&hba->net_dev_lock);
+ 	init_waitqueue_head(&hba->eh_wait);
+-	if (test_bit(BNX2I_NX2_DEV_57710, &hba->cnic_dev_type))
++	if (test_bit(BNX2I_NX2_DEV_57710, &hba->cnic_dev_type)) {
+ 		hba->hba_shutdown_tmo = 20 * HZ;
+-	else	/* 5706/5708/5709 */
++		hba->conn_teardown_tmo = 20 * HZ;
++		hba->conn_ctx_destroy_tmo = 6 * HZ;
++	} else {	/* 5706/5708/5709 */
+ 		hba->hba_shutdown_tmo = 20 * HZ;
++		hba->conn_teardown_tmo = 10 * HZ;
++		hba->conn_ctx_destroy_tmo = 2 * HZ;
++	}
+ 
+ 	if (iscsi2_host_add(shost, &hba->pcidev->dev))
+ 		goto free_dump_mem;
+@@ -1647,7 +1652,7 @@ static int bnx2i_tear_down_conn(struct bnx2i_hba *hba,
+ 
+ 	ep->state = EP_STATE_CLEANUP_START;
+ 	init_timer(&ep->ofld_timer);
+-	ep->ofld_timer.expires = 10*HZ + jiffies;
++	ep->ofld_timer.expires = hba->conn_ctx_destroy_tmo + jiffies;
+ 	ep->ofld_timer.function = bnx2i_ep_ofld_timer;
+ 	ep->ofld_timer.data = (unsigned long) ep;
+ 	add_timer(&ep->ofld_timer);
+@@ -1951,7 +1956,7 @@ int bnx2i_hw_ep_disconnect(struct bnx2i_endpoint *bnx2i_ep)
+ 	bnx2i_ep->state = EP_STATE_DISCONN_START;
+ 
+ 	init_timer(&bnx2i_ep->ofld_timer);
+-	bnx2i_ep->ofld_timer.expires = 10*HZ + jiffies;
++	bnx2i_ep->ofld_timer.expires = hba->conn_teardown_tmo + jiffies;
+ 	bnx2i_ep->ofld_timer.function = bnx2i_ep_ofld_timer;
+ 	bnx2i_ep->ofld_timer.data = (unsigned long) bnx2i_ep;
+ 	add_timer(&bnx2i_ep->ofld_timer);

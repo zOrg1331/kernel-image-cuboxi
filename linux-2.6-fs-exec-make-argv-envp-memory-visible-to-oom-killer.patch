@@ -1,0 +1,133 @@
+From: Oleg Nesterov <oleg@redhat.com>
+Date: Wed, 1 Dec 2010 16:38:08 -0500
+Subject: [fs] exec: make argv/envp memory visible to oom-killer
+Message-id: <20101201163808.GC1758@redhat.com>
+Patchwork-id: 29770
+O-Subject: [RHEL5.6 PATCH 2/3] bz625694: exec: make argv/envp memory visible
+	to oom-killer
+Bugzilla: 625694
+CVE: CVE-2010-4243
+
+https://bugzilla.redhat.com/show_bug.cgi?id=625694
+
+Upstream commit 3c77f845722158206a7209c45ccddc264d19319c
+Author: Oleg Nesterov <oleg@redhat.com>
+Date:   Tue Nov 30 20:55:34 2010 +0100
+
+    exec: make argv/envp memory visible to oom-killer
+
+    Brad Spengler published a local memory-allocation DoS that
+    evades the OOM-killer (though not the virtual memory RLIMIT):
+    http://www.grsecurity.net/~spender/64bit_dos.c
+
+    execve()->copy_strings() can allocate a lot of memory, but
+    this is not visible to oom-killer, nobody can see the nascent
+    bprm->mm and take it into account.
+
+    With this patch get_arg_page() increments current's MM_ANONPAGES
+    counter every time we allocate the new page for argv/envp. When
+    do_execve() succeds or fails, we change this counter back.
+
+    Technically this is not 100% correct, we can't know if the new
+    page is swapped out and turn MM_ANONPAGES into MM_SWAPENTS, but
+    I don't think this really matters and everything becomes correct
+    once exec changes ->mm or fails.
+
+    Reported-by: Brad Spengler <spender@grsecurity.net>
+    Reviewed-and-discussed-by: KOSAKI Motohiro <kosaki.motohiro@jp.fujitsu.com>
+    Signed-off-by: Oleg Nesterov <oleg@redhat.com>
+    Cc: stable@kernel.org
+    Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+
+Compared to upstream:
+
+	RHEL5 doesn't have MM_ANONPAGES, and mm->anon_rss field can't
+	help. Oom-killer's badness() takes mm->total_vm into account
+	and nothing else. So acct_arg_size() has to play with this
+	counter too.
+
+	Note: we take mmap_sem to update ->total_vm, but the usage
+	of this counter is racy in rhel kernels. For example, do_brk()
+	changes it lockless.
+
+Signed-off-by: Oleg Nesterov <oleg@redhat.com>
+
+diff --git a/fs/exec.c b/fs/exec.c
+index 3fe0248..d6f4971 100644
+--- a/fs/exec.c
++++ b/fs/exec.c
+@@ -179,6 +179,21 @@ exit:
+ 
+ #ifdef CONFIG_MMU
+ 
++static void acct_arg_size(struct linux_binprm *bprm, unsigned long pages)
++{
++	struct mm_struct *mm = current->mm;
++	long diff = (long)(pages - bprm->vma_pages);
++
++	if (!mm || !diff)
++		return;
++
++	bprm->vma_pages = pages;
++
++	down_write(&mm->mmap_sem);
++	mm->total_vm += diff;
++	up_write(&mm->mmap_sem);
++}
++
+ struct page *get_arg_page(struct linux_binprm *bprm, unsigned long pos,
+ 		int write)
+ {
+@@ -201,6 +216,8 @@ struct page *get_arg_page(struct linux_binprm *bprm, unsigned long pos,
+ 		struct rlimit *rlim = current->signal->rlim;
+ 		unsigned long size = bprm->vma->vm_end - bprm->vma->vm_start;
+ 
++		acct_arg_size(bprm, size / PAGE_SIZE);
++
+ 		/*
+ 		 * Limit to 1/4-th the stack size for the argv+env strings.
+ 		 * This ensures that:
+@@ -289,6 +306,10 @@ static bool valid_arg_len(struct linux_binprm *bprm, long len)
+ 
+ #else
+ 
++static inline void acct_arg_size(struct linux_binprm *bprm, unsigned long pages)
++{
++}
++
+ struct page *get_arg_page(struct linux_binprm *bprm, unsigned long pos,
+ 		int write)
+ {
+@@ -1057,6 +1078,7 @@ int flush_old_exec(struct linux_binprm * bprm)
+ 	/*
+ 	 * Release all of the old mmap stuff
+ 	 */
++	acct_arg_size(bprm, 0);
+ 	retval = exec_mmap(bprm->mm);
+ 	if (retval)
+ 		goto mmap_failed;
+@@ -1435,8 +1457,10 @@ out:
+ 		security_bprm_free(bprm);
+ 
+ out_mm:
+-	if (bprm->mm)
+-		mmput (bprm->mm);
++	if (bprm->mm) {
++		acct_arg_size(bprm, 0);
++		mmput(bprm->mm);
++	}
+ 
+ out_file:
+ 	if (bprm->file) {
+diff --git a/include/linux/binfmts.h b/include/linux/binfmts.h
+index 523963c..b05117c 100644
+--- a/include/linux/binfmts.h
++++ b/include/linux/binfmts.h
+@@ -43,6 +43,7 @@ struct linux_binprm{
+ 	unsigned long loader, exec;
+ #ifndef __GENKSYMS__
+ #ifdef CONFIG_MMU
++	unsigned long vma_pages;
+ 	struct vm_area_struct *vma;
+ #endif
+ #endif

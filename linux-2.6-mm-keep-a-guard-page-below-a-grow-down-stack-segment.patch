@@ -6,6 +6,7 @@ Patchwork-id: 27711
 O-Subject: [PATCH RHEL5.6 1/5] mm: keep a guard page below a grow-down stack
 	segment
 Bugzilla: 607858
+CVE: CVE-2010-2240
 RH-Acked-by: Rik van Riel <riel@redhat.com>
 RH-Acked-by: Jarod Wilson <jarod@redhat.com>
 

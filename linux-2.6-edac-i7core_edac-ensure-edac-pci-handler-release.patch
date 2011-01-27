@@ -1,0 +1,51 @@
+From: Mauro Carvalho Chehab <mchehab@redhat.com>
+Date: Tue, 23 Nov 2010 17:34:06 -0500
+Subject: [edac] i7core_edac: ensure edac pci handler release
+Message-id: <20101123153406.55a1a03b@pedra>
+Patchwork-id: 29583
+O-Subject: [PATCH RHEL5 14/29] BZ#:651869 i7core_edac: Be sure that the edac
+	pci handler will be properly released
+Bugzilla: 651869
+RH-Acked-by: Aristeu Rozanski <aris@redhat.com>
+
+Changeset: 939747bd680eb09bb98792b17a5bfd2f525afe9d
+
+With multi-sockets, more than one edac pci handler is enabled. Be sure to
+un-register all instances.
+
+Signed-off-by: Mauro Carvalho Chehab <mchehab@redhat.com>
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/edac/edac_mc.c b/drivers/edac/edac_mc.c
+index 8f2efee..ecdeac0 100644
+--- a/drivers/edac/edac_mc.c
++++ b/drivers/edac/edac_mc.c
+@@ -1321,7 +1321,7 @@ void edac_mc_free(struct mem_ctl_info *mci)
+ }
+ EXPORT_SYMBOL_GPL(edac_mc_free);
+ 
+-static struct mem_ctl_info *find_mci_by_dev(struct device *dev)
++struct mem_ctl_info *find_mci_by_dev(struct device *dev)
+ {
+ 	struct mem_ctl_info *mci;
+ 	struct list_head *item;
+@@ -1337,6 +1337,7 @@ static struct mem_ctl_info *find_mci_by_dev(struct device *dev)
+ 
+ 	return NULL;
+ }
++EXPORT_SYMBOL_GPL(find_mci_by_dev);
+ 
+ /* Return 0 on success, 1 on failure.
+  * Before calling this function, caller must
+diff --git a/drivers/edac/edac_mc.h b/drivers/edac/edac_mc.h
+index 7df580c..40b945c 100644
+--- a/drivers/edac/edac_mc.h
++++ b/drivers/edac/edac_mc.h
+@@ -428,6 +428,7 @@ void edac_mc_dump_mci(struct mem_ctl_info *mci);
+ void edac_mc_dump_csrow(struct csrow_info *csrow);
+ #endif  /* CONFIG_EDAC_DEBUG */
+ 
++struct mem_ctl_info *find_mci_by_dev(struct device *dev);
+ extern struct mem_ctl_info * edac_mc_find(int idx);
+ extern int edac_mc_add_mc(struct mem_ctl_info *mci,int mc_idx);
+ extern struct mem_ctl_info * edac_mc_del_mc(struct device *dev);

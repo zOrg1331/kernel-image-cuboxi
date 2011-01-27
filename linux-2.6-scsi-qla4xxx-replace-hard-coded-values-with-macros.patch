@@ -1,0 +1,65 @@
+From: Chad Dupuis <cdupuis@redhat.com>
+Date: Tue, 30 Nov 2010 20:00:44 -0500
+Subject: [scsi] qla4xxx: replace hard coded values with macros
+Message-id: <20101130200044.10450.31610.sendpatchset@localhost.localdomain>
+Patchwork-id: 29711
+O-Subject: [RHEL 5.6 PATCH 20/28] qla4xxx: Added the macros instead of using
+	hard coded values.
+Bugzilla: 656999
+
+Bugzilla
+--------
+
+Bug 656999 (https://bugzilla.redhat.com/show_bug.cgi?id=656999)
+
+Upstream Status
+---------------
+
+Upstream posting, part of http://marc.info/?l=git-commits-head&m=128096289326765&w=4.
+
+Description
+-----------
+
+>From 052fec8e91d85f13a7cb57ed34d55db706baf2e8 Mon Sep 17 00:00:00 2001
+From: Prasanna Mumbai <prasanna.mumbai@qlogic.com>
+Date: Sat, 20 Nov 2010 15:15:08 -0800
+Subject: [PATCH 21/29] Added the macros instead of using hard coded values.
+
+Signed-off-by: Prasanna Mumbai <prasanna.mumbai@qlogic.com>
+
+diff --git a/drivers/scsi/qla4xxx/ql4_fw.h b/drivers/scsi/qla4xxx/ql4_fw.h
+index 9f4cbad..c8a3fa1 100644
+--- a/drivers/scsi/qla4xxx/ql4_fw.h
++++ b/drivers/scsi/qla4xxx/ql4_fw.h
+@@ -439,6 +439,15 @@ struct qla_flt_region {
+ #define MBOX_ASTS_IPSEC_SYSTEM_FATAL_ERROR	0x8022
+ #define MBOX_ASTS_SUBNET_STATE_CHANGE		0x8027
+ 
++/* ACB State Defines */
++#define ACB_STATE_UNCONFIGURED			0x00
++#define ACB_STATE_INVALID			0x01
++#define ACB_STATE_ACQUIRING			0x02
++#define ACB_STATE_TENTATIVE			0x03
++#define ACB_STATE_DEPRICATED			0x04
++#define ACB_STATE_VALID				0x05
++#define ACB_STATE_DISABLING			0x06
++
+ /*************************************************************************/
+ 
+ /* Host Adapter Initialization Control Block (from host) */
+diff --git a/drivers/scsi/qla4xxx/ql4_isr.c b/drivers/scsi/qla4xxx/ql4_isr.c
+index 6b2111e..9e28819 100644
+--- a/drivers/scsi/qla4xxx/ql4_isr.c
++++ b/drivers/scsi/qla4xxx/ql4_isr.c
+@@ -602,7 +602,10 @@ void qla4xxx_isr_decode_mailbox(struct scsi_qla_host *ha,
+ 			printk("scsi%ld: AEN %04x, mbox_sts[2]=%04x, mbox_sts[3]=%04x\n",
+ 					ha->host_no, mbox_sts[0], mbox_sts[2], mbox_sts[3]);
+ 
+-			if ((mbox_sts[3] == 5) && (mbox_sts[2] == 3))
++			/* mbox_sts[2] = Old ACB state
++			 * mbox_sts[3] = new ACB state */
++			if ((mbox_sts[3] == ACB_STATE_VALID) &&
++			    (mbox_sts[2] == ACB_STATE_TENTATIVE))
+ 				set_bit(DPC_GET_DHCP_IP_ADDR, &ha->dpc_flags);
+ 			else if ((mbox_sts[3] == 2) && (mbox_sts[2] == 5))
+ 				set_bit(DPC_RESET_HA, &ha->dpc_flags);

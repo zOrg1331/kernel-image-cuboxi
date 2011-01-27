@@ -1,0 +1,74 @@
+From: Jeff Layton <jlayton@redhat.com>
+Date: Fri, 2 Jul 2010 14:30:49 -0400
+Subject: [fs] nfs: fix compiler warnings introduced recently
+Message-id: <1278081049-10267-2-git-send-email-jlayton@redhat.com>
+Patchwork-id: 26682
+O-Subject: [RHEL5.6 PATCH 6/4] BZ#601800: fix compiler warnings introduced in
+	earlier patches
+Bugzilla: 601800
+RH-Acked-by: Steve Dickson <SteveD@redhat.com>
+
+Upstream has moved a lot of the underlying functions used in these
+patches to take "const" args, but in RHEL5 they don't have that
+qualifier.  The earlier patches for 601800 caused gcc to throw a few of
+these sorts of warnings:
+
+fs/nfs/inode.c:857: warning: passing argument 1 of 'timespec_compare'
+                    discards qualifiers from pointer target type
+
+Fix them by removing the const tags where necessary. Also remove
+nfs_wait_bit_interruptible as it has no more callers. This patch
+make nfs.ko build warning-free on my box.
+
+Signed-off-by: Jeff Layton <jlayton@redhat.com>
+
+diff --git a/fs/nfs/inode.c b/fs/nfs/inode.c
+index 16dced3..e8ef5cf 100644
+--- a/fs/nfs/inode.c
++++ b/fs/nfs/inode.c
+@@ -852,12 +852,12 @@ static int nfs_check_inode_attributes(struct inode *inode, struct nfs_fattr *fat
+ 	return 0;
+ }
+ 
+-static int nfs_ctime_need_update(const struct inode *inode, const struct nfs_fattr *fattr)
++static int nfs_ctime_need_update(struct inode *inode, struct nfs_fattr *fattr)
+ {
+ 	return timespec_compare(&fattr->ctime, &inode->i_ctime) > 0;
+ }
+ 
+-static int nfs_size_need_update(const struct inode *inode, const struct nfs_fattr *fattr)
++static int nfs_size_need_update(struct inode *inode, const struct nfs_fattr *fattr)
+ {
+ 	return nfs_size_to_loff_t(fattr->size) > i_size_read(inode);
+ }
+@@ -882,7 +882,7 @@ static int nfs_size_need_update(const struct inode *inode, const struct nfs_fatt
+  * more recent than the ones cached in the inode.
+  *
+  */
+-static int nfs_inode_attrs_need_update(const struct inode *inode, const struct nfs_fattr *fattr)
++static int nfs_inode_attrs_need_update(struct inode *inode, struct nfs_fattr *fattr)
+ {
+ 	const struct nfs_inode *nfsi = NFS_I(inode);
+ 
+diff --git a/fs/nfs/pagelist.c b/fs/nfs/pagelist.c
+index 4c2c9eb..245d8be 100644
+--- a/fs/nfs/pagelist.c
++++ b/fs/nfs/pagelist.c
+@@ -183,17 +183,6 @@ nfs_release_request(struct nfs_page *req)
+ 	nfs_page_free(req);
+ }
+ 
+-static int nfs_wait_bit_interruptible(void *word)
+-{
+-	int ret = 0;
+-
+-	if (signal_pending(current))
+-		ret = -ERESTARTSYS;
+-	else
+-		schedule();
+-	return ret;
+-}
+-
+ static int nfs_wait_bit_uninterruptible(void *word)
+ {
+ 	io_schedule();

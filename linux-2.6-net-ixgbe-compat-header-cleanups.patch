@@ -1,0 +1,120 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Date: Mon, 10 May 2010 18:51:08 -0400
+Subject: [net] ixgbe: compat header cleanups
+Message-id: <20100510184852.2781.8491.sendpatchset@prarit.bos.redhat.com>
+Patchwork-id: 24968
+O-Subject: [RHEL5 PATCH 8/27] compat.h cleanup: ixgbe and ixgbevf driver changes
+Bugzilla: 546740
+RH-Acked-by: Andy Gospodarek <gospo@redhat.com>
+
+>From cdb6ad9ebcd39133387b957f8ec27d86d730b76e Mon Sep 17 00:00:00 2001
+From: Prarit Bhargava <prarit@redhat.com>
+Date: Mon, 10 May 2010 09:31:43 -0400
+Subject: [PATCH] ixgbe and ixgbevf driver changes
+
+Resolves 546740.
+
+diff --git a/drivers/net/ixgbe/ixgbe.h b/drivers/net/ixgbe/ixgbe.h
+index 71b703e..fbe6c49 100644
+--- a/drivers/net/ixgbe/ixgbe.h
++++ b/drivers/net/ixgbe/ixgbe.h
+@@ -36,7 +36,6 @@
+ #include "ixgbe_type.h"
+ #include "ixgbe_common.h"
+ #include "ixgbe_dcb.h"
+-#include "ixgbe_compat.h"
+ 
+ #ifdef CONFIG_IXGBE_DCA
+ #include <linux/dca.h>
+diff --git a/drivers/net/ixgbe/ixgbe_compat.h b/drivers/net/ixgbe/ixgbe_compat.h
+deleted file mode 100644
+index 61f3a26..0000000
+--- a/drivers/net/ixgbe/ixgbe_compat.h
++++ /dev/null
+@@ -1,31 +0,0 @@
+-#ifndef __IXGBE_COMPAT_H__
+-#define __IXGBE_COMPAT_H__
+-
+-#include <linux/if_vlan.h>
+-
+-#define ETH_FCS_LEN               4
+-
+-static inline struct net_device *vlan_group_get_device(struct vlan_group *vg,
+-						       int vlan_id)
+-{
+-	return vg->vlan_devices[vlan_id];
+-}
+-
+-static inline void vlan_group_set_device(struct vlan_group *vg, int vlan_id,
+-					 struct net_device *dev)
+-{
+-	vg->vlan_devices[vlan_id] = NULL;
+-}
+-
+-/*
+- * * FCoE CRC & EOF - 8 bytes.
+- **/
+-struct fcoe_crc_eof {
+-	__le32          fcoe_crc32;     /* CRC for FC packet */
+-	__u8            fcoe_eof;       /* EOF from RFC 3643 */
+-	__u8            fcoe_resvd[3];  /* reserved - send zero and ignore */
+-} __attribute__((packed));
+-
+-#define IXGBE_RTTDCS_ARBDIS     0x00000040 /* DCB arbiter disable */
+-
+-#endif 
+diff --git a/drivers/net/ixgbe/ixgbe_main.c b/drivers/net/ixgbe/ixgbe_main.c
+index 7e52edb..b8e70c6 100644
+--- a/drivers/net/ixgbe/ixgbe_main.c
++++ b/drivers/net/ixgbe/ixgbe_main.c
+@@ -41,6 +41,7 @@
+ #include <linux/ethtool.h>
+ #include <linux/if_vlan.h>
+ #include <linux/delay.h>
++#include <scsi/fc/fc_fcoe.h>
+ 
+ #include "ixgbe.h"
+ #include "ixgbe_common.h"
+diff --git a/drivers/net/ixgbe/ixgbe_type.h b/drivers/net/ixgbe/ixgbe_type.h
+index f9d80a9..870c5d2 100644
+--- a/drivers/net/ixgbe/ixgbe_type.h
++++ b/drivers/net/ixgbe/ixgbe_type.h
+@@ -30,7 +30,6 @@
+ 
+ #include <linux/types.h>
+ #include <linux/mdio.h>
+-#include "ixgbe_compat.h"
+ 
+ /* Vendor ID */
+ #define IXGBE_INTEL_VENDOR_ID   0x8086
+@@ -2600,4 +2599,7 @@ struct ixgbe_info {
+ #define IXGBE_ERR_EEPROM_VERSION                -24
+ #define IXGBE_NOT_IMPLEMENTED                   0x7FFFFFFF
+ 
++/* defined in drivers/net/ixgbe/ixgbe_dcb_82599.h upstream */
++#define IXGBE_RTTDCS_ARBDIS     0x00000040 /* DCB arbiter disable */
++
+ #endif /* _IXGBE_TYPE_H_ */
+diff --git a/drivers/net/ixgbevf/ixgbevf_main.c b/drivers/net/ixgbevf/ixgbevf_main.c
+index 3fb2c09..efb0783 100644
+--- a/drivers/net/ixgbevf/ixgbevf_main.c
++++ b/drivers/net/ixgbevf/ixgbevf_main.c
+@@ -48,18 +48,6 @@
+ 
+ #define ETH_FCS_LEN               4
+ 
+-static inline struct net_device *vlan_group_get_device(struct vlan_group *vg,
+-                                                       int vlan_id)
+-{
+-        return vg->vlan_devices[vlan_id];
+-}
+-
+-static inline void vlan_group_set_device(struct vlan_group *vg, int vlan_id,
+-                                         struct net_device *dev)
+-{
+-        vg->vlan_devices[vlan_id] = NULL;
+-}
+-
+ char ixgbevf_driver_name[] = "ixgbevf";
+ static const char ixgbevf_driver_string[] =
+ 	"Intel(R) 82599 Virtual Function";

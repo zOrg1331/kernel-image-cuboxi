@@ -1,0 +1,65 @@
+From: Mauro Carvalho Chehab <mchehab@redhat.com>
+Date: Tue, 23 Nov 2010 17:33:59 -0500
+Subject: [edac] i7core_edac: reduce args of i7core_register_mci
+Message-id: <20101123153359.61442e73@pedra>
+Patchwork-id: 29576
+O-Subject: [PATCH RHEL5 21/29] BZ#:651869 i7core_edac: Reduce args of
+	i7core_register_mci
+Bugzilla: 651869
+RH-Acked-by: Aristeu Rozanski <aris@redhat.com>
+
+Changeset: aace42831aa46f210bf3b0d8f1527092cc37eaad
+
+We can check the number of channels in i7core_register_mci.
+
+Signed-off-by: Hidetoshi Seto <seto.hidetoshi@jp.fujitsu.com>
+Signed-off-by: Mauro Carvalho Chehab <mchehab@redhat.com>
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/edac/i7core_edac.c b/drivers/edac/i7core_edac.c
+index b1403a3..7f1c302 100644
+--- a/drivers/edac/i7core_edac.c
++++ b/drivers/edac/i7core_edac.c
+@@ -1935,16 +1935,20 @@ static void i7core_unregister_mci(struct i7core_dev *i7core_dev)
+ 	i7core_dev->mci = NULL;
+ }
+ 
+-static int i7core_register_mci(struct i7core_dev *i7core_dev,
+-			       const int num_channels, const int num_csrows)
++static int i7core_register_mci(struct i7core_dev *i7core_dev)
+ {
+ 	struct mem_ctl_info *mci;
+ 	struct i7core_pvt *pvt;
+ 	int csrow = 0;
+-	int rc;
++	int rc, channels, csrows;
++
++	/* Check the number of active and not disabled channels */
++	rc = i7core_get_active_channels(i7core_dev->socket, &channels, &csrows);
++	if (unlikely(rc < 0))
++		return rc;
+ 
+ 	/* allocate a new MC control structure */
+-	mci = edac_mc_alloc(sizeof(*pvt), num_csrows, num_channels);
++	mci = edac_mc_alloc(sizeof(*pvt), csrows, channels);
+ 	if (unlikely(!mci))
+ 		return -ENOMEM;
+ 
+@@ -2066,16 +2070,7 @@ static int __devinit i7core_probe(struct pci_dev *pdev,
+ 		goto fail0;
+ 
+ 	list_for_each_entry(i7core_dev, &i7core_edac_list, list) {
+-		int channels;
+-		int csrows;
+-
+-		/* Check the number of active and not disabled channels */
+-		rc = i7core_get_active_channels(i7core_dev->socket,
+-						&channels, &csrows);
+-		if (unlikely(rc < 0))
+-			goto fail1;
+-
+-		rc = i7core_register_mci(i7core_dev, channels, csrows);
++		rc = i7core_register_mci(i7core_dev);
+ 		if (unlikely(rc < 0))
+ 			goto fail1;
+ 	}

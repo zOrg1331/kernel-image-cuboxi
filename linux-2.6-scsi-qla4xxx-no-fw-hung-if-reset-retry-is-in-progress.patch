@@ -1,0 +1,45 @@
+From: Chad Dupuis <cdupuis@redhat.com>
+Date: Tue, 30 Nov 2010 20:00:09 -0500
+Subject: [scsi] qla4xxx: no fw hung if reset retry is in progress
+Message-id: <20101130200008.10450.79018.sendpatchset@localhost.localdomain>
+Patchwork-id: 29705
+O-Subject: [RHEL 5.6 PATCH 14/28] qla4xxx: do not check for fw hung if reset
+	retry is in progress
+Bugzilla: 656999
+
+Bugzilla
+--------
+
+Bug 656999 (https://bugzilla.redhat.com/show_bug.cgi?id=656999)
+
+Upstream Status
+---------------
+
+To be sent upstream.
+
+Description
+-----------
+
+>From 7a144967b37d552db30266f5ba540fefad7be500 Mon Sep 17 00:00:00 2001
+From: Lalit Chandivade <lalit.chandivade@qlogic.com>
+Date: Sat, 20 Nov 2010 14:48:48 -0800
+Subject: [PATCH 15/29] qla4xxx: do not check for fw hung if reset retry is in progress
+
+Signed-off-by: Lalit Chandivade <lalit.chandivade@qlogic.com>
+Signed-off-by: Prasanna Mumbai <prasanna.mumbai@qlogic.com>
+
+diff --git a/drivers/scsi/qla4xxx/ql4_os.c b/drivers/scsi/qla4xxx/ql4_os.c
+index 8d59c94..7fabbb8 100644
+--- a/drivers/scsi/qla4xxx/ql4_os.c
++++ b/drivers/scsi/qla4xxx/ql4_os.c
+@@ -762,7 +762,9 @@ void qla4_8xxx_watchdog(struct scsi_qla_host *ha)
+ 
+ 	/* don't poll if reset is going on */
+ 	if (!test_bit(DPC_RESET_ACTIVE, &ha->dpc_flags)) {
+-		if (dev_state == QLA82XX_DEV_NEED_RESET) {
++		if (dev_state == QLA82XX_DEV_NEED_RESET &&
++		    !test_bit(DPC_RESET_HA, &ha->dpc_flags) &&
++		    !test_bit(DPC_RETRY_RESET_HA, &ha->dpc_flags)) {
+ 			printk("scsi%ld: %s: detect HA Reset needed!\n",
+ 				ha->host_no, __func__);
+ 			set_bit(DPC_RESET_HA, &ha->dpc_flags);

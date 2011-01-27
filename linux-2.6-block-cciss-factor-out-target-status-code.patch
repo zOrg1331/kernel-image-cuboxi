@@ -1,0 +1,100 @@
+From: Tomas Henzl <thenzl@redhat.com>
+Date: Sun, 29 Aug 2010 15:49:07 -0400
+Subject: [block] cciss: factor out target status code
+Message-id: <1283097002-3341-9-git-send-email-thenzl@redhat.com>
+Patchwork-id: 27857
+O-Subject: [RHEL6 PATCH 08/63] cciss: factor out code for dealing with target
+	status
+Bugzilla: 568830
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+
+factor out code for dealing with target status
+
+diff --git a/drivers/block/cciss.c b/drivers/block/cciss.c
+index 3850e0a..4261f1a 100644
+--- a/drivers/block/cciss.c
++++ b/drivers/block/cciss.c
+@@ -2324,14 +2324,37 @@ static int fill_cmd(CommandList_struct *c, __u8 cmd, int ctlr, void *buff,
+ 	return status;
+ }
+ 
++static int check_target_status(ctlr_info_t *h, CommandList_struct *c)
++{
++	switch (c->err_info->ScsiStatus) {
++	case SAM_STAT_GOOD:
++		return IO_OK;
++	case SAM_STAT_CHECK_CONDITION:
++		switch (0xf & c->err_info->SenseInfo[2]) {
++		case 0: return IO_OK; /* no sense */
++		case 1: return IO_OK; /* recovered error */
++		default:
++			printk(KERN_WARNING "cciss%d: cmd 0x%02x "
++				"check condition, sense key = 0x%02x\n",
++				h->ctlr, c->Request.CDB[0],
++				c->err_info->SenseInfo[2]);
++		}
++		break;
++	default:
++		printk(KERN_WARNING "cciss%d: cmd 0x%02x"
++			"scsi status = 0x%02x\n", h->ctlr,
++			c->Request.CDB[0], c->err_info->ScsiStatus);
++		break;
++	}
++	return IO_ERROR;
++}
++
+ static int sendcmd_withirq_core(ctlr_info_t *h, CommandList_struct *c)
+ {
+ 	DECLARE_COMPLETION_ONSTACK(wait);
+ 	u64bit  buff_dma_handle;
+ 	unsigned long flags;
+-	unsigned char sense_key;
+ 	int return_status = IO_OK;
+-	int print_this_error = 1;	/* print errors by default */
+ resend_cmd2:
+ 	c->waiting = &wait;
+ 	/* Put the request on the tail of the queue and send it */
+@@ -2349,42 +2372,7 @@ resend_cmd2:
+ 
+ 	switch (c->err_info->CommandStatus) {
+ 	case CMD_TARGET_STATUS:
+-		switch (c->err_info->ScsiStatus) {
+-		case 0x02:  /* Check Condition... if Unit Attention */
+-			if ((c->err_info->SenseInfo[2] == 6) &&
+-				(c->retry_count < MAX_CMD_RETRIES)) {
+-				printk(KERN_WARNING "cciss%d: retrying unit "
+-				      "attention\n", h->ctlr);
+-				c->retry_count++;
+-				/* erase old err info */
+-				memset(c->err_info, 0, sizeof(*c->err_info));
+-				INIT_COMPLETION(wait);
+-				goto resend_cmd2;
+-			} else {
+-				printk(KERN_WARNING "cciss%d: "
+-					"has CHECK CONDITION byte 2 = 0x%x\n",
+-					h->ctlr, c->err_info->SenseInfo[2]);
+-			}
+-			/* check the sense key */
+-			sense_key = 0xf & c->err_info->SenseInfo[2];
+-
+-			/* no status or recovered error */
+-
+-			if ((sense_key == 0x0) || (sense_key == 0x1))
+-				return_status = IO_OK;
+-			printk(KERN_WARNING "sense key = 0x%02x\n",
+-				0xf & c->err_info->SenseInfo[2]);
+- 			break;
+-		case 0x18:  /* Reserve Conflict */
+-			return_status = IO_ERROR;
+-			print_this_error = 0;
+- 			break;
+-		default:
+-			printk(KERN_WARNING "cciss%d: "
+-				"cmd has SCSI Status  = %x\n", h->ctlr,
+-				c->err_info->ScsiStatus);
+-		}
+-		break;
++		return_status = check_target_status(h, c);
+ 	case CMD_DATA_UNDERRUN:
+ 	case CMD_DATA_OVERRUN:
+ 		/* expected for inquire and report lun commands */

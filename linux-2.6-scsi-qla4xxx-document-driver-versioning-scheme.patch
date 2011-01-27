@@ -1,0 +1,61 @@
+From: Chad Dupuis <cdupuis@redhat.com>
+Date: Tue, 30 Nov 2010 20:01:26 -0500
+Subject: [scsi] qla4xxx: Document Driver Versioning Scheme
+Message-id: <20101130200126.10450.81673.sendpatchset@localhost.localdomain>
+Patchwork-id: 29718
+O-Subject: [RHEL 5.6 PATCH 27/28] qla4xxx: Document Driver Versioning Scheme in
+	ql4_version.h
+Bugzilla: 656999
+
+Bugzilla
+--------
+
+Bug 656999 (https://bugzilla.redhat.com/show_bug.cgi?id=656999)
+
+Upstream Status
+---------------
+
+RHEL 5 specific, documentation only.
+
+Description
+-----------
+
+>From 6715975245795679823b70aae4299b01277e2867 Mon Sep 17 00:00:00 2001
+From: Prasanna Mumbai <prasanna.mumbai@qlogic.com>
+Date: Tue, 23 Nov 2010 14:20:16 -0800
+Subject: [PATCH 28/29] Document Driver Versioning Scheme in ql4_version.h
+
+Signed-off-by: Prasanna Mumbai <prasanna.mumbai@qlogic.com>
+
+diff --git a/drivers/scsi/qla4xxx/ql4_version.h b/drivers/scsi/qla4xxx/ql4_version.h
+index a2e2d29..c1ee55b 100644
+--- a/drivers/scsi/qla4xxx/ql4_version.h
++++ b/drivers/scsi/qla4xxx/ql4_version.h
+@@ -6,3 +6,27 @@
+  */
+ 
+ #define QLA4XXX_DRIVER_VERSION	"5.02.03.00.05.06-d1"
++
++/*
++ * Driver Versioning Scheme:
++ * Major.Minor.Patch.Subminor.Distro.DistroLevel-SuffixBeta
++ *
++ * - Major#: Denotes driver family
++ *           (i.e. 5=iSCSI 2.6, 3=iSCSI 2.4, etc.)
++ * - Minor#: Denotes which iSCSI chip is supported
++ *           (i.e. 5.01=Add 4032, 5.02=Add P3P, etc.)
++ * - Patch#: Major Feature or structure (common w/ IOCTL) change.
++ *           Must match patch# in corresponding qisioctl.
++ *           **************************************************
++ *           ***   Also used to distinguish inbox vs OOT    ***
++ *           ***   (Inbox = even number, OOT = odd number)  ***
++ *           **************************************************
++ * - Subminor#: Updated per external release if the above numbers remain
++ *           unchanged. Set to 0 if above numbers are changed.
++ * - Beta#:  To be used for internal/test/EVT builds.
++ *           Set to 0 for release to DVT or external users.
++ * - Suffix [-k/-c/-d]:
++ *           -k: upstream or sysfs based drivers,
++ *           -d: ioctl based,
++ *           -c: Citrix XenServer based
++ */

@@ -1,0 +1,33 @@
+From: Tomas Henzl <thenzl@redhat.com>
+Date: Wed, 15 Sep 2010 11:52:48 -0400
+Subject: [scsi] megaraid: fix suspend function
+Message-id: <4C90B390.4050908@redhat.com>
+Patchwork-id: 28233
+O-Subject: [RHEL5.6 PATCH] megaraid: fix suspend function
+Bugzilla: 630927
+RH-Acked-by: Ivan Vecera <ivecera@redhat.com>
+RH-Acked-by: Mike Christie <mchristi@redhat.com>
+
+This is for bz#630927
+
+The function call 'scsi_host_put(host);' was introduced by mistake
+in upgrade to 4.27. It is not upstream and nowhere posted and
+could cause the problems with suspend/resume.
+Remove it!
+
+Tomas
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/scsi/megaraid/megaraid_sas.c b/drivers/scsi/megaraid/megaraid_sas.c
+index 72128ca..bdf9150 100644
+--- a/drivers/scsi/megaraid/megaraid_sas.c
++++ b/drivers/scsi/megaraid/megaraid_sas.c
+@@ -4188,7 +4188,6 @@ megasas_suspend(struct pci_dev *pdev, pm_message_t state)
+ 	instance->instancet->disable_intr(instance->reg_set);
+ 	free_irq(instance->pdev->irq, instance);
+ 
+-	scsi_host_put(host);
+ 	pci_save_state(pdev);
+ 	pci_disable_device(pdev);
+ 

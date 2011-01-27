@@ -126,6 +126,8 @@
 	unregister_blkdev
 [rhel5_block_u1]
 	__elv_add_request
+[rhel5_block_u6]
+	blkdev_issue_flush
 [rhel5_crypto_ga]
 	crypto_alg_available
 	crypto_alloc_tfm
@@ -334,6 +336,14 @@
 	dm_dirty_log_type_unregister
 [rhel5_drivers_net_ga]
 	loopback_dev
+[rhel5_drivers_net_u6]
+	lro_flush_all
+	lro_receive_frags
+	lro_vlan_hwaccel_receive_frags
+	napi_get_frags
+	napi_gro_frags
+	napi_gro_flush
+	vlan_gro_frags
 [rhel5_drivers_s390_ga]
 	s390_root_dev_register
 	s390_root_dev_unregister
@@ -506,6 +516,29 @@
 	scsi_nl_add_driver
 	scsi_nl_remove_driver
 	scsi_nl_send_vendor_msg
+[rhel5_drivers_scsi_u6]
+	iscsi2_add_session
+	iscsi2_alloc_session
+	iscsi2_block_session
+	iscsi2_conn_error_event
+	iscsi2_conn_setup
+	iscsi2_conn_start
+	iscsi2_create_conn
+	iscsi2_create_endpoint
+	iscsi2_destroy_conn
+	iscsi2_destroy_endpoint
+	iscsi2_free_session
+	iscsi2_host_alloc
+	iscsi2_lookup_endpoint
+	iscsi2_recv_pdu
+	iscsi2_register_transport
+	iscsi2_remove_session
+	iscsi2_session_setup
+	iscsi2_session_teardown
+	iscsi2_unblock_session
+	iscsi2_unregister_transport
+	scsi_build_sense_buffer
+	scsilun_to_int
 [rhel5_drivers_scsi_libsas_ga]
 	sas_bios_param
 	sas_change_queue_depth
@@ -975,6 +1008,8 @@
 	proc_root_fs
 	proc_symlink
 	remove_proc_entry
+[rhel5_fs_proc_u6]
+	proc_create
 [rhel5_fs_sysfs_ga]
 	sysfs_create_bin_file
 	sysfs_create_file
@@ -1387,6 +1422,8 @@
 	__bitmap_intersects
 [rhel5_lib_u3]
 	vscnprintf
+[rhel5_lib_u6]
+	__bitmap_shift_left
 [rhel5_lib_zlib_deflate_ga]
 	zlib_deflate
 	zlib_deflateEnd

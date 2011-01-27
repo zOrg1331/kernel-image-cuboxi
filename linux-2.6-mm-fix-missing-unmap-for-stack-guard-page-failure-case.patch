@@ -6,6 +6,7 @@ Patchwork-id: 27716
 O-Subject: [PATCH RHEL5.6 2/5] mm: fix missing page table unmap for stack guard
 	page failure case
 Bugzilla: 607858
+CVE: CVE-2010-2240
 RH-Acked-by: Rik van Riel <riel@redhat.com>
 RH-Acked-by: Jarod Wilson <jarod@redhat.com>
 

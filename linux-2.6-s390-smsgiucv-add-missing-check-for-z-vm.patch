@@ -1,0 +1,55 @@
+From: Hendrik Brueckner <brueckner@redhat.com>
+Date: Wed, 12 May 2010 12:20:52 -0400
+Subject: [s390] smsgiucv: add missing check for z/VM
+Message-id: <20100512122051.GC18564@redhat.com>
+Patchwork-id: 25017
+O-Subject: [RHEL5.6 PATCH 1/1] [s390x] smsgiucv: missing check for z/VM
+Bugzilla: 590737
+RH-Acked-by: Pete Zaitcev <zaitcev@redhat.com>
+
+Description
+-----------
+Loading the smsgiucv module on LPAR causes the driver core
+and list debugging code to generate several error messages.
+
+smsgiucv is a driver that relies on IUCV to work properly.
+If IUCV and smsgiucv are compiled into the kernel and run
+on an LPAR the following scenario happens:  IUCV is
+initialized early as a subsystem.  It checks for z/VM and
+returns with EPROTONOTSUPPORT.  Later smsgiucv tries to run
+driver_register with iucv_bus as bus.  As this bus is not
+initialized the errors are reported.
+
+smsg_init has to check for running on z/VM.
+
+Bugzilla
+--------
+BZ 590737
+https://bugzilla.redhat.com/show_bug.cgi?id=590737
+
+Upstream status of the patch
+----------------------------
+The patch is upstream as of kernel version 2.6.24
+http://git.kernel.org/?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=0fc3ddd67a6781238b038165d9dd8c1f9ba81111
+
+Test status
+-----------
+The patch has been tested and fixes the problem.
+The fix has been verified by the IBM test department.
+
+
+diff --git a/drivers/s390/net/smsgiucv.c b/drivers/s390/net/smsgiucv.c
+index 3ccca58..47bb47b 100644
+--- a/drivers/s390/net/smsgiucv.c
++++ b/drivers/s390/net/smsgiucv.c
+@@ -148,6 +148,10 @@ static int __init smsg_init(void)
+ {
+ 	int rc;
+ 
++	if (!MACHINE_IS_VM) {
++		rc = -EPROTONOSUPPORT;
++		goto out;
++	}
+ 	rc = driver_register(&smsg_driver);
+ 	if (rc != 0)
+ 		goto out;

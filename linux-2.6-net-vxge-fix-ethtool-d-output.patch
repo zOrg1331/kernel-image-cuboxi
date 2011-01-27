@@ -1,0 +1,46 @@
+From: Bob Picco <bpicco@redhat.com>
+Date: Sun, 22 Aug 2010 19:57:47 -0400
+Subject: [net] vxge: fix ethtool -d output
+Message-id: <20100822195746.24928.59814.sendpatchset@bob-desktop>
+Patchwork-id: 27763
+O-Subject: [RHEL5.7 PATCH 4/7] vxge: Fixed "ethtool -d" prints.
+Bugzilla: 580413
+RH-Acked-by: David S. Miller <davem@redhat.com>
+RH-Acked-by: Michal Schmidt <mschmidt@redhat.com>
+RH-Acked-by: Andy Gospodarek <gospo@redhat.com>
+
+>From 4c5f3b210f53e315e460d539655a8d14595c5d1a Mon Sep 17 00:00:00 2001
+From: Sreenivasa Honnur <Sreenivasa.Honnur@neterion.com>
+Date: Sun, 28 Mar 2010 22:10:33 +0000
+Subject: [PATCH 4/7] vxge: Fixed "ethtool -d" prints.
+
+- Fixed "ethtool -d" prints
+- reg_space pointer was getting over written, updating it correctly.
+
+Signed-off-by: Sreenivasa Honnur <sreenivasa.honnur@neterion.com>
+Signed-off-by: Ramkrishna Vepa <ram.vepa@neterion.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+
+diff --git a/drivers/net/vxge/vxge-ethtool.c b/drivers/net/vxge/vxge-ethtool.c
+index 66466a0..e10370c 100644
+--- a/drivers/net/vxge/vxge-ethtool.c
++++ b/drivers/net/vxge/vxge-ethtool.c
+@@ -110,7 +110,7 @@ static void vxge_ethtool_gregs(struct net_device *dev,
+ 	int index, offset;
+ 	enum vxge_hw_status status;
+ 	u64 reg;
+-	u8 *reg_space = (u8 *) space;
++	u64 *reg_space = (u64 *) space;
+ 	struct vxgedev *vdev = (struct vxgedev *)netdev_priv(dev);
+ 	struct __vxge_hw_device  *hldev = (struct __vxge_hw_device *)
+ 					pci_get_drvdata(vdev->pdev);
+@@ -130,8 +130,7 @@ static void vxge_ethtool_gregs(struct net_device *dev,
+ 						__func__, __LINE__);
+ 				return;
+ 			}
+-
+-			memcpy((reg_space + offset), &reg, 8);
++			*reg_space++ = reg;
+ 		}
+ 	}
+ }

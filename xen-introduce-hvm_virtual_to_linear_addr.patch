@@ -1,0 +1,237 @@
+From: Paolo Bonzini <pbonzini@redhat.com>
+Date: Mon, 30 Aug 2010 16:46:40 -0400
+Subject: [xen] introduce hvm_virtual_to_linear_addr
+Message-id: <1283186802-21009-5-git-send-email-pbonzini@redhat.com>
+Patchwork-id: 27937
+O-Subject: [RHEL5.6 XEN PATCH 4/6] introduce hvm_virtual_to_linear_addr
+Bugzilla: 625903
+
+Bugzilla: https://bugzilla.redhat.com/show_bug.cgi?id=625903
+
+Upstream status: http://xenbits.xensource.com/xen-unstable.hg/rev/15895
+
+Brew build: https://brewweb.devel.redhat.com/taskinfo?taskID=2719051
+
+This patch splits hvm_virtual_to_linear_addr out of the shadow paging code.
+I split it out of the rest of 15895 for ease of review.
+---
+ arch/x86/hvm/hvm.c          |   73 +++++++++++++++++++++++++++++++++++++++
+ arch/x86/mm/shadow/common.c |   80 +++++--------------------------------------
+ include/asm-x86/hvm/hvm.h   |   12 ++++++
+ 3 files changed, 94 insertions(+), 71 deletions(-)
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/arch/x86/hvm/hvm.c b/arch/x86/hvm/hvm.c
+index a4c810c..33b8bf4 100644
+--- a/arch/x86/hvm/hvm.c
++++ b/arch/x86/hvm/hvm.c
+@@ -585,6 +585,79 @@ void hvm_triple_fault(void)
+     domain_shutdown(v->domain, SHUTDOWN_reboot);
+ }
+ 
++int hvm_virtual_to_linear_addr(
++    enum x86_segment seg,
++    struct segment_register *reg,
++    unsigned long offset,
++    unsigned int bytes,
++    enum hvm_access_type access_type,
++    unsigned int addr_size,
++    unsigned long *linear_addr)
++{
++    unsigned long addr = offset;
++    uint32_t last_byte;
++
++    if ( addr_size != 64 )
++    {
++        /*
++         * COMPATIBILITY MODE: Apply segment checks and add base.
++         */
++
++        switch ( access_type )
++        {
++        case hvm_access_read:
++            if ( (reg->attr.fields.type & 0xa) == 0x8 )
++                goto gpf; /* execute-only code segment */
++            break;
++        case hvm_access_write:
++            if ( (reg->attr.fields.type & 0xa) != 0x2 )
++                goto gpf; /* not a writable data segment */
++            break;
++        default:
++            break;
++        }
++
++        last_byte = offset + bytes - 1;
++
++        /* Is this a grows-down data segment? Special limit check if so. */
++        if ( (reg->attr.fields.type & 0xc) == 0x4 )
++        {
++            /* Is upper limit 0xFFFF or 0xFFFFFFFF? */
++            if ( !reg->attr.fields.db )
++                last_byte = (uint16_t)last_byte;
++
++            /* Check first byte and last byte against respective bounds. */
++            if ( (offset <= reg->limit) || (last_byte < offset) )
++                goto gpf;
++        }
++        else if ( (last_byte > reg->limit) || (last_byte < offset) )
++            goto gpf; /* last byte is beyond limit or wraps 0xFFFFFFFF */
++
++        /*
++         * Hardware truncates to 32 bits in compatibility mode.
++         * It does not truncate to 16 bits in 16-bit address-size mode.
++         */
++        addr = (uint32_t)(addr + reg->base);
++    }
++    else
++    {
++        /*
++         * LONG MODE: FS and GS add segment base. Addresses must be canonical.
++         */
++
++        if ( (seg == x86_seg_fs) || (seg == x86_seg_gs) )
++            addr += reg->base;
++
++        if ( !is_canonical_address(addr) )
++            goto gpf;
++    }
++
++    *linear_addr = addr;
++    return 1;
++
++ gpf:
++    return 0;
++}
+ /*
+  * __hvm_copy():
+  *  @buf  = hypervisor buffer
+diff --git a/arch/x86/mm/shadow/common.c b/arch/x86/mm/shadow/common.c
+index 90fa955..17d380e 100644
+--- a/arch/x86/mm/shadow/common.c
++++ b/arch/x86/mm/shadow/common.c
+@@ -101,7 +101,7 @@ int _shadow_mode_refcounts(struct domain *d)
+ /* x86 emulator support for the shadow code
+  */
+ 
+-struct segment_register *hvm_get_seg_reg(
++static struct segment_register *hvm_get_seg_reg(
+     enum x86_segment seg, struct sh_emulate_ctxt *sh_ctxt)
+ {
+     struct segment_register *seg_reg = &sh_ctxt->seg_reg[seg];
+@@ -110,10 +110,6 @@ struct segment_register *hvm_get_seg_reg(
+     return seg_reg;
+ }
+ 
+-enum hvm_access_type {
+-    hvm_access_insn_fetch, hvm_access_read, hvm_access_write
+-};
+-
+ static int hvm_translate_linear_addr(
+     enum x86_segment seg,
+     unsigned long offset,
+@@ -123,76 +119,18 @@ static int hvm_translate_linear_addr(
+     unsigned long *paddr)
+ {
+     struct segment_register *reg = hvm_get_seg_reg(seg, sh_ctxt);
+-    unsigned long limit, addr = offset;
+-    uint32_t last_byte;
+-
+-    if ( sh_ctxt->ctxt.addr_size != 64 )
+-    {
+-        /*
+-         * COMPATIBILITY MODE: Apply segment checks and add base.
+-         */
+-
+-        switch ( access_type )
+-        {
+-        case hvm_access_read:
+-            if ( (reg->attr.fields.type & 0xa) == 0x8 )
+-                goto gpf; /* execute-only code segment */
+-            break;
+-        case hvm_access_write:
+-            if ( (reg->attr.fields.type & 0xa) != 0x2 )
+-                goto gpf; /* not a writable data segment */
+-            break;
+-        default:
+-            break;
+-        }
+-
+-        /* Calculate the segment limit, including granularity flag. */
+-        limit = reg->limit;
+-        if ( reg->attr.fields.g )
+-            limit = (limit << 12) | 0xfff;
++    int okay;
+ 
+-        last_byte = offset + bytes - 1;
++    okay = hvm_virtual_to_linear_addr(
++        seg, reg, offset, bytes, access_type, sh_ctxt->ctxt.addr_size, paddr);
+ 
+-        /* Is this a grows-down data segment? Special limit check if so. */
+-        if ( (reg->attr.fields.type & 0xc) == 0x4 )
+-        {
+-            /* Is upper limit 0xFFFF or 0xFFFFFFFF? */
+-            if ( !reg->attr.fields.db )
+-                last_byte = (uint16_t)last_byte;
+-
+-            /* Check first byte and last byte against respective bounds. */
+-            if ( (offset <= limit) || (last_byte < offset) )
+-                goto gpf;
+-        }
+-        else if ( (last_byte > limit) || (last_byte < offset) )
+-            goto gpf; /* last byte is beyond limit or wraps 0xFFFFFFFF */
+-
+-        /*
+-         * Hardware truncates to 32 bits in compatibility mode.
+-         * It does not truncate to 16 bits in 16-bit address-size mode.
+-         */
+-        addr = (uint32_t)(addr + reg->base);
+-    }
+-    else
++    if ( !okay )
+     {
+-        /*
+-         * LONG MODE: FS and GS add segment base. Addresses must be canonical.
+-         */
+-
+-        if ( (seg == x86_seg_fs) || (seg == x86_seg_gs) )
+-            addr += reg->base;
+-
+-        if ( !is_canonical_address(addr) )
+-            goto gpf;
++        hvm_inject_exception(TRAP_gp_fault, 0, 0);
++        return X86EMUL_EXCEPTION;
+     }
+ 
+-    *paddr = addr;
+-    return 0;    
+-
+- gpf:
+-    /* Inject #GP(0). */
+-    hvm_inject_exception(TRAP_gp_fault, 0, 0);
+-    return X86EMUL_EXCEPTION;
++    return 0;
+ }
+ 
+ static int
+diff --git a/include/asm-x86/hvm/hvm.h b/include/asm-x86/hvm/hvm.h
+index c2b4539..c784727 100644
+--- a/include/asm-x86/hvm/hvm.h
++++ b/include/asm-x86/hvm/hvm.h
+@@ -352,4 +352,16 @@ static inline int hvm_event_pending(struct vcpu *v)
+ 
+ #define HVM_IDENT_PT_PAGE 0xE8000
+ 
++enum hvm_access_type {
++    hvm_access_insn_fetch, hvm_access_read, hvm_access_write
++};
++int hvm_virtual_to_linear_addr(
++    enum x86_segment seg,
++    struct segment_register *reg,
++    unsigned long offset,
++    unsigned int bytes,
++    enum hvm_access_type access_type,
++    unsigned int addr_size,
++    unsigned long *linear_addr);
++
+ #endif /* __ASM_X86_HVM_HVM_H__ */

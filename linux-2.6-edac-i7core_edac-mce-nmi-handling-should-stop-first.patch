@@ -1,0 +1,36 @@
+From: Mauro Carvalho Chehab <mchehab@redhat.com>
+Date: Tue, 23 Nov 2010 17:33:46 -0500
+Subject: [edac] i7core_edac: MCE NMI handling should stop first
+Message-id: <20101123153346.60c46348@pedra>
+Patchwork-id: 29562
+O-Subject: [PATCH RHEL5 06/29] BZ#:651869 i7core_edac: MCE NMI handling should
+	stop first
+Bugzilla: 651869
+
+Changeset: 41ba6c10586dfab632725cd532677ae5ae460e3e
+
+Otherwise, a NMI may happen causing a race condition and a panic.
+
+Signed-off-by: Mauro Carvalho Chehab <mchehab@redhat.com>
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/edac/i7core_edac.c b/drivers/edac/i7core_edac.c
+index fdd40de..f1c53db 100644
+--- a/drivers/edac/i7core_edac.c
++++ b/drivers/edac/i7core_edac.c
+@@ -2068,9 +2068,15 @@ static void __devexit i7core_remove(struct pci_dev *pdev)
+ 			debugf0("MC: " __FILE__ ": %s(): mci = %p, dev = %p\n",
+ 				__func__, mci, &i7core_dev->pdev[0]->dev);
+ 
++			/* Disable MCE NMI handler */
+ 			edac_mce_unregister(&pvt->edac_mce);
++			pvt->i7core_pci = NULL;
++
++			/* Free data */
+ 			kfree(mci->ctl_name);
+ 			edac_mc_free(mci);
++
++			/* Release PCI resources */
+ 			i7core_put_devices(i7core_dev);
+ 		}
+ 	}

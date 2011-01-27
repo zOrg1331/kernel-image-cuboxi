@@ -1,0 +1,39 @@
+From: Mauro Carvalho Chehab <mchehab@redhat.com>
+Date: Thu, 5 Aug 2010 17:18:22 -0400
+Subject: [edac] fix i7core_edac in multi-socket systems
+Message-id: <4C5AF25E.2040807@redhat.com>
+Patchwork-id: 27413
+O-Subject: [RHEL5.6] BZ#468877:  Fix i7core_edac backport for RHEL5
+Bugzilla: 468877
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+RH-Acked-by: Jarod Wilson <jarod@redhat.com>
+
+Fixes a stupid bug made during the driver backport to RHEL5: instead of using
+the socket number, it were always using 0. While this worked on machines with
+just one CPU socket, this caused bug at the EDAC core, as it would otherwise
+try to register the second mc node with a duplicated name:
+
+EDAC MC: Ver: 2.0.1 Jul 22 2010
+dca service started, version 1.4
+EDAC MC0: Giving out device to i7core_edac.c i7 core #0: DEV 0000:ff:03.0
+EDAC MC: bug in low-level driver: attempt to assign duplicate mc_idx 0 in add_mc_to_global_list()
+
+The fix is trivial. There's no upstream patch for it, as the upstream EDAC kernel API
+uses a different way to indicate the number of the memory controller.
+
+Signed-off-by: Mauro Carvalho Chehab <mchehab@redhat.com>
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/edac/i7core_edac.c b/drivers/edac/i7core_edac.c
+index 4ba4da3..5ea848d 100644
+--- a/drivers/edac/i7core_edac.c
++++ b/drivers/edac/i7core_edac.c
+@@ -1898,7 +1898,7 @@ static int i7core_register_mci(struct i7core_dev *i7core_dev,
+ 	get_dimm_config(mci, &csrow);
+ 
+ 	/* add this new MC control structure to EDAC's list of MCs */
+-	if (unlikely(edac_mc_add_mc(mci, 0))) {
++	if (unlikely(edac_mc_add_mc(mci, i7core_dev->socket))) {
+ 		debugf0("MC: " __FILE__
+ 			": %s(): failed edac_mc_add_mc()\n", __func__);
+ 		/* FIXME: perhaps some code should go here that disables error

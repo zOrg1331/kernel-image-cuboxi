@@ -1,0 +1,66 @@
+From: Jiri Olsa <jolsa@redhat.com>
+Date: Tue, 12 Jan 2010 14:10:25 -0500
+Subject: [misc] taskstats: common fix for KABI breakage
+Message-id: <1263305427-17138-3-git-send-email-jolsa@redhat.com>
+Patchwork-id: 22433
+O-Subject: [PATCH v2 RHEL5.6 2/4] BZ 516961 taskstats - common fix for KABI
+	breakage
+Bugzilla: 516961
+RH-Acked-by: Jerome Marchand <jmarchan@redhat.com>
+RH-Acked-by: Anton Arapov <Anton@redhat.com>
+
+- as linux/tsacct_kern.h includes the taskstats definition
+  it changes the KABI
+- keeping acct_stimexpd as clock_t
+  As clock_t is 'long' and cputime_t is 'unsigned long' there is no overflow.
+  The only exception is s390 arch where 'cputime_t' is 'unsigned long long' and
+  powerpc where 'cputime_t' is 'u64'. In both cases the type size is 8 bytes.
+
+wbr,
+jirka
+
+diff --git a/fs/exec.c b/fs/exec.c
+index ba52ccb..36bf8ad 100644
+--- a/fs/exec.c
++++ b/fs/exec.c
+@@ -47,7 +47,9 @@
+ #include <linux/security.h>
+ #include <linux/syscalls.h>
+ #include <linux/rmap.h>
++#ifndef __GENKSYMS__
+ #include <linux/tsacct_kern.h>
++#endif
+ #include <linux/cn_proc.h>
+ #include <linux/audit.h>
+ #include <trace/signal.h>
+diff --git a/include/linux/sched.h b/include/linux/sched.h
+index 683d1b1..75bd351 100644
+--- a/include/linux/sched.h
++++ b/include/linux/sched.h
+@@ -1081,7 +1081,7 @@ struct task_struct {
+ #if defined(CONFIG_TASK_XACCT)
+ 	u64 acct_rss_mem1;	/* accumulated rss usage */
+ 	u64 acct_vm_mem1;	/* accumulated virtual memory usage */
+-	cputime_t acct_stimexpd;/* stime since last update */
++	clock_t acct_stimexpd;	/* clock_t-converted stime since last update */
+ #endif
+ #ifdef CONFIG_NUMA
+   	struct mempolicy *mempolicy;
+diff --git a/kernel/tsacct.c b/kernel/tsacct.c
+index 120194e..89d97ca 100644
+--- a/kernel/tsacct.c
++++ b/kernel/tsacct.c
+@@ -110,11 +110,11 @@ void acct_update_integrals(struct task_struct *tsk)
+ {
+ 	if (likely(tsk->mm)) {
+ 		long delta = cputime_to_jiffies(
+-			cputime_sub(tsk->stime, tsk->acct_stimexpd));
++			cputime_sub(tsk->stime, (cputime_t) tsk->acct_stimexpd));
+ 
+ 		if (delta == 0)
+ 			return;
+-		tsk->acct_stimexpd = tsk->stime;
++		tsk->acct_stimexpd = (clock_t) tsk->stime;
+ 		tsk->acct_rss_mem1 += delta * get_mm_rss(tsk->mm);
+ 		tsk->acct_vm_mem1 += delta * tsk->mm->total_vm;
+ 	}

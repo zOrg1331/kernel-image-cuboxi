@@ -1,0 +1,50 @@
+From: Mauro Carvalho Chehab <mchehab@redhat.com>
+Date: Tue, 23 Nov 2010 17:34:05 -0500
+Subject: [edac] i7core_edac: fix PCI refcounting on reloads
+Message-id: <20101123153405.6dafed54@pedra>
+Patchwork-id: 29582
+O-Subject: [PATCH RHEL5 27/29] BZ#:651869 i7core_edac: Avoid PCI refcount to
+	reach zero on successive load/reload
+Bugzilla: 651869
+RH-Acked-by: Aristeu Rozanski <aris@redhat.com>
+
+Changeset: a3e1541637f2096ab31af311c53eaeb0853650d3
+
+That's a nasty bug that took me a lot of time to track, and whose
+solution took just one line to solve. The best fragrances and the worse
+poisons are shipped on the smalest bottles.
+
+The drivers/pci/quick.c implements the pci_get_device function. The normal
+behavior is that you call it, the function returns you a pdev pointer
+and increment pdev->kobj.kref.refcount of the pci device. However,
+if you want to keep searching an object, you need to pass the previous
+pdev function to the search.
+
+When you use a not null pointer to pdev "from" field, pci_get_device
+will decrement pdev->kobj.kref.refcount, assuming that the driver won't
+be using the previous pdev.
+
+The solution is simple: we just need to call pci_dev_get() manually,
+for the pdev's that the driver will actually use.
+
+Signed-off-by: Mauro Carvalho Chehab <mchehab@redhat.com>
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/edac/i7core_edac.c b/drivers/edac/i7core_edac.c
+index b69c51f..9561551 100644
+--- a/drivers/edac/i7core_edac.c
++++ b/drivers/edac/i7core_edac.c
+@@ -1396,6 +1396,13 @@ static int i7core_get_onedevice(struct pci_dev **prev,
+ 		dev_descr->func,
+ 		PCI_VENDOR_ID_INTEL, dev_descr->dev_id);
+ 
++	/*
++	 * As stated on drivers/pci/search.c, the reference count for
++	 * @from is always decremented if it is not %NULL. So, as we need
++	 * to get all devices up to null, we need to do a get for the device
++	 */
++	pci_dev_get(pdev);
++
+ 	*prev = pdev;
+ 
+ 	return 0;

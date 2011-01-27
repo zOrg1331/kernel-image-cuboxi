@@ -1,0 +1,87 @@
+From: Chad Dupuis <cdupuis@redhat.com>
+Date: Tue, 10 Aug 2010 15:11:05 -0400
+Subject: [net] netxen: protect tx timeout recovery by rtnl lock
+Message-id: <20100810150724.3520.28473.sendpatchset@localhost.localdomain>
+Patchwork-id: 27490
+O-Subject: [RHEL 5.6 PATCH] netxen: protect tx timeout recovery by rtnl lock
+Bugzilla: 562937
+RH-Acked-by: Herbert Xu <herbert.xu@redhat.com>
+RH-Acked-by: David S. Miller <davem@redhat.com>
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+RH-Acked-by: John Feeney <jfeeney@redhat.com>
+
+Bugzilla
+========
+
+562937
+
+Upstream Status
+===============
+
+net-2.6 commit id 16d884bd901288fb5cde876489f7093740b66a30
+
+Brew Build
+==========
+
+2666921
+
+Description
+===========
+
+This is to fix an issue found on the original posting of patch:
+
+[RHEL 5.6 PATCH 3/44] netxen: protect device reset by rtnl_lock
+
+Testing
+=======
+
+This patch was testing against the 2.6.18-210.el5 kernel on top of the patches
+from the series "netxen: Update driver to 4.0.73".  The patch was functionally
+tested at QLogic.
+
+>From 1106c3122b155a2e7e20581ec1fc8a58e1260fa8 Mon Sep 17 00:00:00 2001
+From: Amit Kumar Salecha <amit.salecha@qlogic.com>
+Date: Fri, 6 Aug 2010 05:56:25 -0700
+Subject: [PATCH] netxen: protect tx timeout recovery by rtnl lock
+
+Signed-off-by: Amit Kumar Salecha <amit.salecha@qlogic.com>
+
+diff --git a/drivers/net/netxen/netxen_nic_main.c b/drivers/net/netxen/netxen_nic_main.c
+index d555d46..d3ce1fb 100644
+--- a/drivers/net/netxen/netxen_nic_main.c
++++ b/drivers/net/netxen/netxen_nic_main.c
+@@ -2035,27 +2035,26 @@ static void netxen_tx_timeout_task(void *data)
+ 	if (++adapter->tx_timeo_cnt >= NX_MAX_TX_TIMEOUTS)
+ 		goto request_reset;
+ 
++	rtnl_lock();
+ 	if (NX_IS_REVISION_P2(adapter->ahw.revision_id)) {
+ 		/* try to scrub interrupt */
+ 		netxen_napi_disable(adapter);
+ 
+-		adapter->netdev->trans_start = jiffies;
+-
+ 		netxen_napi_enable(adapter);
+ 
+ 		netif_wake_queue(adapter->netdev);
+ 
+ 		clear_bit(__NX_RESETTING, &adapter->state);
+-		return;
+ 	} else {
+ 		clear_bit(__NX_RESETTING, &adapter->state);
+-		if (!netxen_nic_reset_context(adapter)) {
+-			adapter->netdev->trans_start = jiffies;
+-			return;
++		if (netxen_nic_reset_context(adapter)) {
++			rtnl_unlock();
++			goto request_reset;
+ 		}
+-
+-		/* context reset failed, fall through for fw reset */
+ 	}
++	adapter->netdev->trans_start = jiffies;
++	rtnl_unlock();
++	return;
+ 
+ request_reset:
+ 	adapter->need_fw_reset = 1;

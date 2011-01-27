@@ -1,0 +1,60 @@
+From: Steve Best <sbest@redhat.com>
+Date: Mon, 30 Aug 2010 15:17:19 -0400
+Subject: [scsi] ipr: set data list length in request control block
+Message-id: <20100830150533.5212.93187.sendpatchset@squad5-lp1.lab.bos.redhat.com>
+Patchwork-id: 27918
+O-Subject: [PATCH RHEL5.6 BZ626566 5/16] ipr: set the data list length in the
+	request control block
+Bugzilla: 626566
+
+RHBZ#:
+------
+https://bugzilla.redhat.com/show_bug.cgi?id=626566
+
+Description:
+------------
+In bring up testing for the new 64 bit adapters, the first read command failed
+after loading the driver.  The cause was that the command requires more than
+one scatter gather element and the corresponding code to set the data list
+length in the request control block was missing.  This patch adds the correct
+assignment.
+
+Signed-off-by: Wayne Boyer <wayneb@linux.vnet.ibm.com>
+Acked-by: Brian King <brking@linux.vnet.ibm.com>
+Signed-off-by: James Bottomley <James.Bottomley@suse.de>
+
+RHEL Version Found:
+-------------------
+5.6
+
+Brew:
+-----
+Built on all platforms. All patches brewed together.
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=2713332
+
+Upstream Status:
+----------------
+http://git.kernel.org/?p=linux/kernel/git/jejb/scsi-misc-2.6.git;
+a=commit;h=b8803b1cef28af785c4e903b9b1449898d68c758
+
+Steve Best
+IBM on-site partner
+
+Proposed Patch:
+---------------
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/scsi/ipr.c b/drivers/scsi/ipr.c
+index 5a435c0..cb8d548 100644
+--- a/drivers/scsi/ipr.c
++++ b/drivers/scsi/ipr.c
+@@ -4993,6 +4993,8 @@ static int ipr_build_ioadl64(struct ipr_ioa_cfg *ioa_cfg,
+ 	ipr_cmd->dma_use_sg = nseg;
+ 
+ 	ioarcb->data_transfer_length = cpu_to_be32(length);
++	ioarcb->ioadl_len =
++		cpu_to_be32(sizeof(struct ipr_ioadl64_desc) * ipr_cmd->dma_use_sg);
+ 
+ 	if (scsi_cmd->sc_data_direction == DMA_TO_DEVICE) {
+ 		ioadl_flags = IPR_IOADL_FLAGS_WRITE;

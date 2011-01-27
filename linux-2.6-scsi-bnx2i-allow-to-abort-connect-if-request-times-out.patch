@@ -1,0 +1,42 @@
+From: Mike Christie <mchristi@redhat.com>
+Date: Sat, 27 Nov 2010 02:31:31 -0500
+Subject: [scsi] bnx2i: allow to abort connect if request times out
+Message-id: <1290825091-5914-5-git-send-email-mchristi@redhat.com>
+Patchwork-id: 29643
+O-Subject: [RHEL 5.6 PATCH 4/4] bnx2i: Allow to abort the connection if connect
+	request times out
+Bugzilla: 653991
+RH-Acked-by: David S. Miller <davem@redhat.com>
+RH-Acked-by: Rob Evers <revers@redhat.com>
+
+From: Mike Christie <mchristi@redhat.com>
+
+This is for bz 653991.
+
+In the situation where the connect completion response arrives after
+the connect request has already timed out, the connection was not being
+aborted but only the resource was being freed.  This creates a problem
+for 5771X (10g) as the chip flags this with an assertion.
+
+This change will properly aborts the connection before freeing the
+resource.
+
+diff --git a/drivers/scsi/bnx2i/bnx2i_iscsi.c b/drivers/scsi/bnx2i/bnx2i_iscsi.c
+index f5277b1..ffe9fb6 100644
+--- a/drivers/scsi/bnx2i/bnx2i_iscsi.c
++++ b/drivers/scsi/bnx2i/bnx2i_iscsi.c
+@@ -1941,13 +1941,13 @@ static int bnx2i_ep_tcp_conn_active(struct bnx2i_endpoint *bnx2i_ep)
+ 		cnic_dev_10g = 1;
+ 
+ 	switch (bnx2i_ep->state) {
+-	case EP_STATE_CONNECT_START:
+ 	case EP_STATE_CONNECT_FAILED:
+ 	case EP_STATE_CLEANUP_FAILED:
+ 	case EP_STATE_OFLD_FAILED:
+ 	case EP_STATE_DISCONN_TIMEDOUT:
+ 		ret = 0;
+ 		break;
++	case EP_STATE_CONNECT_START:
+ 	case EP_STATE_CONNECT_COMPL:
+ 	case EP_STATE_ULP_UPDATE_START:
+ 	case EP_STATE_ULP_UPDATE_COMPL:

@@ -1,0 +1,62 @@
+From: Chad Dupuis <cdupuis@redhat.com>
+Date: Wed, 22 Sep 2010 20:10:58 -0400
+Subject: [net] netxen: fix tx csum setting
+Message-id: <20100922201058.2527.55243.sendpatchset@localhost.localdomain>
+Patchwork-id: 28344
+O-Subject: [RHEL 5.6 PATCH 1/6] netxen: fix tx csum setting.
+Bugzilla: 625079
+RH-Acked-by: David S. Miller <davem@redhat.com>
+
+Bugzilla
+--------
+
+Bug 625079 (https://bugzilla.redhat.com/show_bug.cgi?id=625079)
+
+Upstream Status
+---------------
+
+net-2.6 commit id ff90cd4a1dcfc03bf228d94f553619198e65bc42
+
+Description
+-----------
+
+>From a42290b8ca0a367f24f4ca8cbc2dc8d7d1340fe0 Mon Sep 17 00:00:00 2001
+From: Sucheta Chakraborty <sucheta.chakraborty@qlogic.com>
+Date: Wed, 11 Aug 2010 02:16:55 -0700
+Subject: [PATCH] netxen: fix tx csum setting.
+
+Need to disable (NETIF_F_IP_CSUM | NETIF_F_HW_CSUM) flags to disable
+tx csum.
+
+Signed-off-by: Sucheta Chakraborty <sucheta.chakraborty@qlogic.com>
+Signed-off-by: Amit Kumar Salecha <amit.salecha@qlogic.com>
+
+diff --git a/drivers/net/netxen/netxen_nic_ethtool.c b/drivers/net/netxen/netxen_nic_ethtool.c
+index a89ac16..09cfa9b 100644
+--- a/drivers/net/netxen/netxen_nic_ethtool.c
++++ b/drivers/net/netxen/netxen_nic_ethtool.c
+@@ -706,6 +706,15 @@ netxen_nic_get_ethtool_stats(struct net_device *dev,
+ 	}
+ }
+ 
++static int netxen_nic_set_tx_csum(struct net_device *dev, u32 data)
++{
++	if (data)
++		dev->features |= (NETIF_F_IP_CSUM | NETIF_F_HW_CSUM);
++	else
++		dev->features &= ~(NETIF_F_IP_CSUM | NETIF_F_HW_CSUM);
++	return 0;
++}
++
+ static u32 netxen_nic_get_tx_csum(struct net_device *dev)
+ {
+ 	return dev->features & NETIF_F_IP_CSUM;
+@@ -896,7 +905,7 @@ struct ethtool_ops netxen_nic_ethtool_ops = {
+ 	.get_pauseparam = netxen_nic_get_pauseparam,
+ 	.set_pauseparam = netxen_nic_set_pauseparam,
+ 	.get_tx_csum = netxen_nic_get_tx_csum,
+-	.set_tx_csum = ethtool_op_set_tx_csum,
++	.set_tx_csum = netxen_nic_set_tx_csum,
+ 	.get_sg = ethtool_op_get_sg,
+ 	.set_sg = ethtool_op_set_sg,
+ 	.get_tso = netxen_nic_get_tso,

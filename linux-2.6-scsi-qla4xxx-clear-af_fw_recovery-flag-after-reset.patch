@@ -1,0 +1,46 @@
+From: Chad Dupuis <cdupuis@redhat.com>
+Date: Tue, 30 Nov 2010 20:00:56 -0500
+Subject: [scsi] qla4xxx: clear AF_FW_RECOVERY flag after reset
+Message-id: <20101130200055.10450.9356.sendpatchset@localhost.localdomain>
+Patchwork-id: 29713
+O-Subject: [RHEL 5.6 PATCH 22/28] qla4xxx: clear AF_FW_RECOVERY flag after
+	successful isp reset.
+Bugzilla: 656999
+
+Bugzilla
+--------
+
+Bug 656999 (https://bugzilla.redhat.com/show_bug.cgi?id=656999)
+
+Upstream Status
+---------------
+
+Upstream posting, part of: http://marc.info/?l=git-commits-head&m=128181597510107&w=2
+
+Description
+-----------
+
+>From 4cfe45c2aeac48873023c1e42508a0c30f18a695 Mon Sep 17 00:00:00 2001
+From: Prasanna Mumbai <prasanna.mumbai@qlogic.com>
+Date: Mon, 22 Nov 2010 15:45:24 -0800
+Subject: [PATCH 23/29] qla4xxx: clear AF_FW_RECOVERY flag after successful isp reset.
+
+After HBA reset from appliaction, the initialization wasn't getting triggered
+as AF_FW_RECOVERY was not cleared.
+
+Signed-off-by: Prasanna Mumbai <prasanna.mumbai@qlogic.com>
+
+diff --git a/drivers/scsi/qla4xxx/ql4_nx.c b/drivers/scsi/qla4xxx/ql4_nx.c
+index 4013c52..4164390 100644
+--- a/drivers/scsi/qla4xxx/ql4_nx.c
++++ b/drivers/scsi/qla4xxx/ql4_nx.c
+@@ -2162,6 +2162,9 @@ qla4_8xxx_isp_reset(struct scsi_qla_host *ha)
+ 	qla4_8xxx_clear_rst_ready(ha);
+ 	qla4_8xxx_idc_unlock(ha);
+ 
++	if (rval == QLA_SUCCESS)
++		clear_bit(AF_FW_RECOVERY, &ha->flags);
++
+ 	return rval;
+ }
+ 

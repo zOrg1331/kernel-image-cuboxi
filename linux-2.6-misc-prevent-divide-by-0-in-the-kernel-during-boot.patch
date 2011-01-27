@@ -1,0 +1,113 @@
+From: Larry Woodman <lwoodman@redhat.com>
+Date: Fri, 19 Nov 2010 13:27:34 -0500
+Subject: [misc] prevent divide by 0 in the kernel during boot
+Message-id: <4CE67B46.4080800@redhat.com>
+Patchwork-id: 29514
+O-Subject: [RHEL5.6 Patch] Prevent divide by 0 in the kernel during boot
+Bugzilla: 508140
+
+Similar to patch I posted yesterday to fix the RHEL6 DBZ in find_busiest_group().
+This description is directly form the BZ(508140).  In this case
+find_busiest_group() ran at boot time before everything is properly initialized
+so I fixed it by making sure the cpu_power can not inadvertently be zero.
+
+---------------------------------------------------------------------------------
+Sometimes when a node boots up the nmi_watchdog triggers a kernel panic
+immediately after nmi is started.  I tried booting with notsc and the behavior
+is the same.  I have attached the console messages from hyperion718.
+
+This appears to be a statistical phenomena and happens <1% of the time but it
+is still a few nodes every time we reboot the cluster.
+
+Below it looks like we're hitting a divide error (possibly divide by zero or
+something)
+somewhere during boot. The machine tries to panic, and hits another divide
+error, etc,
+until the NMI watchdog kills the machine.
+
+>2009-04-22 13:48:22 Intel(R) Xeon(R) CPU           E5530  @ 2.40GHz stepping 05
+>2009-04-22 13:48:22 Brought up 16 CPUs
+>2009-04-22 13:48:22 testing NMI watchdog ... OK.
+>2009-04-22 13:48:22 time.c: Using 14.318180 MHz WALL HPET GTOD HPET timer.
+>2009-04-22 13:48:22 time.c: Detected 2400.184 MHz processor.
+>2009-04-22 13:48:22 divide error: 0000 [1] SMP
+>2009-04-22 13:48:22 last sysfs file:
+>2009-04-22 13:48:22 CPU 2
+>2009-04-22 13:48:22 Modules linked in:
+>2009-04-22 13:48:22 Pid: 0, comm: swapper Not tainted 2.6.18-66chaos #1
+>2009-04-22 13:48:22 RIP: 0010:[<ffffffff8008b49d>]  [<ffffffff8008b49d>] find_busiest_group+0x23a/0x621
+>2009-04-22 13:48:23 RSP: 0018:ffff8101c55bfdb8  EFLAGS: 00010006
+>2009-04-22 13:48:23 RAX: 0000000000004000 RBX: 00000000000000ff RCX: 0000000000000000
+>2009-04-22 13:48:23 RDX: 0000000000000000 RSI: 0000000000000000 RDI: 00000000000000c0
+>2009-04-22 13:48:23 RBP: ffff8101c55bfea8 R08: 0000000000000010 R09: 0000000000000030
+>2009-04-22 13:48:23 R10: ffff81033fc1f848 R11: 0000000000000000 R12: ffff81033fc1f840
+>2009-04-22 13:48:23 R13: 0000000000000001 R14: 0000000000000000 R15: 0000000000004000
+>2009-04-22 13:48:23 FS:  0000000000000000(0000) GS:ffff8101c55a4740(0000) knlGS:0000000000000000
+>2009-04-22 13:48:23 CS:  0010 DS: 0018 ES: 0018 CR0: 000000008005003b
+>2009-04-22 13:48:23 CR2: 0000000000000000 CR3: 0000000000201000 CR4: 00000000000006e0
+>2009-04-22 13:48:23 Process swapper (pid: 0, threadinfo ffff8101c55b8000, task ffff8101062da0c0)
+>2009-04-22 13:48:23 Stack:  0000000000000000 ffff8101c55bfee8 ffff8101c55bff10 0000000000000000
+>2009-04-22 13:48:23  ffff8101c55bff08 0000000200000000 ffff8101c545b140 0000000000000000
+>2009-04-22 13:48:23  ffff81033fc1f800 0000000000000000 0000000000000080 0000000000000000
+>2009-04-22 13:48:23 Call Trace:
+>2009-04-22 13:48:23  <IRQ>  [<ffffffff8008d526>] rebalance_tick+0x18c/0x3ce
+>2009-04-22 13:48:23  [<ffffffff80097a3c>] update_process_times+0x7a/0x8a
+>2009-04-22 13:48:23  [<ffffffff800770ed>] smp_local_timer_interrupt+0x2f/0x64
+>2009-04-22 13:48:23  [<ffffffff800777f3>] smp_apic_timer_interrupt+0x41/0x47
+>2009-04-22 13:48:23  [<ffffffff800569a4>] mwait_idle+0x0/0x4a
+>2009-04-22 13:48:23  [<ffffffff8005dc8e>] apic_timer_interrupt+0x66/0x6c
+>2009-04-22 13:48:23  <EOI>  [<ffffffff800569da>] mwait_idle+0x36/0x4a
+>2009-04-22 13:48:23  [<ffffffff80048bf6>] cpu_idle+0x95/0xb8
+>2009-04-22 13:48:23  [<ffffffff80076eff>] start_secondary+0x45a/0x469
+>2009-04-22 13:48:23
+>2009-04-22 13:48:23
+
+No hits in RH's IT for "divide error: 0000 [1] SMP" that affect RHEL5. There
+were 4 old closed cases on RHEL4 but nothing recent.
+
+Asked them to reproduce on an offical RHEL5 kernel and to give me a better
+quantified notion of how often this happens. This is going to be important
+because it will give us some idea of how many times we need to serially reboot
+a test machine to get a reasonable comfort level that the problem is fixed.
+
+http://lkml.org/lkml/2008/11/26/524 looks similar but we have Ingo's patch in
+the RHEL5 kernel. http://lkml.org/lkml/2008/11/27/30 However, RHEL doesn't have
+the ACCESS_ONCE macro. http://lkml.org/lkml/2008/11/29/129
+
+These are 16 core Nahelem E5530 machines:
+http://ark.intel.com/cpu.aspx?groupId=37103
+-------------------------------------------------------------------------------
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/kernel/sched.c b/kernel/sched.c
+index d49ddab..6251dbf 100644
+--- a/kernel/sched.c
++++ b/kernel/sched.c
+@@ -6533,6 +6533,8 @@ static void set_domain_attribute(struct sched_domain *sd, int level, int *attr)
+ 	}
+ }
+ 
++#define NZ(x) (x?x:1)
++
+ /*
+  * Build sched domains for a given set of cpus and attach the sched domains
+  * to the individual cpus
+@@ -6787,7 +6789,7 @@ static int __build_sched_domains(const cpumask_t *cpu_map, int *attr)
+ 		struct sched_domain *sd;
+ 		sd = &per_cpu(core_domains, i);
+ 		if (sched_smt_power_savings)
+-			power = SCHED_LOAD_SCALE * cpus_weight(sd->groups->cpumask);
++			power = SCHED_LOAD_SCALE * NZ(cpus_weight(sd->groups->cpumask));
+ 		else
+ 			power = SCHED_LOAD_SCALE + (cpus_weight(sd->groups->cpumask)-1)
+ 					    * SCHED_LOAD_SCALE / 10;
+@@ -6837,7 +6839,7 @@ static int __build_sched_domains(const cpumask_t *cpu_map, int *attr)
+ 		int power;
+ 		sd = &per_cpu(phys_domains, i);
+ 		if (sched_smt_power_savings)
+-			power = SCHED_LOAD_SCALE * cpus_weight(sd->groups->cpumask);
++			power = SCHED_LOAD_SCALE * NZ(cpus_weight(sd->groups->cpumask));
+ 		else
+ 			power = SCHED_LOAD_SCALE;
+ 		sd->groups->cpu_power = power;

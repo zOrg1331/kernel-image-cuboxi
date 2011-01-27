@@ -1,0 +1,96 @@
+From: Eric Sandeen <sandeen@redhat.com>
+Date: Thu, 2 Sep 2010 17:45:49 -0400
+Subject: [fs] xfs: move aio completion after unwritten extent conv
+Message-id: <4C7FE2CD.9020104@redhat.com>
+Patchwork-id: 28025
+O-Subject: [RHEL5.6 PATCH 2/3] xfs: move aio completion after unwritten extent
+	conversion
+Bugzilla: 617690
+RH-Acked-by: Dave Chinner <dchinner@redhat.com>
+
+For Bug 617690 -
+ext4 and xfs wrong data returned on read after write if file size was changed with ftruncate
+
+See also kernel.org bz https://bugzilla.kernel.org/show_bug.cgi?id=16165
+
+Backport of:
+
+commit fb511f2150174b18b28ad54708c1adda0df39b17
+Author: Christoph Hellwig <hch@infradead.org>
+Date:   Sun Jul 18 21:17:10 2010 +0000
+
+    xfs: move aio completion after unwritten extent conversion
+
+    If we write into an unwritten extent using AIO we need to complete the AIO
+    request after the extent conversion has finished.  Without that a read could
+    race to see see the extent still unwritten and return zeros.   For synchronous
+    I/O we already take care of that by flushing the xfsconvertd workqueue (which
+    might be a bit of overkill).
+
+    To do that add iocb and result fields to struct xfs_ioend, so that we can
+    call aio_complete from xfs_end_io after the extent conversion has happened.
+    Note that we need a new result field as io_error is used for positive errno
+    values, while the AIO code can return negative error values and positive
+    transfer sizes.
+
+    Signed-off-by: Christoph Hellwig <hch@lst.de>
+    Reviewed-by: Dave Chinner <dchinner@redhat.com>
+    Signed-off-by: Alex Elder <aelder@sgi.com>
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/fs/xfs/linux-2.6/xfs_aops.c b/fs/xfs/linux-2.6/xfs_aops.c
+index 0f334b5..b546a81 100644
+--- a/fs/xfs/linux-2.6/xfs_aops.c
++++ b/fs/xfs/linux-2.6/xfs_aops.c
+@@ -247,6 +247,8 @@ xfs_end_bio_unwritten(
+ 		}
+ 		xfs_setfilesize(ioend);
+ 	}
++	if (ioend->io_iocb)
++		aio_complete(ioend->io_iocb, ioend->io_result, 0);
+ 	xfs_destroy_ioend(ioend);
+ }
+ 
+@@ -292,6 +294,8 @@ xfs_alloc_ioend(
+ 	atomic_inc(&XFS_I(ioend->io_inode)->i_iocount);
+ 	ioend->io_offset = 0;
+ 	ioend->io_size = 0;
++	ioend->io_iocb = NULL;
++	ioend->io_result = 0;
+ 
+ 	if (type == IOMAP_UNWRITTEN)
+ 		INIT_WORK(&ioend->io_work, xfs_end_bio_unwritten, ioend);
+@@ -1438,6 +1442,7 @@ xfs_end_io_direct(
+ 	bool		is_async)
+ {
+ 	xfs_ioend_t	*ioend = iocb->private;
++	bool		complete_aio = is_async;
+ 
+ 	/*
+ 	 * Non-NULL private data means we need to issue a transaction to
+@@ -1463,7 +1468,14 @@ xfs_end_io_direct(
+ 	if (ioend->io_type == IOMAP_READ) {
+ 		xfs_finish_ioend(ioend, 0);
+ 	} else if (private && size > 0) {
+-		xfs_finish_ioend(ioend, is_sync_kiocb(iocb));
++		if (is_async) {
++			ioend->io_iocb = iocb;
++			ioend->io_result = ret;
++			complete_aio = false;
++			xfs_finish_ioend(ioend, 0);
++		} else {
++			xfs_finish_ioend(ioend, 1);
++		}
+ 	} else {
+ 		/*
+ 		 * A direct I/O write ioend starts it's life in unwritten
+@@ -1482,7 +1494,7 @@ xfs_end_io_direct(
+ 	 */
+ 	iocb->private = NULL;
+ 
+-	if (is_async)
++	if (complete_aio)
+ 		aio_complete(iocb, ret, 0);
+ }
+ 

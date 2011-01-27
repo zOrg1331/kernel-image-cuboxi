@@ -1,0 +1,112 @@
+From: Eric Sandeen <sandeen@redhat.com>
+Date: Thu, 5 Aug 2010 19:53:29 -0400
+Subject: [fs] ext4: allocate ->s_blockgroup_lock separately
+Message-id: <4C5B16B9.6080904@redhat.com>
+Patchwork-id: 27426
+O-Subject: [RHEL5 PATCH] ext4: allocate ->s_blockgroup_lock separately
+Bugzilla: 614957
+
+This is for BZ 614957, ext4: mount error path corrupts slab memory
+
+Root cause is because a backport misfire freed something we did
+not allocate, since we don't have the allocating patch, but did
+backport the subsequent error path free fixup (commit f6830165)
+
+Rather than remove the extraneous free, though, I'll bring back
+the s_blockgroup_lock allocation patch, it's something we should
+have in any case.  Upstream patch below, tested w/ the testcase
+in the bug as well as a run through xfstests.
+
+Thanks,
+-Eric
+
+commit 705895b61133ef43d106fe6a6bbdb2eec923867e
+Author: Pekka Enberg <penberg@cs.helsinki.fi>
+Date:   Sun Feb 15 18:07:52 2009 -0500
+
+    ext4: allocate ->s_blockgroup_lock separately
+
+    As spotted by kmemtrace, struct ext4_sb_info is 17664 bytes on 64-bit
+    which makes it a very bad fit for SLAB allocators.  The culprit of the
+    wasted memory is ->s_blockgroup_lock which can be as big as 16 KB when
+    NR_CPUS >= 32.
+
+    To fix that, allocate ->s_blockgroup_lock, which fits nicely in a order 2
+    page in the worst case, separately.  This shinks down struct ext4_sb_info
+    enough to fit a 2 KB slab cache so now we allocate 16 KB + 2 KB instead of
+    32 KB saving 14 KB of memory.
+
+    Acked-by: Andreas Dilger <adilger@sun.com>
+    Signed-off-by: Pekka Enberg <penberg@cs.helsinki.fi>
+    Cc: <linux-ext4@vger.kernel.org>
+    Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+    Signed-off-by: "Theodore Ts'o" <tytso@mit.edu>
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/fs/ext4/ext4.h b/fs/ext4/ext4.h
+index b5bc347..e22c72f 100644
+--- a/fs/ext4/ext4.h
++++ b/fs/ext4/ext4.h
+@@ -904,7 +904,7 @@ struct ext4_sb_info {
+ 	struct percpu_counter s_freeinodes_counter;
+ 	struct percpu_counter s_dirs_counter;
+ 	struct percpu_counter s_dirtyblocks_counter;
+-	struct blockgroup_lock s_blockgroup_lock;
++	struct blockgroup_lock *s_blockgroup_lock;
+ 	struct proc_dir_entry *s_proc;
+ 	struct kobject s_kobj;
+ 	struct completion s_kobj_unregister;
+@@ -1650,7 +1650,7 @@ bgl_lock_ptr(struct blockgroup_lock *bgl, unsigned int block_group)
+ static inline spinlock_t *ext4_group_lock_ptr(struct super_block *sb,
+ 					      ext4_group_t group)
+ {
+-	return bgl_lock_ptr(&EXT4_SB(sb)->s_blockgroup_lock, group);
++	return bgl_lock_ptr(EXT4_SB(sb)->s_blockgroup_lock, group);
+ }
+ 
+ /*
+diff --git a/fs/ext4/super.c b/fs/ext4/super.c
+index 0c7c35c..487fb2c 100644
+--- a/fs/ext4/super.c
++++ b/fs/ext4/super.c
+@@ -669,6 +669,7 @@ static void ext4_put_super(struct super_block *sb)
+ 	wait_for_completion(&sbi->s_kobj_unregister);
+ 	lock_super(sb);
+ 	lock_kernel();
++	kfree(sbi->s_blockgroup_lock);
+ 	kfree(sbi);
+ }
+ 
+@@ -2354,6 +2355,13 @@ static int ext4_fill_super(struct super_block *sb, void *data, int silent)
+ 	sbi = kzalloc(sizeof(*sbi), GFP_KERNEL);
+ 	if (!sbi)
+ 		return -ENOMEM;
++
++	sbi->s_blockgroup_lock =
++		kzalloc(sizeof(struct blockgroup_lock), GFP_KERNEL);
++	if (!sbi->s_blockgroup_lock) {
++		kfree(sbi);
++		return -ENOMEM;
++	}
+ 	sb->s_fs_info = sbi;
+ 	sbi->s_mount_opt = 0;
+ 	sbi->s_resuid = EXT4_DEF_RESUID;
+@@ -2660,7 +2668,7 @@ static int ext4_fill_super(struct super_block *sb, void *data, int silent)
+ 		sbi->s_proc = proc_mkdir(sb->s_id, ext4_proc_root);
+ #endif
+ 
+-	bgl_lock_init(&sbi->s_blockgroup_lock);
++	bgl_lock_init(sbi->s_blockgroup_lock);
+ 
+ 	for (i = 0; i < db_count; i++) {
+ 		block = descriptor_loc(sb, logical_sb_block, i);
+@@ -2976,7 +2984,7 @@ failed_mount:
+ 	brelse(bh);
+ out_fail:
+ 	sb->s_fs_info = NULL;
+-	kfree(&sbi->s_blockgroup_lock);
++	kfree(sbi->s_blockgroup_lock);
+ 	kfree(sbi);
+ 	lock_kernel();
+ 	return ret;

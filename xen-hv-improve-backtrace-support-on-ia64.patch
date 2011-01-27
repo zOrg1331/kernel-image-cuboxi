@@ -1,0 +1,58 @@
+From: Andrew Jones <drjones@redhat.com>
+Date: Mon, 16 Aug 2010 14:30:16 -0400
+Subject: [xen] hv: improve backtrace support on ia64
+Message-id: <1281969016-12745-3-git-send-email-drjones@redhat.com>
+Patchwork-id: 27640
+O-Subject: [RHEL5.6 PATCH] xen-hv: improve backtrace support on ia64
+Bugzilla: 499553
+RH-Acked-by: Paolo Bonzini <pbonzini@redhat.com>
+RH-Acked-by: Christopher Lalancette <clalance@redhat.com>
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+
+Bugzilla: 499553
+
+Description of problem:
+    Xen-ia64 cannot generate backtraces properly at some points.
+
+Here are some causes:
+    1. At some points of procedure entry, unwind info cannot be
+       generated properly.
+    2. BUG() doesn't show the stacktrace.
+
+Matches upstream, tested by someone in Fujitsu and myself.
+Brew: https://brewweb.devel.redhat.com/taskinfo?taskID=2671576
+---
+ arch/ia64/xen/ivt.S             |    1 +
+ include/asm-ia64/xenprocessor.h |    6 +++++-
+ 2 files changed, 6 insertions(+), 1 deletions(-)
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/arch/ia64/xen/ivt.S b/arch/ia64/xen/ivt.S
+index 767b103..c7d8c3c 100644
+--- a/arch/ia64/xen/ivt.S
++++ b/arch/ia64/xen/ivt.S
+@@ -1237,6 +1237,7 @@ fast_hypercall:
+ 	nop 0
+ 	bsw.1					// B (6 cyc) regs are saved, switch to bank 1
+ 	;;
++	PT_REGS_UNWIND_INFO(-48)
+ 
+ 	ssm psr.ic | PSR_DEFAULT_BITS		// M2	now it's safe to re-enable intr.-collection
+ //	movl r3=ia64_ret_from_syscall		// X
+diff --git a/include/asm-ia64/xenprocessor.h b/include/asm-ia64/xenprocessor.h
+index 7a38f1b..0282b06 100644
+--- a/include/asm-ia64/xenprocessor.h
++++ b/include/asm-ia64/xenprocessor.h
+@@ -237,6 +237,10 @@ typedef union {
+     u64 itir;
+ } ia64_itir_t;
+ 
+-#define dump_execution_state() printk("FIXME: implement ia64 dump_execution_state()\n");
++#define dump_execution_state()						\
++    do {								\
++        printk("FIXME: implement ia64 dump_execution_state()\n");	\
++        dump_stack();							\
++    } while (0)
+ 
+ #endif // _ASM_IA64_XENPROCESSOR_H

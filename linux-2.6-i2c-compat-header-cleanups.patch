@@ -1,0 +1,61 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Date: Mon, 10 May 2010 18:52:47 -0400
+Subject: [i2c] compat header cleanups
+Message-id: <20100510185031.2781.55252.sendpatchset@prarit.bos.redhat.com>
+Patchwork-id: 24984
+O-Subject: [RHEL5 PATCH 24/27] compat.h cleanup: i2c driver changes
+Bugzilla: 546740
+RH-Acked-by: Jarod Wilson <jarod@redhat.com>
+RH-Acked-by: Michal Schmidt <mschmidt@redhat.com>
+
+>From 3010c8692b62145921c4a073331bf1993c58f110 Mon Sep 17 00:00:00 2001
+From: Prarit Bhargava <prarit@redhat.com>
+Date: Mon, 10 May 2010 09:53:51 -0400
+Subject: [PATCH] i2c driver changes
+
+Move i2c_new_dummy() and i2c_unregister_device into the general i2c code.
+These were declared in the sfc compat file.
+
+Resolves 546740.
+
+diff --git a/drivers/i2c/i2c-core.c b/drivers/i2c/i2c-core.c
+index ec183ec..3cf0b73 100644
+--- a/drivers/i2c/i2c-core.c
++++ b/drivers/i2c/i2c-core.c
+@@ -1157,6 +1157,36 @@ s32 i2c_smbus_xfer(struct i2c_adapter * adapter, u16 addr, unsigned short flags,
+ 	return res;
+ }
+ 
++/*
++ * These functions do not really (/un)register the i2c device.
++ * Only create a minimal i2c_client, so i2c_smbus_read_byte_data and
++ * i2c_smbus_write_byte_data can work in the drivers/net/sfc network
++ * driver.
++ *
++ * If some other backport eventually requires the full i2c_new_dummy
++ * functionality, we can backport it then. So ....
++ *
++ * 	DO NOT ADD THESE FUNCTIONS TO KABI.
++ */
++
++struct i2c_client * i2c_new_dummy(struct i2c_adapter *adap, u16 address)
++{
++	struct i2c_client *client;
++
++	client = kzalloc(sizeof(struct i2c_client), GFP_KERNEL);
++	if (client) {
++		client->addr = address;
++		client->adapter = adap;
++	}
++	return client;
++}
++
++void i2c_unregister_device(struct i2c_client *c)
++{
++	kfree(c);
++}
++EXPORT_SYMBOL(i2c_new_dummy);
++EXPORT_SYMBOL(i2c_unregister_device);
+ 
+ /* Next four are needed by i2c-isa */
+ EXPORT_SYMBOL_GPL(i2c_adapter_dev_release);

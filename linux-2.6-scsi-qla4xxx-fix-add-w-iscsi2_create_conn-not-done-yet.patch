@@ -1,0 +1,43 @@
+From: Chad Dupuis <cdupuis@redhat.com>
+Date: Tue, 30 Nov 2010 20:00:14 -0500
+Subject: [scsi] qla4xxx: fix add w/iscsi2_create_conn not done yet
+Message-id: <20101130200014.10450.77982.sendpatchset@localhost.localdomain>
+Patchwork-id: 29706
+O-Subject: [RHEL 5.6 PATCH 15/28] qla4xxx: Call qla4xxx_add_device_dynamically
+	as iscsi2_create_conn is not done yet.
+Bugzilla: 656999
+
+Bugzilla
+--------
+
+Bug 656999 (https://bugzilla.redhat.com/show_bug.cgi?id=656999)
+
+Upstream Status
+---------------
+
+RHEL 5 specific.
+
+Description
+-----------
+
+>From 533116be3363c9586e737d9fe3369dc2d3228efe Mon Sep 17 00:00:00 2001
+From: Lalit Chandivade <lalit.chandivade@qlogic.com>
+Date: Sat, 20 Nov 2010 14:52:01 -0800
+Subject: [PATCH 16/29] qla4xxx: Call qla4xxx_add_device_dynamically as iscsi2_create_conn is not done yet.
+
+Signed-off-by: Lalit Chandivade <lalit.chandivade@qlogic.com>
+Signed-off-by: Prasanna Mumbai <prasanna.mumbai@qlogic.com>
+
+diff --git a/drivers/scsi/qla4xxx/ql4_init.c b/drivers/scsi/qla4xxx/ql4_init.c
+index c96e947..e16455b 100644
+--- a/drivers/scsi/qla4xxx/ql4_init.c
++++ b/drivers/scsi/qla4xxx/ql4_init.c
+@@ -1507,7 +1507,7 @@ int qla4xxx_process_ddb_changed(struct scsi_qla_host *ha, uint32_t fw_ddb_index,
+ 	/* Get the corresponging ddb entry */
+ 	ddb_entry = qla4xxx_lookup_ddb_by_fw_index(ha, fw_ddb_index);
+ 	/* Device does not currently exist in our database. */
+-	if (ddb_entry == NULL) {
++	if (ddb_entry == NULL || ddb_entry->conn == NULL) {
+ 		if (state == DDB_DS_SESSION_ACTIVE)
+ 			qla4xxx_add_device_dynamically(ha, fw_ddb_index);
+ 		return QLA_SUCCESS;

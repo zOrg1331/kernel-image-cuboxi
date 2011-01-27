@@ -6,6 +6,7 @@ Patchwork-id: 27713
 O-Subject: [PATCH RHEL5.6 4/5] mm: fix up some user-visible effects of the stack
 	guard page
 Bugzilla: 607858
+CVE: CVE-2010-2240
 RH-Acked-by: Rik van Riel <riel@redhat.com>
 RH-Acked-by: Jarod Wilson <jarod@redhat.com>
 

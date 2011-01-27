@@ -1,0 +1,295 @@
+From: Tomas Henzl <thenzl@redhat.com>
+Date: Fri, 17 Sep 2010 13:06:38 -0400
+Subject: [scsi] mpt2sas: recover from injected PCIe bus errors
+Message-id: <4C9367DE.4090209@redhat.com>
+Patchwork-id: 28279
+O-Subject: [RHEL5.6 PATCH V2] mpt2sas: driver fails to recover from injected
+	PCIe bus errors
+Bugzilla: 568281
+
+This is for bz#568281
+
+I've already posted 'bz#568281 Update MPT2SAS to 05.101.00.02',
+a part of that patch was support for EEH (Enhanced Error Handling).
+Testing this at IBM on PowerPc uncovered issues with recovery
+from injected EEH errors.
+This patch is needed to make it work properly.
+
+Upstream commit 3cb5469a2ab4b87a7c63dd218fdc1625bc73eccc
+Author: Eric Moore <eric.moore@lsi.com>
+[SCSI] mpt2sas: driver fails to recover from injected PCIe bus errors
+
+Brew taskID=2764148
+
+Tomas
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/scsi/mpt2sas/mpt2sas_base.c b/drivers/scsi/mpt2sas/mpt2sas_base.c
+index d59a40e..4be381a 100644
+--- a/drivers/scsi/mpt2sas/mpt2sas_base.c
++++ b/drivers/scsi/mpt2sas/mpt2sas_base.c
+@@ -1306,6 +1306,9 @@ mpt2sas_base_map_resources(struct MPT2SAS_ADAPTER *ioc)
+ 	printk(MPT2SAS_INFO_FMT "ioport(0x%016llx), size(%d)\n",
+ 	    ioc->name, (unsigned long long)pio_chip, pio_sz);
+ 
++	/* Save PCI configuration state for recovery from PCI AER/EEH errors */
++	pci_save_state(pdev);
++
+ 	return 0;
+ 
+  out_fail:
+@@ -3401,6 +3404,9 @@ _base_make_ioc_ready(struct MPT2SAS_ADAPTER *ioc, int sleep_flag,
+ 	dinitprintk(ioc, printk(MPT2SAS_DEBUG_FMT "%s\n", ioc->name,
+ 	    __func__));
+ 
++	if (ioc->pci_error_recovery)
++		return 0;
++
+ 	ioc_state = mpt2sas_base_get_iocstate(ioc, 0);
+ 	dhsprintk(ioc, printk(MPT2SAS_DEBUG_FMT "%s: ioc_state(0x%08x)\n",
+ 	    ioc->name, __func__, ioc_state));
+@@ -3825,6 +3831,13 @@ mpt2sas_base_hard_reset_handler(struct MPT2SAS_ADAPTER *ioc, int sleep_flag,
+ 	dtmprintk(ioc, printk(MPT2SAS_DEBUG_FMT "%s: enter\n", ioc->name,
+ 	    __func__));
+ 
++	if (ioc->pci_error_recovery) {
++		printk(MPT2SAS_ERR_FMT "%s: pci error recovery reset\n",
++		    ioc->name, __func__);
++		r = 0;
++		goto out;
++	}
++
+ 	if (mpt2sas_fwfault_debug)
+ 		mpt2sas_halt_firmware(ioc);
+ 
+diff --git a/drivers/scsi/mpt2sas/mpt2sas_base.h b/drivers/scsi/mpt2sas/mpt2sas_base.h
+index 57aa2aa..04998d8 100644
+--- a/drivers/scsi/mpt2sas/mpt2sas_base.h
++++ b/drivers/scsi/mpt2sas/mpt2sas_base.h
+@@ -503,6 +503,7 @@ typedef void (*MPT_ADD_SGE)(void *paddr, u32 flags_length, dma_addr_t dma_addr);
+  * @ioc_link_reset_in_progress: phy/hard reset in progress
+  * @ignore_loginfos: ignore loginfos during task managment
+  * @remove_host: flag for when driver unloads, to avoid sending dev resets
++ * @pci_error_recovery: flag to prevent ioc access until slot reset completes
+  * @wait_for_port_enable_to_complete:
+  * @msix_enable: flag indicating msix is enabled
+  * @msix_vector_count: number msix vectors
+@@ -631,6 +632,7 @@ struct MPT2SAS_ADAPTER {
+ 	u8		ioc_link_reset_in_progress;
+ 	u8		ignore_loginfos;
+ 	u8		remove_host;
++	u8		pci_error_recovery;
+ 	u8		wait_for_port_enable_to_complete;
+ 
+ 	u8		msix_enable;
+diff --git a/drivers/scsi/mpt2sas/mpt2sas_config.c b/drivers/scsi/mpt2sas/mpt2sas_config.c
+index a1804ca..d05fbcd 100644
+--- a/drivers/scsi/mpt2sas/mpt2sas_config.c
++++ b/drivers/scsi/mpt2sas/mpt2sas_config.c
+@@ -400,7 +400,7 @@ _config_request(struct MPT2SAS_ADAPTER *ioc, Mpi2ConfigRequest_t
+ 		if (ioc->config_cmds.smid == smid)
+ 			mpt2sas_base_free_smid(ioc, smid);
+ 		if ((ioc->shost_recovery) || (ioc->config_cmds.status &
+-		    MPT2_CMD_RESET))
++		    MPT2_CMD_RESET) || ioc->pci_error_recovery)
+ 			goto retry_config;
+ 		issue_host_reset = 1;
+ 		r = -EFAULT;
+diff --git a/drivers/scsi/mpt2sas/mpt2sas_ctl.c b/drivers/scsi/mpt2sas/mpt2sas_ctl.c
+index 53bee90..eb98435 100644
+--- a/drivers/scsi/mpt2sas/mpt2sas_ctl.c
++++ b/drivers/scsi/mpt2sas/mpt2sas_ctl.c
+@@ -2077,7 +2077,7 @@ _ctl_ioctl_main(struct file *file, unsigned int cmd, void __user *arg)
+ 		    !ioc)
+ 			return -ENODEV;
+ 
+-		if (ioc->shost_recovery)
++		if (ioc->shost_recovery || ioc->pci_error_recovery)
+ 			return -EAGAIN;
+ 
+ 		if (_IOC_SIZE(cmd) == sizeof(struct mpt2_ioctl_command)) {
+@@ -2196,7 +2196,7 @@ _ctl_compat_mpt_command(struct file *file, unsigned cmd, unsigned long arg)
+ 	if (_ctl_verify_adapter(karg32.hdr.ioc_number, &ioc) == -1 || !ioc)
+ 		return -ENODEV;
+ 
+-	if (ioc->shost_recovery)
++	if (ioc->shost_recovery || ioc->pci_error_recovery)
+ 		return -EAGAIN;
+ 
+ 	memset(&karg, 0, sizeof(struct mpt2_ioctl_command));
+diff --git a/drivers/scsi/mpt2sas/mpt2sas_scsih.c b/drivers/scsi/mpt2sas/mpt2sas_scsih.c
+index f090482..6d1bf49 100644
+--- a/drivers/scsi/mpt2sas/mpt2sas_scsih.c
++++ b/drivers/scsi/mpt2sas/mpt2sas_scsih.c
+@@ -1901,7 +1901,8 @@ mpt2sas_scsih_issue_tm(struct MPT2SAS_ADAPTER *ioc, u16 handle, uint channel,
+ 		goto err_out;
+ 	}
+ 
+-	if (ioc->shost_recovery || ioc->remove_host) {
++	if (ioc->shost_recovery || ioc->remove_host ||
++	    ioc->pci_error_recovery) {
+ 		printk(MPT2SAS_INFO_FMT "%s: host reset in progress!\n",
+ 		    __func__, ioc->name);
+ 		rc = FAILED;
+@@ -2429,7 +2430,8 @@ _scsih_tm_tr_send(struct MPT2SAS_ADAPTER *ioc, u16 handle)
+ 	unsigned long flags;
+ 	struct _tr_list *delayed_tr;
+ 
+-	if (ioc->shost_recovery || ioc->remove_host) {
++	if (ioc->shost_recovery || ioc->remove_host ||
++	    ioc->pci_error_recovery) {
+ 		dewtprintk(ioc, printk(MPT2SAS_INFO_FMT "%s: host reset in "
+ 		   "progress!\n", __func__, ioc->name));
+ 		return;
+@@ -2528,7 +2530,8 @@ _scsih_tm_tr_complete(struct MPT2SAS_ADAPTER *ioc, u16 smid, u8 msix_index,
+ 	u16 smid_sas_ctrl;
+ 	struct _tr_list *delayed_tr;
+ 
+-	if (ioc->shost_recovery || ioc->remove_host) {
++	if (ioc->shost_recovery || ioc->remove_host ||
++	    ioc->pci_error_recovery) {
+ 		dewtprintk(ioc, printk(MPT2SAS_INFO_FMT "%s: host reset in "
+ 		   "progress!\n", __func__, ioc->name));
+ 		return 1;
+@@ -2681,7 +2684,10 @@ _scsih_flush_running_cmds(struct MPT2SAS_ADAPTER *ioc)
+ 		count++;
+ 		mpt2sas_base_free_smid(ioc, smid);
+ 		scsi_dma_unmap(scmd);
+-		scmd->result = DID_RESET << 16;
++		if (ioc->pci_error_recovery)
++			scmd->result = DID_NO_CONNECT << 16;
++		else
++			scmd->result = DID_RESET << 16;
+ 		scmd->scsi_done(scmd);
+ 	}
+ 	dtmprintk(ioc, printk(MPT2SAS_INFO_FMT "completing %d cmds\n",
+@@ -2839,6 +2845,12 @@ _scsih_qcmd(struct scsi_cmnd *scmd, void (*done)(struct scsi_cmnd *))
+ 		return 0;
+ 	}
+ 
++	if (ioc->pci_error_recovery) {
++		scmd->result = DID_NO_CONNECT << 16;
++		scmd->scsi_done(scmd);
++		return 0;
++	}
++
+ 	sas_target_priv_data = sas_device_priv_data->sas_target;
+ 	/* invalid device handle */
+ 	if (sas_target_priv_data->handle == MPT2SAS_INVALID_DEVICE_HANDLE) {
+@@ -3650,7 +3662,7 @@ _scsih_expander_add(struct MPT2SAS_ADAPTER *ioc, u16 handle)
+ 	if (!handle)
+ 		return -1;
+ 
+-	if (ioc->shost_recovery)
++	if (ioc->shost_recovery || ioc->pci_error_recovery)
+ 		return -1;
+ 
+ 	if ((mpt2sas_config_get_expander_pg0(ioc, &mpi_reply, &expander_pg0,
+@@ -4499,7 +4511,7 @@ _scsih_remove_pd_device(struct MPT2SAS_ADAPTER *ioc, struct _sas_device
+ 	    MPI2_SCSITASKMGMT_TASKTYPE_TARGET_RESET, 0, 30, NULL);
+ 	dewtprintk(ioc, printk(MPT2SAS_INFO_FMT "issue target reset "
+ 	    "done: handle(0x%04x)\n", ioc->name, vol_handle));
+-	if (ioc->shost_recovery)
++	if (ioc->shost_recovery || ioc->pci_error_recovery)
+ 		return;
+ 
+ 	/* SAS_IO_UNIT_CNTR - send REMOVE_DEVICE */
+@@ -4679,7 +4691,7 @@ _scsih_sas_topology_change_event(struct MPT2SAS_ADAPTER *ioc,
+ 		_scsih_sas_topology_change_event_debug(ioc, event_data);
+ #endif
+ 
+-	if (ioc->shost_recovery || ioc->remove_host)
++	if (ioc->shost_recovery || ioc->remove_host || ioc->pci_error_recovery)
+ 		return;
+ 
+ 	if (!ioc->sas_hba.num_phys)
+@@ -4718,7 +4730,8 @@ _scsih_sas_topology_change_event(struct MPT2SAS_ADAPTER *ioc,
+ 			    "expander event\n", ioc->name));
+ 			return;
+ 		}
+-		if (ioc->shost_recovery || ioc->remove_host)
++		if (ioc->shost_recovery || ioc->remove_host ||
++		    ioc->pci_error_recovery)
+ 			return;
+ 		phy_number = event_data->StartPhyNum + i;
+ 		reason_code = event_data->PHY[i].PhyStatus &
+@@ -6173,7 +6186,8 @@ _firmware_event_work(void *arg)
+ 	struct MPT2SAS_ADAPTER *ioc = fw_event->ioc;
+ 
+ 	/* the queue is being flushed so ignore this event */
+-	if (ioc->remove_host || fw_event->cancel_pending_work) {
++	if (ioc->remove_host || fw_event->cancel_pending_work ||
++	    ioc->pci_error_recovery) {
+ 		_scsih_fw_event_free(ioc, fw_event);
+ 		return;
+ 	}
+@@ -6255,7 +6269,7 @@ mpt2sas_scsih_event_callback(struct MPT2SAS_ADAPTER *ioc, u8 msix_index,
+ 	u16 sz;
+ 
+ 	/* events turned off due to host reset or driver unloading */
+-	if (ioc->remove_host)
++	if (ioc->remove_host || ioc->pci_error_recovery)
+ 		return 1;
+ 
+ 	mpi_reply = mpt2sas_base_get_reply_virt_addr(ioc, reply);
+@@ -6943,12 +6957,17 @@ _scsih_pci_error_detected(struct pci_dev *pdev, pci_channel_state_t state)
+ 	case pci_channel_io_normal:
+ 		return PCI_ERS_RESULT_CAN_RECOVER;
+ 	case pci_channel_io_frozen:
++		/* Fatal error, prepare for slot reset */
++		ioc->pci_error_recovery = 1;
+ 		scsi_block_requests(ioc->shost);
+ 		mpt2sas_base_stop_watchdog(ioc);
+ 		mpt2sas_base_free_resources(ioc);
+ 		return PCI_ERS_RESULT_NEED_RESET;
+ 	case pci_channel_io_perm_failure:
+-		_scsih_remove(pdev);
++		/* Permanent error, prepare for device removal */
++		ioc->pci_error_recovery = 1;
++		mpt2sas_base_stop_watchdog(ioc);
++		_scsih_flush_running_cmds(ioc);
+ 		return PCI_ERS_RESULT_DISCONNECT;
+ 	}
+ 	return PCI_ERS_RESULT_NEED_RESET;
+@@ -6972,7 +6991,9 @@ _scsih_pci_slot_reset(struct pci_dev *pdev)
+ 	printk(MPT2SAS_INFO_FMT "PCI error: slot reset callback!!\n",
+ 		ioc->name);
+ 
++	ioc->pci_error_recovery = 0;
+ 	ioc->pdev = pdev;
++	pci_restore_state(pdev);
+ 	rc = mpt2sas_base_map_resources(ioc);
+ 	if (rc)
+ 		return PCI_ERS_RESULT_DISCONNECT;
+diff --git a/drivers/scsi/mpt2sas/mpt2sas_transport.c b/drivers/scsi/mpt2sas/mpt2sas_transport.c
+index 4efa3bc..a0ce5ec 100644
+--- a/drivers/scsi/mpt2sas/mpt2sas_transport.c
++++ b/drivers/scsi/mpt2sas/mpt2sas_transport.c
+@@ -137,7 +137,7 @@ _transport_set_identify(struct MPT2SAS_ADAPTER *ioc, u16 handle,
+ 	u32 device_info;
+ 	u32 ioc_status;
+ 
+-	if (ioc->shost_recovery) {
++	if (ioc->shost_recovery || ioc->pci_error_recovery) {
+ 		printk(MPT2SAS_INFO_FMT "%s: host reset in progress!\n",
+ 		    __func__, ioc->name);
+ 		return -EFAULT;
+@@ -299,7 +299,7 @@ _transport_expander_report_manufacture(struct MPT2SAS_ADAPTER *ioc,
+ 	u64 *sas_address_le;
+ 	u16 wait_state_count;
+ 
+-	if (ioc->shost_recovery) {
++	if (ioc->shost_recovery || ioc->pci_error_recovery) {
+ 		printk(MPT2SAS_INFO_FMT "%s: host reset in progress!\n",
+ 		    __func__, ioc->name);
+ 		return -EFAULT;
+@@ -891,7 +891,7 @@ mpt2sas_transport_update_links(struct MPT2SAS_ADAPTER *ioc,
+ 	struct _sas_node *sas_node;
+ 	struct _sas_phy *mpt2sas_phy;
+ 
+-	if (ioc->shost_recovery)
++	if (ioc->shost_recovery || ioc->pci_error_recovery)
+ 		return;
+ 
+ 	spin_lock_irqsave(&ioc->sas_node_lock, flags);

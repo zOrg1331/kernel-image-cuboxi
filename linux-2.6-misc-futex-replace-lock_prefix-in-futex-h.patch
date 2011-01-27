@@ -1,39 +1,22 @@
 From: Jiri Pirko <jpirko@redhat.com>
-Date: Thu, 14 Oct 2010 18:05:05 +0200
+Date: Thu, 14 Oct 2010 16:05:05 -0400
 Subject: [misc] futex: replace LOCK_PREFIX in futex.h
 Message-id: <20101014160505.GB2629@psychotron.redhat.com>
-O-Subject: [RHEL5] futex: replace LOCK_PREFIX in futex.h
+Patchwork-id: 4491
+O-Subject: [kernel team] [RHEL5] futex: replace LOCK_PREFIX in futex.h
 Bugzilla: 633176
+CVE: CVE-2010-3086
 RH-Acked-by: Eugene Teo <eugene@redhat.com>
 RH-Acked-by: Gleb Natapov <gleb@redhat.com>
 RH-Acked-by: Petr Matousek <pmatouse@redhat.com>
-RH-Acked-by: Cong Wang <amwang@redhat.com>
+RH-Acked-by: Amerigo Wang <amwang@redhat.com>
 RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
 RH-Acked-by: Larry Woodman <lwoodman@redhat.com>
 
-Thu, Oct 14, 2010 at 08:04:14AM CEST, eteo@redhat.com wrote:
->This is for CVE-2010-3086 rhel-5.6 [#633176:NEW].
->
->Please review.
->
->---
->Subject: [RHEL5] futex: replace LOCK_PREFIX in futex.h
->
->Backport of the upstream commit: 9d55b9923a (x86: replace LOCK_PREFIX in
->futex.h), see also: https://bugzilla.redhat.com/show_bug.cgi?id=429412
->
->RHEL5 still replaces the LOCK prefix with a NOP, unlike mainline which
->rewrites the instruction using a DS prefix, see commit: 1f49a2c2aeb
->(x86: revert replace LOCK_PREFIX in futex.h).
->
->Replacing the LOCK prefix with a NOP causes exceptions to not match the
->__ex_table fault fixup, causing kernel panics and the like when they
->trigger.
->
+This is for CVE-2010-3086 rhel-5.6 [#633176:NEW].
 
-The same patch non-malformed.
+Please review.
 
-https://brewweb.devel.redhat.com/taskinfo?taskID=2824359
 
 diff --git a/include/asm-i386/futex.h b/include/asm-i386/futex.h
 index 946d97c..d84e60f 100644
@@ -109,4 +92,3 @@ index 9804bf0..2c51565 100644
  
  		"2:	.section .fixup, \"ax\"			\n"
  		"3:	mov     %2, %0				\n"
-

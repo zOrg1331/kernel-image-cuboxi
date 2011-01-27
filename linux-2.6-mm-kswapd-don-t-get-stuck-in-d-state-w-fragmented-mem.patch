@@ -1,0 +1,96 @@
+From: Larry Woodman <lwoodman@redhat.com>
+Date: Wed, 29 Sep 2010 20:05:25 -0400
+Subject: [mm] kswapd: don't get stuck in D state w/fragmented mem
+Message-id: <1285790725.23812.45.camel@dhcp-100-19-198.bos.redhat.com>
+Patchwork-id: 28525
+O-Subject: [RHEL5 Patch] Prevent kswapd from getting stuck in D state with
+	fragmented memory and large order allocations
+Bugzilla: 609668
+RH-Acked-by: Amerigo Wang <amwang@redhat.com>
+RH-Acked-by: Johannes Weiner <jweiner@redhat.com>
+RH-Acked-by: Danny Feng <dfeng@redhat.com>
+
+Prevent kswapd from getting stuck in D state with fragmented memory and large order allocations
+
+This problem was encountered in RHEL5.  Customer verified the attached
+upstream backport patch along with
+"linux-2.6-mm-fix-excessive-memory-reclaim-from-zones-w-lots-free.patch"
+fixes this problem in RHEL5.
+
+Fixes BZ609668
+
+--------------------------------------------------------------------------------------
+author
+KOSAKI Motohiro
+<kosaki.motohiro@jp.fujitsu.com>
+
+Tue, 6 Jan 2009 22:40:33
++0000 (14:40 -0800)
+committer
+Linus Torvalds
+<torvalds@linux-foundation.org>
+
+Tue, 6 Jan 2009 23:59:10
++0000 (15:59 -0800)
+commit
+73ce02e96fe34a983199a9855b2ae738f960a6ee
+tree
+06dbbc2c38d55f8eacab09c55a68c736156b9540
+tree | snapshot
+parent
+594fe1a044325bb0a1a49ca7d086e3df4f1df59a
+commit | diff
+mm: stop kswapd's infinite loop at high order allocation
+
+Wassim Dagash reported following kswapd infinite loop problem.
+
+  kswapd runs in some infinite loop trying to swap until order 10 of zone
+  highmem is OK.... kswapd will continue to try to balance order 10 of zone
+  highmem forever (or until someone release a very large chunk of highmem).
+
+For non order-0 allocations, the system may never be balanced due to
+fragmentation but kswapd should not infinitely loop as a result.
+
+Instead, recheck all watermarks at order-0 as they are the most important.
+If watermarks are ok, kswapd will go back to sleep.
+
+[akpm@linux-foundation.org: fix comment]
+Reported-by: wassim dagash <wassim.dagash@gmail.com>
+Signed-off-by: KOSAKI Motohiro <kosaki.motohiro@jp.fujitsu.com>
+Reviewed-by: Nick Piggin <npiggin@suse.de>
+Signed-off-by: Mel Gorman <mel@csn.ul.ie>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+Signed-off-by: Linus Torvalds <torvalds@linux-foundation.org>
+----------------------------------------------------------------------------
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/mm/vmscan.c b/mm/vmscan.c
+index 517023a..42aa6b2 100644
+--- a/mm/vmscan.c
++++ b/mm/vmscan.c
+@@ -1278,6 +1278,24 @@ out:
+ 	}
+ 	if (!all_zones_ok) {
+ 		cond_resched();
++
++		/*
++		 * Fragmentation may mean that the system cannot be
++		 * rebalanced for high-order allocations in all zones.
++		 * At this point, if nr_reclaimed < SWAP_CLUSTER_MAX,
++		 * it means the zones have been fully scanned and are still
++		 * not balanced. For high-order allocations, there is
++		 * little point trying all over again as kswapd may
++		 * infinite loop.
++ 		 *
++		 * Instead, recheck all watermarks at order-0 as they
++		 * are the most important. If watermarks are ok, kswapd will go
++		 * back to sleep. High-order users can still perform direct
++		 * reclaim if they wish.
++		 */
++		if (sc.nr_reclaimed < SWAP_CLUSTER_MAX)
++			order =	0;
++
+ 		goto loop_again;
+ 	}
+ 

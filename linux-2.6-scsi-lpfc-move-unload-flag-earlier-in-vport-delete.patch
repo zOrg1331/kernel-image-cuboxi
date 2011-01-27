@@ -1,0 +1,41 @@
+From: Rob Evers <revers@redhat.com>
+Date: Wed, 27 Oct 2010 15:22:55 -0400
+Subject: [scsi] lpfc: move unload flag earlier in vport delete
+Message-id: <1288192999-24221-4-git-send-email-revers@redhat.com>
+Patchwork-id: 28929
+O-Subject: [RHEL5.6 PATCH 03/27] lpfc: Move Unload flag earlier in vport delete.
+	(CR: 103830)
+Bugzilla: 639028
+
+lpfc: Move Unload flag earlier in vport delete. (CR: 103830)
+
+From: Rob Evers on behalf of Emulex <revers@redhat.com>
+
+https://bugzilla.redhat.com/show_bug.cgi?id=636289
+
+diff --git a/drivers/scsi/lpfc/lpfc_vport.c b/drivers/scsi/lpfc/lpfc_vport.c
+index 3bb05c1..9f59dea 100644
+--- a/drivers/scsi/lpfc/lpfc_vport.c
++++ b/drivers/scsi/lpfc/lpfc_vport.c
+@@ -512,7 +512,9 @@ lpfc_vport_delete(struct Scsi_Host *shost)
+ 				 "static vport.\n");
+ 		return VPORT_ERROR;
+ 	}
+-
++	spin_lock_irq(&phba->hbalock);
++	vport->load_flag |= FC_UNLOADING;
++	spin_unlock_irq(&phba->hbalock);
+ 	/*
+ 	 * If we are not unloading the driver then prevent the vport_delete
+ 	 * from happening until after this vport's discovery is finished.
+@@ -589,10 +591,6 @@ lpfc_vport_delete(struct Scsi_Host *shost)
+ 		}
+ 	}
+ 
+-	spin_lock_irq(&phba->hbalock);
+-	vport->load_flag |= FC_UNLOADING;
+-	spin_unlock_irq(&phba->hbalock);
+-
+ 	lpfc_free_sysfs_attr(vport);
+ 
+ 	kfree(vport->vname);

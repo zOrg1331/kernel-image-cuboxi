@@ -1,0 +1,33 @@
+From: Rob Evers <revers@redhat.com>
+Date: Wed, 24 Nov 2010 21:24:03 -0500
+Subject: [scsi] lpfc: handle CVL after nameserver PLOGI timeouts
+Message-id: <1290633848-10834-3-git-send-email-revers@redhat.com>
+Patchwork-id: 29615
+O-Subject: [RHEL5.6 PATCH 2/7] lpfc: Updated driver to handle CVL after
+	Nameserver PLOGI timeouts. (CR: 111516)
+Bugzilla: 655119
+
+From: Rob Evers on behalf of Emulex <revers@redhat.com>
+
+Without this fix, the driver will lose virtual link after consecutive PLOGIs fail
+https://bugzilla.redhat.com/show_bug.cgi?id=655119
+
+diff --git a/drivers/scsi/lpfc/lpfc_init.c b/drivers/scsi/lpfc/lpfc_init.c
+index 68ac7ee..a5cc5c2 100644
+--- a/drivers/scsi/lpfc/lpfc_init.c
++++ b/drivers/scsi/lpfc/lpfc_init.c
+@@ -3340,10 +3340,12 @@ lpfc_sli4_perform_vport_cvl(struct lpfc_vport *vport)
+ 		if (!ndlp)
+ 			return 0;
+ 	}
+-	if (phba->pport->port_state < LPFC_FLOGI)
++	if ((phba->pport->port_state < LPFC_FLOGI) &&
++		(phba->pport->port_state != LPFC_VPORT_FAILED))
+ 		return NULL;
+ 	/* If virtual link is not yet instantiated ignore CVL */
+-	if ((vport != phba->pport) && (vport->port_state < LPFC_FDISC))
++	if ((vport != phba->pport) && (vport->port_state < LPFC_FDISC)
++		&& (vport->port_state != LPFC_VPORT_FAILED))
+ 		return NULL;
+ 	shost = lpfc_shost_from_vport(vport);
+ 	if (!shost)

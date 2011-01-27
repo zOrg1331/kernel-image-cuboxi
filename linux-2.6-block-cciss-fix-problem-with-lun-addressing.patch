@@ -1,0 +1,163 @@
+From: Tomas Henzl <thenzl@redhat.com>
+Date: Sun, 29 Aug 2010 15:49:14 -0400
+Subject: [block] cciss: fix problem with LUN addressing
+Message-id: <1283097002-3341-16-git-send-email-thenzl@redhat.com>
+Patchwork-id: 27862
+O-Subject: [RHEL6 PATCH 15/63] cciss: fix problem with LUN addressing.
+Bugzilla: 568830
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+
+Change the LunID which we save for each logical drive to save all 8 bytes
+instead of just the 4 "significant" bytes.   This appears to fix a problem
+with addressing of logical drives on external controllers (eg. msa500, msa20,
+msa2012.)  Supposedly the problem appeared between -22 and -24 of the 3.6.20
+driver (cciss.c revision 1.4.2.55 vs. cciss.c revision 1.4.2.73).
+
+diff --git a/drivers/block/cciss.c b/drivers/block/cciss.c
+index 8aa237d..022631d 100644
+--- a/drivers/block/cciss.c
++++ b/drivers/block/cciss.c
+@@ -243,10 +243,8 @@ static inline void removeQ(CommandList_struct *c)
+ static void log_unit_to_scsi3addr(ctlr_info_t *h, unsigned char scsi3addr[],
+ 	uint32_t log_unit)
+ {
+-	log_unit = h->drv[log_unit].LunID & 0x03fff;
+-	memset(&scsi3addr[4], 0, 4);
+-	memcpy(&scsi3addr[0], &log_unit, 4);
+-	scsi3addr[3] |= 0x40;
++	memcpy(scsi3addr, h->drv[log_unit].LunID,
++		sizeof(h->drv[log_unit].LunID));
+ }
+ 
+ #include "cciss_scsi.c"		/* For SCSI tape support */
+@@ -796,7 +794,8 @@ static int cciss_open(struct inode *inode, struct file *filep)
+ 			if (iminor(inode) & 0x0f) {
+ 				return -ENXIO;
+ 				/* if it is, make sure we have a LUN ID */
+-			} else if (drv->LunID == 0) {
++			} else if (memcmp(drv->LunID, "\0\0\0\0\0\0\0\0",
++					sizeof(drv->LunID)) == 0) {
+ 				return -ENXIO;
+ 			}
+ 		}
+@@ -1166,7 +1165,7 @@ static int cciss_ioctl(struct inode *inode, struct file *filep,
+ 	case CCISS_GETLUNINFO:{
+ 			LogvolInfo_struct luninfo;
+ 
+-			luninfo.LunID = drv->LunID;
++			memcpy(&luninfo.LunID, drv->LunID, sizeof(luninfo.LunID));
+ 			luninfo.num_opens = drv->usage_count;
+ 			luninfo.num_parts = 0;
+ 			if (copy_to_user(argp, &luninfo,
+@@ -1901,7 +1900,7 @@ static int cciss_find_free_drive_index(int ctlr, int is_controller_node)
+  * a means to talk to the controller in case no logical
+  * drives have yet been configured.
+  */
+-static int cciss_add_gendisk(ctlr_info_t *h, __u32 lunid, int controller_node)
++static int cciss_add_gendisk(ctlr_info_t *h, unsigned char lunid[], int controller_node)
+ {
+ 	int drv_index;
+ 
+@@ -1919,7 +1918,8 @@ static int cciss_add_gendisk(ctlr_info_t *h, __u32 lunid, int controller_node)
+ 			return -1;
+ 		}
+ 	}
+-	h->drv[drv_index].LunID = lunid;
++	memcpy(h->drv[drv_index].LunID, lunid,
++		sizeof(h->drv[drv_index].LunID));
+ 
+ 	if (cciss_create_ld_sysfs_entry(h, &h->drv[drv_index], drv_index))
+ 		goto err_free_disk;
+@@ -1951,7 +1951,7 @@ static void cciss_add_controller_node(ctlr_info_t *h)
+ 	if (h->gendisk[0] != NULL) /* already did this? Then bail. */
+ 		return;
+ 
+-	drv_index = cciss_add_gendisk(h, 0, 1);
++	drv_index = cciss_add_gendisk(h, "\0\0\0\0\0\0\0\0", 1);
+ 	if (drv_index == -1) {
+ 		printk(KERN_WARNING "cciss%d: could not "
+ 			"add disk 0.\n", h->ctlr);
+@@ -1991,7 +1991,7 @@ static int rebuild_lun_table(ctlr_info_t *h, int first_time)
+ 	int i;
+ 	int drv_found;
+ 	int drv_index = 0;
+-	__u32 lunid = 0;
++	unsigned char lunid[8];
+ 	unsigned long flags;
+ 
+ 	if (!capable(CAP_SYS_RAWIO))
+@@ -2048,9 +2048,9 @@ static int rebuild_lun_table(ctlr_info_t *h, int first_time)
+ 			continue;
+ 
+  		for (j = 0; j < num_luns; j++) {
+- 			memcpy(&lunid, &ld_buff->LUN[j][0], 4);
+- 			lunid = le32_to_cpu(lunid);
+- 			if (h->drv[i].LunID == lunid) {
++ 			memcpy(lunid, &ld_buff->LUN[j][0], sizeof(lunid));
++ 			if (memcmp(h->drv[i].LunID, lunid, 
++				sizeof(h->drv[i].LunID)) == 0) {
+  				drv_found = 1;
+  				break;
+  			}
+@@ -2076,8 +2076,7 @@ static int rebuild_lun_table(ctlr_info_t *h, int first_time)
+   
+  		drv_found = 0;
+   
+- 		memcpy(&lunid, &ld_buff->LUN[i][0], 4);
+- 		lunid = le32_to_cpu(lunid);
++ 		memcpy(lunid, &ld_buff->LUN[i][0], sizeof(lunid));
+   
+  		/* Find if the LUN is already in the drive array
+  		 * of the driver.  If so then update its info
+@@ -2086,7 +2085,8 @@ static int rebuild_lun_table(ctlr_info_t *h, int first_time)
+  		 */
+  		for (j = 0; j <= h->highest_lun; j++) {
+  			if (h->drv[j].raid_level != -1 &&
+- 				h->drv[j].LunID == lunid) {
++ 				memcmp(h->drv[j].LunID, lunid,
++					sizeof(h->drv[j].LunID)) == 0) {
+  				drv_index = j;
+  				drv_found = 1;
+  				break;
+@@ -2217,7 +2217,7 @@ static int deregister_disk(ctlr_info_t *h, int drv_index,
+ 			h->highest_lun = newhighest;
+ 		}
+ 
+-		drv->LunID = 0;
++		memset(drv->LunID, 0, sizeof(drv->LunID));
+ 	}
+ 	return 0;
+ }
+@@ -2645,7 +2645,8 @@ static int cciss_revalidate(struct gendisk *disk)
+ 	InquiryData_struct *inq_buff = NULL;
+ 
+ 	for (logvol = 0; logvol < CISS_MAX_LUN; logvol++) {
+-		if (h->drv[logvol].LunID == drv->LunID) {
++		if (memcmp(h->drv[logvol].LunID, drv->LunID,
++			sizeof(drv->LunID)) == 0) {
+ 			FOUND = 1;
+ 			break;
+ 		}
+@@ -3138,8 +3139,7 @@ static void do_cciss_request(request_queue_t *q)
+ 	/* The first 2 bits are reserved for controller error reporting. */
+ 	c->Header.Tag.lower = (c->cmdindex << 3);
+ 	c->Header.Tag.lower |= 0x04;	/* flag for direct lookup. */
+-	c->Header.LUN.LogDev.VolId = drv->LunID;
+-	c->Header.LUN.LogDev.Mode = 1;
++	memcpy(&c->Header.LUN, drv->LunID, sizeof(drv->LunID));
+ 	c->Request.CDBLen = 10;	// 12 byte commands not in FW yet;
+ 	c->Request.Type.Type = TYPE_CMD;	// It is a command.
+ 	c->Request.Type.Attribute = ATTR_SIMPLE;
+diff --git a/drivers/block/cciss.h b/drivers/block/cciss.h
+index 74493c2..e45ba8f 100644
+--- a/drivers/block/cciss.h
++++ b/drivers/block/cciss.h
+@@ -29,7 +29,7 @@ struct access_method {
+ };
+ typedef struct _drive_info_struct
+ {
+- 	__u32   LunID;	
++ 	unsigned char LunID[8];	
+ 	int 	usage_count;
+ 	struct request_queue *queue;
+ 	sector_t nr_blocks;

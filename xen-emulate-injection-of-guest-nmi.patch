@@ -1,0 +1,859 @@
+From: Paolo Bonzini <pbonzini@redhat.com>
+Date: Mon, 30 Aug 2010 16:46:27 -0400
+Subject: [xen] emulate injection of guest NMI
+Message-id: <1283186789-20909-3-git-send-email-pbonzini@redhat.com>
+Patchwork-id: 27933
+O-Subject: [RHEL5.6 XEN PATCH 2/4] emulate injection of guest NMI
+Bugzilla: 625902
+
+Bugzilla: https://bugzilla.redhat.com/show_bug.cgi?id=625902
+
+Upstream status: http://xenbits.xensource.com/xen-unstable.hg/rev/15388
+
+Brew build: https://brewweb.devel.redhat.com/taskinfo?taskID=2719051
+
+When running on an SMP system but with the uniprocessor HAL (which happens
+for example during installation), Windows makes the boot processor send
+an IPI NMI to all the other processors.  Failure to handle this in the
+hypervisor will cause the guest not to restart.
+
+This patch implements NMI injection based on upstream changeset 15388.
+This is the most delicate patch in the series.  Everything else adds
+code that would crash the guest anyway if it was handled.  However,
+it is also relatively straightforward.  Here are the tricky parts:
+
+- commits b7ddba0e and especially 77fffeb0 introduced conflicts in
+  arch/x86/hvm/*/intr.c.  However, b7ddba0e is easily reconciled, and
+  77fffeb0 (taken from xen-3.1-testing.hg) was actually a subset of
+  the patch I'm backporting so this patch ends up being smaller than
+  upstream 15388.
+
+- upstream removed handling of dest_ExtINT from vioapic_deliver, on
+  the grounds that it is not really implemented and it would most likely
+  fail an assertion in ioapic_inj_irq.  But it is really outside the
+  scope of this patch, so I left it in.
+
+- in general, the new code is easier to understand.  See especially
+  hvm_local_events_need_delivery for a gem in the old code.  However
+  the change to svm_vmexit_do_hlt is quite tricky.  The idea is that if
+  vmcb->eventinj.fields.v was set by svm_intr_assist, the guest could
+  have actually taken the interrupt at that time, so HLT should exit
+  immediately, even if the IF flag is reset.
+
+- there's a possibly uninitialized variable usage for intr_vector in
+  svm_intr_assist.  It is only in a debug message so I preferred not to
+  deviate from upstream here.
+
+---
+ arch/x86/hvm/irq.c            |   52 ++++++++++++----------
+ arch/x86/hvm/svm/intr.c       |   95 +++++++++++++++++++++++------------------
+ arch/x86/hvm/svm/svm.c        |   40 ++++++-----------
+ arch/x86/hvm/vioapic.c        |   33 ++++++++------
+ arch/x86/hvm/vlapic.c         |    8 ++--
+ arch/x86/hvm/vmx/intr.c       |   47 ++++++++++----------
+ arch/x86/hvm/vmx/vmx.c        |   21 +++++++--
+ arch/x86/hvm/vpic.c           |    3 +-
+ arch/x86/hvm/vpt.c            |   13 +++---
+ include/asm-x86/event.h       |    1 -
+ include/asm-x86/hvm/hvm.h     |   16 +++++--
+ include/asm-x86/hvm/irq.h     |   11 +++--
+ include/asm-x86/hvm/vcpu.h    |    4 +-
+ include/asm-x86/hvm/vlapic.h  |    2 +-
+ include/asm-x86/hvm/vmx/vmx.h |   11 ++++-
+ include/asm-x86/hvm/vpic.h    |    3 +-
+ include/asm-x86/hvm/vpt.h     |    3 +-
+ 17 files changed, 203 insertions(+), 160 deletions(-)
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/arch/x86/hvm/irq.c b/arch/x86/hvm/irq.c
+index df01eea..308134b 100644
+--- a/arch/x86/hvm/irq.c
++++ b/arch/x86/hvm/irq.c
+@@ -297,43 +297,49 @@ void hvm_set_callback_via(struct domain *d, uint64_t via)
+     }
+ }
+ 
+-int cpu_has_pending_irq(struct vcpu *v)
++enum hvm_intack hvm_vcpu_has_pending_irq(struct vcpu *v)
+ {
+     struct hvm_domain *plat = &v->domain->arch.hvm_domain;
+ 
+-    /* APIC */
++    if ( unlikely(v->arch.hvm_vcpu.nmi_pending) )
++        return hvm_intack_nmi;
++
+     if ( vlapic_has_interrupt(v) != -1 )
+-        return 1;
++        return hvm_intack_lapic;
+ 
+-    /* PIC */
+     if ( !vlapic_accept_pic_intr(v) )
+-        return 0;
++        return hvm_intack_none;
+ 
+-    return plat->vpic[0].int_output;
++    return plat->vpic[0].int_output ? hvm_intack_pic : hvm_intack_none;
+ }
+ 
+-int cpu_get_interrupt(struct vcpu *v, int *type)
++int hvm_vcpu_ack_pending_irq(struct vcpu *v, enum hvm_intack type, int *vector)
+ {
+-    int vector;
+-
+-    if ( (vector = cpu_get_apic_interrupt(v, type)) != -1 )
+-        return vector;
+-
+-    if ( (v->vcpu_id == 0) &&
+-         ((vector = cpu_get_pic_interrupt(v, type)) != -1) )
+-        return vector;
++    switch ( type )
++    {
++    case hvm_intack_nmi:
++        return test_and_clear_bool(v->arch.hvm_vcpu.nmi_pending);
++    case hvm_intack_lapic:
++        return ((*vector = cpu_get_apic_interrupt(v)) != -1);
++    case hvm_intack_pic:
++        ASSERT(v->vcpu_id == 0);
++        return ((*vector = cpu_get_pic_interrupt(v)) != -1);
++    default:
++        break;
++    }
+ 
+-    return -1;
++    return 0;
+ }
+ 
+-int get_isa_irq_vector(struct vcpu *v, int isa_irq, int type)
++int get_isa_irq_vector(struct vcpu *v, int isa_irq, enum hvm_intack src)
+ {
+     unsigned int gsi = hvm_isa_irq_to_gsi(isa_irq);
+ 
+-    if ( type == APIC_DM_EXTINT )
++    if ( src == hvm_intack_pic )
+         return (v->domain->arch.hvm_domain.vpic[isa_irq >> 3].irq_base
+                 + (isa_irq & 7));
+ 
++    ASSERT(src == hvm_intack_lapic);
+     return domain_vioapic(v->domain)->redirtbl[gsi].fields.vector;
+ }
+ 
+@@ -348,12 +354,12 @@ int is_isa_irq_masked(struct vcpu *v, int isa_irq)
+ 
+ int hvm_local_events_need_delivery(struct vcpu *v)
+ {
+-    int pending = cpu_has_pending_irq(v);
+-
+-    if ( unlikely(pending) )
+-        pending = hvm_interrupts_enabled(v); 
++    enum hvm_intack type = hvm_vcpu_has_pending_irq(v);
++ 
++    if ( likely(type == hvm_intack_none) )
++        return 0;
+ 
+-    return pending;
++    return hvm_interrupts_enabled(v, type);
+ }
+ 
+ #if 0 /* Keep for debugging */
+diff --git a/arch/x86/hvm/svm/intr.c b/arch/x86/hvm/svm/intr.c
+index ed8cd6e..08d1e12 100644
+--- a/arch/x86/hvm/svm/intr.c
++++ b/arch/x86/hvm/svm/intr.c
+@@ -40,25 +40,45 @@
+ #include <xen/domain_page.h>
+ #include <asm/hvm/trace.h>
+ 
+-/*
+- * Most of this code is copied from vmx_io.c and modified 
+- * to be suitable for SVM.
+- */
+-
+-static inline int svm_inject_extint(struct vcpu *v, int trap)
++static void svm_inject_dummy_vintr(struct vcpu *v)
+ {
+     struct vmcb_struct *vmcb = v->arch.hvm_svm.vmcb;
+     vintr_t intr = vmcb->vintr;
+ 
+-    /* Update only relevant fields */    
+     intr.fields.irq = 1;
+     intr.fields.intr_masking = 1;
+-    intr.fields.vector = trap;
++    intr.fields.vector = 0;
+     intr.fields.prio = 0xF;
+     intr.fields.ign_tpr = 1;
+     vmcb->vintr = intr;
++}
++    
++static void svm_inject_nmi(struct vcpu *v)
++{
++    struct vmcb_struct *vmcb = v->arch.hvm_svm.vmcb;
++    eventinj_t event;
++
++    event.bytes = 0;
++    event.fields.v = 1;
++    event.fields.type = EVENTTYPE_NMI;
++    event.fields.vector = 2;
++
++    ASSERT(vmcb->eventinj.fields.v == 0);
++    vmcb->eventinj = event;
++}
++
++static void svm_inject_extint(struct vcpu *v, int vector)
++{
++    struct vmcb_struct *vmcb = v->arch.hvm_svm.vmcb;
++    eventinj_t event;
++
++    event.bytes = 0;
++    event.fields.v = 1;
++    event.fields.type = EVENTTYPE_INTR;
++    event.fields.vector = vector;
+ 
+-    return 0;
++    ASSERT(vmcb->eventinj.fields.v == 0);
++    vmcb->eventinj = event;
+ }
+ 
+ static void update_cr8_intercept(
+@@ -91,8 +111,9 @@ asmlinkage void svm_intr_assist(void)
+ {
+     struct vcpu *v = current;
+     struct vmcb_struct *vmcb = v->arch.hvm_svm.vmcb;
+-    int intr_type = APIC_DM_EXTINT;
+-    int intr_vector = -1;
++    enum hvm_intack intr_source;
++    int intr_vector;
++
+     int intr_window_enabled = 0;
+ 
+     /* Crank the handle on interrupt state and check for new interrrupts. */
+@@ -100,34 +121,23 @@ asmlinkage void svm_intr_assist(void)
+     hvm_dirq_assist(v);
+ 
+     /*
+-     * Previous Interrupt delivery caused this intercept?
++     * Previous event delivery caused this intercept?
+      * This will happen if the injection is latched by the processor (hence
+-     * clearing vintr.fields.irq) but then subsequently a fault occurs (e.g.,
+-     * due to lack of shadow mapping of guest IDT or guest-kernel stack).
+-     * 
+-     * NB. Exceptions that fault during delivery are lost. This needs to be
+-     * fixed but we'll usually get away with it since faults are usually
+-     * idempotent. But this isn't the case for e.g. software interrupts!
++     * clearing vintr.fields.irq or eventinj.v) but then subsequently a fault
++     * occurs (e.g., due to lack of shadow mapping of guest IDT or guest-kernel
++     * stack).
+      */
+-    if ( vmcb->exitintinfo.fields.v && (vmcb->exitintinfo.fields.type == 0) )
++    if ( vmcb->exitintinfo.fields.v )
+     {
+-        intr_vector = vmcb->exitintinfo.fields.vector;
++        vmcb->eventinj = vmcb->exitintinfo;
+         vmcb->exitintinfo.bytes = 0;
+         HVMTRACE_1D(REINJ_VIRQ, v, intr_vector);
+-        svm_inject_extint(v, intr_vector);
+         goto out;
+     }
+ 
+-    /*
+-     * Previous interrupt still pending? This occurs if we return from VMRUN
+-     * very early in the entry-to-guest process. Usually this is because an
+-     * external physical interrupt was pending when we executed VMRUN.
+-     */
+-    if ( vmcb->vintr.fields.irq )
+-        goto out;
+-
+     do {
+-        if ( !cpu_has_pending_irq(v) )
++        intr_source = hvm_vcpu_has_pending_irq(v);
++        if ( likely(intr_source == hvm_intack_none) )
+             goto out;
+ 
+         /*
+@@ -146,24 +156,27 @@ asmlinkage void svm_intr_assist(void)
+          * - the guest might look at the APIC/PIC state, so we ought not to have 
+          *   cleared the interrupt out of the IRR.
+          */
+-        if ( !(vmcb->rflags & X86_EFLAGS_IF) || vmcb->interrupt_shadow 
+-             || vmcb->eventinj.fields.v )  
++        if ( !hvm_interrupts_enabled(v, intr_source) ||
++             vmcb->eventinj.fields.v )  
+         {
+             vmcb->general1_intercepts |= GENERAL1_INTERCEPT_VINTR;
+             HVMTRACE_2D(INJ_VIRQ, v, 0x0, /*fake=*/ 1);
+-            svm_inject_extint(v, 0x0); /* actual vector doesn't matter */
++            svm_inject_dummy_vintr(v);
+             intr_window_enabled  = 1;
+             goto out;
+         }
++    } while ( !hvm_vcpu_ack_pending_irq(v, intr_source, &intr_vector) );
+ 
+-        /* Okay, we can deliver the interrupt: grab it and update PIC state. */
+-        intr_vector = cpu_get_interrupt(v, &intr_type);
+-    } while ( intr_vector < 0 );
+-
+-    HVMTRACE_2D(INJ_VIRQ, v, intr_vector, /*fake=*/ 0);
+-    svm_inject_extint(v, intr_vector);
+-
+-    pt_intr_post(v, intr_vector, intr_type);
++    if ( intr_source == hvm_intack_nmi )
++    {
++        svm_inject_nmi(v);
++    }
++    else
++    {
++        HVMTRACE_2D(INJ_VIRQ, v, intr_vector, /*fake=*/ 0);
++        svm_inject_extint(v, intr_vector);
++        pt_intr_post(v, intr_vector, intr_source);
++    }
+ 
+  out:
+     update_cr8_intercept(v, intr_window_enabled);
+diff --git a/arch/x86/hvm/svm/svm.c b/arch/x86/hvm/svm/svm.c
+index ae48421..df1c49d 100644
+--- a/arch/x86/hvm/svm/svm.c
++++ b/arch/x86/hvm/svm/svm.c
+@@ -371,26 +371,8 @@ int svm_vmcb_save(struct vcpu *v, struct hvm_hw_cpu *c)
+     c->sysenter_esp = vmcb->sysenter_esp;
+     c->sysenter_eip = vmcb->sysenter_eip;
+ 
+-    /* Save any event/interrupt that was being injected when we last
+-     * exited.  Although there are three(!) VMCB fields that can contain
+-     * active events, we only need to save at most one: because the
+-     * intr_assist logic never delivers an IRQ when any other event is
+-     * active, we know that the only possible collision is if we inject
+-     * a fault while exitintinfo contains a valid event (the delivery of
+-     * which caused the last exit).  In that case replaying just the
+-     * first event should cause the same behaviour when we restore. */
+-    if ( vmcb->vintr.fields.irq 
+-         && /* Check it's not a fake interrupt (see svm_intr_assist()) */
+-         !(vmcb->general1_intercepts & GENERAL1_INTERCEPT_VINTR) )
+-    {
+-        c->pending_vector = vmcb->vintr.fields.vector;
+-        c->pending_type = 0; /* External interrupt */
+-        c->pending_error_valid = 0;
+-        c->pending_reserved = 0;
+-        c->pending_valid = 1;
+-        c->error_code = 0;
+-    }
+-    else if ( vmcb->exitintinfo.fields.v )
++    /* Save any event/interrupt that was being injected when we last exited. */
++    if ( vmcb->exitintinfo.fields.v )
+     {
+         c->pending_event = vmcb->exitintinfo.bytes & 0xffffffff;
+         c->error_code = vmcb->exitintinfo.fields.errorcode;
+@@ -620,10 +602,15 @@ static int svm_load_vmcb_ctxt(struct vcpu *v, struct hvm_hw_cpu *ctxt)
+     return 0;
+ }
+ 
+-static int svm_interrupts_enabled(struct vcpu *v)
++static int svm_interrupts_enabled(struct vcpu *v, enum hvm_intack type)
+ {
+-    unsigned long eflags = v->arch.hvm_svm.vmcb->rflags;
+-    return (eflags & X86_EFLAGS_IF);
++    struct vmcb_struct *vmcb = v->arch.hvm_svm.vmcb;
++
++    if ( type == hvm_intack_nmi )
++        return !vmcb->interrupt_shadow;
++
++    ASSERT((type == hvm_intack_pic) || (type == hvm_intack_lapic));
++    return (vmcb->rflags & X86_EFLAGS_IF) && !vmcb->interrupt_shadow;
+ }
+ 
+ static int svm_guest_x86_mode(struct vcpu *v)
+@@ -2208,11 +2195,14 @@ static void svm_do_msr_access(
+ 
+ static void svm_vmexit_do_hlt(struct vmcb_struct *vmcb)
+ {
++    enum hvm_intack type = hvm_vcpu_has_pending_irq(current);
++
+     __update_guest_eip(vmcb, 1);
+ 
+     /* Check for interrupt not handled or new interrupt. */
+-    if ( (vmcb->rflags & X86_EFLAGS_IF) &&
+-         (vmcb->vintr.fields.irq || cpu_has_pending_irq(current)) ) {
++    if ( vmcb->eventinj.fields.v ||
++         ((type != hvm_intack_none) && hvm_interrupts_enabled(current, type)) )
++    {
+         HVMTRACE_1D(HLT, current, /*int pending=*/ 1);
+         return;
+     }
+diff --git a/arch/x86/hvm/vioapic.c b/arch/x86/hvm/vioapic.c
+index 7f17a15..051c671 100644
+--- a/arch/x86/hvm/vioapic.c
++++ b/arch/x86/hvm/vioapic.c
+@@ -257,17 +257,11 @@ static void ioapic_inj_irq(
+     HVM_DBG_LOG(DBG_LEVEL_IOAPIC, "irq %d trig %d deliv %d",
+                 vector, trig_mode, delivery_mode);
+ 
+-    switch ( delivery_mode )
+-    {
+-    case dest_Fixed:
+-    case dest_LowestPrio:
+-        if ( vlapic_set_irq(target, vector, trig_mode) )
+-            vcpu_kick(vlapic_vcpu(target));
+-        break;
+-    default:
+-        gdprintk(XENLOG_WARNING, "error delivery mode %d\n", delivery_mode);
+-        break;
+-    }
++    ASSERT((delivery_mode == dest_Fixed) ||
++           (delivery_mode == dest_LowestPrio));
++
++    if ( vlapic_set_irq(target, vector, trig_mode) )
++        vcpu_kick(vlapic_vcpu(target));
+ }
+ 
+ static uint32_t ioapic_get_delivery_bitmask(
+@@ -396,10 +390,21 @@ static void vioapic_deliver(struct hvm_hw_vioapic *vioapic, int irq)
+         break;
+     }
+ 
+-    case dest_SMI:
+     case dest_NMI:
+-    case dest_INIT:
+-    case dest__reserved_2:
++    {
++        uint8_t bit;
++        for ( bit = 0; deliver_bitmask != 0; bit++ )
++        {
++            if ( !(deliver_bitmask & (1 << bit)) )
++                continue;
++            deliver_bitmask &= ~(1 << bit);
++            if ( ((v = vioapic_domain(vioapic)->vcpu[bit]) != NULL) &&
++                 !test_and_set_bool(v->arch.hvm_vcpu.nmi_pending) )
++                vcpu_kick(v);
++        }
++        break;
++    }
++
+     default:
+         gdprintk(XENLOG_WARNING, "Unsupported delivery mode %d\n",
+                  delivery_mode);
+diff --git a/arch/x86/hvm/vlapic.c b/arch/x86/hvm/vlapic.c
+index 58712f4..df4d9cc 100644
+--- a/arch/x86/hvm/vlapic.c
++++ b/arch/x86/hvm/vlapic.c
+@@ -290,7 +290,8 @@ static int vlapic_accept_irq(struct vcpu *v, int delivery_mode,
+         break;
+ 
+     case APIC_DM_NMI:
+-        gdprintk(XENLOG_WARNING, "Ignoring guest NMI\n");
++        if ( !test_and_set_bool(v->arch.hvm_vcpu.nmi_pending) )
++            vcpu_kick(v);
+         break;
+ 
+     case APIC_DM_INIT:
+@@ -755,7 +756,7 @@ int vlapic_has_interrupt(struct vcpu *v)
+     return highest_irr;
+ }
+ 
+-int cpu_get_apic_interrupt(struct vcpu *v, int *mode)
++int cpu_get_apic_interrupt(struct vcpu *v)
+ {
+     int vector = vlapic_has_interrupt(v);
+     struct vlapic *vlapic = vcpu_vlapic(v);
+@@ -765,8 +766,6 @@ int cpu_get_apic_interrupt(struct vcpu *v, int *mode)
+  
+     vlapic_set_vector(vector, &vlapic->regs->data[APIC_ISR]);
+     vlapic_clear_irr(vector, vlapic);
+-
+-    *mode = APIC_DM_FIXED;
+     return vector;
+ }
+ 
+diff --git a/arch/x86/hvm/vmx/intr.c b/arch/x86/hvm/vmx/intr.c
+index f4d1e15..21f5a49 100644
+--- a/arch/x86/hvm/vmx/intr.c
++++ b/arch/x86/hvm/vmx/intr.c
+@@ -107,8 +107,8 @@ static void update_tpr_threshold(struct vlapic *vlapic)
+ 
+ asmlinkage void vmx_intr_assist(void)
+ {
+-    int has_ext_irq, intr_vector, intr_type = 0;
+-    unsigned long eflags, intr_shadow;
++    int intr_vector;
++    enum hvm_intack intr_source;
+     struct vcpu *v = current;
+     unsigned int idtv_info_field;
+     unsigned long inst_len;
+@@ -119,12 +119,12 @@ asmlinkage void vmx_intr_assist(void)
+     update_tpr_threshold(vcpu_vlapic(v));
+ 
+     do {
+-        has_ext_irq = cpu_has_pending_irq(v);
++        intr_source = hvm_vcpu_has_pending_irq(v);
+ 
+         if ( unlikely(v->arch.hvm_vmx.vector_injected) )
+         {
+             v->arch.hvm_vmx.vector_injected = 0;
+-            if ( unlikely(has_ext_irq) )
++            if ( unlikely(intr_source != hvm_intack_none) )
+                 enable_irq_window(v);
+             return;
+         }
+@@ -147,39 +147,38 @@ asmlinkage void vmx_intr_assist(void)
+             if ( unlikely(idtv_info_field & 0x800) ) /* valid error code */
+                 __vmwrite(VM_ENTRY_EXCEPTION_ERROR_CODE,
+                           __vmread(IDT_VECTORING_ERROR_CODE));
+-            if ( unlikely(has_ext_irq) )
++            if ( unlikely(intr_source != hvm_intack_none) )
+                 enable_irq_window(v);
+ 
+             HVM_DBG_LOG(DBG_LEVEL_1, "idtv_info_field=%x", idtv_info_field);
+             return;
+         }
+ 
+-        if ( likely(!has_ext_irq) )
++        if ( likely(intr_source == hvm_intack_none) )
+             return;
+ 
+-        intr_shadow = __vmread(GUEST_INTERRUPTIBILITY_INFO);
+-        if ( unlikely(intr_shadow & (VMX_INTR_SHADOW_STI|
+-                                     VMX_INTR_SHADOW_MOV_SS)) )
++        /*
++         * TODO: Better NMI handling. Shouldn't wait for EFLAGS.IF==1, but
++         * should wait for exit from 'NMI blocking' window (NMI injection to
++         * next IRET). This requires us to use the new 'virtual NMI' support.
++         */
++        if ( !hvm_interrupts_enabled(v, intr_source) )
+         {
+             enable_irq_window(v);
+-            HVM_DBG_LOG(DBG_LEVEL_1, "interruptibility");
+             return;
+         }
++    } while ( !hvm_vcpu_ack_pending_irq(v, intr_source, &intr_vector) );
+ 
+-        eflags = __vmread(GUEST_RFLAGS);
+-        if ( !(eflags & X86_EFLAGS_IF) )
+-        {
+-            enable_irq_window(v);
+-            return;
+-        }
+-
+-        intr_vector = cpu_get_interrupt(v, &intr_type);
+-    } while ( intr_vector < 0 );
+-
+-    HVMTRACE_2D(INJ_VIRQ, v, intr_vector, /*fake=*/ 0);
+-    vmx_inject_extint(v, intr_vector, VMX_DELIVER_NO_ERROR_CODE);
+-
+-    pt_intr_post(v, intr_vector, intr_type);
++    if ( intr_source == hvm_intack_nmi )
++    {
++        vmx_inject_nmi(v);
++    }
++    else
++    {
++        HVMTRACE_2D(INJ_VIRQ, v, intr_vector, /*fake=*/ 0);
++        vmx_inject_extint(v, intr_vector);
++        pt_intr_post(v, intr_vector, intr_source);
++    }
+ }
+ 
+ /*
+diff --git a/arch/x86/hvm/vmx/vmx.c b/arch/x86/hvm/vmx/vmx.c
+index 09d2ff9..1f6d63d 100644
+--- a/arch/x86/hvm/vmx/vmx.c
++++ b/arch/x86/hvm/vmx/vmx.c
+@@ -1256,16 +1256,27 @@ static void vmx_init_hypercall_page(struct domain *d, void *hypercall_page)
+     *(u16 *)(hypercall_page + (__HYPERVISOR_iret * 32)) = 0x0b0f; /* ud2 */
+ }
+ 
+-static int vmx_interrupts_enabled(struct vcpu *v) 
++static int vmx_interrupts_enabled(struct vcpu *v, enum hvm_intack type)
+ {
+-    unsigned long eflags = __vmread(GUEST_RFLAGS); 
+-    return (eflags & X86_EFLAGS_IF); 
++    unsigned long intr_shadow, eflags;
++
++    ASSERT(v == current);
++
++    intr_shadow  = __vmread(GUEST_INTERRUPTIBILITY_INFO);
++    intr_shadow &= VMX_INTR_SHADOW_STI|VMX_INTR_SHADOW_MOV_SS;
++
++    if ( type == hvm_intack_nmi )
++        return !intr_shadow;
++
++    ASSERT((type == hvm_intack_pic) || (type == hvm_intack_lapic));
++    eflags = __vmread(GUEST_RFLAGS);
++    return (eflags & X86_EFLAGS_IF) && !intr_shadow;
+ }
+ 
+ 
+ static void vmx_update_host_cr3(struct vcpu *v)
+ {
+-    ASSERT( (v == current) || !vcpu_runnable(v) );
++    ASSERT((v == current) || !vcpu_runnable(v));
+     vmx_vmcs_enter(v);
+     __vmwrite(HOST_CR3, v->arch.cr3);
+     vmx_vmcs_exit(v);
+@@ -1273,7 +1284,7 @@ static void vmx_update_host_cr3(struct vcpu *v)
+ 
+ static void vmx_update_guest_cr3(struct vcpu *v)
+ {
+-    ASSERT( (v == current) || !vcpu_runnable(v) );
++    ASSERT((v == current) || !vcpu_runnable(v));
+     vmx_vmcs_enter(v);
+     __vmwrite(GUEST_CR3, v->arch.hvm_vcpu.hw_cr3);
+     vpid_sync_vcpu_all(v);
+diff --git a/arch/x86/hvm/vpic.c b/arch/x86/hvm/vpic.c
+index db698a6..99b6fc5 100644
+--- a/arch/x86/hvm/vpic.c
++++ b/arch/x86/hvm/vpic.c
+@@ -504,7 +504,7 @@ void vpic_irq_negative_edge(struct domain *d, int irq)
+         vpic_update_int_output(vpic);
+ }
+ 
+-int cpu_get_pic_interrupt(struct vcpu *v, int *type)
++int cpu_get_pic_interrupt(struct vcpu *v)
+ {
+     int irq, vector;
+     struct hvm_hw_vpic *vpic = &v->domain->arch.hvm_domain.vpic[0];
+@@ -517,6 +517,5 @@ int cpu_get_pic_interrupt(struct vcpu *v, int *type)
+         return -1;
+ 
+     vector = vpic[irq >> 3].irq_base + (irq & 7);
+-    *type = APIC_DM_EXTINT;
+     return vector;
+ }
+diff --git a/arch/x86/hvm/vpt.c b/arch/x86/hvm/vpt.c
+index 5bb69ee..626dda3 100644
+--- a/arch/x86/hvm/vpt.c
++++ b/arch/x86/hvm/vpt.c
+@@ -25,14 +25,14 @@
+ #define mode_is(d, name) \
+     ((d)->arch.hvm_domain.params[HVM_PARAM_TIMER_MODE] == HVMPTM_##name)
+ 
+-static int pt_irq_vector(struct periodic_time *pt, int type)
++static int pt_irq_vector(struct periodic_time *pt, enum hvm_intack src)
+ {
+     struct vcpu *v = pt->vcpu;
+ 
+     if ( pt->source == PTSRC_lapic )
+         return pt->irq;
+ 
+-    return get_isa_irq_vector(v, pt->irq, type);
++    return get_isa_irq_vector(v, pt->irq, src);
+ }
+ 
+ static int pt_irq_masked(struct periodic_time *pt)
+@@ -207,7 +207,8 @@ void pt_update_irq(struct vcpu *v)
+     }
+ }
+ 
+-static struct periodic_time *is_pt_irq(struct vcpu *v, int vector, int type)
++static struct periodic_time *is_pt_irq(
++    struct vcpu *v, int vector, enum hvm_intack src)
+ {
+     struct list_head *head = &v->arch.hvm_vcpu.tm_list;
+     struct periodic_time *pt;
+@@ -215,14 +216,14 @@ static struct periodic_time *is_pt_irq(struct vcpu *v, int vector, int type)
+     list_for_each_entry ( pt, head, list )
+     {
+         if ( pt->pending_intr_nr && pt->irq_issued &&
+-             (vector == pt_irq_vector(pt, type)) )
++             (vector == pt_irq_vector(pt, src)) )
+             return pt;
+     }
+ 
+     return NULL;
+ }
+ 
+-void pt_intr_post(struct vcpu *v, int vector, int type)
++void pt_intr_post(struct vcpu *v, int vector, enum hvm_intack src)
+ {
+     struct periodic_time *pt;
+     time_cb *cb;
+@@ -230,7 +231,7 @@ void pt_intr_post(struct vcpu *v, int vector, int type)
+ 
+     spin_lock(&v->arch.hvm_vcpu.tm_lock);
+ 
+-    pt = is_pt_irq(v, vector, type);
++    pt = is_pt_irq(v, vector, src);
+     if ( pt == NULL )
+     {
+         spin_unlock(&v->arch.hvm_vcpu.tm_lock);
+diff --git a/include/asm-x86/event.h b/include/asm-x86/event.h
+index 340ec44..6b1bf6a 100644
+--- a/include/asm-x86/event.h
++++ b/include/asm-x86/event.h
+@@ -10,7 +10,6 @@
+ #define __ASM_EVENT_H__
+ 
+ #include <xen/shared.h>
+-#include <asm/hvm/irq.h> /* cpu_has_pending_irq() */
+ 
+ static inline void vcpu_kick(struct vcpu *v)
+ {
+diff --git a/include/asm-x86/hvm/hvm.h b/include/asm-x86/hvm/hvm.h
+index a9f1235..b5e1b17 100644
+--- a/include/asm-x86/hvm/hvm.h
++++ b/include/asm-x86/hvm/hvm.h
+@@ -55,6 +55,14 @@ typedef struct segment_register {
+     u64        base;
+ } __attribute__ ((packed)) segment_register_t;
+ 
++/* Interrupt acknowledgement sources. */
++enum hvm_intack {
++    hvm_intack_none,
++    hvm_intack_pic,
++    hvm_intack_lapic,
++    hvm_intack_nmi
++};
++
+ /*
+  * The hardware virtual machine (HVM) interface abstracts away from the
+  * x86/x86_64 CPU virtualization assist specifics. Currently this interface
+@@ -112,7 +120,7 @@ struct hvm_function_table {
+     int (*long_mode_enabled)(struct vcpu *v);
+     int (*pae_enabled)(struct vcpu *v);
+     int (*nx_enabled)(struct vcpu *v);
+-    int (*interrupts_enabled)(struct vcpu *v);
++    int (*interrupts_enabled)(struct vcpu *v, enum hvm_intack);
+     int (*guest_x86_mode)(struct vcpu *v);
+     unsigned long (*get_guest_ctrl_reg)(struct vcpu *v, unsigned int num);
+     unsigned long (*get_segment_base)(struct vcpu *v, enum x86_segment seg);
+@@ -209,16 +217,16 @@ hvm_long_mode_enabled(struct vcpu *v)
+ #define hvm_long_mode_enabled(v) (v,0)
+ #endif
+ 
+- static inline int
++static inline int
+ hvm_pae_enabled(struct vcpu *v)
+ {
+     return hvm_funcs.pae_enabled(v);
+ }
+ 
+ static inline int
+-hvm_interrupts_enabled(struct vcpu *v)
++hvm_interrupts_enabled(struct vcpu *v, enum hvm_intack type)
+ {
+-    return hvm_funcs.interrupts_enabled(v);
++    return hvm_funcs.interrupts_enabled(v, type);
+ }
+ 
+ static inline int
+diff --git a/include/asm-x86/hvm/irq.h b/include/asm-x86/hvm/irq.h
+index ecaf91f..dbdd57d 100644
+--- a/include/asm-x86/hvm/irq.h
++++ b/include/asm-x86/hvm/irq.h
+@@ -25,12 +25,12 @@
+ #include <xen/types.h>
+ #include <xen/spinlock.h>
+ #include <asm/irq.h>
++#include <asm/hvm/hvm.h>
+ #include <asm/hvm/vpic.h>
+ #include <asm/hvm/vioapic.h>
+ #include <public/hvm/save.h>
+ #include <xen/hvm/irq.h>
+ 
+-
+ struct hvm_irq {
+     /*
+      * Virtual interrupt wires for a single PCI bus.
+@@ -120,9 +120,12 @@ void hvm_maybe_deassert_evtchn_irq(void);
+ void hvm_assert_evtchn_irq(struct vcpu *v);
+ void hvm_set_callback_via(struct domain *d, uint64_t via);
+ 
+-int cpu_get_interrupt(struct vcpu *v, int *type);
+-int cpu_has_pending_irq(struct vcpu *v);
+-int get_isa_irq_vector(struct vcpu *vcpu, int isa_irq, int type);
++/* Check/Acknowledge next pending interrupt. */
++enum hvm_intack hvm_vcpu_has_pending_irq(struct vcpu *v);
++int hvm_vcpu_ack_pending_irq(
++    struct vcpu *v, enum hvm_intack type, int *vector);
++
++int get_isa_irq_vector(struct vcpu *vcpu, int isa_irq, enum hvm_intack src);
+ int is_isa_irq_masked(struct vcpu *v, int isa_irq);
+ 
+ /*
+diff --git a/include/asm-x86/hvm/vcpu.h b/include/asm-x86/hvm/vcpu.h
+index b0a6956..a6a762e 100644
+--- a/include/asm-x86/hvm/vcpu.h
++++ b/include/asm-x86/hvm/vcpu.h
+@@ -30,12 +30,14 @@
+ 
+ struct hvm_vcpu {
+     unsigned long       hw_cr3;     /* value we give to HW to use */
+-    unsigned long       ioflags;
+     struct hvm_io_op    io_op;
+     struct vlapic       vlapic;
+     s64                 cache_tsc_offset;
+     u64                 guest_time;
+ 
++    /* Is an NMI pending for delivery to this VCPU core? */
++    bool_t              nmi_pending; /* NB. integrate flag with save/restore */
++
+     /* Lock and list for virtual platform timers. */
+     spinlock_t          tm_lock;
+     struct list_head    tm_list;
+diff --git a/include/asm-x86/hvm/vlapic.h b/include/asm-x86/hvm/vlapic.h
+index 2f83365..0445d43 100644
+--- a/include/asm-x86/hvm/vlapic.h
++++ b/include/asm-x86/hvm/vlapic.h
+@@ -78,7 +78,7 @@ int vlapic_set_irq(struct vlapic *vlapic, uint8_t vec, uint8_t trig);
+ int vlapic_find_highest_irr(struct vlapic *vlapic);
+ 
+ int vlapic_has_interrupt(struct vcpu *v);
+-int cpu_get_apic_interrupt(struct vcpu *v, int *mode);
++int cpu_get_apic_interrupt(struct vcpu *v);
+ 
+ int  vlapic_init(struct vcpu *v);
+ void vlapic_destroy(struct vcpu *v);
+diff --git a/include/asm-x86/hvm/vmx/vmx.h b/include/asm-x86/hvm/vmx/vmx.h
+index c40f092..c701a7f 100644
+--- a/include/asm-x86/hvm/vmx/vmx.h
++++ b/include/asm-x86/hvm/vmx/vmx.h
+@@ -402,9 +402,16 @@ static inline void vmx_inject_sw_exception(
+                            instruction_len);
+ }
+ 
+-static inline void vmx_inject_extint(struct vcpu *v, int trap, int error_code)
++static inline void vmx_inject_extint(struct vcpu *v, int trap)
+ {
+-    __vmx_inject_exception(v, trap, INTR_TYPE_EXT_INTR, error_code, 0);
++    __vmx_inject_exception(v, trap, INTR_TYPE_EXT_INTR,
++                           VMX_DELIVER_NO_ERROR_CODE, 0);
++}
++
++static inline void vmx_inject_nmi(struct vcpu *v)
++{
++    __vmx_inject_exception(v, 2, INTR_TYPE_NMI,
++                           VMX_DELIVER_NO_ERROR_CODE, 0);
+ }
+ 
+ void ept_p2m_init(struct domain *d);
+diff --git a/include/asm-x86/hvm/vpic.h b/include/asm-x86/hvm/vpic.h
+index 6bb9bb3..1c60333 100644
+--- a/include/asm-x86/hvm/vpic.h
++++ b/include/asm-x86/hvm/vpic.h
+@@ -32,7 +32,6 @@
+ void vpic_irq_positive_edge(struct domain *d, int irq);
+ void vpic_irq_negative_edge(struct domain *d, int irq);
+ void vpic_init(struct domain *d);
+-int cpu_get_pic_interrupt(struct vcpu *v, int *type);
+-int is_periodic_irq(struct vcpu *v, int irq, int type);
++int cpu_get_pic_interrupt(struct vcpu *v);
+ 
+ #endif  /* __ASM_X86_HVM_VPIC_H__ */  
+diff --git a/include/asm-x86/hvm/vpt.h b/include/asm-x86/hvm/vpt.h
+index 1991f3f..44420a2 100644
+--- a/include/asm-x86/hvm/vpt.h
++++ b/include/asm-x86/hvm/vpt.h
+@@ -29,6 +29,7 @@
+ #include <xen/timer.h>
+ #include <xen/list.h>
+ #include <asm/hvm/vpic.h>
++#include <asm/hvm/irq.h>
+ #include <public/hvm/save.h>
+ 
+ struct HPETState;
+@@ -126,7 +127,7 @@ struct pl_time {    /* platform time */
+ void pt_save_timer(struct vcpu *v);
+ void pt_restore_timer(struct vcpu *v);
+ void pt_update_irq(struct vcpu *v);
+-void pt_intr_post(struct vcpu *v, int vector, int type);
++void pt_intr_post(struct vcpu *v, int vector, enum hvm_intack src);
+ void pt_reset(struct vcpu *v);
+ void pt_migrate(struct vcpu *v);
+ 

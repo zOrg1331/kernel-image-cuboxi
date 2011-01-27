@@ -1,0 +1,59 @@
+From: Bhavna Sarathy <bnagendr@redhat.com>
+Date: Thu, 2 Sep 2010 17:06:04 -0400
+Subject: [misc] amd: don't use mwait_idle on AMD CPUs
+Message-id: <20100902171203.18123.91322.sendpatchset@localhost.localdomain>
+Patchwork-id: 28021
+O-Subject: [RHEL5.6 PATCH 5/5] Don't use mwait_idle on AMD CPUs
+Bugzilla: 610199
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+RH-Acked-by: Bob Picco <bpicco@redhat.com>
+
+Resolves BZ 610199, please review and ACK.
+
+>From 84377529e50752cb6a48b426ed54a4cee0f55f88 Mon Sep 17 00:00:00 2001
+From: Andreas Herrmann <andreas.herrmann3@amd.com>
+Date: Wed, 1 Sep 2010 19:13:30 +0200
+Subject: [PATCH 5/5] x86, amd: Don't use mwait_idle on AMD CPUs
+
+From: Andreas Herrmann <andreas.herrmann3@amd.com>
+
+There is no C-state support with MWAIT on AMD. For increased power
+savings C1e is the preferred state for idle CPUs. But default_idle
+(using hlt) must be used for this purpose.
+
+This patch prevents usage of mwait_idle for AMD CPUs.
+
+This is closer to what we have in mainline Linux where similar
+behaviour is achieved by checking bits in CPUID Fn0000_0005_EDX (which
+is 0 on AMD).
+
+Signed-off-by: Andreas Herrmann <andreas.herrmann3@amd.com>
+
+diff --git a/arch/i386/kernel/cpu/amd.c b/arch/i386/kernel/cpu/amd.c
+index 6c4f964..628baca 100644
+--- a/arch/i386/kernel/cpu/amd.c
++++ b/arch/i386/kernel/cpu/amd.c
+@@ -309,7 +309,7 @@ static void __cpuinit init_amd(struct cpuinfo_x86 *c)
+ 			num_cache_leaves = 3;
+ 	}
+ 
+-	if ((c->x86 == 0x10 || c->x86 == 0x11) && !force_mwait)
++	if ((c->x86 >= 0x10) && !force_mwait)
+ 		clear_bit(X86_FEATURE_MWAIT, &c->x86_capability);
+ 
+ 	if (c->x86 >= 0x10)
+diff --git a/arch/x86_64/kernel/setup.c b/arch/x86_64/kernel/setup.c
+index 4d6213d..5860db9 100644
+--- a/arch/x86_64/kernel/setup.c
++++ b/arch/x86_64/kernel/setup.c
+@@ -986,8 +986,8 @@ static void __init init_amd(struct cpuinfo_x86 *c)
+ 	else
+ 		num_cache_leaves = 3;
+ 
+-	/* Family 10 doesn't support C states in MWAIT so don't use it */
+-	if (c->x86 == 0x10 && !force_mwait)
++	/* No support for C states in MWAIT so don't use it */
++	if (c->x86 >= 0x10 && !force_mwait)
+ 		clear_bit(X86_FEATURE_MWAIT, &c->x86_capability);
+ 	set_bit(X86_FEATURE_MFENCE_RDTSC, &c->x86_capability);
+ 

@@ -1,0 +1,255 @@
+From: Tomas Henzl <thenzl@redhat.com>
+Date: Sun, 29 Aug 2010 15:49:05 -0400
+Subject: [block] cciss: factor out sendcmd_withirq core
+Message-id: <1283097002-3341-7-git-send-email-thenzl@redhat.com>
+Patchwork-id: 27853
+O-Subject: [RHEL6 PATCH 06/63] cciss: Factor out core of sendcmd_withirq() to
+	provide a saner interface
+Bugzilla: 568830
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+
+Factor out core of sendcmd_withirq() to provide a saner interface
+
+diff --git a/drivers/block/cciss.c b/drivers/block/cciss.c
+index 37b0e59..bf4044d 100644
+--- a/drivers/block/cciss.c
++++ b/drivers/block/cciss.c
+@@ -2339,114 +2339,148 @@ static int fill_cmd(CommandList_struct *c, __u8 cmd, int ctlr, void *buff, size_
+ 	return status;
+ }
+ 
+-static int sendcmd_withirq(__u8 cmd,
+-			   int ctlr,
+-			   void *buff,
+-			   size_t size,
+-			   unsigned int use_unit_num,
+-			   unsigned int log_unit, __u8 page_code, int cmd_type)
++static int sendcmd_withirq_core(ctlr_info_t *h, CommandList_struct *c)
+ {
+-	ctlr_info_t *h = hba[ctlr];
+-	CommandList_struct *c;
+-	u64bit buff_dma_handle;
+-	unsigned long flags;
+-	int return_status;
+ 	DECLARE_COMPLETION_ONSTACK(wait);
+-
+-	if ((c = cmd_alloc(h, 0)) == NULL)
+-		return -ENOMEM;
+-	return_status = fill_cmd(c, cmd, ctlr, buff, size, use_unit_num,
+-				 log_unit, page_code, NULL, cmd_type);
+-	if (return_status != IO_OK) {
+-		cmd_free(h, c, 0);
+-		return return_status;
+-	}
+-      resend_cmd2:
++	u64bit  buff_dma_handle;
++	unsigned long flags;
++	unsigned char sense_key;
++	int return_status = IO_OK;
++	int print_this_error = 1;	/* print errors by default */
++resend_cmd2:
+ 	c->waiting = &wait;
+-
+ 	/* Put the request on the tail of the queue and send it */
+-	spin_lock_irqsave(CCISS_LOCK(ctlr), flags);
++	spin_lock_irqsave(CCISS_LOCK(h->ctlr), flags);
+ 	addQ(&h->reqQ, c);
+ 	h->Qdepth++;
+ 	start_io(h);
+-	spin_unlock_irqrestore(CCISS_LOCK(ctlr), flags);
++	spin_unlock_irqrestore(CCISS_LOCK(h->ctlr), flags);
+ 
+ 	wait_for_completion(&wait);
+ 
+-	if (c->err_info->CommandStatus != 0) {	/* an error has occurred */
+-		switch (c->err_info->CommandStatus) {
+-		case CMD_TARGET_STATUS:
+-			printk(KERN_WARNING "cciss: cmd %p has "
+-			       " completed with errors\n", c);
+-			if (c->err_info->ScsiStatus) {
+-				printk(KERN_WARNING "cciss: cmd %p "
+-				       "has SCSI Status = %x\n",
+-				       c, c->err_info->ScsiStatus);
+-			}
++	if (c->err_info->CommandStatus == 0)
++		goto command_done;
+ 
+-			break;
+-		case CMD_DATA_UNDERRUN:
+-		case CMD_DATA_OVERRUN:
+-			/* expected for inquire and report lun commands */
+-			break;
+-		case CMD_INVALID:
+-			printk(KERN_WARNING "cciss: Cmd %p is "
+-			       "reported invalid\n", c);
+-			return_status = IO_ERROR;
+-			break;
+-		case CMD_PROTOCOL_ERR:
+-			printk(KERN_WARNING "cciss: cmd %p has "
+-			       "protocol error \n", c);
+-			return_status = IO_ERROR;
+-			break;
+-		case CMD_HARDWARE_ERR:
+-			printk(KERN_WARNING "cciss: cmd %p had "
+-			       " hardware error\n", c);
+-			return_status = IO_ERROR;
+-			break;
+-		case CMD_CONNECTION_LOST:
+-			printk(KERN_WARNING "cciss: cmd %p had "
+-			       "connection lost\n", c);
+-			return_status = IO_ERROR;
+-			break;
+-		case CMD_ABORTED:
+-			printk(KERN_WARNING "cciss: cmd %p was "
+-			       "aborted\n", c);
+-			return_status = IO_ERROR;
+-			break;
+-		case CMD_ABORT_FAILED:
+-			printk(KERN_WARNING "cciss: cmd %p reports "
+-			       "abort failed\n", c);
+-			return_status = IO_ERROR;
+-			break;
+-		case CMD_UNSOLICITED_ABORT:
+-			printk(KERN_WARNING
+-			       "cciss%d: unsolicited abort %p\n", ctlr, c);
+-			if (c->retry_count < MAX_CMD_RETRIES) {
+-				printk(KERN_WARNING
+-				       "cciss%d: retrying %p\n", ctlr, c);
++
++	switch (c->err_info->CommandStatus) {
++	case CMD_TARGET_STATUS:
++		switch (c->err_info->ScsiStatus) {
++		case 0x02:  /* Check Condition... if Unit Attention */
++			if ((c->err_info->SenseInfo[2] == 6) &&
++				(c->retry_count < MAX_CMD_RETRIES)) {
++				printk(KERN_WARNING "cciss%d: retrying unit "
++				      "attention\n", h->ctlr);
+ 				c->retry_count++;
+-				/* erase the old error information */
+-				memset(c->err_info, 0,
+-				       sizeof(ErrorInfo_struct));
+-				return_status = IO_OK;
++				/* erase old err info */
++				memset(c->err_info, 0, sizeof(*c->err_info));
+ 				INIT_COMPLETION(wait);
+ 				goto resend_cmd2;
++			} else {
++				printk(KERN_WARNING "cciss%d: "
++					"has CHECK CONDITION byte 2 = 0x%x\n",
++					h->ctlr, c->err_info->SenseInfo[2]);
+ 			}
++			/* check the sense key */
++			sense_key = 0xf & c->err_info->SenseInfo[2];
++
++			/* no status or recovered error */
++
++			if ((sense_key == 0x0) || (sense_key == 0x1))
++				return_status = IO_OK;
++ 			break;
++		case 0x18:  /* Reserve Conflict */
+ 			return_status = IO_ERROR;
+-			break;
++			print_this_error = 0;
++ 			break;
+ 		default:
+-			printk(KERN_WARNING "cciss: cmd %p returned "
+-			       "unknown status %x\n", c,
+-			       c->err_info->CommandStatus);
+-			return_status = IO_ERROR;
++			printk(KERN_WARNING "cciss%d: "
++				"cmd has SCSI Status  = %x\n", h->ctlr,
++				c->err_info->ScsiStatus);
++ 		}
++		break;
++	case CMD_DATA_UNDERRUN:
++	case CMD_DATA_OVERRUN:
++		/* expected for inquire and report lun commands */
++		break;
++	case CMD_INVALID:
++		printk(KERN_WARNING "cciss: Cmd %02x is "
++			"reported invalid\n", c->Request.CDB[0]);
++		return_status = IO_ERROR;
++		break;
++	case CMD_PROTOCOL_ERR:
++		printk(KERN_WARNING "cciss: cmd %02x has "
++			"protocol error \n", c->Request.CDB[0]);
++		return_status = IO_ERROR;
++		break;
++	case CMD_HARDWARE_ERR:
++		printk(KERN_WARNING "cciss: cmd %02x had "
++			"hardware error\n", c->Request.CDB[0]);
++		return_status = IO_ERROR;
++		break;
++	case CMD_CONNECTION_LOST:
++		printk(KERN_WARNING "cciss: cmd %02x had "
++			"connection lost\n", c->Request.CDB[0]);
++		return_status = IO_ERROR;
++		break;
++	case CMD_ABORTED:
++		printk(KERN_WARNING "cciss: cmd %02x was "
++			"aborted\n", c->Request.CDB[0]);
++		return_status = IO_ERROR;
++		break;
++	case CMD_ABORT_FAILED:
++		printk(KERN_WARNING "cciss: cmd %02x reports "
++			"abort failed\n", c->Request.CDB[0]);
++		return_status = IO_ERROR;
++		break;
++	case CMD_UNSOLICITED_ABORT:
++		printk(KERN_WARNING "cciss%d: unsolicited abort %02x\n",
++			h->ctlr, c->Request.CDB[0]);
++		if (c->retry_count < MAX_CMD_RETRIES) {
++			printk(KERN_WARNING "cciss%d: retrying %02x\n", h->ctlr,
++				c->Request.CDB[0]);
++			c->retry_count++;
++			/* erase the old error information */
++			memset(c->err_info, 0, sizeof(ErrorInfo_struct));
++			return_status = IO_OK;
++			INIT_COMPLETION(wait);
++			goto resend_cmd2;
+ 		}
+-	}
+-	/* unlock the buffers from DMA */
+-	buff_dma_handle.val32.lower = c->SG[0].Addr.lower;
+-	buff_dma_handle.val32.upper = c->SG[0].Addr.upper;
+-	pci_unmap_single(h->pdev, (dma_addr_t) buff_dma_handle.val,
+-			 c->SG[0].Len, PCI_DMA_BIDIRECTIONAL);
++		return_status = IO_ERROR;
++		break;
++	default:
++		printk(KERN_WARNING "cciss: cmd 0x%02x returned "
++			"unknown status %x\n", c->Request.CDB[0],
++			c->err_info->CommandStatus);
++		return_status = IO_ERROR;
++ 	}	
++ 
++command_done:
++ 	/* unlock the buffers from DMA */
++ 	buff_dma_handle.val32.lower = c->SG[0].Addr.lower;
++ 	buff_dma_handle.val32.upper = c->SG[0].Addr.upper;
++ 	pci_unmap_single(h->pdev, (dma_addr_t) buff_dma_handle.val,
++ 			c->SG[0].Len, PCI_DMA_BIDIRECTIONAL);
++         return return_status;
++}
++
++static int sendcmd_withirq(__u8	cmd,
++			   int ctlr,
++			   void *buff,
++			   size_t size,
++			   unsigned int use_unit_num,
++			   unsigned int log_unit, __u8 page_code, int cmd_type)
++{
++	ctlr_info_t *h = hba[ctlr];
++	CommandList_struct *c;
++	int return_status;
++
++	c = cmd_alloc(h, 0);
++	if (!c)
++		return -ENOMEM;
++	return_status = fill_cmd(c, cmd, ctlr, buff, size, use_unit_num,
++		log_unit, page_code, NULL, cmd_type);
++	if (return_status == IO_OK)
++		return_status = sendcmd_withirq_core(h, c);
+ 	cmd_free(h, c, 0);
+ 	return return_status;
+ }

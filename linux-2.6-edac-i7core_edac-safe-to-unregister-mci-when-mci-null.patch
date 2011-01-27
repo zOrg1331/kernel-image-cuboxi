@@ -1,0 +1,49 @@
+From: Mauro Carvalho Chehab <mchehab@redhat.com>
+Date: Tue, 23 Nov 2010 17:34:03 -0500
+Subject: [edac] i7core_edac: safe to unregister mci when mci NULL
+Message-id: <20101123153403.28e81d48@pedra>
+Patchwork-id: 29580
+O-Subject: [PATCH RHEL5 25/29] BZ#:651869 i7core_edac: it is safe to
+	i7core_unregister_mci() when mci=NULL
+Bugzilla: 651869
+RH-Acked-by: Aristeu Rozanski <aris@redhat.com>
+
+Changeset: 88ef5ea9767b0c7bfb4b477e1857629fe8fa2983
+
+i7core_unregister_mci() checks internally when mci=NULL. There's no
+need to test it outside.
+
+Signed-off-by: Mauro Carvalho Chehab <mchehab@redhat.com>
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/edac/i7core_edac.c b/drivers/edac/i7core_edac.c
+index 04a0227..fbdb7f6 100644
+--- a/drivers/edac/i7core_edac.c
++++ b/drivers/edac/i7core_edac.c
+@@ -2079,10 +2079,9 @@ static int __devinit i7core_probe(struct pci_dev *pdev,
+ 	return 0;
+ 
+ fail1:
+-	list_for_each_entry(i7core_dev, &i7core_edac_list, list) {
+-		if (i7core_dev->mci)
+-			i7core_unregister_mci(i7core_dev);
+-	}
++	list_for_each_entry(i7core_dev, &i7core_edac_list, list)
++		i7core_unregister_mci(i7core_dev);
++
+ 	i7core_put_all_devices();
+ fail0:
+ 	mutex_unlock(&i7core_edac_lock);
+@@ -2114,10 +2113,8 @@ static void __devexit i7core_remove(struct pci_dev *pdev)
+ 		return;
+ 	}
+ 
+-	list_for_each_entry(i7core_dev, &i7core_edac_list, list) {
+-		if (i7core_dev->mci)
+-			i7core_unregister_mci(i7core_dev);
+-	}
++	list_for_each_entry(i7core_dev, &i7core_edac_list, list)
++		i7core_unregister_mci(i7core_dev);
+ 
+ 	/* Release PCI resources */
+ 	i7core_put_all_devices();

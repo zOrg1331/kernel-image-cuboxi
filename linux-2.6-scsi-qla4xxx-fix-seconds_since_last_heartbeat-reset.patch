@@ -1,0 +1,48 @@
+From: Chad Dupuis <cdupuis@redhat.com>
+Date: Tue, 30 Nov 2010 19:59:05 -0500
+Subject: [scsi] qla4xxx: fix seconds_since_last_heartbeat reset
+Message-id: <20101130195905.10450.30657.sendpatchset@localhost.localdomain>
+Patchwork-id: 29694
+O-Subject: [RHEL 5.6 PATCH 3/28] qla4xxx: Reset seconds_since_last_heartbeat
+	correctly.
+Bugzilla: 656999
+
+Bugzilla
+--------
+
+Bug 656999 (https://bugzilla.redhat.com/show_bug.cgi?id=656999)
+
+Upstream Status
+---------------
+
+linux-2.6 commit id 99457d75f617873591bf886921154e304e603ab4
+
+Description
+-----------
+
+>From 0acea8397eb0037e2cdb9efbf3eb20e69454caee Mon Sep 17 00:00:00 2001
+From: Lalit Chandivade <lalit.chandivade@qlogic.com>
+Date: Sat, 20 Nov 2010 14:02:51 -0800
+Subject: [PATCH 04/29] qla4xxx: Reset seconds_since_last_heartbeat correctly.
+
+The seconds_since_last_heartbeat should be checked for consecutive
+heartbeat checks. Currently it could happen that it gets set to
+max (2 seconds) for non-consecutive heartbeat checks.
+
+Signed-off-by: Lalit Chandivade <lalit.chandivade@qlogic.com>
+Signed-off-by: Prasanna Mumbai <prasanna.mumbai@qlogic.com>
+
+diff --git a/drivers/scsi/qla4xxx/ql4_os.c b/drivers/scsi/qla4xxx/ql4_os.c
+index 1d899da..cd950ff 100644
+--- a/drivers/scsi/qla4xxx/ql4_os.c
++++ b/drivers/scsi/qla4xxx/ql4_os.c
+@@ -745,7 +745,8 @@ qla4_8xxx_check_fw_alive(struct scsi_qla_host *ha)
+ 			qla4xxx_wake_dpc(ha);
+ 			qla4xxx_mailbox_premature_completion(ha);
+ 		}
+-	}
++	} else
++		ha->seconds_since_last_heartbeat = 0;
+ 
+ 	ha->fw_heartbeat_counter = fw_heartbeat_counter;
+ }

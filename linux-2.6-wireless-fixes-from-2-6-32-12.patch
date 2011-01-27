@@ -1,0 +1,197 @@
+From: Stanislaw Gruszka <sgruszka@redhat.com>
+Date: Fri, 3 Sep 2010 12:23:38 -0400
+Subject: [wireless] fixes from 2.6.32.12
+Message-id: <1283516623-11659-6-git-send-email-sgruszka@redhat.com>
+Patchwork-id: 28068
+O-Subject: [RHEL5 PATCH 05/10] wireless fixes from 2.6.32.12
+Bugzilla: 621105
+RH-Acked-by: David S. Miller <davem@redhat.com>
+RH-Acked-by: Thomas Graf <tgraf@redhat.com>
+
+Included commits:
+e69f8f53037556764c9c51821e75b72cc8f392d7 iwlwifi: counting number of tfds can be free for 4965
+a2266949a5aa747f53ecfbe0c6836b8317794f91 iwlwifi: range checking issue
+a850f39d86b2fa5a0933ccd6c8e91e9e86d62937 mac80211: tear down all agg queues when restart/reconfig hw
+485f88310f3216db5bbbfadaf8bb5049ea606f86 iwlwifi: need check for valid qos packet before free
+f772fcf6054544c4dd9694e1037cad50bd850a53 iwlwifi: clear all tx queues when firmware ready
+bbcb1d90f0b20e097ff6e2f80b130a92c73dde7d iwlwifi: fix scan race
+afd9fc6961f208b539d6accd49927639d964be23 mac80211: fix deferred hardware scan requests
+
+Already applied commits:
+79ae3ed1457827cf19ff1eab473d181a6156ff2f iwlwifi: fix nfreed--
+
+Omitted commits:
+c7f02946f8a70d815f2c37e88c3dde335d36417c setup correct int pipe type in ar9170_usb_exec_cmd
+6a45694284d21a5f1f322eea978247edd8916410 mac80211: move netdev queue enabling to correct spot
+a56d040407bfbb67c0c3c15994768ed389d2b93f b43: Remove reset after fatal DMA error O
+2e53415d0c9daa3bd7a6996727f311ca30b0f552 b43: Allow PIO mode to be selected at module load O
+04f6e0977f1180ebb2a34169aca8f83bb0154caf b43: fall back gracefully to PIO mode after fatal DMA errors O
+b8798e6f8ed0dca2cc5c0e3f65a3c14261b7052b b43: Optimize PIO scratchbuffer usage O
+
+diff --git a/drivers/net/wireless/iwlwifi/iwl-4965.c b/drivers/net/wireless/iwlwifi/iwl-4965.c
+index e172025..0cd7f0b 100644
+--- a/drivers/net/wireless/iwlwifi/iwl-4965.c
++++ b/drivers/net/wireless/iwlwifi/iwl-4965.c
+@@ -716,6 +716,8 @@ static int iwl4965_alive_notify(struct iwl_priv *priv)
+ 
+ 	iwl4965_set_wr_ptrs(priv, IWL_CMD_QUEUE_NUM, 0);
+ 
++	/* reset to 0 to enable all the queue first */
++	priv->txq_ctx_active_msk = 0;
+ 	/* Map each Tx/cmd queue to its corresponding fifo */
+ 	for (i = 0; i < ARRAY_SIZE(default_queue_to_tx_fifo); i++) {
+ 		int ac = default_queue_to_tx_fifo[i];
+@@ -2135,7 +2137,9 @@ static void iwl4965_rx_reply_tx(struct iwl_priv *priv,
+ 			IWL_DEBUG_TX_REPLY(priv, "Retry scheduler reclaim scd_ssn "
+ 					   "%d index %d\n", scd_ssn , index);
+ 			freed = iwl_tx_queue_reclaim(priv, txq_id, index);
+-			iwl_free_tfds_in_queue(priv, sta_id, tid, freed);
++			if (qc)
++				iwl_free_tfds_in_queue(priv, sta_id,
++						       tid, freed);
+ 
+ 			if (priv->mac80211_registered &&
+ 			    (iwl_queue_space(&txq->q) > txq->q.low_mark) &&
+@@ -2163,13 +2167,14 @@ static void iwl4965_rx_reply_tx(struct iwl_priv *priv,
+ 
+ 		freed = iwl_tx_queue_reclaim(priv, txq_id, index);
+ 		if (qc && likely(sta_id != IWL_INVALID_STATION))
+-			priv->stations[sta_id].tid[tid].tfds_in_queue -= freed;
++			iwl_free_tfds_in_queue(priv, sta_id, tid, freed);
++		else if (sta_id == IWL_INVALID_STATION)
++			IWL_DEBUG_TX_REPLY(priv, "Station not known\n");
+ 
+ 		if (priv->mac80211_registered &&
+ 		    (iwl_queue_space(&txq->q) > txq->q.low_mark))
+ 			iwl_wake_queue(priv, txq_id);
+ 	}
+-
+ 	if (qc && likely(sta_id != IWL_INVALID_STATION))
+ 		iwl_txq_check_empty(priv, sta_id, tid, txq_id);
+ 
+diff --git a/drivers/net/wireless/iwlwifi/iwl-5000.c b/drivers/net/wireless/iwlwifi/iwl-5000.c
+index e011564..d31d2a0 100644
+--- a/drivers/net/wireless/iwlwifi/iwl-5000.c
++++ b/drivers/net/wireless/iwlwifi/iwl-5000.c
+@@ -799,6 +799,8 @@ int iwl5000_alive_notify(struct iwl_priv *priv)
+ 
+ 	iwl5000_set_wr_ptrs(priv, IWL_CMD_QUEUE_NUM, 0);
+ 
++	/* reset to 0 to enable all the queue first */
++	priv->txq_ctx_active_msk = 0;
+ 	/* map qos queues to fifos one-to-one */
+ 	for (i = 0; i < ARRAY_SIZE(iwl5000_default_queue_to_tx_fifo); i++) {
+ 		int ac = iwl5000_default_queue_to_tx_fifo[i];
+diff --git a/drivers/net/wireless/iwlwifi/iwl-scan.c b/drivers/net/wireless/iwlwifi/iwl-scan.c
+index 86d712f..e438be8 100644
+--- a/drivers/net/wireless/iwlwifi/iwl-scan.c
++++ b/drivers/net/wireless/iwlwifi/iwl-scan.c
+@@ -407,21 +407,6 @@ void iwl_init_scan_params(struct iwl_priv *priv)
+ 
+ static int iwl_scan_initiate(struct iwl_priv *priv)
+ {
+-	if (!iwl_is_ready_rf(priv)) {
+-		IWL_DEBUG_SCAN(priv, "Aborting scan due to not ready.\n");
+-		return -EIO;
+-	}
+-
+-	if (test_bit(STATUS_SCANNING, &priv->status)) {
+-		IWL_DEBUG_SCAN(priv, "Scan already in progress.\n");
+-		return -EAGAIN;
+-	}
+-
+-	if (test_bit(STATUS_SCAN_ABORTING, &priv->status)) {
+-		IWL_DEBUG_SCAN(priv, "Scan request while abort pending\n");
+-		return -EAGAIN;
+-	}
+-
+ 	IWL_DEBUG_INFO(priv, "Starting scan...\n");
+ 	set_bit(STATUS_SCANNING, &priv->status);
+ 	priv->scan_start = jiffies;
+@@ -452,6 +437,18 @@ int iwl_mac_hw_scan(struct ieee80211_hw *hw,
+ 		goto out_unlock;
+ 	}
+ 
++	if (test_bit(STATUS_SCANNING, &priv->status)) {
++		IWL_DEBUG_SCAN(priv, "Scan already in progress.\n");
++		ret = -EAGAIN;
++		goto out_unlock;
++	}
++
++	if (test_bit(STATUS_SCAN_ABORTING, &priv->status)) {
++		IWL_DEBUG_SCAN(priv, "Scan request while abort pending\n");
++		ret = -EAGAIN;
++		goto out_unlock;
++	}
++
+ 	/* We don't schedule scan within next_scan_jiffies period.
+ 	 * Avoid scanning during possible EAPOL exchange, return
+ 	 * success immediately.
+diff --git a/drivers/net/wireless/iwlwifi/iwl3945-base.c b/drivers/net/wireless/iwlwifi/iwl3945-base.c
+index f755dc4..d01a088 100644
+--- a/drivers/net/wireless/iwlwifi/iwl3945-base.c
++++ b/drivers/net/wireless/iwlwifi/iwl3945-base.c
+@@ -1913,7 +1913,7 @@ static void iwl3945_init_hw_rates(struct iwl_priv *priv,
+ {
+ 	int i;
+ 
+-	for (i = 0; i < IWL_RATE_COUNT; i++) {
++	for (i = 0; i < IWL_RATE_COUNT_LEGACY; i++) {
+ 		rates[i].bitrate = iwl3945_rates[i].ieee * 5;
+ 		rates[i].hw_value = i; /* Rate scaling will work on indexes */
+ 		rates[i].hw_value_short = i;
+diff --git a/net/mac80211/scan.c b/net/mac80211/scan.c
+index 78b65d3..d19f4aa 100644
+--- a/net/mac80211/scan.c
++++ b/net/mac80211/scan.c
+@@ -408,6 +408,16 @@ static int __ieee80211_start_scan(struct ieee80211_sub_if_data *sdata,
+ 	if (local->scan_req)
+ 		return -EBUSY;
+ 
++	if (req != local->int_scan_req &&
++	    sdata->vif.type == NL80211_IFTYPE_STATION &&
++	    !list_empty(&ifmgd->work_list)) {
++		/* actually wait for the work it's doing to finish/time out */
++		set_bit(IEEE80211_STA_REQ_SCAN, &ifmgd->request);
++		local->scan_req = req;
++		local->scan_sdata = sdata;
++		return 0;
++	}
++
+ 	if (local->ops->hw_scan) {
+ 		u8 *ies;
+ 		int ielen;
+@@ -428,14 +438,6 @@ static int __ieee80211_start_scan(struct ieee80211_sub_if_data *sdata,
+ 	local->scan_req = req;
+ 	local->scan_sdata = sdata;
+ 
+-	if (req != local->int_scan_req &&
+-	    sdata->vif.type == NL80211_IFTYPE_STATION &&
+-	    !list_empty(&ifmgd->work_list)) {
+-		/* actually wait for the work it's doing to finish/time out */
+-		set_bit(IEEE80211_STA_REQ_SCAN, &ifmgd->request);
+-		return 0;
+-	}
+-
+ 	if (local->ops->hw_scan)
+ 		__set_bit(SCAN_HW_SCANNING, &local->scanning);
+ 	else
+diff --git a/net/mac80211/util.c b/net/mac80211/util.c
+index 0eb2ba4..252c8bc 100644
+--- a/net/mac80211/util.c
++++ b/net/mac80211/util.c
+@@ -1153,6 +1153,14 @@ int ieee80211_reconfig(struct ieee80211_local *local)
+ 		}
+ 	}
+ 
++	rcu_read_lock();
++	if (hw->flags & IEEE80211_HW_AMPDU_AGGREGATION) {
++		list_for_each_entry_rcu(sta, &local->sta_list, list) {
++			ieee80211_sta_tear_down_BA_sessions(sta);
++		}
++	}
++	rcu_read_unlock();
++
+ 	/* add back keys */
+ 	list_for_each_entry(sdata, &local->interfaces, list)
+ 		if (netif_running(sdata->dev))

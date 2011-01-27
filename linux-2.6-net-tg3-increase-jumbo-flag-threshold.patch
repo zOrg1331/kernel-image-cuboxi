@@ -1,0 +1,120 @@
+From: John Feeney <jfeeney@redhat.com>
+Date: Thu, 9 Dec 2010 00:11:08 -0500
+Subject: [net] tg3: increase jumbo flag threshold
+Message-id: <4D001E9C.8010206@redhat.com>
+Patchwork-id: 30021
+O-Subject: [RHEL5.6 PATCH] tg3: Increase jumbo flag threshold
+Bugzilla: 660506
+RH-Acked-by: David S. Miller <davem@redhat.com>
+RH-Acked-by: Jiri Pirko <jpirko@redhat.com>
+RH-Acked-by: Stefan Assmann <sassmann@redhat.com>
+
+bz660506
+https://bugzilla.redhat.com/bugzilla/show_bug.cgi?id=660506
+tg3: Increase tx jumbo bd flag threshold
+
+Description of problem:
+According to Broadcom, setting the jumbo BD flag too soon seems to
+cause some tx recovery problems on 5719.
+
+Solution:
+Increase the jumbo flag threshold from 1500 to 1518.
+
+Upstream commits:
+The tg3 maintainer (Matt Carlson from Broadcom) has posted
+this patch to netdev. I have included a copy of that here:
+
+>The current transmit routines set the jumbo frame BD flag too
+>aggressively.  This can reduce performance for common cases.  This patch
+>raises the jumbo flag threshold to 1518, up from 1500.
+>
+>Signed-off-by: Matt Carlson <mcarlson@broadcom.com>
+>Reviewed-by: Benjamin Li <benli@broadcom.com>
+>---
+> drivers/net/tg3.c |    4 ++--
+> 1 files changed, 2 insertions(+), 2 deletions(-)
+>
+>diff --git a/drivers/net/tg3.c b/drivers/net/tg3.c
+>index afb79db..b8ae5e1 100644
+>--- a/drivers/net/tg3.c
+>+++ b/drivers/net/tg3.c
+>@@ -5761,7 +5761,7 @@ static netdev_tx_t tg3_start_xmit(struct sk_buff *skb,
+> 	dma_unmap_addr_set(&tnapi->tx_buffers[entry], mapping, mapping);
+>
+> 	if ((tp->tg3_flags3 & TG3_FLG3_USE_JUMBO_BDFLAG) &&
+>-	    !mss && skb->len > ETH_DATA_LEN)
+>+	    !mss && skb->len > VLAN_ETH_FRAME_LEN)
+> 		base_flags |= TXD_FLAG_JMB_PKT;
+>
+> 	tg3_set_txd(tnapi, entry, mapping, len, base_flags,
+>@@ -5995,7 +5995,7 @@ static netdev_tx_t tg3_start_xmit_dma_bug(struct sk_buff *skb,
+> #endif
+>
+> 	if ((tp->tg3_flags3 & TG3_FLG3_USE_JUMBO_BDFLAG) &&
+>-	    !mss && skb->len > ETH_DATA_LEN)
+>+	    !mss && skb->len > VLAN_ETH_FRAME_LEN)
+> 		base_flags |= TXD_FLAG_JMB_PKT;
+>
+> 	len = skb_headlen(skb);
+>-- 1.7.2.2 "
+
+Note:
+When applying the patch it was noticed that there is a bug in
+the RHEL5.6 tg3 driver. The if condition to set the value of
+base_flags to TXD_FLAG_JMB_PKT was found in tg3_start_xmit_dma_bug()
+twice, instead of being found in tg3_start_xmit() and
+tg3_start_xmit_dma_bug(). This caused the setting of TXD_FLAG_JMB_PKT
+to be set again superfluously and not be set at all in tg3_start_xmit().
+
+This patch fixes that problem, in addition to increasing the threshold.
+
+Brew:
+Successfully built in Brew for all architectures.
+
+Testing:
+Broadcom is testing the rpm with this patch and I will provide
+an update upon arrival.
+
+In addition, I performed some level of sanity testing
+on a tg3 nic but not with a 5719 because we don't have
+one in Beaker.
+
+Acks would be appreciated. Thanks.
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/net/tg3.c b/drivers/net/tg3.c
+index 29f7d70..479dab5 100644
+--- a/drivers/net/tg3.c
++++ b/drivers/net/tg3.c
+@@ -5197,6 +5197,10 @@ static int tg3_start_xmit(struct sk_buff *skb, struct net_device *dev)
+ 	tnapi->tx_buffers[entry].skb = skb;
+ 	pci_unmap_addr_set(&tnapi->tx_buffers[entry], mapping, mapping);
+ 
++	if ((tp->tg3_flags3 & TG3_FLG3_USE_JUMBO_BDFLAG) &&
++	    !mss && skb->len > VLAN_ETH_FRAME_LEN)
++		base_flags |= TXD_FLAG_JMB_PKT;
++
+ 	tg3_set_txd(tnapi, entry, mapping, len, base_flags,
+ 		    (skb_shinfo(skb)->nr_frags == 0) | (mss << 1));
+ 
+@@ -5390,7 +5394,7 @@ static int tg3_start_xmit_dma_bug(struct sk_buff *skb, struct net_device *dev)
+ #endif
+ 
+ 	if ((tp->tg3_flags3 & TG3_FLG3_USE_JUMBO_BDFLAG) &&
+-	    !mss && skb->len > ETH_DATA_LEN)
++	    !mss && skb->len > VLAN_ETH_FRAME_LEN)
+ 		base_flags |= TXD_FLAG_JMB_PKT;
+ 
+ 	/* Queue skb data, a.k.a. the main skb fragment. */
+@@ -5415,10 +5419,6 @@ static int tg3_start_xmit_dma_bug(struct sk_buff *skb, struct net_device *dev)
+ 	if (tp->tg3_flags3 & TG3_FLG3_5701_DMA_BUG)
+ 		would_hit_hwbug = 1;
+ 
+-	if ((tp->tg3_flags3 & TG3_FLG3_USE_JUMBO_BDFLAG) &&
+-	    !mss && skb->len > ETH_DATA_LEN)
+-		base_flags |= TXD_FLAG_JMB_PKT;
+-
+ 	tg3_set_txd(tnapi, entry, mapping, len, base_flags,
+ 		    (skb_shinfo(skb)->nr_frags == 0) | (mss << 1));
+ 

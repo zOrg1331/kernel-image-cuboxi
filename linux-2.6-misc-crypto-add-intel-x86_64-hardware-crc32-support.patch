@@ -1,0 +1,182 @@
+From: Prarit Bhargava <prarit@redhat.com>
+Date: Wed, 8 Sep 2010 18:05:24 -0400
+Subject: [misc] crypto: add Intel x86_64 hardware CRC32 support
+Message-id: <20100908180524.13414.16141.sendpatchset@prarit.bos.redhat.com>
+Patchwork-id: 28180
+O-Subject: [RHEL5.6 BZ 626018 PATCH V2] x86_64,
+	crypto: Backport Intel HW CRC32 support
+Bugzilla: 626018
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+RH-Acked-by: Stanislaw Gruszka <sgruszka@redhat.com>
+RH-Acked-by: Dean Nelson <dnelson@redhat.com>
+
+Backport the Intel Hardware CRC32 instruction for x86_64.
+
+Backport crc32c_intel_le_hw_byte() and crc32c_intel_le_hw() from upstream
+(as of commit b7e8bdadce6317eb13c13b9451d7114614aa1450).
+
+When using HW CRC32 the customer reported a 200% to 700% increase in performance
+when using lustre.
+
+This code has been upstream for approximately 2 years and has not seen any
+bugs reported against it.  No Intel errata have been filed either -- AFAICT,
+this code is extremely stable and safe to backport to RHEL5.
+
+Successfully tested with sctp (thanks for the suggestion nhorman), and a very
+similar patch was tested by the reporter.
+
+Resolves BZ 626018.
+
+v2: updated copyright notice, added static to crc32c_intel_le_hw(), other
+minor stylistic changes
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/include/asm-x86_64/crc32c-hw.h b/include/asm-x86_64/crc32c-hw.h
+new file mode 100644
+index 0000000..fc220a3
+--- /dev/null
++++ b/include/asm-x86_64/crc32c-hw.h
+@@ -0,0 +1,78 @@
++/*
++ * Using hardware provided CRC32 instruction to accelerate the CRC32 disposal.
++ * CRC32C polynomial:0x1EDC6F41(BE)/0x82F63B78(LE)
++ * CRC32 is a new instruction in Intel SSE4.2, the reference can be found at:
++ * http://www.intel.com/products/processor/manuals/
++ * Intel(R) 64 and IA-32 Architectures Software Developer's Manual
++ * Volume 2A: Instruction Set Reference, A-M
++ *
++ * Copyright (C) 2008 Intel Corporation
++ * Authors: Austin Zhang <austin_zhang@linux.intel.com>
++ *          Kent Liu <kent.liu@intel.com>
++ *
++ * This program is free software; you can redistribute it and/or modify it
++ * under the terms and conditions of the GNU General Public License,
++ * version 2, as published by the Free Software Foundation.
++ *
++ * This program is distributed in the hope it will be useful, but WITHOUT
++ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
++ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
++ * more details.
++ *
++ * You should have received a copy of the GNU General Public License along with
++ * this program; if not, write to the Free Software Foundation, Inc.,
++ * 51 Franklin St - Fifth Floor, Boston, MA 02110-1301 USA.
++ *
++ */
++#ifndef __ASM_X86_CRC32C_HW_H
++#define __ASM_X86_CRC32C_HW_H
++
++#include <asm/cpufeature.h>
++#include <asm/processor.h>
++
++#define SCALE_F	sizeof(unsigned long)
++
++#ifdef CONFIG_X86_64
++#define REX_PRE "0x48, "
++#else
++#define REX_PRE
++#endif
++
++static u32 crc32c_intel_le_hw_byte(u32 crc, unsigned char const *data, size_t length)
++{
++	while (length--) {
++		__asm__ __volatile__(
++			".byte 0xf2, 0xf, 0x38, 0xf0, 0xf1"
++			:"=S"(crc)
++			:"0"(crc), "c"(*data)
++		);
++		data++;
++	}
++
++	return crc;
++}
++
++static u32 __attribute_pure__ crc32c_intel_le_hw(u32 crc, unsigned char const *p, size_t len)
++{
++	unsigned int iquotient = len / SCALE_F;
++	unsigned int iremainder = len % SCALE_F;
++	unsigned long *ptmp = (unsigned long *)p;
++
++	while (iquotient--) {
++		__asm__ __volatile__(
++			".byte 0xf2, " REX_PRE "0xf, 0x38, 0xf1, 0xf1;"
++			:"=S"(crc)
++			:"0"(crc), "c"(*ptmp)
++		);
++		ptmp++;
++	}
++
++	if (iremainder)
++		crc = crc32c_intel_le_hw_byte(crc, (unsigned char *)ptmp,
++				 iremainder);
++
++	return crc;
++}
++
++#endif /* __ASM_X86_CRC32C_HW_H */
++
+diff --git a/include/asm-x86_64/processor.h b/include/asm-x86_64/processor.h
+index 6ad46d8..fcb76e2 100644
+--- a/include/asm-x86_64/processor.h
++++ b/include/asm-x86_64/processor.h
+@@ -500,4 +500,7 @@ extern int bootloader_type;
+ 
+ #define HAVE_ARCH_PICK_MMAP_LAYOUT 1
+ 
++/* Hardware provides CRC32C accelerated instruction */
++#define ARCH_HAS_CRC32C_HW	1
++
+ #endif /* __ASM_X86_64_PROCESSOR_H */
+diff --git a/lib/libcrc32c.c b/lib/libcrc32c.c
+index 60f4680..dc4e336 100644
+--- a/lib/libcrc32c.c
++++ b/lib/libcrc32c.c
+@@ -35,6 +35,10 @@
+ #include <linux/module.h>
+ #include <asm/byteorder.h>
+ 
++#ifdef ARCH_HAS_CRC32C_HW
++#include <asm/crc32c-hw.h>
++#endif
++
+ MODULE_AUTHOR("Clay Haapala <chaapala@cisco.com>");
+ MODULE_DESCRIPTION("CRC32c (Castagnoli) calculations");
+ MODULE_LICENSE("GPL");
+@@ -67,7 +71,7 @@ EXPORT_SYMBOL(crc32c_le);
+  * of space and maintainability in keeping the two modules separate.
+  */
+ u32 __attribute_pure__
+-crc32c_le(u32 crc, unsigned char const *p, size_t len)
++crc32c_le_sw(u32 crc, unsigned char const *p, size_t len)
+ {
+ 	int i;
+ 	while (len--) {
+@@ -161,7 +165,7 @@ static const u32 crc32c_table[256] = {
+  */
+ 
+ u32 __attribute_pure__
+-crc32c_le(u32 seed, unsigned char const *data, size_t length)
++crc32c_le_sw(u32 seed, unsigned char const *data, size_t length)
+ {
+ 	u32 crc = __cpu_to_le32(seed);
+ 	
+@@ -174,6 +178,18 @@ crc32c_le(u32 seed, unsigned char const *data, size_t length)
+ 
+ #endif	/* CRC_LE_BITS == 8 */
+ 
++u32 __attribute_pure__
++crc32c_le(u32 crc, unsigned char const *p, size_t len)
++{
++#ifdef ARCH_HAS_CRC32C_HW
++	if (cpu_has_xmm4_2)
++		return crc32c_intel_le_hw(crc, p, len);
++#endif
++
++	return crc32c_le_sw(crc, p, len);
++}
++
++
+ EXPORT_SYMBOL(crc32c_be);
+ 
+ #if CRC_BE_BITS == 1

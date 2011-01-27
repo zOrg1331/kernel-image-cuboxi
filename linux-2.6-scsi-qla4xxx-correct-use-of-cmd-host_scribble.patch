@@ -1,0 +1,106 @@
+From: Chad Dupuis <cdupuis@redhat.com>
+Date: Tue, 30 Nov 2010 20:00:03 -0500
+Subject: [scsi] qla4xxx: correct use of cmd->host_scribble
+Message-id: <20101130200003.10450.95640.sendpatchset@localhost.localdomain>
+Patchwork-id: 29704
+O-Subject: [RHEL 5.6 PATCH 13/28] qla4xxx: correct use of cmd->host_scribble
+Bugzilla: 656999
+
+Bugzilla
+--------
+
+Bug 656999 (https://bugzilla.redhat.com/show_bug.cgi?id=656999)
+
+Upstream Status
+---------------
+
+linux-2.6 commit id 5369887a95da9509163931b21f61a94da09dac15
+
+Description
+-----------
+
+>From 2048a0e96cd3fa6c6b20a434a5397ea7153e4ad8 Mon Sep 17 00:00:00 2001
+From: Vikas Chaudhary <vikas.chaudhary@qlogic.com>
+Date: Sat, 20 Nov 2010 14:42:59 -0800
+Subject: [PATCH 14/29] qla4xxx: correct use of cmd->host_scribble
+
+used cmd->host_scribble to store iocb command handle.
+
+Signed-off-by: Vikas Chaudhary <vikas.chaudhary@qlogic.com>
+Signed-off-by: Prasanna Mumbai <prasanna.mumbai@qlogic.com>
+
+diff --git a/drivers/scsi/qla4xxx/ql4_def.h b/drivers/scsi/qla4xxx/ql4_def.h
+index 6e146fd..3e422bb 100644
+--- a/drivers/scsi/qla4xxx/ql4_def.h
++++ b/drivers/scsi/qla4xxx/ql4_def.h
+@@ -162,6 +162,8 @@
+ #define MAX_RESET_HA_RETRIES		2
+ #define DEVICE_ONLINE_TOV		10
+ 
++#define	CMD_SP(Cmnd)			((Cmnd)->SCp.ptr)
++
+ /*
+  * SCSI Request Block structure	 (srb)	that is placed
+  * on cmd->SCp location of every I/O	 [We have 22 bytes available]
+diff --git a/drivers/scsi/qla4xxx/ql4_os.c b/drivers/scsi/qla4xxx/ql4_os.c
+index ad2ae6e..8d59c94 100644
+--- a/drivers/scsi/qla4xxx/ql4_os.c
++++ b/drivers/scsi/qla4xxx/ql4_os.c
+@@ -460,7 +460,7 @@ static struct srb* qla4xxx_get_new_srb(struct scsi_qla_host *ha,
+ 	srb->ddb = ddb_entry;
+ 	srb->cmd = cmd;
+ 	srb->flags = 0;
+-	cmd->SCp.ptr = (void *)srb;
++	CMD_SP(cmd) = (void *)srb;
+ 	cmd->scsi_done = done;
+ 
+ 	return srb;
+@@ -481,7 +481,7 @@ static void qla4xxx_srb_free_dma(struct scsi_qla_host *ha, struct srb *srb)
+ 		}
+ 		srb->flags &= ~SRB_DMA_VALID;
+ 	}
+-	cmd->SCp.ptr = NULL;
++	CMD_SP(cmd) = NULL;
+ }
+ 
+ void qla4xxx_srb_compl(struct kref *ref)
+@@ -2142,10 +2142,9 @@ struct srb *qla4xxx_del_from_active_array(struct scsi_qla_host *ha, uint32_t ind
+ static int qla4xxx_eh_wait_on_command(struct scsi_qla_host *ha,
+ 				      struct scsi_cmnd *cmd, int got_ref)
+ {
+-#define ABORT_POLLING_PERIOD	2000
+-#define ABORT_WAIT_ITER		1
+ 	int done = 0;
+-	unsigned long wait_iter = ABORT_WAIT_ITER;
++	struct srb *rp;
++	uint32_t max_wait_time = EH_WAIT_CMD_TOV;
+ 	int ret = SUCCESS;
+ 
+ 	/* Dont wait on command if PCI error is being handled
+@@ -2161,13 +2160,14 @@ static int qla4xxx_eh_wait_on_command(struct scsi_qla_host *ha,
+ 
+ 	do {
+ 		/* Checking to see if its returned to OS */
+-		if (cmd->host_scribble == NULL) {
++		rp = (struct srb *) CMD_SP(cmd);
++		if (rp == NULL) {
+ 			done++;
+ 			break;
+ 		}
+ 
+-		msleep(ABORT_POLLING_PERIOD);
+-	} while (!(--wait_iter));
++		msleep(2000);
++	} while (max_wait_time--);
+ 
+ 	return done;
+ }
+@@ -2267,7 +2267,7 @@ static int qla4xxx_eh_abort(struct scsi_cmnd *cmd)
+ 	}
+ 
+ 	spin_lock_irqsave(&ha->hardware_lock, flags);
+-	srb = (struct srb *) cmd->SCp.ptr;
++	srb = (struct srb *) CMD_SP(cmd);
+ 	if (!srb) {
+ 		DEBUG2(printk("scsi%ld: ABORT - cmd already completed.\n",
+ 				ha->host_no));

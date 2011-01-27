@@ -1,0 +1,64 @@
+From: Chad Dupuis <cdupuis@redhat.com>
+Date: Tue, 3 Aug 2010 13:50:10 -0400
+Subject: [net] netxen: fix endianness intr coalesce
+Message-id: <20100803134726.2239.70721.sendpatchset@localhost.localdomain>
+Patchwork-id: 27322
+O-Subject: [RHEL 5.6 PATCH 20/44] netxen: fix endianness intr coalesce
+Bugzilla: 562937
+RH-Acked-by: David S. Miller <davem@redhat.com>
+RH-Acked-by: Neil Horman <nhorman@redhat.com>
+
+Bugzilla
+========
+
+562937
+
+Upstream Status
+===============
+
+net-2.6 commit id c070395009e1e153395837cd256dffc931dd6f98
+
+Description
+===========
+
+>From cda06696aea5b9df505c9f9579dd2c15b00c9fda Mon Sep 17 00:00:00 2001
+From: Amit Kumar Salecha <amit.salecha@qlogic.com>
+Date: Thu, 14 Jan 2010 01:53:22 +0000
+Subject: [PATCH] netxen: fix endianness intr coalesce
+
+Before sending Interrupt coalesce parameters to device,
+convert them in little endian.
+
+Signed-off-by: Amit Kumar Salecha <amit.salecha@qlogic.com>
+Signed-off-by: David S. Miller <davem@davemloft.net>
+
+diff --git a/drivers/net/netxen/netxen_nic_hw.c b/drivers/net/netxen/netxen_nic_hw.c
+index c4ece3b..7407136 100644
+--- a/drivers/net/netxen/netxen_nic_hw.c
++++ b/drivers/net/netxen/netxen_nic_hw.c
+@@ -762,17 +762,20 @@ int netxen_p3_nic_set_mac_addr(struct netxen_adapter *adapter, u8 *addr)
+ int netxen_config_intr_coalesce(struct netxen_adapter *adapter)
+ {
+ 	nx_nic_req_t req;
+-	u64 word;
+-	int rv;
++	u64 word[6];
++	int rv, i;
+ 
+ 	memset(&req, 0, sizeof(nx_nic_req_t));
++	memset(word, 0, sizeof(word));
+ 
+ 	req.qhdr = cpu_to_le64(NX_HOST_REQUEST << 23);
+ 
+-	word = NETXEN_CONFIG_INTR_COALESCE | ((u64)adapter->portnum << 16);
+-	req.req_hdr = cpu_to_le64(word);
++	word[0] = NETXEN_CONFIG_INTR_COALESCE | ((u64)adapter->portnum << 16);
++	req.req_hdr = cpu_to_le64(word[0]);
+ 
+-	memcpy(&req.words[0], &adapter->coal, sizeof(adapter->coal));
++	memcpy(&word[0], &adapter->coal, sizeof(adapter->coal));
++	for (i = 0; i < 6; i++)
++		req.words[i] = cpu_to_le64(word[i]);
+ 
+ 	rv = netxen_send_cmd_descs(adapter, (struct cmd_desc_type0 *)&req, 1);
+ 	if (rv != 0) {

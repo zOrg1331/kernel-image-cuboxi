@@ -1,0 +1,59 @@
+From: Hendrik Brueckner <brueckner@redhat.com>
+Date: Thu, 5 Aug 2010 14:49:27 -0400
+Subject: [s390] cio: fix cause of unexpected recovery actions
+Message-id: <20100805144926.GA18211@redhat.com>
+Patchwork-id: 27411
+O-Subject: [RHEL5.6 PATCH 1/1] [s390x] cio: VARY OFF on CHPID 00 causes
+	unexpected recovery actions
+Bugzilla: 621330
+RH-Acked-by: Jarod Wilson <jarod@redhat.com>
+
+Description
+-----------
+When Channel-Path-ID (CHPID) 00 is varied offline in Linux,
+I/O programs on all channel-attached devices may be interrupted,
+even if they are not associated with CHPID 00. This may result
+in unexpected recovery actions, e.g. on QETH network devices.
+
+During a VARY OFF operation, Linux tries to identify affected
+subchannels by comparing the CHPID of the operation with those
+installed at each subchannel. If there are less than 8 CHPIDs
+installed at a subchannel, Linux internally represents the
+CHPIDS which are not installed as 00. Due to a missing path
+mask check, Linux incorrectly considers these subchannels as
+affected and triggers recovery actions which will interrupt
+long-running channel programs, such as used by the QETH device
+driver.
+
+When looking for affected subchannels, consider the Path-
+Installed-Mask (PIM) to decide if a CHPID is valid at a
+subchannel.
+
+Bugzilla
+--------
+BZ 621330
+https://bugzilla.redhat.com/show_bug.cgi?id=621330
+
+Upstream status of the patch
+----------------------------
+The patch is specific to the RHEL 5 release.
+
+Test status
+-----------
+The patch has been tested and fixes the problem.
+The fix has been verified by the IBM test department.
+
+
+diff --git a/drivers/s390/cio/chsc.c b/drivers/s390/cio/chsc.c
+index 9eb78a1..74c71da 100644
+--- a/drivers/s390/cio/chsc.c
++++ b/drivers/s390/cio/chsc.c
+@@ -685,6 +685,8 @@ static void __s390_subchannel_vary_chpid(struct subchannel *sch,
+ 	old_lpm = sch->lpm;
+ 	for (chp = 0; chp < 8; chp++) {
+ 		mask = 0x80 >> chp;
++		if (!(sch->schib.pmcw.pim & mask))
++			continue;
+ 		if (sch->ssd_info.chpid[chp] != chpid.id)
+ 			continue;
+ 

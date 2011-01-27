@@ -1,0 +1,133 @@
+From: Michal Schmidt <mschmidt@redhat.com>
+Date: Fri, 3 Sep 2010 16:41:25 -0400
+Subject: [net] bnx2x: make NAPI poll routine closer to upstream
+Message-id: <20100903164125.25415.73713.stgit@brian.englab.brq.redhat.com>
+Patchwork-id: 28079
+O-Subject: [RHEL5.6 BZ572012 PATCH 04/46] bnx2x: make the NAPI poll routine
+	closer to upstream
+Bugzilla: 572012
+RH-Acked-by: David S. Miller <davem@redhat.com>
+RH-Acked-by: Stanislaw Gruszka <sgruszka@redhat.com>
+
+from upstream 54b9ddaa68414fad72ab2e1042be067c902441a6:
+    bnx2x: Handle Rx and Tx together in NAPI
+
+    Put Tx and Rx DPC to be handled in the NAPI:
+      - Saves status blocks.
+      - Moves the Tx work from hardIRQ to NAPI.
+
+A bigger part of the commit was already in RHEL. Only the bnx2x_poll()
+piece was missing.
+
+diff --git a/drivers/net/bnx2x_main.c b/drivers/net/bnx2x_main.c
+index 788f031..4bc1e08 100644
+--- a/drivers/net/bnx2x_main.c
++++ b/drivers/net/bnx2x_main.c
+@@ -10956,58 +10956,67 @@ static inline int bnx2x_has_rx_work(struct bnx2x_fastpath *fp)
+ 
+ static int bnx2x_poll(struct net_device *dev, int *budget)
+ {
++	int work_done = 0;
+ 	struct bnx2x_fastpath *fp = dev->priv;
+ 	struct bnx2x *bp = fp->bp;
+ 	int work_to_do = min(*budget, dev->quota);
+-	int work_done = 0;
++	int more_poll = 1;
+ 
++	while (1) {
+ #ifdef BNX2X_STOP_ON_ERROR
+-	if (unlikely(bp->panic))
+-		goto poll_panic;
++		if (unlikely(bp->panic)) {
++			napi_gro_flush(&fp->napi);
++			netif_rx_complete(dev);
++			more_poll = 0;
++			break;
++		}
+ #endif
+ 
+-	prefetch(fp->tx_buf_ring[TX_BD(fp->tx_pkt_cons)].skb);
+-	prefetch(fp->rx_buf_ring[RX_BD(fp->rx_bd_cons)].skb);
+-	prefetch((char *)(fp->rx_buf_ring[RX_BD(fp->rx_bd_cons)].skb) + 256);
+-
+-	bnx2x_update_fpsb_idx(fp);
+-
+-	if (bnx2x_has_tx_work(fp))
+-		bnx2x_tx_int(fp);
+-
+-	if (bnx2x_has_rx_work(fp)) {
+-		work_done = bnx2x_rx_int(fp, work_to_do);
++		if (bnx2x_has_tx_work(fp))
++			bnx2x_tx_int(fp);
+ 
+-		*budget -= work_done;
+-		dev->quota -= work_done;
+-	}
++		if (bnx2x_has_rx_work(fp)) {
++			work_done += bnx2x_rx_int(fp, work_to_do - work_done);
+ 
+-	/* bnx2x_has_rx_work() reads the status block, thus we need to
+-	 * ensure that status block indices have been actually read
+-	 * (bnx2x_update_fpsb_idx) prior to this check (bnx2x_has_rx_work)
+-	 * so that we won't write the "newer" value of the status block to IGU
+-	 * (if there was a DMA right after bnx2x_has_rx_work and
+-	 * if there is no rmb, the memory reading (bnx2x_update_fpsb_idx)
+-	 * may be postponed to right before bnx2x_ack_sb). In this case
+-	 * there will never be another interrupt until there is another update
+-	 * of the status block, while there is still unhandled work.
+-	 */
+-	rmb();
++			/* must not complete if we consumed full budget */
++			if (work_done >= work_to_do)
++				break;
++		}
+ 
+-	if (!bnx2x_has_rx_work(fp)) {
+-#ifdef BNX2X_STOP_ON_ERROR
+-poll_panic:
+-#endif
+-		napi_gro_flush(&fp->napi);
+-		netif_rx_complete(dev);
++		/* Fall out from the NAPI loop if needed */
++		if (!(bnx2x_has_rx_work(fp) || bnx2x_has_tx_work(fp))) {
++			bnx2x_update_fpsb_idx(fp);
++		/* bnx2x_has_rx_work() reads the status block, thus we need
++		 * to ensure that status block indices have been actually read
++		 * (bnx2x_update_fpsb_idx) prior to this check
++		 * (bnx2x_has_rx_work) so that we won't write the "newer"
++		 * value of the status block to IGU (if there was a DMA right
++		 * after bnx2x_has_rx_work and if there is no rmb, the memory
++		 * reading (bnx2x_update_fpsb_idx) may be postponed to right
++		 * before bnx2x_ack_sb). In this case there will never be
++		 * another interrupt until there is another update of the
++		 * status block, while there is still unhandled work.
++		 */
++			rmb();
+ 
+-		bnx2x_ack_sb(bp, fp->sb_id, USTORM_ID,
+-			     le16_to_cpu(fp->fp_u_idx), IGU_INT_NOP, 1);
+-		bnx2x_ack_sb(bp, fp->sb_id, CSTORM_ID,
+-			     le16_to_cpu(fp->fp_c_idx), IGU_INT_ENABLE, 1);
+-		return 0;
++			if (!(bnx2x_has_rx_work(fp) || bnx2x_has_tx_work(fp))) {
++				napi_gro_flush(&fp->napi);
++				netif_rx_complete(dev);
++				/* Re-enable interrupts */
++				bnx2x_ack_sb(bp, fp->sb_id, CSTORM_ID,
++					     le16_to_cpu(fp->fp_c_idx),
++					     IGU_INT_NOP, 1);
++				bnx2x_ack_sb(bp, fp->sb_id, USTORM_ID,
++					     le16_to_cpu(fp->fp_u_idx),
++					     IGU_INT_ENABLE, 1);
++				more_poll = 0;
++				break;
++			}
++		}
+ 	}
+-	return 1;
++	*budget -= work_done;
++	dev->quota -= work_done;
++	return more_poll;
+ }
+ 
+ 

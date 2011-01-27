@@ -1,0 +1,61 @@
+From: Steve Best <sbest@redhat.com>
+Date: Thu, 22 Apr 2010 18:23:06 -0400
+Subject: [scsi] ipr: define register offsets for next gen chip
+Message-id: <20100422181413.16224.6206.sendpatchset@squad5-lp1.lab.bos.redhat.com>
+Patchwork-id: 24599
+O-Subject: [PATCH RHEL5.6 BZ563589 v2 8/15] ipr: define new offsets to registers
+	for the next generation chip
+Bugzilla: 563589
+RH-Acked-by: Jarod Wilson <jarod@redhat.com>
+RH-Acked-by: David Howells <dhowells@redhat.com>
+
+RHBZ#:
+======
+https://bugzilla.redhat.com/show_bug.cgi?id=563589
+
+Description:
+============
+Patch 8/15: ipr: define new offsets to registers for the next generation chip
+
+commit: a74c16390a47dcb6c96b20b572ffc9936073d4b1
+
+This patch adds the entry to the ipr_chip_cfg array that defines the register
+offsets for the next generation 64 bit IOA PCI interface chip.
+
+Brew:
+=====
+Built on all platforms. All patches brewed together.
+https://brewweb.devel.redhat.com/taskinfo?taskID=2396559
+
+===============================================================
+Steve Best
+IBM on-site partner
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/scsi/ipr.c b/drivers/scsi/ipr.c
+index 28d04a5..74abdf3 100644
+--- a/drivers/scsi/ipr.c
++++ b/drivers/scsi/ipr.c
+@@ -127,6 +127,21 @@ static const struct ipr_chip_cfg_t ipr_chip_cfg[] = {
+ 			.clr_uproc_interrupt_reg = 0x00294
+ 		}
+ 	},
++	{ /* CRoC */
++		.mailbox = 0x00040,
++		.cache_line_size = 0x20,
++		{
++			.set_interrupt_mask_reg = 0x00010,
++			.clr_interrupt_mask_reg = 0x00018,
++			.sense_interrupt_mask_reg = 0x00010,
++			.clr_interrupt_reg = 0x00008,
++			.sense_interrupt_reg = 0x00000,
++			.ioarrin_reg = 0x00070,
++			.sense_uproc_interrupt_reg = 0x00020,
++			.set_uproc_interrupt_reg = 0x00020,
++			.clr_uproc_interrupt_reg = 0x00028
++		}
++	},
+ };
+ 
+ static const struct ipr_chip_t ipr_chip[] = {

@@ -1,0 +1,85 @@
+From: Dean Nelson <dnelson@redhat.com>
+Date: Wed, 26 May 2010 13:17:14 -0400
+Subject: [pci] fix pcix access of PCI_X_CMD get/set mmrbc calls
+Message-id: <20100526131714.5326.46014.send-patch@localhost.localdomain>
+Patchwork-id: 25813
+O-Subject: [RHEL5.6 PATCH 3/4] PCI: fix access of PCI_X_CMD by pcix get and set
+	mmrbc functions
+Bugzilla: 578492
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+RH-Acked-by: Don Dutile <ddutile@redhat.com>
+
+Resolves RHBZ 578492.
+
+An e1000 driver on a system with a PCI-X bus was always being returned
+a value of 135 from both pcix_get_mmrbc() and pcix_set_mmrbc(). This
+value reflects an error return of PCIBIOS_BAD_REGISTER_NUMBER from
+pci_bus_read_config_dword(,, cap + PCI_X_CMD,).
+
+This is because for a dword, the following portion of the PCI_OP_READ()
+macro:
+
+	if (PCI_##size##_BAD) return PCIBIOS_BAD_REGISTER_NUMBER;
+
+expands to:
+
+	if (pos & 3) return PCIBIOS_BAD_REGISTER_NUMBER;
+
+And is always true for 'cap + PCI_X_CMD', which is 0xe4 + 2 = 0xe6. ('cap' is
+the result of calling pci_find_capability(, PCI_CAP_ID_PCIX).)
+
+The same problem exists for pci_bus_write_config_dword(,, cap + PCI_X_CMD,).
+In both cases, instead of calling _dword(), _word() should be called.
+
+Backport of upstream commit:
+http://git.kernel.org/linus/bdc2bda7c4dd253026cc1fce45fc939304749029
+
+
+diff --git a/drivers/pci/pci.c b/drivers/pci/pci.c
+index 0bf6fed..1722798 100644
+--- a/drivers/pci/pci.c
++++ b/drivers/pci/pci.c
+@@ -1646,13 +1646,13 @@ int
+ pcix_get_mmrbc(struct pci_dev *dev)
+ {
+ 	int ret, cap;
+-	u32 cmd;
++	u16 cmd;
+ 
+ 	cap = pci_find_capability(dev, PCI_CAP_ID_PCIX);
+ 	if (!cap)
+ 		return -EINVAL;
+ 
+-	ret = pci_read_config_dword(dev, cap + PCI_X_CMD, &cmd);
++	ret = pci_read_config_word(dev, cap + PCI_X_CMD, &cmd);
+ 	if (!ret)
+ 		ret = 512 << ((cmd & PCI_X_CMD_MAX_READ) >> 2);
+ 
+@@ -1673,7 +1673,8 @@ int
+ pcix_set_mmrbc(struct pci_dev *dev, int mmrbc)
+ {
+ 	int cap, err = -EINVAL;
+-	u32 stat, cmd, v, o;
++	u32 stat, v, o;
++	u16 cmd;
+ 
+ 	if (mmrbc < 512 || mmrbc > 4096 || (mmrbc & (mmrbc-1)))
+ 		goto out;
+@@ -1691,7 +1692,7 @@ pcix_set_mmrbc(struct pci_dev *dev, int mmrbc)
+ 	if (v > (stat & PCI_X_STATUS_MAX_READ) >> 21)
+ 		return -E2BIG;
+ 
+-	err = pci_read_config_dword(dev, cap + PCI_X_CMD, &cmd);
++	err = pci_read_config_word(dev, cap + PCI_X_CMD, &cmd);
+ 	if (err)
+ 		goto out;
+ 
+@@ -1703,7 +1704,7 @@ pcix_set_mmrbc(struct pci_dev *dev, int mmrbc)
+ 
+ 		cmd &= ~PCI_X_CMD_MAX_READ;
+ 		cmd |= v << 2;
+-		err = pci_write_config_dword(dev, cap + PCI_X_CMD, cmd);
++		err = pci_write_config_word(dev, cap + PCI_X_CMD, cmd);
+ 	}
+ out:
+ 	return err;

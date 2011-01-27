@@ -1,0 +1,58 @@
+From: Steve Best <sbest@redhat.com>
+Date: Fri, 12 Mar 2010 19:54:17 -0500
+Subject: [scsi] scsi_dh_alua: add IBM Power Virtual SCSI ALUA dev
+Message-id: <20100312194619.7279.46375.sendpatchset@squad5-lp1.lab.bos.redhat.com>
+Patchwork-id: 23562
+O-Subject: [PATCH RHEL5.6 BZ567292] scsi_dh_alua: Add IBM Power Virtual SCSI
+	ALUA device to dev list
+Bugzilla: 567292
+RH-Acked-by: Jarod Wilson <jarod@redhat.com>
+RH-Acked-by: David Howells <dhowells@redhat.com>
+
+RHBZ#:
+======
+https://bugzilla.redhat.com/show_bug.cgi?id=567292
+
+Description:
+============
+Adds IBM Power Virtual SCSI ALUA devices to the ALUA device handler.
+
+RHEL Version Found:
+===================
+RHEL 5.5
+
+kABI Status:
+============
+No symbols were harmed.
+
+Brew:
+=====
+http://brewweb.devel.redhat.com/brew/taskinfo?taskID=2318265
+
+Upstream Status:
+================
+back port from
+
+http://git.kernel.org/gitweb.cgi?p=linux/kernel/git/torvalds/linux-2.6.git;a=commitdiff;h=22963a37b3437a25812cc856afa5a84ad4a3f541
+
+Signed-off-by: Brian King <brking@linux.vnet.ibm.com>
+Signed-off-by: James Bottomley <James.Bottomley@suse.de>
+
+Test Status:
+============
+Tested by IBM test team.
+
+Signed-off-by: Jarod Wilson <jarod@redhat.com>
+
+diff --git a/drivers/scsi/device_handler/scsi_dh_alua.c b/drivers/scsi/device_handler/scsi_dh_alua.c
+index 0315aa1..a78aaa6 100644
+--- a/drivers/scsi/device_handler/scsi_dh_alua.c
++++ b/drivers/scsi/device_handler/scsi_dh_alua.c
+@@ -701,6 +701,7 @@ const struct scsi_dh_devlist alua_dev_list[] = {
+ 	{"DGC", "DISK"},
+ 	{"DGC", "VRAID"},
+ 	{"NETAPP", "LUN"},
++       {"AIX", "NVDISK"},
+ 	{NULL, NULL}
+ };
+ 

@@ -1,0 +1,35 @@
+From: David Milburn <dmilburn@redhat.com>
+Date: Thu, 18 Nov 2010 20:40:49 -0500
+Subject: [ata] ahci: AHCI and RAID mode for Intel Patsburg Devices
+Message-id: <1290112856-1796-3-git-send-email-dmilburn@redhat.com>
+Patchwork-id: 29502
+O-Subject: [RHEL5.6 PATCH 2/9] BZ 570868 ahci: AHCI and RAID mode SATA patch for
+	Intel Patsburg DeviceIDs
+Bugzilla: 570868
+RH-Acked-by: Stanislaw Gruszka <sgruszka@redhat.com>
+RH-Acked-by: Ivan Vecera <ivecera@redhat.com>
+RH-Acked-by: Prarit Bhargava <prarit@redhat.com>
+RH-Acked-by: Michal Schmidt <mschmidt@redhat.com>
+
+commit 992b3fb9b5391bc4de5b42bb810dc6dd583a6c4a
+Author: Seth Heasley <seth.heasley@intel.com>
+Date:   Thu Sep 9 09:44:56 2010 -0700
+
+    ahci: AHCI and RAID mode SATA patch for Intel Patsburg DeviceIDs
+
+BZ570868
+
+diff --git a/drivers/ata/ahci.c b/drivers/ata/ahci.c
+index 5d3bb5b..d1809f3 100644
+--- a/drivers/ata/ahci.c
++++ b/drivers/ata/ahci.c
+@@ -531,6 +531,9 @@ static const struct pci_device_id ahci_pci_tbl[] = {
+ 	{ PCI_VDEVICE(INTEL, 0x1c05), board_ahci }, /* CPT RAID */
+ 	{ PCI_VDEVICE(INTEL, 0x1c06), board_ahci }, /* CPT RAID */
+ 	{ PCI_VDEVICE(INTEL, 0x1c07), board_ahci }, /* CPT RAID */
++	{ PCI_VDEVICE(INTEL, 0x1d02), board_ahci }, /* PBG AHCI */
++	{ PCI_VDEVICE(INTEL, 0x1d04), board_ahci }, /* PBG RAID */
++	{ PCI_VDEVICE(INTEL, 0x1d06), board_ahci }, /* PBG RAID */
+ 
+ 	/* JMicron 360/1/3/5/6, match class to avoid IDE function */
+ 	{ PCI_VENDOR_ID_JMICRON, PCI_ANY_ID, PCI_ANY_ID, PCI_ANY_ID,

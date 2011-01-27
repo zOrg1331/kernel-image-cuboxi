@@ -1,0 +1,102 @@
+From: Michal Schmidt <mschmidt@redhat.com>
+Date: Fri, 3 Sep 2010 19:58:12 -0400
+Subject: [net] sfc: undo now unnecessary RHEL workqueue changes
+Message-id: <20100903195811.7750.20435.stgit@localhost6.localdomain6>
+Patchwork-id: 28131
+O-Subject: [RHEL5.6 BZ556476 PATCH 5/6] sfc: undo now unnecessary RHEL workqueue
+	changes
+Bugzilla: 556476
+RH-Acked-by: David S. Miller <davem@redhat.com>
+RH-Acked-by: Thomas Graf <tgraf@redhat.com>
+
+This reverts some workqueue changes that were originally introduced as a part
+of the sfc backport. They were only necessary because we did not have
+cancel_work_sync() in RHEL5 back then.
+
+diff --git a/drivers/net/sfc/efx.c b/drivers/net/sfc/efx.c
+index 3e75d68..bbb0dd0 100644
+--- a/drivers/net/sfc/efx.c
++++ b/drivers/net/sfc/efx.c
+@@ -1129,21 +1129,18 @@ static void efx_start_all(struct efx_nic *efx)
+  * since we're holding the rtnl_lock at this point. */
+ static void efx_flush_all(struct efx_nic *efx)
+ {
+-	/* Ensure efx_monitor() and efx_mac_work() are complete, which
+-	 * are the only two consumers of efx->workqueue. Since the hardware
+-	 * monitor runs on a long period, we put in some effort to cancel
+-	 * the delayed work safely rather than just flushing the queue twice
+-	 * (which is guaranteed to flush all the work since efx_monitor(),
+-	 * and efx_mac_work() disarm if !efx->port_enabled). */
+-	cancel_delayed_work_sync(&efx->monitor_work);
+-	flush_workqueue(efx->workqueue);
++	struct efx_rx_queue *rx_queue;
++
++	/* Make sure the hardware monitor is stopped */
+ 	cancel_delayed_work_sync(&efx->monitor_work);
+-	flush_workqueue(efx->workqueue);
+ 
+-	/* efx_rx_work will disarm if !channel->enabled, so we can just
+-	 * flush the refill workqueue twice as well. */
+-	flush_workqueue(refill_workqueue);
+-	flush_workqueue(refill_workqueue);
++	/* Ensure that all RX slow refills are complete. */
++	efx_for_each_rx_queue(rx_queue, efx)
++		cancel_delayed_work_sync(&rx_queue->work);
++
++	/* Stop scheduled port reconfigurations */
++	cancel_work_sync(&efx->mac_work);
++	cancel_work_sync(&efx->phy_work);
+ }
+ 
+ /* Quiesce hardware and software without bringing the link down.
+@@ -1262,13 +1259,13 @@ static void efx_monitor(void *data)
+ 	EFX_TRACE(efx, "hardware monitor executing on CPU %d\n",
+ 		  raw_smp_processor_id());
+ 
+-	/* Without cancel_delayed_work_sync(), we have to make sure that
+-	 * we don't rearm when !port_enabled */
+-	mutex_lock(&efx->mac_lock);
+-	if (!efx->port_enabled) {
+-		mutex_unlock(&efx->mac_lock);
+-		return;
+-	}
++	/* If the mac_lock is already held then it is likely a port
++	 * reconfiguration is already in place, which will likely do
++	 * most of the work of check_hw() anyway. */
++	if (!mutex_trylock(&efx->mac_lock))
++		goto out_requeue;
++	if (!efx->port_enabled)
++		goto out_unlock;
+ 	rc = efx->board_info.monitor(efx);
+ 	if (rc) {
+ 		EFX_ERR(efx, "Board sensor %s; shutting down PHY\n",
+@@ -1279,7 +1276,9 @@ static void efx_monitor(void *data)
+ 	efx->phy_op->poll(efx);
+ 	efx->mac_op->poll(efx);
+ 
++out_unlock:
+ 	mutex_unlock(&efx->mac_lock);
++out_requeue:
+ 	queue_delayed_work(efx->workqueue, &efx->monitor_work.work,
+ 			   efx_monitor_interval);
+ }
+@@ -2085,8 +2084,7 @@ static void efx_pci_remove(struct pci_dev *pci_dev)
+ 	 * scheduled from this point because efx_stop_all() has been
+ 	 * called, we are no longer registered with driverlink, and
+ 	 * the net_device's have been removed. */
+-	flush_workqueue(reset_workqueue);
+-
++	cancel_work_sync(&efx->reset_work);
+ 
+ 	efx_pci_remove_main(efx);
+ 
+@@ -2207,8 +2205,7 @@ static int __devinit efx_pci_probe(struct pci_dev *pci_dev,
+ 		 * scheduled since efx_stop_all() has been called, and we
+ 		 * have not and never have been registered with either
+ 		 * the rtnetlink or driverlink layers. */
+-		flush_workqueue(reset_workqueue);
+-
++		cancel_work_sync(&efx->reset_work);
+ 
+ 		if (rc == 0) {
+ 			if (efx->reset_pending != RESET_TYPE_NONE) {
