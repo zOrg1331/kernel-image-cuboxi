@@ -141,9 +141,6 @@ mmci_request_end(struct mmci_host *host, struct mmc_request *mrq)
 	host->mrq = NULL;
 	host->cmd = NULL;
 
-	if (mrq->data)
-		mrq->data->bytes_xfered = host->data_xfered;
-
 	/*
 	 * Need to drop the host lock here; mmc_request_done may call
 	 * back into the driver...
@@ -201,7 +198,7 @@ static void mmci_start_data(struct mmci_host *host, struct mmc_data *data)
 
 	host->data = data;
 	host->size = data->blksz * data->blocks;
-	host->data_xfered = 0;
+	data->bytes_xfered = 0;
 
 	mmci_init_sg(host, data);
 
@@ -290,13 +287,13 @@ mmci_data_irq(struct mmci_host *host, struct mmc_data *data,
 		dev_dbg(mmc_dev(host->mmc), "MCI ERROR IRQ (status %08x)\n", status);
 		if (status & MCI_DATACRCFAIL) {
 			/* Last block was not successful */
-			host->data_xfered = ((success - 1) / data->blksz) * data->blksz;
+			data->bytes_xfered = ((success - 1) / data->blksz) * data->blksz;
 			data->error = -EILSEQ;
 		} else if (status & MCI_DATATIMEOUT) {
-			host->data_xfered = success;
+			data->bytes_xfered = success;
 			data->error = -ETIMEDOUT;
 		} else if (status & (MCI_TXUNDERRUN|MCI_RXOVERRUN)) {
-			host->data_xfered = success;
+			data->bytes_xfered = success;
 			data->error = -EIO;
 		}
 	}
@@ -309,7 +306,7 @@ mmci_data_irq(struct mmci_host *host, struct mmc_data *data,
 
 		if (!data->error)
 			/* The error clause is handled above, success! */
-			host->data_xfered += data->blksz * data->blocks;
+			data->bytes_xfered = data->blksz * data->blocks;
 
 		if (!data->stop) {
 			mmci_request_end(host, data->mrq);
