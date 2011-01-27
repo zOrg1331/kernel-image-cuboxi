@@ -12291,7 +12291,6 @@ cd xen
 %patch20241 -p1
 # end of necessary hypervisor patches
 %endif
-%endif
 
 %if %with_openafs
   echo Prepare openafs...
