@@ -614,7 +614,6 @@ static struct clk_lookup lookups[] = {
 	_REGISTER_CLOCK("mxs-auart.2", NULL, uart_clk)
 	_REGISTER_CLOCK("mxs-auart.3", NULL, uart_clk)
 	_REGISTER_CLOCK("mxs-auart.4", NULL, uart_clk)
-	_REGISTER_CLOCK("fec.0", NULL, fec_clk)
 	_REGISTER_CLOCK("rtc", NULL, rtc_clk)
 	_REGISTER_CLOCK("pll2", NULL, pll2_clk)
 	_REGISTER_CLOCK(NULL, "hclk", hbus_clk)
