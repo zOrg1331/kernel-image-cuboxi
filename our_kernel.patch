@@ -20166,13 +20166,12 @@ diff --git a/security/commoncap.c b/security/commoncap.c
 index f50fc29..966cfce 100644
 --- a/security/commoncap.c
 +++ b/security/commoncap.c
-@@ -311,9 +311,27 @@ void cap_task_reparent_to_init (struct task_struct *p)
+@@ -318,8 +318,27 @@
+ 	if (dmesg_restrict && !capable(CAP_SYS_ADMIN))
+ 		return -EPERM;
  
- int cap_syslog (int type)
- {
 -	if ((type != 3 && type != 10) && !capable(CAP_VE_SYS_ADMIN))
 -		return -EPERM;
--	return 0;
 +	switch (type) {
 +	case 3:		/* Read last kernel messages */
 +	case 10:	/* Size of the log buffer */
@@ -20194,6 +20193,7 @@ index f50fc29..966cfce 100644
 +			return -EPERM;
 +		return 0;
 +	}
+ 	return 0;
  }
  
  int cap_vm_enough_memory(long pages)
@@ -20232,3 +20232,13 @@ index 58c6d39..3da65fe 100644
  }
  
  static int dummy_settime(struct timespec *ts, struct timezone *tz)
+--- a/drivers/block/umem.c.orig	2011-01-27 12:47:29 +0000
++++ b/drivers/block/umem.c	2011-01-27 12:47:31 +0000
+@@ -552,7 +552,6 @@
+ static int mm_make_request(request_queue_t *q, struct bio *bio)
+ {
+ 	struct cardinfo *card = q->queuedata;
+-	pr_debug("mm_make_request %ld %d\n", bh->b_rsector, bh->b_size);
+ 
+ 	bio->bi_phys_segments = bio->bi_idx; /* count of completed segments*/
+ 	spin_lock_irq(&card->lock);
