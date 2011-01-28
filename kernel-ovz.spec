@@ -6106,8 +6106,6 @@ Patch99999: linux-kernel-test.patch
 # ALT-specific patches
 Patch200000: our_kernel.patch
 
-Patch200100: linux-2.6-scsi-3w-9xxx-update-to-version-2-26-08-006.patch
-
 # END OF PATCH DEFINITIONS
 
 # Override find_provides to use a script that provides "kernel(symbol) = hash".
@@ -12021,7 +12019,6 @@ perl -p -i -e "s/^RHEL_MINOR.*/RHEL_MINOR = %rh_release_minor/" Makefile
 
 # ALT-specific patch
 %patch200000 -p1
-%patch200100 -p1
 
 # %patch210000 -p1
 # %patch210001 -p1
