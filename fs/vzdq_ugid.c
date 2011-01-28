@@ -318,6 +318,9 @@ static int vz_quota_on(struct super_block *sb, int type,
 	int mask, mask2;
 	int err;
 
+	if (remount)
+		return 0;
+
 	qmblk = vzquota_find_qmblk(sb);
 	err = -ESRCH;
 	if (qmblk == NULL)
@@ -364,6 +367,9 @@ static int vz_quota_off(struct super_block *sb, int type, int remount)
 	struct vz_quota_master *qmblk;
 	int mask2;
 	int err;
+
+	if (remount)
+		return 0;
 
 	qmblk = vzquota_find_qmblk(sb);
 	mutex_lock(&vz_quota_mutex);
