@@ -81,6 +81,7 @@ static inline int phys_to_machine_mapping_valid(unsigned long pfn)
 static inline unsigned long mfn_to_pfn(unsigned long mfn)
 {
 	unsigned long pfn;
+	unsigned long p2m_mfn;
 
 	if (xen_feature(XENFEAT_auto_translated_physmap))
 		return mfn;
@@ -102,7 +103,12 @@ try_override:
 	 * doesn't map back to the mfn), then check the local override
 	 * table to see if there's a better pfn to use.
 	 */
-	if (get_phys_to_machine(pfn) != mfn)
+	p2m_mfn = get_phys_to_machine(pfn);
+
+	if (p2m_mfn == IDENTITY_FRAME(mfn))
+		return pfn;
+
+	if (p2m_mfn != mfn)
 		pfn = m2p_find_override_pfn(mfn, pfn);
 
 	return pfn;
