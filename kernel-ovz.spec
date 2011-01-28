@@ -12403,7 +12403,7 @@ rm -rf %buildroot%modules_dir/build/scripts/bloat-o-meter
 rm -rf %buildroot%modules_dir/build/scripts/show_delta
 mkdir -p %buildroot%modules_dir/build/include
 pushd include
-cp -a acpi config keys linux math-emu media mtd net pcmcia rdma rxrpc scsi sound video asm asm-generic ub %buildroot%modules_dir/build/include
+cp -a acpi config keys linux math-emu media mtd net pcmcia rdma rxrpc scsi sound trace video asm asm-generic ub %buildroot%modules_dir/build/include
 cp -a `readlink asm` %buildroot%modules_dir/build/include
 if [ "$ARCH" = "x86_64" ]; then
   cp -a asm-i386 %buildroot%modules_dir/build/include
