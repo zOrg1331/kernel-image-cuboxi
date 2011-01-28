@@ -77,7 +77,7 @@ index 0000000..9ccdc5b
 +#include <asm/mce.h>
 +
 +int edac_mce_enabled;
-+EXPORT_SYMBOL_GPL(edac_mce_enabled);
++EXPORT_SYMBOL(edac_mce_enabled);
 +
 +
 +/*
@@ -116,7 +116,7 @@ index 0000000..9ccdc5b
 +	/* Nobody queued the error */
 +	return 0;
 +}
-+EXPORT_SYMBOL_GPL(edac_mce_parse);
++EXPORT_SYMBOL(edac_mce_parse);
 +
 +MODULE_LICENSE("GPL");
 +MODULE_AUTHOR("Mauro Carvalho Chehab <mchehab@redhat.com>");
