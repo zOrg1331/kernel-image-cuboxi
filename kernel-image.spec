@@ -1,6 +1,7 @@
 Name: kernel-image-ovz-smp
 Version: 2.6.27
 Release: alt13.M51.4
+Epoch: 1
 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -468,6 +469,9 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %modules_dir/kernel/drivers/media/
 
 %changelog
+* Mon Jan 31 2011 Anton Protopopov <aspsk@altlinux.org> 1:2.6.27-alt13.M51.4
+- Add epoch tag to prevent version conflicts with 4.0 branch
+
 * Fri Jan 28 2011 Anton Protopopov <aspsk@altlinux.org> 2.6.27-alt13.M51.4
 - Update to 2.6.27 repin
 
