@@ -20,6 +20,9 @@
 #include <linux/spi/spi.h>
 #include <linux/mfd/ab8500.h>
 #include <linux/mfd/tc3589x.h>
+#include <linux/leds-lp5521.h>
+#include <linux/input.h>
+#include <linux/gpio_keys.h>
 
 #include <asm/mach-types.h>
 #include <asm/mach/arch.h>
@@ -77,6 +80,23 @@ static pin_cfg_t mop500_pins[] = {
 
 	/* STMPE1601 IRQ */
 	GPIO218_GPIO    | PIN_INPUT_PULLUP,
+
+	/* touch screen */
+	GPIO84_GPIO	| PIN_INPUT_PULLUP,
+
+	/* USB OTG */
+	GPIO256_USB_NXT		| PIN_PULL_DOWN,
+	GPIO257_USB_STP		| PIN_PULL_UP,
+	GPIO258_USB_XCLK	| PIN_PULL_DOWN,
+	GPIO259_USB_DIR		| PIN_PULL_DOWN,
+	GPIO260_USB_DAT7	| PIN_PULL_DOWN,
+	GPIO261_USB_DAT6	| PIN_PULL_DOWN,
+	GPIO262_USB_DAT5	| PIN_PULL_DOWN,
+	GPIO263_USB_DAT4	| PIN_PULL_DOWN,
+	GPIO264_USB_DAT3	| PIN_PULL_DOWN,
+	GPIO265_USB_DAT2	| PIN_PULL_DOWN,
+	GPIO266_USB_DAT1	| PIN_PULL_DOWN,
+	GPIO267_USB_DAT0	| PIN_PULL_DOWN,
 };
 
 static struct ab8500_platform_data ab8500_platdata = {
@@ -133,11 +153,78 @@ static struct tc3589x_platform_data mop500_tc35892_data = {
 	.irq_base	= MOP500_EGPIO_IRQ_BASE,
 };
 
+static struct lp5521_led_config lp5521_pri_led[] = {
+       [0] = {
+	       .chan_nr = 0,
+	       .led_current = 0x2f,
+	       .max_current = 0x5f,
+       },
+       [1] = {
+	       .chan_nr = 1,
+	       .led_current = 0x2f,
+	       .max_current = 0x5f,
+       },
+       [2] = {
+	       .chan_nr = 2,
+	       .led_current = 0x2f,
+	       .max_current = 0x5f,
+       },
+};
+
+static struct lp5521_platform_data __initdata lp5521_pri_data = {
+       .label = "lp5521_pri",
+       .led_config     = &lp5521_pri_led[0],
+       .num_channels   = 3,
+       .clock_mode     = LP5521_CLOCK_EXT,
+};
+
+static struct lp5521_led_config lp5521_sec_led[] = {
+       [0] = {
+	       .chan_nr = 0,
+	       .led_current = 0x2f,
+	       .max_current = 0x5f,
+       },
+       [1] = {
+	       .chan_nr = 1,
+	       .led_current = 0x2f,
+	       .max_current = 0x5f,
+       },
+       [2] = {
+	       .chan_nr = 2,
+	       .led_current = 0x2f,
+	       .max_current = 0x5f,
+       },
+};
+
+static struct lp5521_platform_data __initdata lp5521_sec_data = {
+       .label = "lp5521_sec",
+       .led_config     = &lp5521_sec_led[0],
+       .num_channels   = 3,
+       .clock_mode     = LP5521_CLOCK_EXT,
+};
+
 static struct i2c_board_info mop500_i2c0_devices[] = {
 	{
 		I2C_BOARD_INFO("tc3589x", 0x42),
-		.irq            = NOMADIK_GPIO_TO_IRQ(217),
+		.irq		= NOMADIK_GPIO_TO_IRQ(217),
 		.platform_data  = &mop500_tc35892_data,
+	},
+};
+
+static struct i2c_board_info __initdata mop500_i2c2_devices[] = {
+	{
+		/* lp5521 LED driver, 1st device */
+		I2C_BOARD_INFO("lp5521", 0x33),
+		.platform_data = &lp5521_pri_data,
+	},
+	{
+		/* lp5521 LED driver, 2st device */
+		I2C_BOARD_INFO("lp5521", 0x34),
+		.platform_data = &lp5521_sec_data,
+	},
+	{
+		/* Light sensor Rohm BH1780GLI */
+		I2C_BOARD_INFO("bh1780", 0x29),
 	},
 };
 
@@ -178,8 +265,58 @@ static void __init mop500_i2c_init(void)
 	db8500_add_i2c3(&u8500_i2c3_data);
 }
 
+static struct gpio_keys_button mop500_gpio_keys[] = {
+	{
+		.desc			= "SFH7741 Proximity Sensor",
+		.type			= EV_SW,
+		.code			= SW_FRONT_PROXIMITY,
+		.gpio			= GPIO_PROX_SENSOR,
+		.active_low		= 0,
+		.can_disable		= 1,
+	}
+};
+
+static struct regulator *prox_regulator;
+static int mop500_prox_activate(struct device *dev);
+static void mop500_prox_deactivate(struct device *dev);
+
+static struct gpio_keys_platform_data mop500_gpio_keys_data = {
+	.buttons	= mop500_gpio_keys,
+	.nbuttons	= ARRAY_SIZE(mop500_gpio_keys),
+	.enable		= mop500_prox_activate,
+	.disable	= mop500_prox_deactivate,
+};
+
+static struct platform_device mop500_gpio_keys_device = {
+	.name	= "gpio-keys",
+	.id	= 0,
+	.dev	= {
+		.platform_data	= &mop500_gpio_keys_data,
+	},
+};
+
+static int mop500_prox_activate(struct device *dev)
+{
+	prox_regulator = regulator_get(&mop500_gpio_keys_device.dev,
+						"vcc");
+	if (IS_ERR(prox_regulator)) {
+		dev_err(&mop500_gpio_keys_device.dev,
+			"no regulator\n");
+		return PTR_ERR(prox_regulator);
+	}
+	regulator_enable(prox_regulator);
+	return 0;
+}
+
+static void mop500_prox_deactivate(struct device *dev)
+{
+	regulator_disable(prox_regulator);
+	regulator_put(prox_regulator);
+}
+
 /* add any platform devices here - TODO */
 static struct platform_device *platform_devs[] __initdata = {
+	&mop500_gpio_keys_device,
 };
 
 static void __init mop500_spi_init(void)
@@ -207,12 +344,12 @@ static void __init u8500_init_machine(void)
 	mop500_spi_init();
 	mop500_uart_init();
 
-	mop500_keypad_init();
-
 	platform_device_register(&ab8500_device);
 
 	i2c_register_board_info(0, mop500_i2c0_devices,
 				ARRAY_SIZE(mop500_i2c0_devices));
+	i2c_register_board_info(2, mop500_i2c2_devices,
+				ARRAY_SIZE(mop500_i2c2_devices));
 }
 
 MACHINE_START(U8500, "ST-Ericsson MOP500 platform")
