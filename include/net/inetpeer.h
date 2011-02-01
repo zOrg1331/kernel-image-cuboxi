@@ -11,6 +11,7 @@
 #include <linux/init.h>
 #include <linux/jiffies.h>
 #include <linux/spinlock.h>
+#include <linux/rtnetlink.h>
 #include <net/ipv6.h>
 #include <asm/atomic.h>
 
@@ -33,8 +34,8 @@ struct inet_peer {
 	atomic_t		refcnt;
 	/*
 	 * Once inet_peer is queued for deletion (refcnt == -1), following fields
-	 * are not available: rid, ip_id_count, tcp_ts, tcp_ts_stamp
-	 * We can share memory with rcu_head to keep inet_peer small
+	 * are not available: rid, ip_id_count, tcp_ts, tcp_ts_stamp, metrics
+	 * We can share memory with rcu_head to help keep inet_peer small.
 	 */
 	union {
 		struct {
@@ -42,12 +43,20 @@ struct inet_peer {
 			atomic_t	ip_id_count;	/* IP ID for the next packet */
 			__u32		tcp_ts;
 			__u32		tcp_ts_stamp;
+			u32		metrics[RTAX_MAX];
 		};
 		struct rcu_head         rcu;
 	};
 };
 
 void			inet_initpeers(void) __init;
+
+#define INETPEER_METRICS_NEW	(~(u32) 0)
+
+static inline bool inet_metrics_new(const struct inet_peer *p)
+{
+	return p->metrics[RTAX_LOCK-1] == INETPEER_METRICS_NEW;
+}
 
 /* can be called with or without local BH being disabled */
 struct inet_peer	*inet_getpeer(struct inetpeer_addr *daddr, int create);
