@@ -1,0 +1,21 @@
+Importing i2c based on 2.6.38-rc2-git7
+Unchanged quilt series i2c
+Importing jdelvare-hwmon based on 2.6.38-rc2-git7
+Unchanged quilt series jdelvare-hwmon
+Importing kernel-doc based on 2.6.37-rc4
+Unchanged quilt series kernel-doc
+Importing rr based on v2.6.38-rc2-324-g70d1f36
+$ git clone -s -l -n -q . ../quilt-tmp
+$ cd ../quilt-tmp
+$ git reset --hard 70d1f365568e0cdbc9f4ab92428e1830fdb09ab0
+HEAD is now at 70d1f36 Merge branch 'for-linus' of git://git.infradead.org/ubi-2.6
+$ git quiltimport --author Rusty Russell <rusty@rustcorp.com.au> --patches ../quilt/rr
+virtio:maintainer.patch
+virtio:console_wake_up_outvq_on_host_notifications.patch
+virtio:console_update_copyright.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/rr
+From ../quilt-tmp
+ + cb94198...2dcbcf9 master     -> quilt/rr  (forced update)
+Importing device-mapper based on v2.6.37-7185-g52cfd50
+Unchanged quilt series device-mapper
