@@ -93,7 +93,7 @@ static void HTCCleanup(HTC_TARGET *target)
 HTC_HANDLE HTCCreate(void *hif_handle, HTC_INIT_INFO *pInfo)
 {
     HTC_TARGET              *target = NULL;
-    A_STATUS                 status = A_OK;
+    int                 status = A_OK;
     int                      i;
     A_UINT32                 ctrl_bufsz;
     A_UINT32                 blocksizes[HTC_MAILBOX_NUM_MAX];
@@ -137,7 +137,7 @@ HTC_HANDLE HTCCreate(void *hif_handle, HTC_INIT_INFO *pInfo)
             /* setup device layer */
         status = DevSetup(&target->Device);
 
-        if (A_FAILED(status)) {
+        if (status) {
             break;
         }
 
@@ -145,7 +145,7 @@ HTC_HANDLE HTCCreate(void *hif_handle, HTC_INIT_INFO *pInfo)
         /* get the block sizes */
         status = HIFConfigureDevice(hif_handle, HIF_DEVICE_GET_MBOX_BLOCK_SIZE,
                                     blocksizes, sizeof(blocksizes));
-        if (A_FAILED(status)) {
+        if (status) {
             AR_DEBUG_PRINTF(ATH_DEBUG_ERR,("Failed to get block size info from HIF layer...\n"));
             break;
         }
@@ -165,7 +165,7 @@ HTC_HANDLE HTCCreate(void *hif_handle, HTC_INIT_INFO *pInfo)
             }
         }
 
-        if (A_FAILED(status)) {
+        if (status) {
             break;
         }
 
@@ -192,7 +192,7 @@ HTC_HANDLE HTCCreate(void *hif_handle, HTC_INIT_INFO *pInfo)
 
     } while (FALSE);
 
-    if (A_FAILED(status)) {
+    if (status) {
         if (target != NULL) {
             HTCCleanup(target);
             target = NULL;
@@ -222,10 +222,10 @@ void *HTCGetHifDevice(HTC_HANDLE HTCHandle)
 
 /* wait for the target to arrive (sends HTC Ready message)
  * this operation is fully synchronous and the message is polled for */
-A_STATUS HTCWaitTarget(HTC_HANDLE HTCHandle)
+int HTCWaitTarget(HTC_HANDLE HTCHandle)
 {
     HTC_TARGET              *target = GET_HTC_TARGET_FROM_HANDLE(HTCHandle);
-    A_STATUS                 status;
+    int                 status;
     HTC_PACKET              *pPacket = NULL;
     HTC_READY_EX_MSG        *pRdyMsg;
 
@@ -249,7 +249,7 @@ A_STATUS HTCWaitTarget(HTC_HANDLE HTCHandle)
             /* we should be getting 1 control message that the target is ready */
         status = HTCWaitforControlMessage(target, &pPacket);
 
-        if (A_FAILED(status)) {
+        if (status) {
             AR_DEBUG_PRINTF(ATH_DEBUG_ERR, (" Target Not Available!!\n"));
             break;
         }
@@ -305,7 +305,7 @@ A_STATUS HTCWaitTarget(HTC_HANDLE HTCHandle)
                 /* limit what HTC can handle */
             target->MaxMsgPerBundle = min(HTC_HOST_MAX_MSG_PER_BUNDLE, target->MaxMsgPerBundle);          
                 /* target supports message bundling, setup device layer */
-            if (A_FAILED(DevSetupMsgBundling(&target->Device,target->MaxMsgPerBundle))) {
+            if (DevSetupMsgBundling(&target->Device,target->MaxMsgPerBundle)) {
                     /* device layer can't handle bundling */
                 target->MaxMsgPerBundle = 0;        
             } else {
@@ -351,7 +351,7 @@ A_STATUS HTCWaitTarget(HTC_HANDLE HTCHandle)
                                    &connect,
                                    &resp);
 
-        if (!A_FAILED(status)) {
+        if (!status) {
             break;
         }
 
@@ -369,11 +369,11 @@ A_STATUS HTCWaitTarget(HTC_HANDLE HTCHandle)
 
 
 /* Start HTC, enable interrupts and let the target know host has finished setup */
-A_STATUS HTCStart(HTC_HANDLE HTCHandle)
+int HTCStart(HTC_HANDLE HTCHandle)
 {
     HTC_TARGET *target = GET_HTC_TARGET_FROM_HANDLE(HTCHandle);
     HTC_PACKET *pPacket;
-    A_STATUS   status;
+    int   status;
 
     AR_DEBUG_PRINTF(ATH_DEBUG_TRC, ("HTCStart Enter\n"));
 
@@ -419,14 +419,14 @@ A_STATUS HTCStart(HTC_HANDLE HTCHandle)
             * target that the setup phase is complete */
         status = HTCSendSetupComplete(target);
 
-        if (A_FAILED(status)) {
+        if (status) {
             break;
         }
 
             /* unmask interrupts */
         status = DevUnmaskInterrupts(&target->Device);
 
-        if (A_FAILED(status)) {
+        if (status) {
             HTCStop(target);
         }
 

@@ -26,7 +26,6 @@
 /*****************************************************************************/
 
 #include "easycap.h"
-#include "easycap_debug.h"
 
 /*****************************************************************************/
 #define TESTCARD_BYTESPERLINE (2 * 720)
@@ -397,7 +396,7 @@ int tones[2048] = {
 };
 /*****************************************************************************/
 void
-easysnd_testtone(struct easycap *peasycap, int audio_fill)
+easyoss_testtone(struct easycap *peasycap, int audio_fill)
 {
 int i1;
 unsigned char *p2;
