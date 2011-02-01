@@ -304,6 +304,7 @@ config HID_MULTITOUCH
 	  Say Y here if you have one of the following devices:
 	  - Cypress TrueTouch panels
 	  - Hanvon dual touch panels
+	  - IrTouch Infrared USB panels
 	  - Pixcir dual touch panels
 	  - 'Sensing Win7-TwoFinger' panel by GeneralTouch
 
@@ -416,6 +417,13 @@ config HID_ROCCAT
 	Support for Roccat special events.
 	Say Y here if you have a Roccat mouse or keyboard and want OSD or
 	macro execution support.
+
+config HID_ROCCAT_ARVO
+	tristate "Roccat Arvo keyboard support"
+	depends on USB_HID
+	select HID_ROCCAT
+	---help---
+	Support for Roccat Arvo keyboard.
 
 config HID_ROCCAT_KONE
 	tristate "Roccat Kone Mouse support"
