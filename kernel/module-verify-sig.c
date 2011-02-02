@@ -159,7 +159,7 @@ int module_verify_signature(struct module_verify_data *mvdata,
 	 * - !!! if this tries to load the sha1.ko module, we will deadlock!!!
 	 */
 	tfm = crypto_alloc_shash("sha1", 0, 0);
-	if (!tfm) {
+	if (IS_ERR(tfm)) {
 		printk(KERN_ERR
 		       "Couldn't load module - SHA1 transform unavailable\n");
 		return -EPERM;
