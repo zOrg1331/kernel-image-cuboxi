@@ -12,7 +12,7 @@
 %define buildheaders 0
 %define _without_kabichk 1
 
-%define ovzver 028stab083
+%define ovzver 028stab084
 %define ovzrel 1
 
 %if !%{buildup}
@@ -6364,7 +6364,7 @@ Patch90002: diff-drbd-dont-use-connector
 
 # 3ware
 
-Patch90210: linux-2.6.18-atl1-1.0.41.0.patch
+Patch90210: linux-2.6.18-atl1-2.1.3.patch
 Patch90211: diff-backport-dm-delay-20070716
 Patch90212: diff-dm-limits-bounce_pfn-20071029
 # Patch90213: diff-forcedeth-fix-timeout-20071129
