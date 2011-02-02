@@ -52,6 +52,8 @@ phys_addr_t xen_extra_mem_start, xen_extra_mem_size;
 
 static __init void xen_add_extra_mem(unsigned long pages)
 {
+	unsigned long pfn;
+
 	u64 size = (u64)pages * PAGE_SIZE;
 	u64 extra_start = xen_extra_mem_start + xen_extra_mem_size;
 
@@ -66,6 +68,9 @@ static __init void xen_add_extra_mem(unsigned long pages)
 	xen_extra_mem_size += size;
 
 	xen_max_p2m_pfn = PFN_DOWN(extra_start + size);
+
+	for (pfn = PFN_DOWN(extra_start); pfn <= xen_max_p2m_pfn; pfn++)
+		__set_phys_to_machine(pfn, INVALID_P2M_ENTRY);
 }
 
 static unsigned long __init xen_release_chunk(phys_addr_t start_addr,
@@ -104,7 +109,7 @@ static unsigned long __init xen_release_chunk(phys_addr_t start_addr,
 		WARN(ret != 1, "Failed to release memory %lx-%lx err=%d\n",
 		     start, end, ret);
 		if (ret == 1) {
-			set_phys_to_machine(pfn, INVALID_P2M_ENTRY);
+			__set_phys_to_machine(pfn, INVALID_P2M_ENTRY);
 			len++;
 		}
 	}
@@ -138,6 +143,62 @@ static unsigned long __init xen_return_unused_memory(unsigned long max_pfn,
 	return released;
 }
 
+static unsigned long __init xen_set_identity(const struct e820map *e820)
+{
+	phys_addr_t last = xen_initial_domain() ? 0 : ISA_END_ADDRESS;
+	phys_addr_t start_pci = last;
+	phys_addr_t ram_end = last;
+	int i;
+	unsigned long identity = 0;
+
+	for (i = 0; i < e820->nr_map; i++) {
+		phys_addr_t start = e820->map[i].addr;
+		phys_addr_t end = start + e820->map[i].size;
+
+		if (start < last)
+			start = last;
+
+		if (end <= start)
+			continue;
+
+		/* Skip over the 1MB region. */
+		if (last > end)
+			continue;
+
+		if (e820->map[i].type == E820_RAM) {
+			/* Without saving 'last' we would gooble RAM too. */
+			if (start > start_pci)
+				identity += set_phys_range_identity(
+					PFN_UP(start_pci), PFN_DOWN(start));
+
+			start_pci = last = ram_end = end;
+			continue;
+		}
+		/* Gap found right after the 1st RAM region. Skip over it.
+		 * Why? That is b/c we if we pass in dom0_mem=max:512MB and
+		 * have in reality 1GB, the E820 is clipped at 512MB. Ok?
+		 * In xen_set_pte_init we end up calling xen_set_domain_pte
+		 * which asks Xen hypervisor to alter the ownership of the MFN
+		 * to DOMID_IO. We would try to set that on PFNs from 512MB
+		 * up to the next System RAM region (likely from 0x20000->
+		 * 0x100000). But changing the ownership on "real" RAM regions
+		 * will infuriate Xen hypervisor and we would fail.
+		 * So instead of trying to set IDENTITY mapping on the gap
+		 * between the System RAM and the first non-RAM E820 region
+		 * we start at the non-RAM E820 region.*/
+		if (ram_end && start >= ram_end) {
+			start_pci = start;
+			ram_end = 0;
+		}
+		start_pci = min(start, start_pci);
+		last = end;
+	}
+	if (last > start_pci)
+		identity += set_phys_range_identity(
+					PFN_UP(start_pci), PFN_DOWN(last));
+
+	return identity;
+}
 /**
  * machine_specific_memory_setup - Hook for machine specific memory setup.
  **/
@@ -151,6 +212,7 @@ char * __init xen_memory_setup(void)
 	struct xen_memory_map memmap;
 	unsigned long extra_pages = 0;
 	unsigned long extra_limit;
+	unsigned long identity_pages = 0;
 	int i;
 	int op;
 
@@ -251,6 +313,12 @@ char * __init xen_memory_setup(void)
 
 	xen_add_extra_mem(extra_pages);
 
+	/*
+	 * Set P2M for all non-RAM pages and E820 gaps to be identity
+	 * type PFNs.
+	 */
+	identity_pages = xen_set_identity(&e820);
+	printk(KERN_INFO "Set %ld page(s) to 1-1 mapping.\n", identity_pages);
 	return "Xen";
 }
 

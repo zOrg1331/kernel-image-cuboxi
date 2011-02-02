@@ -30,7 +30,9 @@ typedef struct xpaddr {
 /**** MACHINE <-> PHYSICAL CONVERSION MACROS ****/
 #define INVALID_P2M_ENTRY	(~0UL)
 #define FOREIGN_FRAME_BIT	(1UL<<31)
+#define IDENTITY_FRAME_BIT	(1UL<<30)
 #define FOREIGN_FRAME(m)	((m) | FOREIGN_FRAME_BIT)
+#define IDENTITY_FRAME(m)	((m) | IDENTITY_FRAME_BIT)
 
 /* Maximum amount of memory we can handle in a domain in pages */
 #define MAX_DOMAIN_PAGES						\
@@ -41,12 +43,18 @@ extern unsigned int   machine_to_phys_order;
 
 extern unsigned long get_phys_to_machine(unsigned long pfn);
 extern bool set_phys_to_machine(unsigned long pfn, unsigned long mfn);
+extern bool __set_phys_to_machine(unsigned long pfn, unsigned long mfn);
+extern unsigned long set_phys_range_identity(unsigned long pfn_s,
+					     unsigned long pfn_e);
 
 extern int m2p_add_override(unsigned long mfn, struct page *page);
 extern int m2p_remove_override(struct page *page);
 extern struct page *m2p_find_override(unsigned long mfn);
 extern unsigned long m2p_find_override_pfn(unsigned long mfn, unsigned long pfn);
 
+#ifdef CONFIG_XEN_DEBUG_FS
+extern int p2m_dump_show(struct seq_file *m, void *v);
+#endif
 static inline unsigned long pfn_to_mfn(unsigned long pfn)
 {
 	unsigned long mfn;
@@ -57,7 +65,7 @@ static inline unsigned long pfn_to_mfn(unsigned long pfn)
 	mfn = get_phys_to_machine(pfn);
 
 	if (mfn != INVALID_P2M_ENTRY)
-		mfn &= ~FOREIGN_FRAME_BIT;
+		mfn &= ~(FOREIGN_FRAME_BIT | IDENTITY_FRAME_BIT);
 
 	return mfn;
 }
@@ -73,10 +81,15 @@ static inline int phys_to_machine_mapping_valid(unsigned long pfn)
 static inline unsigned long mfn_to_pfn(unsigned long mfn)
 {
 	unsigned long pfn;
+	unsigned long p2m_mfn;
 
 	if (xen_feature(XENFEAT_auto_translated_physmap))
 		return mfn;
 
+	if (unlikely((mfn >> machine_to_phys_order) != 0)) {
+		pfn = ~0;
+		goto try_override;
+	}
 	pfn = 0;
 	/*
 	 * The array access can fail (e.g., device space beyond end of RAM).
@@ -84,13 +97,18 @@ static inline unsigned long mfn_to_pfn(unsigned long mfn)
 	 * but we must handle the fault without crashing!
 	 */
 	__get_user(pfn, &machine_to_phys_mapping[mfn]);
-
+try_override:
 	/*
 	 * If this appears to be a foreign mfn (because the pfn
 	 * doesn't map back to the mfn), then check the local override
 	 * table to see if there's a better pfn to use.
 	 */
-	if (get_phys_to_machine(pfn) != mfn)
+	p2m_mfn = get_phys_to_machine(pfn);
+
+	if (p2m_mfn == IDENTITY_FRAME(mfn))
+		return pfn;
+
+	if (p2m_mfn != mfn)
 		pfn = m2p_find_override_pfn(mfn, pfn);
 
 	return pfn;
