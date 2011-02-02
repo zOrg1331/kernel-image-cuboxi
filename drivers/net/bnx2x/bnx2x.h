@@ -22,8 +22,8 @@
  * (you will need to reboot afterwards) */
 /* #define BNX2X_STOP_ON_ERROR */
 
-#define DRV_MODULE_VERSION      "1.62.00-5"
-#define DRV_MODULE_RELDATE      "2011/01/30"
+#define DRV_MODULE_VERSION      "1.62.11-0"
+#define DRV_MODULE_RELDATE      "2011/01/31"
 #define BNX2X_BC_VER            0x040200
 
 #define BNX2X_MULTI_QUEUE
@@ -976,8 +976,12 @@ struct bnx2x {
 #define MF_FUNC_DIS			0x1000
 #define FCOE_MACS_SET			0x2000
 #define NO_FCOE_FLAG			0x4000
+#define NO_ISCSI_OOO_FLAG		0x8000
+#define NO_ISCSI_FLAG			0x10000
 
 #define NO_FCOE(bp)		((bp)->flags & NO_FCOE_FLAG)
+#define NO_ISCSI(bp)		((bp)->flags & NO_ISCSI_FLAG)
+#define NO_ISCSI_OOO(bp)	((bp)->flags & NO_ISCSI_OOO_FLAG)
 
 	int			pf_num;	/* absolute PF number */
 	int			pfid;	/* per-path PF number */
@@ -1110,7 +1114,7 @@ struct bnx2x {
 #define BNX2X_CNIC_FLAG_MAC_SET		1
 	void			*t2;
 	dma_addr_t		t2_mapping;
-	struct cnic_ops		*cnic_ops;
+	struct cnic_ops	__rcu	*cnic_ops;
 	void			*cnic_data;
 	u32			cnic_tag;
 	struct cnic_eth_dev	cnic_eth_dev;
@@ -1125,7 +1129,6 @@ struct bnx2x {
 	u16			cnic_kwq_pending;
 	u16			cnic_spq_pending;
 	struct mutex		cnic_mutex;
-	u8			iscsi_mac[ETH_ALEN];
 	u8			fip_mac[ETH_ALEN];
 #endif
 

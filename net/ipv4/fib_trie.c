@@ -1340,7 +1340,7 @@ err:
 }
 
 /* should be called with rcu_read_lock */
-static int check_leaf(struct trie *t, struct leaf *l,
+static int check_leaf(struct fib_table *tb, struct trie *t, struct leaf *l,
 		      t_key key,  const struct flowi *flp,
 		      struct fib_result *res, int fib_flags)
 {
@@ -1356,7 +1356,7 @@ static int check_leaf(struct trie *t, struct leaf *l,
 		if (l->key != (key & ntohl(mask)))
 			continue;
 
-		err = fib_semantic_match(&li->falh, flp, res, plen, fib_flags);
+		err = fib_semantic_match(tb, &li->falh, flp, res, plen, fib_flags);
 
 #ifdef CONFIG_IP_FIB_TRIE_STATS
 		if (err <= 0)
@@ -1398,7 +1398,7 @@ int fib_table_lookup(struct fib_table *tb, const struct flowi *flp,
 
 	/* Just a leaf? */
 	if (IS_LEAF(n)) {
-		ret = check_leaf(t, (struct leaf *)n, key, flp, res, fib_flags);
+		ret = check_leaf(tb, t, (struct leaf *)n, key, flp, res, fib_flags);
 		goto found;
 	}
 
@@ -1423,7 +1423,7 @@ int fib_table_lookup(struct fib_table *tb, const struct flowi *flp,
 		}
 
 		if (IS_LEAF(n)) {
-			ret = check_leaf(t, (struct leaf *)n, key, flp, res, fib_flags);
+			ret = check_leaf(tb, t, (struct leaf *)n, key, flp, res, fib_flags);
 			if (ret > 0)
 				goto backtrace;
 			goto found;
@@ -1800,80 +1800,6 @@ int fib_table_flush(struct fib_table *tb)
 void fib_free_table(struct fib_table *tb)
 {
 	kfree(tb);
-}
-
-void fib_table_select_default(struct fib_table *tb,
-			      const struct flowi *flp,
-			      struct fib_result *res)
-{
-	struct trie *t = (struct trie *) tb->tb_data;
-	int order, last_idx;
-	struct fib_info *fi = NULL;
-	struct fib_info *last_resort;
-	struct fib_alias *fa = NULL;
-	struct list_head *fa_head;
-	struct leaf *l;
-
-	last_idx = -1;
-	last_resort = NULL;
-	order = -1;
-
-	rcu_read_lock();
-
-	l = fib_find_node(t, 0);
-	if (!l)
-		goto out;
-
-	fa_head = get_fa_head(l, 0);
-	if (!fa_head)
-		goto out;
-
-	if (list_empty(fa_head))
-		goto out;
-
-	list_for_each_entry_rcu(fa, fa_head, fa_list) {
-		struct fib_info *next_fi = fa->fa_info;
-
-		if (fa->fa_scope != res->scope ||
-		    fa->fa_type != RTN_UNICAST)
-			continue;
-
-		if (next_fi->fib_priority > res->fi->fib_priority)
-			break;
-		if (!next_fi->fib_nh[0].nh_gw ||
-		    next_fi->fib_nh[0].nh_scope != RT_SCOPE_LINK)
-			continue;
-
-		fib_alias_accessed(fa);
-
-		if (fi == NULL) {
-			if (next_fi != res->fi)
-				break;
-		} else if (!fib_detect_death(fi, order, &last_resort,
-					     &last_idx, tb->tb_default)) {
-			fib_result_assign(res, fi);
-			tb->tb_default = order;
-			goto out;
-		}
-		fi = next_fi;
-		order++;
-	}
-	if (order <= 0 || fi == NULL) {
-		tb->tb_default = -1;
-		goto out;
-	}
-
-	if (!fib_detect_death(fi, order, &last_resort, &last_idx,
-				tb->tb_default)) {
-		fib_result_assign(res, fi);
-		tb->tb_default = order;
-		goto out;
-	}
-	if (last_idx >= 0)
-		fib_result_assign(res, last_resort);
-	tb->tb_default = last_idx;
-out:
-	rcu_read_unlock();
 }
 
 static int fn_trie_dump_fa(t_key key, int plen, struct list_head *fah,
