@@ -160,52 +160,14 @@ cmpk_count_txstatistic(
 	   feedback info. */
 	if (pstx_fb->tok)
 	{
-		priv->stats.txfeedbackok++;
 		priv->stats.txoktotal++;
-		priv->stats.txokbytestotal += pstx_fb->pkt_length;
-		priv->stats.txokinperiod++;
 
 		/* We can not make sure broadcast/multicast or unicast mode. */
-		if (pstx_fb->pkt_type == PACKET_MULTICAST)
-		{
-			priv->stats.txmulticast++;
-			priv->stats.txbytesmulticast += pstx_fb->pkt_length;
-		}
-		else if (pstx_fb->pkt_type == PACKET_BROADCAST)
-		{
-			priv->stats.txbroadcast++;
-			priv->stats.txbytesbroadcast += pstx_fb->pkt_length;
-		}
-		else
-		{
-			priv->stats.txunicast++;
+		if (pstx_fb->pkt_type != PACKET_MULTICAST &&
+		    pstx_fb->pkt_type != PACKET_BROADCAST) {
 			priv->stats.txbytesunicast += pstx_fb->pkt_length;
 		}
 	}
-	else
-	{
-		priv->stats.txfeedbackfail++;
-		priv->stats.txerrtotal++;
-		priv->stats.txerrbytestotal += pstx_fb->pkt_length;
-
-		/* We can not make sure broadcast/multicast or unicast mode. */
-		if (pstx_fb->pkt_type == PACKET_MULTICAST)
-		{
-			priv->stats.txerrmulticast++;
-		}
-		else if (pstx_fb->pkt_type == PACKET_BROADCAST)
-		{
-			priv->stats.txerrbroadcast++;
-		}
-		else
-		{
-			priv->stats.txerrunicast++;
-		}
-	}
-
-	priv->stats.txretrycount += pstx_fb->retry_cnt;
-	priv->stats.txfeedbackretry += pstx_fb->retry_cnt;
-
 }
 
 
@@ -403,29 +365,7 @@ static	void	cmpk_count_tx_status(	struct net_device *dev,
 	priv->stats.txfeedbackok	+= pstx_status->txok;
 	priv->stats.txoktotal		+= pstx_status->txok;
 
-	priv->stats.txfeedbackfail	+= pstx_status->txfail;
-	priv->stats.txerrtotal		+= pstx_status->txfail;
-
-	priv->stats.txretrycount		+= pstx_status->txretry;
-	priv->stats.txfeedbackretry	+= pstx_status->txretry;
-
-	//pAdapter->TxStats.NumTxOkBytesTotal += psTx_FB->pkt_length;
-	//pAdapter->TxStats.NumTxErrBytesTotal += psTx_FB->pkt_length;
-	//pAdapter->MgntInfo.LinkDetectInfo.NumTxOkInPeriod++;
-
-	priv->stats.txmulticast	+= pstx_status->txmcok;
-	priv->stats.txbroadcast	+= pstx_status->txbcok;
-	priv->stats.txunicast		+= pstx_status->txucok;
-
-	priv->stats.txerrmulticast	+= pstx_status->txmcfail;
-	priv->stats.txerrbroadcast	+= pstx_status->txbcfail;
-	priv->stats.txerrunicast	+= pstx_status->txucfail;
-
-	priv->stats.txbytesmulticast	+= pstx_status->txmclength;
-	priv->stats.txbytesbroadcast	+= pstx_status->txbclength;
 	priv->stats.txbytesunicast		+= pstx_status->txuclength;
-
-	priv->stats.last_packet_rate		= pstx_status->rate;
 }
 
 
@@ -454,13 +394,9 @@ cmpk_handle_tx_rate_history(
 	struct net_device *dev,
 	u8*	   pmsg)
 {
-	cmpk_tx_rahis_t	*ptxrate;
-//	RT_RF_POWER_STATE	rtState;
-	u8				i, j;
+	u8				i;
 	u16				length = sizeof(cmpk_tx_rahis_t);
 	u32				*ptemp;
-	struct r8192_priv *priv = ieee80211_priv(dev);
-
 
 #ifdef ENABLE_PS
 	pAdapter->HalFunc.GetHwRegHandler(pAdapter, HW_VAR_RF_STATE, (pu1Byte)(&rtState));
@@ -488,28 +424,6 @@ cmpk_handle_tx_rate_history(
 		temp2 = ptemp[i]>>16;
 		ptemp[i] = (temp1<<16)|temp2;
 	}
-
-	ptxrate = (cmpk_tx_rahis_t *)pmsg;
-
-	if (ptxrate == NULL )
-	{
-		return;
-	}
-
-	for (i = 0; i < 16; i++)
-	{
-		// Collect CCK rate packet num
-		if (i < 4)
-			priv->stats.txrate.cck[i] += ptxrate->cck[i];
-
-		// Collect OFDM rate packet num
-		if (i< 8)
-			priv->stats.txrate.ofdm[i] += ptxrate->ofdm[i];
-
-		for (j = 0; j < 4; j++)
-			priv->stats.txrate.ht_mcs[j][i] += ptxrate->ht_mcs[j][i];
-	}
-
 }
 
 
@@ -523,7 +437,6 @@ cmpk_handle_tx_rate_history(
 u32 cmpk_message_handle_rx(struct net_device *dev, struct ieee80211_rx_stats *pstats)
 {
 //	u32			debug_level = DBG_LOUD;
-	struct r8192_priv *priv = ieee80211_priv(dev);
 	int			total_length;
 	u8			cmd_length, exe_cnt = 0;
 	u8			element_id;
@@ -612,14 +525,6 @@ u32 cmpk_message_handle_rx(struct net_device *dev, struct ieee80211_rx_stats *ps
 			        RT_TRACE(COMP_EVENTS, "---->cmpk_message_handle_rx():unknown CMD Element\n");
 				return 1;	/* This is a command packet. */
 		}
-		// 2007/01/22 MH Display received rx command packet info.
-		//cmpk_Display_Message(cmd_length, pcmd_buff);
-
-		// 2007/01/22 MH Add to display tx statistic.
-		//cmpk_DisplayTxStatistic(pAdapter);
-
-		/* 2007/03/09 MH Collect sidderent cmd element pkt num. */
-		priv->stats.rxcmdpkt[element_id]++;
 
 		total_length -= cmd_length;
 		pcmd_buff    += cmd_length;

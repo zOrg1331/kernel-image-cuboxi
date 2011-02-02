@@ -111,10 +111,10 @@ ar6000_htc_raw_write_cb(void *Context, HTC_PACKET *pPacket)
 }
 
 /* connect to a service */
-static A_STATUS ar6000_connect_raw_service(AR_SOFTC_T        *ar,
+static int ar6000_connect_raw_service(AR_SOFTC_T        *ar,
                                            HTC_RAW_STREAM_ID StreamID)
 {
-    A_STATUS                 status;
+    int                 status;
     HTC_SERVICE_CONNECT_RESP response;
     A_UINT8                  streamNo;
     HTC_SERVICE_CONNECT_REQ  connect;
@@ -147,7 +147,7 @@ static A_STATUS ar6000_connect_raw_service(AR_SOFTC_T        *ar,
                                    &connect,
                                    &response);
         
-        if (A_FAILED(status)) {
+        if (status) {
             if (response.ConnectRespCode == HTC_SERVICE_NO_MORE_EP) {
                 AR_DEBUG_PRINTF(ATH_DEBUG_ERR,("HTC RAW , No more streams allowed \n"));
                 status = A_OK;    
@@ -168,7 +168,7 @@ static A_STATUS ar6000_connect_raw_service(AR_SOFTC_T        *ar,
 
 int ar6000_htc_raw_open(AR_SOFTC_T *ar)
 {
-    A_STATUS status;
+    int status;
     int streamID, endPt, count2;
     raw_htc_buffer *buffer;
     HTC_SERVICE_ID servicepriority;
@@ -187,7 +187,7 @@ int ar6000_htc_raw_open(AR_SOFTC_T *ar)
     /* wait for target */
     status = HTCWaitTarget(ar->arHtcTarget);
         
-    if (A_FAILED(status)) {
+    if (status) {
         AR_DEBUG_PRINTF(ATH_DEBUG_ERR,("HTCWaitTarget failed (%d)\n", status));
         return -ENODEV;  
     }
@@ -206,7 +206,7 @@ int ar6000_htc_raw_open(AR_SOFTC_T *ar)
             /* try to connect to the raw service */
         status = ar6000_connect_raw_service(ar,streamID);
         
-        if (A_FAILED(status)) {
+        if (status) {
             break;    
         }
         
@@ -245,7 +245,7 @@ int ar6000_htc_raw_open(AR_SOFTC_T *ar)
         arRaw->write_buffer_available[streamID] = TRUE;
     }
     
-    if (A_FAILED(status)) {
+    if (status) {
         return -EIO;    
     }
     

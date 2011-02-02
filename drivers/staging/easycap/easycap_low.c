@@ -39,10 +39,12 @@
 /****************************************************************************/
 
 #include "easycap.h"
-#include "easycap_debug.h"
 
 /*--------------------------------------------------------------------------*/
-const struct stk1160config { int reg; int set; } stk1160configPAL[256] = {
+static const struct stk1160config {
+	int reg;
+	int set;
+} stk1160configPAL[256] = {
 		{0x000, 0x0098},
 		{0x002, 0x0093},
 
@@ -84,7 +86,7 @@ const struct stk1160config { int reg; int set; } stk1160configPAL[256] = {
 		{0xFFF, 0xFFFF}
 };
 /*--------------------------------------------------------------------------*/
-const struct stk1160config stk1160configNTSC[256] = {
+static const struct stk1160config stk1160configNTSC[256] = {
 		{0x000, 0x0098},
 		{0x002, 0x0093},
 
@@ -126,7 +128,10 @@ const struct stk1160config stk1160configNTSC[256] = {
 		{0xFFF, 0xFFFF}
 };
 /*--------------------------------------------------------------------------*/
-const struct saa7113config { int reg; int set; } saa7113configPAL[256] = {
+static const struct saa7113config{
+	int reg;
+	int set;
+} saa7113configPAL[256] = {
 		{0x01, 0x08},
 #if defined(ANTIALIAS)
 		{0x02, 0xC0},
@@ -184,7 +189,7 @@ const struct saa7113config { int reg; int set; } saa7113configPAL[256] = {
 		{0xFF, 0xFF}
 };
 /*--------------------------------------------------------------------------*/
-const struct saa7113config saa7113configNTSC[256] = {
+static const struct saa7113config saa7113configNTSC[256] = {
 		{0x01, 0x08},
 #if defined(ANTIALIAS)
 		{0x02, 0xC0},
@@ -259,28 +264,28 @@ GET(p, 0x0114, &get4);
 GET(p, 0x0115, &get5);
 GET(p, 0x0116, &get6);
 GET(p, 0x0117, &get7);
-JOT(8,  "0x%03X, 0x%03X, " \
-	"0x%03X, 0x%03X, " \
-	"0x%03X, 0x%03X, " \
-	"0x%03X, 0x%03X\n", \
+JOT(8,  "0x%03X, 0x%03X, "
+	"0x%03X, 0x%03X, "
+	"0x%03X, 0x%03X, "
+	"0x%03X, 0x%03X\n",
 	get0, get1, get2, get3, get4, get5, get6, get7);
-JOT(8,  "....cf PAL_720x526: " \
-	"0x%03X, 0x%03X, " \
-	"0x%03X, 0x%03X, " \
-	"0x%03X, 0x%03X, " \
-	"0x%03X, 0x%03X\n", \
+JOT(8,  "....cf PAL_720x526: "
+	"0x%03X, 0x%03X, "
+	"0x%03X, 0x%03X, "
+	"0x%03X, 0x%03X, "
+	"0x%03X, 0x%03X\n",
 	0x000, 0x000, 0x001, 0x000, 0x5A0, 0x005, 0x121, 0x001);
-JOT(8,  "....cf PAL_704x526: " \
-	"0x%03X, 0x%03X, " \
-	"0x%03X, 0x%03X, " \
-	"0x%03X, 0x%03X, " \
-	"0x%03X, 0x%03X\n", \
+JOT(8,  "....cf PAL_704x526: "
+	"0x%03X, 0x%03X, "
+	"0x%03X, 0x%03X, "
+	"0x%03X, 0x%03X, "
+	"0x%03X, 0x%03X\n",
 	0x004, 0x000, 0x001, 0x000, 0x584, 0x005, 0x121, 0x001);
-JOT(8,  "....cf VGA_640x480: " \
-	"0x%03X, 0x%03X, " \
-	"0x%03X, 0x%03X, " \
-	"0x%03X, 0x%03X, " \
-	"0x%03X, 0x%03X\n", \
+JOT(8,  "....cf VGA_640x480: "
+	"0x%03X, 0x%03X, "
+	"0x%03X, 0x%03X, "
+	"0x%03X, 0x%03X, "
+	"0x%03X, 0x%03X\n",
 	0x008, 0x000, 0x020, 0x000, 0x508, 0x005, 0x110, 0x001);
 return 0;
 }
@@ -336,13 +341,13 @@ if (NULL == p)
 i0 = 0;
 if (true == ntsc) {
 	while (0xFF != saa7113configNTSC[i0].reg) {
-		ir = write_saa(p, saa7113configNTSC[i0].reg, \
+		ir = write_saa(p, saa7113configNTSC[i0].reg,
 					saa7113configNTSC[i0].set);
 		i0++;
 	}
 } else {
 	while (0xFF != saa7113configPAL[i0].reg) {
-		ir = write_saa(p, saa7113configPAL[i0].reg, \
+		ir = write_saa(p, saa7113configPAL[i0].reg,
 					saa7113configPAL[i0].set);
 		i0++;
 	}
@@ -400,7 +405,7 @@ SET(p, 0x0500, 0x008B);
 GET(p, 0x0502, &igot);  got502 = (0xFF & igot);
 GET(p, 0x0503, &igot);  got503 = (0xFF & igot);
 
-JOT(16, "write_vt(., 0x%04X, 0x%04X): was 0x%04X\n", \
+JOT(16, "write_vt(., 0x%04X, 0x%04X): was 0x%04X\n",
 					reg0, set0, ((got503 << 8) | got502));
 
 set502 =  (0x00FF & set0);
@@ -485,9 +490,9 @@ if (true == ntsc) {
 
 		ir = read_saa(p, saa7113configNTSC[i0].reg);
 		if (ir != saa7113configNTSC[i0].set) {
-			SAY("SAA register 0x%02X has 0x%02X, " \
-						"expected 0x%02X\n", \
-						saa7113configNTSC[i0].reg, \
+			SAY("SAA register 0x%02X has 0x%02X, "
+						"expected 0x%02X\n",
+						saa7113configNTSC[i0].reg,
 						ir, saa7113configNTSC[i0].set);
 			rc--;
 		}
@@ -502,9 +507,9 @@ if (true == ntsc) {
 
 		ir = read_saa(p, saa7113configPAL[i0].reg);
 		if (ir != saa7113configPAL[i0].set) {
-			SAY("SAA register 0x%02X has 0x%02X, " \
-						"expected 0x%02X\n", \
-						saa7113configPAL[i0].reg, \
+			SAY("SAA register 0x%02X has 0x%02X, "
+						"expected 0x%02X\n",
+						saa7113configPAL[i0].reg,
 						ir, saa7113configPAL[i0].set);
 			rc--;
 		}
@@ -603,23 +608,23 @@ if (true == ntsc) {
 		}
 		ir = read_stk(p, stk1160configNTSC[i0].reg);
 		if (0x100 == stk1160configNTSC[i0].reg) {
-			if ((ir != (0xFF & stk1160configNTSC[i0].set)) && \
-					(ir != (0x80 | (0xFF & \
-					stk1160configNTSC[i0].set))) && \
-					(0xFFFF != \
+			if ((ir != (0xFF & stk1160configNTSC[i0].set)) &&
+					(ir != (0x80 | (0xFF &
+					stk1160configNTSC[i0].set))) &&
+					(0xFFFF !=
 					stk1160configNTSC[i0].set)) {
-				SAY("STK register 0x%03X has 0x%02X, " \
-						"expected 0x%02X\n", \
-						stk1160configNTSC[i0].reg, \
+				SAY("STK register 0x%03X has 0x%02X, "
+						"expected 0x%02X\n",
+						stk1160configNTSC[i0].reg,
 						ir, stk1160configNTSC[i0].set);
 				}
 			i0++; continue;
 			}
-		if ((ir != (0xFF & stk1160configNTSC[i0].set)) && \
+		if ((ir != (0xFF & stk1160configNTSC[i0].set)) &&
 				(0xFFFF != stk1160configNTSC[i0].set)) {
-			SAY("STK register 0x%03X has 0x%02X, " \
-						"expected 0x%02X\n", \
-						stk1160configNTSC[i0].reg, \
+			SAY("STK register 0x%03X has 0x%02X, "
+						"expected 0x%02X\n",
+						stk1160configNTSC[i0].reg,
 						ir, stk1160configNTSC[i0].set);
 		}
 		i0++;
@@ -634,23 +639,23 @@ if (true == ntsc) {
 		}
 		ir = read_stk(p, stk1160configPAL[i0].reg);
 		if (0x100 == stk1160configPAL[i0].reg) {
-			if ((ir != (0xFF & stk1160configPAL[i0].set)) && \
-					(ir != (0x80 | (0xFF & \
-					stk1160configPAL[i0].set))) && \
-					(0xFFFF != \
+			if ((ir != (0xFF & stk1160configPAL[i0].set)) &&
+					(ir != (0x80 | (0xFF &
+					stk1160configPAL[i0].set))) &&
+					(0xFFFF !=
 					stk1160configPAL[i0].set)) {
-				SAY("STK register 0x%03X has 0x%02X, " \
-						"expected 0x%02X\n", \
-						stk1160configPAL[i0].reg, \
+				SAY("STK register 0x%03X has 0x%02X, "
+						"expected 0x%02X\n",
+						stk1160configPAL[i0].reg,
 						ir, stk1160configPAL[i0].set);
 				}
 			i0++; continue;
 			}
-		if ((ir != (0xFF & stk1160configPAL[i0].set)) && \
+		if ((ir != (0xFF & stk1160configPAL[i0].set)) &&
 				(0xFFFF != stk1160configPAL[i0].set)) {
-			SAY("STK register 0x%03X has 0x%02X, " \
-						"expected 0x%02X\n", \
-						stk1160configPAL[i0].reg, \
+			SAY("STK register 0x%03X has 0x%02X, "
+						"expected 0x%02X\n",
+						stk1160configPAL[i0].reg,
 						ir, stk1160configPAL[i0].set);
 		}
 		i0++;
@@ -717,7 +722,7 @@ switch (input) {
 case 0:
 case 1: {
 	if (0 != write_saa(p, 0x02, 0x80)) {
-		SAY("ERROR: failed to set SAA register 0x02 for input %i\n", \
+		SAY("ERROR: failed to set SAA register 0x02 for input %i\n",
 									input);
 	}
 	SET(p, 0x0000, 0x0098);
@@ -726,7 +731,7 @@ case 1: {
 }
 case 2: {
 	if (0 != write_saa(p, 0x02, 0x80)) {
-		SAY("ERROR: failed to set SAA register 0x02 for input %i\n", \
+		SAY("ERROR: failed to set SAA register 0x02 for input %i\n",
 									input);
 	}
 	SET(p, 0x0000, 0x0090);
@@ -735,7 +740,7 @@ case 2: {
 }
 case 3: {
 	if (0 != write_saa(p, 0x02, 0x80)) {
-		SAY("ERROR: failed to set SAA register 0x02 for input %i\n", \
+		SAY("ERROR: failed to set SAA register 0x02 for input %i\n",
 									input);
 	}
 	SET(p, 0x0000, 0x0088);
@@ -744,7 +749,7 @@ case 3: {
 }
 case 4: {
 	if (0 != write_saa(p, 0x02, 0x80)) {
-		SAY("ERROR: failed to set SAA register 0x02 for input %i\n", \
+		SAY("ERROR: failed to set SAA register 0x02 for input %i\n",
 									input);
 	}
 	SET(p, 0x0000, 0x0080);
@@ -757,22 +762,22 @@ case 5: {
 	switch (mode) {
 	case 7: {
 		if (0 != write_saa(p, 0x02, 0x87)) {
-			SAY("ERROR: failed to set SAA register 0x02 " \
+			SAY("ERROR: failed to set SAA register 0x02 "
 						"for input %i\n", input);
 		}
 		if (0 != write_saa(p, 0x05, 0xFF)) {
-			SAY("ERROR: failed to set SAA register 0x05 " \
+			SAY("ERROR: failed to set SAA register 0x05 "
 						"for input %i\n", input);
 		}
 		break;
 	}
 	case 9: {
 		if (0 != write_saa(p, 0x02, 0x89)) {
-			SAY("ERROR: failed to set SAA register 0x02 " \
+			SAY("ERROR: failed to set SAA register 0x02 "
 						"for input %i\n", input);
 		}
 		if (0 != write_saa(p, 0x05, 0x00)) {
-			SAY("ERROR: failed to set SAA register 0x05 " \
+			SAY("ERROR: failed to set SAA register 0x05 "
 						"for input %i\n", input);
 		}
 	break;
@@ -783,11 +788,11 @@ case 5: {
 	}
 	}
 	if (0 != write_saa(p, 0x04, 0x00)) {
-		SAY("ERROR: failed to set SAA register 0x04 for input %i\n", \
+		SAY("ERROR: failed to set SAA register 0x04 for input %i\n",
 									input);
 	}
 	if (0 != write_saa(p, 0x09, 0x80)) {
-		SAY("ERROR: failed to set SAA register 0x09 for input %i\n", \
+		SAY("ERROR: failed to set SAA register 0x09 for input %i\n",
 									input);
 	}
 	SET(p, 0x0002, 0x0093);
@@ -809,7 +814,7 @@ return 0;
 }
 /****************************************************************************/
 int
-set_resolution(struct usb_device *p, \
+set_resolution(struct usb_device *p,
 				__u16 set0, __u16 set1, __u16 set2, __u16 set3)
 {
 __u16 u0x0111, u0x0113, u0x0115, u0x0117;
@@ -915,25 +920,25 @@ int rc0, rc1;
 if (!pusb_device)
 	return -ENODEV;
 rc1 = 0;  igot = 0;
-rc0 = usb_control_msg(pusb_device, usb_sndctrlpipe(pusb_device, 0), \
-		(__u8)0x01, \
-		(__u8)(USB_DIR_OUT | USB_TYPE_VENDOR | USB_RECIP_DEVICE), \
-		(__u16)value, \
-		(__u16)index, \
-		(void *)NULL, \
-		(__u16)0, \
+rc0 = usb_control_msg(pusb_device, usb_sndctrlpipe(pusb_device, 0),
+		(__u8)0x01,
+		(__u8)(USB_DIR_OUT | USB_TYPE_VENDOR | USB_RECIP_DEVICE),
+		(__u16)value,
+		(__u16)index,
+		(void *)NULL,
+		(__u16)0,
 		(int)500);
 
 #if defined(NOREADBACK)
 #
 #else
-rc1 = usb_control_msg(pusb_device, usb_rcvctrlpipe(pusb_device, 0), \
-		(__u8)0x00, \
-		(__u8)(USB_DIR_IN | USB_TYPE_VENDOR | USB_RECIP_DEVICE), \
-		(__u16)0x00, \
-		(__u16)index, \
-		(void *)&igot, \
-		(__u16)sizeof(__u16), \
+rc1 = usb_control_msg(pusb_device, usb_rcvctrlpipe(pusb_device, 0),
+		(__u8)0x00,
+		(__u8)(USB_DIR_IN | USB_TYPE_VENDOR | USB_RECIP_DEVICE),
+		(__u16)0x00,
+		(__u16)index,
+		(void *)&igot,
+		(__u16)sizeof(__u16),
 		(int)50000);
 igot = 0xFF & igot;
 switch (index) {
@@ -951,15 +956,15 @@ case 0x205:
 case 0x350:
 case 0x351: {
 	if (0 != (0xFF & igot)) {
-		JOT(8, "unexpected 0x%02X for STK register 0x%03X\n", \
+		JOT(8, "unexpected 0x%02X for STK register 0x%03X\n",
 								igot, index);
 	}
 break;
 }
 default: {
 	if ((0xFF & value) != (0xFF & igot)) {
-		JOT(8, "unexpected 0x%02X != 0x%02X " \
-					"for STK register 0x%03X\n", \
+		JOT(8, "unexpected 0x%02X != 0x%02X "
+					"for STK register 0x%03X\n",
 					igot, value, index);
 	}
 break;
@@ -977,13 +982,13 @@ int ir;
 
 if (!pusb_device)
 	return -ENODEV;
-ir = usb_control_msg(pusb_device, usb_rcvctrlpipe(pusb_device, 0), \
-		(__u8)0x00, \
-		(__u8)(USB_DIR_IN | USB_TYPE_VENDOR | USB_RECIP_DEVICE), \
-		(__u16)0x00, \
-		(__u16)index, \
-		(void *)pvoid, \
-		sizeof(__u8), \
+ir = usb_control_msg(pusb_device, usb_rcvctrlpipe(pusb_device, 0),
+		(__u8)0x00,
+		(__u8)(USB_DIR_IN | USB_TYPE_VENDOR | USB_RECIP_DEVICE),
+		(__u16)0x00,
+		(__u16)index,
+		(void *)pvoid,
+		sizeof(__u8),
 		(int)50000);
 return 0xFF & ir;
 }
@@ -993,13 +998,13 @@ wakeup_device(struct usb_device *pusb_device)
 {
 if (!pusb_device)
 	return -ENODEV;
-return usb_control_msg(pusb_device, usb_sndctrlpipe(pusb_device, 0), \
-		(__u8)USB_REQ_SET_FEATURE, \
-		(__u8)(USB_DIR_OUT | USB_TYPE_STANDARD | USB_RECIP_DEVICE), \
-		USB_DEVICE_REMOTE_WAKEUP, \
-		(__u16)0, \
-		(void *) NULL, \
-		(__u16)0, \
+return usb_control_msg(pusb_device, usb_sndctrlpipe(pusb_device, 0),
+		(__u8)USB_REQ_SET_FEATURE,
+		(__u8)(USB_DIR_OUT | USB_TYPE_STANDARD | USB_RECIP_DEVICE),
+		USB_DEVICE_REMOTE_WAKEUP,
+		(__u16)0,
+		(void *) NULL,
+		(__u16)0,
 		(int)50000);
 }
 /*****************************************************************************/
@@ -1018,7 +1023,7 @@ int rc, id1, id2;
  */
 /*---------------------------------------------------------------------------*/
 const __u8 request = 0x01;
-const __u8 requesttype = \
+const __u8 requesttype =
 		(__u8)(USB_DIR_OUT | USB_TYPE_CLASS | USB_RECIP_INTERFACE);
 const __u16 value_unmute = 0x0200;
 const __u16 index = 0x0301;
@@ -1031,30 +1036,39 @@ pusb_device = peasycap->pusb_device;
 if (NULL == pusb_device)
 	return -ENODEV;
 
-JOM(8, "%02X %02X %02X %02X %02X %02X %02X %02X\n",	\
-			requesttype, request,		\
-			(0x00FF & value_unmute),	\
-			(0xFF00 & value_unmute) >> 8,	\
-			(0x00FF & index),		\
-			(0xFF00 & index) >> 8,		\
-			(0x00FF & length),		\
+JOM(8, "%02X %02X %02X %02X %02X %02X %02X %02X\n",
+			requesttype, request,
+			(0x00FF & value_unmute),
+			(0xFF00 & value_unmute) >> 8,
+			(0x00FF & index),
+			(0xFF00 & index) >> 8,
+			(0x00FF & length),
 			(0xFF00 & length) >> 8);
 
 buffer[0] = 0x01;
 
-rc = usb_control_msg(pusb_device, usb_sndctrlpipe(pusb_device, 0),	\
-			(__u8)request,					\
-			(__u8)requesttype,				\
-			(__u16)value_unmute,				\
-			(__u16)index,					\
-			(void *)&buffer[0],				\
-			(__u16)length,					\
+rc = usb_control_msg(pusb_device, usb_sndctrlpipe(pusb_device, 0),
+			(__u8)request,
+			(__u8)requesttype,
+			(__u16)value_unmute,
+			(__u16)index,
+			(void *)&buffer[0],
+			(__u16)length,
 			(int)50000);
 
 JOT(8, "0x%02X=buffer\n", *((__u8 *) &buffer[0]));
-if (rc != (int)length)
-	SAY("ERROR: usb_control_msg returned %i\n", rc);
-
+if (rc != (int)length) {
+	switch (rc) {
+	case -EPIPE: {
+		SAY("usb_control_msg returned -EPIPE\n");
+		break;
+	}
+	default: {
+		SAY("ERROR: usb_control_msg returned %i\n", rc);
+		break;
+	}
+	}
+}
 /*--------------------------------------------------------------------------*/
 /*
  *  REGISTER 500:  SETTING VALUE TO 0x0094 RESETS AUDIO CONFIGURATION ???
@@ -1082,11 +1096,7 @@ SAM("0x%04X:0x%04X is audio vendor id\n", id1, id2);
  *  SELECT AUDIO SOURCE "LINE IN" AND SET THE AUDIO GAIN.
 */
 /*---------------------------------------------------------------------------*/
-if (31 < easycap_gain)
-	easycap_gain = 31;
-if (0 > easycap_gain)
-	easycap_gain = 0;
-if (0 != audio_gainset(pusb_device, (__s8)easycap_gain))
+if (0 != audio_gainset(pusb_device, peasycap->gain))
 	SAY("ERROR: audio_gainset() failed\n");
 check_vt(pusb_device);
 return 0;
@@ -1204,7 +1214,7 @@ if (0 > igot) {
 	mute = 0x8000 & ((unsigned int)igot);
 mute = 0;
 
-JOT(8, "0x%04X=(mute|u8|(u8<<8)) for VT1612A register 0x10,...0x18\n", \
+JOT(8, "0x%04X=(mute|u8|(u8<<8)) for VT1612A register 0x10,...0x18\n",
 							mute | u8 | (u8 << 8));
 write_vt(pusb_device, 0x0010, (mute | u8 | (u8 << 8)));
 write_vt(pusb_device, 0x0012, (mute | u8 | (u8 << 8)));
@@ -1225,7 +1235,7 @@ if (16 <= loud)
 else
 	u8 = 0;
 
-JOT(8, "0x%04X=(mute|u8|(u8<<8)) for VT1612A register 0x1C\n", \
+JOT(8, "0x%04X=(mute|u8|(u8<<8)) for VT1612A register 0x1C\n",
 							mute | u8 | (u8 << 8));
 write_vt(pusb_device, 0x001C, (mute | u8 | (u8 << 8)));
 write_vt(pusb_device, 0x001A, 0x0404);

@@ -17,7 +17,6 @@
 
 ccflags-y :=			\
 	-DARP_OFFLOAD_SUPPORT	\
-	-DBCMDBG		\
 	-DBCMLXSDMMC		\
 	-DBCMPLATFORM_BUS	\
 	-DBCMSDIO		\
@@ -37,11 +36,26 @@ ccflags-y :=			\
 	-Idrivers/staging/brcm80211/include		\
 	-Idrivers/staging/brcm80211/util
 
-DHDOFILES = dhd_linux.o ../util/linux_osl.o ../util/bcmutils.o dhd_common.o dhd_custom_gpio.o	\
-	wl_iw.o wl_cfg80211.o ../util/siutils.o ../util/sbutils.o ../util/aiutils.o ../util/hndpmu.o ../util/bcmwifi.o dhd_sdio.o	\
-	dhd_linux_sched.o dhd_cdc.o bcmsdh_sdmmc.o bcmsdh.o bcmsdh_linux.o	\
-	bcmsdh_sdmmc_linux.o
+DHDOFILES = \
+	wl_cfg80211.o \
+	wl_iw.o \
+	dhd_cdc.o \
+	dhd_common.o \
+	dhd_custom_gpio.o \
+	dhd_sdio.o	\
+	dhd_linux.o \
+	dhd_linux_sched.o \
+	bcmsdh.o \
+	bcmsdh_linux.o	\
+	bcmsdh_sdmmc.o \
+	bcmsdh_sdmmc_linux.o \
+	../util/linux_osl.o \
+	../util/aiutils.o \
+	../util/siutils.o \
+	../util/sbutils.o \
+	../util/bcmutils.o \
+	../util/bcmwifi.o \
+	../util/hndpmu.o
 
 obj-m += brcmfmac.o
 brcmfmac-objs += $(DHDOFILES)
-
