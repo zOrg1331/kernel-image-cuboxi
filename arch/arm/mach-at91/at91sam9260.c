@@ -214,6 +214,39 @@ static struct clk *periph_clocks[] __initdata = {
 	// irq0 .. irq2
 };
 
+static struct clk_lookup periph_clocks_lookups[] = {
+	CLKDEV_CON_ID("pioA_clk", &pioA_clk),
+	CLKDEV_CON_ID("pioB_clk", &pioB_clk),
+	CLKDEV_CON_ID("pioC_clk", &pioC_clk),
+	CLKDEV_CON_ID("adc_clk", &adc_clk),
+	CLKDEV_CON_ID("mci_clk", &mmc_clk),
+	CLKDEV_CON_ID("udc_clk", &udc_clk),
+	CLKDEV_CON_ID("twi_clk", &twi_clk),
+	CLKDEV_CON_ID("ohci_clk", &ohci_clk),
+	CLKDEV_CON_ID("macb_clk", &macb_clk),
+	CLKDEV_CON_ID("isi_clk", &isi_clk),
+	CLKDEV_CON_DEV_ID("spi_clk", "atmel_spi.0", &spi0_clk),
+	CLKDEV_CON_DEV_ID("spi_clk", "atmel_spi.1", &spi1_clk),
+	/* this chip has a separate clock and irq for each TC channel */
+	CLKDEV_CON_DEV_ID("t0_clk", "atmel_tcb.0", &tc0_clk),
+	CLKDEV_CON_DEV_ID("t1_clk", "atmel_tcb.0", &tc1_clk),
+	CLKDEV_CON_DEV_ID("t2_clk", "atmel_tcb.0", &tc2_clk),
+	CLKDEV_CON_DEV_ID("t3_clk", "atmel_tcb.1", &tc3_clk),
+	CLKDEV_CON_DEV_ID("t4_clk", "atmel_tcb.1", &tc4_clk),
+	CLKDEV_CON_DEV_ID("t5_clk", "atmel_tcb.1", &tc5_clk),
+	CLKDEV_CON_DEV_ID("pclk", "ssc.0", &ssc_clk),
+};
+
+static struct clk_lookup usart_clocks_lookups[] = {
+	CLKDEV_CON_DEV_ID("usart", "atmel_usart.0", &mck),
+	CLKDEV_CON_DEV_ID("usart", "atmel_usart.1", &usart0_clk),
+	CLKDEV_CON_DEV_ID("usart", "atmel_usart.2", &usart1_clk),
+	CLKDEV_CON_DEV_ID("usart", "atmel_usart.3", &usart2_clk),
+	CLKDEV_CON_DEV_ID("usart", "atmel_usart.4", &usart3_clk),
+	CLKDEV_CON_DEV_ID("usart", "atmel_usart.5", &usart4_clk),
+	CLKDEV_CON_DEV_ID("usart", "atmel_usart.6", &usart5_clk),
+};
+
 /*
  * The two programmable clocks.
  * You must configure pin multiplexing to bring these signals out.
@@ -231,6 +264,11 @@ static struct clk pck1 = {
 	.id		= 1,
 };
 
+static struct clk_lookup program_clocks_lookups[] = {
+	CLKDEV_CON_ID("pck0", &pck0),
+	CLKDEV_CON_ID("pck1", &pck1),
+};
+
 static void __init at91sam9260_register_clocks(void)
 {
 	int i;
@@ -238,8 +276,21 @@ static void __init at91sam9260_register_clocks(void)
 	for (i = 0; i < ARRAY_SIZE(periph_clocks); i++)
 		clk_register(periph_clocks[i]);
 
+	clkdev_add_table(periph_clocks_lookups,
+			 ARRAY_SIZE(periph_clocks_lookups));
+
 	clk_register(&pck0);
 	clk_register(&pck1);
+
+	clkdev_add_table(program_clocks_lookups,
+			 ARRAY_SIZE(program_clocks_lookups));
+}
+
+struct clk* __init at91sam9260_get_uart_clock(int id)
+{
+	if (id >= ARRAY_SIZE(usart_clocks_lookups))
+		return NULL;
+	return usart_clocks_lookups[id].clk;
 }
 
 /* --------------------------------------------------------------------

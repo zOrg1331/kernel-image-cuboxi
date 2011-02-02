@@ -218,6 +218,44 @@ static struct clk *periph_clocks[] __initdata = {
 	// irq0 .. irq1
 };
 
+static struct clk_lookup periph_clocks_lookups[] = {
+	CLKDEV_CON_ID("pioABCD_clk", &pioABCD_clk),
+	CLKDEV_CON_ID("mpb0_clk", &mpb0_clk),
+	CLKDEV_CON_ID("mpb1_clk", &mpb1_clk),
+	CLKDEV_CON_ID("mpb2_clk", &mpb2_clk),
+	CLKDEV_CON_ID("mpb3_clk", &mpb3_clk),
+	CLKDEV_CON_ID("mpb4_clk", &mpb4_clk),
+	CLKDEV_CON_ID("can_clk", &can_clk),
+	CLKDEV_CON_ID("twi_clk", &twi_clk),
+	CLKDEV_CON_ID("ac97_clk", &ac97_clk),
+	CLKDEV_CON_ID("tcb_clk", &tcb_clk),
+	CLKDEV_CON_ID("pwm_clk", &pwm_clk),
+	CLKDEV_CON_ID("macb_clk", &macb_clk),
+	CLKDEV_CON_ID("aestdes_clk", &aestdes_clk),
+	CLKDEV_CON_ID("adc_clk", &adc_clk),
+	CLKDEV_CON_ID("isi_clk", &isi_clk),
+	CLKDEV_CON_ID("lcdc_clk", &lcdc_clk),
+	CLKDEV_CON_ID("dma_clk", &dma_clk),
+	CLKDEV_CON_ID("udphs_clk", &udphs_clk),
+	CLKDEV_CON_ID("ohci_clk", &ohci_clk),
+	CLKDEV_CON_DEV_ID("hclk", "atmel_usba_udc.0", &utmi_clk),
+	CLKDEV_CON_DEV_ID("pclk", "atmel_usba_udc.0", &udphs_clk),
+	CLKDEV_CON_DEV_ID("mci_clk", "at91_mci.0", &mmc0_clk),
+	CLKDEV_CON_DEV_ID("mci_clk", "at91_mci.1", &mmc1_clk),
+	CLKDEV_CON_DEV_ID("spi_clk", "atmel_spi.0", &spi0_clk),
+	CLKDEV_CON_DEV_ID("spi_clk", "atmel_spi.1", &spi1_clk),
+	CLKDEV_CON_DEV_ID("t0_clk", "atmel_tcb.0", &tcb_clk),
+	CLKDEV_CON_DEV_ID("ssc", "ssc.0", &ssc0_clk),
+	CLKDEV_CON_DEV_ID("ssc", "ssc.1", &ssc1_clk),
+};
+
+static struct clk_lookup usart_clocks_lookups[] = {
+	CLKDEV_CON_DEV_ID("usart", "atmel_usart.0", &mck),
+	CLKDEV_CON_DEV_ID("usart", "atmel_usart.1", &usart0_clk),
+	CLKDEV_CON_DEV_ID("usart", "atmel_usart.2", &usart1_clk),
+	CLKDEV_CON_DEV_ID("usart", "atmel_usart.3", &usart2_clk),
+};
+
 /*
  * The four programmable clocks.
  * You must configure pin multiplexing to bring these signals out.
@@ -247,6 +285,13 @@ static struct clk pck3 = {
 	.id		= 3,
 };
 
+static struct clk_lookup program_clocks_lookups[] = {
+	CLKDEV_CON_ID("pck0", &pck0),
+	CLKDEV_CON_ID("pck1", &pck1),
+	CLKDEV_CON_ID("pck2", &pck2),
+	CLKDEV_CON_ID("pck3", &pck3),
+};
+
 static void __init at91cap9_register_clocks(void)
 {
 	int i;
@@ -254,10 +299,23 @@ static void __init at91cap9_register_clocks(void)
 	for (i = 0; i < ARRAY_SIZE(periph_clocks); i++)
 		clk_register(periph_clocks[i]);
 
+	clkdev_add_table(periph_clocks_lookups,
+			 ARRAY_SIZE(periph_clocks_lookups));
+
 	clk_register(&pck0);
 	clk_register(&pck1);
 	clk_register(&pck2);
 	clk_register(&pck3);
+
+	clkdev_add_table(program_clocks_lookups,
+			 ARRAY_SIZE(program_clocks_lookups));
+}
+
+struct clk* __init at91cap9_get_uart_clock(int id)
+{
+	if (id >= ARRAY_SIZE(usart_clocks_lookups))
+		return NULL;
+	return usart_clocks_lookups[id].clk;
 }
 
 /* --------------------------------------------------------------------

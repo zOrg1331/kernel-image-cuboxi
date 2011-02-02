@@ -645,14 +645,7 @@ static struct platform_device at91rm9200_tcb1_device = {
 static void __init at91_add_device_tc(void)
 {
 	/* this chip has a separate clock and irq for each TC channel */
-	at91_clock_associate("tc0_clk", &at91rm9200_tcb0_device.dev, "t0_clk");
-	at91_clock_associate("tc1_clk", &at91rm9200_tcb0_device.dev, "t1_clk");
-	at91_clock_associate("tc2_clk", &at91rm9200_tcb0_device.dev, "t2_clk");
 	platform_device_register(&at91rm9200_tcb0_device);
-
-	at91_clock_associate("tc3_clk", &at91rm9200_tcb1_device.dev, "t0_clk");
-	at91_clock_associate("tc4_clk", &at91rm9200_tcb1_device.dev, "t1_clk");
-	at91_clock_associate("tc5_clk", &at91rm9200_tcb1_device.dev, "t2_clk");
 	platform_device_register(&at91rm9200_tcb1_device);
 }
 #else
@@ -849,17 +842,14 @@ void __init at91_add_device_ssc(unsigned id, unsigned pins)
 	case AT91RM9200_ID_SSC0:
 		pdev = &at91rm9200_ssc0_device;
 		configure_ssc0_pins(pins);
-		at91_clock_associate("ssc0_clk", &pdev->dev, "ssc");
 		break;
 	case AT91RM9200_ID_SSC1:
 		pdev = &at91rm9200_ssc1_device;
 		configure_ssc1_pins(pins);
-		at91_clock_associate("ssc1_clk", &pdev->dev, "ssc");
 		break;
 	case AT91RM9200_ID_SSC2:
 		pdev = &at91rm9200_ssc2_device;
 		configure_ssc2_pins(pins);
-		at91_clock_associate("ssc2_clk", &pdev->dev, "ssc");
 		break;
 	default:
 		return;
@@ -1115,27 +1105,22 @@ void __init at91_register_uart(unsigned id, unsigned portnr, unsigned pins)
 		case 0:		/* DBGU */
 			pdev = &at91rm9200_dbgu_device;
 			configure_dbgu_pins();
-			at91_clock_associate("mck", &pdev->dev, "usart");
 			break;
 		case AT91RM9200_ID_US0:
 			pdev = &at91rm9200_uart0_device;
 			configure_usart0_pins(pins);
-			at91_clock_associate("usart0_clk", &pdev->dev, "usart");
 			break;
 		case AT91RM9200_ID_US1:
 			pdev = &at91rm9200_uart1_device;
 			configure_usart1_pins(pins);
-			at91_clock_associate("usart1_clk", &pdev->dev, "usart");
 			break;
 		case AT91RM9200_ID_US2:
 			pdev = &at91rm9200_uart2_device;
 			configure_usart2_pins(pins);
-			at91_clock_associate("usart2_clk", &pdev->dev, "usart");
 			break;
 		case AT91RM9200_ID_US3:
 			pdev = &at91rm9200_uart3_device;
 			configure_usart3_pins(pins);
-			at91_clock_associate("usart3_clk", &pdev->dev, "usart");
 			break;
 		default:
 			return;
@@ -1147,10 +1132,21 @@ void __init at91_register_uart(unsigned id, unsigned portnr, unsigned pins)
 		at91_uarts[portnr] = pdev;
 }
 
+static struct clk_lookup console_lookups = {
+	.con_id = "usart",
+};
+
 void __init at91_set_serial_console(unsigned portnr)
 {
-	if (portnr < ATMEL_MAX_UART)
+	struct atmel_uart_data *pdata;
+
+	if (portnr < ATMEL_MAX_UART) {
 		atmel_default_console_device = at91_uarts[portnr];
+
+		pdata = atmel_default_console_device->dev.platform_data;
+		console_lookups.clk = at91rm9200_get_uart_clock(pdata->num);
+		clkdev_add(&console_lookups);
+	}
 }
 
 void __init at91_add_device_serial(void)
