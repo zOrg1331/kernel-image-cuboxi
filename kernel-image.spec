@@ -1,6 +1,6 @@
 Name: kernel-image-ovz-el
 Version: 2.6.32
-Release: alt9
+Release: alt10
 
 %define kernel_base_version	%version
 %define kernel_extra_version	%nil
@@ -583,6 +583,17 @@ find %buildroot%_docdir/kernel-doc-%base_flavour-%version/DocBook \
 %endif # staging
 
 %changelog
+* Thu Feb 03 2011 Anton Protopopov <aspsk@altlinux.org> 2.6.32-alt10
+- mm: check mm in __vm_enough_memory() (ALT #25000)
+- Check return value of crypto_alloc_shash() right
+- fix jiffies location
+- Fix some differences between i586 and x86_64 configs
+- build a lot of stuff as modules
+- Do not build snd_pcsp.ko
+- Add drbd83 to modules.build
+- Remove KALLSYMS_{ALL,EXTRA_PASS}
+- Enable IKCONFIG and IKCONFIG_PROC
+
 * Fri Jan 21 2011 Anton Protopopov <aspsk@altlinux.org> 2.6.32-alt9
 - Apply 042test006.1 patches
 - Build kernel-modules-v4l-ovz-el as a separate package
