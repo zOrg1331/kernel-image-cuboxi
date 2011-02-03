@@ -128,7 +128,7 @@ int __vm_enough_memory(struct mm_struct *mm, long pages, int cap_sys_admin)
 	vm_acct_memory(pages);
 
 #ifdef CONFIG_BEANCOUNTERS
-	if (mm->mm_ub->ub_parms[UB_PRIVVMPAGES].held <=
+	if (mm && mm->mm_ub->ub_parms[UB_PRIVVMPAGES].held <=
 			mm->mm_ub->ub_parms[UB_VMGUARPAGES].barrier)
 		return 0;
 #endif
