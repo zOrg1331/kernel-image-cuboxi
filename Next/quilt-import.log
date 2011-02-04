@@ -1,0 +1,27 @@
+Importing i2c based on 2.6.38-rc3-git1
+$ git clone -s -l -n -q . ../quilt-tmp
+$ cd ../quilt-tmp
+$ git reset --hard afe8a887550f7cc24eb16449670b93f6b43c32d8
+HEAD is now at afe8a88 Merge branch 'next' of git://git.monstr.eu/linux-2.6-microblaze
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/i2c
+i2c-delete-linux-i2c-id-h.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/i2c
+From ../quilt-tmp
+ + ce2ec59...69d4685 master     -> quilt/i2c  (forced update)
+Importing jdelvare-hwmon based on 2.6.38-rc3-git1
+$ cd ../quilt-tmp
+$ git reset --hard afe8a887550f7cc24eb16449670b93f6b43c32d8
+HEAD is now at afe8a88 Merge branch 'next' of git://git.monstr.eu/linux-2.6-microblaze
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/jdelvare-hwmon
+hwmon-w83795-document-pin-mapping.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/jdelvare-hwmon
+From ../quilt-tmp
+ + 59e4fea...0f34c62 master     -> quilt/jdelvare-hwmon  (forced update)
+Importing kernel-doc based on 2.6.37-rc4
+Unchanged quilt series kernel-doc
+Importing rr based on v2.6.38-rc2-324-g70d1f36
+Unchanged quilt series rr
+Importing device-mapper based on v2.6.37-7185-g52cfd50
+Unchanged quilt series device-mapper
