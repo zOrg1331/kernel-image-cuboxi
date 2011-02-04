@@ -480,6 +480,13 @@ static int nor_erase_prepare(struct ubi_device *ubi, int pnum)
 	size_t written;
 	loff_t addr;
 	uint32_t data = 0;
+	/*
+	 * Note, we cannot generally define VID header buffers on stack,
+	 * because of the way we deal with these buffers (see the header
+	 * comment in this file). But we know this is a NOR-specific piece of
+	 * code, so we can do this. But yes, this is error-prone and we should
+	 * (pre-)allocate VID header buffer instead.
+	 */
 	struct ubi_vid_hdr vid_hdr;
 
 	/*
@@ -507,11 +514,13 @@ static int nor_erase_prepare(struct ubi_device *ubi, int pnum)
 	 * PEB.
 	 */
 	err1 = ubi_io_read_vid_hdr(ubi, pnum, &vid_hdr, 0);
-	if (err1 == UBI_IO_BAD_HDR_EBADMSG || err1 == UBI_IO_BAD_HDR) {
+	if (err1 == UBI_IO_BAD_HDR_EBADMSG || err1 == UBI_IO_BAD_HDR ||
+	    err1 == UBI_IO_FF) {
 		struct ubi_ec_hdr ec_hdr;
 
 		err1 = ubi_io_read_ec_hdr(ubi, pnum, &ec_hdr, 0);
-		if (err1 == UBI_IO_BAD_HDR_EBADMSG || err1 == UBI_IO_BAD_HDR)
+		if (err1 == UBI_IO_BAD_HDR_EBADMSG || err1 == UBI_IO_BAD_HDR ||
+		    err1 == UBI_IO_FF)
 			/*
 			 * Both VID and EC headers are corrupted, so we can
 			 * safely erase this PEB and not afraid that it will be
