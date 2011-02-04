@@ -1571,7 +1571,7 @@ static int iwl4965_commit_rxon(struct iwl_priv *priv, struct iwl_rxon_context *c
 
 	/* If we issue a new RXON command which required a tune then we must
 	 * send a new TXPOWER command or we won't be able to Tx any frames */
-	ret = iwl_set_tx_power(priv, priv->tx_power_user_lmt, true);
+	ret = iwl_set_tx_power(priv, priv->tx_power_next, true);
 	if (ret) {
 		IWL_ERR(priv, "Error sending TX power (%d)\n", ret);
 		return ret;
@@ -2316,6 +2316,11 @@ static void iwl4965_rx_handler_setup(struct iwl_priv *priv)
 	priv->rx_handlers[REPLY_RX] = iwlagn_rx_reply_rx;
 	/* Tx response */
 	priv->rx_handlers[REPLY_TX] = iwl4965_rx_reply_tx;
+
+	/* set up notification wait support */
+	spin_lock_init(&priv->_agn.notif_wait_lock);
+	INIT_LIST_HEAD(&priv->_agn.notif_waits);
+	init_waitqueue_head(&priv->_agn.notif_waitq);
 }
 
 static void iwl4965_setup_deferred_work(struct iwl_priv *priv)
