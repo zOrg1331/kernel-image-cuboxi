@@ -1,0 +1,22 @@
+Importing i2c based on 2.6.38-rc3-git1
+Unchanged quilt series i2c
+Importing jdelvare-hwmon based on 2.6.38-rc3-git1
+Unchanged quilt series jdelvare-hwmon
+Importing kernel-doc based on 2.6.37-rc4
+Unchanged quilt series kernel-doc
+Importing rr based on v2.6.38-rc3-19-gafe8a88
+$ git clone -s -l -n -q . ../quilt-tmp
+$ cd ../quilt-tmp
+$ git reset --hard afe8a887550f7cc24eb16449670b93f6b43c32d8
+HEAD is now at afe8a88 Merge branch 'next' of git://git.monstr.eu/linux-2.6-microblaze
+$ git quiltimport --author Rusty Russell <rusty@rustcorp.com.au> --patches ../quilt/rr
+virtio:console_wake_up_outvq_on_host_notifications.patch
+virtio:console_update_copyright.patch
+virtio:blk_allow_re_reading_config_space_at_runtime.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/rr
+From ../quilt-tmp
+ + 2dcbcf9...c9ed933 master     -> quilt/rr  (forced update)
+Importing device-mapper based on v2.6.37-7185-g52cfd50
+	quilt series is empty
+$ git update-ref refs/heads/quilt/device-mapper 52cfd503ad7176d23a5dd7af3981744feb60622f
