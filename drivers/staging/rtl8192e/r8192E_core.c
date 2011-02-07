@@ -152,7 +152,6 @@ static void rtl8192_irq_rx_tasklet(struct r8192_priv *priv);
 static void rtl8192_irq_tx_tasklet(struct r8192_priv *priv);
 static void rtl8192_prepare_beacon(struct r8192_priv *priv);
 static irqreturn_t rtl8192_interrupt(int irq, void *netdev);
-static void rtl8192_try_wake_queue(struct net_device *dev, int pri);
 static void rtl819xE_tx_cmd(struct net_device *dev, struct sk_buff *skb);
 static void rtl8192_update_ratr_table(struct net_device* dev);
 static void rtl8192_restart(struct work_struct *work);
@@ -405,7 +404,7 @@ rtl8192e_SetHwReg(struct net_device *dev,u8 variable,u8* val)
 		}
 		break;
 
-		case HW_VAR_CECHK_BSSID:
+		case HW_VAR_CHECK_BSSID:
 		{
 			u32	RegRCR, Type;
 
@@ -548,71 +547,29 @@ static int proc_get_stats_tx(char *page, char **start,
 
 	len += snprintf(page + len, count - len,
 		"TX VI priority ok int: %lu\n"
-//		"TX VI priority error int: %lu\n"
 		"TX VO priority ok int: %lu\n"
-//		"TX VO priority error int: %lu\n"
 		"TX BE priority ok int: %lu\n"
-//		"TX BE priority error int: %lu\n"
 		"TX BK priority ok int: %lu\n"
-//		"TX BK priority error int: %lu\n"
 		"TX MANAGE priority ok int: %lu\n"
-//		"TX MANAGE priority error int: %lu\n"
 		"TX BEACON priority ok int: %lu\n"
 		"TX BEACON priority error int: %lu\n"
 		"TX CMDPKT priority ok int: %lu\n"
-//		"TX high priority ok int: %lu\n"
-//		"TX high priority failed error int: %lu\n"
-//		"TX queue resume: %lu\n"
 		"TX queue stopped?: %d\n"
 		"TX fifo overflow: %lu\n"
-//		"TX beacon: %lu\n"
-//		"TX VI queue: %d\n"
-//		"TX VO queue: %d\n"
-//		"TX BE queue: %d\n"
-//		"TX BK queue: %d\n"
-//		"TX HW queue: %d\n"
-//		"TX VI dropped: %lu\n"
-//		"TX VO dropped: %lu\n"
-//		"TX BE dropped: %lu\n"
-//		"TX BK dropped: %lu\n"
 		"TX total data packets %lu\n"
 		"TX total data bytes :%lu\n",
-//		"TX beacon aborted: %lu\n",
 		priv->stats.txviokint,
-//		priv->stats.txvierr,
 		priv->stats.txvookint,
-//		priv->stats.txvoerr,
 		priv->stats.txbeokint,
-//		priv->stats.txbeerr,
 		priv->stats.txbkokint,
-//		priv->stats.txbkerr,
 		priv->stats.txmanageokint,
-//		priv->stats.txmanageerr,
 		priv->stats.txbeaconokint,
 		priv->stats.txbeaconerr,
 		priv->stats.txcmdpktokint,
-//		priv->stats.txhpokint,
-//		priv->stats.txhperr,
-//		priv->stats.txresumed,
 		netif_queue_stopped(dev),
 		priv->stats.txoverflow,
-//		priv->stats.txbeacon,
-//		atomic_read(&(priv->tx_pending[VI_QUEUE])),
-//		atomic_read(&(priv->tx_pending[VO_QUEUE])),
-//		atomic_read(&(priv->tx_pending[BE_QUEUE])),
-//		atomic_read(&(priv->tx_pending[BK_QUEUE])),
-//		read_nic_byte(dev, TXFIFOCOUNT),
-//		priv->stats.txvidrop,
-//		priv->stats.txvodrop,
 		priv->ieee80211->stats.tx_packets,
-		priv->ieee80211->stats.tx_bytes
-
-
-//		priv->stats.txbedrop,
-//		priv->stats.txbkdrop
-			//	priv->stats.txdatapkt
-//		priv->stats.txbeaconerr
-		);
+		priv->ieee80211->stats.tx_bytes);
 
 	*eof = 1;
 	return len;
@@ -632,12 +589,10 @@ static int proc_get_stats_rx(char *page, char **start,
 	len += snprintf(page + len, count - len,
 		"RX packets: %lu\n"
 		"RX desc err: %lu\n"
-		"RX rx overflow error: %lu\n"
-		"RX invalid urb error: %lu\n",
+		"RX rx overflow error: %lu\n",
 		priv->stats.rxint,
 		priv->stats.rxrdu,
-		priv->stats.rxoverflow,
-		priv->stats.rxurberr);
+		priv->stats.rxoverflow);
 
 	*eof = 1;
 	return len;
@@ -979,7 +934,7 @@ static void rtl8192_hard_data_xmit(struct sk_buff *skb, struct net_device *dev, 
 	u8 queue_index = tcb_desc->queue_index;
 
 	/* shall not be referred by command packet */
-	assert(queue_index != TXCMD_QUEUE);
+	BUG_ON(queue_index == TXCMD_QUEUE);
 
 	if (priv->bHwRadioOff || (!priv->up))
 	{
@@ -1242,16 +1197,6 @@ void rtl819xE_tx_cmd(struct net_device *dev, struct sk_buff *skb)
     entry->TxBuffAddr = cpu_to_le32(mapping);
     entry->OWN = 1;
 
-#ifdef JOHN_DUMP_TXDESC
-    {       int i;
-        tx_desc_819x_pci *entry1 =  &ring->desc[0];
-        unsigned int *ptr= (unsigned int *)entry1;
-        printk("<Tx descriptor>:\n");
-        for (i = 0; i < 8; i++)
-            printk("%8x ", ptr[i]);
-        printk("\n");
-    }
-#endif
     __skb_queue_tail(&ring->queue, skb);
     spin_unlock_irqrestore(&priv->irq_th_lock,flags);
 
@@ -1401,10 +1346,6 @@ short rtl8192_tx(struct net_device *dev, struct sk_buff* skb)
 
 	if (uni_addr)
 		priv->stats.txbytesunicast += (u8)(skb->len) - sizeof(TX_FWINFO_8190PCI);
-	else if (multi_addr)
-		priv->stats.txbytesmulticast += (u8)(skb->len) - sizeof(TX_FWINFO_8190PCI);
-	else
-		priv->stats.txbytesbroadcast += (u8)(skb->len) - sizeof(TX_FWINFO_8190PCI);
 
 	/* fill tx firmware */
 	pTxFwInfo = (PTX_FWINFO_8190PCI)skb->data;
@@ -1665,11 +1606,10 @@ static void rtl8192_link_change(struct net_device *dev)
 	{
 		rtl8192_net_update(dev);
 		rtl8192_update_ratr_table(dev);
-#if 1
+
 		//add this as in pure N mode, wep encryption will use software way, but there is no chance to set this as wep will not set group key in wext. WB.2008.07.08
 		if ((KEY_TYPE_WEP40 == ieee->pairwise_key_type) || (KEY_TYPE_WEP104 == ieee->pairwise_key_type))
 		EnableHWSecurityConfig8192(dev);
-#endif
 	}
 	else
 	{
@@ -1744,7 +1684,6 @@ static void rtl8192_qos_activate(struct work_struct * work)
 				(((u32)(qos_parameters->cw_max[i]))<< AC_PARAM_ECW_MAX_OFFSET)|
 				(((u32)(qos_parameters->cw_min[i]))<< AC_PARAM_ECW_MIN_OFFSET)|
 				((u32)u1bAIFS << AC_PARAM_AIFS_OFFSET));
-		//printk("===>u4bAcParam:%x, ", u4bAcParam);
 		write_nic_dword(dev, WDCAPARA_ADD[i], u4bAcParam);
 		//write_nic_dword(dev, WDCAPARA_ADD[i], 0x005e4332);
 	}
@@ -1936,8 +1875,6 @@ static void rtl8192_refresh_supportrate(struct r8192_priv* priv)
 	if (ieee->mode == WIRELESS_MODE_N_24G || ieee->mode == WIRELESS_MODE_N_5G)
 	{
 		memcpy(ieee->Regdot11HTOperationalRateSet, ieee->RegHTSuppRateSet, 16);
-		//RT_DEBUG_DATA(COMP_INIT, ieee->RegHTSuppRateSet, 16);
-		//RT_DEBUG_DATA(COMP_INIT, ieee->Regdot11HTOperationalRateSet, 16);
 	}
 	else
 		memset(ieee->Regdot11HTOperationalRateSet, 0, 16);
@@ -1969,7 +1906,6 @@ static void rtl8192_SetWirelessMode(struct net_device* dev, u8 wireless_mode)
 	struct r8192_priv *priv = ieee80211_priv(dev);
 	u8 bSupportMode = rtl8192_getSupportedWireleeMode(dev);
 
-#if 1
 	if ((wireless_mode == WIRELESS_MODE_AUTO) || ((wireless_mode&bSupportMode)==0))
 	{
 		if(bSupportMode & WIRELESS_MODE_N_24G)
@@ -1997,9 +1933,6 @@ static void rtl8192_SetWirelessMode(struct net_device* dev, u8 wireless_mode)
 			wireless_mode = WIRELESS_MODE_B;
 		}
 	}
-#ifdef TO_DO_LIST //// TODO: this function doesn't work well at this time, we should wait for FPGA
-	ActUpdateChannelAccessSetting( pAdapter, pHalData->CurrentWirelessMode, &pAdapter->MgntInfo.Info8185.ChannelAccessSetting );
-#endif
 	priv->ieee80211->mode = wireless_mode;
 
 	if ((wireless_mode == WIRELESS_MODE_N_24G) ||  (wireless_mode == WIRELESS_MODE_N_5G))
@@ -2008,8 +1941,6 @@ static void rtl8192_SetWirelessMode(struct net_device* dev, u8 wireless_mode)
 		priv->ieee80211->pHTInfo->bEnableHT = 0;
 	RT_TRACE(COMP_INIT, "Current Wireless Mode is %x\n", wireless_mode);
 	rtl8192_refresh_supportrate(priv);
-#endif
-
 }
 
 static bool GetHalfNmodeSupportByAPs819xPci(struct net_device* dev)
@@ -2151,23 +2082,14 @@ static void rtl8192_init_priv_variable(struct net_device* dev)
 	priv->bHwRadioOff = false;
 
 	priv->being_init_adapter = false;
-	priv->txbuffsize = 1600;//1024;
-	priv->txfwbuffersize = 4096;
 	priv->txringcount = 64;//32;
-	//priv->txbeaconcount = priv->txringcount;
-	priv->txbeaconcount = 2;
 	priv->rxbuffersize = 9100;//2048;//1024;
 	priv->rxringcount = MAX_RX_COUNT;//64;
 	priv->irq_enabled=0;
-	priv->card_8192 = NIC_8192E;
 	priv->rx_skb_complete = 1;
 	priv->chan = 1; //set to channel 1
 	priv->RegWirelessMode = WIRELESS_MODE_AUTO;
 	priv->RegChannelPlan = 0xf;
-	priv->nrxAMPDU_size = 0;
-	priv->nrxAMPDU_aggr_num = 0;
-	priv->last_rxdesc_tsf_high = 0;
-	priv->last_rxdesc_tsf_low = 0;
 	priv->ieee80211->mode = WIRELESS_MODE_AUTO; //SET AUTO
 	priv->ieee80211->iw_mode = IW_MODE_INFRA;
 	priv->ieee80211->ieee_up=0;
@@ -2178,31 +2100,22 @@ static void rtl8192_init_priv_variable(struct net_device* dev)
 	priv->ieee80211->short_slot = 1;
 	priv->promisc = (dev->flags & IFF_PROMISC) ? 1:0;
 	priv->bcck_in_ch14 = false;
-	priv->bfsync_processing  = false;
 	priv->CCKPresentAttentuation = 0;
 	priv->rfa_txpowertrackingindex = 0;
 	priv->rfc_txpowertrackingindex = 0;
 	priv->CckPwEnl = 6;
-	priv->ScanDelay = 50;//for Scan TODO
 	//added by amy for silent reset
 	priv->ResetProgress = RESET_TYPE_NORESET;
 	priv->bForcedSilentReset = 0;
 	priv->bDisableNormalResetCheck = false;
 	priv->force_reset = false;
 	//added by amy for power save
-	priv->RegRfOff = 0;
 	priv->ieee80211->RfOffReason = 0;
 	priv->RFChangeInProgress = false;
 	priv->bHwRfOffAction = 0;
 	priv->SetRFPowerStateInProgress = false;
 	priv->ieee80211->PowerSaveControl.bInactivePs = true;
 	priv->ieee80211->PowerSaveControl.bIPSModeBackup = false;
-	//just for debug
-	priv->txpower_checkcnt = 0;
-	priv->thermal_readback_index =0;
-	priv->txpower_tracking_callback_cnt = 0;
-	priv->ccktxpower_adjustcnt_ch14 = 0;
-	priv->ccktxpower_adjustcnt_not_ch14 = 0;
 
 	priv->ieee80211->current_network.beacon_interval = DEFAULT_BEACONINTERVAL;
 	priv->ieee80211->iw_mode = IW_MODE_INFRA;
@@ -2260,15 +2173,8 @@ static void rtl8192_init_priv_variable(struct net_device* dev)
 	priv->ieee80211->SetHwRegHandler = rtl8192e_SetHwReg;
 	priv->ieee80211->rtllib_ap_sec_type = rtl8192e_ap_sec_type;
 
-	priv->card_type = USB;
-	{
-		priv->ShortRetryLimit = 0x30;
-		priv->LongRetryLimit = 0x30;
-	}
-	priv->EarlyRxThreshold = 7;
-	priv->enable_gpio0 = 0;
-
-	priv->TransmitConfig = 0;
+	priv->ShortRetryLimit = 0x30;
+	priv->LongRetryLimit = 0x30;
 
 	priv->ReceiveConfig = RCR_ADD3	|
 		RCR_AMF | RCR_ADF |		//accept management/data
@@ -2282,11 +2188,9 @@ static void rtl8192_init_priv_variable(struct net_device* dev)
 				IMR_BDOK | IMR_RXCMDOK | IMR_TIMEOUT0 | IMR_RDU | IMR_RXFOVW |
 				IMR_TXFOVW | IMR_BcnInt | IMR_TBDOK | IMR_TBDER);
 
-	priv->AcmControl = 0;
 	priv->pFirmware = vzalloc(sizeof(rt_firmware));
 
 	/* rx related queue */
-        skb_queue_head_init(&priv->rx_queue);
 	skb_queue_head_init(&priv->skb_queue);
 
 	/* Tx related queue */
@@ -2302,11 +2206,9 @@ static void rtl8192_init_priv_variable(struct net_device* dev)
 static void rtl8192_init_priv_lock(struct r8192_priv* priv)
 {
 	spin_lock_init(&priv->tx_lock);
-	spin_lock_init(&priv->irq_lock);//added by thomas
 	spin_lock_init(&priv->irq_th_lock);
 	spin_lock_init(&priv->rf_ps_lock);
 	spin_lock_init(&priv->ps_lock);
-	//spin_lock_init(&priv->rf_lock);
 	sema_init(&priv->wx_sem,1);
 	sema_init(&priv->rf_sem,1);
 	mutex_init(&priv->mutex);
@@ -2318,11 +2220,7 @@ static void rtl8192_init_priv_task(struct net_device* dev)
 {
 	struct r8192_priv *priv = ieee80211_priv(dev);
 
-#ifdef PF_SYNCTHREAD
-	priv->priv_wq = create_workqueue(DRV_NAME,0);
-#else
 	priv->priv_wq = create_workqueue(DRV_NAME);
-#endif
 
 #ifdef ENABLE_IPS
 	INIT_WORK(&priv->ieee80211->ips_leave_wq, (void*)IPSLeave_wq);
@@ -2362,17 +2260,6 @@ static void rtl8192_get_eeprom_size(struct net_device* dev)
 	//whether need I consider BIT5?
 	priv->epromtype = (curCR & EPROM_CMD_9356SEL) ? EPROM_93c56 : EPROM_93c46;
 	RT_TRACE(COMP_INIT, "<===========%s(), epromtype:%d\n", __FUNCTION__, priv->epromtype);
-}
-
-/*
- * used to swap endian. as ntohl & htonl are not
- * neccessary to swap endian, so use this instead.
- */
-static inline u16 endian_swap(u16* data)
-{
-	u16 tmp = *data;
-	*data = (tmp >> 8) | (tmp << 8);
-	return *data;
 }
 
 /*
@@ -2778,7 +2665,6 @@ static void rtl8192_read_eeprom_info(struct net_device* dev)
 				priv->ChannelPlan);
 			break;
 		case EEPROM_CID_Nettronix:
-			priv->ScanDelay = 100;	//cosa add for scan
 			priv->CustomerID = RT_CID_Nettronix;
 			break;
 		case EEPROM_CID_Pronet:
@@ -2914,11 +2800,7 @@ static short rtl8192_init(struct net_device *dev)
 	init_timer(&priv->watch_dog_timer);
 	priv->watch_dog_timer.data = (unsigned long)dev;
 	priv->watch_dog_timer.function = watch_dog_timer_callback;
-#if defined(IRQF_SHARED)
-        if(request_irq(dev->irq, (void*)rtl8192_interrupt, IRQF_SHARED, dev->name, dev)){
-#else
-        if(request_irq(dev->irq, (void *)rtl8192_interrupt, SA_SHIRQ, dev->name, dev)){
-#endif
+        if (request_irq(dev->irq, rtl8192_interrupt, IRQF_SHARED, dev->name, dev)) {
 		printk("Error allocating IRQ %d",dev->irq);
 		return -1;
 	}else{
@@ -3049,10 +2931,6 @@ static RT_STATUS rtl8192_adapter_start(struct net_device *dev)
 	//PlatformSleepUs(10000);
 	// For any kind of InitializeAdapter process, we shall use system now!!
 	priv->pFirmware->firmware_status = FW_STATUS_0_INIT;
-
-	// Set to eRfoff in order not to count receive count.
-	if(priv->RegRfOff == TRUE)
-		priv->ieee80211->eRFPowerState = eRfOff;
 
 	//
 	//3 //Config CPUReset Register
@@ -3266,7 +3144,6 @@ static RT_STATUS rtl8192_adapter_start(struct net_device *dev)
 			RT_TRACE(COMP_INIT, "Before C-cut\n");
 		}
 
-#if 1
 	//Firmware download
 	RT_TRACE(COMP_INIT, "Load Firmware!\n");
 	bfirmwareok = init_firmware(dev);
@@ -3275,7 +3152,7 @@ static RT_STATUS rtl8192_adapter_start(struct net_device *dev)
 		return rtStatus;
 	}
 	RT_TRACE(COMP_INIT, "Load Firmware finished!\n");
-#endif
+
 	//RF config
 	if(priv->ResetProgress == RESET_TYPE_NORESET)
 	{
@@ -3315,17 +3192,7 @@ static RT_STATUS rtl8192_adapter_start(struct net_device *dev)
 #ifdef ENABLE_IPS
 
 {
-	if(priv->RegRfOff == TRUE)
-	{ // User disable RF via registry.
-		RT_TRACE((COMP_INIT|COMP_RF|COMP_POWER), "%s(): Turn off RF for RegRfOff ----------\n",__FUNCTION__);
-		MgntActSet_RF_State(dev, eRfOff, RF_CHANGE_BY_SW);
-#if 0//cosa, ask SD3 willis and he doesn't know what is this for
-		// Those action will be discard in MgntActSet_RF_State because off the same state
-	for(eRFPath = 0; eRFPath <pHalData->NumTotalRFPath; eRFPath++)
-		PHY_SetRFReg(Adapter, (RF90_RADIO_PATH_E)eRFPath, 0x4, 0xC00, 0x0);
-#endif
-	}
-	else if(priv->ieee80211->RfOffReason > RF_CHANGE_BY_PS)
+	if(priv->ieee80211->RfOffReason > RF_CHANGE_BY_PS)
 	{ // H/W or S/W RF OFF before sleep.
 		RT_TRACE((COMP_INIT|COMP_RF|COMP_POWER), "%s(): Turn off RF for RfOffReason(%d) ----------\n", __FUNCTION__,priv->ieee80211->RfOffReason);
 		MgntActSet_RF_State(dev, eRfOff, priv->ieee80211->RfOffReason);
@@ -3564,8 +3431,6 @@ static RESET_TYPE
 TxCheckStuck(struct net_device *dev)
 {
 	struct r8192_priv *priv = ieee80211_priv(dev);
-	u8			QueueID;
-	ptx_ring		head=NULL,tail=NULL,txring = NULL;
 	u8			ResetThreshold = NIC_SEND_HANG_THRESHOLD_POWERSAVE;
 	bool			bCheckFwTxCnt = false;
 
@@ -3586,62 +3451,6 @@ TxCheckStuck(struct net_device *dev)
 			break;
 	}
 
-	//
-	// Check whether specific tcb has been queued for a specific time
-	//
-	for(QueueID = 0; QueueID < MAX_TX_QUEUE; QueueID++)
-	{
-
-
-		if(QueueID == TXCMD_QUEUE)
-			continue;
-
-		switch(QueueID) {
-		case MGNT_QUEUE:
-			tail=priv->txmapringtail;
-			head=priv->txmapringhead;
-			break;
-
-		case BK_QUEUE:
-			tail=priv->txbkpringtail;
-			head=priv->txbkpringhead;
-			break;
-
-		case BE_QUEUE:
-			tail=priv->txbepringtail;
-			head=priv->txbepringhead;
-			break;
-
-		case VI_QUEUE:
-			tail=priv->txvipringtail;
-			head=priv->txvipringhead;
-			break;
-
-		case VO_QUEUE:
-			tail=priv->txvopringtail;
-			head=priv->txvopringhead;
-			break;
-
-		default:
-			tail=head=NULL;
-			break;
-		}
-
-		if(tail == head)
-			continue;
-		else
-		{
-			txring = head;
-			if(txring == NULL)
-			{
-				RT_TRACE(COMP_ERR,"%s():txring is NULL , BUG!\n",__FUNCTION__);
-				continue;
-			}
-			txring->nStuckCount++;
-			bCheckFwTxCnt = TRUE;
-		}
-	}
-#if 1
 	if(bCheckFwTxCnt)
 	{
 		if(HalTxCheckStuck8190Pci(dev))
@@ -3650,7 +3459,7 @@ TxCheckStuck(struct net_device *dev)
 			return RESET_TYPE_SILENT;
 		}
 	}
-#endif
+
 	return RESET_TYPE_NORESET;
 }
 
@@ -3660,55 +3469,51 @@ static bool HalRxCheckStuck8190Pci(struct net_device *dev)
 	struct r8192_priv *priv = ieee80211_priv(dev);
 	u16 				RegRxCounter = read_nic_word(dev, 0x130);
 	bool				bStuck = FALSE;
-	static u8			rx_chk_cnt = 0;
+
 	RT_TRACE(COMP_RESET,"%s(): RegRxCounter is %d,RxCounter is %d\n",__FUNCTION__,RegRxCounter,priv->RxCounter);
 	// If rssi is small, we should check rx for long time because of bad rx.
 	// or maybe it will continuous silent reset every 2 seconds.
-	rx_chk_cnt++;
+	priv->rx_chk_cnt++;
 	if(priv->undecorated_smoothed_pwdb >= (RateAdaptiveTH_High+5))
 	{
-		rx_chk_cnt = 0;	//high rssi, check rx stuck right now.
+		priv->rx_chk_cnt = 0;	/* high rssi, check rx stuck right now. */
 	}
 	else if(priv->undecorated_smoothed_pwdb < (RateAdaptiveTH_High+5) &&
 		((priv->CurrentChannelBW!=HT_CHANNEL_WIDTH_20&&priv->undecorated_smoothed_pwdb>=RateAdaptiveTH_Low_40M) ||
 		(priv->CurrentChannelBW==HT_CHANNEL_WIDTH_20&&priv->undecorated_smoothed_pwdb>=RateAdaptiveTH_Low_20M)) )
 
 	{
-		if(rx_chk_cnt < 2)
+		if(priv->rx_chk_cnt < 2)
 		{
 			return bStuck;
 		}
 		else
 		{
-			rx_chk_cnt = 0;
+			priv->rx_chk_cnt = 0;
 		}
 	}
 	else if(((priv->CurrentChannelBW!=HT_CHANNEL_WIDTH_20&&priv->undecorated_smoothed_pwdb<RateAdaptiveTH_Low_40M) ||
 		(priv->CurrentChannelBW==HT_CHANNEL_WIDTH_20&&priv->undecorated_smoothed_pwdb<RateAdaptiveTH_Low_20M)) &&
 		priv->undecorated_smoothed_pwdb >= VeryLowRSSI)
 	{
-		if(rx_chk_cnt < 4)
+		if(priv->rx_chk_cnt < 4)
 		{
-			//DbgPrint("RSSI < %d && RSSI >= %d, no check this time \n", RateAdaptiveTH_Low, VeryLowRSSI);
 			return bStuck;
 		}
 		else
 		{
-			rx_chk_cnt = 0;
-			//DbgPrint("RSSI < %d && RSSI >= %d, check this time \n", RateAdaptiveTH_Low, VeryLowRSSI);
+			priv->rx_chk_cnt = 0;
 		}
 	}
 	else
 	{
-		if(rx_chk_cnt < 8)
+		if(priv->rx_chk_cnt < 8)
 		{
-			//DbgPrint("RSSI <= %d, no check this time \n", VeryLowRSSI);
 			return bStuck;
 		}
 		else
 		{
-			rx_chk_cnt = 0;
-			//DbgPrint("RSSI <= %d, check this time \n", VeryLowRSSI);
+			priv->rx_chk_cnt = 0;
 		}
 	}
 	if(priv->RxCounter==RegRxCounter)
@@ -3742,7 +3547,7 @@ rtl819x_ifcheck_resetornot(struct net_device *dev)
 	rfState = priv->ieee80211->eRFPowerState;
 
 	TxResetType = TxCheckStuck(dev);
-#if 1
+
 	if( rfState != eRfOff &&
 		/*ADAPTER_TEST_STATUS_FLAG(Adapter, ADAPTER_STATUS_FW_DOWNLOAD_FAILURE)) &&*/
 		(priv->ieee80211->iw_mode != IW_MODE_ADHOC))
@@ -3757,7 +3562,6 @@ rtl819x_ifcheck_resetornot(struct net_device *dev)
 		// set, STA cannot hear any packet a all. Emily, 2008.04.12
 		RxResetType = RxCheckStuck(dev);
 	}
-#endif
 
 	RT_TRACE(COMP_RESET,"%s(): TxResetType is %d, RxResetType is %d\n",__FUNCTION__,TxResetType,RxResetType);
 	if(TxResetType==RESET_TYPE_NORMAL || RxResetType==RESET_TYPE_NORMAL)
@@ -3937,7 +3741,7 @@ RESET_START:
 		// Set the variable for reset.
 		priv->ResetProgress = RESET_TYPE_SILENT;
 //		rtl8192_close(dev);
-#if 1
+
 		down(&priv->wx_sem);
 		if(priv->up == 0)
 		{
@@ -3990,18 +3794,13 @@ RESET_START:
 				RT_TRACE(COMP_ERR," ERR!!! %s():  Reset Failed!!\n",__FUNCTION__);
 			}
 		}
-#endif
 		ieee->is_silent_reset = 1;
-#if 1
 		EnableHWSecurityConfig8192(dev);
-#if 1
 		if(ieee->state == IEEE80211_LINKED && ieee->iw_mode == IW_MODE_INFRA)
 		{
 			ieee->set_chan(ieee->dev, ieee->current_network.channel);
 
-#if 1
 			queue_work(ieee->wq, &ieee->associate_complete_wq);
-#endif
 
 		}
 		else if(ieee->state == IEEE80211_LINKED && ieee->iw_mode == IW_MODE_ADHOC)
@@ -4017,7 +3816,6 @@ RESET_START:
 				ieee->data_hard_resume(ieee->dev);
 			netif_carrier_on(ieee->dev);
 		}
-#endif
 
 		CamRestoreAllEntry(dev);
 
@@ -4033,7 +3831,6 @@ RESET_START:
 		// For test --> force write UFWP.
 		write_nic_byte(dev, UFWP, 1);
 		RT_TRACE(COMP_RESET, "Reset finished!! ====>[%d]\n", priv->reset_count);
-#endif
 	}
 }
 
@@ -4193,7 +3990,6 @@ IPSEnter(struct net_device *dev)
 			&& (priv->ieee80211->state != IEEE80211_LINKED) )
 		{
 			RT_TRACE(COMP_RF,"IPSEnter(): Turn off RF.\n");
-			//printk("IPSEnter(): Turn off RF.\n");
 			pPSC->eInactivePowerState = eRfOff;
 //			queue_work(priv->priv_wq,&(pPSC->InactivePsWorkItem));
 			InactivePsWorkItemCallback(dev);
@@ -4219,7 +4015,6 @@ IPSLeave(struct net_device *dev)
 		if (rtState != eRfOn  && !pPSC->bSwRfProcessing && priv->ieee80211->RfOffReason <= RF_CHANGE_BY_IPS)
 		{
 			RT_TRACE(COMP_POWER, "IPSLeave(): Turn on RF.\n");
-			//printk("IPSLeave(): Turn on RF.\n");
 			pPSC->eInactivePowerState = eRfOn;
 //			queue_work(priv->priv_wq,&(pPSC->InactivePsWorkItem));
 			InactivePsWorkItemCallback(dev);
@@ -4297,10 +4092,8 @@ static void rtl819x_watchdog_wqcallback(struct work_struct *work)
        struct net_device *dev = priv->ieee80211->dev;
 	struct ieee80211_device* ieee = priv->ieee80211;
 	RESET_TYPE	ResetType = RESET_TYPE_NORESET;
-      	static u8	check_reset_cnt=0;
 	unsigned long flags;
 	bool bBusyTraffic = false;
-	static u8 last_time = 0;
 	bool bEnterPS = false;
 
 	if ((!priv->up) || priv->bHwRadioOff)
@@ -4310,14 +4103,11 @@ static void rtl819x_watchdog_wqcallback(struct work_struct *work)
 		return;
 	hal_dm_watchdog(dev);
 #ifdef ENABLE_IPS
-//	printk("watch_dog ENABLE_IPS\n");
 	if(ieee->actscanning == false){
-		//printk("%d,%d,%d,%d\n", ieee->eRFPowerState, ieee->is_set_key, ieee->proto_stoppping, ieee->wx_set_enc);
 		if((ieee->iw_mode == IW_MODE_INFRA) && (ieee->state == IEEE80211_NOLINK) &&
 		    (ieee->eRFPowerState == eRfOn)&&!ieee->is_set_key &&
 		    (!ieee->proto_stoppping) && !ieee->wx_set_enc){
 			if(ieee->PowerSaveControl.ReturnPoint == IPS_CALLBACK_NONE){
-				//printk("====================>haha:IPSEnter()\n");
 				IPSEnter(dev);
 				//ieee80211_stop_scan(priv->ieee80211);
 			}
@@ -4337,8 +4127,6 @@ static void rtl819x_watchdog_wqcallback(struct work_struct *work)
 			if(	((ieee->LinkDetectInfo.NumRxUnicastOkInPeriod + ieee->LinkDetectInfo.NumTxOkInPeriod) > 8 ) ||
 				(ieee->LinkDetectInfo.NumRxUnicastOkInPeriod > 2) )
 			{
-				//printk("ieee->LinkDetectInfo.NumRxUnicastOkInPeriod is %d,ieee->LinkDetectInfo.NumTxOkInPeriod is %d\n",
-				//	ieee->LinkDetectInfo.NumRxUnicastOkInPeriod,ieee->LinkDetectInfo.NumTxOkInPeriod);
 				bEnterPS= false;
 			}
 			else
@@ -4346,7 +4134,6 @@ static void rtl819x_watchdog_wqcallback(struct work_struct *work)
 				bEnterPS= true;
 			}
 
-			//printk("***bEnterPS = %d\n", bEnterPS);
 			// LeisurePS only work in infra mode.
 			if(bEnterPS)
 			{
@@ -4404,11 +4191,11 @@ static void rtl819x_watchdog_wqcallback(struct work_struct *work)
 	}
 	//check if reset the driver
 	spin_lock_irqsave(&priv->tx_lock,flags);
-	if(check_reset_cnt++ >= 3 && !ieee->is_roaming && (last_time != 1))
+	if (priv->watchdog_check_reset_cnt++ >= 3 && !ieee->is_roaming && 
+	    priv->watchdog_last_time != 1)
 	{
     		ResetType = rtl819x_ifcheck_resetornot(dev);
-		check_reset_cnt = 3;
-		//DbgPrint("Start to check silent reset\n");
+		priv->watchdog_check_reset_cnt = 3;
 	}
 	spin_unlock_irqrestore(&priv->tx_lock,flags);
 	if(!priv->bDisableNormalResetCheck && ResetType == RESET_TYPE_NORMAL)
@@ -4418,15 +4205,15 @@ static void rtl819x_watchdog_wqcallback(struct work_struct *work)
 		return;
 	}
 	/* disable silent reset temply 2008.9.11*/
-#if 1
+
 	if( ((priv->force_reset) || (!priv->bDisableNormalResetCheck && ResetType==RESET_TYPE_SILENT))) // This is control by OID set in Pomelo
 	{
-		last_time = 1;
+		priv->watchdog_last_time = 1;
 		rtl819x_ifsilentreset(dev);
 	}
 	else
-		last_time = 0;
-#endif
+		priv->watchdog_last_time = 0;
+
 	priv->force_reset = false;
 	priv->bForcedSilentReset = false;
 	priv->bResetInProgress = false;
@@ -4709,18 +4496,6 @@ static int rtl8192_ioctl(struct net_device *dev, struct ifreq *rq, int cmd)
 					}
 				}
 			}
-#ifdef JOHN_DEBUG
-		//john's test 0711
-	{
-		int i;
-		printk("@@ wrq->u pointer = ");
-		for(i=0;i<wrq->u.data.length;i++){
-			if(i%10==0) printk("\n");
-			printk( "%8x|", ((u32*)wrq->u.data.pointer)[i] );
-		}
-		printk("\n");
-	}
-#endif /*JOHN_DEBUG*/
 		ret = ieee80211_wpa_supplicant_ioctl(priv->ieee80211, &wrq->u.data);
 		break;
 
@@ -4812,41 +4587,6 @@ static long rtl819x_translate_todbm(u8 signal_strength_index)// 0-100 index.
 	signal_power -= 95;
 
 	return signal_power;
-}
-
-/*
- * Update Rx signal related information in the packet reeived
- * to RxStats. User application can query RxStats to realize
- * current Rx signal status.
- *
- * In normal operation, user only care about the information of the BSS
- * and we shall invoke this function if the packet received is from the BSS.
- */
-static void
-rtl819x_update_rxsignalstatistics8190pci(
-	struct r8192_priv * priv,
-	struct ieee80211_rx_stats * pprevious_stats
-	)
-{
-	int weighting = 0;
-
-	//2 <ToDo> Update Rx Statistics (such as signal strength and signal quality).
-
-	// Initila state
-	if(priv->stats.recv_signal_power == 0)
-		priv->stats.recv_signal_power = pprevious_stats->RecvSignalPower;
-
-	// To avoid the past result restricting the statistics sensitivity, weight the current power (5/6) to speed up the
-	// reaction of smoothed Signal Power.
-	if(pprevious_stats->RecvSignalPower > priv->stats.recv_signal_power)
-		weighting = 5;
-	else if(pprevious_stats->RecvSignalPower < priv->stats.recv_signal_power)
-		weighting = (-5);
-	//
-	// We need more correct power of received packets and the  "SignalStrength" of RxStats have been beautified or translated,
-	// so we record the correct power in Dbm here. By Bruce, 2008-03-07.
-	//
-	priv->stats.recv_signal_power = (priv->stats.recv_signal_power * 5 + pprevious_stats->RecvSignalPower + weighting) / 6;
 }
 
 static void
@@ -4946,17 +4686,6 @@ static void rtl8192_process_phyinfo(struct r8192_priv * priv, u8* buffer,struct 
 	{
 		// if previous packet is not aggregated packet
 		bcheck = true;
-	}else
-	{
-//remve for that we don't use AMPDU to calculate PWDB,because the reported PWDB of some AP is fault.
-#if 0
-		// if previous packet is aggregated packet, and current packet
-		//	(1) is not AMPDU
-		//	(2) is the first packet of one AMPDU
-		// that means the previous packet is the last one aggregated packet
-		if( !pcurrent_stats->bIsAMPDU || pcurrent_stats->bFirstMPDU)
-			bcheck = true;
-#endif
 	}
 
 	if(slide_rssi_statistics++ >= PHY_RSSI_SLID_WIN_MAX)
@@ -4989,29 +4718,6 @@ static void rtl8192_process_phyinfo(struct r8192_priv * priv, u8* buffer,struct 
 
 	rtl8190_process_cck_rxpathsel(priv,pprevious_stats);
 
-	//
-	// Check RSSI
-	//
-	priv->stats.num_process_phyinfo++;
-#if 0
-	/* record the general signal strength to the sliding window. */
-	if(slide_rssi_statistics++ >= PHY_RSSI_SLID_WIN_MAX)
-	{
-		slide_rssi_statistics = PHY_RSSI_SLID_WIN_MAX;
-		last_rssi = priv->stats.slide_signal_strength[slide_rssi_index];
-		priv->stats.slide_rssi_total -= last_rssi;
-	}
-	priv->stats.slide_rssi_total += pprevious_stats->SignalStrength;
-
-	priv->stats.slide_signal_strength[slide_rssi_index++] = pprevious_stats->SignalStrength;
-	if(slide_rssi_index >= PHY_RSSI_SLID_WIN_MAX)
-		slide_rssi_index = 0;
-
-	// <1> Showed on UI for user, in dbm
-	tmp_val = priv->stats.slide_rssi_total/slide_rssi_statistics;
-	priv->stats.signal_strength = rtl819x_translate_todbm((u8)tmp_val);
-
-#endif
 	// <2> Showed on UI for engineering
 	// hardware does not provide rssi information for each rf path in CCK
 	if(!pprevious_stats->bIsCCK && pprevious_stats->bPacketToSelf)
@@ -5025,7 +4731,6 @@ static void rtl8192_process_phyinfo(struct r8192_priv * priv, u8* buffer,struct 
 			if(priv->stats.rx_rssi_percentage[rfpath] == 0)
 			{
 				priv->stats.rx_rssi_percentage[rfpath] = pprevious_stats->RxMIMOSignalStrength[rfpath];
-				//DbgPrint("MIMO RSSI initialize \n");
 			}
 			if(pprevious_stats->RxMIMOSignalStrength[rfpath]  > priv->stats.rx_rssi_percentage[rfpath])
 			{
@@ -5057,12 +4762,10 @@ static void rtl8192_process_phyinfo(struct r8192_priv * priv, u8* buffer,struct 
 			slide_beacon_adc_pwdb_statistics = PHY_Beacon_RSSI_SLID_WIN_MAX;
 			last_beacon_adc_pwdb = priv->stats.Slide_Beacon_pwdb[slide_beacon_adc_pwdb_index];
 			priv->stats.Slide_Beacon_Total -= last_beacon_adc_pwdb;
-			//DbgPrint("slide_beacon_adc_pwdb_index = %d, last_beacon_adc_pwdb = %d, Adapter->RxStats.Slide_Beacon_Total = %d\n",
 			//	slide_beacon_adc_pwdb_index, last_beacon_adc_pwdb, Adapter->RxStats.Slide_Beacon_Total);
 		}
 		priv->stats.Slide_Beacon_Total += pprevious_stats->RxPWDBAll;
 		priv->stats.Slide_Beacon_pwdb[slide_beacon_adc_pwdb_index] = pprevious_stats->RxPWDBAll;
-		//DbgPrint("slide_beacon_adc_pwdb_index = %d, pPreviousRfd->Status.RxPWDBAll = %d\n", slide_beacon_adc_pwdb_index, pPreviousRfd->Status.RxPWDBAll);
 		slide_beacon_adc_pwdb_index++;
 		if(slide_beacon_adc_pwdb_index >= PHY_Beacon_RSSI_SLID_WIN_MAX)
 			slide_beacon_adc_pwdb_index = 0;
@@ -5080,9 +4783,8 @@ static void rtl8192_process_phyinfo(struct r8192_priv * priv, u8* buffer,struct 
 		if(priv->undecorated_smoothed_pwdb < 0)	// initialize
 		{
 			priv->undecorated_smoothed_pwdb = pprevious_stats->RxPWDBAll;
-			//DbgPrint("First pwdb initialize \n");
 		}
-#if 1
+
 		if(pprevious_stats->RxPWDBAll > (u32)priv->undecorated_smoothed_pwdb)
 		{
 			priv->undecorated_smoothed_pwdb =
@@ -5096,21 +4798,6 @@ static void rtl8192_process_phyinfo(struct r8192_priv * priv, u8* buffer,struct 
 					( ((priv->undecorated_smoothed_pwdb)*(Rx_Smooth_Factor-1)) +
 					(pprevious_stats->RxPWDBAll)) /(Rx_Smooth_Factor);
 		}
-#else
-		//Fixed by Jacken 2008-03-20
-		if(pPreviousRfd->Status.RxPWDBAll > (u32)pHalData->UndecoratedSmoothedPWDB)
-		{
-			pHalData->UndecoratedSmoothedPWDB =
-					( ((pHalData->UndecoratedSmoothedPWDB)* 5) + (pPreviousRfd->Status.RxPWDBAll)) / 6;
-			pHalData->UndecoratedSmoothedPWDB = pHalData->UndecoratedSmoothedPWDB + 1;
-		}
-		else
-		{
-			pHalData->UndecoratedSmoothedPWDB =
-					( ((pHalData->UndecoratedSmoothedPWDB)* 5) + (pPreviousRfd->Status.RxPWDBAll)) / 6;
-		}
-#endif
-		rtl819x_update_rxsignalstatistics8190pci(priv,pprevious_stats);
 	}
 
 	//
@@ -5137,9 +4824,7 @@ static void rtl8192_process_phyinfo(struct r8192_priv * priv, u8* buffer,struct 
 
 			// <1> Showed on UI for user, in percentage.
 			tmp_val = priv->stats.slide_evm_total/slide_evm_statistics;
-			priv->stats.signal_quality = tmp_val;
 			//cosa add 10/11/2007, Showed on UI for user in Windows Vista, for Link quality.
-			priv->stats.last_signal_strength_inpercent = tmp_val;
 		}
 
 		// <2> Showed on UI for engineering
@@ -5279,12 +4964,6 @@ static void rtl8192_query_rxphystatus(
 	u8				is_cck_rate=0;
 	u8				rf_rx_num = 0;
 
-	/* 2007/07/04 MH For OFDM RSSI. For high power or not. */
-	static	u8		check_reg824 = 0;
-	static	u32		reg824_bit9 = 0;
-
-	priv->stats.numqry_phystatus++;
-
 	is_cck_rate = rx_hal_is_cck_rate(pdrvinfo);
 
 	// Record it for next packet processing
@@ -5295,10 +4974,10 @@ static void rtl8192_query_rxphystatus(
 	pstats->bPacketBeacon = precord_stats->bPacketBeacon = bPacketBeacon;
 	pstats->bToSelfBA = precord_stats->bToSelfBA = bToSelfBA;
 	/*2007.08.30 requested by SD3 Jerry */
-	if(check_reg824 == 0)
+	if (priv->phy_check_reg824 == 0)
 	{
-		reg824_bit9 = rtl8192_QueryBBReg(priv->ieee80211->dev, rFPGA0_XA_HSSIParameter2, 0x200);
-		check_reg824 = 1;
+		priv->phy_reg824_bit9 = rtl8192_QueryBBReg(priv->ieee80211->dev, rFPGA0_XA_HSSIParameter2, 0x200);
+		priv->phy_check_reg824 = 1;
 	}
 
 
@@ -5330,7 +5009,6 @@ static void rtl8192_query_rxphystatus(
 		u8 tmp_pwdb;
 		char cck_adc_pwdb[4];
 #endif
-		priv->stats.numqry_phystatusCCK++;
 
 #ifdef RTL8190P	//Only 90P 2T4R need to check
 		if(priv->rf_type == RF_2T4R && DM_RxPathSelTable.Enable && bpacket_match_bssid)
@@ -5341,12 +5019,11 @@ static void rtl8192_query_rxphystatus(
 				cck_adc_pwdb[i] = (char)tmp_pwdb;
 				cck_adc_pwdb[i] /= 2;
 				pstats->cck_adc_pwdb[i] = precord_stats->cck_adc_pwdb[i] = cck_adc_pwdb[i];
-				//DbgPrint("RF-%d tmp_pwdb = 0x%x, cck_adc_pwdb = %d", i, tmp_pwdb, cck_adc_pwdb[i]);
 			}
 		}
 #endif
 
-		if(!reg824_bit9)
+		if (!priv->phy_reg824_bit9)
 		{
 			report = pcck_buf->cck_agc_rpt & 0xc0;
 			report = report>>6;
@@ -5422,7 +5099,6 @@ static void rtl8192_query_rxphystatus(
 	}
 	else
 	{
-		priv->stats.numqry_phystatusHT++;
 		//
 		// (1)Get RSSI for HT rate
 		//
@@ -5446,7 +5122,6 @@ static void rtl8192_query_rxphystatus(
 			tmp_rxsnr = pofdm_buf->rxsnr_X[i];
 			rx_snrX = (char)(tmp_rxsnr);
 			rx_snrX /= 2;
-			priv->stats.rxSNRdB[i] = (long)rx_snrX;
 
 			/* Translate DBM to percentage. */
 			RSSI = rtl819x_query_rxpwrpercentage(rx_pwr[i]);
@@ -5493,9 +5168,6 @@ static void rtl8192_query_rxphystatus(
 			rx_evmX /= 2;	//dbm
 
 			evm = rtl819x_evm_dbtopercentage(rx_evmX);
-#if 0
-			EVM = SignalScaleMapping(EVM);//make it good looking, from 0~100
-#endif
 			if(bpacket_match_bssid)
 			{
 				if(i==0) // Fill value in RFD, Get the first spatial stream only
@@ -5508,10 +5180,6 @@ static void rtl8192_query_rxphystatus(
 		/* record rx statistics for debug */
 		rxsc_sgien_exflg = pofdm_buf->rxsc_sgien_exflg;
 		prxsc = (phy_ofdm_rx_status_rxsc_sgien_exintfflag *)&rxsc_sgien_exflg;
-		if(pdrvinfo->BW)	//40M channel
-			priv->stats.received_bwtype[1+prxsc->rxsc]++;
-		else				//20M channel
-			priv->stats.received_bwtype[0]++;
 	}
 
 	//UI BSS List signal strength(in percentage), make it good looking, from 0~100.
@@ -5553,7 +5221,6 @@ static void TranslateRxSignalStuff819xpci(struct net_device *dev,
     struct r8192_priv *priv = (struct r8192_priv *)ieee80211_priv(dev);
     bool bpacket_match_bssid, bpacket_toself;
     bool bPacketBeacon=false, bToSelfBA=false;
-    static struct ieee80211_rx_stats  previous_stats;
     struct ieee80211_hdr_3addr *hdr;
     u16 fc,type;
 
@@ -5572,39 +5239,29 @@ static void TranslateRxSignalStuff819xpci(struct net_device *dev,
 
     /* Check if the received packet is acceptabe. */
     bpacket_match_bssid = ((IEEE80211_FTYPE_CTL != type) &&
-            (eqMacAddr(priv->ieee80211->current_network.bssid,	(fc & IEEE80211_FCTL_TODS)? hdr->addr1 : (fc & IEEE80211_FCTL_FROMDS )? hdr->addr2 : hdr->addr3))
+            (!compare_ether_addr(priv->ieee80211->current_network.bssid,	(fc & IEEE80211_FCTL_TODS)? hdr->addr1 : (fc & IEEE80211_FCTL_FROMDS )? hdr->addr2 : hdr->addr3))
             && (!pstats->bHwError) && (!pstats->bCRC)&& (!pstats->bICV));
-    bpacket_toself =  bpacket_match_bssid & (eqMacAddr(praddr, priv->ieee80211->dev->dev_addr));
-#if 1//cosa
+    bpacket_toself =  bpacket_match_bssid & (!compare_ether_addr(praddr, priv->ieee80211->dev->dev_addr));
+
     if(WLAN_FC_GET_FRAMETYPE(fc)== IEEE80211_STYPE_BEACON)
     {
         bPacketBeacon = true;
-        //DbgPrint("Beacon 2, MatchBSSID = %d, ToSelf = %d \n", bPacketMatchBSSID, bPacketToSelf);
     }
     if(WLAN_FC_GET_FRAMETYPE(fc) == IEEE80211_STYPE_BLOCKACK)
     {
-        if((eqMacAddr(praddr,dev->dev_addr)))
+        if((!compare_ether_addr(praddr,dev->dev_addr)))
             bToSelfBA = true;
-        //DbgPrint("BlockAck, MatchBSSID = %d, ToSelf = %d \n", bPacketMatchBSSID, bPacketToSelf);
     }
 
-#endif
-    if(bpacket_match_bssid)
-    {
-        priv->stats.numpacket_matchbssid++;
-    }
-    if(bpacket_toself){
-        priv->stats.numpacket_toself++;
-    }
     //
     // Process PHY information for previous packet (RSSI/PWDB/EVM)
     //
     // Because phy information is contained in the last packet of AMPDU only, so driver
     // should process phy information of previous packet
-    rtl8192_process_phyinfo(priv, tmp_buf,&previous_stats, pstats);
-    rtl8192_query_rxphystatus(priv, pstats, pdesc, pdrvinfo, &previous_stats, bpacket_match_bssid,
+    rtl8192_process_phyinfo(priv, tmp_buf, &priv->previous_stats, pstats);
+    rtl8192_query_rxphystatus(priv, pstats, pdesc, pdrvinfo, &priv->previous_stats, bpacket_match_bssid,
             bpacket_toself ,bPacketBeacon, bToSelfBA);
-    rtl8192_record_rxdesc_forlateruse(pstats, &previous_stats);
+    rtl8192_record_rxdesc_forlateruse(pstats, &priv->previous_stats);
 
 }
 
@@ -5623,12 +5280,6 @@ static void rtl8192_tx_resume(struct net_device *dev)
 			skb = skb_dequeue(&ieee->skb_waitQ[queue_index]);
 			/* 2. tx the packet directly */
 			ieee->softmac_data_hard_start_xmit(skb,dev,0/* rate useless now*/);
-			#if 0
-			if(queue_index!=MGNT_QUEUE) {
-				ieee->stats.tx_packets++;
-				ieee->stats.tx_bytes += skb->len;
-			}
-			#endif
 		}
 	}
 }
@@ -5700,7 +5351,6 @@ static void UpdateReceivedRateHistogramStatistics8190(
 	    	case MGN_MCS15: rateIndex = 27; break;
 		default:        rateIndex = 28; break;
 	}
-	priv->stats.received_preamble_GI[preamble_guardinterval][rateIndex]++;
 	priv->stats.received_rate_histogram[0][rateIndex]++; //total
 	priv->stats.received_rate_histogram[rcvType][rateIndex]++;
 }
@@ -5717,8 +5367,6 @@ static void rtl8192_rx(struct net_device *dev)
         .freq = IEEE80211_24GHZ_BAND,
     };
     unsigned int count = priv->rxringcount;
-
-    stats.nic_type = NIC_8192E;
 
     while (count--) {
         rx_desc_819x_pci *pdesc = &priv->rx_ring[priv->rx_idx];//rx descriptor
@@ -5738,15 +5386,6 @@ static void rtl8192_rx(struct net_device *dev)
 
             if(stats.bHwError) {
                 stats.bShift = false;
-
-                if(pdesc->CRC32) {
-                    if (pdesc->Length <500)
-                        priv->stats.rxcrcerrmin++;
-                    else if (pdesc->Length >1000)
-                        priv->stats.rxcrcerrmax++;
-                    else
-                        priv->stats.rxcrcerrmid++;
-                }
                 goto done;
             } else {
                 prx_fwinfo_819x_pci pDrvInfo = NULL;
@@ -5970,28 +5609,11 @@ static int __devinit rtl8192_pci_probe(struct pci_dev *pdev,
 	priv->irq = 0;
 
 	dev->netdev_ops = &rtl8192_netdev_ops;
-#if 0
-	dev->open = rtl8192_open;
-	dev->stop = rtl8192_close;
-	//dev->hard_start_xmit = rtl8192_8023_hard_start_xmit;
-	dev->tx_timeout = tx_timeout;
-	//dev->wireless_handlers = &r8192_wx_handlers_def;
-	dev->do_ioctl = rtl8192_ioctl;
-	dev->set_multicast_list = r8192_set_multicast;
-	dev->set_mac_address = r8192_set_mac_adr;
-#endif
 
-         //DMESG("Oops: i'm coming\n");
-#if WIRELESS_EXT >= 12
-#if WIRELESS_EXT < 17
-        dev->get_wireless_stats = r8192_get_wireless_stats;
-#endif
-        dev->wireless_handlers = (struct iw_handler_def *) &r8192_wx_handlers_def;
-#endif
-       //dev->get_wireless_stats = r8192_get_wireless_stats;
+	dev->wireless_handlers = &r8192_wx_handlers_def;
 	dev->type=ARPHRD_ETHER;
 
-	dev->watchdog_timeo = HZ*3;	//modified by john, 0805
+	dev->watchdog_timeo = HZ*3;
 
 	if (dev_alloc_name(dev, ifname) < 0){
                 RT_TRACE(COMP_INIT, "Oops: devname already taken! Trying wlan%%d...\n");
@@ -6004,9 +5626,6 @@ static int __devinit rtl8192_pci_probe(struct pci_dev *pdev,
 		RT_TRACE(COMP_ERR, "Initialization failed");
 		goto fail;
 	}
-
-	netif_carrier_off(dev);
-	netif_stop_queue(dev);
 
 	register_netdev(dev);
 	RT_TRACE(COMP_INIT, "dev name=======> %s\n",dev->name);
@@ -6119,10 +5738,6 @@ static void __devexit rtl8192_pci_disconnect(struct pci_dev *pdev)
 
 		}
 
-
-
-	//	free_beacon_desc_ring(dev,priv->txbeaconcount);
-
 #ifdef CONFIG_RTL8180_IO_MAP
 
 		if( dev->base_addr != 0 ){
@@ -6159,7 +5774,6 @@ static int __init rtl8192_pci_module_init(void)
 	printk(KERN_INFO "\nLinux kernel driver for RTL8192 based WLAN cards\n");
 	printk(KERN_INFO "Copyright (c) 2007-2008, Realsil Wlan\n");
 	RT_TRACE(COMP_INIT, "Initializing module");
-	RT_TRACE(COMP_INIT, "Wireless extensions version %d", WIRELESS_EXT);
 	rtl8192_proc_module_init();
       if(0!=pci_register_driver(&rtl8192_pci_driver))
 	{
@@ -6180,154 +5794,124 @@ static void __exit rtl8192_pci_module_exit(void)
 	ieee80211_rtl_exit();
 }
 
-//warning message WB
 static irqreturn_t rtl8192_interrupt(int irq, void *netdev)
 {
-    struct net_device *dev = (struct net_device *) netdev;
-    struct r8192_priv *priv = (struct r8192_priv *)ieee80211_priv(dev);
-    unsigned long flags;
-    u32 inta;
-    /* We should return IRQ_NONE, but for now let me keep this */
-    if(priv->irq_enabled == 0){
-        return IRQ_HANDLED;
-    }
+	struct net_device *dev = (struct net_device *) netdev;
+	struct r8192_priv *priv = (struct r8192_priv *)ieee80211_priv(dev);
+	unsigned long flags;
+	u32 inta;
+	irqreturn_t ret = IRQ_HANDLED;
 
-    spin_lock_irqsave(&priv->irq_th_lock,flags);
+	spin_lock_irqsave(&priv->irq_th_lock, flags);
 
-    //ISR: 4bytes
+	/* We should return IRQ_NONE, but for now let me keep this */
+	if (priv->irq_enabled == 0)
+		goto out_unlock;
 
-    inta = read_nic_dword(dev, ISR);// & priv->IntrMask;
-    write_nic_dword(dev,ISR,inta); // reset int situation
+	/* ISR: 4bytes */
 
-    priv->stats.shints++;
-    //DMESG("Enter interrupt, ISR value = 0x%08x", inta);
-    if(!inta){
-        spin_unlock_irqrestore(&priv->irq_th_lock,flags);
-        return IRQ_HANDLED;
-        /*
-           most probably we can safely return IRQ_NONE,
-           but for now is better to avoid problems
-           */
-    }
+	inta = read_nic_dword(dev, ISR); /* & priv->IntrMask; */
+	write_nic_dword(dev, ISR, inta); /* reset int situation */
 
-    if(inta == 0xffff){
-        /* HW disappared */
-        spin_unlock_irqrestore(&priv->irq_th_lock,flags);
-        return IRQ_HANDLED;
-    }
+	if (!inta) {
+		/*
+		 * most probably we can safely return IRQ_NONE,
+		 * but for now is better to avoid problems
+		 */
+		goto out_unlock;
+	}
 
-    priv->stats.ints++;
-#ifdef DEBUG_IRQ
-    DMESG("NIC irq %x",inta);
-#endif
-    //priv->irqpending = inta;
+	if (inta == 0xffff) {
+		/* HW disappared */
+		goto out_unlock;
+	}
 
+	if (!netif_running(dev))
+		goto out_unlock;
 
-    if(!netif_running(dev)) {
-        spin_unlock_irqrestore(&priv->irq_th_lock,flags);
-        return IRQ_HANDLED;
-    }
+	if (inta & IMR_TBDOK) {
+		RT_TRACE(COMP_INTR, "beacon ok interrupt!\n");
+		rtl8192_tx_isr(dev, BEACON_QUEUE);
+		priv->stats.txbeaconokint++;
+	}
 
-    if(inta & IMR_TIMEOUT0){
-        //		write_nic_dword(dev, TimerInt, 0);
-        //DMESG("=================>waking up");
-        //		rtl8180_hw_wakeup(dev);
-    }
+	if (inta & IMR_TBDER) {
+		RT_TRACE(COMP_INTR, "beacon ok interrupt!\n");
+		rtl8192_tx_isr(dev, BEACON_QUEUE);
+		priv->stats.txbeaconerr++;
+	}
 
-    if(inta & IMR_TBDOK){
-        RT_TRACE(COMP_INTR, "beacon ok interrupt!\n");
-        rtl8192_tx_isr(dev, BEACON_QUEUE);
-        priv->stats.txbeaconokint++;
-    }
+	if (inta & IMR_MGNTDOK ) {
+		RT_TRACE(COMP_INTR, "Manage ok interrupt!\n");
+		priv->stats.txmanageokint++;
+		rtl8192_tx_isr(dev,MGNT_QUEUE);
+	}
 
-    if(inta & IMR_TBDER){
-        RT_TRACE(COMP_INTR, "beacon ok interrupt!\n");
-        rtl8192_tx_isr(dev, BEACON_QUEUE);
-        priv->stats.txbeaconerr++;
-    }
+	if (inta & IMR_COMDOK)
+	{
+		priv->stats.txcmdpktokint++;
+		rtl8192_tx_isr(dev, TXCMD_QUEUE);
+	}
 
-    if(inta  & IMR_MGNTDOK ) {
-        RT_TRACE(COMP_INTR, "Manage ok interrupt!\n");
-        priv->stats.txmanageokint++;
-        rtl8192_tx_isr(dev,MGNT_QUEUE);
+	if (inta & IMR_ROK) {
+		priv->stats.rxint++;
+		tasklet_schedule(&priv->irq_rx_tasklet);
+	}
 
-    }
+	if (inta & IMR_BcnInt) {
+		RT_TRACE(COMP_INTR, "prepare beacon for interrupt!\n");
+		tasklet_schedule(&priv->irq_prepare_beacon_tasklet);
+	}
 
-    if(inta & IMR_COMDOK)
-    {
-        priv->stats.txcmdpktokint++;
-        rtl8192_tx_isr(dev,TXCMD_QUEUE);
-    }
+	if (inta & IMR_RDU) {
+		RT_TRACE(COMP_INTR, "rx descriptor unavailable!\n");
+		priv->stats.rxrdu++;
+		/* reset int situation */
+		write_nic_dword(dev, INTA_MASK, read_nic_dword(dev, INTA_MASK) & ~IMR_RDU);
+		tasklet_schedule(&priv->irq_rx_tasklet);
+	}
 
-    if(inta & IMR_ROK){
-#ifdef DEBUG_RX
-        DMESG("Frame arrived !");
-#endif
-        priv->stats.rxint++;
-        tasklet_schedule(&priv->irq_rx_tasklet);
-    }
+	if (inta & IMR_RXFOVW) {
+		RT_TRACE(COMP_INTR, "rx overflow !\n");
+		priv->stats.rxoverflow++;
+		tasklet_schedule(&priv->irq_rx_tasklet);
+	}
 
-    if(inta & IMR_BcnInt) {
-        RT_TRACE(COMP_INTR, "prepare beacon for interrupt!\n");
-        tasklet_schedule(&priv->irq_prepare_beacon_tasklet);
-    }
+	if (inta & IMR_TXFOVW)
+		priv->stats.txoverflow++;
 
-    if(inta & IMR_RDU){
-        RT_TRACE(COMP_INTR, "rx descriptor unavailable!\n");
-        priv->stats.rxrdu++;
-        /* reset int situation */
-        write_nic_dword(dev,INTA_MASK,read_nic_dword(dev, INTA_MASK) & ~IMR_RDU);
-        tasklet_schedule(&priv->irq_rx_tasklet);
-    }
+	if (inta & IMR_BKDOK) {
+		RT_TRACE(COMP_INTR, "BK Tx OK interrupt!\n");
+		priv->stats.txbkokint++;
+		priv->ieee80211->LinkDetectInfo.NumTxOkInPeriod++;
+		rtl8192_tx_isr(dev, BK_QUEUE);
+	}
 
-    if(inta & IMR_RXFOVW){
-        RT_TRACE(COMP_INTR, "rx overflow !\n");
-        priv->stats.rxoverflow++;
-        tasklet_schedule(&priv->irq_rx_tasklet);
-    }
+	if (inta & IMR_BEDOK) {
+		RT_TRACE(COMP_INTR, "BE TX OK interrupt!\n");
+		priv->stats.txbeokint++;
+		priv->ieee80211->LinkDetectInfo.NumTxOkInPeriod++;
+		rtl8192_tx_isr(dev, BE_QUEUE);
+	}
 
-    if(inta & IMR_TXFOVW) priv->stats.txoverflow++;
+	if (inta & IMR_VIDOK) {
+		RT_TRACE(COMP_INTR, "VI TX OK interrupt!\n");
+		priv->stats.txviokint++;
+		priv->ieee80211->LinkDetectInfo.NumTxOkInPeriod++;
+		rtl8192_tx_isr(dev, VI_QUEUE);
+	}
 
-    if(inta & IMR_BKDOK){
-        RT_TRACE(COMP_INTR, "BK Tx OK interrupt!\n");
-        priv->stats.txbkokint++;
-        priv->ieee80211->LinkDetectInfo.NumTxOkInPeriod++;
-        rtl8192_tx_isr(dev,BK_QUEUE);
-        rtl8192_try_wake_queue(dev, BK_QUEUE);
-    }
+	if (inta & IMR_VODOK) {
+		priv->stats.txvookint++;
+		priv->ieee80211->LinkDetectInfo.NumTxOkInPeriod++;
+		rtl8192_tx_isr(dev, VO_QUEUE);
+	}
 
-    if(inta & IMR_BEDOK){
-        RT_TRACE(COMP_INTR, "BE TX OK interrupt!\n");
-        priv->stats.txbeokint++;
-        priv->ieee80211->LinkDetectInfo.NumTxOkInPeriod++;
-        rtl8192_tx_isr(dev,BE_QUEUE);
-        rtl8192_try_wake_queue(dev, BE_QUEUE);
-    }
+out_unlock:
+	spin_unlock_irqrestore(&priv->irq_th_lock, flags);
 
-    if(inta & IMR_VIDOK){
-        RT_TRACE(COMP_INTR, "VI TX OK interrupt!\n");
-        priv->stats.txviokint++;
-        priv->ieee80211->LinkDetectInfo.NumTxOkInPeriod++;
-        rtl8192_tx_isr(dev,VI_QUEUE);
-        rtl8192_try_wake_queue(dev, VI_QUEUE);
-    }
-
-    if(inta & IMR_VODOK){
-        priv->stats.txvookint++;
-        priv->ieee80211->LinkDetectInfo.NumTxOkInPeriod++;
-        rtl8192_tx_isr(dev,VO_QUEUE);
-        rtl8192_try_wake_queue(dev, VO_QUEUE);
-    }
-
-    spin_unlock_irqrestore(&priv->irq_th_lock,flags);
-
-    return IRQ_HANDLED;
+	return ret;
 }
-
-static void rtl8192_try_wake_queue(struct net_device *dev, int pri)
-{
-}
-
 
 void EnableHWSecurityConfig8192(struct net_device *dev)
 {
@@ -6336,7 +5920,7 @@ void EnableHWSecurityConfig8192(struct net_device *dev)
 	struct ieee80211_device* ieee = priv->ieee80211;
 
 	SECR_value = SCR_TxEncEnable | SCR_RxDecEnable;
-#if 1
+
 	if (((KEY_TYPE_WEP40 == ieee->pairwise_key_type) || (KEY_TYPE_WEP104 == ieee->pairwise_key_type)) && (priv->ieee80211->auth_mode != 2))
 	{
 		SECR_value |= SCR_RxUseDK;
@@ -6347,8 +5931,6 @@ void EnableHWSecurityConfig8192(struct net_device *dev)
 		SECR_value |= SCR_RxUseDK;
 		SECR_value |= SCR_TxUseDK;
 	}
-
-#endif
 
         //add HWSec active enable here.
 //default using hwsec. when peer AP is in N mode only and pairwise_key_type is none_aes(which HT_IOT_ACT_PURE_N_MODE indicates it), use software security. when peer AP is in b,g,n mode mixed and pairwise_key_type is none_aes, use g mode hw security. WB on 2008.7.4
@@ -6425,7 +6007,6 @@ void setKey(	struct net_device *dev,
 
 			write_nic_dword(dev, WCAMI, TargetContent);
 			write_nic_dword(dev, RWCAM, TargetCommand);
-	//		printk("setkey cam =%8x\n", read_cam(dev, i+6*EntryNo));
 		}
 		else if(i==1){//MAC
                         TargetContent = (u32)(*(MacAddr+2)) 	 |
@@ -6469,7 +6050,6 @@ bool NicIFEnableNIC(struct net_device* dev)
 		priv->bdisable_nic = false;  //YJ,add,091111
 		return -1;
 	}
-	//printk("start adapter finished\n");
 	RT_CLEAR_PS_LEVEL(pPSC, RT_RF_OFF_LEVL_HALT_NIC);
 	//priv->bfirst_init = false;
 
