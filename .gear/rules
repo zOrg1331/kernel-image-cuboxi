@@ -73,10 +73,12 @@ copy: diff-openafs-find_task_by_pid
 copy: diff-openafs-for_each_process
 copy: diff-rh-cifs-disable-posix-extensons-by-default-20090304
 copy: diff-rh-hung-task-tunes-and-fixes
+copy: diff-rh-vdso-wall-to-monotonic-kvar-fix
 copy: diff-scsi-add-modalias-mainstream
 copy: diff-serial-pci-add-netmos-9901-support
 copy: diff-snd-hda-intel
 copy: diff-tossing-headers-around
+copy: diff-ubc-batched-pte-acct-x86-fix
 copy: diff-ubc-debug-sock-orphan-acct
 copy: diff-ve-moreleaks-20090829
 copy: diff-vmalloc-supress-passing-gfp-dma32-to-slab

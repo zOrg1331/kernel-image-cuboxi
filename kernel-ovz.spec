@@ -13,7 +13,7 @@
 %define _without_kabichk 1
 
 %define ovzver 028stab084
-%define ovzrel 1
+%define ovzrel 2
 
 %if !%{buildup}
 %define _without_up 1
@@ -6429,6 +6429,8 @@ Patch100026: diff-ms-ext4-nodelalloc-by-default
 Patch100027: diff-rh-hung-task-tunes-and-fixes
 Patch100029: diff-vmalloc-supress-passing-gfp-dma32-to-slab
 Patch100036: diff-ubc-debug-sock-orphan-acct
+Patch100037: diff-rh-vdso-wall-to-monotonic-kvar-fix
+Patch100038: diff-ubc-batched-pte-acct-x86-fix
 
 # MAC HW hacks
 Patch101000: diff-mac-acpi-scan-rsdp-bit-lower-20090811
@@ -12630,6 +12632,8 @@ mv drivers/xen/blktap/blktap.c drivers/xen/blktap/blktapmain.c
 %patch100027 -p1
 %patch100029 -p1
 %patch100036 -p1
+%patch100037 -p1
+%patch100038 -p1
 
 %patch101000 -p1
 %patch101001 -p1
