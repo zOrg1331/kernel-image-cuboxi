@@ -85,6 +85,9 @@ ieee80211_rx_radiotap_len(struct ieee80211_local *local,
 	if (len & 1) /* padding for RX_FLAGS if necessary */
 		len++;
 
+	if (status->flag & RX_FLAG_HT) /* HT info */
+		len += 3;
+
 	return len;
 }
 
@@ -193,6 +196,20 @@ ieee80211_add_rx_radiotap_header(struct ieee80211_local *local,
 		rx_flags |= IEEE80211_RADIOTAP_F_RX_BADPLCP;
 	put_unaligned_le16(rx_flags, pos);
 	pos += 2;
+
+	if (status->flag & RX_FLAG_HT) {
+		rthdr->it_present |= cpu_to_le32(1 << IEEE80211_RADIOTAP_MCS);
+		*pos++ = IEEE80211_RADIOTAP_MCS_HAVE_MCS |
+			 IEEE80211_RADIOTAP_MCS_HAVE_GI |
+			 IEEE80211_RADIOTAP_MCS_HAVE_BW;
+		*pos = 0;
+		if (status->flag & RX_FLAG_SHORT_GI)
+			*pos |= IEEE80211_RADIOTAP_MCS_SGI;
+		if (status->flag & RX_FLAG_40MHZ)
+			*pos |= IEEE80211_RADIOTAP_MCS_BW_40;
+		pos++;
+		*pos++ = status->rate_idx;
+	}
 }
 
 /*
@@ -1556,17 +1573,36 @@ __ieee80211_data_to_8023(struct ieee80211_rx_data *rx)
 {
 	struct ieee80211_sub_if_data *sdata = rx->sdata;
 	struct ieee80211_hdr *hdr = (struct ieee80211_hdr *)rx->skb->data;
+	bool check_port_control = false;
+	struct ethhdr *ehdr;
+	int ret;
 
 	if (ieee80211_has_a4(hdr->frame_control) &&
 	    sdata->vif.type == NL80211_IFTYPE_AP_VLAN && !sdata->u.vlan.sta)
 		return -1;
 
+	if (sdata->vif.type == NL80211_IFTYPE_STATION &&
+	    !!sdata->u.mgd.use_4addr != !!ieee80211_has_a4(hdr->frame_control)) {
+
+		if (!sdata->u.mgd.use_4addr)
+			return -1;
+		else
+			check_port_control = true;
+	}
+
 	if (is_multicast_ether_addr(hdr->addr1) &&
-	    ((sdata->vif.type == NL80211_IFTYPE_AP_VLAN && sdata->u.vlan.sta) ||
-	     (sdata->vif.type == NL80211_IFTYPE_STATION && sdata->u.mgd.use_4addr)))
+	    sdata->vif.type == NL80211_IFTYPE_AP_VLAN && sdata->u.vlan.sta)
 		return -1;
 
-	return ieee80211_data_to_8023(rx->skb, sdata->vif.addr, sdata->vif.type);
+	ret = ieee80211_data_to_8023(rx->skb, sdata->vif.addr, sdata->vif.type);
+	if (ret < 0 || !check_port_control)
+		return ret;
+
+	ehdr = (struct ethhdr *) rx->skb->data;
+	if (ehdr->h_proto != rx->sdata->control_port_protocol)
+		return -1;
+
+	return 0;
 }
 
 /*
@@ -2692,7 +2728,7 @@ static bool ieee80211_prepare_and_rx_handle(struct ieee80211_rx_data *rx,
 		if (!skb) {
 			if (net_ratelimit())
 				wiphy_debug(local->hw.wiphy,
-					"failed to copy multicast frame for %s\n",
+					"failed to copy skb for %s\n",
 					sdata->name);
 			return true;
 		}
