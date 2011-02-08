@@ -26,7 +26,6 @@
 /*****************************************************************************/
 
 #include "easycap.h"
-#include "easycap_debug.h"
 
 /*****************************************************************************/
 #define TESTCARD_BYTESPERLINE (2 * 720)
@@ -152,7 +151,7 @@ for (line = 0;  line < (barheight / 2);  line++) {
 return;
 }
 /*****************************************************************************/
-#if defined(EASYCAP_TESTTONE)
+#ifdef EASYCAP_TESTTONE
 /*-----------------------------------------------------------------------------
 THE tones[] ARRAY BELOW IS THE OUTPUT OF THIS PROGRAM,
 COMPILED gcc -o prog -lm prog.c
@@ -397,7 +396,7 @@ int tones[2048] = {
 };
 /*****************************************************************************/
 void
-easysnd_testtone(struct easycap *peasycap, int audio_fill)
+easyoss_testtone(struct easycap *peasycap, int audio_fill)
 {
 int i1;
 unsigned char *p2;
