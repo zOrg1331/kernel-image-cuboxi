@@ -376,81 +376,69 @@ static void unmask_evtchn(int port)
 	put_cpu();
 }
 
-static int get_nr_hw_irqs(void)
+static int xen_allocate_irq_dynamic(void)
 {
-	int ret = 1;
+	int first = 0;
+	int irq;
 
 #ifdef CONFIG_X86_IO_APIC
-	ret = get_nr_irqs_gsi();
+	/*
+	 * For an HVM guest or domain 0 which see "real" (emulated or
+	 * actual repectively) GSIs we allocate dynamic IRQs
+	 * e.g. those corresponding to event channels or MSIs
+	 * etc. from the range above those "real" GSIs to avoid
+	 * collisions.
+	 */
+	if (xen_initial_domain() || xen_hvm_domain())
+		first = get_nr_irqs_gsi();
 #endif
 
-	return ret;
-}
+retry:
+	irq = irq_alloc_desc_from(first, -1);
 
-static int find_unbound_pirq(int type)
-{
-	int rc, i;
-	struct physdev_get_free_pirq op_get_free_pirq;
-	op_get_free_pirq.type = type;
-
-	rc = HYPERVISOR_physdev_op(PHYSDEVOP_get_free_pirq, &op_get_free_pirq);
-	if (!rc)
-		return op_get_free_pirq.pirq;
-
-	for (i = 0; i < nr_irqs; i++) {
-		if (pirq_to_irq[i] < 0)
-			return i;
-	}
-	return -1;
-}
-
-static int find_unbound_irq(void)
-{
-	struct irq_data *data;
-	int irq, res;
-	int bottom = get_nr_hw_irqs();
-	int top = nr_irqs-1;
-
-	if (bottom == nr_irqs)
-		goto no_irqs;
-
-	/* This loop starts from the top of IRQ space and goes down.
-	 * We need this b/c if we have a PCI device in a Xen PV guest
-	 * we do not have an IO-APIC (though the backend might have them)
-	 * mapped in. To not have a collision of physical IRQs with the Xen
-	 * event channels start at the top of the IRQ space for virtual IRQs.
-	 */
-	for (irq = top; irq > bottom; irq--) {
-		data = irq_get_irq_data(irq);
-		/* only 15->0 have init'd desc; handle irq > 16 */
-		if (!data)
-			break;
-		if (data->chip == &no_irq_chip)
-			break;
-		if (data->chip != &xen_dynamic_chip)
-			continue;
-		if (irq_info[irq].type == IRQT_UNBOUND)
-			return irq;
+	if (irq == -ENOMEM && first > NR_IRQS_LEGACY) {
+		printk(KERN_ERR "Out of dynamic IRQ space and eating into GSI space. You should increase nr_irqs\n");
+		first = max(NR_IRQS_LEGACY, first - NR_IRQS_LEGACY);
+		goto retry;
 	}
 
-	if (irq == bottom)
-		goto no_irqs;
-
-	res = irq_alloc_desc_at(irq, -1);
-
-	if (WARN_ON(res != irq))
-		return -1;
+	if (irq < 0)
+		panic("No available IRQ to bind to: increase nr_irqs!\n");
 
 	return irq;
-
-no_irqs:
-	panic("No available IRQ to bind to: increase nr_irqs!\n");
 }
 
-static bool identity_mapped_irq(unsigned irq)
+static int xen_allocate_irq_gsi(unsigned gsi)
 {
-	/* identity map all the hardware irqs */
-	return irq < get_nr_hw_irqs();
+	int irq;
+
+	/*
+	 * A PV guest has no concept of a GSI (since it has no ACPI
+	 * nor access to/knowledge of the physical APICs). Therefore
+	 * all IRQs are dynamically allocated from the entire IRQ
+	 * space.
+	 */
+	if (xen_pv_domain() && !xen_initial_domain())
+		return xen_allocate_irq_dynamic();
+
+	/* Legacy IRQ descriptors are already allocated by the arch. */
+	if (gsi < NR_IRQS_LEGACY)
+		return gsi;
+
+	irq = irq_alloc_desc_at(gsi, -1);
+	if (irq < 0)
+		panic("Unable to allocate to IRQ%d (%d)\n", gsi, irq);
+
+	return irq;
+}
+
+static void xen_free_irq(unsigned irq)
+{
+	/* Legacy IRQ descriptors are managed by the arch. */
+	if (irq < NR_IRQS_LEGACY)
+		return;
+
+	irq_free_desc(irq);
 }
 
 static void pirq_unmask_notify(int irq)
@@ -638,14 +626,7 @@ int xen_map_pirq_gsi(unsigned pirq, unsigned gsi, int shareable, char *name)
 		goto out;	/* XXX need refcount? */
 	}
 
-	/* If we are a PV guest, we don't have GSIs (no ACPI passed). Therefore
-	 * we are using the !xen_initial_domain() to drop in the function.*/
-	if (identity_mapped_irq(gsi) || (!xen_initial_domain() &&
-				xen_pv_domain())) {
-		irq = gsi;
-		irq_alloc_desc_at(irq, -1);
-	} else
-		irq = find_unbound_irq();
+	irq = xen_allocate_irq_gsi(gsi);
 
 	set_irq_chip_and_handler_name(irq, &xen_pirq_chip,
 				      handle_level_irq, name);
@@ -658,7 +639,7 @@ int xen_map_pirq_gsi(unsigned pirq, unsigned gsi, int shareable, char *name)
 	 * this in the priv domain. */
 	if (xen_initial_domain() &&
 	    HYPERVISOR_physdev_op(PHYSDEVOP_alloc_irq_vector, &irq_op)) {
-		irq_free_desc(irq);
+		xen_free_irq(irq);
 		irq = -ENOSPC;
 		goto out;
 	}
@@ -677,12 +658,29 @@ out:
 #include <linux/msi.h>
 #include "../pci/msi.h"
 
+static int find_unbound_pirq(int type)
+{
+	int rc, i;
+	struct physdev_get_free_pirq op_get_free_pirq;
+	op_get_free_pirq.type = type;
+
+	rc = HYPERVISOR_physdev_op(PHYSDEVOP_get_free_pirq, &op_get_free_pirq);
+	if (!rc)
+		return op_get_free_pirq.pirq;
+
+	for (i = 0; i < nr_irqs; i++) {
+		if (pirq_to_irq[i] < 0)
+			return i;
+	}
+	return -1;
+}
+
 void xen_allocate_pirq_msi(char *name, int *irq, int *pirq, int alloc)
 {
 	spin_lock(&irq_mapping_update_lock);
 
 	if (alloc & XEN_ALLOC_IRQ) {
-		*irq = find_unbound_irq();
+		*irq = xen_allocate_irq_dynamic();
 		if (*irq == -1)
 			goto out;
 	}
@@ -732,7 +730,7 @@ int xen_create_msi_irq(struct pci_dev *dev, struct msi_desc *msidesc, int type)
 
 	spin_lock(&irq_mapping_update_lock);
 
-	irq = find_unbound_irq();
+	irq = xen_allocate_irq_dynamic();
 
 	if (irq == -1)
 		goto out;
@@ -741,7 +739,7 @@ int xen_create_msi_irq(struct pci_dev *dev, struct msi_desc *msidesc, int type)
 	if (rc) {
 		printk(KERN_WARNING "xen map irq failed %d\n", rc);
 
-		irq_free_desc(irq);
+		xen_free_irq(irq);
 
 		irq = -1;
 		goto out;
@@ -783,7 +781,7 @@ int xen_destroy_irq(int irq)
 	}
 	irq_info[irq] = mk_unbound_info();
 
-	irq_free_desc(irq);
+	xen_free_irq(irq);
 
 out:
 	spin_unlock(&irq_mapping_update_lock);
@@ -814,7 +812,7 @@ int bind_evtchn_to_irq(unsigned int evtchn)
 	irq = evtchn_to_irq[evtchn];
 
 	if (irq == -1) {
-		irq = find_unbound_irq();
+		irq = xen_allocate_irq_dynamic();
 
 		set_irq_chip_and_handler_name(irq, &xen_dynamic_chip,
 					      handle_fasteoi_irq, "event");
@@ -839,7 +837,7 @@ static int bind_ipi_to_irq(unsigned int ipi, unsigned int cpu)
 	irq = per_cpu(ipi_to_irq, cpu)[ipi];
 
 	if (irq == -1) {
-		irq = find_unbound_irq();
+		irq = xen_allocate_irq_dynamic();
 		if (irq < 0)
 			goto out;
 
@@ -875,7 +873,7 @@ int bind_virq_to_irq(unsigned int virq, unsigned int cpu)
 	irq = per_cpu(virq_to_irq, cpu)[virq];
 
 	if (irq == -1) {
-		irq = find_unbound_irq();
+		irq = xen_allocate_irq_dynamic();
 
 		set_irq_chip_and_handler_name(irq, &xen_percpu_chip,
 					      handle_percpu_irq, "virq");
@@ -934,7 +932,7 @@ static void unbind_from_irq(unsigned int irq)
 	if (irq_info[irq].type != IRQT_UNBOUND) {
 		irq_info[irq] = mk_unbound_info();
 
-		irq_free_desc(irq);
+		xen_free_irq(irq);
 	}
 
 	spin_unlock(&irq_mapping_update_lock);
