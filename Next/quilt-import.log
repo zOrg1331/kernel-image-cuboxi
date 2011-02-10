@@ -1,0 +1,27 @@
+Importing i2c based on 2.6.38-rc4
+$ git clone -s -l -n -q . ../quilt-tmp
+$ cd ../quilt-tmp
+$ git reset --hard 100b33c8bd8a3235fd0b7948338d6cbb3db3c63d
+HEAD is now at 100b33c Linux 2.6.38-rc4
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/i2c
+i2c-delete-linux-i2c-id-h.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/i2c
+From ../quilt-tmp
+ + 5f98829...06bc0fe master     -> quilt/i2c  (forced update)
+Importing jdelvare-hwmon based on 2.6.38-rc4
+$ cd ../quilt-tmp
+$ git reset --hard 100b33c8bd8a3235fd0b7948338d6cbb3db3c63d
+HEAD is now at 100b33c Linux 2.6.38-rc4
+$ git quiltimport --author Jean Delvare <khali@linux-fr.org> --patches ../quilt/jdelvare-hwmon
+hwmon-w83795-document-pin-mapping.patch
+$ cd ../next
+$ git fetch -f ../quilt-tmp master:quilt/jdelvare-hwmon
+From ../quilt-tmp
+ + 0a1d8eb...feb703a master     -> quilt/jdelvare-hwmon  (forced update)
+Importing kernel-doc based on 2.6.38-rc3
+Unchanged quilt series kernel-doc
+Importing rr based on v2.6.38-rc3-19-gafe8a88
+Unchanged quilt series rr
+Importing device-mapper based on v2.6.37-7185-g52cfd50
+Unchanged quilt series device-mapper
