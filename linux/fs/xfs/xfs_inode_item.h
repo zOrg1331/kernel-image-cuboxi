@@ -25,52 +25,52 @@
  * must be added on to the end.
  */
 typedef struct xfs_inode_log_format {
-	unsigned short		ilf_type;	/* inode log item type */
-	unsigned short		ilf_size;	/* size of this item */
-	uint			ilf_fields;	/* flags for fields logged */
-	ushort			ilf_asize;	/* size of attr d/ext/root */
-	ushort			ilf_dsize;	/* size of data/ext/root */
-	xfs_ino_t		ilf_ino;	/* inode number */
+	__uint16_t		ilf_type;	/* inode log item type */
+	__uint16_t		ilf_size;	/* size of this item */
+	__uint32_t		ilf_fields;	/* flags for fields logged */
+	__uint16_t		ilf_asize;	/* size of attr d/ext/root */
+	__uint16_t		ilf_dsize;	/* size of data/ext/root */
+	__uint64_t		ilf_ino;	/* inode number */
 	union {
-		xfs_dev_t	ilfu_rdev;	/* rdev value for dev inode*/
+		__uint32_t	ilfu_rdev;	/* rdev value for dev inode*/
 		uuid_t		ilfu_uuid;	/* mount point value */
 	} ilf_u;
 	__int64_t		ilf_blkno;	/* blkno of inode buffer */
-	int			ilf_len;	/* len of inode buffer */
-	int			ilf_boffset;	/* off of inode in buffer */
+	__int32_t		ilf_len;	/* len of inode buffer */
+	__int32_t		ilf_boffset;	/* off of inode in buffer */
 } xfs_inode_log_format_t;
 
 typedef struct xfs_inode_log_format_32 {
-	unsigned short		ilf_type;	/* 16: inode log item type */
-	unsigned short		ilf_size;	/* 16: size of this item */
-	uint			ilf_fields;	/* 32: flags for fields logged */
-	ushort			ilf_asize;	/* 32: size of attr d/ext/root */
-	ushort			ilf_dsize;	/* 32: size of data/ext/root */
-	xfs_ino_t		ilf_ino;	/* 64: inode number */
+	__uint16_t		ilf_type;	/* inode log item type */
+	__uint16_t		ilf_size;	/* size of this item */
+	__uint32_t		ilf_fields;	/* flags for fields logged */
+	__uint16_t		ilf_asize;	/* size of attr d/ext/root */
+	__uint16_t		ilf_dsize;	/* size of data/ext/root */
+	__uint64_t		ilf_ino;	/* inode number */
 	union {
-		xfs_dev_t	ilfu_rdev;	/* 32: rdev value for dev inode*/
-		uuid_t		ilfu_uuid;	/* 128: mount point value */
+		__uint32_t	ilfu_rdev;	/* rdev value for dev inode*/
+		uuid_t		ilfu_uuid;	/* mount point value */
 	} ilf_u;
-	__int64_t		ilf_blkno;	/* 64: blkno of inode buffer */
-	int			ilf_len;	/* 32: len of inode buffer */
-	int			ilf_boffset;	/* 32: off of inode in buffer */
+	__int64_t		ilf_blkno;	/* blkno of inode buffer */
+	__int32_t		ilf_len;	/* len of inode buffer */
+	__int32_t		ilf_boffset;	/* off of inode in buffer */
 } __attribute__((packed)) xfs_inode_log_format_32_t;
 
 typedef struct xfs_inode_log_format_64 {
-	unsigned short		ilf_type;	/* 16: inode log item type */
-	unsigned short		ilf_size;	/* 16: size of this item */
-	uint			ilf_fields;	/* 32: flags for fields logged */
-	ushort			ilf_asize;	/* 32: size of attr d/ext/root */
-	ushort			ilf_dsize;	/* 32: size of data/ext/root */
-	__uint32_t		ilf_pad;	/* 32: pad for 64 bit boundary */
-	xfs_ino_t		ilf_ino;	/* 64: inode number */
+	__uint16_t		ilf_type;	/* inode log item type */
+	__uint16_t		ilf_size;	/* size of this item */
+	__uint32_t		ilf_fields;	/* flags for fields logged */
+	__uint16_t		ilf_asize;	/* size of attr d/ext/root */
+	__uint16_t		ilf_dsize;	/* size of data/ext/root */
+	__uint32_t		ilf_pad;	/* pad for 64 bit boundary */
+	__uint64_t		ilf_ino;	/* inode number */
 	union {
-		xfs_dev_t	ilfu_rdev;	/* 32: rdev value for dev inode*/
-		uuid_t		ilfu_uuid;	/* 128: mount point value */
+		__uint32_t	ilfu_rdev;	/* rdev value for dev inode*/
+		uuid_t		ilfu_uuid;	/* mount point value */
 	} ilf_u;
-	__int64_t		ilf_blkno;	/* 64: blkno of inode buffer */
-	int			ilf_len;	/* 32: len of inode buffer */
-	int			ilf_boffset;	/* 32: off of inode in buffer */
+	__int64_t		ilf_blkno;	/* blkno of inode buffer */
+	__int32_t		ilf_len;	/* len of inode buffer */
+	__int32_t		ilf_boffset;	/* off of inode in buffer */
 } xfs_inode_log_format_64_t;
 
 /*
@@ -109,11 +109,25 @@ typedef struct xfs_inode_log_format_64 {
 
 #define	XFS_ILI_IOLOCKED_ANY   (XFS_ILI_IOLOCKED_EXCL | XFS_ILI_IOLOCKED_SHARED)
 
+static inline int xfs_ilog_fbroot(int w)
+{
+	return (w == XFS_DATA_FORK ? XFS_ILOG_DBROOT : XFS_ILOG_ABROOT);
+}
+
+static inline int xfs_ilog_fext(int w)
+{
+	return (w == XFS_DATA_FORK ? XFS_ILOG_DEXT : XFS_ILOG_AEXT);
+}
+
+static inline int xfs_ilog_fdata(int w)
+{
+	return (w == XFS_DATA_FORK ? XFS_ILOG_DDATA : XFS_ILOG_ADATA);
+}
 
 #ifdef __KERNEL__
 
 struct xfs_buf;
-struct xfs_bmbt_rec_64;
+struct xfs_bmbt_rec;
 struct xfs_inode;
 struct xfs_mount;
 
@@ -123,21 +137,13 @@ typedef struct xfs_inode_log_item {
 	struct xfs_inode	*ili_inode;	   /* inode ptr */
 	xfs_lsn_t		ili_flush_lsn;	   /* lsn at last flush */
 	xfs_lsn_t		ili_last_lsn;	   /* lsn at last transaction */
-	unsigned short		ili_ilock_recur;   /* lock recursion count */
-	unsigned short		ili_iolock_recur;  /* lock recursion count */
 	unsigned short		ili_flags;	   /* misc flags */
 	unsigned short		ili_logged;	   /* flushed logged data */
 	unsigned int		ili_last_fields;   /* fields when flushed */
-	struct xfs_bmbt_rec_64	*ili_extents_buf;  /* array of logged
+	struct xfs_bmbt_rec	*ili_extents_buf;  /* array of logged
 						      data exts */
-	struct xfs_bmbt_rec_64	*ili_aextents_buf; /* array of logged
+	struct xfs_bmbt_rec	*ili_aextents_buf; /* array of logged
 						      attr exts */
-	unsigned int            ili_pushbuf_flag;  /* one bit used in push_ail */
-
-#ifdef DEBUG
-	uint64_t                ili_push_owner;    /* one who sets pushbuf_flag
-						      above gets to push the buf */
-#endif
 #ifdef XFS_TRANS_DEBUG
 	int			ili_root_size;
 	char			*ili_orig_root;
@@ -146,27 +152,12 @@ typedef struct xfs_inode_log_item {
 } xfs_inode_log_item_t;
 
 
-#define	XFS_ILOG_FDATA(w)	xfs_ilog_fdata(w)
-static inline int xfs_ilog_fdata(int w)
+static inline int xfs_inode_clean(xfs_inode_t *ip)
 {
-	return (w == XFS_DATA_FORK ? XFS_ILOG_DDATA : XFS_ILOG_ADATA);
+	return (!ip->i_itemp ||
+		!(ip->i_itemp->ili_format.ilf_fields & XFS_ILOG_ALL)) &&
+	       !ip->i_update_core;
 }
-
-#endif	/* __KERNEL__ */
-
-#define	XFS_ILOG_FBROOT(w)	xfs_ilog_fbroot(w)
-static inline int xfs_ilog_fbroot(int w)
-{
-	return (w == XFS_DATA_FORK ? XFS_ILOG_DBROOT : XFS_ILOG_ABROOT);
-}
-
-#define	XFS_ILOG_FEXT(w)	xfs_ilog_fext(w)
-static inline int xfs_ilog_fext(int w)
-{
-	return (w == XFS_DATA_FORK ? XFS_ILOG_DEXT : XFS_ILOG_AEXT);
-}
-
-#ifdef __KERNEL__
 
 extern void xfs_inode_item_init(struct xfs_inode *, struct xfs_mount *);
 extern void xfs_inode_item_destroy(struct xfs_inode *);

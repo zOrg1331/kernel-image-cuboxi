@@ -2,7 +2,12 @@
 # Makefile for the linux kernel.
 #
 
-obj-y				:= main.o version.o mounts.o initramfs.o
+obj-y                          := main.o version.o mounts.o
+ifneq ($(CONFIG_BLK_DEV_INITRD),y)
+obj-y                          += noinitramfs.o
+else
+obj-$(CONFIG_BLK_DEV_INITRD)   += initramfs.o
+endif
 obj-$(CONFIG_GENERIC_CALIBRATE_DELAY) += calibrate.o
 
 mounts-y			:= do_mounts.o
@@ -22,7 +27,10 @@ $(obj)/version.o: include/linux/compile.h
 # mkcompile_h will make sure to only update the
 # actual file if its content has changed.
 
+       chk_compile.h = :
+ quiet_chk_compile.h = echo '  CHK     $@'
+silent_chk_compile.h = :
 include/linux/compile.h: FORCE
-	@echo '  CHK     $@'
+	@$($(quiet)chk_compile.h)
 	$(Q)$(CONFIG_SHELL) $(srctree)/scripts/mkcompile_h $@ \
-	"$(UTS_MACHINE)" "$(CONFIG_SMP)" "$(CONFIG_PREEMPT)" "$(CC) $(CFLAGS)"
+	"$(UTS_MACHINE)" "$(CONFIG_SMP)" "$(CONFIG_PREEMPT)" "$(CC) $(KBUILD_CFLAGS)"

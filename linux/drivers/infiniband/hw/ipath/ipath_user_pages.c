@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2006 QLogic, Inc. All rights reserved.
+ * Copyright (c) 2006, 2007 QLogic Corporation. All rights reserved.
  * Copyright (c) 2003, 2004, 2005, 2006 PathScale, Inc. All rights reserved.
  *
  * This software is available to you under a choice of one of two
@@ -33,6 +33,7 @@
 
 #include <linux/mm.h>
 #include <linux/device.h>
+#include <linux/sched.h>
 
 #include "ipath_kernel.h"
 
@@ -58,8 +59,7 @@ static int __get_user_pages(unsigned long start_page, size_t num_pages,
 	size_t got;
 	int ret;
 
-	lock_limit = current->signal->rlim[RLIMIT_MEMLOCK].rlim_cur >>
-		PAGE_SHIFT;
+	lock_limit = rlimit(RLIMIT_MEMLOCK) >> PAGE_SHIFT;
 
 	if (num_pages > lock_limit) {
 		ret = -ENOMEM;
@@ -90,6 +90,62 @@ bail:
 }
 
 /**
+ * ipath_map_page - a safety wrapper around pci_map_page()
+ *
+ * A dma_addr of all 0's is interpreted by the chip as "disabled".
+ * Unfortunately, it can also be a valid dma_addr returned on some
+ * architectures.
+ *
+ * The powerpc iommu assigns dma_addrs in ascending order, so we don't
+ * have to bother with retries or mapping a dummy page to insure we
+ * don't just get the same mapping again.
+ *
+ * I'm sure we won't be so lucky with other iommu's, so FIXME.
+ */
+dma_addr_t ipath_map_page(struct pci_dev *hwdev, struct page *page,
+	unsigned long offset, size_t size, int direction)
+{
+	dma_addr_t phys;
+
+	phys = pci_map_page(hwdev, page, offset, size, direction);
+
+	if (phys == 0) {
+		pci_unmap_page(hwdev, phys, size, direction);
+		phys = pci_map_page(hwdev, page, offset, size, direction);
+		/*
+		 * FIXME: If we get 0 again, we should keep this page,
+		 * map another, then free the 0 page.
+		 */
+	}
+
+	return phys;
+}
+
+/**
+ * ipath_map_single - a safety wrapper around pci_map_single()
+ *
+ * Same idea as ipath_map_page().
+ */
+dma_addr_t ipath_map_single(struct pci_dev *hwdev, void *ptr, size_t size,
+	int direction)
+{
+	dma_addr_t phys;
+
+	phys = pci_map_single(hwdev, ptr, size, direction);
+
+	if (phys == 0) {
+		pci_unmap_single(hwdev, phys, size, direction);
+		phys = pci_map_single(hwdev, ptr, size, direction);
+		/*
+		 * FIXME: If we get 0 again, we should keep this page,
+		 * map another, then free the 0 page.
+		 */
+	}
+
+	return phys;
+}
+
+/**
  * ipath_get_user_pages - lock user pages into memory
  * @start_page: the start page
  * @num_pages: the number of pages
@@ -115,32 +171,6 @@ int ipath_get_user_pages(unsigned long start_page, size_t num_pages,
 	return ret;
 }
 
-/**
- * ipath_get_user_pages_nocopy - lock a single page for I/O and mark shared
- * @start_page: the page to lock
- * @p: the output page structure
- *
- * This is similar to ipath_get_user_pages, but it's always one page, and we
- * mark the page as locked for I/O, and shared.  This is used for the user
- * process page that contains the destination address for the rcvhdrq tail
- * update, so we need to have the vma. If we don't do this, the page can be
- * taken away from us on fork, even if the child never touches it, and then
- * the user process never sees the tail register updates.
- */
-int ipath_get_user_pages_nocopy(unsigned long page, struct page **p)
-{
-	struct vm_area_struct *vma;
-	int ret;
-
-	down_write(&current->mm->mmap_sem);
-
-	ret = __get_user_pages(page, 1, p, &vma);
-
-	up_write(&current->mm->mmap_sem);
-
-	return ret;
-}
-
 void ipath_release_user_pages(struct page **p, size_t num_pages)
 {
 	down_write(&current->mm->mmap_sem);
@@ -158,9 +188,10 @@ struct ipath_user_pages_work {
 	unsigned long num_pages;
 };
 
-static void user_pages_account(void *ptr)
+static void user_pages_account(struct work_struct *_work)
 {
-	struct ipath_user_pages_work *work = ptr;
+	struct ipath_user_pages_work *work =
+		container_of(_work, struct ipath_user_pages_work, work);
 
 	down_write(&work->mm->mmap_sem);
 	work->mm->locked_vm -= work->num_pages;
@@ -178,20 +209,20 @@ void ipath_release_user_pages_on_close(struct page **p, size_t num_pages)
 
 	mm = get_task_mm(current);
 	if (!mm)
-		goto bail;
+		return;
 
 	work = kmalloc(sizeof(*work), GFP_KERNEL);
 	if (!work)
 		goto bail_mm;
 
-	goto bail;
-
-	INIT_WORK(&work->work, user_pages_account, work);
+	INIT_WORK(&work->work, user_pages_account);
 	work->mm = mm;
 	work->num_pages = num_pages;
 
+	schedule_work(&work->work);
+	return;
+
 bail_mm:
 	mmput(mm);
-bail:
 	return;
 }

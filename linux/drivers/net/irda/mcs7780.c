@@ -45,14 +45,11 @@
 
 #include <linux/module.h>
 #include <linux/moduleparam.h>
-#include <linux/config.h>
 #include <linux/kernel.h>
 #include <linux/types.h>
 #include <linux/errno.h>
 #include <linux/init.h>
 #include <linux/slab.h>
-#include <linux/module.h>
-#include <linux/kref.h>
 #include <linux/usb.h>
 #include <linux/device.h>
 #include <linux/crc32.h>
@@ -201,14 +198,14 @@ static inline int mcs_setup_transceiver_vishay(struct mcs_cb *mcs)
 /* Setup a communication between mcs7780 and agilent chip. */
 static inline int mcs_setup_transceiver_agilent(struct mcs_cb *mcs)
 {
-	IRDA_WARNING("This transceiver type is not supported yet.");
+	IRDA_WARNING("This transceiver type is not supported yet.\n");
 	return 1;
 }
 
 /* Setup a communication between mcs7780 and sharp chip. */
 static inline int mcs_setup_transceiver_sharp(struct mcs_cb *mcs)
 {
-	IRDA_WARNING("This transceiver type is not supported yet.");
+	IRDA_WARNING("This transceiver type is not supported yet.\n");
 	return 1;
 }
 
@@ -280,7 +277,7 @@ static inline int mcs_setup_transceiver(struct mcs_cb *mcs)
 		break;
 
 	default:
-		IRDA_WARNING("Unknown transceiver type: %d",
+		IRDA_WARNING("Unknown transceiver type: %d\n",
 			     mcs->transceiver_type);
 		ret = 1;
 	}
@@ -319,7 +316,7 @@ static inline int mcs_setup_transceiver(struct mcs_cb *mcs)
 		return ret;
 
 error:
-	IRDA_ERROR("%s", msg);
+	IRDA_ERROR("%s\n", msg);
 	return ret;
 }
 
@@ -354,7 +351,7 @@ static unsigned mcs_wrap_fir_skb(const struct sk_buff *skb, __u8 *buf)
 	buf[0] = len & 0xff;
 	buf[1] = (len >> 8) & 0xff;
 	/* copy the data into the tx buffer. */
-	memcpy(buf+2, skb->data, skb->len);
+	skb_copy_from_linear_data(skb, buf + 2, skb->len);
 	/* put the fcs in the last four bytes in little endian order. */
 	buf[len - 4] = fcs & 0xff;
 	buf[len - 3] = (fcs >> 8) & 0xff;
@@ -378,7 +375,7 @@ static unsigned mcs_wrap_mir_skb(const struct sk_buff *skb, __u8 *buf)
 	buf[0] = len & 0xff;
 	buf[1] = (len >> 8) & 0xff;
 	/* copy the data */
-	memcpy(buf+2, skb->data, skb->len);
+	skb_copy_from_linear_data(skb, buf + 2, skb->len);
 	/* put the fcs in last two bytes in little endian order. */
 	buf[len - 2] = fcs & 0xff;
 	buf[len - 1] = (fcs >> 8) & 0xff;
@@ -405,8 +402,8 @@ static void mcs_unwrap_mir(struct mcs_cb *mcs, __u8 *buf, int len)
 	if(unlikely(new_len <= 0)) {
 		IRDA_ERROR("%s short frame length %d\n",
 			     mcs->netdev->name, new_len);
-		++mcs->stats.rx_errors;
-		++mcs->stats.rx_length_errors;
+		++mcs->netdev->stats.rx_errors;
+		++mcs->netdev->stats.rx_length_errors;
 		return;
 	}
 	fcs = 0;
@@ -415,28 +412,28 @@ static void mcs_unwrap_mir(struct mcs_cb *mcs, __u8 *buf, int len)
 	if(fcs != GOOD_FCS) {
 		IRDA_ERROR("crc error calc 0x%x len %d\n",
 			   fcs, new_len);
-		mcs->stats.rx_errors++;
-		mcs->stats.rx_crc_errors++;
+		mcs->netdev->stats.rx_errors++;
+		mcs->netdev->stats.rx_crc_errors++;
 		return;
 	}
 
 	skb = dev_alloc_skb(new_len + 1);
 	if(unlikely(!skb)) {
-		++mcs->stats.rx_dropped;
+		++mcs->netdev->stats.rx_dropped;
 		return;
 	}
 
 	skb_reserve(skb, 1);
-	memcpy(skb->data, buf, new_len);
+	skb_copy_to_linear_data(skb, buf, new_len);
 	skb_put(skb, new_len);
-	skb->mac.raw = skb->data;
+	skb_reset_mac_header(skb);
 	skb->protocol = htons(ETH_P_IRDA);
 	skb->dev = mcs->netdev;
 
 	netif_rx(skb);
 
-	mcs->stats.rx_packets++;
-	mcs->stats.rx_bytes += new_len;
+	mcs->netdev->stats.rx_packets++;
+	mcs->netdev->stats.rx_bytes += new_len;
 
 	return;
 }
@@ -460,36 +457,36 @@ static void mcs_unwrap_fir(struct mcs_cb *mcs, __u8 *buf, int len)
 	if(unlikely(new_len <= 0)) {
 		IRDA_ERROR("%s short frame length %d\n",
 			   mcs->netdev->name, new_len);
-		++mcs->stats.rx_errors;
-		++mcs->stats.rx_length_errors;
+		++mcs->netdev->stats.rx_errors;
+		++mcs->netdev->stats.rx_length_errors;
 		return;
 	}
 
 	fcs = ~(crc32_le(~0, buf, new_len));
-	if(fcs != le32_to_cpu(get_unaligned((u32 *)(buf+new_len)))) {
+	if(fcs != get_unaligned_le32(buf + new_len)) {
 		IRDA_ERROR("crc error calc 0x%x len %d\n", fcs, new_len);
-		mcs->stats.rx_errors++;
-		mcs->stats.rx_crc_errors++;
+		mcs->netdev->stats.rx_errors++;
+		mcs->netdev->stats.rx_crc_errors++;
 		return;
 	}
 
 	skb = dev_alloc_skb(new_len + 1);
 	if(unlikely(!skb)) {
-		++mcs->stats.rx_dropped;
+		++mcs->netdev->stats.rx_dropped;
 		return;
 	}
 
 	skb_reserve(skb, 1);
-	memcpy(skb->data, buf, new_len);
+	skb_copy_to_linear_data(skb, buf, new_len);
 	skb_put(skb, new_len);
-	skb->mac.raw = skb->data;
+	skb_reset_mac_header(skb);
 	skb->protocol = htons(ETH_P_IRDA);
 	skb->dev = mcs->netdev;
 
 	netif_rx(skb);
 
-	mcs->stats.rx_packets++;
-	mcs->stats.rx_bytes += new_len;
+	mcs->netdev->stats.rx_packets++;
+	mcs->netdev->stats.rx_bytes += new_len;
 
 	return;
 }
@@ -561,9 +558,9 @@ static inline int mcs_find_endpoints(struct mcs_cb *mcs,
 	return ret;
 }
 
-static void mcs_speed_work(void *arg)
+static void mcs_speed_work(struct work_struct *work)
 {
-	struct mcs_cb *mcs = arg;
+	struct mcs_cb *mcs = container_of(work, struct mcs_cb, work);
 	struct net_device *netdev = mcs->netdev;
 
 	mcs_speed_change(mcs);
@@ -587,8 +584,8 @@ static int mcs_speed_change(struct mcs_cb *mcs)
 		mcs_get_reg(mcs, MCS_RESV_REG, &rval);
 	} while(cnt++ < 100 && (rval & MCS_IRINTX));
 
-	if(cnt >= 100) {
-		IRDA_ERROR("unable to change speed");
+	if (cnt > 100) {
+		IRDA_ERROR("unable to change speed\n");
 		ret = -EIO;
 		goto error;
 	}
@@ -639,7 +636,7 @@ static int mcs_speed_change(struct mcs_cb *mcs)
 
 		default:
 			ret = 1;
-			IRDA_WARNING("Unknown transceiver type: %d",
+			IRDA_WARNING("Unknown transceiver type: %d\n",
 				     mcs->transceiver_type);
 		}
 	if (unlikely(ret))
@@ -678,6 +675,8 @@ static int mcs_net_close(struct net_device *netdev)
 
 	/* Stop transmit processing */
 	netif_stop_queue(netdev);
+
+	kfree_skb(mcs->rx_buff.skb);
 
 	/* kill and free the receive and transmit URBs */
 	usb_kill_urb(mcs->rx_urb);
@@ -734,7 +733,7 @@ static int mcs_net_open(struct net_device *netdev)
 	sprintf(hwname, "usb#%d", mcs->usbdev->devnum);
 	mcs->irlap = irlap_open(netdev, &mcs->qos, hwname);
 	if (!mcs->irlap) {
-		IRDA_ERROR("mcs7780: irlap_open failed");
+		IRDA_ERROR("mcs7780: irlap_open failed\n");
 		goto error2;
 	}
 
@@ -756,16 +755,8 @@ static int mcs_net_open(struct net_device *netdev)
 		return ret;
 }
 
-
-/* Get device stats for /proc/net/dev and ifconfig */
-static struct net_device_stats *mcs_net_get_stats(struct net_device *netdev)
-{
-	struct mcs_cb *mcs = netdev_priv(netdev);
-	return &mcs->stats;
-}
-
 /* Receive callback function.  */
-static void mcs_receive_irq(struct urb *urb, struct pt_regs *regs)
+static void mcs_receive_irq(struct urb *urb)
 {
 	__u8 *bytes;
 	struct mcs_cb *mcs = urb->context;
@@ -786,14 +777,14 @@ static void mcs_receive_irq(struct urb *urb, struct pt_regs *regs)
 		 */
 		/* SIR speed */
 		if(mcs->speed < 576000) {
-			async_unwrap_char(mcs->netdev, &mcs->stats,
+			async_unwrap_char(mcs->netdev, &mcs->netdev->stats,
 				  &mcs->rx_buff, 0xc0);
 
 			for (i = 0; i < urb->actual_length; i++)
-				async_unwrap_char(mcs->netdev, &mcs->stats,
+				async_unwrap_char(mcs->netdev, &mcs->netdev->stats,
 					  &mcs->rx_buff, bytes[i]);
 
-			async_unwrap_char(mcs->netdev, &mcs->stats,
+			async_unwrap_char(mcs->netdev, &mcs->netdev->stats,
 				  &mcs->rx_buff, 0xc1);
 		}
 		/* MIR speed */
@@ -806,7 +797,6 @@ static void mcs_receive_irq(struct urb *urb, struct pt_regs *regs)
 			mcs_unwrap_fir(mcs, urb->transfer_buffer,
 				urb->actual_length);
 		}
-		mcs->netdev->last_rx = jiffies;
 		do_gettimeofday(&mcs->rx_time);
 	}
 
@@ -814,7 +804,7 @@ static void mcs_receive_irq(struct urb *urb, struct pt_regs *regs)
 }
 
 /* Transmit callback funtion.  */
-static void mcs_send_irq(struct urb *urb, struct pt_regs *regs)
+static void mcs_send_irq(struct urb *urb)
 {
 	struct mcs_cb *mcs = urb->context;
 	struct net_device *ndev = mcs->netdev;
@@ -826,16 +816,13 @@ static void mcs_send_irq(struct urb *urb, struct pt_regs *regs)
 }
 
 /* Transmit callback funtion.  */
-static int mcs_hard_xmit(struct sk_buff *skb, struct net_device *ndev)
+static netdev_tx_t mcs_hard_xmit(struct sk_buff *skb,
+				       struct net_device *ndev)
 {
 	unsigned long flags;
 	struct mcs_cb *mcs;
 	int wraplen;
 	int ret = 0;
-
-
-	if (skb == NULL || ndev == NULL)
-		return -EINVAL;
 
 	netif_stop_queue(ndev);
 	mcs = netdev_priv(ndev);
@@ -863,24 +850,31 @@ static int mcs_hard_xmit(struct sk_buff *skb, struct net_device *ndev)
 			  mcs->out_buf, wraplen, mcs_send_irq, mcs);
 
 	if ((ret = usb_submit_urb(mcs->tx_urb, GFP_ATOMIC))) {
-		IRDA_ERROR("failed tx_urb: %d", ret);
+		IRDA_ERROR("failed tx_urb: %d\n", ret);
 		switch (ret) {
 		case -ENODEV:
 		case -EPIPE:
 			break;
 		default:
-			mcs->stats.tx_errors++;
+			mcs->netdev->stats.tx_errors++;
 			netif_start_queue(ndev);
 		}
 	} else {
-		mcs->stats.tx_packets++;
-		mcs->stats.tx_bytes += skb->len;
+		mcs->netdev->stats.tx_packets++;
+		mcs->netdev->stats.tx_bytes += skb->len;
 	}
 
 	dev_kfree_skb(skb);
 	spin_unlock_irqrestore(&mcs->lock, flags);
-	return ret;
+	return NETDEV_TX_OK;
 }
+
+static const struct net_device_ops mcs_netdev_ops = {
+	.ndo_open = mcs_net_open,
+	.ndo_stop = mcs_net_close,
+	.ndo_start_xmit = mcs_hard_xmit,
+	.ndo_do_ioctl = mcs_net_ioctl,
+};
 
 /*
  * This function is called by the USB subsystem for each new device in the
@@ -898,15 +892,13 @@ static int mcs_probe(struct usb_interface *intf,
 	if (!ndev)
 		goto error1;
 
-	IRDA_DEBUG(1, "MCS7780 USB-IrDA bridge found at %d.", udev->devnum);
+	IRDA_DEBUG(1, "MCS7780 USB-IrDA bridge found at %d.\n", udev->devnum);
 
-	/* what is it realy for? */
-	SET_MODULE_OWNER(ndev);
 	SET_NETDEV_DEV(ndev, &intf->dev);
 
 	ret = usb_reset_configuration(udev);
 	if (ret != 0) {
-		IRDA_ERROR("mcs7780: usb reset configuration failed");
+		IRDA_ERROR("mcs7780: usb reset configuration failed\n");
 		goto error2;
 	}
 
@@ -928,14 +920,9 @@ static int mcs_probe(struct usb_interface *intf,
 	irda_qos_bits_to_value(&mcs->qos);
 
 	/* Speed change work initialisation*/
-	INIT_WORK(&mcs->work, mcs_speed_work, mcs);
+	INIT_WORK(&mcs->work, mcs_speed_work);
 
-	/* Override the network functions we need to use */
-	ndev->hard_start_xmit = mcs_hard_xmit;
-	ndev->open = mcs_net_open;
-	ndev->stop = mcs_net_close;
-	ndev->get_stats = mcs_net_get_stats;
-	ndev->do_ioctl = mcs_net_ioctl;
+	ndev->netdev_ops = &mcs_netdev_ops;
 
 	if (!intf->cur_altsetting)
 		goto error2;
@@ -951,7 +938,7 @@ static int mcs_probe(struct usb_interface *intf,
 	if (ret != 0)
 		goto error2;
 
-	IRDA_DEBUG(1, "IrDA: Registered MosChip MCS7780 device as %s",
+	IRDA_DEBUG(1, "IrDA: Registered MosChip MCS7780 device as %s\n",
 		   ndev->name);
 
 	mcs->transceiver_type = transceiver_type;
@@ -982,7 +969,7 @@ static void mcs_disconnect(struct usb_interface *intf)
 	free_netdev(mcs->netdev);
 
 	usb_set_intfdata(intf, NULL);
-	IRDA_DEBUG(0, "MCS7780 now disconnected.");
+	IRDA_DEBUG(0, "MCS7780 now disconnected.\n");
 }
 
 /* Module insertion */
@@ -993,7 +980,7 @@ static int __init mcs_init(void)
 	/* register this driver with the USB subsystem */
 	result = usb_register(&mcs_driver);
 	if (result)
-		IRDA_ERROR("usb_register failed. Error number %d", result);
+		IRDA_ERROR("usb_register failed. Error number %d\n", result);
 
 	return result;
 }

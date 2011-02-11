@@ -27,7 +27,7 @@ struct sx_port {
   int                     c_dcd;
   struct sx_board         *board;
   int                     line;
-  long                    locks;
+  unsigned long           locks;
 };
 
 struct sx_board {
@@ -35,6 +35,7 @@ struct sx_board {
   void __iomem *base;
   void __iomem *base2;
   unsigned long hw_base;
+  resource_size_t hw_len;
   int eisa_base;
   int port_base; /* Number of the first port */
   struct sx_port *ports;
@@ -44,7 +45,7 @@ struct sx_board {
   int poll;
   int ta_type;
   struct timer_list       timer;
-  long                    locks;
+  unsigned long           locks;
 };
 
 struct vpd_prom {
@@ -86,8 +87,6 @@ struct vpd_prom {
 #define IS_EISA_BOARD(board) (board->flags & SI_EISA_BOARD)
 
 #define IS_CF_BOARD(board) (board->flags & (SX_CFISA_BOARD | SX_CFPCI_BOARD))
-
-#define SERIAL_TYPE_NORMAL 1
 
 /* The SI processor clock is required to calculate the cc_int_count register
    value for the SI cards. */

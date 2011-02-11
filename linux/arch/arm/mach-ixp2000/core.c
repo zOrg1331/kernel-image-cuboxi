@@ -29,7 +29,7 @@
 #include <asm/types.h>
 #include <asm/setup.h>
 #include <asm/memory.h>
-#include <asm/hardware.h>
+#include <mach/hardware.h>
 #include <asm/irq.h>
 #include <asm/system.h>
 #include <asm/tlbflush.h>
@@ -39,7 +39,7 @@
 #include <asm/mach/time.h>
 #include <asm/mach/irq.h>
 
-#include <asm/arch/gpio.h>
+#include <mach/gpio.h>
 
 static DEFINE_SPINLOCK(ixp2000_slowport_lock);
 static unsigned long ixp2000_slowport_irq_flags;
@@ -84,64 +84,57 @@ static struct map_desc ixp2000_io_desc[] __initdata = {
 		.virtual	= IXP2000_CAP_VIRT_BASE,
 		.pfn		= __phys_to_pfn(IXP2000_CAP_PHYS_BASE),
 		.length		= IXP2000_CAP_SIZE,
-		.type		= MT_IXP2000_DEVICE,
+		.type		= MT_DEVICE,
 	}, {
 		.virtual	= IXP2000_INTCTL_VIRT_BASE,
 		.pfn		= __phys_to_pfn(IXP2000_INTCTL_PHYS_BASE),
 		.length		= IXP2000_INTCTL_SIZE,
-		.type		= MT_IXP2000_DEVICE,
+		.type		= MT_DEVICE,
 	}, {
 		.virtual	= IXP2000_PCI_CREG_VIRT_BASE,
 		.pfn		= __phys_to_pfn(IXP2000_PCI_CREG_PHYS_BASE),
 		.length		= IXP2000_PCI_CREG_SIZE,
-		.type		= MT_IXP2000_DEVICE,
+		.type		= MT_DEVICE,
 	}, {
 		.virtual	= IXP2000_PCI_CSR_VIRT_BASE,
 		.pfn		= __phys_to_pfn(IXP2000_PCI_CSR_PHYS_BASE),
 		.length		= IXP2000_PCI_CSR_SIZE,
-		.type		= MT_IXP2000_DEVICE,
+		.type		= MT_DEVICE,
 	}, {
 		.virtual	= IXP2000_MSF_VIRT_BASE,
 		.pfn		= __phys_to_pfn(IXP2000_MSF_PHYS_BASE),
 		.length		= IXP2000_MSF_SIZE,
-		.type		= MT_IXP2000_DEVICE,
+		.type		= MT_DEVICE,
 	}, {
 		.virtual	= IXP2000_SCRATCH_RING_VIRT_BASE,
 		.pfn		= __phys_to_pfn(IXP2000_SCRATCH_RING_PHYS_BASE),
 		.length		= IXP2000_SCRATCH_RING_SIZE,
-		.type		= MT_IXP2000_DEVICE,
+		.type		= MT_DEVICE,
 	}, {
 		.virtual	= IXP2000_SRAM0_VIRT_BASE,
 		.pfn		= __phys_to_pfn(IXP2000_SRAM0_PHYS_BASE),
 		.length		= IXP2000_SRAM0_SIZE,
-		.type		= MT_IXP2000_DEVICE,
+		.type		= MT_DEVICE,
 	}, {
 		.virtual	= IXP2000_PCI_IO_VIRT_BASE,
 		.pfn		= __phys_to_pfn(IXP2000_PCI_IO_PHYS_BASE),
 		.length		= IXP2000_PCI_IO_SIZE,
-		.type		= MT_IXP2000_DEVICE,
+		.type		= MT_DEVICE,
 	}, {
 		.virtual	= IXP2000_PCI_CFG0_VIRT_BASE,
 		.pfn		= __phys_to_pfn(IXP2000_PCI_CFG0_PHYS_BASE),
 		.length		= IXP2000_PCI_CFG0_SIZE,
-		.type		= MT_IXP2000_DEVICE,
+		.type		= MT_DEVICE,
 	}, {
 		.virtual	= IXP2000_PCI_CFG1_VIRT_BASE,
 		.pfn		= __phys_to_pfn(IXP2000_PCI_CFG1_PHYS_BASE),
 		.length		= IXP2000_PCI_CFG1_SIZE,
-		.type		= MT_IXP2000_DEVICE,
+		.type		= MT_DEVICE,
 	}
 };
 
 void __init ixp2000_map_io(void)
 {
-	/*
-	 * On IXP2400 CPUs we need to use MT_IXP2000_DEVICE so that
-	 * XCB=101 (to avoid triggering erratum #66), and given that
-	 * this mode speeds up I/O accesses and we have write buffer
-	 * flushes in the right places anyway, it doesn't hurt to use
-	 * XCB=101 for all IXP2000s.
-	 */
 	iotable_init(ixp2000_io_desc, ARRAY_SIZE(ixp2000_io_desc));
 
 	/* Set slowport to 8-bit mode.  */
@@ -204,27 +197,23 @@ unsigned long ixp2000_gettimeoffset (void)
 	return offset / ticks_per_usec;
 }
 
-static int ixp2000_timer_interrupt(int irq, void *dev_id, struct pt_regs *regs)
+static int ixp2000_timer_interrupt(int irq, void *dev_id)
 {
-	write_seqlock(&xtime_lock);
-
 	/* clear timer 1 */
 	ixp2000_reg_wrb(IXP2000_T1_CLR, 1);
 
 	while ((signed long)(next_jiffy_time - *missing_jiffy_timer_csr)
 							>= ticks_per_jiffy) {
-		timer_tick(regs);
+		timer_tick();
 		next_jiffy_time -= ticks_per_jiffy;
 	}
-
-	write_sequnlock(&xtime_lock);
 
 	return IRQ_HANDLED;
 }
 
 static struct irqaction ixp2000_timer_irq = {
 	.name		= "IXP2000 Timer Tick",
-	.flags		= IRQF_DISABLED | IRQF_TIMER,
+	.flags		= IRQF_DISABLED | IRQF_TIMER | IRQF_IRQPOLL,
 	.handler	= ixp2000_timer_interrupt,
 };
 
@@ -308,15 +297,14 @@ EXPORT_SYMBOL(gpio_line_config);
 /*************************************************************************
  * IRQ handling IXP2000
  *************************************************************************/
-static void ixp2000_GPIO_irq_handler(unsigned int irq, struct irqdesc *desc, struct pt_regs *regs)
+static void ixp2000_GPIO_irq_handler(unsigned int irq, struct irq_desc *desc)
 {                               
 	int i;
 	unsigned long status = *IXP2000_GPIO_INST;
 		   
 	for (i = 0; i <= 7; i++) {
 		if (status & (1<<i)) {
-			desc = irq_desc + i + IRQ_IXP2000_GPIO0;
-			desc_handle_irq(i + IRQ_IXP2000_GPIO0, desc, regs);
+			generic_handle_irq(i + IRQ_IXP2000_GPIO0);
 		}
 	}
 }
@@ -333,19 +321,19 @@ static int ixp2000_GPIO_irq_type(unsigned int irq, unsigned int type)
 	/*
 	 * Then, set the proper trigger type.
 	 */
-	if (type & IRQT_FALLING)
+	if (type & IRQ_TYPE_EDGE_FALLING)
 		GPIO_IRQ_falling_edge |= 1 << line;
 	else
 		GPIO_IRQ_falling_edge &= ~(1 << line);
-	if (type & IRQT_RISING)
+	if (type & IRQ_TYPE_EDGE_RISING)
 		GPIO_IRQ_rising_edge |= 1 << line;
 	else
 		GPIO_IRQ_rising_edge &= ~(1 << line);
-	if (type & IRQT_LOW)
+	if (type & IRQ_TYPE_LEVEL_LOW)
 		GPIO_IRQ_level_low |= 1 << line;
 	else
 		GPIO_IRQ_level_low &= ~(1 << line);
-	if (type & IRQT_HIGH)
+	if (type & IRQ_TYPE_LEVEL_HIGH)
 		GPIO_IRQ_level_high |= 1 << line;
 	else
 		GPIO_IRQ_level_high &= ~(1 << line);
@@ -373,7 +361,7 @@ static void ixp2000_GPIO_irq_unmask(unsigned int irq)
 	ixp2000_reg_write(IXP2000_GPIO_INSR, (1 << (irq - IRQ_IXP2000_GPIO0)));
 }
 
-static struct irqchip ixp2000_GPIO_irq_chip = {
+static struct irq_chip ixp2000_GPIO_irq_chip = {
 	.ack		= ixp2000_GPIO_irq_mask_ack,
 	.mask		= ixp2000_GPIO_irq_mask,
 	.unmask		= ixp2000_GPIO_irq_unmask,
@@ -401,15 +389,14 @@ static void ixp2000_pci_irq_unmask(unsigned int irq)
 /*
  * Error interrupts. These are used extensively by the microengine drivers
  */
-static void ixp2000_err_irq_handler(unsigned int irq, struct irqdesc *desc,  struct pt_regs *regs)
+static void ixp2000_err_irq_handler(unsigned int irq, struct irq_desc *desc)
 {
 	int i;
 	unsigned long status = *IXP2000_IRQ_ERR_STATUS;
 
 	for(i = 31; i >= 0; i--) {
 		if(status & (1 << i)) {
-			desc = irq_desc + IRQ_IXP2000_DRAM0_MIN_ERR + i;
-			desc_handle_irq(IRQ_IXP2000_DRAM0_MIN_ERR + i, desc, regs);
+			generic_handle_irq(IRQ_IXP2000_DRAM0_MIN_ERR + i);
 		}
 	}
 }
@@ -426,13 +413,13 @@ static void ixp2000_err_irq_unmask(unsigned int irq)
 			(1 << (irq - IRQ_IXP2000_DRAM0_MIN_ERR)));
 }
 
-static struct irqchip ixp2000_err_irq_chip = {
+static struct irq_chip ixp2000_err_irq_chip = {
 	.ack	= ixp2000_err_irq_mask,
 	.mask	= ixp2000_err_irq_mask,
 	.unmask	= ixp2000_err_irq_unmask
 };
 
-static struct irqchip ixp2000_pci_irq_chip = {
+static struct irq_chip ixp2000_pci_irq_chip = {
 	.ack	= ixp2000_pci_irq_mask,
 	.mask	= ixp2000_pci_irq_mask,
 	.unmask	= ixp2000_pci_irq_unmask
@@ -448,7 +435,7 @@ static void ixp2000_irq_unmask(unsigned int irq)
 	ixp2000_reg_write(IXP2000_IRQ_ENABLE_SET, (1 << irq));
 }
 
-static struct irqchip ixp2000_irq_chip = {
+static struct irq_chip ixp2000_irq_chip = {
 	.ack	= ixp2000_irq_mask,
 	.mask	= ixp2000_irq_mask,
 	.unmask	= ixp2000_irq_unmask
@@ -484,7 +471,7 @@ void __init ixp2000_init_irq(void)
 	for (irq = IRQ_IXP2000_SOFT_INT; irq <= IRQ_IXP2000_THDB3; irq++) {
 		if ((1 << irq) & IXP2000_VALID_IRQ_MASK) {
 			set_irq_chip(irq, &ixp2000_irq_chip);
-			set_irq_handler(irq, do_level_IRQ);
+			set_irq_handler(irq, handle_level_irq);
 			set_irq_flags(irq, IRQF_VALID);
 		} else set_irq_flags(irq, 0);
 	}
@@ -493,7 +480,7 @@ void __init ixp2000_init_irq(void)
 		if((1 << (irq - IRQ_IXP2000_DRAM0_MIN_ERR)) &
 				IXP2000_VALID_ERR_IRQ_MASK) {
 			set_irq_chip(irq, &ixp2000_err_irq_chip);
-			set_irq_handler(irq, do_level_IRQ);
+			set_irq_handler(irq, handle_level_irq);
 			set_irq_flags(irq, IRQF_VALID);
 		}
 		else
@@ -503,7 +490,7 @@ void __init ixp2000_init_irq(void)
 
 	for (irq = IRQ_IXP2000_GPIO0; irq <= IRQ_IXP2000_GPIO7; irq++) {
 		set_irq_chip(irq, &ixp2000_GPIO_irq_chip);
-		set_irq_handler(irq, do_level_IRQ);
+		set_irq_handler(irq, handle_level_irq);
 		set_irq_flags(irq, IRQF_VALID);
 	}
 	set_irq_chained_handler(IRQ_IXP2000_GPIO, ixp2000_GPIO_irq_handler);
@@ -516,7 +503,7 @@ void __init ixp2000_init_irq(void)
 	ixp2000_reg_write(IXP2000_IRQ_ENABLE_SET, (1 << IRQ_IXP2000_PCI));
 	for (irq = IRQ_IXP2000_PCIA; irq <= IRQ_IXP2000_PCIB; irq++) {
 		set_irq_chip(irq, &ixp2000_pci_irq_chip);
-		set_irq_handler(irq, do_level_IRQ);
+		set_irq_handler(irq, handle_level_irq);
 		set_irq_flags(irq, IRQF_VALID);
 	}
 }

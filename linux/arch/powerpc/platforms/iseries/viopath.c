@@ -36,13 +36,14 @@
 #include <linux/dma-mapping.h>
 #include <linux/wait.h>
 #include <linux/seq_file.h>
-#include <linux/smp_lock.h>
 #include <linux/interrupt.h>
+#include <linux/completion.h>
 
 #include <asm/system.h>
 #include <asm/uaccess.h>
+#include <asm/prom.h>
+#include <asm/firmware.h>
 #include <asm/iseries/hv_types.h>
-#include <asm/iseries/it_exp_vpd_panel.h>
 #include <asm/iseries/hv_lp_event.h>
 #include <asm/iseries/hv_lp_config.h>
 #include <asm/iseries/mf.h>
@@ -81,7 +82,7 @@ static void handleMonitorEvent(struct HvLpEvent *event);
  * if system_state is not SYSTEM_RUNNING, then wait_atomic is used ...
  */
 struct alloc_parms {
-	struct semaphore sem;
+	struct completion done;
 	int number;
 	atomic_t wait_atomic;
 	int used_wait_atomic;
@@ -115,15 +116,15 @@ static int proc_viopath_show(struct seq_file *m, void *v)
 	u16 vlanMap;
 	dma_addr_t handle;
 	HvLpEvent_Rc hvrc;
-	DECLARE_MUTEX_LOCKED(Semaphore);
+	DECLARE_COMPLETION(done);
+	struct device_node *node;
+	const char *sysid;
 
-	buf = kmalloc(HW_PAGE_SIZE, GFP_KERNEL);
+	buf = kzalloc(HW_PAGE_SIZE, GFP_KERNEL);
 	if (!buf)
 		return 0;
-	memset(buf, 0, HW_PAGE_SIZE);
 
-	handle = dma_map_single(iSeries_vio_dev, buf, HW_PAGE_SIZE,
-				DMA_FROM_DEVICE);
+	handle = iseries_hv_map(buf, HW_PAGE_SIZE, DMA_FROM_DEVICE);
 
 	hvrc = HvCallEvent_signalLpEventFast(viopath_hostLp,
 			HvLpEvent_Type_VirtualIo,
@@ -131,31 +132,36 @@ static int proc_viopath_show(struct seq_file *m, void *v)
 			HvLpEvent_AckInd_DoAck, HvLpEvent_AckType_ImmediateAck,
 			viopath_sourceinst(viopath_hostLp),
 			viopath_targetinst(viopath_hostLp),
-			(u64)(unsigned long)&Semaphore, VIOVERSION << 16,
+			(u64)(unsigned long)&done, VIOVERSION << 16,
 			((u64)handle) << 32, HW_PAGE_SIZE, 0, 0);
 
 	if (hvrc != HvLpEvent_Rc_Good)
 		printk(VIOPATH_KERN_WARN "hv error on op %d\n", (int)hvrc);
 
-	down(&Semaphore);
+	wait_for_completion(&done);
 
 	vlanMap = HvLpConfig_getVirtualLanIndexMap();
 
 	buf[HW_PAGE_SIZE-1] = '\0';
 	seq_printf(m, "%s", buf);
-	seq_printf(m, "AVAILABLE_VETH=%x\n", vlanMap);
-	seq_printf(m, "SRLNBR=%c%c%c%c%c%c%c\n",
-		   e2a(xItExtVpdPanel.mfgID[2]),
-		   e2a(xItExtVpdPanel.mfgID[3]),
-		   e2a(xItExtVpdPanel.systemSerial[1]),
-		   e2a(xItExtVpdPanel.systemSerial[2]),
-		   e2a(xItExtVpdPanel.systemSerial[3]),
-		   e2a(xItExtVpdPanel.systemSerial[4]),
-		   e2a(xItExtVpdPanel.systemSerial[5]));
 
-	dma_unmap_single(iSeries_vio_dev, handle, HW_PAGE_SIZE,
-			 DMA_FROM_DEVICE);
+	iseries_hv_unmap(handle, HW_PAGE_SIZE, DMA_FROM_DEVICE);
 	kfree(buf);
+
+	seq_printf(m, "AVAILABLE_VETH=%x\n", vlanMap);
+
+	node = of_find_node_by_path("/");
+	sysid = NULL;
+	if (node != NULL)
+		sysid = of_get_property(node, "system-id", NULL);
+
+	if (sysid == NULL)
+		seq_printf(m, "SRLNBR=<UNKNOWN>\n");
+	else
+		/* Skip "IBM," on front of serial number, see dt.c */
+		seq_printf(m, "SRLNBR=%s\n", sysid + 4);
+
+	of_node_put(node);
 
 	return 0;
 }
@@ -165,7 +171,7 @@ static int proc_viopath_open(struct inode *inode, struct file *file)
 	return single_open(file, proc_viopath_show, NULL);
 }
 
-static struct file_operations proc_viopath_operations = {
+static const struct file_operations proc_viopath_operations = {
 	.open		= proc_viopath_open,
 	.read		= seq_read,
 	.llseek		= seq_lseek,
@@ -174,12 +180,10 @@ static struct file_operations proc_viopath_operations = {
 
 static int __init vio_proc_init(void)
 {
-	struct proc_dir_entry *e;
+	if (!firmware_has_feature(FW_FEATURE_ISERIES))
+		return 0;
 
-	e = create_proc_entry("iSeries/config", 0, NULL);
-	if (e)
-		e->proc_fops = &proc_viopath_operations;
-
+	proc_create("iSeries/config", 0, NULL, &proc_viopath_operations);
         return 0;
 }
 __initcall(vio_proc_init);
@@ -343,7 +347,7 @@ static void handleConfig(struct HvLpEvent *event)
 		return;
 	}
 
-	up((struct semaphore *)event->xCorrelationToken);
+	complete((struct completion *)event->xCorrelationToken);
 }
 
 /*
@@ -370,7 +374,7 @@ void vio_set_hostlp(void)
 }
 EXPORT_SYMBOL(vio_set_hostlp);
 
-static void vio_handleEvent(struct HvLpEvent *event, struct pt_regs *regs)
+static void vio_handleEvent(struct HvLpEvent *event)
 {
 	HvLpIndex remoteLp;
 	int subtype = (event->xSubtype & VIOMAJOR_SUBTYPE_MASK)
@@ -454,7 +458,7 @@ static void viopath_donealloc(void *parm, int number)
 	if (parmsp->used_wait_atomic)
 		atomic_set(&parmsp->wait_atomic, 0);
 	else
-		up(&parmsp->sem);
+		complete(&parmsp->done);
 }
 
 static int allocateEvents(HvLpIndex remoteLp, int numEvents)
@@ -466,7 +470,7 @@ static int allocateEvents(HvLpIndex remoteLp, int numEvents)
 		atomic_set(&parms.wait_atomic, 1);
 	} else {
 		parms.used_wait_atomic = 0;
-		init_MUTEX_LOCKED(&parms.sem);
+		init_completion(&parms.done);
 	}
 	mf_allocate_lp_events(remoteLp, HvLpEvent_Type_VirtualIo, 250,	/* It would be nice to put a real number here! */
 			    numEvents, &viopath_donealloc, &parms);
@@ -474,7 +478,7 @@ static int allocateEvents(HvLpIndex remoteLp, int numEvents)
 		while (atomic_read(&parms.wait_atomic))
 			mb();
 	} else
-		down(&parms.sem);
+		wait_for_completion(&parms.done);
 	return parms.number;
 }
 
@@ -575,17 +579,17 @@ int viopath_close(HvLpIndex remoteLp, int subtype, int numReq)
 	spin_unlock_irqrestore(&statuslock, flags);
 
 	parms.used_wait_atomic = 0;
-	init_MUTEX_LOCKED(&parms.sem);
+	init_completion(&parms.done);
 	mf_deallocate_lp_events(remoteLp, HvLpEvent_Type_VirtualIo,
 			      numReq, &viopath_donealloc, &parms);
-	down(&parms.sem);
+	wait_for_completion(&parms.done);
 
 	spin_lock_irqsave(&statuslock, flags);
 	for (i = 0, numOpen = 0; i < VIO_MAX_SUBTYPES; i++)
 		numOpen += viopathStatus[remoteLp].users[i];
 
 	if ((viopathStatus[remoteLp].isOpen) && (numOpen == 0)) {
-		printk(VIOPATH_KERN_INFO "closing connection to partition %d",
+		printk(VIOPATH_KERN_INFO "closing connection to partition %d\n",
 				remoteLp);
 
 		HvCallEvent_closeLpEventPath(remoteLp,

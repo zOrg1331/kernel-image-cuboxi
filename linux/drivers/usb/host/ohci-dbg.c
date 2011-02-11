@@ -16,15 +16,15 @@
 	case PIPE_CONTROL:	temp = "ctrl"; break; \
 	case PIPE_BULK:		temp = "bulk"; break; \
 	case PIPE_INTERRUPT:	temp = "intr"; break; \
-	default: 		temp = "isoc"; break; \
+	default:		temp = "isoc"; break; \
 	}; temp;})
 #define pipestring(pipe) edstring(usb_pipetype(pipe))
 
 /* debug| print the main components of an URB
  * small: 0) header + data packets 1) just header
  */
-static void __attribute__((unused))
-urb_print (struct urb * urb, char * str, int small)
+static void __maybe_unused
+urb_print(struct urb * urb, char * str, int small, int status)
 {
 	unsigned int pipe= urb->pipe;
 
@@ -34,7 +34,7 @@ urb_print (struct urb * urb, char * str, int small)
 	}
 
 #ifndef	OHCI_VERBOSE_DEBUG
-	if (urb->status != 0)
+	if (status != 0)
 #endif
 	dbg("%s %p dev=%d ep=%d%s-%s flags=%x len=%d/%d stat=%d",
 		    str,
@@ -46,7 +46,7 @@ urb_print (struct urb * urb, char * str, int small)
 		    urb->transfer_flags,
 		    urb->actual_length,
 		    urb->transfer_buffer_length,
-		    urb->status);
+		    status);
 
 #ifdef	OHCI_VERBOSE_DEBUG
 	if (!small) {
@@ -66,7 +66,7 @@ urb_print (struct urb * urb, char * str, int small)
 						urb->transfer_buffer_length: urb->actual_length;
 			for (i = 0; i < 16 && i < len; i++)
 				printk (" %02x", ((__u8 *) urb->transfer_buffer) [i]);
-			printk ("%s stat:%d\n", i < len? "...": "", urb->status);
+			printk ("%s stat:%d\n", i < len? "...": "", status);
 		}
 	}
 #endif
@@ -74,7 +74,7 @@ urb_print (struct urb * urb, char * str, int small)
 
 #define ohci_dbg_sw(ohci, next, size, format, arg...) \
 	do { \
-	if (next) { \
+	if (next != NULL) { \
 		unsigned s_len; \
 		s_len = scnprintf (*next, *size, format, ## arg ); \
 		*size -= s_len; *next += s_len; \
@@ -205,13 +205,13 @@ ohci_dump_status (struct ohci_hcd *controller, char **next, unsigned *size)
 		(temp & RH_PS_PSSC) ? " PSSC" : "", \
 		(temp & RH_PS_PESC) ? " PESC" : "", \
 		(temp & RH_PS_CSC) ? " CSC" : "", \
- 		\
+		\
 		(temp & RH_PS_LSDA) ? " LSDA" : "", \
 		(temp & RH_PS_PPS) ? " PPS" : "", \
 		(temp & RH_PS_PRS) ? " PRS" : "", \
 		(temp & RH_PS_POCI) ? " POCI" : "", \
 		(temp & RH_PS_PSS) ? " PSS" : "", \
- 		\
+		\
 		(temp & RH_PS_PES) ? " PES" : "", \
 		(temp & RH_PS_CCS) ? " CCS" : "" \
 		);
@@ -338,7 +338,7 @@ static void ohci_dump_td (const struct ohci_hcd *ohci, const char *label,
 }
 
 /* caller MUST own hcd spinlock if verbose is set! */
-static void __attribute__((unused))
+static void __maybe_unused
 ohci_dump_ed (const struct ohci_hcd *ohci, const char *label,
 		const struct ed *ed, int verbose)
 {
@@ -400,6 +400,42 @@ static inline void create_debug_files (struct ohci_hcd *bus) { }
 static inline void remove_debug_files (struct ohci_hcd *bus) { }
 
 #else
+
+static int debug_async_open(struct inode *, struct file *);
+static int debug_periodic_open(struct inode *, struct file *);
+static int debug_registers_open(struct inode *, struct file *);
+static int debug_async_open(struct inode *, struct file *);
+static ssize_t debug_output(struct file*, char __user*, size_t, loff_t*);
+static int debug_close(struct inode *, struct file *);
+
+static const struct file_operations debug_async_fops = {
+	.owner		= THIS_MODULE,
+	.open		= debug_async_open,
+	.read		= debug_output,
+	.release	= debug_close,
+};
+static const struct file_operations debug_periodic_fops = {
+	.owner		= THIS_MODULE,
+	.open		= debug_periodic_open,
+	.read		= debug_output,
+	.release	= debug_close,
+};
+static const struct file_operations debug_registers_fops = {
+	.owner		= THIS_MODULE,
+	.open		= debug_registers_open,
+	.read		= debug_output,
+	.release	= debug_close,
+};
+
+static struct dentry *ohci_debug_root;
+
+struct debug_buffer {
+	ssize_t (*fill_func)(struct debug_buffer *);	/* fill method */
+	struct ohci_hcd *ohci;
+	struct mutex mutex;	/* protect filling of buffer */
+	size_t count;		/* number of characters filled into buffer */
+	char *page;
+};
 
 static ssize_t
 show_list (struct ohci_hcd *ohci, char *buf, size_t count, struct ed *ed)
@@ -467,37 +503,28 @@ show_list (struct ohci_hcd *ohci, char *buf, size_t count, struct ed *ed)
 	return count - size;
 }
 
-static ssize_t
-show_async (struct class_device *class_dev, char *buf)
+static ssize_t fill_async_buffer(struct debug_buffer *buf)
 {
-	struct usb_bus		*bus;
-	struct usb_hcd		*hcd;
 	struct ohci_hcd		*ohci;
 	size_t			temp;
 	unsigned long		flags;
 
-	bus = class_get_devdata(class_dev);
-	hcd = bus->hcpriv;
-	ohci = hcd_to_ohci(hcd);
+	ohci = buf->ohci;
 
 	/* display control and bulk lists together, for simplicity */
 	spin_lock_irqsave (&ohci->lock, flags);
-	temp = show_list (ohci, buf, PAGE_SIZE, ohci->ed_controltail);
-	temp += show_list (ohci, buf + temp, PAGE_SIZE - temp, ohci->ed_bulktail);
+	temp = show_list(ohci, buf->page, buf->count, ohci->ed_controltail);
+	temp += show_list(ohci, buf->page + temp, buf->count - temp,
+			  ohci->ed_bulktail);
 	spin_unlock_irqrestore (&ohci->lock, flags);
 
 	return temp;
 }
-static CLASS_DEVICE_ATTR (async, S_IRUGO, show_async, NULL);
-
 
 #define DBG_SCHED_LIMIT 64
 
-static ssize_t
-show_periodic (struct class_device *class_dev, char *buf)
+static ssize_t fill_periodic_buffer(struct debug_buffer *buf)
 {
-	struct usb_bus		*bus;
-	struct usb_hcd		*hcd;
 	struct ohci_hcd		*ohci;
 	struct ed		**seen, *ed;
 	unsigned long		flags;
@@ -505,14 +532,12 @@ show_periodic (struct class_device *class_dev, char *buf)
 	char			*next;
 	unsigned		i;
 
-	if (!(seen = kmalloc (DBG_SCHED_LIMIT * sizeof *seen, SLAB_ATOMIC)))
+	if (!(seen = kmalloc (DBG_SCHED_LIMIT * sizeof *seen, GFP_ATOMIC)))
 		return 0;
 	seen_count = 0;
 
-	bus = class_get_devdata(class_dev);
-	hcd = bus->hcpriv;
-	ohci = hcd_to_ohci(hcd);
-	next = buf;
+	ohci = buf->ohci;
+	next = buf->page;
 	size = PAGE_SIZE;
 
 	temp = scnprintf (next, size, "size = %d\n", NUM_INTS);
@@ -563,7 +588,7 @@ show_periodic (struct class_device *class_dev, char *buf)
 					(info & ED_SKIP) ? " K" : "",
 					(ed->hwHeadP &
 						cpu_to_hc32(ohci, ED_H)) ?
- 							" H" : "");
+							" H" : "");
 				size -= temp;
 				next += temp;
 
@@ -589,15 +614,10 @@ show_periodic (struct class_device *class_dev, char *buf)
 
 	return PAGE_SIZE - size;
 }
-static CLASS_DEVICE_ATTR (periodic, S_IRUGO, show_periodic, NULL);
-
-
 #undef DBG_SCHED_LIMIT
 
-static ssize_t
-show_registers (struct class_device *class_dev, char *buf)
+static ssize_t fill_registers_buffer(struct debug_buffer *buf)
 {
-	struct usb_bus		*bus;
 	struct usb_hcd		*hcd;
 	struct ohci_hcd		*ohci;
 	struct ohci_regs __iomem *regs;
@@ -606,11 +626,10 @@ show_registers (struct class_device *class_dev, char *buf)
 	char			*next;
 	u32			rdata;
 
-	bus = class_get_devdata(class_dev);
-	hcd = bus->hcpriv;
-	ohci = hcd_to_ohci(hcd);
+	ohci = buf->ohci;
+	hcd = ohci_to_hcd(ohci);
 	regs = ohci->regs;
-	next = buf;
+	next = buf->page;
 	size = PAGE_SIZE;
 
 	spin_lock_irqsave (&ohci->lock, flags);
@@ -620,13 +639,13 @@ show_registers (struct class_device *class_dev, char *buf)
 	ohci_dbg_sw (ohci, &next, &size,
 		"bus %s, device %s\n"
 		"%s\n"
-		"%s version " DRIVER_VERSION "\n",
+		"%s\n",
 		hcd->self.controller->bus->name,
-		hcd->self.controller->bus_id,
+		dev_name(hcd->self.controller),
 		hcd->product_desc,
 		hcd_name);
 
-	if (bus->controller->power.power_state.event) {
+	if (!test_bit(HCD_FLAG_HW_ACCESSIBLE, &hcd->flags)) {
 		size -= scnprintf (next, size,
 			"SUSPENDED (no register access)\n");
 		goto done;
@@ -667,33 +686,164 @@ show_registers (struct class_device *class_dev, char *buf)
 	size -= temp;
 	next += temp;
 
+	temp = scnprintf (next, size, "hub poll timer %s\n",
+			ohci_to_hcd(ohci)->poll_rh ? "ON" : "off");
+	size -= temp;
+	next += temp;
+
 	/* roothub */
 	ohci_dump_roothub (ohci, 1, &next, &size);
 
 done:
 	spin_unlock_irqrestore (&ohci->lock, flags);
+
 	return PAGE_SIZE - size;
 }
-static CLASS_DEVICE_ATTR (registers, S_IRUGO, show_registers, NULL);
 
+static struct debug_buffer *alloc_buffer(struct ohci_hcd *ohci,
+				ssize_t (*fill_func)(struct debug_buffer *))
+{
+	struct debug_buffer *buf;
 
+	buf = kzalloc(sizeof(struct debug_buffer), GFP_KERNEL);
+
+	if (buf) {
+		buf->ohci = ohci;
+		buf->fill_func = fill_func;
+		mutex_init(&buf->mutex);
+	}
+
+	return buf;
+}
+
+static int fill_buffer(struct debug_buffer *buf)
+{
+	int ret = 0;
+
+	if (!buf->page)
+		buf->page = (char *)get_zeroed_page(GFP_KERNEL);
+
+	if (!buf->page) {
+		ret = -ENOMEM;
+		goto out;
+	}
+
+	ret = buf->fill_func(buf);
+
+	if (ret >= 0) {
+		buf->count = ret;
+		ret = 0;
+	}
+
+out:
+	return ret;
+}
+
+static ssize_t debug_output(struct file *file, char __user *user_buf,
+			size_t len, loff_t *offset)
+{
+	struct debug_buffer *buf = file->private_data;
+	int ret = 0;
+
+	mutex_lock(&buf->mutex);
+	if (buf->count == 0) {
+		ret = fill_buffer(buf);
+		if (ret != 0) {
+			mutex_unlock(&buf->mutex);
+			goto out;
+		}
+	}
+	mutex_unlock(&buf->mutex);
+
+	ret = simple_read_from_buffer(user_buf, len, offset,
+				      buf->page, buf->count);
+
+out:
+	return ret;
+
+}
+
+static int debug_close(struct inode *inode, struct file *file)
+{
+	struct debug_buffer *buf = file->private_data;
+
+	if (buf) {
+		if (buf->page)
+			free_page((unsigned long)buf->page);
+		kfree(buf);
+	}
+
+	return 0;
+}
+static int debug_async_open(struct inode *inode, struct file *file)
+{
+	file->private_data = alloc_buffer(inode->i_private, fill_async_buffer);
+
+	return file->private_data ? 0 : -ENOMEM;
+}
+
+static int debug_periodic_open(struct inode *inode, struct file *file)
+{
+	file->private_data = alloc_buffer(inode->i_private,
+					  fill_periodic_buffer);
+
+	return file->private_data ? 0 : -ENOMEM;
+}
+
+static int debug_registers_open(struct inode *inode, struct file *file)
+{
+	file->private_data = alloc_buffer(inode->i_private,
+					  fill_registers_buffer);
+
+	return file->private_data ? 0 : -ENOMEM;
+}
 static inline void create_debug_files (struct ohci_hcd *ohci)
 {
-	struct class_device *cldev = ohci_to_hcd(ohci)->self.class_dev;
+	struct usb_bus *bus = &ohci_to_hcd(ohci)->self;
 
-	class_device_create_file(cldev, &class_device_attr_async);
-	class_device_create_file(cldev, &class_device_attr_periodic);
-	class_device_create_file(cldev, &class_device_attr_registers);
+	ohci->debug_dir = debugfs_create_dir(bus->bus_name, ohci_debug_root);
+	if (!ohci->debug_dir)
+		goto dir_error;
+
+	ohci->debug_async = debugfs_create_file("async", S_IRUGO,
+						ohci->debug_dir, ohci,
+						&debug_async_fops);
+	if (!ohci->debug_async)
+		goto async_error;
+
+	ohci->debug_periodic = debugfs_create_file("periodic", S_IRUGO,
+						   ohci->debug_dir, ohci,
+						   &debug_periodic_fops);
+	if (!ohci->debug_periodic)
+		goto periodic_error;
+
+	ohci->debug_registers = debugfs_create_file("registers", S_IRUGO,
+						    ohci->debug_dir, ohci,
+						    &debug_registers_fops);
+	if (!ohci->debug_registers)
+		goto registers_error;
+
 	ohci_dbg (ohci, "created debug files\n");
+	return;
+
+registers_error:
+	debugfs_remove(ohci->debug_periodic);
+periodic_error:
+	debugfs_remove(ohci->debug_async);
+async_error:
+	debugfs_remove(ohci->debug_dir);
+dir_error:
+	ohci->debug_periodic = NULL;
+	ohci->debug_async = NULL;
+	ohci->debug_dir = NULL;
 }
 
 static inline void remove_debug_files (struct ohci_hcd *ohci)
 {
-	struct class_device *cldev = ohci_to_hcd(ohci)->self.class_dev;
-
-	class_device_remove_file(cldev, &class_device_attr_async);
-	class_device_remove_file(cldev, &class_device_attr_periodic);
-	class_device_remove_file(cldev, &class_device_attr_registers);
+	debugfs_remove(ohci->debug_registers);
+	debugfs_remove(ohci->debug_periodic);
+	debugfs_remove(ohci->debug_async);
+	debugfs_remove(ohci->debug_dir);
 }
 
 #endif

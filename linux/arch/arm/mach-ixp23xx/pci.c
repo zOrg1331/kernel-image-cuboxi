@@ -25,18 +25,17 @@
 #include <linux/ioport.h>
 #include <linux/slab.h>
 #include <linux/delay.h>
+#include <linux/io.h>
 
-#include <asm/io.h>
 #include <asm/irq.h>
 #include <asm/sizes.h>
 #include <asm/system.h>
 #include <asm/mach/pci.h>
-#include <asm/mach-types.h>
-#include <asm/hardware.h>
+#include <mach/hardware.h>
 
 extern int (*external_fault) (unsigned long, struct pt_regs *);
 
-static int pci_master_aborts = 0;
+static volatile int pci_master_aborts = 0;
 
 #ifdef DEBUG
 #define DBG(x...)	printk(x)
@@ -284,7 +283,7 @@ int ixp23xx_pci_setup(int nr, struct pci_sys_data *sys)
 	return 1;
 }
 
-void ixp23xx_pci_slave_init(void)
+void __init ixp23xx_pci_slave_init(void)
 {
 	ixp23xx_pci_common_init();
 }

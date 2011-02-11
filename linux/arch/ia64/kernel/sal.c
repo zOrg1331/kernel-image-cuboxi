@@ -109,6 +109,13 @@ check_versions (struct ia64_sal_systab *systab)
 		sal_revision = SAL_VERSION_CODE(2, 8);
 		sal_version = SAL_VERSION_CODE(0, 0);
 	}
+
+	if (ia64_platform_is("sn2") && (sal_revision == SAL_VERSION_CODE(2, 9)))
+		/*
+		 * SGI Altix has hard-coded version 2.9 in their prom
+		 * but they actually implement 3.2, so let's fix it here.
+		 */
+		sal_revision = SAL_VERSION_CODE(3, 2);
 }
 
 static void __init
@@ -134,7 +141,7 @@ set_smp_redirect (int flag)
 	 * interrupt redirection. The reason is this would require that
 	 * All interrupts be stopped and hard bind the irq to a cpu.
 	 * Later when the interrupt is fired we need to set the redir hint
-	 * on again in the vector. This is combersome for something that the
+	 * on again in the vector. This is cumbersome for something that the
 	 * user mode irq balancer will solve anyways.
 	 */
 	no_int_routing=1;
@@ -194,9 +201,8 @@ static void __init
 chk_nointroute_opt(void)
 {
 	char *cp;
-	extern char saved_command_line[];
 
-	for (cp = saved_command_line; *cp; ) {
+	for (cp = boot_command_line; *cp; ) {
 		if (memcmp(cp, "nointroute", 10) == 0) {
 			no_int_routing = 1;
 			printk ("no_int_routing on\n");
@@ -223,27 +229,41 @@ static void __init sal_desc_ap_wakeup(void *p) { }
  */
 static int sal_cache_flush_drops_interrupts;
 
-static void __init
+static int __init
+force_pal_cache_flush(char *str)
+{
+	sal_cache_flush_drops_interrupts = 1;
+	return 0;
+}
+early_param("force_pal_cache_flush", force_pal_cache_flush);
+
+void __init
 check_sal_cache_flush (void)
 {
 	unsigned long flags;
 	int cpu;
-	u64 vector;
+	u64 vector, cache_type = 3;
+	struct ia64_sal_retval isrv;
+
+	if (sal_cache_flush_drops_interrupts)
+		return;
 
 	cpu = get_cpu();
 	local_irq_save(flags);
 
 	/*
-	 * Schedule a timer interrupt, wait until it's reported, and see if
-	 * SAL_CACHE_FLUSH drops it.
+	 * Send ourselves a timer interrupt, wait until it's reported, and see
+	 * if SAL_CACHE_FLUSH drops it.
 	 */
-	ia64_set_itv(IA64_TIMER_VECTOR);
-	ia64_set_itm(ia64_get_itc() + 1000);
+	platform_send_ipi(cpu, IA64_TIMER_VECTOR, IA64_IPI_DM_INT, 0);
 
 	while (!ia64_get_irr(IA64_TIMER_VECTOR))
 		cpu_relax();
 
-	ia64_sal_cache_flush(3);
+	SAL_CALL(isrv, SAL_CACHE_FLUSH, cache_type, 0, 0, 0, 0, 0, 0);
+
+	if (isrv.status)
+		printk(KERN_ERR "SAL_CAL_FLUSH failed with %ld\n", isrv.status);
 
 	if (ia64_get_irr(IA64_TIMER_VECTOR)) {
 		vector = ia64_get_ivr();
@@ -281,6 +301,7 @@ ia64_sal_cache_flush (u64 cache_type)
 	SAL_CALL(isrv, SAL_CACHE_FLUSH, cache_type, 0, 0, 0, 0, 0, 0);
 	return isrv.status;
 }
+EXPORT_SYMBOL_GPL(ia64_sal_cache_flush);
 
 void __init
 ia64_sal_init (struct ia64_sal_systab *systab)
@@ -331,7 +352,6 @@ ia64_sal_init (struct ia64_sal_systab *systab)
 		p += SAL_DESC_SIZE(*p);
 	}
 
-	check_sal_cache_flush();
 }
 
 int
@@ -370,3 +390,16 @@ ia64_sal_oemcall_reentrant(struct ia64_sal_retval *isrvp, u64 oemfunc,
 	return 0;
 }
 EXPORT_SYMBOL(ia64_sal_oemcall_reentrant);
+
+long
+ia64_sal_freq_base (unsigned long which, unsigned long *ticks_per_second,
+		    unsigned long *drift_info)
+{
+	struct ia64_sal_retval isrv;
+
+	SAL_CALL(isrv, SAL_FREQ_BASE, which, 0, 0, 0, 0, 0, 0);
+	*ticks_per_second = isrv.v0;
+	*drift_info = isrv.v1;
+	return isrv.status;
+}
+EXPORT_SYMBOL_GPL(ia64_sal_freq_base);

@@ -9,6 +9,7 @@
 
 #include <linux/kernel.h>
 #include <linux/usb.h>
+#include <linux/fs.h>
 #include <asm/uaccess.h>
 
 #include "usb_mon.h"
@@ -28,7 +29,7 @@ static int mon_stat_open(struct inode *inode, struct file *file)
 	if ((sp = kmalloc(sizeof(struct snap), GFP_KERNEL)) == NULL)
 		return -ENOMEM;
 
-	mbus = inode->u.generic_ip;
+	mbus = inode->i_private;
 
 	sp->slen = snprintf(sp->str, STAT_BUF_SIZE,
 	    "nreaders %d events %u text_lost %u\n",
@@ -42,27 +43,19 @@ static ssize_t mon_stat_read(struct file *file, char __user *buf,
 				size_t nbytes, loff_t *ppos)
 {
 	struct snap *sp = file->private_data;
-	loff_t pos = *ppos;
-	int cnt;
 
-	if (pos < 0 || pos >= sp->slen)
-		return 0;
-	if (nbytes == 0)
-		return 0;
-	if ((cnt = sp->slen - pos) > nbytes)
-		cnt = nbytes;
-	if (copy_to_user(buf, sp->str + pos, cnt))
-		return -EFAULT;
-	*ppos = pos + cnt;
-	return cnt;
+	return simple_read_from_buffer(buf, nbytes, ppos, sp->str, sp->slen);
 }
 
 static int mon_stat_release(struct inode *inode, struct file *file)
 {
+	struct snap *sp = file->private_data;
+	file->private_data = NULL;
+	kfree(sp);
 	return 0;
 }
 
-struct file_operations mon_fops_stat = {
+const struct file_operations mon_fops_stat = {
 	.owner =	THIS_MODULE,
 	.open =		mon_stat_open,
 	.llseek =	no_llseek,

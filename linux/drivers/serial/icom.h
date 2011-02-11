@@ -20,7 +20,7 @@
  * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307 USA
  */
 
-#include<linux/serial_core.h>
+#include <linux/serial_core.h>
 
 #define BAUD_TABLE_LIMIT	((sizeof(icom_acfg_baud)/sizeof(int)) - 1)
 static int icom_acfg_baud[] = {
@@ -258,7 +258,6 @@ struct icom_port {
 struct icom_adapter {
 	void __iomem * base_addr;
 	unsigned long base_addr_pci;
-	unsigned char irq_number;
 	struct pci_dev *pci_dev;
 	struct icom_port port_info[4];
 	int index;
@@ -271,7 +270,7 @@ struct icom_adapter {
 #define V2_ONE_PORT_RVX_ONE_PORT_IMBED_MDM	0x0251
 	int numb_ports;
 	struct list_head icom_adapter_entry;
-	struct kobject kobj;
+	struct kref kref;
 };
 
 /* prototype */

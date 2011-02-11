@@ -25,7 +25,6 @@ static unsigned char cached_8259[2] = { 0xff, 0xff };
 
 static DEFINE_SPINLOCK(i8259_lock);
 
-static struct device_node *i8259_node;
 static struct irq_host *i8259_host;
 
 /*
@@ -34,7 +33,7 @@ static struct irq_host *i8259_host;
  * which is called.  It should be noted that polling is broken on some
  * IBM and Motorola PReP boxes so we must use the int-ack feature on them.
  */
-unsigned int i8259_irq(struct pt_regs *regs)
+unsigned int i8259_irq(void)
 {
 	int irq;
 	int lock = 0;
@@ -138,6 +137,7 @@ static void i8259_unmask_irq(unsigned int irq_nr)
 static struct irq_chip i8259_pic = {
 	.typename	= " i8259    ",
 	.mask		= i8259_mask_irq,
+	.disable	= i8259_mask_irq,
 	.unmask		= i8259_unmask_irq,
 	.mask_ack	= i8259_mask_and_ack_irq,
 };
@@ -165,7 +165,7 @@ static struct resource pic_edgectrl_iores = {
 
 static int i8259_host_match(struct irq_host *h, struct device_node *node)
 {
-	return i8259_node == NULL || i8259_node == node;
+	return h->of_node == NULL || h->of_node == node;
 }
 
 static int i8259_host_map(struct irq_host *h, unsigned int virq,
@@ -224,7 +224,12 @@ static struct irq_host_ops i8259_host_ops = {
 	.xlate = i8259_host_xlate,
 };
 
-/****
+struct irq_host *i8259_get_host(void)
+{
+	return i8259_host;
+}
+
+/**
  * i8259_init - Initialize the legacy controller
  * @node: device node of the legacy PIC (can be NULL, but then, it will match
  *        all interrupts, so beware)
@@ -271,9 +276,8 @@ void i8259_init(struct device_node *node, unsigned long intack_addr)
 	spin_unlock_irqrestore(&i8259_lock, flags);
 
 	/* create a legacy host */
-	if (node)
-		i8259_node = of_node_get(node);
-	i8259_host = irq_alloc_host(IRQ_HOST_MAP_LEGACY, 0, &i8259_host_ops, 0);
+	i8259_host = irq_alloc_host(node, IRQ_HOST_MAP_LEGACY,
+				    0, &i8259_host_ops, 0);
 	if (i8259_host == NULL) {
 		printk(KERN_ERR "i8259: failed to allocate irq host !\n");
 		return;

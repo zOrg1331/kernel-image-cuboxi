@@ -36,6 +36,8 @@
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/fs.h>
+#include <linux/sched.h>
+#include <linux/smp_lock.h>
 #include <linux/init.h>
 #include <linux/miscdevice.h>
 #include <linux/delay.h>
@@ -65,11 +67,11 @@ static inline void hwrng_cleanup(struct hwrng *rng)
 		rng->cleanup(rng);
 }
 
-static inline int hwrng_data_present(struct hwrng *rng)
+static inline int hwrng_data_present(struct hwrng *rng, int wait)
 {
 	if (!rng->data_present)
 		return 1;
-	return rng->data_present(rng);
+	return rng->data_present(rng, wait);
 }
 
 static inline int hwrng_data_read(struct hwrng *rng, u32 *data)
@@ -85,6 +87,7 @@ static int rng_dev_open(struct inode *inode, struct file *filp)
 		return -EINVAL;
 	if (filp->f_mode & FMODE_WRITE)
 		return -EINVAL;
+	cycle_kernel_lock();
 	return 0;
 }
 
@@ -93,8 +96,7 @@ static ssize_t rng_dev_read(struct file *filp, char __user *buf,
 {
 	u32 data;
 	ssize_t ret = 0;
-	int i, err = 0;
-	int data_present;
+	int err = 0;
 	int bytes_read;
 
 	while (size) {
@@ -106,27 +108,20 @@ static ssize_t rng_dev_read(struct file *filp, char __user *buf,
 			err = -ENODEV;
 			goto out;
 		}
-		if (filp->f_flags & O_NONBLOCK) {
-			data_present = hwrng_data_present(current_rng);
-		} else {
-			/* Some RNG require some time between data_reads to gather
-			 * new entropy. Poll it.
-			 */
-			for (i = 0; i < 20; i++) {
-				data_present = hwrng_data_present(current_rng);
-				if (data_present)
-					break;
-				udelay(10);
-			}
-		}
+
 		bytes_read = 0;
-		if (data_present)
+		if (hwrng_data_present(current_rng,
+				       !(filp->f_flags & O_NONBLOCK)))
 			bytes_read = hwrng_data_read(current_rng, &data);
 		mutex_unlock(&rng_mutex);
 
 		err = -EAGAIN;
 		if (!bytes_read && (filp->f_flags & O_NONBLOCK))
 			goto out;
+		if (bytes_read < 0) {
+			err = bytes_read;
+			goto out;
+		}
 
 		err = -EFAULT;
 		while (bytes_read && size) {
@@ -158,11 +153,13 @@ static const struct file_operations rng_chrdev_ops = {
 static struct miscdevice rng_miscdev = {
 	.minor		= RNG_MISCDEV_MINOR,
 	.name		= RNG_MODULE_NAME,
+	.nodename	= "hwrng",
 	.fops		= &rng_chrdev_ops,
 };
 
 
-static ssize_t hwrng_attr_current_store(struct class_device *class,
+static ssize_t hwrng_attr_current_store(struct device *dev,
+					struct device_attribute *attr,
 					const char *buf, size_t len)
 {
 	int err;
@@ -192,7 +189,8 @@ static ssize_t hwrng_attr_current_store(struct class_device *class,
 	return err ? : len;
 }
 
-static ssize_t hwrng_attr_current_show(struct class_device *class,
+static ssize_t hwrng_attr_current_show(struct device *dev,
+				       struct device_attribute *attr,
 				       char *buf)
 {
 	int err;
@@ -210,7 +208,8 @@ static ssize_t hwrng_attr_current_show(struct class_device *class,
 	return ret;
 }
 
-static ssize_t hwrng_attr_available_show(struct class_device *class,
+static ssize_t hwrng_attr_available_show(struct device *dev,
+					 struct device_attribute *attr,
 					 char *buf)
 {
 	int err;
@@ -234,20 +233,18 @@ static ssize_t hwrng_attr_available_show(struct class_device *class,
 	return ret;
 }
 
-static CLASS_DEVICE_ATTR(rng_current, S_IRUGO | S_IWUSR,
-			 hwrng_attr_current_show,
-			 hwrng_attr_current_store);
-static CLASS_DEVICE_ATTR(rng_available, S_IRUGO,
-			 hwrng_attr_available_show,
-			 NULL);
+static DEVICE_ATTR(rng_current, S_IRUGO | S_IWUSR,
+		   hwrng_attr_current_show,
+		   hwrng_attr_current_store);
+static DEVICE_ATTR(rng_available, S_IRUGO,
+		   hwrng_attr_available_show,
+		   NULL);
 
 
 static void unregister_miscdev(void)
 {
-	class_device_remove_file(rng_miscdev.class,
-				 &class_device_attr_rng_available);
-	class_device_remove_file(rng_miscdev.class,
-				 &class_device_attr_rng_current);
+	device_remove_file(rng_miscdev.this_device, &dev_attr_rng_available);
+	device_remove_file(rng_miscdev.this_device, &dev_attr_rng_current);
 	misc_deregister(&rng_miscdev);
 }
 
@@ -258,20 +255,19 @@ static int register_miscdev(void)
 	err = misc_register(&rng_miscdev);
 	if (err)
 		goto out;
-	err = class_device_create_file(rng_miscdev.class,
-				       &class_device_attr_rng_current);
+	err = device_create_file(rng_miscdev.this_device,
+				 &dev_attr_rng_current);
 	if (err)
 		goto err_misc_dereg;
-	err = class_device_create_file(rng_miscdev.class,
-				       &class_device_attr_rng_available);
+	err = device_create_file(rng_miscdev.this_device,
+				 &dev_attr_rng_available);
 	if (err)
 		goto err_remove_current;
 out:
 	return err;
 
 err_remove_current:
-	class_device_remove_file(rng_miscdev.class,
-				 &class_device_attr_rng_current);
+	device_remove_file(rng_miscdev.this_device, &dev_attr_rng_current);
 err_misc_dereg:
 	misc_deregister(&rng_miscdev);
 	goto out;

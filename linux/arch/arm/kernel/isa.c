@@ -16,6 +16,7 @@
 #include <linux/fs.h>
 #include <linux/sysctl.h>
 #include <linux/init.h>
+#include <linux/io.h>
 
 static unsigned int isa_membase, isa_portbase, isa_portshift;
 
@@ -70,5 +71,5 @@ register_isa_ports(unsigned int membase, unsigned int portbase, unsigned int por
 	isa_membase = membase;
 	isa_portbase = portbase;
 	isa_portshift = portshift;
-	isa_sysctl_header = register_sysctl_table(ctl_bus, 0);
+	isa_sysctl_header = register_sysctl_table(ctl_bus);
 }

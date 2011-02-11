@@ -26,7 +26,6 @@
 #include <linux/init.h>
 #include <linux/slab.h>
 #include <linux/types.h>
-#include <linux/sched.h>
 #include <linux/delay.h>
 #include <linux/errno.h>
 #include <linux/ptrace.h>
@@ -251,20 +250,20 @@ static void btuart_receive(btuart_info_t *info)
 				switch (info->rx_state) {
 
 				case RECV_WAIT_EVENT_HEADER:
-					eh = (struct hci_event_hdr *)(info->rx_skb->data);
+					eh = hci_event_hdr(info->rx_skb);
 					info->rx_state = RECV_WAIT_DATA;
 					info->rx_count = eh->plen;
 					break;
 
 				case RECV_WAIT_ACL_HEADER:
-					ah = (struct hci_acl_hdr *)(info->rx_skb->data);
+					ah = hci_acl_hdr(info->rx_skb);
 					dlen = __le16_to_cpu(ah->dlen);
 					info->rx_state = RECV_WAIT_DATA;
 					info->rx_count = dlen;
 					break;
 
 				case RECV_WAIT_SCO_HEADER:
-					sh = (struct hci_sco_hdr *)(info->rx_skb->data);
+					sh = hci_sco_hdr(info->rx_skb);
 					info->rx_state = RECV_WAIT_DATA;
 					info->rx_count = sh->dlen;
 					break;
@@ -288,17 +287,15 @@ static void btuart_receive(btuart_info_t *info)
 }
 
 
-static irqreturn_t btuart_interrupt(int irq, void *dev_inst, struct pt_regs *regs)
+static irqreturn_t btuart_interrupt(int irq, void *dev_inst)
 {
 	btuart_info_t *info = dev_inst;
 	unsigned int iobase;
 	int boguscount = 0;
 	int iir, lsr;
+	irqreturn_t r = IRQ_NONE;
 
-	if (!info || !info->hdev) {
-		BT_ERR("Call of irq %d for unknown device", irq);
-		return IRQ_NONE;
-	}
+	BUG_ON(!info->hdev);
 
 	iobase = info->p_dev->io.BasePort1;
 
@@ -306,6 +303,7 @@ static irqreturn_t btuart_interrupt(int irq, void *dev_inst, struct pt_regs *reg
 
 	iir = inb(iobase + UART_IIR) & UART_IIR_ID;
 	while (iir) {
+		r = IRQ_HANDLED;
 
 		/* Clear interrupt */
 		lsr = inb(iobase + UART_LSR);
@@ -339,7 +337,7 @@ static irqreturn_t btuart_interrupt(int irq, void *dev_inst, struct pt_regs *reg
 
 	spin_unlock(&(info->lock));
 
-	return IRQ_HANDLED;
+	return r;
 }
 
 
@@ -387,7 +385,7 @@ static void btuart_change_speed(btuart_info_t *info, unsigned int speed)
 	outb(lcr, iobase + UART_LCR);	/* Set 8N1  */
 	outb(fcr, iobase + UART_FCR);	/* Enable FIFO's */
 
-	/* Turn on interrups */
+	/* Turn on interrupts */
 	outb(UART_IER_RLSI | UART_IER_RDI | UART_IER_THRI, iobase + UART_IER);
 
 	spin_unlock_irqrestore(&(info->lock), flags);
@@ -590,7 +588,7 @@ static int btuart_probe(struct pcmcia_device *link)
 
 	link->io.Attributes1 = IO_DATA_PATH_WIDTH_8;
 	link->io.NumPorts1 = 8;
-	link->irq.Attributes = IRQ_TYPE_EXCLUSIVE | IRQ_HANDLE_PRESENT;
+	link->irq.Attributes = IRQ_TYPE_DYNAMIC_SHARING | IRQ_HANDLE_PRESENT;
 	link->irq.IRQInfo1 = IRQ_LEVEL_ID;
 
 	link->irq.Handler = btuart_interrupt;
@@ -611,117 +609,78 @@ static void btuart_detach(struct pcmcia_device *link)
 	kfree(info);
 }
 
-static int get_tuple(struct pcmcia_device *handle, tuple_t *tuple, cisparse_t *parse)
+static int btuart_check_config(struct pcmcia_device *p_dev,
+			       cistpl_cftable_entry_t *cf,
+			       cistpl_cftable_entry_t *dflt,
+			       unsigned int vcc,
+			       void *priv_data)
 {
-	int i;
+	int *try = priv_data;
 
-	i = pcmcia_get_tuple_data(handle, tuple);
-	if (i != CS_SUCCESS)
-		return i;
-
-	return pcmcia_parse_tuple(handle, tuple, parse);
+	if (cf->vpp1.present & (1 << CISTPL_POWER_VNOM))
+		p_dev->conf.Vpp = cf->vpp1.param[CISTPL_POWER_VNOM] / 10000;
+	if ((cf->io.nwin > 0) && (cf->io.win[0].len == 8) &&
+	    (cf->io.win[0].base != 0)) {
+		p_dev->io.BasePort1 = cf->io.win[0].base;
+		p_dev->io.IOAddrLines = (*try == 0) ? 16 :
+			cf->io.flags & CISTPL_IO_LINES_MASK;
+		if (!pcmcia_request_io(p_dev, &p_dev->io))
+			return 0;
+	}
+	return -ENODEV;
 }
 
-static int first_tuple(struct pcmcia_device *handle, tuple_t *tuple, cisparse_t *parse)
+static int btuart_check_config_notpicky(struct pcmcia_device *p_dev,
+					cistpl_cftable_entry_t *cf,
+					cistpl_cftable_entry_t *dflt,
+					unsigned int vcc,
+					void *priv_data)
 {
-	if (pcmcia_get_first_tuple(handle, tuple) != CS_SUCCESS)
-		return CS_NO_MORE_ITEMS;
-	return get_tuple(handle, tuple, parse);
-}
+	static unsigned int base[5] = { 0x3f8, 0x2f8, 0x3e8, 0x2e8, 0x0 };
+	int j;
 
-static int next_tuple(struct pcmcia_device *handle, tuple_t *tuple, cisparse_t *parse)
-{
-	if (pcmcia_get_next_tuple(handle, tuple) != CS_SUCCESS)
-		return CS_NO_MORE_ITEMS;
-	return get_tuple(handle, tuple, parse);
+	if ((cf->io.nwin > 0) && ((cf->io.flags & CISTPL_IO_LINES_MASK) <= 3)) {
+		for (j = 0; j < 5; j++) {
+			p_dev->io.BasePort1 = base[j];
+			p_dev->io.IOAddrLines = base[j] ? 16 : 3;
+			if (!pcmcia_request_io(p_dev, &p_dev->io))
+				return 0;
+		}
+	}
+	return -ENODEV;
 }
 
 static int btuart_config(struct pcmcia_device *link)
 {
-	static kio_addr_t base[5] = { 0x3f8, 0x2f8, 0x3e8, 0x2e8, 0x0 };
 	btuart_info_t *info = link->priv;
-	tuple_t tuple;
-	u_short buf[256];
-	cisparse_t parse;
-	cistpl_cftable_entry_t *cf = &parse.cftable_entry;
-	int i, j, try, last_ret, last_fn;
+	int i;
+	int try;
 
-	tuple.TupleData = (cisdata_t *)buf;
-	tuple.TupleOffset = 0;
-	tuple.TupleDataMax = 255;
-	tuple.Attributes = 0;
-
-	/* Get configuration register information */
-	tuple.DesiredTuple = CISTPL_CONFIG;
-	last_ret = first_tuple(link, &tuple, &parse);
-	if (last_ret != CS_SUCCESS) {
-		last_fn = ParseTuple;
-		goto cs_failed;
-	}
-	link->conf.ConfigBase = parse.config.base;
-	link->conf.Present = parse.config.rmask[0];
-
-	/* First pass: look for a config entry that looks normal. */
-	tuple.TupleData = (cisdata_t *) buf;
-	tuple.TupleOffset = 0;
-	tuple.TupleDataMax = 255;
-	tuple.Attributes = 0;
-	tuple.DesiredTuple = CISTPL_CFTABLE_ENTRY;
-	/* Two tries: without IO aliases, then with aliases */
-	for (try = 0; try < 2; try++) {
-		i = first_tuple(link, &tuple, &parse);
-		while (i != CS_NO_MORE_ITEMS) {
-			if (i != CS_SUCCESS)
-				goto next_entry;
-			if (cf->vpp1.present & (1 << CISTPL_POWER_VNOM))
-				link->conf.Vpp = cf->vpp1.param[CISTPL_POWER_VNOM] / 10000;
-			if ((cf->io.nwin > 0) && (cf->io.win[0].len == 8) && (cf->io.win[0].base != 0)) {
-				link->conf.ConfigIndex = cf->index;
-				link->io.BasePort1 = cf->io.win[0].base;
-				link->io.IOAddrLines = (try == 0) ? 16 : cf->io.flags & CISTPL_IO_LINES_MASK;
-				i = pcmcia_request_io(link, &link->io);
-				if (i == CS_SUCCESS)
-					goto found_port;
-			}
-next_entry:
-			i = next_tuple(link, &tuple, &parse);
-		}
-	}
+	/* First pass: look for a config entry that looks normal.
+	   Two tries: without IO aliases, then with aliases */
+	for (try = 0; try < 2; try++)
+		if (!pcmcia_loop_config(link, btuart_check_config, &try))
+			goto found_port;
 
 	/* Second pass: try to find an entry that isn't picky about
 	   its base address, then try to grab any standard serial port
 	   address, and finally try to get any free port. */
-	i = first_tuple(link, &tuple, &parse);
-	while (i != CS_NO_MORE_ITEMS) {
-		if ((i == CS_SUCCESS) && (cf->io.nwin > 0)
-		    && ((cf->io.flags & CISTPL_IO_LINES_MASK) <= 3)) {
-			link->conf.ConfigIndex = cf->index;
-			for (j = 0; j < 5; j++) {
-				link->io.BasePort1 = base[j];
-				link->io.IOAddrLines = base[j] ? 16 : 3;
-				i = pcmcia_request_io(link, &link->io);
-				if (i == CS_SUCCESS)
-					goto found_port;
-			}
-		}
-		i = next_tuple(link, &tuple, &parse);
-	}
+	if (!pcmcia_loop_config(link, btuart_check_config_notpicky, NULL))
+		goto found_port;
+
+	BT_ERR("No usable port range found");
+	cs_error(link, RequestIO, -ENODEV);
+	goto failed;
 
 found_port:
-	if (i != CS_SUCCESS) {
-		BT_ERR("No usable port range found");
-		cs_error(link, RequestIO, i);
-		goto failed;
-	}
-
 	i = pcmcia_request_irq(link, &link->irq);
-	if (i != CS_SUCCESS) {
+	if (i != 0) {
 		cs_error(link, RequestIRQ, i);
 		link->irq.AssignedIRQ = 0;
 	}
 
 	i = pcmcia_request_configuration(link, &link->conf);
-	if (i != CS_SUCCESS) {
+	if (i != 0) {
 		cs_error(link, RequestConfiguration, i);
 		goto failed;
 	}
@@ -733,9 +692,6 @@ found_port:
 	link->dev_node = &info->node;
 
 	return 0;
-
-cs_failed:
-	cs_error(link, last_fn, last_ret);
 
 failed:
 	btuart_release(link);

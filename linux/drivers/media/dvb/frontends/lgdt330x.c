@@ -31,14 +31,10 @@
  *   Air2PC/AirStar 2 ATSC 3rd generation (HD5000)
  *   pcHDTV HD5500
  *
- * TODO:
- * signal strength always returns 0.
- *
  */
 
 #include <linux/kernel.h>
 #include <linux/module.h>
-#include <linux/moduleparam.h>
 #include <linux/init.h>
 #include <linux/delay.h>
 #include <linux/string.h>
@@ -46,10 +42,14 @@
 #include <asm/byteorder.h>
 
 #include "dvb_frontend.h"
+#include "dvb_math.h"
 #include "lgdt330x_priv.h"
 #include "lgdt330x.h"
 
-static int debug = 0;
+/* Use Equalizer Mean Squared Error instead of Phaser Tracker MSE */
+/* #define USE_EQMSE */
+
+static int debug;
 module_param(debug, int, 0644);
 MODULE_PARM_DESC(debug,"Turn on/off lgdt330x frontend debugging (default:off).");
 #define dprintk(args...) \
@@ -68,6 +68,7 @@ struct lgdt330x_state
 
 	/* Demodulator private data */
 	fe_modulation_t current_modulation;
+	u32 snr; /* Result of last SNR calculation */
 
 	/* Tuner private data */
 	u32 current_frequency;
@@ -87,7 +88,7 @@ static int i2c_write_demod_bytes (struct lgdt330x_state* state,
 
 	for (i=0; i<len-1; i+=2){
 		if ((err = i2c_transfer(state->i2c, &msg, 1)) != 1) {
-			printk(KERN_WARNING "lgdt330x: %s error (addr %02x <- %02x, err = %i)\n", __FUNCTION__, msg.buf[0], msg.buf[1], err);
+			printk(KERN_WARNING "lgdt330x: %s error (addr %02x <- %02x, err = %i)\n", __func__, msg.buf[0], msg.buf[1], err);
 			if (err < 0)
 				return err;
 			else
@@ -116,7 +117,7 @@ static u8 i2c_read_demod_bytes (struct lgdt330x_state* state,
 	int ret;
 	ret = i2c_transfer(state->i2c, msg, 2);
 	if (ret != 2) {
-		printk(KERN_WARNING "lgdt330x: %s: addr 0x%02x select 0x%02x error (ret == %i)\n", __FUNCTION__, state->config->demod_address, reg, ret);
+		printk(KERN_WARNING "lgdt330x: %s: addr 0x%02x select 0x%02x error (ret == %i)\n", __func__, state->config->demod_address, reg, ret);
 	} else {
 		ret = 0;
 	}
@@ -225,9 +226,14 @@ static int lgdt330x_init(struct dvb_frontend* fe)
 		0x4c, 0x14
 	};
 
-	static u8 flip_lgdt3303_init_data[] = {
+	static u8 flip_1_lgdt3303_init_data[] = {
 		0x4c, 0x14,
 		0x87, 0xf3
+	};
+
+	static u8 flip_2_lgdt3303_init_data[] = {
+		0x4c, 0x14,
+		0x87, 0xda
 	};
 
 	struct lgdt330x_state* state = fe->demodulator_priv;
@@ -242,10 +248,19 @@ static int lgdt330x_init(struct dvb_frontend* fe)
 		break;
 	case LGDT3303:
 		chip_name = "LGDT3303";
-		if (state->config->clock_polarity_flip) {
-			err = i2c_write_demod_bytes(state, flip_lgdt3303_init_data,
-						    sizeof(flip_lgdt3303_init_data));
-		} else {
+		switch (state->config->clock_polarity_flip) {
+		case 2:
+			err = i2c_write_demod_bytes(state,
+					flip_2_lgdt3303_init_data,
+					sizeof(flip_2_lgdt3303_init_data));
+			break;
+		case 1:
+			err = i2c_write_demod_bytes(state,
+					flip_1_lgdt3303_init_data,
+					sizeof(flip_1_lgdt3303_init_data));
+			break;
+		case 0:
+		default:
 			err = i2c_write_demod_bytes(state, lgdt3303_init_data,
 						    sizeof(lgdt3303_init_data));
 		}
@@ -255,7 +270,7 @@ static int lgdt330x_init(struct dvb_frontend* fe)
 		printk (KERN_WARNING "Only LGDT3302 and LGDT3303 are supported chips.\n");
 		err = -ENODEV;
 	}
-	dprintk("%s entered as %s\n", __FUNCTION__, chip_name);
+	dprintk("%s entered as %s\n", __func__, chip_name);
 	if (err < 0)
 		return err;
 	return lgdt330x_SwReset(state);
@@ -302,10 +317,10 @@ static int lgdt330x_set_parameters(struct dvb_frontend* fe,
 	static u8 lgdt3303_8vsb_44_data[] = {
 		0x04, 0x00,
 		0x0d, 0x40,
-	0x0e, 0x87,
-	0x0f, 0x8e,
-	0x10, 0x01,
-	0x47, 0x8b };
+		0x0e, 0x87,
+		0x0f, 0x8e,
+		0x10, 0x01,
+		0x47, 0x8b };
 
 	/*
 	 * Array of byte pairs <address, value>
@@ -333,7 +348,7 @@ static int lgdt330x_set_parameters(struct dvb_frontend* fe,
 	if (state->current_modulation != param->u.vsb.modulation) {
 		switch(param->u.vsb.modulation) {
 		case VSB_8:
-			dprintk("%s: VSB_8 MODE\n", __FUNCTION__);
+			dprintk("%s: VSB_8 MODE\n", __func__);
 
 			/* Select VSB mode */
 			top_ctrl_cfg[1] = 0x03;
@@ -349,7 +364,7 @@ static int lgdt330x_set_parameters(struct dvb_frontend* fe,
 			break;
 
 		case QAM_64:
-			dprintk("%s: QAM_64 MODE\n", __FUNCTION__);
+			dprintk("%s: QAM_64 MODE\n", __func__);
 
 			/* Select QAM_64 mode */
 			top_ctrl_cfg[1] = 0x00;
@@ -365,7 +380,7 @@ static int lgdt330x_set_parameters(struct dvb_frontend* fe,
 			break;
 
 		case QAM_256:
-			dprintk("%s: QAM_256 MODE\n", __FUNCTION__);
+			dprintk("%s: QAM_256 MODE\n", __func__);
 
 			/* Select QAM_256 mode */
 			top_ctrl_cfg[1] = 0x01;
@@ -380,7 +395,7 @@ static int lgdt330x_set_parameters(struct dvb_frontend* fe,
 			}
 			break;
 		default:
-			printk(KERN_WARNING "lgdt330x: %s: Modulation type(%d) UNSUPPORTED\n", __FUNCTION__, param->u.vsb.modulation);
+			printk(KERN_WARNING "lgdt330x: %s: Modulation type(%d) UNSUPPORTED\n", __func__, param->u.vsb.modulation);
 			return -1;
 		}
 		/*
@@ -430,14 +445,11 @@ static int lgdt3302_read_status(struct dvb_frontend* fe, fe_status_t* status)
 
 	/* AGC status register */
 	i2c_read_demod_bytes(state, AGC_STATUS, buf, 1);
-	dprintk("%s: AGC_STATUS = 0x%02x\n", __FUNCTION__, buf[0]);
+	dprintk("%s: AGC_STATUS = 0x%02x\n", __func__, buf[0]);
 	if ((buf[0] & 0x0c) == 0x8){
 		/* Test signal does not exist flag */
 		/* as well as the AGC lock flag.   */
 		*status |= FE_HAS_SIGNAL;
-	} else {
-		/* Without a signal all other status bits are meaningless */
-		return 0;
 	}
 
 	/*
@@ -447,7 +459,7 @@ static int lgdt3302_read_status(struct dvb_frontend* fe, fe_status_t* status)
 	 */
 	/* signal status */
 	i2c_read_demod_bytes(state, TOP_CONTROL, buf, sizeof(buf));
-	dprintk("%s: TOP_CONTROL = 0x%02x, IRO_MASK = 0x%02x, IRQ_STATUS = 0x%02x\n", __FUNCTION__, buf[0], buf[1], buf[2]);
+	dprintk("%s: TOP_CONTROL = 0x%02x, IRO_MASK = 0x%02x, IRQ_STATUS = 0x%02x\n", __func__, buf[0], buf[1], buf[2]);
 
 
 	/* sync status */
@@ -463,7 +475,7 @@ static int lgdt3302_read_status(struct dvb_frontend* fe, fe_status_t* status)
 
 	/* Carrier Recovery Lock Status Register */
 	i2c_read_demod_bytes(state, CARRIER_LOCK, buf, 1);
-	dprintk("%s: CARRIER_LOCK = 0x%02x\n", __FUNCTION__, buf[0]);
+	dprintk("%s: CARRIER_LOCK = 0x%02x\n", __func__, buf[0]);
 	switch (state->current_modulation) {
 	case QAM_256:
 	case QAM_64:
@@ -476,7 +488,7 @@ static int lgdt3302_read_status(struct dvb_frontend* fe, fe_status_t* status)
 			*status |= FE_HAS_CARRIER;
 		break;
 	default:
-		printk("KERN_WARNING lgdt330x: %s: Modulation set to unsupported value\n", __FUNCTION__);
+		printk(KERN_WARNING "lgdt330x: %s: Modulation set to unsupported value\n", __func__);
 	}
 
 	return 0;
@@ -495,19 +507,16 @@ static int lgdt3303_read_status(struct dvb_frontend* fe, fe_status_t* status)
 	if (err < 0)
 		return err;
 
-	dprintk("%s: AGC_STATUS = 0x%02x\n", __FUNCTION__, buf[0]);
+	dprintk("%s: AGC_STATUS = 0x%02x\n", __func__, buf[0]);
 	if ((buf[0] & 0x21) == 0x01){
 		/* Test input signal does not exist flag */
 		/* as well as the AGC lock flag.   */
 		*status |= FE_HAS_SIGNAL;
-	} else {
-		/* Without a signal all other status bits are meaningless */
-		return 0;
 	}
 
 	/* Carrier Recovery Lock Status Register */
 	i2c_read_demod_bytes(state, CARRIER_LOCK, buf, 1);
-	dprintk("%s: CARRIER_LOCK = 0x%02x\n", __FUNCTION__, buf[0]);
+	dprintk("%s: CARRIER_LOCK = 0x%02x\n", __func__, buf[0]);
 	switch (state->current_modulation) {
 	case QAM_256:
 	case QAM_64:
@@ -538,156 +547,155 @@ static int lgdt3303_read_status(struct dvb_frontend* fe, fe_status_t* status)
 		}
 		break;
 	default:
-		printk("KERN_WARNING lgdt330x: %s: Modulation set to unsupported value\n", __FUNCTION__);
+		printk(KERN_WARNING "lgdt330x: %s: Modulation set to unsupported value\n", __func__);
 	}
 	return 0;
 }
 
-static int lgdt330x_read_signal_strength(struct dvb_frontend* fe, u16* strength)
+/* Calculate SNR estimation (scaled by 2^24)
+
+   8-VSB SNR equations from LGDT3302 and LGDT3303 datasheets, QAM
+   equations from LGDT3303 datasheet.  VSB is the same between the '02
+   and '03, so maybe QAM is too?  Perhaps someone with a newer datasheet
+   that has QAM information could verify?
+
+   For 8-VSB: (two ways, take your pick)
+   LGDT3302:
+     SNR_EQ = 10 * log10(25 * 24^2 / EQ_MSE)
+   LGDT3303:
+     SNR_EQ = 10 * log10(25 * 32^2 / EQ_MSE)
+   LGDT3302 & LGDT3303:
+     SNR_PT = 10 * log10(25 * 32^2 / PT_MSE)  (we use this one)
+   For 64-QAM:
+     SNR    = 10 * log10( 688128   / MSEQAM)
+   For 256-QAM:
+     SNR    = 10 * log10( 696320   / MSEQAM)
+
+   We re-write the snr equation as:
+     SNR * 2^24 = 10*(c - intlog10(MSE))
+   Where for 256-QAM, c = log10(696320) * 2^24, and so on. */
+
+static u32 calculate_snr(u32 mse, u32 c)
 {
-	/* not directly available. */
-	*strength = 0;
-	return 0;
+	if (mse == 0) /* No signal */
+		return 0;
+
+	mse = intlog10(mse);
+	if (mse > c) {
+		/* Negative SNR, which is possible, but realisticly the
+		demod will lose lock before the signal gets this bad.  The
+		API only allows for unsigned values, so just return 0 */
+		return 0;
+	}
+	return 10*(c - mse);
 }
 
 static int lgdt3302_read_snr(struct dvb_frontend* fe, u16* snr)
 {
-#ifdef SNR_IN_DB
-	/*
-	 * Spec sheet shows formula for SNR_EQ = 10 log10(25 * 24**2 / noise)
-	 * and SNR_PH = 10 log10(25 * 32**2 / noise) for equalizer and phase tracker
-	 * respectively. The following tables are built on these formulas.
-	 * The usual definition is SNR = 20 log10(signal/noise)
-	 * If the specification is wrong the value retuned is 1/2 the actual SNR in db.
-	 *
-	 * This table is a an ordered list of noise values computed by the
-	 * formula from the spec sheet such that the index into the table
-	 * starting at 43 or 45 is the SNR value in db. There are duplicate noise
-	 * value entries at the beginning because the SNR varies more than
-	 * 1 db for a change of 1 digit in noise at very small values of noise.
-	 *
-	 * Examples from SNR_EQ table:
-	 * noise SNR
-	 *   0    43
-	 *   1    42
-	 *   2    39
-	 *   3    37
-	 *   4    36
-	 *   5    35
-	 *   6    34
-	 *   7    33
-	 *   8    33
-	 *   9    32
-	 *   10   32
-	 *   11   31
-	 *   12   31
-	 *   13   30
-	 */
-
-	static const u32 SNR_EQ[] =
-		{ 1,     2,      2,      2, 3,      3,      4,     4,     5,     7,
-		  9,     11,     13,     17, 21,     26,     33,    41,    52,    65,
-		  81,    102,    129,    162, 204,    257,    323,   406,   511,   644,
-		  810,   1020,   1284,   1616, 2035,   2561,   3224,  4059,  5110,  6433,
-		  8098,  10195,  12835,  16158, 20341,  25608,  32238, 40585, 51094, 64323,
-		  80978, 101945, 128341, 161571, 203406, 256073, 0x40000
-		};
-
-	static const u32 SNR_PH[] =
-		{ 1,     2,      2,      2,      3,      3,     4,     5,     6,     8,
-		  10,    12,     15,     19,     23,     29, 37,    46,    58,    73,
-		  91,    115,    144,    182,    229,    288, 362,   456,   574,   722,
-		  909,   1144,   1440,   1813,   2282,   2873, 3617,  4553,  5732,  7216,
-		  9084,  11436,  14396,  18124,  22817,  28724,  36161, 45524, 57312, 72151,
-		  90833, 114351, 143960, 181235, 228161, 0x080000
-		};
-
-	static u8 buf[5];/* read data buffer */
-	static u32 noise;   /* noise value */
-	static u32 snr_db;  /* index into SNR_EQ[] */
 	struct lgdt330x_state* state = (struct lgdt330x_state*) fe->demodulator_priv;
+	u8 buf[5];	/* read data buffer */
+	u32 noise;	/* noise value */
+	u32 c;		/* per-modulation SNR calculation constant */
 
-	/* read both equalizer and phase tracker noise data */
-	i2c_read_demod_bytes(state, EQPH_ERR0, buf, sizeof(buf));
-
-	if (state->current_modulation == VSB_8) {
-		/* Equalizer Mean-Square Error Register for VSB */
+	switch(state->current_modulation) {
+	case VSB_8:
+		i2c_read_demod_bytes(state, LGDT3302_EQPH_ERR0, buf, 5);
+#ifdef USE_EQMSE
+		/* Use Equalizer Mean-Square Error Register */
+		/* SNR for ranges from -15.61 to +41.58 */
 		noise = ((buf[0] & 7) << 16) | (buf[1] << 8) | buf[2];
-
-		/*
-		 * Look up noise value in table.
-		 * A better search algorithm could be used...
-		 * watch out there are duplicate entries.
-		 */
-		for (snr_db = 0; snr_db < sizeof(SNR_EQ); snr_db++) {
-			if (noise < SNR_EQ[snr_db]) {
-				*snr = 43 - snr_db;
-				break;
-			}
-		}
-	} else {
-		/* Phase Tracker Mean-Square Error Register for QAM */
-		noise = ((buf[0] & 7<<3) << 13) | (buf[3] << 8) | buf[4];
-
-		/* Look up noise value in table. */
-		for (snr_db = 0; snr_db < sizeof(SNR_PH); snr_db++) {
-			if (noise < SNR_PH[snr_db]) {
-				*snr = 45 - snr_db;
-				break;
-			}
-		}
-	}
+		c = 69765745; /* log10(25*24^2)*2^24 */
 #else
-	/* Return the raw noise value */
-	static u8 buf[5];/* read data buffer */
-	static u32 noise;   /* noise value */
-	struct lgdt330x_state* state = (struct lgdt330x_state*) fe->demodulator_priv;
-
-	/* read both equalizer and pase tracker noise data */
-	i2c_read_demod_bytes(state, EQPH_ERR0, buf, sizeof(buf));
-
-	if (state->current_modulation == VSB_8) {
-		/* Phase Tracker Mean-Square Error Register for VSB */
+		/* Use Phase Tracker Mean-Square Error Register */
+		/* SNR for ranges from -13.11 to +44.08 */
 		noise = ((buf[0] & 7<<3) << 13) | (buf[3] << 8) | buf[4];
-	} else {
-
-		/* Carrier Recovery Mean-Square Error for QAM */
-		i2c_read_demod_bytes(state, 0x1a, buf, 2);
+		c = 73957994; /* log10(25*32^2)*2^24 */
+#endif
+		break;
+	case QAM_64:
+	case QAM_256:
+		i2c_read_demod_bytes(state, CARRIER_MSEQAM1, buf, 2);
 		noise = ((buf[0] & 3) << 8) | buf[1];
+		c = state->current_modulation == QAM_64 ? 97939837 : 98026066;
+		/* log10(688128)*2^24 and log10(696320)*2^24 */
+		break;
+	default:
+		printk(KERN_ERR "lgdt330x: %s: Modulation set to unsupported value\n",
+		       __func__);
+		return -EREMOTEIO; /* return -EDRIVER_IS_GIBBERED; */
 	}
 
-	/* Small values for noise mean signal is better so invert noise */
-	*snr = ~noise;
-#endif
+	state->snr = calculate_snr(noise, c);
+	*snr = (state->snr) >> 16; /* Convert from 8.24 fixed-point to 8.8 */
 
-	dprintk("%s: noise = 0x%05x, snr = %idb\n",__FUNCTION__, noise, *snr);
+	dprintk("%s: noise = 0x%08x, snr = %d.%02d dB\n", __func__, noise,
+		state->snr >> 24, (((state->snr>>8) & 0xffff) * 100) >> 16);
 
 	return 0;
 }
 
 static int lgdt3303_read_snr(struct dvb_frontend* fe, u16* snr)
 {
-	/* Return the raw noise value */
-	static u8 buf[5];/* read data buffer */
-	static u32 noise;   /* noise value */
 	struct lgdt330x_state* state = (struct lgdt330x_state*) fe->demodulator_priv;
+	u8 buf[5];	/* read data buffer */
+	u32 noise;	/* noise value */
+	u32 c;		/* per-modulation SNR calculation constant */
 
-	if (state->current_modulation == VSB_8) {
-
-		i2c_read_demod_bytes(state, 0x6e, buf, 5);
-		/* Phase Tracker Mean-Square Error Register for VSB */
+	switch(state->current_modulation) {
+	case VSB_8:
+		i2c_read_demod_bytes(state, LGDT3303_EQPH_ERR0, buf, 5);
+#ifdef USE_EQMSE
+		/* Use Equalizer Mean-Square Error Register */
+		/* SNR for ranges from -16.12 to +44.08 */
+		noise = ((buf[0] & 0x78) << 13) | (buf[1] << 8) | buf[2];
+		c = 73957994; /* log10(25*32^2)*2^24 */
+#else
+		/* Use Phase Tracker Mean-Square Error Register */
+		/* SNR for ranges from -13.11 to +44.08 */
 		noise = ((buf[0] & 7) << 16) | (buf[3] << 8) | buf[4];
-	} else {
-
-		/* Carrier Recovery Mean-Square Error for QAM */
-		i2c_read_demod_bytes(state, 0x1a, buf, 2);
+		c = 73957994; /* log10(25*32^2)*2^24 */
+#endif
+		break;
+	case QAM_64:
+	case QAM_256:
+		i2c_read_demod_bytes(state, CARRIER_MSEQAM1, buf, 2);
 		noise = (buf[0] << 8) | buf[1];
+		c = state->current_modulation == QAM_64 ? 97939837 : 98026066;
+		/* log10(688128)*2^24 and log10(696320)*2^24 */
+		break;
+	default:
+		printk(KERN_ERR "lgdt330x: %s: Modulation set to unsupported value\n",
+		       __func__);
+		return -EREMOTEIO; /* return -EDRIVER_IS_GIBBERED; */
 	}
 
-	/* Small values for noise mean signal is better so invert noise */
-	*snr = ~noise;
+	state->snr = calculate_snr(noise, c);
+	*snr = (state->snr) >> 16; /* Convert from 8.24 fixed-point to 8.8 */
 
-	dprintk("%s: noise = 0x%05x, snr = %idb\n",__FUNCTION__, noise, *snr);
+	dprintk("%s: noise = 0x%08x, snr = %d.%02d dB\n", __func__, noise,
+		state->snr >> 24, (((state->snr >> 8) & 0xffff) * 100) >> 16);
+
+	return 0;
+}
+
+static int lgdt330x_read_signal_strength(struct dvb_frontend* fe, u16* strength)
+{
+	/* Calculate Strength from SNR up to 35dB */
+	/* Even though the SNR can go higher than 35dB, there is some comfort */
+	/* factor in having a range of strong signals that can show at 100%   */
+	struct lgdt330x_state* state = (struct lgdt330x_state*) fe->demodulator_priv;
+	u16 snr;
+	int ret;
+
+	ret = fe->ops.read_snr(fe, &snr);
+	if (ret != 0)
+		return ret;
+	/* Rather than use the 8.8 value snr, use state->snr which is 8.24 */
+	/* scale the range 0 - 35*2^24 into 0 - 65535 */
+	if (state->snr >= 8960 * 0x10000)
+		*strength = 0xffff;
+	else
+		*strength = state->snr / 8960;
 
 	return 0;
 }
@@ -749,7 +757,7 @@ struct dvb_frontend* lgdt330x_attach(const struct lgdt330x_config* config,
 
 error:
 	kfree(state);
-	dprintk("%s: ERROR\n",__FUNCTION__);
+	dprintk("%s: ERROR\n",__func__);
 	return NULL;
 }
 

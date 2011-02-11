@@ -1,5 +1,5 @@
 /*
- * arch/arch/mach-ixp4xx/coyote-pci.c
+ * arch/arm/mach-ixp4xx/coyote-pci.c
  *
  * PCI setup routines for ADI Engineering Coyote platform
  *
@@ -20,19 +20,15 @@
 #include <linux/irq.h>
 
 #include <asm/mach-types.h>
-#include <asm/hardware.h>
+#include <mach/hardware.h>
 #include <asm/irq.h>
 
 #include <asm/mach/pci.h>
 
-extern void ixp4xx_pci_preinit(void);
-extern int ixp4xx_setup(int nr, struct pci_sys_data *sys);
-extern struct pci_bus *ixp4xx_scan_bus(int nr, struct pci_sys_data *sys);
-
 void __init coyote_pci_preinit(void)
 {
-	set_irq_type(IRQ_COYOTE_PCI_SLOT0, IRQT_LOW);
-	set_irq_type(IRQ_COYOTE_PCI_SLOT1, IRQT_LOW);
+	set_irq_type(IRQ_COYOTE_PCI_SLOT0, IRQ_TYPE_LEVEL_LOW);
+	set_irq_type(IRQ_COYOTE_PCI_SLOT1, IRQ_TYPE_LEVEL_LOW);
 
 	ixp4xx_pci_preinit();
 }

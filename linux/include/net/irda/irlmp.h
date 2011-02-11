@@ -18,7 +18,7 @@
  *     published by the Free Software Foundation; either version 2 of 
  *     the License, or (at your option) any later version.
  *
- *     Neither Dag Brattli nor University of Tromsø admit liability nor
+ *     Neither Dag Brattli nor University of TromsÃ¸ admit liability nor
  *     provide warranty for any of this software. This material is 
  *     provided "AS-IS" and at no charge.
  *
@@ -48,7 +48,7 @@
 #define DEV_ADDR_ANY  0xffffffff
 
 #define LMP_HEADER          2    /* Dest LSAP + Source LSAP */
-#define LMP_CONTROL_HEADER  4
+#define LMP_CONTROL_HEADER  4    /* LMP_HEADER + opcode + parameter */
 #define LMP_PID_HEADER      1    /* Used by Ultra */
 #define LMP_MAX_HEADER      (LMP_CONTROL_HEADER+LAP_MAX_HEADER)
 

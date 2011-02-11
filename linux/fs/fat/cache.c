@@ -9,8 +9,8 @@
  */
 
 #include <linux/fs.h>
-#include <linux/msdos_fs.h>
 #include <linux/buffer_head.h>
+#include "fat.h"
 
 /* this must be > 0. */
 #define FAT_MAX_CACHE	8
@@ -34,15 +34,13 @@ static inline int fat_max_cache(struct inode *inode)
 	return FAT_MAX_CACHE;
 }
 
-static kmem_cache_t *fat_cache_cachep;
+static struct kmem_cache *fat_cache_cachep;
 
-static void init_once(void *foo, kmem_cache_t *cachep, unsigned long flags)
+static void init_once(void *foo)
 {
 	struct fat_cache *cache = (struct fat_cache *)foo;
 
-	if ((flags & (SLAB_CTOR_VERIFY|SLAB_CTOR_CONSTRUCTOR)) ==
-	    SLAB_CTOR_CONSTRUCTOR)
-		INIT_LIST_HEAD(&cache->cache_list);
+	INIT_LIST_HEAD(&cache->cache_list);
 }
 
 int __init fat_cache_init(void)
@@ -50,7 +48,7 @@ int __init fat_cache_init(void)
 	fat_cache_cachep = kmem_cache_create("fat_cache",
 				sizeof(struct fat_cache),
 				0, SLAB_RECLAIM_ACCOUNT|SLAB_MEM_SPREAD,
-				init_once, NULL);
+				init_once);
 	if (fat_cache_cachep == NULL)
 		return -ENOMEM;
 	return 0;
@@ -58,13 +56,12 @@ int __init fat_cache_init(void)
 
 void fat_cache_destroy(void)
 {
-	if (kmem_cache_destroy(fat_cache_cachep))
-		printk(KERN_INFO "fat_cache: not all structures were freed\n");
+	kmem_cache_destroy(fat_cache_cachep);
 }
 
 static inline struct fat_cache *fat_cache_alloc(struct inode *inode)
 {
-	return kmem_cache_alloc(fat_cache_cachep, SLAB_KERNEL);
+	return kmem_cache_alloc(fat_cache_cachep, GFP_NOFS);
 }
 
 static inline void fat_cache_free(struct fat_cache *cache)
@@ -244,8 +241,8 @@ int fat_get_cluster(struct inode *inode, int cluster, int *fclus, int *dclus)
 	while (*fclus < cluster) {
 		/* prevent the infinite loop of cluster chain */
 		if (*fclus > limit) {
-			fat_fs_panic(sb, "%s: detected the cluster chain loop"
-				     " (i_pos %lld)", __FUNCTION__,
+			fat_fs_error(sb, "%s: detected the cluster chain loop"
+				     " (i_pos %lld)", __func__,
 				     MSDOS_I(inode)->i_pos);
 			nr = -EIO;
 			goto out;
@@ -255,8 +252,8 @@ int fat_get_cluster(struct inode *inode, int cluster, int *fclus, int *dclus)
 		if (nr < 0)
 			goto out;
 		else if (nr == FAT_ENT_FREE) {
-			fat_fs_panic(sb, "%s: invalid cluster chain"
-				     " (i_pos %lld)", __FUNCTION__,
+			fat_fs_error(sb, "%s: invalid cluster chain"
+				     " (i_pos %lld)", __func__,
 				     MSDOS_I(inode)->i_pos);
 			nr = -EIO;
 			goto out;
@@ -288,18 +285,20 @@ static int fat_bmap_cluster(struct inode *inode, int cluster)
 	if (ret < 0)
 		return ret;
 	else if (ret == FAT_ENT_EOF) {
-		fat_fs_panic(sb, "%s: request beyond EOF (i_pos %lld)",
-			     __FUNCTION__, MSDOS_I(inode)->i_pos);
+		fat_fs_error(sb, "%s: request beyond EOF (i_pos %lld)",
+			     __func__, MSDOS_I(inode)->i_pos);
 		return -EIO;
 	}
 	return dclus;
 }
 
 int fat_bmap(struct inode *inode, sector_t sector, sector_t *phys,
-	     unsigned long *mapped_blocks)
+	     unsigned long *mapped_blocks, int create)
 {
 	struct super_block *sb = inode->i_sb;
 	struct msdos_sb_info *sbi = MSDOS_SB(sb);
+	const unsigned long blocksize = sb->s_blocksize;
+	const unsigned char blocksize_bits = sb->s_blocksize_bits;
 	sector_t last_block;
 	int cluster, offset;
 
@@ -312,10 +311,21 @@ int fat_bmap(struct inode *inode, sector_t sector, sector_t *phys,
 		}
 		return 0;
 	}
-	last_block = (MSDOS_I(inode)->mmu_private + (sb->s_blocksize - 1))
-		>> sb->s_blocksize_bits;
-	if (sector >= last_block)
-		return 0;
+
+	last_block = (i_size_read(inode) + (blocksize - 1)) >> blocksize_bits;
+	if (sector >= last_block) {
+		if (!create)
+			return 0;
+
+		/*
+		 * ->mmu_private can access on only allocation path.
+		 * (caller must hold ->i_mutex)
+		 */
+		last_block = (MSDOS_I(inode)->mmu_private + (blocksize - 1))
+			>> blocksize_bits;
+		if (sector >= last_block)
+			return 0;
+	}
 
 	cluster = sector >> (sbi->cluster_bits - sb->s_blocksize_bits);
 	offset  = sector & (sbi->sec_per_clus - 1);

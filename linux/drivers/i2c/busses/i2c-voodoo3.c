@@ -1,6 +1,4 @@
 /*
-    voodoo3.c - Part of lm_sensors, Linux kernel modules for hardware
-              monitoring
     Copyright (c) 1998, 1999  Frodo Looijaard <frodol@dds.nl>,
     Philip Edelbrock <phil@netroedge.com>,
     Ralph Metzler <rjkm@thp.uni-koeln.de>, and
@@ -160,13 +158,11 @@ static struct i2c_algo_bit_data voo_i2c_bit_data = {
 	.getsda		= bit_vooi2c_getsda,
 	.getscl		= bit_vooi2c_getscl,
 	.udelay		= CYCLE_DELAY,
-	.mdelay		= CYCLE_DELAY,
 	.timeout	= TIMEOUT
 };
 
 static struct i2c_adapter voodoo3_i2c_adapter = {
 	.owner		= THIS_MODULE,
-	.class		= I2C_CLASS_TV_ANALOG, 
 	.name		= "I2C Voodoo3/Banshee adapter",
 	.algo_data	= &voo_i2c_bit_data,
 };
@@ -177,7 +173,6 @@ static struct i2c_algo_bit_data voo_ddc_bit_data = {
 	.getsda		= bit_vooddc_getsda,
 	.getscl		= bit_vooddc_getscl,
 	.udelay		= CYCLE_DELAY,
-	.mdelay		= CYCLE_DELAY,
 	.timeout	= TIMEOUT
 };
 
@@ -213,14 +208,14 @@ static int __devinit voodoo3_probe(struct pci_dev *dev, const struct pci_device_
 		return retval;
 	retval = i2c_bit_add_bus(&voodoo3_ddc_adapter);
 	if (retval)
-		i2c_bit_del_bus(&voodoo3_i2c_adapter);
+		i2c_del_adapter(&voodoo3_i2c_adapter);
 	return retval;
 }
 
 static void __devexit voodoo3_remove(struct pci_dev *dev)
 {
-	i2c_bit_del_bus(&voodoo3_i2c_adapter);
- 	i2c_bit_del_bus(&voodoo3_ddc_adapter);
+	i2c_del_adapter(&voodoo3_i2c_adapter);
+	i2c_del_adapter(&voodoo3_ddc_adapter);
 	iounmap(ioaddr);
 }
 

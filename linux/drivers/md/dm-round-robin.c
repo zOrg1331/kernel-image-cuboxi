@@ -9,7 +9,8 @@
  * Round-robin path selector.
  */
 
-#include "dm.h"
+#include <linux/device-mapper.h>
+
 #include "dm-path-selector.h"
 
 #include <linux/slab.h>
@@ -21,7 +22,7 @@
  *---------------------------------------------------------------*/
 struct path_info {
 	struct list_head list;
-	struct path *path;
+	struct dm_path *path;
 	unsigned repeat_count;
 };
 
@@ -80,7 +81,7 @@ static void rr_destroy(struct path_selector *ps)
 	ps->context = NULL;
 }
 
-static int rr_status(struct path_selector *ps, struct path *path,
+static int rr_status(struct path_selector *ps, struct dm_path *path,
 		     status_type_t type, char *result, unsigned int maxlen)
 {
 	struct path_info *pi;
@@ -106,7 +107,7 @@ static int rr_status(struct path_selector *ps, struct path *path,
  * Called during initialisation to register each path with an
  * optional repeat_count.
  */
-static int rr_add_path(struct path_selector *ps, struct path *path,
+static int rr_add_path(struct path_selector *ps, struct dm_path *path,
 		       int argc, char **argv, char **error)
 {
 	struct selector *s = (struct selector *) ps->context;
@@ -136,12 +137,12 @@ static int rr_add_path(struct path_selector *ps, struct path *path,
 
 	path->pscontext = pi;
 
-	list_add(&pi->list, &s->valid_paths);
+	list_add_tail(&pi->list, &s->valid_paths);
 
 	return 0;
 }
 
-static void rr_fail_path(struct path_selector *ps, struct path *p)
+static void rr_fail_path(struct path_selector *ps, struct dm_path *p)
 {
 	struct selector *s = (struct selector *) ps->context;
 	struct path_info *pi = p->pscontext;
@@ -149,7 +150,7 @@ static void rr_fail_path(struct path_selector *ps, struct path *p)
 	list_move(&pi->list, &s->invalid_paths);
 }
 
-static int rr_reinstate_path(struct path_selector *ps, struct path *p)
+static int rr_reinstate_path(struct path_selector *ps, struct dm_path *p)
 {
 	struct selector *s = (struct selector *) ps->context;
 	struct path_info *pi = p->pscontext;
@@ -159,8 +160,8 @@ static int rr_reinstate_path(struct path_selector *ps, struct path *p)
 	return 0;
 }
 
-static struct path *rr_select_path(struct path_selector *ps,
-				   unsigned *repeat_count)
+static struct dm_path *rr_select_path(struct path_selector *ps,
+				      unsigned *repeat_count, size_t nr_bytes)
 {
 	struct selector *s = (struct selector *) ps->context;
 	struct path_info *pi = NULL;
@@ -205,7 +206,7 @@ static void __exit dm_rr_exit(void)
 	int r = dm_unregister_path_selector(&rr_ps);
 
 	if (r < 0)
-		DMERR("round-robin: unregister failed %d", r);
+		DMERR("unregister failed %d", r);
 }
 
 module_init(dm_rr_init);

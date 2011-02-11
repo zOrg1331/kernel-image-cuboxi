@@ -10,8 +10,6 @@
 
 =========================================================*/
 
-/* $Id: nsp_cs.h,v 1.19 2003/08/18 11:09:19 elca Exp $ */
-
 #ifndef  __nsp_cs__
 #define  __nsp_cs__
 
@@ -26,7 +24,6 @@
 /************************************
  * Some useful macros...
  */
-#define BIT(x)      (1L << (x))
 
 /* SCSI initiator must be ID 7 */
 #define NSP_INITIATOR_ID  7
@@ -227,13 +224,7 @@
 typedef struct scsi_info_t {
 	struct pcmcia_device	*p_dev;
 	struct Scsi_Host      *host;
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(2,5,74))
 	dev_node_t             node;
-#else
-	int	               ndev;
-	dev_node_t             node[8];
-	struct bus_operations *bus;
-#endif
 	int                    stop;
 } scsi_info_t;
 
@@ -266,7 +257,7 @@ typedef struct _nsp_hw_data {
 
 	int           TimerCount;
 	int           SelectionTimeOut;
-	Scsi_Cmnd    *CurrentSC;
+	struct scsi_cmnd *CurrentSC;
 	//int           CurrnetTarget;
 
 	int           FifoCount;
@@ -290,7 +281,6 @@ typedef struct _nsp_hw_data {
 #endif
 } nsp_hw_data;
 
-
 /****************************************************************************
  *
  */
@@ -302,61 +292,55 @@ static int        nsp_cs_config (struct pcmcia_device *link);
 
 /* Linux SCSI subsystem specific functions */
 static struct Scsi_Host *nsp_detect     (struct scsi_host_template *sht);
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(2,5,0))
-static        int        nsp_detect_old (struct scsi_host_template *sht);
-static        int        nsp_release_old(struct Scsi_Host *shpnt);
-#endif
 static const  char      *nsp_info       (struct Scsi_Host *shpnt);
 static        int        nsp_proc_info  (
-#if (LINUX_VERSION_CODE > KERNEL_VERSION(2,5,73))
 	                                 struct Scsi_Host *host,
-#endif
 					 char   *buffer,
 					 char  **start,
 					 off_t   offset,
 					 int     length,
-#if !(LINUX_VERSION_CODE > KERNEL_VERSION(2,5,73))
-					 int     hostno,
-#endif
 					 int     inout);
-static        int        nsp_queuecommand(Scsi_Cmnd *SCpnt, void (* done)(Scsi_Cmnd *SCpnt));
+static int nsp_queuecommand(struct scsi_cmnd *SCpnt,
+			    void (* done)(struct scsi_cmnd *SCpnt));
 
 /* Error handler */
-/*static int nsp_eh_abort       (Scsi_Cmnd *SCpnt);*/
-/*static int nsp_eh_device_reset(Scsi_Cmnd *SCpnt);*/
-static int nsp_eh_bus_reset    (Scsi_Cmnd *SCpnt);
-static int nsp_eh_host_reset   (Scsi_Cmnd *SCpnt);
+/*static int nsp_eh_abort       (struct scsi_cmnd *SCpnt);*/
+/*static int nsp_eh_device_reset(struct scsi_cmnd *SCpnt);*/
+static int nsp_eh_bus_reset    (struct scsi_cmnd *SCpnt);
+static int nsp_eh_host_reset   (struct scsi_cmnd *SCpnt);
 static int nsp_bus_reset       (nsp_hw_data *data);
 
 /* */
 static int  nsphw_init           (nsp_hw_data *data);
-static int  nsphw_start_selection(Scsi_Cmnd *SCpnt);
-static void nsp_start_timer      (Scsi_Cmnd *SCpnt, int time);
-static int  nsp_fifo_count       (Scsi_Cmnd *SCpnt);
-static void nsp_pio_read         (Scsi_Cmnd *SCpnt);
-static void nsp_pio_write        (Scsi_Cmnd *SCpnt);
-static int  nsp_nexus            (Scsi_Cmnd *SCpnt);
-static void nsp_scsi_done        (Scsi_Cmnd *SCpnt);
-static int  nsp_analyze_sdtr     (Scsi_Cmnd *SCpnt);
-static int  nsp_negate_signal    (Scsi_Cmnd *SCpnt, unsigned char mask, char *str);
-static int  nsp_expect_signal    (Scsi_Cmnd *SCpnt, unsigned char current_phase, unsigned char  mask);
-static int  nsp_xfer             (Scsi_Cmnd *SCpnt, int phase);
-static int  nsp_dataphase_bypass (Scsi_Cmnd *SCpnt);
-static int  nsp_reselected       (Scsi_Cmnd *SCpnt);
+static int  nsphw_start_selection(struct scsi_cmnd *SCpnt);
+static void nsp_start_timer      (struct scsi_cmnd *SCpnt, int time);
+static int  nsp_fifo_count       (struct scsi_cmnd *SCpnt);
+static void nsp_pio_read         (struct scsi_cmnd *SCpnt);
+static void nsp_pio_write        (struct scsi_cmnd *SCpnt);
+static int  nsp_nexus            (struct scsi_cmnd *SCpnt);
+static void nsp_scsi_done        (struct scsi_cmnd *SCpnt);
+static int  nsp_analyze_sdtr     (struct scsi_cmnd *SCpnt);
+static int  nsp_negate_signal    (struct scsi_cmnd *SCpnt,
+				  unsigned char mask, char *str);
+static int  nsp_expect_signal    (struct scsi_cmnd *SCpnt,
+				  unsigned char current_phase,
+				  unsigned char  mask);
+static int  nsp_xfer             (struct scsi_cmnd *SCpnt, int phase);
+static int  nsp_dataphase_bypass (struct scsi_cmnd *SCpnt);
+static int  nsp_reselected       (struct scsi_cmnd *SCpnt);
 static struct Scsi_Host *nsp_detect(struct scsi_host_template *sht);
 
 /* Interrupt handler */
-//static irqreturn_t nspintr(int irq, void *dev_id, struct pt_regs *regs);
+//static irqreturn_t nspintr(int irq, void *dev_id);
 
 /* Module entry point*/
 static int  __init nsp_cs_init(void);
 static void __exit nsp_cs_exit(void);
 
-
 /* Debug */
 #ifdef NSP_DEBUG
-static void show_command (Scsi_Cmnd *SCpnt);
-static void show_phase   (Scsi_Cmnd *SCpnt);
+static void show_command (struct scsi_cmnd *SCpnt);
+static void show_phase   (struct scsi_cmnd *SCpnt);
 static void show_busphase(unsigned char stat);
 static void show_message (nsp_hw_data *data);
 #else
@@ -397,7 +381,6 @@ enum _burst_mode {
 	BURST_MEM32 = 2,
 };
 
-
 /**************************************************************************
  * SCSI messaage
  */
@@ -409,62 +392,8 @@ enum _burst_mode {
 
 #define MSG_EXT_SDTR         0x01
 
-
-/**************************************************************************
- * Compatibility functions
- */
-
-/* for Kernel 2.4 */
-#if (LINUX_VERSION_CODE < KERNEL_VERSION(2,6,0))
-#  define scsi_register_host(template)   scsi_register_module(MODULE_SCSI_HA, template)
-#  define scsi_unregister_host(template) scsi_unregister_module(MODULE_SCSI_HA, template)
-#  define scsi_host_put(host)            scsi_unregister(host)
-
-typedef void irqreturn_t;
-#  define IRQ_NONE      /* */
-#  define IRQ_HANDLED   /* */
-#  define IRQ_RETVAL(x) /* */
-
-/* This is ad-hoc version of scsi_host_get_next() */
-static inline struct Scsi_Host *scsi_host_get_next(struct Scsi_Host *host)
-{
-	if (host == NULL) {
-		return scsi_hostlist;
-	} else {
-		return host->next;
-	}
-}
-
-/* This is ad-hoc version of scsi_host_hn_get() */
-static inline struct Scsi_Host *scsi_host_hn_get(unsigned short hostno)
-{
-	struct Scsi_Host *host;
-
-	for (host = scsi_host_get_next(NULL); host != NULL;
-	     host = scsi_host_get_next(host)) {
-		if (host->host_no == hostno) {
-			break;
-		}
-	}
-
-	return host;
-}
-
-static void cs_error(struct pcmcia_device *handle, int func, int ret)
-{
-	error_info_t err = { func, ret };
-	pcmcia_report_error(handle, &err);
-}
-
 /* scatter-gather table */
-#  define BUFFER_ADDR (SCpnt->SCp.buffer->address)
-#endif
-
-/* for Kernel 2.6 */
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(2,6,0))
-/* scatter-gather table */
-#  define BUFFER_ADDR ((char *)((unsigned int)(SCpnt->SCp.buffer->page) + SCpnt->SCp.buffer->offset))
-#endif
+#  define BUFFER_ADDR ((char *)((sg_virt(SCpnt->SCp.buffer))))
 
 #endif  /*__nsp_cs__*/
 /* end */

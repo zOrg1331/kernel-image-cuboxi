@@ -62,7 +62,7 @@ static unsigned char V110_OffMatrix_38400[] =
  * and to 67452301 when keylen = 2. This is necessary because ordering on
  * the isdn line is the other way.
  */
-static __inline unsigned char
+static inline unsigned char
 FlipBits(unsigned char c, int keylen)
 {
 	unsigned char b = c;
@@ -92,9 +92,8 @@ isdn_v110_open(unsigned char key, int hdrlen, int maxsize)
 	int i;
 	isdn_v110_stream *v;
 
-	if ((v = kmalloc(sizeof(isdn_v110_stream), GFP_ATOMIC)) == NULL)
+	if ((v = kzalloc(sizeof(isdn_v110_stream), GFP_ATOMIC)) == NULL)
 		return NULL;
-	memset(v, 0, sizeof(isdn_v110_stream));
 	v->key = key;
 	v->nbits = 0;
 	for (i = 0; key & (1 << i); i++)

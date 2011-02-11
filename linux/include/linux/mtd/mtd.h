@@ -1,6 +1,4 @@
 /*
- * $Id: mtd.h,v 1.61 2005/11/07 11:14:54 gleixner Exp $
- *
  * Copyright (C) 1999-2003 David Woodhouse <dwmw2@infradead.org> et al.
  *
  * Released under GPL
@@ -9,21 +7,20 @@
 #ifndef __MTD_MTD_H__
 #define __MTD_MTD_H__
 
-#ifndef __KERNEL__
-#error This is a kernel header. Perhaps include mtd-user.h instead?
-#endif
-
 #include <linux/types.h>
 #include <linux/module.h>
 #include <linux/uio.h>
 #include <linux/notifier.h>
+#include <linux/device.h>
 
 #include <linux/mtd/compatmac.h>
 #include <mtd/mtd-abi.h>
 
+#include <asm/div64.h>
+
 #define MTD_CHAR_MAJOR 90
 #define MTD_BLOCK_MAJOR 31
-#define MAX_MTD_DEVICES 16
+#define MAX_MTD_DEVICES 32
 
 #define MTD_ERASE_PENDING      	0x01
 #define MTD_ERASING		0x02
@@ -31,18 +28,20 @@
 #define MTD_ERASE_DONE          0x08
 #define MTD_ERASE_FAILED        0x10
 
+#define MTD_FAIL_ADDR_UNKNOWN -1LL
+
 /* If the erase fails, fail_addr might indicate exactly which block failed.  If
-   fail_addr = 0xffffffff, the failure was not at the device level or was not
+   fail_addr = MTD_FAIL_ADDR_UNKNOWN, the failure was not at the device level or was not
    specific to any particular block. */
 struct erase_info {
 	struct mtd_info *mtd;
-	u_int32_t addr;
-	u_int32_t len;
-	u_int32_t fail_addr;
+	uint64_t addr;
+	uint64_t len;
+	uint64_t fail_addr;
 	u_long time;
 	u_long retries;
-	u_int dev;
-	u_int cell;
+	unsigned dev;
+	unsigned cell;
 	void (*callback) (struct erase_info *self);
 	u_long priv;
 	u_char state;
@@ -50,9 +49,10 @@ struct erase_info {
 };
 
 struct mtd_erase_region_info {
-	u_int32_t offset;			/* At which this region starts, from the beginning of the MTD */
-	u_int32_t erasesize;		/* For this region */
-	u_int32_t numblocks;		/* Number of blocks of erasesize in this region */
+	uint64_t offset;			/* At which this region starts, from the beginning of the MTD */
+	uint32_t erasesize;		/* For this region */
+	uint32_t numblocks;		/* Number of blocks of erasesize in this region */
+	unsigned long *lockmap;		/* If keeping bitmap of locks */
 };
 
 /*
@@ -75,25 +75,27 @@ typedef enum {
  * struct mtd_oob_ops - oob operation operands
  * @mode:	operation mode
  *
- * @len:	number of bytes to write/read. When a data buffer is given
- *		(datbuf != NULL) this is the number of data bytes. When
- *		no data buffer is available this is the number of oob bytes.
+ * @len:	number of data bytes to write/read
  *
- * @retlen:	number of bytes written/read. When a data buffer is given
- *		(datbuf != NULL) this is the number of data bytes. When
- *		no data buffer is available this is the number of oob bytes.
+ * @retlen:	number of data bytes written/read
  *
- * @ooblen:	number of oob bytes per page
+ * @ooblen:	number of oob bytes to write/read
+ * @oobretlen:	number of oob bytes written/read
  * @ooboffs:	offset of oob data in the oob area (only relevant when
  *		mode = MTD_OOB_PLACE)
  * @datbuf:	data buffer - if NULL only oob data are read/written
  * @oobbuf:	oob data buffer
+ *
+ * Note, it is allowed to read more than one OOB area at one go, but not write.
+ * The interface assumes that the OOB write requests program only one page's
+ * OOB area.
  */
 struct mtd_oob_ops {
 	mtd_oob_mode_t	mode;
 	size_t		len;
 	size_t		retlen;
 	size_t		ooblen;
+	size_t		oobretlen;
 	uint32_t	ooboffs;
 	uint8_t		*datbuf;
 	uint8_t		*oobbuf;
@@ -101,14 +103,14 @@ struct mtd_oob_ops {
 
 struct mtd_info {
 	u_char type;
-	u_int32_t flags;
-	u_int32_t size;	 // Total size of the MTD
+	uint32_t flags;
+	uint64_t size;	 // Total size of the MTD
 
 	/* "Major" erase size for the device. Naïve users may take this
 	 * to be the only erase size available, or may use the more detailed
 	 * information below if they desire
 	 */
-	u_int32_t erasesize;
+	uint32_t erasesize;
 	/* Minimal writable flash unit size. In case of NOR flash it is 1 (even
 	 * though individual bits can be cleared), in case of NAND flash it is
 	 * one NAND page (or half, or one-fourths of it), in case of ECC-ed NOR
@@ -116,24 +118,23 @@ struct mtd_info {
 	 * Any driver registering a struct mtd_info must ensure a writesize of
 	 * 1 or larger.
 	 */
-	u_int32_t writesize;
+	uint32_t writesize;
 
-	u_int32_t oobsize;   // Amount of OOB data per block (e.g. 16)
-	u_int32_t ecctype;
-	u_int32_t eccsize;
+	uint32_t oobsize;   // Amount of OOB data per block (e.g. 16)
+	uint32_t oobavail;  // Available OOB bytes per block
 
 	/*
-	 * Reuse some of the above unused fields in the case of NOR flash
-	 * with configurable programming regions to avoid modifying the
-	 * user visible structure layout/size.  Only valid when the
-	 * MTD_PROGRAM_REGIONS flag is set.
-	 * (Maybe we should have an union for those?)
+	 * If erasesize is a power of 2 then the shift is stored in
+	 * erasesize_shift otherwise erasesize_shift is zero. Ditto writesize.
 	 */
-#define MTD_PROGREGION_CTRLMODE_VALID(mtd)  (mtd)->oobsize
-#define MTD_PROGREGION_CTRLMODE_INVALID(mtd)  (mtd)->ecctype
+	unsigned int erasesize_shift;
+	unsigned int writesize_shift;
+	/* Masks based on erasesize_shift and writesize_shift */
+	unsigned int erasesize_mask;
+	unsigned int writesize_mask;
 
 	// Kernel-only stuff starts here.
-	char *name;
+	const char *name;
 	int index;
 
 	/* ecc layout structure pointer - read only ! */
@@ -145,20 +146,49 @@ struct mtd_info {
 	int numeraseregions;
 	struct mtd_erase_region_info *eraseregions;
 
-	/* This really shouldn't be here. It can go away in 2.5 */
-	u_int32_t bank_size;
-
+	/*
+	 * Erase is an asynchronous operation.  Device drivers are supposed
+	 * to call instr->callback() whenever the operation completes, even
+	 * if it completes with a failure.
+	 * Callers are supposed to pass a callback function and wait for it
+	 * to be called before writing to the block.
+	 */
 	int (*erase) (struct mtd_info *mtd, struct erase_info *instr);
 
 	/* This stuff for eXecute-In-Place */
-	int (*point) (struct mtd_info *mtd, loff_t from, size_t len, size_t *retlen, u_char **mtdbuf);
+	/* phys is optional and may be set to NULL */
+	int (*point) (struct mtd_info *mtd, loff_t from, size_t len,
+			size_t *retlen, void **virt, resource_size_t *phys);
 
 	/* We probably shouldn't allow XIP if the unpoint isn't a NULL */
-	void (*unpoint) (struct mtd_info *mtd, u_char * addr, loff_t from, size_t len);
+	void (*unpoint) (struct mtd_info *mtd, loff_t from, size_t len);
+
+	/* Allow NOMMU mmap() to directly map the device (if not NULL)
+	 * - return the address to which the offset maps
+	 * - return -ENOSYS to indicate refusal to do the mapping
+	 */
+	unsigned long (*get_unmapped_area) (struct mtd_info *mtd,
+					    unsigned long len,
+					    unsigned long offset,
+					    unsigned long flags);
+
+	/* Backing device capabilities for this device
+	 * - provides mmap capabilities
+	 */
+	struct backing_dev_info *backing_dev_info;
 
 
 	int (*read) (struct mtd_info *mtd, loff_t from, size_t len, size_t *retlen, u_char *buf);
 	int (*write) (struct mtd_info *mtd, loff_t to, size_t len, size_t *retlen, const u_char *buf);
+
+	/* In blackbox flight recorder like scenarios we want to make successful
+	   writes in interrupt context. panic_write() is only intended to be
+	   called when its known the kernel is about to panic and we need the
+	   write to succeed. Since the kernel is not going to be running for much
+	   longer, this function can break locks and delay to ensure the write
+	   succeeds (but not sleep). */
+
+	int (*panic_write) (struct mtd_info *mtd, loff_t to, size_t len, size_t *retlen, const u_char *buf);
 
 	int (*read_oob) (struct mtd_info *mtd, loff_t from,
 			 struct mtd_oob_ops *ops);
@@ -187,8 +217,8 @@ struct mtd_info {
 	void (*sync) (struct mtd_info *mtd);
 
 	/* Chip-supported device locking */
-	int (*lock) (struct mtd_info *mtd, loff_t ofs, size_t len);
-	int (*unlock) (struct mtd_info *mtd, loff_t ofs, size_t len);
+	int (*lock) (struct mtd_info *mtd, loff_t ofs, uint64_t len);
+	int (*unlock) (struct mtd_info *mtd, loff_t ofs, uint64_t len);
 
 	/* Power Management functions */
 	int (*suspend) (struct mtd_info *mtd);
@@ -202,13 +232,57 @@ struct mtd_info {
 
 	/* ECC status information */
 	struct mtd_ecc_stats ecc_stats;
+	/* Subpage shift (NAND) */
+	int subpage_sft;
 
 	void *priv;
 
 	struct module *owner;
+	struct device dev;
 	int usecount;
+
+	/* If the driver is something smart, like UBI, it may need to maintain
+	 * its own reference counting. The below functions are only for driver.
+	 * The driver may register its callbacks. These callbacks are not
+	 * supposed to be called by MTD users */
+	int (*get_device) (struct mtd_info *mtd);
+	void (*put_device) (struct mtd_info *mtd);
 };
 
+static inline struct mtd_info *dev_to_mtd(struct device *dev)
+{
+	return dev ? dev_get_drvdata(dev) : NULL;
+}
+
+static inline uint32_t mtd_div_by_eb(uint64_t sz, struct mtd_info *mtd)
+{
+	if (mtd->erasesize_shift)
+		return sz >> mtd->erasesize_shift;
+	do_div(sz, mtd->erasesize);
+	return sz;
+}
+
+static inline uint32_t mtd_mod_by_eb(uint64_t sz, struct mtd_info *mtd)
+{
+	if (mtd->erasesize_shift)
+		return sz & mtd->erasesize_mask;
+	return do_div(sz, mtd->erasesize);
+}
+
+static inline uint32_t mtd_div_by_ws(uint64_t sz, struct mtd_info *mtd)
+{
+	if (mtd->writesize_shift)
+		return sz >> mtd->writesize_shift;
+	do_div(sz, mtd->writesize);
+	return sz;
+}
+
+static inline uint32_t mtd_mod_by_ws(uint64_t sz, struct mtd_info *mtd)
+{
+	if (mtd->writesize_shift)
+		return sz & mtd->writesize_mask;
+	return do_div(sz, mtd->writesize);
+}
 
 	/* Kernel-side ioctl definitions */
 
@@ -216,6 +290,7 @@ extern int add_mtd_device(struct mtd_info *mtd);
 extern int del_mtd_device (struct mtd_info *mtd);
 
 extern struct mtd_info *get_mtd_device(struct mtd_info *mtd, int num);
+extern struct mtd_info *get_mtd_device_nm(const char *name);
 
 extern void put_mtd_device(struct mtd_info *mtd);
 
@@ -261,7 +336,11 @@ static inline void mtd_erase_callback(struct erase_info *instr)
 			printk(KERN_INFO args);		\
 	} while(0)
 #else /* CONFIG_MTD_DEBUG */
-#define DEBUG(n, args...) do { } while(0)
+#define DEBUG(n, args...)				\
+	do {						\
+		if (0)					\
+			printk(KERN_INFO args);		\
+	} while(0)
 
 #endif /* CONFIG_MTD_DEBUG */
 

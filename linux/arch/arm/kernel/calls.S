@@ -81,7 +81,7 @@
 		CALL(sys_ni_syscall)		/* was sys_ssetmask */
 /* 70 */	CALL(sys_setreuid16)
 		CALL(sys_setregid16)
-		CALL(sys_sigsuspend_wrapper)
+		CALL(sys_sigsuspend)
 		CALL(sys_sigpending)
 		CALL(sys_sethostname)
 /* 75 */	CALL(sys_setrlimit)
@@ -98,7 +98,7 @@
 		CALL(sys_uselib)
 		CALL(sys_swapon)
 		CALL(sys_reboot)
-		CALL(OBSOLETE(old_readdir))	/* used by libc4 */
+		CALL(OBSOLETE(sys_old_readdir))	/* used by libc4 */
 /* 90 */	CALL(OBSOLETE(old_mmap))	/* used by libc4 */
 		CALL(sys_munmap)
 		CALL(sys_truncate)
@@ -110,7 +110,7 @@
 		CALL(sys_ni_syscall)		/* was sys_profil */
 		CALL(sys_statfs)
 /* 100 */	CALL(sys_fstatfs)
-		CALL(sys_ni_syscall)
+		CALL(sys_ni_syscall)		/* sys_ioperm */
 		CALL(OBSOLETE(ABI(sys_socketcall, sys_oabi_socketcall)))
 		CALL(sys_syslog)
 		CALL(sys_setitimer)
@@ -132,7 +132,7 @@
 /* 120 */	CALL(sys_clone_wrapper)
 		CALL(sys_setdomainname)
 		CALL(sys_newuname)
-		CALL(sys_ni_syscall)
+		CALL(sys_ni_syscall)		/* modify_ldt */
 		CALL(sys_adjtimex)
 /* 125 */	CALL(sys_mprotect)
 		CALL(sys_sigprocmask)
@@ -146,7 +146,7 @@
 		CALL(sys_bdflush)
 /* 135 */	CALL(sys_sysfs)
 		CALL(sys_personality)
-		CALL(sys_ni_syscall)		/* CALL(_sys_afs_syscall) */
+		CALL(sys_ni_syscall)		/* reserved for afs_syscall */
 		CALL(sys_setfsuid16)
 		CALL(sys_setfsgid16)
 /* 140 */	CALL(sys_llseek)
@@ -172,10 +172,10 @@
 /* 160 */	CALL(sys_sched_get_priority_min)
 		CALL(sys_sched_rr_get_interval)
 		CALL(sys_nanosleep)
-		CALL(sys_arm_mremap)
+		CALL(sys_mremap)
 		CALL(sys_setresuid16)
 /* 165 */	CALL(sys_getresuid16)
-		CALL(sys_ni_syscall)
+		CALL(sys_ni_syscall)		/* vm86 */
 		CALL(sys_ni_syscall)		/* was sys_query_module */
 		CALL(sys_poll)
 		CALL(sys_nfsservctl)
@@ -188,7 +188,7 @@
 		CALL(sys_rt_sigpending)
 		CALL(sys_rt_sigtimedwait)
 		CALL(sys_rt_sigqueueinfo)
-		CALL(sys_rt_sigsuspend_wrapper)
+		CALL(sys_rt_sigsuspend)
 /* 180 */	CALL(ABI(sys_pread64, sys_oabi_pread64))
 		CALL(ABI(sys_pwrite64, sys_oabi_pwrite64))
 		CALL(sys_chown16)
@@ -197,8 +197,8 @@
 /* 185 */	CALL(sys_capset)
 		CALL(sys_sigaltstack_wrapper)
 		CALL(sys_sendfile)
-		CALL(sys_ni_syscall)
-		CALL(sys_ni_syscall)
+		CALL(sys_ni_syscall)		/* getpmsg */
+		CALL(sys_ni_syscall)		/* putpmsg */
 /* 190 */	CALL(sys_vfork_wrapper)
 		CALL(sys_getrlimit)
 		CALL(sys_mmap2)
@@ -262,10 +262,10 @@
 /* 250 */	CALL(sys_epoll_create)
 		CALL(ABI(sys_epoll_ctl, sys_oabi_epoll_ctl))
 		CALL(ABI(sys_epoll_wait, sys_oabi_epoll_wait))
-	 	CALL(sys_remap_file_pages)
+		CALL(sys_remap_file_pages)
 		CALL(sys_ni_syscall)	/* sys_set_thread_area */
 /* 255 */	CALL(sys_ni_syscall)	/* sys_get_thread_area */
- 		CALL(sys_set_tid_address)
+		CALL(sys_set_tid_address)
 		CALL(sys_timer_create)
 		CALL(sys_timer_settime)
 		CALL(sys_timer_gettime)
@@ -331,6 +331,50 @@
 		CALL(sys_mbind)
 /* 320 */	CALL(sys_get_mempolicy)
 		CALL(sys_set_mempolicy)
+		CALL(sys_openat)
+		CALL(sys_mkdirat)
+		CALL(sys_mknodat)
+/* 325 */	CALL(sys_fchownat)
+		CALL(sys_futimesat)
+		CALL(ABI(sys_fstatat64,  sys_oabi_fstatat64))
+		CALL(sys_unlinkat)
+		CALL(sys_renameat)
+/* 330 */	CALL(sys_linkat)
+		CALL(sys_symlinkat)
+		CALL(sys_readlinkat)
+		CALL(sys_fchmodat)
+		CALL(sys_faccessat)
+/* 335 */	CALL(sys_pselect6)
+		CALL(sys_ppoll)
+		CALL(sys_unshare)
+		CALL(sys_set_robust_list)
+		CALL(sys_get_robust_list)
+/* 340 */	CALL(sys_splice)
+		CALL(sys_sync_file_range2)
+		CALL(sys_tee)
+		CALL(sys_vmsplice)
+		CALL(sys_move_pages)
+/* 345 */	CALL(sys_getcpu)
+		CALL(sys_epoll_pwait)
+		CALL(sys_kexec_load)
+		CALL(sys_utimensat)
+		CALL(sys_signalfd)
+/* 350 */	CALL(sys_timerfd_create)
+		CALL(sys_eventfd)
+		CALL(sys_fallocate)
+		CALL(sys_timerfd_settime)
+		CALL(sys_timerfd_gettime)
+/* 355 */	CALL(sys_signalfd4)
+		CALL(sys_eventfd2)
+		CALL(sys_epoll_create1)
+		CALL(sys_dup3)
+		CALL(sys_pipe2)
+/* 360 */	CALL(sys_inotify_init1)
+		CALL(sys_preadv)
+		CALL(sys_pwritev)
+		CALL(sys_rt_tgsigqueueinfo)
+		CALL(sys_perf_event_open)
+/* 365 */	CALL(sys_recvmmsg)
 #ifndef syscalls_counted
 .equ syscalls_padding, ((NR_syscalls + 3) & ~3) - NR_syscalls
 #define syscalls_counted

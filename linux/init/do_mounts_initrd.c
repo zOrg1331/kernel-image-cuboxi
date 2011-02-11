@@ -1,4 +1,3 @@
-#define __KERNEL_SYSCALLS__
 #include <linux/unistd.h>
 #include <linux/kernel.h>
 #include <linux/fs.h>
@@ -7,6 +6,7 @@
 #include <linux/romfs_fs.h>
 #include <linux/initrd.h>
 #include <linux/sched.h>
+#include <linux/freezer.h>
 
 #include "do_mounts.h"
 
@@ -35,7 +35,7 @@ static int __init do_linuxrc(void * shell)
 	(void) sys_open("/dev/console",O_RDWR,0);
 	(void) sys_dup(0);
 	(void) sys_dup(0);
-	return execve(shell, argv, envp_init);
+	return kernel_execve(shell, argv, envp_init);
 }
 
 static void __init handle_initrd(void)
@@ -55,12 +55,18 @@ static void __init handle_initrd(void)
 	sys_mount(".", "/", NULL, MS_MOVE, NULL);
 	sys_chroot(".");
 
-	current->flags |= PF_NOFREEZE;
+	/*
+	 * In case that a resume from disk is carried out by linuxrc or one of
+	 * its children, we need to tell the freezer not to wait for us.
+	 */
+	current->flags |= PF_FREEZER_SKIP;
+
 	pid = kernel_thread(do_linuxrc, "/linuxrc", SIGCHLD);
-	if (pid > 0) {
+	if (pid > 0)
 		while (pid != sys_wait4(-1, NULL, 0, NULL))
 			yield();
-	}
+
+	current->flags &= ~PF_FREEZER_SKIP;
 
 	/* move initrd to rootfs' /old */
 	sys_fchdir(old_fd);

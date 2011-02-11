@@ -1,5 +1,6 @@
 /*
- *    Copyright (c) 2005-2006 Michael Ellerman, IBM Corporation
+ *    Copyright (C) 2005-2006 Michael Ellerman, IBM Corporation
+ *    Copyright (C) 2000-2004, IBM Corporation
  *
  *    Description:
  *      This file contains all the routines to build a flattened device
@@ -33,13 +34,14 @@
 #include <asm/iseries/hv_types.h>
 #include <asm/iseries/hv_lp_config.h>
 #include <asm/iseries/hv_call_xm.h>
-#include <asm/iseries/it_exp_vpd_panel.h>
 #include <asm/udbg.h>
 
 #include "processor_vpd.h"
 #include "call_hpt.h"
 #include "call_pci.h"
 #include "pci.h"
+#include "it_exp_vpd_panel.h"
+#include "naca.h"
 
 #ifdef DEBUG
 #define DBG(fmt...) udbg_printf(fmt)
@@ -49,10 +51,15 @@
 
 /*
  * These are created by the linker script at the start and end
- * of the section containing all the strings from this file.
+ * of the section containing all the strings marked with the DS macro.
  */
 extern char __dt_strings_start[];
 extern char __dt_strings_end[];
+
+#define DS(s)	({	\
+	static const char __s[] __attribute__((section(".dt_strings"))) = s; \
+	__s;		\
+})
 
 struct iseries_flat_dt {
 	struct boot_param_header header;
@@ -62,19 +69,53 @@ struct iseries_flat_dt {
 static void * __initdata dt_data;
 
 /*
- * Putting these strings here keeps them out of the section
- * that we rename to .dt_strings using objcopy and capture
- * for the strings blob of the flattened device tree.
+ * Putting these strings here keeps them out of the .dt_strings section
+ * that we capture for the strings blob of the flattened device tree.
  */
 static char __initdata device_type_cpu[] = "cpu";
 static char __initdata device_type_memory[] = "memory";
 static char __initdata device_type_serial[] = "serial";
 static char __initdata device_type_network[] = "network";
-static char __initdata device_type_block[] = "block";
-static char __initdata device_type_byte[] = "byte";
 static char __initdata device_type_pci[] = "pci";
 static char __initdata device_type_vdevice[] = "vdevice";
 static char __initdata device_type_vscsi[] = "vscsi";
+
+
+/* EBCDIC to ASCII conversion routines */
+
+static unsigned char __init e2a(unsigned char x)
+{
+	switch (x) {
+	case 0x81 ... 0x89:
+		return x - 0x81 + 'a';
+	case 0x91 ... 0x99:
+		return x - 0x91 + 'j';
+	case 0xA2 ... 0xA9:
+		return x - 0xA2 + 's';
+	case 0xC1 ... 0xC9:
+		return x - 0xC1 + 'A';
+	case 0xD1 ... 0xD9:
+		return x - 0xD1 + 'J';
+	case 0xE2 ... 0xE9:
+		return x - 0xE2 + 'S';
+	case 0xF0 ... 0xF9:
+		return x - 0xF0 + '0';
+	}
+	return ' ';
+}
+
+static unsigned char * __init strne2a(unsigned char *dest,
+		const unsigned char *src, size_t n)
+{
+	int i;
+
+	n = strnlen(src, n);
+
+	for (i = 0; i < n; i++)
+		dest[i] = e2a(src[i]);
+
+	return dest;
+}
 
 static struct iseries_flat_dt * __init dt_init(void)
 {
@@ -136,7 +177,7 @@ static void __init dt_start_node(struct iseries_flat_dt *dt, const char *name)
 
 #define dt_end_node(dt) dt_push_u32(dt, OF_DT_END_NODE)
 
-static void __init dt_prop(struct iseries_flat_dt *dt, const char *name,
+static void __init __dt_prop(struct iseries_flat_dt *dt, const char *name,
 		const void *data, int len)
 {
 	unsigned long offset;
@@ -154,45 +195,32 @@ static void __init dt_prop(struct iseries_flat_dt *dt, const char *name,
 	/* The actual data. */
 	dt_push_bytes(dt, data, len);
 }
+#define dt_prop(dt, name, data, len)	__dt_prop((dt), DS(name), (data), (len))
 
-static void __init dt_prop_str(struct iseries_flat_dt *dt, const char *name,
-		const char *data)
-{
-	dt_prop(dt, name, data, strlen(data) + 1); /* + 1 for NULL */
-}
+#define dt_prop_str(dt, name, data)	\
+	dt_prop((dt), name, (data), strlen((data)) + 1); /* + 1 for NULL */
 
-static void __init dt_prop_u32(struct iseries_flat_dt *dt, const char *name,
+static void __init __dt_prop_u32(struct iseries_flat_dt *dt, const char *name,
 		u32 data)
 {
-	dt_prop(dt, name, &data, sizeof(u32));
+	__dt_prop(dt, name, &data, sizeof(u32));
 }
+#define dt_prop_u32(dt, name, data)	__dt_prop_u32((dt), DS(name), (data))
 
-#ifdef notyet
-static void __init dt_prop_u64(struct iseries_flat_dt *dt, const char *name,
-		u64 data)
+static void __init __maybe_unused __dt_prop_u64(struct iseries_flat_dt *dt,
+		const char *name, u64 data)
 {
-	dt_prop(dt, name, &data, sizeof(u64));
+	__dt_prop(dt, name, &data, sizeof(u64));
 }
-#endif
+#define dt_prop_u64(dt, name, data)	__dt_prop_u64((dt), DS(name), (data))
 
-static void __init dt_prop_u64_list(struct iseries_flat_dt *dt,
-		const char *name, u64 *data, int n)
-{
-	dt_prop(dt, name, data, sizeof(u64) * n);
-}
+#define dt_prop_u64_list(dt, name, data, n)	\
+	dt_prop((dt), name, (data), sizeof(u64) * (n))
 
-static void __init dt_prop_u32_list(struct iseries_flat_dt *dt,
-		const char *name, u32 *data, int n)
-{
-	dt_prop(dt, name, data, sizeof(u32) * n);
-}
+#define dt_prop_u32_list(dt, name, data, n)	\
+	dt_prop((dt), name, (data), sizeof(u32) * (n))
 
-#ifdef notyet
-static void __init dt_prop_empty(struct iseries_flat_dt *dt, const char *name)
-{
-	dt_prop(dt, name, NULL, 0);
-}
-#endif
+#define dt_prop_empty(dt, name)		dt_prop((dt), name, NULL, 0)
 
 static void __init dt_cpus(struct iseries_flat_dt *dt)
 {
@@ -268,6 +296,17 @@ static void __init dt_model(struct iseries_flat_dt *dt)
 	dt_prop_u32(dt, "ibm,partition-no", HvLpConfig_getLpIndex());
 }
 
+static void __init dt_initrd(struct iseries_flat_dt *dt)
+{
+#ifdef CONFIG_BLK_DEV_INITRD
+	if (naca.xRamDisk) {
+		dt_prop_u64(dt, "linux,initrd-start", (u64)naca.xRamDisk);
+		dt_prop_u64(dt, "linux,initrd-end",
+			(u64)naca.xRamDisk + naca.xRamDiskSize * HW_PAGE_SIZE);
+	}
+#endif
+}
+
 static void __init dt_do_vdevice(struct iseries_flat_dt *dt,
 		const char *name, u32 reg, int unit,
 		const char *type, const char *compat, int end)
@@ -298,7 +337,8 @@ static void __init dt_vdevices(struct iseries_flat_dt *dt)
 	dt_prop_u32(dt, "#address-cells", 1);
 	dt_prop_u32(dt, "#size-cells", 0);
 
-	dt_do_vdevice(dt, "vty", reg, -1, device_type_serial, NULL, 1);
+	dt_do_vdevice(dt, "vty", reg, -1, device_type_serial,
+			"IBM,iSeries-vty", 1);
 	reg++;
 
 	dt_do_vdevice(dt, "v-scsi", reg, -1, device_type_vscsi,
@@ -326,21 +366,6 @@ static void __init dt_vdevices(struct iseries_flat_dt *dt)
 
 		dt_end_node(dt);
 	}
-	reg += HVMAXARCHITECTEDVIRTUALLANS;
-
-	for (i = 0; i < HVMAXARCHITECTEDVIRTUALDISKS; i++)
-		dt_do_vdevice(dt, "viodasd", reg, i, device_type_block,
-				"IBM,iSeries-viodasd", 1);
-	reg += HVMAXARCHITECTEDVIRTUALDISKS;
-
-	for (i = 0; i < HVMAXARCHITECTEDVIRTUALCDROMS; i++)
-		dt_do_vdevice(dt, "viocd", reg, i, device_type_block,
-				"IBM,iSeries-viocd", 1);
-	reg += HVMAXARCHITECTEDVIRTUALCDROMS;
-
-	for (i = 0; i < HVMAXARCHITECTEDVIRTUALTAPES; i++)
-		dt_do_vdevice(dt, "viotape", reg, i, device_type_byte,
-				"IBM,iSeries-viotape", 1);
 
 	dt_end_node(dt);
 }
@@ -602,6 +627,7 @@ void * __init build_flat_dt(unsigned long phys_mem_size)
 	/* /chosen */
 	dt_start_node(iseries_dt, "chosen");
 	dt_prop_str(iseries_dt, "bootargs", cmd_line);
+	dt_initrd(iseries_dt);
 	dt_end_node(iseries_dt);
 
 	dt_cpus(iseries_dt);

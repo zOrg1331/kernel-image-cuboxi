@@ -5,7 +5,6 @@
  *  Modifications by Paul Mackerras (PowerMac) (paulus@cs.anu.edu.au)
  *  and Cort Dougan (PReP) (cort@cs.nmt.edu)
  *    Copyright (C) 1996 Paul Mackerras
- *  Amiga/APUS changes by Jesper Skov (jskov@cygnus.co.uk).
  *
  *  Derived from "arch/i386/mm/init.c"
  *    Copyright (C) 1991, 1992, 1993, 1994  Linus Torvalds
@@ -41,11 +40,11 @@
 #include <linux/nodemask.h>
 #include <linux/module.h>
 #include <linux/poison.h>
+#include <linux/lmb.h>
 
 #include <asm/pgalloc.h>
 #include <asm/page.h>
 #include <asm/prom.h>
-#include <asm/lmb.h>
 #include <asm/rtas.h>
 #include <asm/io.h>
 #include <asm/mmu_context.h>
@@ -67,12 +66,7 @@
 
 #include "mmu_decl.h"
 
-#ifdef DEBUG
-#define DBG(fmt...) printk(fmt)
-#else
-#define DBG(fmt...)
-#endif
-
+#ifdef CONFIG_PPC_STD_MMU_64
 #if PGTABLE_RANGE > USER_VSID_RANGE
 #warning Limited user VSID range means pagetable space is wasted
 #endif
@@ -80,9 +74,10 @@
 #if (TASK_SIZE_USER64 < PGTABLE_RANGE) && (TASK_SIZE_USER64 < USER_VSID_RANGE)
 #warning TASK_SIZE is smaller than it needs to be.
 #endif
+#endif /* CONFIG_PPC_STD_MMU_64 */
 
-/* max amount of RAM to use */
-unsigned long __max_memory;
+phys_addr_t memstart_addr = ~0;
+phys_addr_t kernstart_addr;
 
 void free_initmem(void)
 {
@@ -114,81 +109,187 @@ void free_initrd_mem(unsigned long start, unsigned long end)
 }
 #endif
 
-static struct kcore_list kcore_vmem;
-
-static int __init setup_kcore(void)
+static void pgd_ctor(void *addr)
 {
-	int i;
-
-	for (i=0; i < lmb.memory.cnt; i++) {
-		unsigned long base, size;
-		struct kcore_list *kcore_mem;
-
-		base = lmb.memory.region[i].base;
-		size = lmb.memory.region[i].size;
-
-		/* GFP_ATOMIC to avoid might_sleep warnings during boot */
-		kcore_mem = kmalloc(sizeof(struct kcore_list), GFP_ATOMIC);
-		if (!kcore_mem)
-			panic("mem_init: kmalloc failed\n");
-
-		kclist_add(kcore_mem, __va(base), size);
-	}
-
-	kclist_add(&kcore_vmem, (void *)VMALLOC_START, VMALLOC_END-VMALLOC_START);
-
-	return 0;
-}
-module_init(setup_kcore);
-
-static void zero_ctor(void *addr, kmem_cache_t *cache, unsigned long flags)
-{
-	memset(addr, 0, kmem_cache_size(cache));
+	memset(addr, 0, PGD_TABLE_SIZE);
 }
 
-#ifdef CONFIG_PPC_64K_PAGES
-static const unsigned int pgtable_cache_size[3] = {
-	PTE_TABLE_SIZE, PMD_TABLE_SIZE, PGD_TABLE_SIZE
-};
-static const char *pgtable_cache_name[ARRAY_SIZE(pgtable_cache_size)] = {
-	"pte_pmd_cache", "pmd_cache", "pgd_cache",
-};
-#else
+static void pmd_ctor(void *addr)
+{
+	memset(addr, 0, PMD_TABLE_SIZE);
+}
+
 static const unsigned int pgtable_cache_size[2] = {
-	PTE_TABLE_SIZE, PMD_TABLE_SIZE
+	PGD_TABLE_SIZE, PMD_TABLE_SIZE
 };
 static const char *pgtable_cache_name[ARRAY_SIZE(pgtable_cache_size)] = {
-	"pgd_pte_cache", "pud_pmd_cache",
-};
+#ifdef CONFIG_PPC_64K_PAGES
+	"pgd_cache", "pmd_cache",
+#else
+	"pgd_cache", "pud_pmd_cache",
 #endif /* CONFIG_PPC_64K_PAGES */
+};
 
 #ifdef CONFIG_HUGETLB_PAGE
-/* Hugepages need one extra cache, initialized in hugetlbpage.c.  We
- * can't put into the tables above, because HPAGE_SHIFT is not compile
- * time constant. */
-kmem_cache_t *pgtable_cache[ARRAY_SIZE(pgtable_cache_size)+1];
+/* Hugepages need an extra cache per hugepagesize, initialized in
+ * hugetlbpage.c.  We can't put into the tables above, because HPAGE_SHIFT
+ * is not compile time constant. */
+struct kmem_cache *pgtable_cache[ARRAY_SIZE(pgtable_cache_size)+MMU_PAGE_COUNT];
 #else
-kmem_cache_t *pgtable_cache[ARRAY_SIZE(pgtable_cache_size)];
+struct kmem_cache *pgtable_cache[ARRAY_SIZE(pgtable_cache_size)];
 #endif
 
 void pgtable_cache_init(void)
 {
-	int i;
-
-	for (i = 0; i < ARRAY_SIZE(pgtable_cache_size); i++) {
-		int size = pgtable_cache_size[i];
-		const char *name = pgtable_cache_name[i];
-
-		DBG("Allocating page table cache %s (#%d) "
-		    "for size: %08x...\n", name, i, size);
-		pgtable_cache[i] = kmem_cache_create(name,
-						     size, size,
-						     SLAB_HWCACHE_ALIGN |
-						     SLAB_MUST_HWCACHE_ALIGN,
-						     zero_ctor,
-						     NULL);
-		if (! pgtable_cache[i])
-			panic("pgtable_cache_init(): could not create %s!\n",
-			      name);
-	}
+	pgtable_cache[0] = kmem_cache_create(pgtable_cache_name[0], PGD_TABLE_SIZE, PGD_TABLE_SIZE, SLAB_PANIC, pgd_ctor);
+	pgtable_cache[1] = kmem_cache_create(pgtable_cache_name[1], PMD_TABLE_SIZE, PMD_TABLE_SIZE, SLAB_PANIC, pmd_ctor);
 }
+
+#ifdef CONFIG_SPARSEMEM_VMEMMAP
+/*
+ * Given an address within the vmemmap, determine the pfn of the page that
+ * represents the start of the section it is within.  Note that we have to
+ * do this by hand as the proffered address may not be correctly aligned.
+ * Subtraction of non-aligned pointers produces undefined results.
+ */
+static unsigned long __meminit vmemmap_section_start(unsigned long page)
+{
+	unsigned long offset = page - ((unsigned long)(vmemmap));
+
+	/* Return the pfn of the start of the section. */
+	return (offset / sizeof(struct page)) & PAGE_SECTION_MASK;
+}
+
+/*
+ * Check if this vmemmap page is already initialised.  If any section
+ * which overlaps this vmemmap page is initialised then this page is
+ * initialised already.
+ */
+static int __meminit vmemmap_populated(unsigned long start, int page_size)
+{
+	unsigned long end = start + page_size;
+
+	for (; start < end; start += (PAGES_PER_SECTION * sizeof(struct page)))
+		if (pfn_valid(vmemmap_section_start(start)))
+			return 1;
+
+	return 0;
+}
+
+/* On hash-based CPUs, the vmemmap is bolted in the hash table.
+ *
+ * On Book3E CPUs, the vmemmap is currently mapped in the top half of
+ * the vmalloc space using normal page tables, though the size of
+ * pages encoded in the PTEs can be different
+ */
+
+#ifdef CONFIG_PPC_BOOK3E
+static void __meminit vmemmap_create_mapping(unsigned long start,
+					     unsigned long page_size,
+					     unsigned long phys)
+{
+	/* Create a PTE encoding without page size */
+	unsigned long i, flags = _PAGE_PRESENT | _PAGE_ACCESSED |
+		_PAGE_KERNEL_RW;
+
+	/* PTEs only contain page size encodings up to 32M */
+	BUG_ON(mmu_psize_defs[mmu_vmemmap_psize].enc > 0xf);
+
+	/* Encode the size in the PTE */
+	flags |= mmu_psize_defs[mmu_vmemmap_psize].enc << 8;
+
+	/* For each PTE for that area, map things. Note that we don't
+	 * increment phys because all PTEs are of the large size and
+	 * thus must have the low bits clear
+	 */
+	for (i = 0; i < page_size; i += PAGE_SIZE)
+		BUG_ON(map_kernel_page(start + i, phys, flags));
+}
+#else /* CONFIG_PPC_BOOK3E */
+static void __meminit vmemmap_create_mapping(unsigned long start,
+					     unsigned long page_size,
+					     unsigned long phys)
+{
+	int  mapped = htab_bolt_mapping(start, start + page_size, phys,
+					PAGE_KERNEL, mmu_vmemmap_psize,
+					mmu_kernel_ssize);
+	BUG_ON(mapped < 0);
+}
+#endif /* CONFIG_PPC_BOOK3E */
+
+struct vmemmap_backing *vmemmap_list;
+
+static __meminit struct vmemmap_backing * vmemmap_list_alloc(int node)
+{
+	static struct vmemmap_backing *next;
+	static int num_left;
+
+	/* allocate a page when required and hand out chunks */
+	if (!next || !num_left) {
+		next = vmemmap_alloc_block(PAGE_SIZE, node);
+		if (unlikely(!next)) {
+			WARN_ON(1);
+			return NULL;
+		}
+		num_left = PAGE_SIZE / sizeof(struct vmemmap_backing);
+	}
+
+	num_left--;
+
+	return next++;
+}
+
+static __meminit void vmemmap_list_populate(unsigned long phys,
+					    unsigned long start,
+					    int node)
+{
+	struct vmemmap_backing *vmem_back;
+
+	vmem_back = vmemmap_list_alloc(node);
+	if (unlikely(!vmem_back)) {
+		WARN_ON(1);
+		return;
+	}
+
+	vmem_back->phys = phys;
+	vmem_back->virt_addr = start;
+	vmem_back->list = vmemmap_list;
+
+	vmemmap_list = vmem_back;
+}
+
+int __meminit vmemmap_populate(struct page *start_page,
+			       unsigned long nr_pages, int node)
+{
+	unsigned long start = (unsigned long)start_page;
+	unsigned long end = (unsigned long)(start_page + nr_pages);
+	unsigned long page_size = 1 << mmu_psize_defs[mmu_vmemmap_psize].shift;
+
+	/* Align to the page size of the linear mapping. */
+	start = _ALIGN_DOWN(start, page_size);
+
+	pr_debug("vmemmap_populate page %p, %ld pages, node %d\n",
+		 start_page, nr_pages, node);
+	pr_debug(" -> map %lx..%lx\n", start, end);
+
+	for (; start < end; start += page_size) {
+		void *p;
+
+		if (vmemmap_populated(start, page_size))
+			continue;
+
+		p = vmemmap_alloc_block(page_size, node);
+		if (!p)
+			return -ENOMEM;
+
+		vmemmap_list_populate(__pa(p), start, node);
+
+		pr_debug("      * %016lx..%016lx allocated at %p\n",
+			 start, start + page_size, p);
+
+		vmemmap_create_mapping(start, page_size, __pa(p));
+	}
+
+	return 0;
+}
+#endif /* CONFIG_SPARSEMEM_VMEMMAP */

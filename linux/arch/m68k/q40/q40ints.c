@@ -47,7 +47,7 @@ static int q40_irq_startup(unsigned int irq)
 	switch (irq) {
 	case 1: case 2: case 8: case 9:
 	case 11: case 12: case 13:
-		printk("%s: ISA IRQ %d not implemented by HW\n", __FUNCTION__, irq);
+		printk("%s: ISA IRQ %d not implemented by HW\n", __func__, irq);
 		return -ENXIO;
 	}
 	return 0;
@@ -59,7 +59,7 @@ static void q40_irq_shutdown(unsigned int irq)
 
 static struct irq_controller q40_irq_controller = {
 	.name		= "q40",
-	.lock		= SPIN_LOCK_UNLOCKED,
+	.lock		= __SPIN_LOCK_UNLOCKED(q40_irq_controller.lock),
 	.startup	= q40_irq_startup,
 	.shutdown	= q40_irq_shutdown,
 	.enable		= q40_enable_irq,
@@ -79,7 +79,7 @@ static struct irq_controller q40_irq_controller = {
 
 static int disabled;
 
-void q40_init_IRQ(void)
+void __init q40_init_IRQ(void)
 {
 	m68k_setup_irq_controller(&q40_irq_controller, 1, Q40_IRQ_MAX);
 
@@ -125,9 +125,9 @@ void q40_mksound(unsigned int hz, unsigned int ticks)
 	sound_ticks = ticks << 1;
 }
 
-static irqreturn_t (*q40_timer_routine)(int, void *, struct pt_regs *);
+static irq_handler_t q40_timer_routine;
 
-static irqreturn_t q40_timer_int (int irq, void * dev, struct pt_regs * regs)
+static irqreturn_t q40_timer_int (int irq, void * dev)
 {
 	ql_ticks = ql_ticks ? 0 : 1;
 	if (sound_ticks) {
@@ -138,11 +138,11 @@ static irqreturn_t q40_timer_int (int irq, void * dev, struct pt_regs * regs)
 	}
 
 	if (!ql_ticks)
-		q40_timer_routine(irq, dev, regs);
+		q40_timer_routine(irq, dev);
 	return IRQ_HANDLED;
 }
 
-void q40_sched_init (irqreturn_t (*timer_routine)(int, void *, struct pt_regs *))
+void q40_sched_init (irq_handler_t timer_routine)
 {
 	int timer_irq;
 
@@ -184,7 +184,7 @@ static struct IRQ_TABLE eirqs[] = {
 };
 
 /* complain only this many times about spurious ints : */
-static int ccleirq=60;    /* ISA dev IRQ's*/
+static int ccleirq=60;    /* ISA dev IRQs*/
 /*static int cclirq=60;*/     /* internal */
 
 /* FIXME: add shared ints,mask,unmask,probing.... */
@@ -218,11 +218,11 @@ static void q40_irq_handler(unsigned int irq, struct pt_regs *fp)
 	switch (irq) {
 	case 4:
 	case 6:
-		m68k_handle_int(Q40_IRQ_SAMPLE, fp);
+		__m68k_handle_int(Q40_IRQ_SAMPLE, fp);
 		return;
 	}
 	if (mir & Q40_IRQ_FRAME_MASK) {
-		m68k_handle_int(Q40_IRQ_FRAME, fp);
+		__m68k_handle_int(Q40_IRQ_FRAME, fp);
 		master_outb(-1, FRAME_CLEAR_REG);
 	}
 	if ((mir & Q40_IRQ_SER_MASK) || (mir & Q40_IRQ_EXT_MASK)) {
@@ -234,7 +234,7 @@ static void q40_irq_handler(unsigned int irq, struct pt_regs *fp)
  * There is a little mess wrt which IRQ really caused this irq request. The
  * main problem is that IIRQ_REG and EIRQ_REG reflect the state when they
  * are read - which is long after the request came in. In theory IRQs should
- * not just go away but they occassionally do
+ * not just go away but they occasionally do
  */
 				if (irq > 4 && irq <= 15 && mext_disabled) {
 					/*aliased_irq++;*/
@@ -257,7 +257,7 @@ static void q40_irq_handler(unsigned int irq, struct pt_regs *fp)
 					goto iirq;
 				}
 				q40_state[irq] |= IRQ_INPROGRESS;
-				m68k_handle_int(irq, fp);
+				__m68k_handle_int(irq, fp);
 				q40_state[irq] &= ~IRQ_INPROGRESS;
 
 				/* naively enable everything, if that fails than    */
@@ -288,7 +288,7 @@ static void q40_irq_handler(unsigned int irq, struct pt_regs *fp)
 	mir = master_inb(IIRQ_REG);
 	/* should test whether keyboard irq is really enabled, doing it in defhand */
 	if (mir & Q40_IRQ_KEYB_MASK)
-		m68k_handle_int(Q40_IRQ_KEYBOARD, fp);
+		__m68k_handle_int(Q40_IRQ_KEYBOARD, fp);
 
 	return;
 }

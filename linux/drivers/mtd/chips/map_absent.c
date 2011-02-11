@@ -1,7 +1,6 @@
 /*
  * Common code to handle absent "placeholder" devices
  * Copyright 2001 Resilience Corporation <ebrower@resilience.com>
- * $Id: map_absent.c,v 1.6 2005/11/07 11:14:23 gleixner Exp $
  *
  * This map driver is used to allocate "placeholder" MTD
  * devices on systems that have socketed/removable media.
@@ -47,12 +46,10 @@ static struct mtd_info *map_absent_probe(struct map_info *map)
 {
 	struct mtd_info *mtd;
 
-	mtd = kmalloc(sizeof(*mtd), GFP_KERNEL);
+	mtd = kzalloc(sizeof(*mtd), GFP_KERNEL);
 	if (!mtd) {
 		return NULL;
 	}
-
-	memset(mtd, 0, sizeof(*mtd));
 
 	map->fldrv 	= &map_absent_chipdrv;
 	mtd->priv 	= map;

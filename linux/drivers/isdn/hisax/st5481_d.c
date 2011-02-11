@@ -173,7 +173,7 @@ static void l1m_debug(struct FsmInst *fi, char *fmt, ...)
 	char buf[256];
 	
 	va_start(args, fmt);
-	vsprintf(buf, fmt, args);
+	vsnprintf(buf, sizeof(buf), fmt, args);
 	DBG(8, "%s", buf);
 	va_end(args);
 }
@@ -275,7 +275,7 @@ static void dout_debug(struct FsmInst *fi, char *fmt, ...)
 	char buf[256];
 	
 	va_start(args, fmt);
-	vsprintf(buf, fmt, args);
+	vsnprintf(buf, sizeof(buf), fmt, args);
 	DBG(0x2, "%s", buf);
 	va_end(args);
 }
@@ -370,11 +370,11 @@ static void fifo_reseted(void *context)
 	FsmEvent(&adapter->d_out.fsm, EV_DOUT_RESETED, NULL);
 }
 
-static void usb_d_out_complete(struct urb *urb, struct pt_regs *regs)
+static void usb_d_out_complete(struct urb *urb)
 {
 	struct st5481_adapter *adapter = urb->context;
 	struct st5481_d_out *d_out = &adapter->d_out;
-	int buf_nr;
+	long buf_nr;
 	
 	DBG(2, "");
 
@@ -389,7 +389,7 @@ static void usb_d_out_complete(struct urb *urb, struct pt_regs *regs)
 				DBG(1,"urb killed status %d", urb->status);
 				break;
 			default: 
-				WARN("urb status %d",urb->status);
+				WARNING("urb status %d",urb->status);
 				if (d_out->busy == 0) {
 					st5481_usb_pipe_reset(adapter, EP_D_OUT | USB_DIR_OUT, fifo_reseted, adapter);
 				}
@@ -417,10 +417,10 @@ static void dout_start_xmit(struct FsmInst *fsm, int event, void *arg)
 
 	DBG(2,"len=%d",skb->len);
 
-	isdnhdlc_out_init(&d_out->hdlc_state, 1, 0);
+	isdnhdlc_out_init(&d_out->hdlc_state, HDLC_DCHANNEL | HDLC_BITREVERSE);
 
 	if (test_and_set_bit(buf_nr, &d_out->busy)) {
-		WARN("ep %d urb %d busy %#lx", EP_D_OUT, buf_nr, d_out->busy);
+		WARNING("ep %d urb %d busy %#lx", EP_D_OUT, buf_nr, d_out->busy);
 		return;
 	}
 	urb = d_out->urb[buf_nr];
@@ -546,7 +546,7 @@ static void dout_reseted(struct FsmInst *fsm, int event, void *arg)
 static void dout_complete(struct FsmInst *fsm, int event, void *arg)
 {
 	struct st5481_adapter *adapter = fsm->userdata;
-	int buf_nr = (int) arg;
+	long buf_nr = (long) arg;
 
 	usb_d_out(adapter, buf_nr);
 }
@@ -601,7 +601,7 @@ void st5481_d_l2l1(struct hisax_if *hisax_d_if, int pr, void *arg)
 		FsmEvent(&adapter->d_out.fsm, EV_DOUT_START_XMIT, NULL);
 		break;
 	default:
-		WARN("pr %#x\n", pr);
+		WARNING("pr %#x\n", pr);
 		break;
 	}
 }

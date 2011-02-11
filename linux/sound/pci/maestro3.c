@@ -31,7 +31,6 @@
 #define CARD_NAME "ESS Maestro3/Allegro/Canyon3D-2"
 #define DRIVER_NAME "Maestro3"
 
-#include <sound/driver.h>
 #include <asm/io.h>
 #include <linux/delay.h>
 #include <linux/interrupt.h>
@@ -41,6 +40,7 @@
 #include <linux/slab.h>
 #include <linux/vmalloc.h>
 #include <linux/moduleparam.h>
+#include <linux/firmware.h>
 #include <sound/core.h>
 #include <sound/info.h>
 #include <sound/control.h>
@@ -48,6 +48,7 @@
 #include <sound/mpu401.h>
 #include <sound/ac97_codec.h>
 #include <sound/initval.h>
+#include <asm/byteorder.h>
 
 MODULE_AUTHOR("Zach Brown <zab@zabbo.net>, Takashi Iwai <tiwai@suse.de>");
 MODULE_DESCRIPTION("ESS Maestro3 PCI");
@@ -57,6 +58,8 @@ MODULE_SUPPORTED_DEVICE("{{ESS,Maestro3 PCI},"
 		"{ESS,Allegro PCI},"
 		"{ESS,Allegro-1 PCI},"
 	        "{ESS,Canyon3D-2/LE PCI}}");
+MODULE_FIRMWARE("ess/maestro3_assp_kernel.fw");
+MODULE_FIRMWARE("ess/maestro3_assp_minisrc.fw");
 
 static int index[SNDRV_CARDS] = SNDRV_DEFAULT_IDX;	/* Index 0-MAX */
 static char *id[SNDRV_CARDS] = SNDRV_DEFAULT_STR;	/* ID for this card */
@@ -726,7 +729,6 @@ MODULE_PARM_DESC(amp_gpio, "GPIO pin number for external amp. (default = -1)");
 
 #define MINISRC_IN_BUFFER_SIZE   ( 0x50 * 2 )
 #define MINISRC_OUT_BUFFER_SIZE  ( 0x50 * 2 * 2)
-#define MINISRC_OUT_BUFFER_SIZE  ( 0x50 * 2 * 2)
 #define MINISRC_TMP_BUFFER_SIZE  ( 112 + ( MINISRC_BIQUAD_STAGE * 3 + 4 ) * 2 * 2 )
 #define MINISRC_BIQUAD_STAGE    2
 #define MINISRC_COEF_LOC          0x175
@@ -767,21 +769,6 @@ MODULE_PARM_DESC(amp_gpio, "GPIO pin number for external amp. (default = -1)");
 
 /*
  */
-
-/* quirk lists */
-struct m3_quirk {
-	const char *name;	/* device name */
-	u16 vendor, device;	/* subsystem ids */
-	int amp_gpio;		/* gpio pin #  for external amp, -1 = default */
-	int irda_workaround;	/* non-zero if avoid to touch 0x10 on GPIO_DIRECTION
-				   (e.g. for IrDA on Dell Inspirons) */
-};
-
-struct m3_hv_quirk {
-	u16 vendor, device, subsystem_vendor, subsystem_device;
-	u32 config;		/* ALLEGRO_CONFIG hardware volume bits */
-	int is_omnibook;	/* Do HP OmniBook GPIO magic? */
-};
 
 struct m3_list {
 	int curlen;
@@ -830,8 +817,6 @@ struct snd_m3 {
 	struct snd_pcm *pcm;
 
 	struct pci_dev *pci;
-	const struct m3_quirk *quirk;
-	const struct m3_hv_quirk *hv_quirk;
 
 	int dacs_active;
 	int timer_users;
@@ -845,7 +830,11 @@ struct snd_m3 {
 	u8 reset_state;
 
 	int external_amp;
-	int amp_gpio;
+	int amp_gpio;	/* gpio pin #  for external amp, -1 = default */
+	unsigned int hv_config;		/* hardware-volume config bits */
+	unsigned irda_workaround :1;	/* avoid to touch 0x10 on GPIO_DIRECTION
+					   (e.g. for IrDA on Dell Inspirons) */
+	unsigned is_omnibook :1;	/* Do HP OmniBook GPIO magic? */
 
 	/* midi */
 	struct snd_rawmidi *rmidi;
@@ -860,10 +849,14 @@ struct snd_m3 {
 	struct snd_kcontrol *master_switch;
 	struct snd_kcontrol *master_volume;
 	struct tasklet_struct hwvol_tq;
+	unsigned int in_suspend;
 
 #ifdef CONFIG_PM
 	u16 *suspend_mem;
 #endif
+
+	const struct firmware *assp_kernel_image;
+	const struct firmware *assp_minisrc_image;
 };
 
 /*
@@ -891,127 +884,105 @@ static struct pci_device_id snd_m3_ids[] = {
 
 MODULE_DEVICE_TABLE(pci, snd_m3_ids);
 
-static const struct m3_quirk m3_quirk_list[] = {
-	/* panasonic CF-28 "toughbook" */
-	{
-		.name = "Panasonic CF-28",
-		.vendor = 0x10f7,
-		.device = 0x833e,
-		.amp_gpio = 0x0d,
-	},
-	/* panasonic CF-72 "toughbook" */
-	{
-		.name = "Panasonic CF-72",
-		.vendor = 0x10f7,
-		.device = 0x833d,
-		.amp_gpio = 0x0d,
-	},
-	/* Dell Inspiron 4000 */
-	{
-		.name = "Dell Inspiron 4000",
-		.vendor = 0x1028,
-		.device = 0x00b0,
-		.amp_gpio = -1,
-		.irda_workaround = 1,
-	},
-	/* Dell Inspiron 8000 */
-	{
-		.name = "Dell Inspiron 8000",
-		.vendor = 0x1028,
-		.device = 0x00a4,
-		.amp_gpio = -1,
-		.irda_workaround = 1,
-	},
-	/* Dell Inspiron 8100 */
-	{
-		.name = "Dell Inspiron 8100",
-		.vendor = 0x1028,
-		.device = 0x00e6,
-		.amp_gpio = -1,
-		.irda_workaround = 1,
-	},
-	/* NEC LM800J/7 */
-	{
-		.name = "NEC LM800J/7",
-		.vendor = 0x1033,
-		.device = 0x80f1,
-		.amp_gpio = 0x03,
-	},
-	/* LEGEND ZhaoYang 3100CF */
-	{
-		.name = "LEGEND ZhaoYang 3100CF",
-		.vendor = 0x1509,
-		.device = 0x1740,
-		.amp_gpio = 0x03,
-	},
-	/* END */
-	{ NULL }
+static struct snd_pci_quirk m3_amp_quirk_list[] __devinitdata = {
+	SND_PCI_QUIRK(0x0E11, 0x0094, "Compaq Evo N600c", 0x0c),
+	SND_PCI_QUIRK(0x10f7, 0x833e, "Panasonic CF-28", 0x0d),
+	SND_PCI_QUIRK(0x10f7, 0x833d, "Panasonic CF-72", 0x0d),
+	SND_PCI_QUIRK(0x1033, 0x80f1, "NEC LM800J/7", 0x03),
+	SND_PCI_QUIRK(0x1509, 0x1740, "LEGEND ZhaoYang 3100CF", 0x03),
+	{ } /* END */
 };
 
-/* These values came from the Windows driver. */
-static const struct m3_hv_quirk m3_hv_quirk_list[] = {
+static struct snd_pci_quirk m3_irda_quirk_list[] __devinitdata = {
+	SND_PCI_QUIRK(0x1028, 0x00b0, "Dell Inspiron 4000", 1),
+	SND_PCI_QUIRK(0x1028, 0x00a4, "Dell Inspiron 8000", 1),
+	SND_PCI_QUIRK(0x1028, 0x00e6, "Dell Inspiron 8100", 1),
+	{ } /* END */
+};
+
+/* hardware volume quirks */
+static struct snd_pci_quirk m3_hv_quirk_list[] __devinitdata = {
 	/* Allegro chips */
-	{ 0x125D, 0x1988, 0x0E11, 0x002E, HV_CTRL_ENABLE | HV_BUTTON_FROM_GD, 0 },
-	{ 0x125D, 0x1988, 0x0E11, 0x0094, HV_CTRL_ENABLE | HV_BUTTON_FROM_GD, 0 },
-	{ 0x125D, 0x1988, 0x0E11, 0xB112, HV_CTRL_ENABLE | HV_BUTTON_FROM_GD, 0 },
-	{ 0x125D, 0x1988, 0x0E11, 0xB114, HV_CTRL_ENABLE | HV_BUTTON_FROM_GD, 0 },
-	{ 0x125D, 0x1988, 0x103C, 0x0012, HV_CTRL_ENABLE | HV_BUTTON_FROM_GD, 0 },
-	{ 0x125D, 0x1988, 0x103C, 0x0018, HV_CTRL_ENABLE | HV_BUTTON_FROM_GD, 0 },
-	{ 0x125D, 0x1988, 0x103C, 0x001C, HV_CTRL_ENABLE | HV_BUTTON_FROM_GD, 0 },
-	{ 0x125D, 0x1988, 0x103C, 0x001D, HV_CTRL_ENABLE | HV_BUTTON_FROM_GD, 0 },
-	{ 0x125D, 0x1988, 0x103C, 0x001E, HV_CTRL_ENABLE | HV_BUTTON_FROM_GD, 0 },
-	{ 0x125D, 0x1988, 0x107B, 0x3350, HV_CTRL_ENABLE | HV_BUTTON_FROM_GD, 0 },
-	{ 0x125D, 0x1988, 0x10F7, 0x8338, HV_CTRL_ENABLE | HV_BUTTON_FROM_GD, 0 },
-	{ 0x125D, 0x1988, 0x10F7, 0x833C, HV_CTRL_ENABLE | HV_BUTTON_FROM_GD, 0 },
-	{ 0x125D, 0x1988, 0x10F7, 0x833D, HV_CTRL_ENABLE | HV_BUTTON_FROM_GD, 0 },
-	{ 0x125D, 0x1988, 0x10F7, 0x833E, HV_CTRL_ENABLE | HV_BUTTON_FROM_GD, 0 },
-	{ 0x125D, 0x1988, 0x10F7, 0x833F, HV_CTRL_ENABLE | HV_BUTTON_FROM_GD, 0 },
-	{ 0x125D, 0x1988, 0x13BD, 0x1018, HV_CTRL_ENABLE | HV_BUTTON_FROM_GD, 0 },
-	{ 0x125D, 0x1988, 0x13BD, 0x1019, HV_CTRL_ENABLE | HV_BUTTON_FROM_GD, 0 },
-	{ 0x125D, 0x1988, 0x13BD, 0x101A, HV_CTRL_ENABLE | HV_BUTTON_FROM_GD, 0 },
-	{ 0x125D, 0x1988, 0x14FF, 0x0F03, HV_CTRL_ENABLE | HV_BUTTON_FROM_GD, 0 },
-	{ 0x125D, 0x1988, 0x14FF, 0x0F04, HV_CTRL_ENABLE | HV_BUTTON_FROM_GD, 0 },
-	{ 0x125D, 0x1988, 0x14FF, 0x0F05, HV_CTRL_ENABLE | HV_BUTTON_FROM_GD, 0 },
-	{ 0x125D, 0x1988, 0x156D, 0xB400, HV_CTRL_ENABLE | HV_BUTTON_FROM_GD, 0 },
-	{ 0x125D, 0x1988, 0x156D, 0xB795, HV_CTRL_ENABLE | HV_BUTTON_FROM_GD, 0 },
-	{ 0x125D, 0x1988, 0x156D, 0xB797, HV_CTRL_ENABLE | HV_BUTTON_FROM_GD, 0 },
-	{ 0x125D, 0x1988, 0x156D, 0xC700, HV_CTRL_ENABLE | HV_BUTTON_FROM_GD, 0 },
-	{ 0x125D, 0x1988, 0x1033, 0x80F1, HV_CTRL_ENABLE | HV_BUTTON_FROM_GD | REDUCED_DEBOUNCE, 0 },
-	{ 0x125D, 0x1988, 0x103C, 0x001A, HV_CTRL_ENABLE | HV_BUTTON_FROM_GD | REDUCED_DEBOUNCE, 0 }, /* HP OmniBook 6100 */
-	{ 0x125D, 0x1988, 0x107B, 0x340A, HV_CTRL_ENABLE | HV_BUTTON_FROM_GD | REDUCED_DEBOUNCE, 0 },
-	{ 0x125D, 0x1988, 0x107B, 0x3450, HV_CTRL_ENABLE | HV_BUTTON_FROM_GD | REDUCED_DEBOUNCE, 0 },
-	{ 0x125D, 0x1988, 0x109F, 0x3134, HV_CTRL_ENABLE | HV_BUTTON_FROM_GD | REDUCED_DEBOUNCE, 0 },
-	{ 0x125D, 0x1988, 0x109F, 0x3161, HV_CTRL_ENABLE | HV_BUTTON_FROM_GD | REDUCED_DEBOUNCE, 0 },
-	{ 0x125D, 0x1988, 0x144D, 0x3280, HV_CTRL_ENABLE | HV_BUTTON_FROM_GD | REDUCED_DEBOUNCE, 0 },
-	{ 0x125D, 0x1988, 0x144D, 0x3281, HV_CTRL_ENABLE | HV_BUTTON_FROM_GD | REDUCED_DEBOUNCE, 0 },
-	{ 0x125D, 0x1988, 0x144D, 0xC002, HV_CTRL_ENABLE | HV_BUTTON_FROM_GD | REDUCED_DEBOUNCE, 0 },
-	{ 0x125D, 0x1988, 0x144D, 0xC003, HV_CTRL_ENABLE | HV_BUTTON_FROM_GD | REDUCED_DEBOUNCE, 0 },
-	{ 0x125D, 0x1988, 0x1509, 0x1740, HV_CTRL_ENABLE | HV_BUTTON_FROM_GD | REDUCED_DEBOUNCE, 0 },
-	{ 0x125D, 0x1988, 0x1610, 0x0010, HV_CTRL_ENABLE | HV_BUTTON_FROM_GD | REDUCED_DEBOUNCE, 0 },
-	{ 0x125D, 0x1988, 0x1042, 0x1042, HV_CTRL_ENABLE, 0 },
-	{ 0x125D, 0x1988, 0x107B, 0x9500, HV_CTRL_ENABLE, 0 },
-	{ 0x125D, 0x1988, 0x14FF, 0x0F06, HV_CTRL_ENABLE, 0 },
-	{ 0x125D, 0x1988, 0x1558, 0x8586, HV_CTRL_ENABLE, 0 },
-	{ 0x125D, 0x1988, 0x161F, 0x2011, HV_CTRL_ENABLE, 0 },
+	SND_PCI_QUIRK(0x0E11, 0x002E, NULL, HV_CTRL_ENABLE | HV_BUTTON_FROM_GD),
+	SND_PCI_QUIRK(0x0E11, 0x0094, NULL, HV_CTRL_ENABLE | HV_BUTTON_FROM_GD),
+	SND_PCI_QUIRK(0x0E11, 0xB112, NULL, HV_CTRL_ENABLE | HV_BUTTON_FROM_GD),
+	SND_PCI_QUIRK(0x0E11, 0xB114, NULL, HV_CTRL_ENABLE | HV_BUTTON_FROM_GD),
+	SND_PCI_QUIRK(0x103C, 0x0012, NULL, HV_CTRL_ENABLE | HV_BUTTON_FROM_GD),
+	SND_PCI_QUIRK(0x103C, 0x0018, NULL, HV_CTRL_ENABLE | HV_BUTTON_FROM_GD),
+	SND_PCI_QUIRK(0x103C, 0x001C, NULL, HV_CTRL_ENABLE | HV_BUTTON_FROM_GD),
+	SND_PCI_QUIRK(0x103C, 0x001D, NULL, HV_CTRL_ENABLE | HV_BUTTON_FROM_GD),
+	SND_PCI_QUIRK(0x103C, 0x001E, NULL, HV_CTRL_ENABLE | HV_BUTTON_FROM_GD),
+	SND_PCI_QUIRK(0x107B, 0x3350, NULL, HV_CTRL_ENABLE | HV_BUTTON_FROM_GD),
+	SND_PCI_QUIRK(0x10F7, 0x8338, NULL, HV_CTRL_ENABLE | HV_BUTTON_FROM_GD),
+	SND_PCI_QUIRK(0x10F7, 0x833C, NULL, HV_CTRL_ENABLE | HV_BUTTON_FROM_GD),
+	SND_PCI_QUIRK(0x10F7, 0x833D, NULL, HV_CTRL_ENABLE | HV_BUTTON_FROM_GD),
+	SND_PCI_QUIRK(0x10F7, 0x833E, NULL, HV_CTRL_ENABLE | HV_BUTTON_FROM_GD),
+	SND_PCI_QUIRK(0x10F7, 0x833F, NULL, HV_CTRL_ENABLE | HV_BUTTON_FROM_GD),
+	SND_PCI_QUIRK(0x13BD, 0x1018, NULL, HV_CTRL_ENABLE | HV_BUTTON_FROM_GD),
+	SND_PCI_QUIRK(0x13BD, 0x1019, NULL, HV_CTRL_ENABLE | HV_BUTTON_FROM_GD),
+	SND_PCI_QUIRK(0x13BD, 0x101A, NULL, HV_CTRL_ENABLE | HV_BUTTON_FROM_GD),
+	SND_PCI_QUIRK(0x14FF, 0x0F03, NULL, HV_CTRL_ENABLE | HV_BUTTON_FROM_GD),
+	SND_PCI_QUIRK(0x14FF, 0x0F04, NULL, HV_CTRL_ENABLE | HV_BUTTON_FROM_GD),
+	SND_PCI_QUIRK(0x14FF, 0x0F05, NULL, HV_CTRL_ENABLE | HV_BUTTON_FROM_GD),
+	SND_PCI_QUIRK(0x156D, 0xB400, NULL, HV_CTRL_ENABLE | HV_BUTTON_FROM_GD),
+	SND_PCI_QUIRK(0x156D, 0xB795, NULL, HV_CTRL_ENABLE | HV_BUTTON_FROM_GD),
+	SND_PCI_QUIRK(0x156D, 0xB797, NULL, HV_CTRL_ENABLE | HV_BUTTON_FROM_GD),
+	SND_PCI_QUIRK(0x156D, 0xC700, NULL, HV_CTRL_ENABLE | HV_BUTTON_FROM_GD),
+	SND_PCI_QUIRK(0x1033, 0x80F1, NULL,
+		      HV_CTRL_ENABLE | HV_BUTTON_FROM_GD | REDUCED_DEBOUNCE),
+	SND_PCI_QUIRK(0x103C, 0x001A, NULL, /* HP OmniBook 6100 */
+		      HV_CTRL_ENABLE | HV_BUTTON_FROM_GD | REDUCED_DEBOUNCE),
+	SND_PCI_QUIRK(0x107B, 0x340A, NULL,
+		      HV_CTRL_ENABLE | HV_BUTTON_FROM_GD | REDUCED_DEBOUNCE),
+	SND_PCI_QUIRK(0x107B, 0x3450, NULL,
+		      HV_CTRL_ENABLE | HV_BUTTON_FROM_GD | REDUCED_DEBOUNCE),
+	SND_PCI_QUIRK(0x109F, 0x3134, NULL,
+		      HV_CTRL_ENABLE | HV_BUTTON_FROM_GD | REDUCED_DEBOUNCE),
+	SND_PCI_QUIRK(0x109F, 0x3161, NULL,
+		      HV_CTRL_ENABLE | HV_BUTTON_FROM_GD | REDUCED_DEBOUNCE),
+	SND_PCI_QUIRK(0x144D, 0x3280, NULL,
+		      HV_CTRL_ENABLE | HV_BUTTON_FROM_GD | REDUCED_DEBOUNCE),
+	SND_PCI_QUIRK(0x144D, 0x3281, NULL,
+		      HV_CTRL_ENABLE | HV_BUTTON_FROM_GD | REDUCED_DEBOUNCE),
+	SND_PCI_QUIRK(0x144D, 0xC002, NULL,
+		      HV_CTRL_ENABLE | HV_BUTTON_FROM_GD | REDUCED_DEBOUNCE),
+	SND_PCI_QUIRK(0x144D, 0xC003, NULL,
+		      HV_CTRL_ENABLE | HV_BUTTON_FROM_GD | REDUCED_DEBOUNCE),
+	SND_PCI_QUIRK(0x1509, 0x1740, NULL,
+		      HV_CTRL_ENABLE | HV_BUTTON_FROM_GD | REDUCED_DEBOUNCE),
+	SND_PCI_QUIRK(0x1610, 0x0010, NULL,
+		      HV_CTRL_ENABLE | HV_BUTTON_FROM_GD | REDUCED_DEBOUNCE),
+	SND_PCI_QUIRK(0x1042, 0x1042, NULL, HV_CTRL_ENABLE),
+	SND_PCI_QUIRK(0x107B, 0x9500, NULL, HV_CTRL_ENABLE),
+	SND_PCI_QUIRK(0x14FF, 0x0F06, NULL, HV_CTRL_ENABLE),
+	SND_PCI_QUIRK(0x1558, 0x8586, NULL, HV_CTRL_ENABLE),
+	SND_PCI_QUIRK(0x161F, 0x2011, NULL, HV_CTRL_ENABLE),
 	/* Maestro3 chips */
-	{ 0x125D, 0x1998, 0x103C, 0x000E, HV_CTRL_ENABLE, 0 },
-	{ 0x125D, 0x1998, 0x103C, 0x0010, HV_CTRL_ENABLE, 1 }, /* HP OmniBook 6000 */
-	{ 0x125D, 0x1998, 0x103C, 0x0011, HV_CTRL_ENABLE, 1 }, /* HP OmniBook 500 */
-	{ 0x125D, 0x1998, 0x103C, 0x001B, HV_CTRL_ENABLE, 0 },
-	{ 0x125D, 0x1998, 0x104D, 0x80A6, HV_CTRL_ENABLE, 0 },
-	{ 0x125D, 0x1998, 0x104D, 0x80AA, HV_CTRL_ENABLE, 0 },
-	{ 0x125D, 0x1998, 0x107B, 0x5300, HV_CTRL_ENABLE, 0 },
-	{ 0x125D, 0x1998, 0x110A, 0x1998, HV_CTRL_ENABLE, 0 },
-	{ 0x125D, 0x1998, 0x13BD, 0x1015, HV_CTRL_ENABLE, 0 },
-	{ 0x125D, 0x1998, 0x13BD, 0x101C, HV_CTRL_ENABLE, 0 },
-	{ 0x125D, 0x1998, 0x13BD, 0x1802, HV_CTRL_ENABLE, 0 },
-	{ 0x125D, 0x1998, 0x1599, 0x0715, HV_CTRL_ENABLE, 0 },
-	{ 0x125D, 0x1998, 0x5643, 0x5643, HV_CTRL_ENABLE, 0 },
-	{ 0x125D, 0x199A, 0x144D, 0x3260, HV_CTRL_ENABLE | REDUCED_DEBOUNCE, 0 },
-	{ 0x125D, 0x199A, 0x144D, 0x3261, HV_CTRL_ENABLE | REDUCED_DEBOUNCE, 0 },
-	{ 0x125D, 0x199A, 0x144D, 0xC000, HV_CTRL_ENABLE | REDUCED_DEBOUNCE, 0 },
-	{ 0x125D, 0x199A, 0x144D, 0xC001, HV_CTRL_ENABLE | REDUCED_DEBOUNCE, 0 },
-	{ 0 }
+	SND_PCI_QUIRK(0x103C, 0x000E, NULL, HV_CTRL_ENABLE),
+	SND_PCI_QUIRK(0x103C, 0x0010, NULL, HV_CTRL_ENABLE),
+	SND_PCI_QUIRK(0x103C, 0x0011, NULL, HV_CTRL_ENABLE),
+	SND_PCI_QUIRK(0x103C, 0x001B, NULL, HV_CTRL_ENABLE),
+	SND_PCI_QUIRK(0x104D, 0x80A6, NULL, HV_CTRL_ENABLE),
+	SND_PCI_QUIRK(0x104D, 0x80AA, NULL, HV_CTRL_ENABLE),
+	SND_PCI_QUIRK(0x107B, 0x5300, NULL, HV_CTRL_ENABLE),
+	SND_PCI_QUIRK(0x110A, 0x1998, NULL, HV_CTRL_ENABLE),
+	SND_PCI_QUIRK(0x13BD, 0x1015, NULL, HV_CTRL_ENABLE),
+	SND_PCI_QUIRK(0x13BD, 0x101C, NULL, HV_CTRL_ENABLE),
+	SND_PCI_QUIRK(0x13BD, 0x1802, NULL, HV_CTRL_ENABLE),
+	SND_PCI_QUIRK(0x1599, 0x0715, NULL, HV_CTRL_ENABLE),
+	SND_PCI_QUIRK(0x5643, 0x5643, NULL, HV_CTRL_ENABLE),
+	SND_PCI_QUIRK(0x144D, 0x3260, NULL, HV_CTRL_ENABLE | REDUCED_DEBOUNCE),
+	SND_PCI_QUIRK(0x144D, 0x3261, NULL, HV_CTRL_ENABLE | REDUCED_DEBOUNCE),
+	SND_PCI_QUIRK(0x144D, 0xC000, NULL, HV_CTRL_ENABLE | REDUCED_DEBOUNCE),
+	SND_PCI_QUIRK(0x144D, 0xC001, NULL, HV_CTRL_ENABLE | REDUCED_DEBOUNCE),
+	{ } /* END */
+};
+
+/* HP Omnibook quirks */
+static struct snd_pci_quirk m3_omnibook_quirk_list[] __devinitdata = {
+	SND_PCI_QUIRK_ID(0x103c, 0x0010), /* HP OmniBook 6000 */
+	SND_PCI_QUIRK_ID(0x103c, 0x0011), /* HP OmniBook 500 */
+	{ } /* END */
 };
 
 /*
@@ -1206,7 +1177,8 @@ snd_m3_pcm_trigger(struct snd_pcm_substream *subs, int cmd)
 	struct m3_dma *s = subs->runtime->private_data;
 	int err = -EINVAL;
 
-	snd_assert(s != NULL, return -ENXIO);
+	if (snd_BUG_ON(!s))
+		return -ENXIO;
 
 	spin_lock(&chip->reg_lock);
 	switch (cmd) {
@@ -1518,7 +1490,8 @@ snd_m3_pcm_prepare(struct snd_pcm_substream *subs)
 	struct snd_pcm_runtime *runtime = subs->runtime;
 	struct m3_dma *s = runtime->private_data;
 
-	snd_assert(s != NULL, return -ENXIO);
+	if (snd_BUG_ON(!s))
+		return -ENXIO;
 
 	if (runtime->format != SNDRV_PCM_FORMAT_U8 &&
 	    runtime->format != SNDRV_PCM_FORMAT_S16_LE)
@@ -1577,7 +1550,9 @@ snd_m3_pcm_pointer(struct snd_pcm_substream *subs)
 	struct snd_m3 *chip = snd_pcm_substream_chip(subs);
 	unsigned int ptr;
 	struct m3_dma *s = subs->runtime->private_data;
-	snd_assert(s != NULL, return 0);
+
+	if (snd_BUG_ON(!s))
+		return 0;
 
 	spin_lock(&chip->reg_lock);
 	ptr = snd_m3_get_pointer(chip, s, subs);
@@ -1640,6 +1615,11 @@ static void snd_m3_update_hw_volume(unsigned long private_data)
 	outb(0x88, chip->iobase + SHADOW_MIX_REG_MASTER);
 	outb(0x88, chip->iobase + HW_VOL_COUNTER_MASTER);
 
+	/* Ignore spurious HV interrupts during suspend / resume, this avoids
+	   mistaking them for a mute button press. */
+	if (chip->in_suspend)
+		return;
+
 	if (!chip->master_switch || !chip->master_volume)
 		return;
 
@@ -1685,8 +1665,7 @@ static void snd_m3_update_hw_volume(unsigned long private_data)
 	spin_unlock_irqrestore(&chip->ac97_lock, flags);
 }
 
-static irqreturn_t
-snd_m3_interrupt(int irq, void *dev_id, struct pt_regs *regs)
+static irqreturn_t snd_m3_interrupt(int irq, void *dev_id)
 {
 	struct snd_m3 *chip = dev_id;
 	u8 status;
@@ -1698,7 +1677,7 @@ snd_m3_interrupt(int irq, void *dev_id, struct pt_regs *regs)
 		return IRQ_NONE;
 
 	if (status & HV_INT_PENDING)
-		tasklet_hi_schedule(&chip->hwvol_tq);
+		tasklet_schedule(&chip->hwvol_tq);
 
 	/*
 	 * ack an assp int if its running
@@ -1849,7 +1828,6 @@ snd_m3_playback_open(struct snd_pcm_substream *subs)
 		return err;
 
 	runtime->hw = snd_m3_playback;
-	snd_pcm_set_sync(subs);
 
 	return 0;
 }
@@ -1874,7 +1852,6 @@ snd_m3_capture_open(struct snd_pcm_substream *subs)
 		return err;
 
 	runtime->hw = snd_m3_capture;
-	snd_pcm_set_sync(subs);
 
 	return 0;
 }
@@ -2051,7 +2028,7 @@ static void snd_m3_ac97_reset(struct snd_m3 *chip)
 
 	for (i = 0; i < 5; i++) {
 		dir = inw(io + GPIO_DIRECTION);
-		if (! chip->quirk || ! chip->quirk->irda_workaround)
+		if (!chip->irda_workaround)
 			dir |= 0x10; /* assuming pci bus master? */
 
 		snd_m3_remote_codec_config(io, 0);
@@ -2100,7 +2077,7 @@ static int __devinit snd_m3_mixer(struct snd_m3 *chip)
 {
 	struct snd_ac97_bus *pbus;
 	struct snd_ac97_template ac97;
-	struct snd_ctl_elem_id id;
+	struct snd_ctl_elem_id elem_id;
 	int err;
 	static struct snd_ac97_bus_ops ops = {
 		.write = snd_m3_ac97_write,
@@ -2120,146 +2097,17 @@ static int __devinit snd_m3_mixer(struct snd_m3 *chip)
 	schedule_timeout_uninterruptible(msecs_to_jiffies(100));
 	snd_ac97_write(chip->ac97, AC97_PCM, 0);
 
-	memset(&id, 0, sizeof(id));
-	id.iface = SNDRV_CTL_ELEM_IFACE_MIXER;
-	strcpy(id.name, "Master Playback Switch");
-	chip->master_switch = snd_ctl_find_id(chip->card, &id);
-	memset(&id, 0, sizeof(id));
-	id.iface = SNDRV_CTL_ELEM_IFACE_MIXER;
-	strcpy(id.name, "Master Playback Volume");
-	chip->master_volume = snd_ctl_find_id(chip->card, &id);
+	memset(&elem_id, 0, sizeof(elem_id));
+	elem_id.iface = SNDRV_CTL_ELEM_IFACE_MIXER;
+	strcpy(elem_id.name, "Master Playback Switch");
+	chip->master_switch = snd_ctl_find_id(chip->card, &elem_id);
+	memset(&elem_id, 0, sizeof(elem_id));
+	elem_id.iface = SNDRV_CTL_ELEM_IFACE_MIXER;
+	strcpy(elem_id.name, "Master Playback Volume");
+	chip->master_volume = snd_ctl_find_id(chip->card, &elem_id);
 
 	return 0;
 }
-
-
-/*
- * DSP Code images
- */
-
-static const u16 assp_kernel_image[] = {
-    0x7980, 0x0030, 0x7980, 0x03B4, 0x7980, 0x03B4, 0x7980, 0x00FB, 0x7980, 0x00DD, 0x7980, 0x03B4, 
-    0x7980, 0x0332, 0x7980, 0x0287, 0x7980, 0x03B4, 0x7980, 0x03B4, 0x7980, 0x03B4, 0x7980, 0x03B4, 
-    0x7980, 0x031A, 0x7980, 0x03B4, 0x7980, 0x022F, 0x7980, 0x03B4, 0x7980, 0x03B4, 0x7980, 0x03B4, 
-    0x7980, 0x03B4, 0x7980, 0x03B4, 0x7980, 0x0063, 0x7980, 0x006B, 0x7980, 0x03B4, 0x7980, 0x03B4, 
-    0xBF80, 0x2C7C, 0x8806, 0x8804, 0xBE40, 0xBC20, 0xAE09, 0x1000, 0xAE0A, 0x0001, 0x6938, 0xEB08, 
-    0x0053, 0x695A, 0xEB08, 0x00D6, 0x0009, 0x8B88, 0x6980, 0xE388, 0x0036, 0xBE30, 0xBC20, 0x6909, 
-    0xB801, 0x9009, 0xBE41, 0xBE41, 0x6928, 0xEB88, 0x0078, 0xBE41, 0xBE40, 0x7980, 0x0038, 0xBE41, 
-    0xBE41, 0x903A, 0x6938, 0xE308, 0x0056, 0x903A, 0xBE41, 0xBE40, 0xEF00, 0x903A, 0x6939, 0xE308, 
-    0x005E, 0x903A, 0xEF00, 0x690B, 0x660C, 0xEF8C, 0x690A, 0x660C, 0x620B, 0x6609, 0xEF00, 0x6910, 
-    0x660F, 0xEF04, 0xE388, 0x0075, 0x690E, 0x660F, 0x6210, 0x660D, 0xEF00, 0x690E, 0x660D, 0xEF00, 
-    0xAE70, 0x0001, 0xBC20, 0xAE27, 0x0001, 0x6939, 0xEB08, 0x005D, 0x6926, 0xB801, 0x9026, 0x0026, 
-    0x8B88, 0x6980, 0xE388, 0x00CB, 0x9028, 0x0D28, 0x4211, 0xE100, 0x007A, 0x4711, 0xE100, 0x00A0, 
-    0x7A80, 0x0063, 0xB811, 0x660A, 0x6209, 0xE304, 0x007A, 0x0C0B, 0x4005, 0x100A, 0xBA01, 0x9012, 
-    0x0C12, 0x4002, 0x7980, 0x00AF, 0x7A80, 0x006B, 0xBE02, 0x620E, 0x660D, 0xBA10, 0xE344, 0x007A, 
-    0x0C10, 0x4005, 0x100E, 0xBA01, 0x9012, 0x0C12, 0x4002, 0x1003, 0xBA02, 0x9012, 0x0C12, 0x4000, 
-    0x1003, 0xE388, 0x00BA, 0x1004, 0x7980, 0x00BC, 0x1004, 0xBA01, 0x9012, 0x0C12, 0x4001, 0x0C05, 
-    0x4003, 0x0C06, 0x4004, 0x1011, 0xBFB0, 0x01FF, 0x9012, 0x0C12, 0x4006, 0xBC20, 0xEF00, 0xAE26, 
-    0x1028, 0x6970, 0xBFD0, 0x0001, 0x9070, 0xE388, 0x007A, 0xAE28, 0x0000, 0xEF00, 0xAE70, 0x0300, 
-    0x0C70, 0xB00C, 0xAE5A, 0x0000, 0xEF00, 0x7A80, 0x038A, 0x697F, 0xB801, 0x907F, 0x0056, 0x8B88, 
-    0x0CA0, 0xB008, 0xAF71, 0xB000, 0x4E71, 0xE200, 0x00F3, 0xAE56, 0x1057, 0x0056, 0x0CA0, 0xB008, 
-    0x8056, 0x7980, 0x03A1, 0x0810, 0xBFA0, 0x1059, 0xE304, 0x03A1, 0x8056, 0x7980, 0x03A1, 0x7A80, 
-    0x038A, 0xBF01, 0xBE43, 0xBE59, 0x907C, 0x6937, 0xE388, 0x010D, 0xBA01, 0xE308, 0x010C, 0xAE71, 
-    0x0004, 0x0C71, 0x5000, 0x6936, 0x9037, 0xBF0A, 0x109E, 0x8B8A, 0xAF80, 0x8014, 0x4C80, 0xBF0A, 
-    0x0560, 0xF500, 0xBF0A, 0x0520, 0xB900, 0xBB17, 0x90A0, 0x6917, 0xE388, 0x0148, 0x0D17, 0xE100, 
-    0x0127, 0xBF0C, 0x0578, 0xBF0D, 0x057C, 0x7980, 0x012B, 0xBF0C, 0x0538, 0xBF0D, 0x053C, 0x6900, 
-    0xE308, 0x0135, 0x8B8C, 0xBE59, 0xBB07, 0x90A0, 0xBC20, 0x7980, 0x0157, 0x030C, 0x8B8B, 0xB903, 
-    0x8809, 0xBEC6, 0x013E, 0x69AC, 0x90AB, 0x69AD, 0x90AB, 0x0813, 0x660A, 0xE344, 0x0144, 0x0309, 
-    0x830C, 0xBC20, 0x7980, 0x0157, 0x6955, 0xE388, 0x0157, 0x7C38, 0xBF0B, 0x0578, 0xF500, 0xBF0B, 
-    0x0538, 0xB907, 0x8809, 0xBEC6, 0x0156, 0x10AB, 0x90AA, 0x6974, 0xE388, 0x0163, 0xAE72, 0x0540, 
-    0xF500, 0xAE72, 0x0500, 0xAE61, 0x103B, 0x7A80, 0x02F6, 0x6978, 0xE388, 0x0182, 0x8B8C, 0xBF0C, 
-    0x0560, 0xE500, 0x7C40, 0x0814, 0xBA20, 0x8812, 0x733D, 0x7A80, 0x0380, 0x733E, 0x7A80, 0x0380, 
-    0x8B8C, 0xBF0C, 0x056C, 0xE500, 0x7C40, 0x0814, 0xBA2C, 0x8812, 0x733F, 0x7A80, 0x0380, 0x7340, 
-    0x7A80, 0x0380, 0x6975, 0xE388, 0x018E, 0xAE72, 0x0548, 0xF500, 0xAE72, 0x0508, 0xAE61, 0x1041, 
-    0x7A80, 0x02F6, 0x6979, 0xE388, 0x01AD, 0x8B8C, 0xBF0C, 0x0560, 0xE500, 0x7C40, 0x0814, 0xBA18, 
-    0x8812, 0x7343, 0x7A80, 0x0380, 0x7344, 0x7A80, 0x0380, 0x8B8C, 0xBF0C, 0x056C, 0xE500, 0x7C40, 
-    0x0814, 0xBA24, 0x8812, 0x7345, 0x7A80, 0x0380, 0x7346, 0x7A80, 0x0380, 0x6976, 0xE388, 0x01B9, 
-    0xAE72, 0x0558, 0xF500, 0xAE72, 0x0518, 0xAE61, 0x1047, 0x7A80, 0x02F6, 0x697A, 0xE388, 0x01D8, 
-    0x8B8C, 0xBF0C, 0x0560, 0xE500, 0x7C40, 0x0814, 0xBA08, 0x8812, 0x7349, 0x7A80, 0x0380, 0x734A, 
-    0x7A80, 0x0380, 0x8B8C, 0xBF0C, 0x056C, 0xE500, 0x7C40, 0x0814, 0xBA14, 0x8812, 0x734B, 0x7A80, 
-    0x0380, 0x734C, 0x7A80, 0x0380, 0xBC21, 0xAE1C, 0x1090, 0x8B8A, 0xBF0A, 0x0560, 0xE500, 0x7C40, 
-    0x0812, 0xB804, 0x8813, 0x8B8D, 0xBF0D, 0x056C, 0xE500, 0x7C40, 0x0815, 0xB804, 0x8811, 0x7A80, 
-    0x034A, 0x8B8A, 0xBF0A, 0x0560, 0xE500, 0x7C40, 0x731F, 0xB903, 0x8809, 0xBEC6, 0x01F9, 0x548A, 
-    0xBE03, 0x98A0, 0x7320, 0xB903, 0x8809, 0xBEC6, 0x0201, 0x548A, 0xBE03, 0x98A0, 0x1F20, 0x2F1F, 
-    0x9826, 0xBC20, 0x6935, 0xE388, 0x03A1, 0x6933, 0xB801, 0x9033, 0xBFA0, 0x02EE, 0xE308, 0x03A1, 
-    0x9033, 0xBF00, 0x6951, 0xE388, 0x021F, 0x7334, 0xBE80, 0x5760, 0xBE03, 0x9F7E, 0xBE59, 0x9034, 
-    0x697E, 0x0D51, 0x9013, 0xBC20, 0x695C, 0xE388, 0x03A1, 0x735E, 0xBE80, 0x5760, 0xBE03, 0x9F7E, 
-    0xBE59, 0x905E, 0x697E, 0x0D5C, 0x9013, 0x7980, 0x03A1, 0x7A80, 0x038A, 0xBF01, 0xBE43, 0x6977, 
-    0xE388, 0x024E, 0xAE61, 0x104D, 0x0061, 0x8B88, 0x6980, 0xE388, 0x024E, 0x9071, 0x0D71, 0x000B, 
-    0xAFA0, 0x8010, 0xAFA0, 0x8010, 0x0810, 0x660A, 0xE308, 0x0249, 0x0009, 0x0810, 0x660C, 0xE388, 
-    0x024E, 0x800B, 0xBC20, 0x697B, 0xE388, 0x03A1, 0xBF0A, 0x109E, 0x8B8A, 0xAF80, 0x8014, 0x4C80, 
-    0xE100, 0x0266, 0x697C, 0xBF90, 0x0560, 0x9072, 0x0372, 0x697C, 0xBF90, 0x0564, 0x9073, 0x0473, 
-    0x7980, 0x0270, 0x697C, 0xBF90, 0x0520, 0x9072, 0x0372, 0x697C, 0xBF90, 0x0524, 0x9073, 0x0473, 
-    0x697C, 0xB801, 0x907C, 0xBF0A, 0x10FD, 0x8B8A, 0xAF80, 0x8010, 0x734F, 0x548A, 0xBE03, 0x9880, 
-    0xBC21, 0x7326, 0x548B, 0xBE03, 0x618B, 0x988C, 0xBE03, 0x6180, 0x9880, 0x7980, 0x03A1, 0x7A80, 
-    0x038A, 0x0D28, 0x4711, 0xE100, 0x02BE, 0xAF12, 0x4006, 0x6912, 0xBFB0, 0x0C00, 0xE388, 0x02B6, 
-    0xBFA0, 0x0800, 0xE388, 0x02B2, 0x6912, 0xBFB0, 0x0C00, 0xBFA0, 0x0400, 0xE388, 0x02A3, 0x6909, 
-    0x900B, 0x7980, 0x02A5, 0xAF0B, 0x4005, 0x6901, 0x9005, 0x6902, 0x9006, 0x4311, 0xE100, 0x02ED, 
-    0x6911, 0xBFC0, 0x2000, 0x9011, 0x7980, 0x02ED, 0x6909, 0x900B, 0x7980, 0x02B8, 0xAF0B, 0x4005, 
-    0xAF05, 0x4003, 0xAF06, 0x4004, 0x7980, 0x02ED, 0xAF12, 0x4006, 0x6912, 0xBFB0, 0x0C00, 0xE388, 
-    0x02E7, 0xBFA0, 0x0800, 0xE388, 0x02E3, 0x6912, 0xBFB0, 0x0C00, 0xBFA0, 0x0400, 0xE388, 0x02D4, 
-    0x690D, 0x9010, 0x7980, 0x02D6, 0xAF10, 0x4005, 0x6901, 0x9005, 0x6902, 0x9006, 0x4311, 0xE100, 
-    0x02ED, 0x6911, 0xBFC0, 0x2000, 0x9011, 0x7980, 0x02ED, 0x690D, 0x9010, 0x7980, 0x02E9, 0xAF10, 
-    0x4005, 0xAF05, 0x4003, 0xAF06, 0x4004, 0xBC20, 0x6970, 0x9071, 0x7A80, 0x0078, 0x6971, 0x9070, 
-    0x7980, 0x03A1, 0xBC20, 0x0361, 0x8B8B, 0x6980, 0xEF88, 0x0272, 0x0372, 0x7804, 0x9071, 0x0D71, 
-    0x8B8A, 0x000B, 0xB903, 0x8809, 0xBEC6, 0x0309, 0x69A8, 0x90AB, 0x69A8, 0x90AA, 0x0810, 0x660A, 
-    0xE344, 0x030F, 0x0009, 0x0810, 0x660C, 0xE388, 0x0314, 0x800B, 0xBC20, 0x6961, 0xB801, 0x9061, 
-    0x7980, 0x02F7, 0x7A80, 0x038A, 0x5D35, 0x0001, 0x6934, 0xB801, 0x9034, 0xBF0A, 0x109E, 0x8B8A, 
-    0xAF80, 0x8014, 0x4880, 0xAE72, 0x0550, 0xF500, 0xAE72, 0x0510, 0xAE61, 0x1051, 0x7A80, 0x02F6, 
-    0x7980, 0x03A1, 0x7A80, 0x038A, 0x5D35, 0x0002, 0x695E, 0xB801, 0x905E, 0xBF0A, 0x109E, 0x8B8A, 
-    0xAF80, 0x8014, 0x4780, 0xAE72, 0x0558, 0xF500, 0xAE72, 0x0518, 0xAE61, 0x105C, 0x7A80, 0x02F6, 
-    0x7980, 0x03A1, 0x001C, 0x8B88, 0x6980, 0xEF88, 0x901D, 0x0D1D, 0x100F, 0x6610, 0xE38C, 0x0358, 
-    0x690E, 0x6610, 0x620F, 0x660D, 0xBA0F, 0xE301, 0x037A, 0x0410, 0x8B8A, 0xB903, 0x8809, 0xBEC6, 
-    0x036C, 0x6A8C, 0x61AA, 0x98AB, 0x6A8C, 0x61AB, 0x98AD, 0x6A8C, 0x61AD, 0x98A9, 0x6A8C, 0x61A9, 
-    0x98AA, 0x7C04, 0x8B8B, 0x7C04, 0x8B8D, 0x7C04, 0x8B89, 0x7C04, 0x0814, 0x660E, 0xE308, 0x0379, 
-    0x040D, 0x8410, 0xBC21, 0x691C, 0xB801, 0x901C, 0x7980, 0x034A, 0xB903, 0x8809, 0x8B8A, 0xBEC6, 
-    0x0388, 0x54AC, 0xBE03, 0x618C, 0x98AA, 0xEF00, 0xBC20, 0xBE46, 0x0809, 0x906B, 0x080A, 0x906C, 
-    0x080B, 0x906D, 0x081A, 0x9062, 0x081B, 0x9063, 0x081E, 0x9064, 0xBE59, 0x881E, 0x8065, 0x8166, 
-    0x8267, 0x8368, 0x8469, 0x856A, 0xEF00, 0xBC20, 0x696B, 0x8809, 0x696C, 0x880A, 0x696D, 0x880B, 
-    0x6962, 0x881A, 0x6963, 0x881B, 0x6964, 0x881E, 0x0065, 0x0166, 0x0267, 0x0368, 0x0469, 0x056A, 
-    0xBE3A, 
-};
-
-/*
- * Mini sample rate converter code image
- * that is to be loaded at 0x400 on the DSP.
- */
-static const u16 assp_minisrc_image[] = {
-
-    0xBF80, 0x101E, 0x906E, 0x006E, 0x8B88, 0x6980, 0xEF88, 0x906F, 0x0D6F, 0x6900, 0xEB08, 0x0412, 
-    0xBC20, 0x696E, 0xB801, 0x906E, 0x7980, 0x0403, 0xB90E, 0x8807, 0xBE43, 0xBF01, 0xBE47, 0xBE41, 
-    0x7A80, 0x002A, 0xBE40, 0x3029, 0xEFCC, 0xBE41, 0x7A80, 0x0028, 0xBE40, 0x3028, 0xEFCC, 0x6907, 
-    0xE308, 0x042A, 0x6909, 0x902C, 0x7980, 0x042C, 0x690D, 0x902C, 0x1009, 0x881A, 0x100A, 0xBA01, 
-    0x881B, 0x100D, 0x881C, 0x100E, 0xBA01, 0x881D, 0xBF80, 0x00ED, 0x881E, 0x050C, 0x0124, 0xB904, 
-    0x9027, 0x6918, 0xE308, 0x04B3, 0x902D, 0x6913, 0xBFA0, 0x7598, 0xF704, 0xAE2D, 0x00FF, 0x8B8D, 
-    0x6919, 0xE308, 0x0463, 0x691A, 0xE308, 0x0456, 0xB907, 0x8809, 0xBEC6, 0x0453, 0x10A9, 0x90AD, 
-    0x7980, 0x047C, 0xB903, 0x8809, 0xBEC6, 0x0460, 0x1889, 0x6C22, 0x90AD, 0x10A9, 0x6E23, 0x6C22, 
-    0x90AD, 0x7980, 0x047C, 0x101A, 0xE308, 0x046F, 0xB903, 0x8809, 0xBEC6, 0x046C, 0x10A9, 0x90A0, 
-    0x90AD, 0x7980, 0x047C, 0xB901, 0x8809, 0xBEC6, 0x047B, 0x1889, 0x6C22, 0x90A0, 0x90AD, 0x10A9, 
-    0x6E23, 0x6C22, 0x90A0, 0x90AD, 0x692D, 0xE308, 0x049C, 0x0124, 0xB703, 0xB902, 0x8818, 0x8B89, 
-    0x022C, 0x108A, 0x7C04, 0x90A0, 0x692B, 0x881F, 0x7E80, 0x055B, 0x692A, 0x8809, 0x8B89, 0x99A0, 
-    0x108A, 0x90A0, 0x692B, 0x881F, 0x7E80, 0x055B, 0x692A, 0x8809, 0x8B89, 0x99AF, 0x7B99, 0x0484, 
-    0x0124, 0x060F, 0x101B, 0x2013, 0x901B, 0xBFA0, 0x7FFF, 0xE344, 0x04AC, 0x901B, 0x8B89, 0x7A80, 
-    0x051A, 0x6927, 0xBA01, 0x9027, 0x7A80, 0x0523, 0x6927, 0xE308, 0x049E, 0x7980, 0x050F, 0x0624, 
-    0x1026, 0x2013, 0x9026, 0xBFA0, 0x7FFF, 0xE304, 0x04C0, 0x8B8D, 0x7A80, 0x051A, 0x7980, 0x04B4, 
-    0x9026, 0x1013, 0x3026, 0x901B, 0x8B8D, 0x7A80, 0x051A, 0x7A80, 0x0523, 0x1027, 0xBA01, 0x9027, 
-    0xE308, 0x04B4, 0x0124, 0x060F, 0x8B89, 0x691A, 0xE308, 0x04EA, 0x6919, 0xE388, 0x04E0, 0xB903, 
-    0x8809, 0xBEC6, 0x04DD, 0x1FA0, 0x2FAE, 0x98A9, 0x7980, 0x050F, 0xB901, 0x8818, 0xB907, 0x8809, 
-    0xBEC6, 0x04E7, 0x10EE, 0x90A9, 0x7980, 0x050F, 0x6919, 0xE308, 0x04FE, 0xB903, 0x8809, 0xBE46, 
-    0xBEC6, 0x04FA, 0x17A0, 0xBE1E, 0x1FAE, 0xBFBF, 0xFF00, 0xBE13, 0xBFDF, 0x8080, 0x99A9, 0xBE47, 
-    0x7980, 0x050F, 0xB901, 0x8809, 0xBEC6, 0x050E, 0x16A0, 0x26A0, 0xBFB7, 0xFF00, 0xBE1E, 0x1EA0, 
-    0x2EAE, 0xBFBF, 0xFF00, 0xBE13, 0xBFDF, 0x8080, 0x99A9, 0x850C, 0x860F, 0x6907, 0xE388, 0x0516, 
-    0x0D07, 0x8510, 0xBE59, 0x881E, 0xBE4A, 0xEF00, 0x101E, 0x901C, 0x101F, 0x901D, 0x10A0, 0x901E, 
-    0x10A0, 0x901F, 0xEF00, 0x101E, 0x301C, 0x9020, 0x731B, 0x5420, 0xBE03, 0x9825, 0x1025, 0x201C, 
-    0x9025, 0x7325, 0x5414, 0xBE03, 0x8B8E, 0x9880, 0x692F, 0xE388, 0x0539, 0xBE59, 0xBB07, 0x6180, 
-    0x9880, 0x8BA0, 0x101F, 0x301D, 0x9021, 0x731B, 0x5421, 0xBE03, 0x982E, 0x102E, 0x201D, 0x902E, 
-    0x732E, 0x5415, 0xBE03, 0x9880, 0x692F, 0xE388, 0x054F, 0xBE59, 0xBB07, 0x6180, 0x9880, 0x8BA0, 
-    0x6918, 0xEF08, 0x7325, 0x5416, 0xBE03, 0x98A0, 0x732E, 0x5417, 0xBE03, 0x98A0, 0xEF00, 0x8BA0, 
-    0xBEC6, 0x056B, 0xBE59, 0xBB04, 0xAA90, 0xBE04, 0xBE1E, 0x99E0, 0x8BE0, 0x69A0, 0x90D0, 0x69A0, 
-    0x90D0, 0x081F, 0xB805, 0x881F, 0x8B90, 0x69A0, 0x90D0, 0x69A0, 0x9090, 0x8BD0, 0x8BD8, 0xBE1F, 
-    0xEF00, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 
-    0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 0x0000, 
-};
 
 
 /*
@@ -2275,6 +2123,7 @@ static const u16 minisrc_lpf[MINISRC_LPF_LEN] = {
 static void snd_m3_assp_init(struct snd_m3 *chip)
 {
 	unsigned int i;
+	const u16 *data;
 
 	/* zero kernel data */
 	for (i = 0; i < (REV_B_DATA_MEMORY_UNIT_LENGTH * NUM_UNITS_KERNEL_DATA) / 2; i++)
@@ -2292,10 +2141,11 @@ static void snd_m3_assp_init(struct snd_m3 *chip)
 			  KDATA_DMA_XFER0);
 
 	/* write kernel into code memory.. */
-	for (i = 0 ; i < ARRAY_SIZE(assp_kernel_image); i++) {
+	data = (const u16 *)chip->assp_kernel_image->data;
+	for (i = 0 ; i * 2 < chip->assp_kernel_image->size; i++) {
 		snd_m3_assp_write(chip, MEMTYPE_INTERNAL_CODE, 
-				  REV_B_CODE_MEMORY_BEGIN + i, 
-				  assp_kernel_image[i]);
+				  REV_B_CODE_MEMORY_BEGIN + i,
+				  le16_to_cpu(data[i]));
 	}
 
 	/*
@@ -2304,10 +2154,10 @@ static void snd_m3_assp_init(struct snd_m3 *chip)
 	 * drop it there.  It seems that the minisrc doesn't
 	 * need vectors, so we won't bother with them..
 	 */
-	for (i = 0; i < ARRAY_SIZE(assp_minisrc_image); i++) {
+	data = (const u16 *)chip->assp_minisrc_image->data;
+	for (i = 0; i * 2 < chip->assp_minisrc_image->size; i++) {
 		snd_m3_assp_write(chip, MEMTYPE_INTERNAL_CODE, 
-				  0x400 + i, 
-				  assp_minisrc_image[i]);
+				  0x400 + i, le16_to_cpu(data[i]));
 	}
 
 	/*
@@ -2378,7 +2228,7 @@ static int __devinit snd_m3_assp_client_init(struct snd_m3 *chip, struct m3_dma 
 	 * shifted list address is aligned.
 	 * list address = (mem address >> 1) >> 7;
 	 */
-	data_bytes = (data_bytes + 255) & ~255;
+	data_bytes = ALIGN(data_bytes, 256);
 	address = 0x1100 + ((data_bytes/2) * index);
 
 	if ((address + (data_bytes/2)) >= 0x1c00) {
@@ -2430,6 +2280,29 @@ snd_m3_amp_enable(struct snd_m3 *chip, int enable)
 	outw(0xffff, io + GPIO_MASK);
 }
 
+static void
+snd_m3_hv_init(struct snd_m3 *chip)
+{
+	unsigned long io = chip->iobase;
+	u16 val = GPI_VOL_DOWN | GPI_VOL_UP;
+
+	if (!chip->is_omnibook)
+		return;
+
+	/*
+	 * Volume buttons on some HP OmniBook laptops
+	 * require some GPIO magic to work correctly.
+	 */
+	outw(0xffff, io + GPIO_MASK);
+	outw(0x0000, io + GPIO_DATA);
+
+	outw(~val, io + GPIO_MASK);
+	outw(inw(io + GPIO_DIRECTION) & ~val, io + GPIO_DIRECTION);
+	outw(val, io + GPIO_MASK);
+
+	outw(0xffff, io + GPIO_MASK);
+}
+
 static int
 snd_m3_chip_init(struct snd_m3 *chip)
 {
@@ -2445,25 +2318,9 @@ snd_m3_chip_init(struct snd_m3 *chip)
 	       DISABLE_LEGACY);
 	pci_write_config_word(pcidev, PCI_LEGACY_AUDIO_CTRL, w);
 
-	if (chip->hv_quirk && chip->hv_quirk->is_omnibook) {
-		/*
-		 * Volume buttons on some HP OmniBook laptops don't work
-		 * correctly. This makes them work for the most part.
-		 *
-		 * Volume up and down buttons on the laptop side work.
-		 * Fn+cursor_up (volme up) works.
-		 * Fn+cursor_down (volume down) doesn't work.
-		 * Fn+F7 (mute) works acts as volume up.
-		 */
-		outw(~(GPI_VOL_DOWN|GPI_VOL_UP), io + GPIO_MASK);
-		outw(inw(io + GPIO_DIRECTION) & ~(GPI_VOL_DOWN|GPI_VOL_UP), io + GPIO_DIRECTION);
-		outw((GPI_VOL_DOWN|GPI_VOL_UP), io + GPIO_DATA);
-		outw(0xffff, io + GPIO_MASK);
-	}
 	pci_read_config_dword(pcidev, PCI_ALLEGRO_CONFIG, &n);
 	n &= ~(HV_CTRL_ENABLE | REDUCED_DEBOUNCE | HV_BUTTON_FROM_GD);
-	if (chip->hv_quirk)
-		n |= chip->hv_quirk->config;
+	n |= chip->hv_config;
 	/* For some reason we must always use reduced debounce. */
 	n |= REDUCED_DEBOUNCE;
 	n |= PM_CTRL_ENABLE | CLK_DIV_BY_49 | USE_PCI_TIMING;
@@ -2511,7 +2368,7 @@ snd_m3_enable_ints(struct snd_m3 *chip)
 
 	/* TODO: MPU401 not supported yet */
 	val = ASSP_INT_ENABLE /*| MPU401_INT_ENABLE*/;
-	if (chip->hv_quirk && (chip->hv_quirk->config & HV_CTRL_ENABLE))
+	if (chip->hv_config & HV_CTRL_ENABLE)
 		val |= HV_INT_ENABLE;
 	outw(val, io + HOST_INT_CTRL);
 	outb(inb(io + ASSP_CONTROL_C) | ASSP_HOST_INT_ENABLE,
@@ -2546,13 +2403,14 @@ static int snd_m3_free(struct snd_m3 *chip)
 	vfree(chip->suspend_mem);
 #endif
 
-	if (chip->irq >= 0) {
-		synchronize_irq(chip->irq);
+	if (chip->irq >= 0)
 		free_irq(chip->irq, chip);
-	}
 
 	if (chip->iobase)
 		pci_release_regions(chip->pci);
+
+	release_firmware(chip->assp_kernel_image);
+	release_firmware(chip->assp_minisrc_image);
 
 	pci_disable_device(chip->pci);
 	kfree(chip);
@@ -2568,11 +2426,12 @@ static int m3_suspend(struct pci_dev *pci, pm_message_t state)
 {
 	struct snd_card *card = pci_get_drvdata(pci);
 	struct snd_m3 *chip = card->private_data;
-	int i, index;
+	int i, dsp_index;
 
 	if (chip->suspend_mem == NULL)
 		return 0;
 
+	chip->in_suspend = 1;
 	snd_power_change_state(card, SNDRV_CTL_POWER_D3hot);
 	snd_pcm_suspend_all(chip->pcm);
 	snd_ac97_suspend(chip->ac97);
@@ -2582,20 +2441,17 @@ static int m3_suspend(struct pci_dev *pci, pm_message_t state)
 	snd_m3_assp_halt(chip);
 
 	/* save dsp image */
-	index = 0;
+	dsp_index = 0;
 	for (i = REV_B_CODE_MEMORY_BEGIN; i <= REV_B_CODE_MEMORY_END; i++)
-		chip->suspend_mem[index++] = 
+		chip->suspend_mem[dsp_index++] =
 			snd_m3_assp_read(chip, MEMTYPE_INTERNAL_CODE, i);
 	for (i = REV_B_DATA_MEMORY_BEGIN ; i <= REV_B_DATA_MEMORY_END; i++)
-		chip->suspend_mem[index++] = 
+		chip->suspend_mem[dsp_index++] =
 			snd_m3_assp_read(chip, MEMTYPE_INTERNAL_DATA, i);
-
-	/* power down apci registers */
-	snd_m3_outw(chip, 0xffff, 0x54);
-	snd_m3_outw(chip, 0xffff, 0x56);
 
 	pci_disable_device(pci);
 	pci_save_state(pci);
+	pci_set_power_state(pci, pci_choose_state(pci, state));
 	return 0;
 }
 
@@ -2603,13 +2459,19 @@ static int m3_resume(struct pci_dev *pci)
 {
 	struct snd_card *card = pci_get_drvdata(pci);
 	struct snd_m3 *chip = card->private_data;
-	int i, index;
+	int i, dsp_index;
 
 	if (chip->suspend_mem == NULL)
 		return 0;
 
+	pci_set_power_state(pci, PCI_D0);
 	pci_restore_state(pci);
-	pci_enable_device(pci);
+	if (pci_enable_device(pci) < 0) {
+		printk(KERN_ERR "maestor3: pci_enable_device failed, "
+		       "disabling device\n");
+		snd_card_disconnect(card);
+		return -EIO;
+	}
 	pci_set_master(pci);
 
 	/* first lets just bring everything back. .*/
@@ -2621,13 +2483,13 @@ static int m3_resume(struct pci_dev *pci)
 	snd_m3_ac97_reset(chip);
 
 	/* restore dsp image */
-	index = 0;
+	dsp_index = 0;
 	for (i = REV_B_CODE_MEMORY_BEGIN; i <= REV_B_CODE_MEMORY_END; i++)
 		snd_m3_assp_write(chip, MEMTYPE_INTERNAL_CODE, i, 
-				  chip->suspend_mem[index++]);
+				  chip->suspend_mem[dsp_index++]);
 	for (i = REV_B_DATA_MEMORY_BEGIN ; i <= REV_B_DATA_MEMORY_END; i++)
 		snd_m3_assp_write(chip, MEMTYPE_INTERNAL_DATA, i, 
-				  chip->suspend_mem[index++]);
+				  chip->suspend_mem[dsp_index++]);
 
 	/* tell the dma engine to restart itself */
 	snd_m3_assp_write(chip, MEMTYPE_INTERNAL_DATA, 
@@ -2640,7 +2502,10 @@ static int m3_resume(struct pci_dev *pci)
 	snd_m3_enable_ints(chip);
 	snd_m3_amp_enable(chip, 1);
 
+	snd_m3_hv_init(chip);
+
 	snd_power_change_state(card, SNDRV_CTL_POWER_D0);
+	chip->in_suspend = 0;
 	return 0;
 }
 #endif /* CONFIG_PM */
@@ -2663,8 +2528,7 @@ snd_m3_create(struct snd_card *card, struct pci_dev *pci,
 {
 	struct snd_m3 *chip;
 	int i, err;
-	const struct m3_quirk *quirk;
-	const struct m3_hv_quirk *hv_quirk;
+	const struct snd_pci_quirk *quirk;
 	static struct snd_device_ops ops = {
 		.dev_free =	snd_m3_dev_free,
 	};
@@ -2675,8 +2539,8 @@ snd_m3_create(struct snd_card *card, struct pci_dev *pci,
 		return -EIO;
 
 	/* check, if we can restrict PCI DMA transfers to 28 bits */
-	if (pci_set_dma_mask(pci, DMA_28BIT_MASK) < 0 ||
-	    pci_set_consistent_dma_mask(pci, DMA_28BIT_MASK) < 0) {
+	if (pci_set_dma_mask(pci, DMA_BIT_MASK(28)) < 0 ||
+	    pci_set_consistent_dma_mask(pci, DMA_BIT_MASK(28)) < 0) {
 		snd_printk(KERN_ERR "architecture does not support 28bit PCI busmaster DMA\n");
 		pci_disable_device(pci);
 		return -ENXIO;
@@ -2704,34 +2568,32 @@ snd_m3_create(struct snd_card *card, struct pci_dev *pci,
 	chip->pci = pci;
 	chip->irq = -1;
 
-	for (quirk = m3_quirk_list; quirk->vendor; quirk++) {
-		if (pci->subsystem_vendor == quirk->vendor &&
-		    pci->subsystem_device == quirk->device) {
-			printk(KERN_INFO "maestro3: enabled hack for '%s'\n", quirk->name);
-			chip->quirk = quirk;
-			break;
-		}
-	}
-
-	for (hv_quirk = m3_hv_quirk_list; hv_quirk->vendor; hv_quirk++) {
-		if (pci->vendor == hv_quirk->vendor &&
-		    pci->device == hv_quirk->device &&
-		    pci->subsystem_vendor == hv_quirk->subsystem_vendor &&
-		    pci->subsystem_device == hv_quirk->subsystem_device) {
-			chip->hv_quirk = hv_quirk;
-			break;
-		}
-	}
-
 	chip->external_amp = enable_amp;
 	if (amp_gpio >= 0 && amp_gpio <= 0x0f)
 		chip->amp_gpio = amp_gpio;
-	else if (chip->quirk && chip->quirk->amp_gpio >= 0)
-		chip->amp_gpio = chip->quirk->amp_gpio;
-	else if (chip->allegro_flag)
-		chip->amp_gpio = GPO_EXT_AMP_ALLEGRO;
-	else /* presumably this is for all 'maestro3's.. */
-		chip->amp_gpio = GPO_EXT_AMP_M3;
+	else {
+		quirk = snd_pci_quirk_lookup(pci, m3_amp_quirk_list);
+		if (quirk) {
+			snd_printdd(KERN_INFO "maestro3: set amp-gpio "
+				    "for '%s'\n", quirk->name);
+			chip->amp_gpio = quirk->value;
+		} else if (chip->allegro_flag)
+			chip->amp_gpio = GPO_EXT_AMP_ALLEGRO;
+		else /* presumably this is for all 'maestro3's.. */
+			chip->amp_gpio = GPO_EXT_AMP_M3;
+	}
+
+	quirk = snd_pci_quirk_lookup(pci, m3_irda_quirk_list);
+	if (quirk) {
+		snd_printdd(KERN_INFO "maestro3: enabled irda workaround "
+			    "for '%s'\n", quirk->name);
+		chip->irda_workaround = 1;
+	}
+	quirk = snd_pci_quirk_lookup(pci, m3_hv_quirk_list);
+	if (quirk)
+		chip->hv_config = quirk->value;
+	if (snd_pci_quirk_lookup(pci, m3_omnibook_quirk_list))
+		chip->is_omnibook = 1;
 
 	chip->num_substreams = NR_DSPS;
 	chip->substreams = kcalloc(chip->num_substreams, sizeof(struct m3_dma),
@@ -2740,6 +2602,20 @@ snd_m3_create(struct snd_card *card, struct pci_dev *pci,
 		kfree(chip);
 		pci_disable_device(pci);
 		return -ENOMEM;
+	}
+
+	err = request_firmware(&chip->assp_kernel_image,
+			       "ess/maestro3_assp_kernel.fw", &pci->dev);
+	if (err < 0) {
+		snd_m3_free(chip);
+		return err;
+	}
+
+	err = request_firmware(&chip->assp_minisrc_image,
+			       "ess/maestro3_assp_minisrc.fw", &pci->dev);
+	if (err < 0) {
+		snd_m3_free(chip);
+		return err;
 	}
 
 	if ((err = pci_request_regions(pci, card->driver)) < 0) {
@@ -2758,9 +2634,11 @@ snd_m3_create(struct snd_card *card, struct pci_dev *pci,
 
 	snd_m3_amp_enable(chip, 1);
 
+	snd_m3_hv_init(chip);
+
 	tasklet_init(&chip->hwvol_tq, snd_m3_update_hw_volume, (unsigned long)chip);
 
-	if (request_irq(pci->irq, snd_m3_interrupt, IRQF_DISABLED|IRQF_SHARED,
+	if (request_irq(pci->irq, snd_m3_interrupt, IRQF_SHARED,
 			card->driver, chip)) {
 		snd_printk(KERN_ERR "unable to grab IRQ %d\n", pci->irq);
 		snd_m3_free(chip);
@@ -2822,9 +2700,9 @@ snd_m3_probe(struct pci_dev *pci, const struct pci_device_id *pci_id)
 		return -ENOENT;
 	}
 
-	card = snd_card_new(index[dev], id[dev], THIS_MODULE, 0);
-	if (card == NULL)
-		return -ENOMEM;
+	err = snd_card_create(index[dev], id[dev], THIS_MODULE, 0, &card);
+	if (err < 0)
+		return err;
 
 	switch (pci->device) {
 	case PCI_DEVICE_ID_ESS_ALLEGRO:

@@ -31,8 +31,6 @@
  * ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
  * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  * SOFTWARE.
- *
- * $Id: ib_user_verbs.h 4019 2005-11-11 00:33:09Z sean.hefty $
  */
 
 #ifndef IB_USER_VERBS_H
@@ -83,7 +81,16 @@ enum {
 	IB_USER_VERBS_CMD_MODIFY_SRQ,
 	IB_USER_VERBS_CMD_QUERY_SRQ,
 	IB_USER_VERBS_CMD_DESTROY_SRQ,
-	IB_USER_VERBS_CMD_POST_SRQ_RECV
+	IB_USER_VERBS_CMD_POST_SRQ_RECV,
+	IB_USER_VERBS_CMD_CREATE_XRC_SRQ,
+	IB_USER_VERBS_CMD_OPEN_XRC_DOMAIN,
+	IB_USER_VERBS_CMD_CLOSE_XRC_DOMAIN,
+	IB_USER_VERBS_CMD_CREATE_XRC_RCV_QP,
+	IB_USER_VERBS_CMD_MODIFY_XRC_RCV_QP,
+	IB_USER_VERBS_CMD_QUERY_XRC_RCV_QP,
+	IB_USER_VERBS_CMD_REG_XRC_RCV_QP,
+	IB_USER_VERBS_CMD_UNREG_XRC_RCV_QP,
+	IB_USER_VERBS_CMD_GET_ETH_L2_ADDR,
 };
 
 /*
@@ -207,7 +214,8 @@ struct ib_uverbs_query_port_resp {
 	__u8  active_width;
 	__u8  active_speed;
 	__u8  phys_state;
-	__u8  reserved[3];
+	__u8  link_layer;
+	__u8  reserved[2];
 };
 
 struct ib_uverbs_alloc_pd {
@@ -275,6 +283,8 @@ struct ib_uverbs_resize_cq {
 
 struct ib_uverbs_resize_cq_resp {
 	__u32 cqe;
+	__u32 reserved;
+	__u64 driver_data[0];
 };
 
 struct ib_uverbs_poll_cq {
@@ -289,7 +299,10 @@ struct ib_uverbs_wc {
 	__u32 opcode;
 	__u32 vendor_err;
 	__u32 byte_len;
-	__u32 imm_data;
+	union {
+		__u32 imm_data;
+		__u32 invalidate_rkey;
+	} ex;
 	__u32 qp_num;
 	__u32 src_qp;
 	__u32 wc_flags;
@@ -456,7 +469,7 @@ struct ib_uverbs_query_qp_resp {
 	__u8  cur_qp_state;
 	__u8  path_mtu;
 	__u8  path_mig_state;
-	__u8  en_sqd_async_notify;
+	__u8  sq_draining;
 	__u8  max_rd_atomic;
 	__u8  max_dest_rd_atomic;
 	__u8  min_rnr_timer;
@@ -531,7 +544,10 @@ struct ib_uverbs_send_wr {
 	__u32 num_sge;
 	__u32 opcode;
 	__u32 send_flags;
-	__u32 imm_data;
+	union {
+		__u32 imm_data;
+		__u32 invalidate_rkey;
+	} ex;
 	union {
 		struct {
 			__u64 remote_addr;
@@ -613,6 +629,20 @@ struct ib_uverbs_create_ah_resp {
 
 struct ib_uverbs_destroy_ah {
 	__u32 ah_handle;
+};
+
+struct ib_uverbs_get_eth_l2_addr {
+	__u64	response;
+	__u32	pd_handle;
+	__u8	port;
+	__u8	sgid_idx;
+	__u8	reserved[2];
+	__u8	gid[16];
+};
+
+struct ib_uverbs_get_eth_l2_addr_resp {
+	__u8	mac[6];
+	__u16	vlan_id;
 };
 
 struct ib_uverbs_attach_mcast {

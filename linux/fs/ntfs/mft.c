@@ -251,7 +251,7 @@ MFT_RECORD *map_extent_mft_record(ntfs_inode *base_ni, MFT_REF mref,
 	int i;
 	unsigned long mft_no = MREF(mref);
 	u16 seq_no = MSEQNO(mref);
-	BOOL destroy_ni = FALSE;
+	bool destroy_ni = false;
 
 	ntfs_debug("Mapping extent mft record 0x%lx (base mft record 0x%lx).",
 			mft_no, base_ni->mft_no);
@@ -322,7 +322,7 @@ map_err_out:
 	if (seq_no && (le16_to_cpu(m->sequence_number) != seq_no)) {
 		ntfs_error(base_ni->vol->sb, "Found stale extent mft "
 				"reference! Corrupt filesystem. Run chkdsk.");
-		destroy_ni = TRUE;
+		destroy_ni = true;
 		m = ERR_PTR(-EIO);
 		goto unm_err_out;
 	}
@@ -331,11 +331,11 @@ map_err_out:
 		ntfs_inode **tmp;
 		int new_size = (base_ni->nr_extents + 4) * sizeof(ntfs_inode *);
 
-		tmp = (ntfs_inode **)kmalloc(new_size, GFP_NOFS);
+		tmp = kmalloc(new_size, GFP_NOFS);
 		if (unlikely(!tmp)) {
 			ntfs_error(base_ni->vol->sb, "Failed to allocate "
 					"internal buffer.");
-			destroy_ni = TRUE;
+			destroy_ni = true;
 			m = ERR_PTR(-ENOMEM);
 			goto unm_err_out;
 		}
@@ -384,13 +384,12 @@ unm_err_out:
  * it is dirty in the inode meta data rather than the data page cache of the
  * inode, and thus there are no data pages that need writing out.  Therefore, a
  * full mark_inode_dirty() is overkill.  A mark_inode_dirty_sync(), on the
- * other hand, is not sufficient, because I_DIRTY_DATASYNC needs to be set to
- * ensure ->write_inode is called from generic_osync_inode() and this needs to
- * happen or the file data would not necessarily hit the device synchronously,
- * even though the vfs inode has the O_SYNC flag set.  Also, I_DIRTY_DATASYNC
- * simply "feels" better than just I_DIRTY_SYNC, since the file data has not
- * actually hit the block device yet, which is not what I_DIRTY_SYNC on its own
- * would suggest.
+ * other hand, is not sufficient, because ->write_inode needs to be called even
+ * in case of fdatasync. This needs to happen or the file data would not
+ * necessarily hit the device synchronously, even though the vfs inode has the
+ * O_SYNC flag set.  Also, I_DIRTY_DATASYNC simply "feels" better than just
+ * I_DIRTY_SYNC, since the file data has not actually hit the block device yet,
+ * which is not what I_DIRTY_SYNC on its own would suggest.
  */
 void __mark_mft_record_dirty(ntfs_inode *ni)
 {
@@ -586,7 +585,7 @@ int ntfs_sync_mft_mirror(ntfs_volume *vol, const unsigned long mft_no,
 		for (i_bhs = 0; i_bhs < nr_bhs; i_bhs++) {
 			struct buffer_head *tbh = bhs[i_bhs];
 
-			if (unlikely(test_set_buffer_locked(tbh)))
+			if (!trylock_buffer(tbh))
 				BUG();
 			BUG_ON(!buffer_uptodate(tbh));
 			clear_buffer_dirty(tbh);
@@ -779,7 +778,7 @@ int write_mft_record_nolock(ntfs_inode *ni, MFT_RECORD *m, int sync)
 	for (i_bhs = 0; i_bhs < nr_bhs; i_bhs++) {
 		struct buffer_head *tbh = bhs[i_bhs];
 
-		if (unlikely(test_set_buffer_locked(tbh)))
+		if (!trylock_buffer(tbh))
 			BUG();
 		BUG_ON(!buffer_uptodate(tbh));
 		clear_buffer_dirty(tbh);
@@ -857,7 +856,7 @@ err_out:
  * caller is responsible for unlocking the ntfs inode and unpinning the base
  * vfs inode.
  *
- * Return TRUE if the mft record may be written out and FALSE if not.
+ * Return 'true' if the mft record may be written out and 'false' if not.
  *
  * The caller has locked the page and cleared the uptodate flag on it which
  * means that we can safely write out any dirty mft records that do not have
@@ -868,7 +867,7 @@ err_out:
  * Here is a description of the tests we perform:
  *
  * If the inode is found in icache we know the mft record must be a base mft
- * record.  If it is dirty, we do not write it and return FALSE as the vfs
+ * record.  If it is dirty, we do not write it and return 'false' as the vfs
  * inode write paths will result in the access times being updated which would
  * cause the base mft record to be redirtied and written out again.  (We know
  * the access time update will modify the base mft record because Windows
@@ -877,11 +876,11 @@ err_out:
  *
  * If the inode is in icache and not dirty, we attempt to lock the mft record
  * and if we find the lock was already taken, it is not safe to write the mft
- * record and we return FALSE.
+ * record and we return 'false'.
  *
  * If we manage to obtain the lock we have exclusive access to the mft record,
  * which also allows us safe writeout of the mft record.  We then set
- * @locked_ni to the locked ntfs inode and return TRUE.
+ * @locked_ni to the locked ntfs inode and return 'true'.
  *
  * Note we cannot just lock the mft record and sleep while waiting for the lock
  * because this would deadlock due to lock reversal (normally the mft record is
@@ -891,24 +890,24 @@ err_out:
  * If the inode is not in icache we need to perform further checks.
  *
  * If the mft record is not a FILE record or it is a base mft record, we can
- * safely write it and return TRUE.
+ * safely write it and return 'true'.
  *
  * We now know the mft record is an extent mft record.  We check if the inode
  * corresponding to its base mft record is in icache and obtain a reference to
- * it if it is.  If it is not, we can safely write it and return TRUE.
+ * it if it is.  If it is not, we can safely write it and return 'true'.
  *
  * We now have the base inode for the extent mft record.  We check if it has an
  * ntfs inode for the extent mft record attached and if not it is safe to write
- * the extent mft record and we return TRUE.
+ * the extent mft record and we return 'true'.
  *
  * The ntfs inode for the extent mft record is attached to the base inode so we
  * attempt to lock the extent mft record and if we find the lock was already
- * taken, it is not safe to write the extent mft record and we return FALSE.
+ * taken, it is not safe to write the extent mft record and we return 'false'.
  *
  * If we manage to obtain the lock we have exclusive access to the extent mft
  * record, which also allows us safe writeout of the extent mft record.  We
  * set the ntfs inode of the extent mft record clean and then set @locked_ni to
- * the now locked ntfs inode and return TRUE.
+ * the now locked ntfs inode and return 'true'.
  *
  * Note, the reason for actually writing dirty mft records here and not just
  * relying on the vfs inode dirty code paths is that we can have mft records
@@ -922,7 +921,7 @@ err_out:
  * appear if the mft record is reused for a new inode before it got written
  * out.
  */
-BOOL ntfs_may_write_mft_record(ntfs_volume *vol, const unsigned long mft_no,
+bool ntfs_may_write_mft_record(ntfs_volume *vol, const unsigned long mft_no,
 		const MFT_RECORD *m, ntfs_inode **locked_ni)
 {
 	struct super_block *sb = vol->sb;
@@ -977,7 +976,7 @@ BOOL ntfs_may_write_mft_record(ntfs_volume *vol, const unsigned long mft_no,
 					mft_no);
 			atomic_dec(&ni->count);
 			iput(vi);
-			return FALSE;
+			return false;
 		}
 		ntfs_debug("Inode 0x%lx is not dirty.", mft_no);
 		/* The inode is not dirty, try to take the mft record lock. */
@@ -986,7 +985,7 @@ BOOL ntfs_may_write_mft_record(ntfs_volume *vol, const unsigned long mft_no,
 					"not write it.", mft_no);
 			atomic_dec(&ni->count);
 			iput(vi);
-			return FALSE;
+			return false;
 		}
 		ntfs_debug("Managed to lock mft record 0x%lx, write it.",
 				mft_no);
@@ -995,7 +994,7 @@ BOOL ntfs_may_write_mft_record(ntfs_volume *vol, const unsigned long mft_no,
 		 * return the locked ntfs inode.
 		 */
 		*locked_ni = ni;
-		return TRUE;
+		return true;
 	}
 	ntfs_debug("Inode 0x%lx is not in icache.", mft_no);
 	/* The inode is not in icache. */
@@ -1003,13 +1002,13 @@ BOOL ntfs_may_write_mft_record(ntfs_volume *vol, const unsigned long mft_no,
 	if (!ntfs_is_mft_record(m->magic)) {
 		ntfs_debug("Mft record 0x%lx is not a FILE record, write it.",
 				mft_no);
-		return TRUE;
+		return true;
 	}
 	/* Write the mft record if it is a base inode. */
 	if (!m->base_mft_record) {
 		ntfs_debug("Mft record 0x%lx is a base record, write it.",
 				mft_no);
-		return TRUE;
+		return true;
 	}
 	/*
 	 * This is an extent mft record.  Check if the inode corresponding to
@@ -1033,7 +1032,7 @@ BOOL ntfs_may_write_mft_record(ntfs_volume *vol, const unsigned long mft_no,
 		 */
 		ntfs_debug("Base inode 0x%lx is not in icache, write the "
 				"extent record.", na.mft_no);
-		return TRUE;
+		return true;
 	}
 	ntfs_debug("Base inode 0x%lx is in icache.", na.mft_no);
 	/*
@@ -1051,7 +1050,7 @@ BOOL ntfs_may_write_mft_record(ntfs_volume *vol, const unsigned long mft_no,
 		iput(vi);
 		ntfs_debug("Base inode 0x%lx has no attached extent inodes, "
 				"write the extent record.", na.mft_no);
-		return TRUE;
+		return true;
 	}
 	/* Iterate over the attached extent inodes. */
 	extent_nis = ni->ext.extent_ntfs_inos;
@@ -1075,7 +1074,7 @@ BOOL ntfs_may_write_mft_record(ntfs_volume *vol, const unsigned long mft_no,
 		ntfs_debug("Extent inode 0x%lx is not attached to its base "
 				"inode 0x%lx, write the extent record.",
 				mft_no, na.mft_no);
-		return TRUE;
+		return true;
 	}
 	ntfs_debug("Extent inode 0x%lx is attached to its base inode 0x%lx.",
 			mft_no, na.mft_no);
@@ -1091,7 +1090,7 @@ BOOL ntfs_may_write_mft_record(ntfs_volume *vol, const unsigned long mft_no,
 		iput(vi);
 		ntfs_debug("Extent mft record 0x%lx is already locked, do "
 				"not write it.", mft_no);
-		return FALSE;
+		return false;
 	}
 	ntfs_debug("Managed to lock extent mft record 0x%lx, write it.",
 			mft_no);
@@ -1103,7 +1102,7 @@ BOOL ntfs_may_write_mft_record(ntfs_volume *vol, const unsigned long mft_no,
 	 * the locked extent ntfs inode.
 	 */
 	*locked_ni = eni;
-	return TRUE;
+	return true;
 }
 
 static const char *es = "  Leaving inconsistent metadata.  Unmount and run "
@@ -1191,7 +1190,7 @@ static int ntfs_mft_bitmap_find_and_alloc_free_rec_nolock(ntfs_volume *vol,
 		if (size) {
 			page = ntfs_map_page(mftbmp_mapping,
 					ofs >> PAGE_CACHE_SHIFT);
-			if (unlikely(IS_ERR(page))) {
+			if (IS_ERR(page)) {
 				ntfs_error(vol->sb, "Failed to read mft "
 						"bitmap, aborting.");
 				return PTR_ERR(page);
@@ -1354,7 +1353,7 @@ static int ntfs_mft_bitmap_extend_allocation_nolock(ntfs_volume *vol)
 		ntfs_unmap_page(page);
 		/* Allocate a cluster from the DATA_ZONE. */
 		rl2 = ntfs_cluster_alloc(vol, rl[1].vcn, 1, lcn, DATA_ZONE,
-				TRUE);
+				true);
 		if (IS_ERR(rl2)) {
 			up_write(&mftbmp_ni->runlist.lock);
 			ntfs_error(vol->sb, "Failed to allocate a cluster for "
@@ -1724,7 +1723,7 @@ static int ntfs_mft_data_extend_allocation_nolock(ntfs_volume *vol)
 	ATTR_RECORD *a = NULL;
 	int ret, mp_size;
 	u32 old_alen = 0;
-	BOOL mp_rebuilt = FALSE;
+	bool mp_rebuilt = false;
 
 	ntfs_debug("Extending mft data allocation.");
 	mft_ni = NTFS_I(vol->mft_ino);
@@ -1780,7 +1779,7 @@ static int ntfs_mft_data_extend_allocation_nolock(ntfs_volume *vol)
 	old_last_vcn = rl[1].vcn;
 	do {
 		rl2 = ntfs_cluster_alloc(vol, old_last_vcn, nr, lcn, MFT_ZONE,
-				TRUE);
+				true);
 		if (likely(!IS_ERR(rl2)))
 			break;
 		if (PTR_ERR(rl2) != -ENOSPC || nr == min_nr) {
@@ -1884,7 +1883,7 @@ static int ntfs_mft_data_extend_allocation_nolock(ntfs_volume *vol)
 		ret = -EOPNOTSUPP;
 		goto undo_alloc;
 	}
-	mp_rebuilt = TRUE;
+	mp_rebuilt = true;
 	/* Generate the mapping pairs array directly into the attr record. */
 	ret = ntfs_mapping_pairs_build(vol, (u8*)a +
 			le16_to_cpu(a->data.non_resident.mapping_pairs_offset),
@@ -2118,7 +2117,7 @@ static int ntfs_mft_record_format(const ntfs_volume *vol, const s64 mft_no)
 	}
 	/* Read, map, and pin the page containing the mft record. */
 	page = ntfs_map_page(mft_vi->i_mapping, index);
-	if (unlikely(IS_ERR(page))) {
+	if (IS_ERR(page)) {
 		ntfs_error(vol->sb, "Failed to map page containing mft record "
 				"to format 0x%llx.", (long long)mft_no);
 		return PTR_ERR(page);
@@ -2255,7 +2254,7 @@ ntfs_inode *ntfs_mft_record_alloc(ntfs_volume *vol, const int mode,
 	unsigned int ofs;
 	int err;
 	le16 seq_no, usn;
-	BOOL record_formatted = FALSE;
+	bool record_formatted = false;
 
 	if (base_ni) {
 		ntfs_debug("Entering (allocating an extent mft record for "
@@ -2454,7 +2453,7 @@ have_alloc_rec:
 		mft_ni->initialized_size = new_initialized_size;
 	}
 	write_unlock_irqrestore(&mft_ni->size_lock, flags);
-	record_formatted = TRUE;
+	record_formatted = true;
 	/* Update the mft data attribute record to reflect the new sizes. */
 	m = map_mft_record(mft_ni);
 	if (IS_ERR(m)) {
@@ -2519,7 +2518,7 @@ mft_rec_already_initialized:
 	ofs = (bit << vol->mft_record_size_bits) & ~PAGE_CACHE_MASK;
 	/* Read, map, and pin the page containing the mft record. */
 	page = ntfs_map_page(vol->mft_ino->i_mapping, index);
-	if (unlikely(IS_ERR(page))) {
+	if (IS_ERR(page)) {
 		ntfs_error(vol->sb, "Failed to map page containing allocated "
 				"mft record 0x%llx.", (long long)bit);
 		err = PTR_ERR(page);
@@ -2637,11 +2636,6 @@ mft_rec_already_initialized:
 			goto undo_mftbmp_alloc;
 		}
 		vi->i_ino = bit;
-		/*
-		 * This is the optimal IO size (for stat), not the fs block
-		 * size.
-		 */
-		vi->i_blksize = PAGE_CACHE_SIZE;
 		/*
 		 * This is for checking whether an inode has changed w.r.t. a
 		 * file so that the file can be updated if necessary (compare
@@ -2844,7 +2838,7 @@ int ntfs_extent_mft_record_free(ntfs_inode *ni, MFT_RECORD *m)
 	 */
 
 	/* Mark the mft record as not in use. */
-	m->flags &= const_cpu_to_le16(~const_le16_to_cpu(MFT_RECORD_IN_USE));
+	m->flags &= ~MFT_RECORD_IN_USE;
 
 	/* Increment the sequence number, skipping zero, if it is not zero. */
 	old_seq_no = m->sequence_number;
@@ -2893,7 +2887,7 @@ rollback:
 	if (!(base_ni->nr_extents & 3)) {
 		int new_size = (base_ni->nr_extents + 4) * sizeof(ntfs_inode*);
 
-		extent_nis = (ntfs_inode**)kmalloc(new_size, GFP_NOFS);
+		extent_nis = kmalloc(new_size, GFP_NOFS);
 		if (unlikely(!extent_nis)) {
 			ntfs_error(vol->sb, "Failed to allocate internal "
 					"buffer during rollback.%s", es);

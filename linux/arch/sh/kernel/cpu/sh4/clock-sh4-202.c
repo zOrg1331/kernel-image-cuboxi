@@ -21,10 +21,10 @@
 static int frqcr3_divisors[] = { 1, 2, 3, 4, 6, 8, 16 };
 static int frqcr3_values[]   = { 0, 1, 2, 3, 4, 5, 6  };
 
-static void emi_clk_recalc(struct clk *clk)
+static unsigned long emi_clk_recalc(struct clk *clk)
 {
 	int idx = ctrl_inl(CPG2_FRQCR3) & 0x0007;
-	clk->rate = clk->parent->rate / frqcr3_divisors[idx];
+	return clk->parent->rate / frqcr3_divisors[idx];
 }
 
 static inline int frqcr3_lookup(struct clk *clk, unsigned long rate)
@@ -46,14 +46,14 @@ static struct clk_ops sh4202_emi_clk_ops = {
 
 static struct clk sh4202_emi_clk = {
 	.name		= "emi_clk",
-	.flags		= CLK_ALWAYS_ENABLED,
+	.flags		= CLK_ENABLE_ON_INIT,
 	.ops		= &sh4202_emi_clk_ops,
 };
 
-static void femi_clk_recalc(struct clk *clk)
+static unsigned long femi_clk_recalc(struct clk *clk)
 {
 	int idx = (ctrl_inl(CPG2_FRQCR3) >> 3) & 0x0007;
-	clk->rate = clk->parent->rate / frqcr3_divisors[idx];
+	return clk->parent->rate / frqcr3_divisors[idx];
 }
 
 static struct clk_ops sh4202_femi_clk_ops = {
@@ -62,7 +62,7 @@ static struct clk_ops sh4202_femi_clk_ops = {
 
 static struct clk sh4202_femi_clk = {
 	.name		= "femi_clk",
-	.flags		= CLK_ALWAYS_ENABLED,
+	.flags		= CLK_ENABLE_ON_INIT,
 	.ops		= &sh4202_femi_clk_ops,
 };
 
@@ -82,22 +82,23 @@ static void shoc_clk_init(struct clk *clk)
 	for (i = 0; i < ARRAY_SIZE(frqcr3_divisors); i++) {
 		int divisor = frqcr3_divisors[i];
 
-		if (clk->ops->set_rate(clk, clk->parent->rate / divisor) == 0)
+		if (clk->ops->set_rate(clk, clk->parent->rate /
+						divisor, 0) == 0)
 			break;
 	}
 
 	WARN_ON(i == ARRAY_SIZE(frqcr3_divisors));	/* Undefined clock */
 }
 
-static void shoc_clk_recalc(struct clk *clk)
+static unsigned long shoc_clk_recalc(struct clk *clk)
 {
 	int idx = (ctrl_inl(CPG2_FRQCR3) >> 6) & 0x0007;
-	clk->rate = clk->parent->rate / frqcr3_divisors[idx];
+	return clk->parent->rate / frqcr3_divisors[idx];
 }
 
 static int shoc_clk_verify_rate(struct clk *clk, unsigned long rate)
 {
-	struct clk *bclk = clk_get("bus_clk");
+	struct clk *bclk = clk_get(NULL, "bus_clk");
 	unsigned long bclk_rate = clk_get_rate(bclk);
 
 	clk_put(bclk);
@@ -110,7 +111,7 @@ static int shoc_clk_verify_rate(struct clk *clk, unsigned long rate)
 	return 0;
 }
 
-static int shoc_clk_set_rate(struct clk *clk, unsigned long rate)
+static int shoc_clk_set_rate(struct clk *clk, unsigned long rate, int algo_id)
 {
 	unsigned long frqcr3;
 	unsigned int tmp;
@@ -139,7 +140,7 @@ static struct clk_ops sh4202_shoc_clk_ops = {
 
 static struct clk sh4202_shoc_clk = {
 	.name		= "shoc_clk",
-	.flags		= CLK_ALWAYS_ENABLED,
+	.flags		= CLK_ENABLE_ON_INIT,
 	.ops		= &sh4202_shoc_clk_ops,
 };
 
@@ -149,31 +150,22 @@ static struct clk *sh4202_onchip_clocks[] = {
 	&sh4202_shoc_clk,
 };
 
-static int __init sh4202_clk_init(void)
+int __init arch_clk_init(void)
 {
-	struct clk *clk = clk_get("master_clk");
-	int i;
+	struct clk *clk;
+	int i, ret = 0;
 
+	cpg_clk_init();
+
+	clk = clk_get(NULL, "master_clk");
 	for (i = 0; i < ARRAY_SIZE(sh4202_onchip_clocks); i++) {
 		struct clk *clkp = sh4202_onchip_clocks[i];
 
 		clkp->parent = clk;
-		clk_register(clkp);
-		clk_enable(clkp);
+		ret |= clk_register(clkp);
 	}
-
-	/*
-	 * Now that we have the rest of the clocks registered, we need to
-	 * force the parent clock to propagate so that these clocks will
-	 * automatically figure out their rate. We cheat by handing the
-	 * parent clock its current rate and forcing child propagation.
-	 */
-	clk_set_rate(clk, clk_get_rate(clk));
 
 	clk_put(clk);
 
-	return 0;
+	return ret;
 }
-
-arch_initcall(sh4202_clk_init);
-

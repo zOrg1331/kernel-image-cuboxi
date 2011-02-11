@@ -17,13 +17,13 @@
     Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307 USA
 */
 
-#include <sound/driver.h>
 #include <linux/delay.h>
 #include <linux/init.h>
 #include <linux/interrupt.h>
 #include <linux/slab.h>
 #include <linux/ioport.h>
 #include <sound/core.h>
+#include <sound/tlv.h>
 #include <sound/ad1816a.h>
 
 #include <asm/io.h>
@@ -37,7 +37,7 @@ static inline int snd_ad1816a_busy_wait(struct snd_ad1816a *chip)
 		if (inb(AD1816A_REG(AD1816A_CHIP_STATUS)) & AD1816A_READY)
 			return 0;
 
-	snd_printk("chip busy.\n");
+	snd_printk(KERN_WARNING "chip busy.\n");
 	return -EBUSY;
 }
 
@@ -196,7 +196,7 @@ static int snd_ad1816a_trigger(struct snd_ad1816a *chip, unsigned char what,
 		spin_unlock(&chip->lock);
 		break;
 	default:
-		snd_printk("invalid trigger mode 0x%x.\n", what);
+		snd_printk(KERN_WARNING "invalid trigger mode 0x%x.\n", what);
 		error = -EINVAL;
 	}
 
@@ -314,7 +314,7 @@ static snd_pcm_uframes_t snd_ad1816a_capture_pointer(struct snd_pcm_substream *s
 }
 
 
-static irqreturn_t snd_ad1816a_interrupt(int irq, void *dev_id, struct pt_regs *regs)
+static irqreturn_t snd_ad1816a_interrupt(int irq, void *dev_id)
 {
 	struct snd_ad1816a *chip = dev_id;
 	unsigned char status;
@@ -377,7 +377,6 @@ static struct snd_pcm_hardware snd_ad1816a_capture = {
 	.fifo_size =		0,
 };
 
-#if 0 /* not used now */
 static int snd_ad1816a_timer_close(struct snd_timer *timer)
 {
 	struct snd_ad1816a *chip = snd_timer_chip(timer);
@@ -394,7 +393,8 @@ static int snd_ad1816a_timer_open(struct snd_timer *timer)
 
 static unsigned long snd_ad1816a_timer_resolution(struct snd_timer *timer)
 {
-	snd_assert(timer != NULL, return 0);
+	if (snd_BUG_ON(!timer))
+		return 0;
 
 	return 10000;
 }
@@ -441,8 +441,6 @@ static struct snd_timer_hardware snd_ad1816a_timer_table = {
 	.start =	snd_ad1816a_timer_start,
 	.stop =		snd_ad1816a_timer_stop,
 };
-#endif /* not used now */
-
 
 static int snd_ad1816a_playback_open(struct snd_pcm_substream *substream)
 {
@@ -452,7 +450,6 @@ static int snd_ad1816a_playback_open(struct snd_pcm_substream *substream)
 
 	if ((error = snd_ad1816a_open(chip, AD1816A_MODE_PLAYBACK)) < 0)
 		return error;
-	snd_pcm_set_sync(substream);
 	runtime->hw = snd_ad1816a_playback;
 	snd_pcm_limit_isa_dma_size(chip->dma1, &runtime->hw.buffer_bytes_max);
 	snd_pcm_limit_isa_dma_size(chip->dma1, &runtime->hw.period_bytes_max);
@@ -468,7 +465,6 @@ static int snd_ad1816a_capture_open(struct snd_pcm_substream *substream)
 
 	if ((error = snd_ad1816a_open(chip, AD1816A_MODE_CAPTURE)) < 0)
 		return error;
-	snd_pcm_set_sync(substream);
 	runtime->hw = snd_ad1816a_capture;
 	snd_pcm_limit_isa_dma_size(chip->dma2, &runtime->hw.buffer_bytes_max);
 	snd_pcm_limit_isa_dma_size(chip->dma2, &runtime->hw.period_bytes_max);
@@ -569,7 +565,7 @@ static const char __devinit *snd_ad1816a_chip_id(struct snd_ad1816a *chip)
 	case AD1816A_HW_AD1815:	return "AD1815";
 	case AD1816A_HW_AD18MAX10: return "AD18max10";
 	default:
-		snd_printk("Unknown chip version %d:%d.\n",
+		snd_printk(KERN_WARNING "Unknown chip version %d:%d.\n",
 			chip->version, chip->hardware);
 		return "AD1816A - unknown";
 	}
@@ -688,7 +684,6 @@ int __devinit snd_ad1816a_pcm(struct snd_ad1816a *chip, int device, struct snd_p
 	return 0;
 }
 
-#if 0 /* not used now */
 int __devinit snd_ad1816a_timer(struct snd_ad1816a *chip, int device, struct snd_timer **rtimer)
 {
 	struct snd_timer *timer;
@@ -710,7 +705,6 @@ int __devinit snd_ad1816a_timer(struct snd_ad1816a *chip, int device, struct snd
 		*rtimer = timer;
 	return 0;
 }
-#endif /* not used now */
 
 /*
  *
@@ -765,6 +759,13 @@ static int snd_ad1816a_put_mux(struct snd_kcontrol *kcontrol, struct snd_ctl_ele
 	return change;
 }
 
+#define AD1816A_SINGLE_TLV(xname, reg, shift, mask, invert, xtlv)	\
+{ .iface = SNDRV_CTL_ELEM_IFACE_MIXER, \
+  .access = SNDRV_CTL_ELEM_ACCESS_READWRITE | SNDRV_CTL_ELEM_ACCESS_TLV_READ, \
+  .name = xname, .info = snd_ad1816a_info_single, \
+  .get = snd_ad1816a_get_single, .put = snd_ad1816a_put_single, \
+  .private_value = reg | (shift << 8) | (mask << 16) | (invert << 24), \
+  .tlv = { .p = (xtlv) } }
 #define AD1816A_SINGLE(xname, reg, shift, mask, invert) \
 { .iface = SNDRV_CTL_ELEM_IFACE_MIXER, .name = xname, .info = snd_ad1816a_info_single, \
   .get = snd_ad1816a_get_single, .put = snd_ad1816a_put_single, \
@@ -821,6 +822,14 @@ static int snd_ad1816a_put_single(struct snd_kcontrol *kcontrol, struct snd_ctl_
 	spin_unlock_irqrestore(&chip->lock, flags);
 	return change;
 }
+
+#define AD1816A_DOUBLE_TLV(xname, reg, shift_left, shift_right, mask, invert, xtlv) \
+{ .iface = SNDRV_CTL_ELEM_IFACE_MIXER, \
+  .access = SNDRV_CTL_ELEM_ACCESS_READWRITE | SNDRV_CTL_ELEM_ACCESS_TLV_READ, \
+  .name = xname, .info = snd_ad1816a_info_double,		\
+  .get = snd_ad1816a_get_double, .put = snd_ad1816a_put_double, \
+  .private_value = reg | (shift_left << 8) | (shift_right << 12) | (mask << 16) | (invert << 24), \
+  .tlv = { .p = (xtlv) } }
 
 #define AD1816A_DOUBLE(xname, reg, shift_left, shift_right, mask, invert) \
 { .iface = SNDRV_CTL_ELEM_IFACE_MIXER, .name = xname, .info = snd_ad1816a_info_double, \
@@ -890,28 +899,44 @@ static int snd_ad1816a_put_double(struct snd_kcontrol *kcontrol, struct snd_ctl_
 	return change;
 }
 
+static const DECLARE_TLV_DB_SCALE(db_scale_4bit, -4500, 300, 0);
+static const DECLARE_TLV_DB_SCALE(db_scale_5bit, -4650, 150, 0);
+static const DECLARE_TLV_DB_SCALE(db_scale_6bit, -9450, 150, 0);
+static const DECLARE_TLV_DB_SCALE(db_scale_5bit_12db_max, -3450, 150, 0);
+static const DECLARE_TLV_DB_SCALE(db_scale_rec_gain, 0, 150, 0);
+
 static struct snd_kcontrol_new snd_ad1816a_controls[] __devinitdata = {
 AD1816A_DOUBLE("Master Playback Switch", AD1816A_MASTER_ATT, 15, 7, 1, 1),
-AD1816A_DOUBLE("Master Playback Volume", AD1816A_MASTER_ATT, 8, 0, 31, 1),
+AD1816A_DOUBLE_TLV("Master Playback Volume", AD1816A_MASTER_ATT, 8, 0, 31, 1,
+		   db_scale_5bit),
 AD1816A_DOUBLE("PCM Playback Switch", AD1816A_VOICE_ATT, 15, 7, 1, 1),
-AD1816A_DOUBLE("PCM Playback Volume", AD1816A_VOICE_ATT, 8, 0, 63, 1),
+AD1816A_DOUBLE_TLV("PCM Playback Volume", AD1816A_VOICE_ATT, 8, 0, 63, 1,
+		   db_scale_6bit),
 AD1816A_DOUBLE("Line Playback Switch", AD1816A_LINE_GAIN_ATT, 15, 7, 1, 1),
-AD1816A_DOUBLE("Line Playback Volume", AD1816A_LINE_GAIN_ATT, 8, 0, 31, 1),
+AD1816A_DOUBLE_TLV("Line Playback Volume", AD1816A_LINE_GAIN_ATT, 8, 0, 31, 1,
+		   db_scale_5bit_12db_max),
 AD1816A_DOUBLE("CD Playback Switch", AD1816A_CD_GAIN_ATT, 15, 7, 1, 1),
-AD1816A_DOUBLE("CD Playback Volume", AD1816A_CD_GAIN_ATT, 8, 0, 31, 1),
+AD1816A_DOUBLE_TLV("CD Playback Volume", AD1816A_CD_GAIN_ATT, 8, 0, 31, 1,
+		   db_scale_5bit_12db_max),
 AD1816A_DOUBLE("Synth Playback Switch", AD1816A_SYNTH_GAIN_ATT, 15, 7, 1, 1),
-AD1816A_DOUBLE("Synth Playback Volume", AD1816A_SYNTH_GAIN_ATT, 8, 0, 31, 1),
+AD1816A_DOUBLE_TLV("Synth Playback Volume", AD1816A_SYNTH_GAIN_ATT, 8, 0, 31, 1,
+		   db_scale_5bit_12db_max),
 AD1816A_DOUBLE("FM Playback Switch", AD1816A_FM_ATT, 15, 7, 1, 1),
-AD1816A_DOUBLE("FM Playback Volume", AD1816A_FM_ATT, 8, 0, 63, 1),
+AD1816A_DOUBLE_TLV("FM Playback Volume", AD1816A_FM_ATT, 8, 0, 63, 1,
+		   db_scale_6bit),
 AD1816A_SINGLE("Mic Playback Switch", AD1816A_MIC_GAIN_ATT, 15, 1, 1),
-AD1816A_SINGLE("Mic Playback Volume", AD1816A_MIC_GAIN_ATT, 8, 31, 1),
+AD1816A_SINGLE_TLV("Mic Playback Volume", AD1816A_MIC_GAIN_ATT, 8, 31, 1,
+		   db_scale_5bit_12db_max),
 AD1816A_SINGLE("Mic Boost", AD1816A_MIC_GAIN_ATT, 14, 1, 0),
 AD1816A_DOUBLE("Video Playback Switch", AD1816A_VID_GAIN_ATT, 15, 7, 1, 1),
-AD1816A_DOUBLE("Video Playback Volume", AD1816A_VID_GAIN_ATT, 8, 0, 31, 1),
+AD1816A_DOUBLE_TLV("Video Playback Volume", AD1816A_VID_GAIN_ATT, 8, 0, 31, 1,
+		   db_scale_5bit_12db_max),
 AD1816A_SINGLE("Phone Capture Switch", AD1816A_PHONE_IN_GAIN_ATT, 15, 1, 1),
-AD1816A_SINGLE("Phone Capture Volume", AD1816A_PHONE_IN_GAIN_ATT, 0, 15, 1),
+AD1816A_SINGLE_TLV("Phone Capture Volume", AD1816A_PHONE_IN_GAIN_ATT, 0, 15, 1,
+		   db_scale_4bit),
 AD1816A_SINGLE("Phone Playback Switch", AD1816A_PHONE_OUT_ATT, 7, 1, 1),
-AD1816A_SINGLE("Phone Playback Volume", AD1816A_PHONE_OUT_ATT, 0, 31, 1),
+AD1816A_SINGLE_TLV("Phone Playback Volume", AD1816A_PHONE_OUT_ATT, 0, 31, 1,
+		   db_scale_5bit),
 {
 	.iface = SNDRV_CTL_ELEM_IFACE_MIXER,
 	.name = "Capture Source",
@@ -920,7 +945,8 @@ AD1816A_SINGLE("Phone Playback Volume", AD1816A_PHONE_OUT_ATT, 0, 31, 1),
 	.put = snd_ad1816a_put_mux,
 },
 AD1816A_DOUBLE("Capture Switch", AD1816A_ADC_PGA, 15, 7, 1, 1),
-AD1816A_DOUBLE("Capture Volume", AD1816A_ADC_PGA, 8, 0, 15, 0),
+AD1816A_DOUBLE_TLV("Capture Volume", AD1816A_ADC_PGA, 8, 0, 15, 0,
+		   db_scale_rec_gain),
 AD1816A_SINGLE("3D Control - Switch", AD1816A_3D_PHAT_CTRL, 15, 1, 1),
 AD1816A_SINGLE("3D Control - Level", AD1816A_3D_PHAT_CTRL, 0, 15, 0),
 };
@@ -931,7 +957,8 @@ int __devinit snd_ad1816a_mixer(struct snd_ad1816a *chip)
 	unsigned int idx;
 	int err;
 
-	snd_assert(chip != NULL && chip->card != NULL, return -EINVAL);
+	if (snd_BUG_ON(!chip || !chip->card))
+		return -EINVAL;
 
 	card = chip->card;
 

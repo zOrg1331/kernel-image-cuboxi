@@ -28,7 +28,10 @@
 #include <linux/highmem.h>
 #include <linux/module.h>
 #include <linux/kprobes.h>
+#include <linux/kdebug.h>
+#include <linux/perf_event.h>
 
+#include <asm/firmware.h>
 #include <asm/page.h>
 #include <asm/pgtable.h>
 #include <asm/mmu.h>
@@ -36,40 +39,28 @@
 #include <asm/system.h>
 #include <asm/uaccess.h>
 #include <asm/tlbflush.h>
-#include <asm/kdebug.h>
 #include <asm/siginfo.h>
 
+
 #ifdef CONFIG_KPROBES
-ATOMIC_NOTIFIER_HEAD(notify_page_fault_chain);
-
-/* Hook to register for page fault notifications */
-int register_page_fault_notifier(struct notifier_block *nb)
+static inline int notify_page_fault(struct pt_regs *regs)
 {
-	return atomic_notifier_chain_register(&notify_page_fault_chain, nb);
-}
+	int ret = 0;
 
-int unregister_page_fault_notifier(struct notifier_block *nb)
-{
-	return atomic_notifier_chain_unregister(&notify_page_fault_chain, nb);
-}
+	/* kprobe_running() needs smp_processor_id() */
+	if (!user_mode(regs)) {
+		preempt_disable();
+		if (kprobe_running() && kprobe_fault_handler(regs, 11))
+			ret = 1;
+		preempt_enable();
+	}
 
-static inline int notify_page_fault(enum die_val val, const char *str,
-			struct pt_regs *regs, long err, int trap, int sig)
-{
-	struct die_args args = {
-		.regs = regs,
-		.str = str,
-		.err = err,
-		.trapnr = trap,
-		.signr = sig
-	};
-	return atomic_notifier_call_chain(&notify_page_fault_chain, val, &args);
+	return ret;
 }
 #else
-static inline int notify_page_fault(enum die_val val, const char *str,
-			struct pt_regs *regs, long err, int trap, int sig)
+static inline int notify_page_fault(struct pt_regs *regs)
 {
-	return NOTIFY_DONE;
+	return 0;
 }
 #endif
 
@@ -111,31 +102,6 @@ static int store_updates_sp(struct pt_regs *regs)
 	return 0;
 }
 
-#if !(defined(CONFIG_4xx) || defined(CONFIG_BOOKE))
-static void do_dabr(struct pt_regs *regs, unsigned long address,
-		    unsigned long error_code)
-{
-	siginfo_t info;
-
-	if (notify_die(DIE_DABR_MATCH, "dabr_match", regs, error_code,
-			11, SIGSEGV) == NOTIFY_STOP)
-		return;
-
-	if (debugger_dabr_match(regs))
-		return;
-
-	/* Clear the DABR */
-	set_dabr(0);
-
-	/* Deliver the signal to userspace */
-	info.si_signo = SIGTRAP;
-	info.si_errno = 0;
-	info.si_code = TRAP_HWBKPT;
-	info.si_addr = (void __user *)address;
-	force_sig_info(SIGTRAP, &info, current);
-}
-#endif /* !(CONFIG_4xx || CONFIG_BOOKE)*/
-
 /*
  * For 600- and 800-family processors, the error_code parameter is DSISR
  * for a data fault, SRR1 for an instruction fault. For 400-family processors
@@ -156,7 +122,7 @@ int __kprobes do_page_fault(struct pt_regs *regs, unsigned long address,
 	struct mm_struct *mm = current->mm;
 	siginfo_t info;
 	int code = SEGV_MAPERR;
-	int is_write = 0;
+	int is_write = 0, ret;
 	int trap = TRAP(regs);
  	int is_exec = trap == 0x400;
 
@@ -175,14 +141,11 @@ int __kprobes do_page_fault(struct pt_regs *regs, unsigned long address,
 	is_write = error_code & ESR_DST;
 #endif /* CONFIG_4xx || CONFIG_BOOKE */
 
-	if (notify_page_fault(DIE_PAGE_FAULT, "page_fault", regs, error_code,
-				11, SIGSEGV) == NOTIFY_STOP)
+	if (notify_page_fault(regs))
 		return 0;
 
-	if (trap == 0x300) {
-		if (debugger_fault_handler(regs))
-			return 0;
-	}
+	if (unlikely(debugger_fault_handler(regs)))
+		return 0;
 
 	/* On a kernel SLB miss we can only check for a valid exception entry */
 	if (!user_mode(regs) && (address >= TASK_SIZE))
@@ -201,12 +164,14 @@ int __kprobes do_page_fault(struct pt_regs *regs, unsigned long address,
 			return SIGSEGV;
 		/* in_atomic() in user mode is really bad,
 		   as is current->mm == NULL. */
-		printk(KERN_EMERG "Page fault in user mode with"
+		printk(KERN_EMERG "Page fault in user mode with "
 		       "in_atomic() = %d mm = %p\n", in_atomic(), mm);
 		printk(KERN_EMERG "NIP = %lx  MSR = %lx\n",
 		       regs->nip, regs->msr);
 		die("Weird page fault", regs, SIGSEGV);
 	}
+
+	perf_sw_event(PERF_COUNT_SW_PAGE_FAULTS, 1, 0, regs, address);
 
 	/* When running in the kernel we expect faults to occur only to
 	 * addresses in user space.  All other faults represent errors in the
@@ -291,39 +256,33 @@ good_area:
 #endif /* CONFIG_8xx */
 
 	if (is_exec) {
-#ifdef CONFIG_PPC64
-		/* protection fault */
+#ifdef CONFIG_PPC_STD_MMU
+		/* Protection fault on exec go straight to failure on
+		 * Hash based MMUs as they either don't support per-page
+		 * execute permission, or if they do, it's handled already
+		 * at the hash level. This test would probably have to
+		 * be removed if we change the way this works to make hash
+		 * processors use the same I/D cache coherency mechanism
+		 * as embedded.
+		 */
 		if (error_code & DSISR_PROTFAULT)
 			goto bad_area;
-		if (!(vma->vm_flags & VM_EXEC))
+#endif /* CONFIG_PPC_STD_MMU */
+
+		/*
+		 * Allow execution from readable areas if the MMU does not
+		 * provide separate controls over reading and executing.
+		 *
+		 * Note: That code used to not be enabled for 4xx/BookE.
+		 * It is now as I/D cache coherency for these is done at
+		 * set_pte_at() time and I see no reason why the test
+		 * below wouldn't be valid on those processors. This -may-
+		 * break programs compiled with a really old ABI though.
+		 */
+		if (!(vma->vm_flags & VM_EXEC) &&
+		    (cpu_has_feature(CPU_FTR_NOEXECUTE) ||
+		     !(vma->vm_flags & (VM_READ | VM_WRITE))))
 			goto bad_area;
-#endif
-#if defined(CONFIG_4xx) || defined(CONFIG_BOOKE)
-		pte_t *ptep;
-		pmd_t *pmdp;
-
-		/* Since 4xx/Book-E supports per-page execute permission,
-		 * we lazily flush dcache to icache. */
-		ptep = NULL;
-		if (get_pteptr(mm, address, &ptep, &pmdp)) {
-			spinlock_t *ptl = pte_lockptr(mm, pmdp);
-			spin_lock(ptl);
-			if (pte_present(*ptep)) {
-				struct page *page = pte_page(*ptep);
-
-				if (!test_bit(PG_arch_1, &page->flags)) {
-					flush_dcache_icache_page(page);
-					set_bit(PG_arch_1, &page->flags);
-				}
-				pte_update(ptep, 0, _PAGE_HWEXEC);
-				_tlbie(address);
-				pte_unmap_unlock(ptep, ptl);
-				up_read(&mm->mmap_sem);
-				return 0;
-			}
-			pte_unmap_unlock(ptep, ptl);
-		}
-#endif
 	/* a write */
 	} else if (is_write) {
 		if (!(vma->vm_flags & VM_WRITE))
@@ -333,7 +292,7 @@ good_area:
 		/* protection fault */
 		if (error_code & 0x08000000)
 			goto bad_area;
-		if (!(vma->vm_flags & (VM_READ | VM_EXEC)))
+		if (!(vma->vm_flags & (VM_READ | VM_EXEC | VM_WRITE)))
 			goto bad_area;
 	}
 
@@ -343,22 +302,30 @@ good_area:
 	 * the fault.
 	 */
  survive:
-	switch (handle_mm_fault(mm, vma, address, is_write)) {
-
-	case VM_FAULT_MINOR:
-		current->min_flt++;
-		break;
-	case VM_FAULT_MAJOR:
-		current->maj_flt++;
-		break;
-	case VM_FAULT_SIGBUS:
-		goto do_sigbus;
-	case VM_FAULT_OOM:
-		goto out_of_memory;
-	default:
+	ret = handle_mm_fault(mm, vma, address, is_write ? FAULT_FLAG_WRITE : 0);
+	if (unlikely(ret & VM_FAULT_ERROR)) {
+		if (ret & VM_FAULT_OOM)
+			goto out_of_memory;
+		else if (ret & VM_FAULT_SIGBUS)
+			goto do_sigbus;
 		BUG();
 	}
-
+	if (ret & VM_FAULT_MAJOR) {
+		current->maj_flt++;
+		perf_sw_event(PERF_COUNT_SW_PAGE_FAULTS_MAJ, 1, 0,
+				     regs, address);
+#ifdef CONFIG_PPC_SMLPAR
+		if (firmware_has_feature(FW_FEATURE_CMO)) {
+			preempt_disable();
+			get_lppaca()->page_ins += (1 << PAGE_FACTOR);
+			preempt_enable();
+		}
+#endif
+	} else {
+		current->min_flt++;
+		perf_sw_event(PERF_COUNT_SW_PAGE_FAULTS_MIN, 1, 0,
+				     regs, address);
+	}
 	up_read(&mm->mmap_sem);
 	return 0;
 
@@ -376,7 +343,7 @@ bad_area_nosemaphore:
 	    && printk_ratelimit())
 		printk(KERN_CRIT "kernel tried to execute NX-protected"
 		       " page (%lx) - exploit attempt? (uid: %d)\n",
-		       address, current->uid);
+		       address, current_uid());
 
 	return SIGSEGV;
 
@@ -386,14 +353,14 @@ bad_area_nosemaphore:
  */
 out_of_memory:
 	up_read(&mm->mmap_sem);
-	if (current->pid == 1) {
+	if (is_global_init(current)) {
 		yield();
 		down_read(&mm->mmap_sem);
 		goto survive;
 	}
 	printk("VM: killing process %s\n", current->comm);
 	if (user_mode(regs))
-		do_exit(SIGKILL);
+		do_group_exit(SIGKILL);
 	return SIGKILL;
 
 do_sigbus:
@@ -426,18 +393,21 @@ void bad_page_fault(struct pt_regs *regs, unsigned long address, int sig)
 
 	/* kernel has accessed a bad area */
 
-	printk(KERN_ALERT "Unable to handle kernel paging request for ");
 	switch (regs->trap) {
-		case 0x300:
-		case 0x380:
-			printk("data at address 0x%08lx\n", regs->dar);
-			break;
-		case 0x400:
-		case 0x480:
-			printk("instruction fetch\n");
-			break;
-		default:
-			printk("unknown fault\n");
+	case 0x300:
+	case 0x380:
+		printk(KERN_ALERT "Unable to handle kernel paging request for "
+			"data at address 0x%08lx\n", regs->dar);
+		break;
+	case 0x400:
+	case 0x480:
+		printk(KERN_ALERT "Unable to handle kernel paging request for "
+			"instruction fetch\n");
+		break;
+	default:
+		printk(KERN_ALERT "Unable to handle kernel paging request for "
+			"unknown fault\n");
+		break;
 	}
 	printk(KERN_ALERT "Faulting instruction address: 0x%08lx\n",
 		regs->nip);

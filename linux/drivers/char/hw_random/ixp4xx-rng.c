@@ -1,5 +1,5 @@
 /*
- * drivers/char/rng/ixp4xx-rng.c
+ * drivers/char/hw_random/ixp4xx-rng.c
  *
  * RNG driver for Intel IXP4xx family of NPUs
  *
@@ -15,7 +15,6 @@
  */
 
 #include <linux/kernel.h>
-#include <linux/config.h>
 #include <linux/types.h>
 #include <linux/module.h>
 #include <linux/moduleparam.h>
@@ -24,7 +23,7 @@
 #include <linux/hw_random.h>
 
 #include <asm/io.h>
-#include <asm/hardware.h>
+#include <mach/hardware.h>
 
 
 static int ixp4xx_rng_data_read(struct hwrng *rng, u32 *buffer)
@@ -65,7 +64,7 @@ static void __exit ixp4xx_rng_exit(void)
 	iounmap(rng_base);
 }
 
-subsys_initcall(ixp4xx_rng_init);
+module_init(ixp4xx_rng_init);
 module_exit(ixp4xx_rng_exit);
 
 MODULE_AUTHOR("Deepak Saxena <dsaxena@plexity.net>");

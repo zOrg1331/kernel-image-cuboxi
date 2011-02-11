@@ -1,7 +1,6 @@
 #include <linux/types.h>
 #include <linux/mm.h>
 #include <linux/blkdev.h>
-#include <linux/sched.h>
 #include <linux/interrupt.h>
 
 #include <asm/page.h>
@@ -20,7 +19,7 @@
 
 static struct Scsi_Host *mvme147_host = NULL;
 
-static irqreturn_t mvme147_intr (int irq, void *dummy, struct pt_regs *fp)
+static irqreturn_t mvme147_intr (int irq, void *dummy)
 {
     if (irq == MVME147_IRQ_SCSI_PORT)
 	wd33c93_intr (mvme147_host);
@@ -29,7 +28,7 @@ static irqreturn_t mvme147_intr (int irq, void *dummy, struct pt_regs *fp)
     return IRQ_HANDLED;
 }
 
-static int dma_setup (Scsi_Cmnd *cmd, int dir_in)
+static int dma_setup(struct scsi_cmnd *cmd, int dir_in)
 {
     unsigned char flags = 0x01;
     unsigned long addr = virt_to_bus(cmd->SCp.ptr);
@@ -57,7 +56,7 @@ static int dma_setup (Scsi_Cmnd *cmd, int dir_in)
     return 0;
 }
 
-static void dma_stop (struct Scsi_Host *instance, Scsi_Cmnd *SCpnt,
+static void dma_stop(struct Scsi_Host *instance, struct scsi_cmnd *SCpnt,
 		      int status)
 {
     m147_pcc->dma_cntrl = 0;
@@ -83,6 +82,9 @@ int mvme147_detect(struct scsi_host_template *tpnt)
     mvme147_host->irq = MVME147_IRQ_SCSI_PORT;
     regs.SASR = (volatile unsigned char *)0xfffe4000;
     regs.SCMD = (volatile unsigned char *)0xfffe4001;
+    HDATA(mvme147_host)->no_sync = 0xff;
+    HDATA(mvme147_host)->fast = 0;
+    HDATA(mvme147_host)->dma_mode = CTRL_DMA;
     wd33c93_init(mvme147_host, regs, dma_setup, dma_stop, WD33C93_FS_8_10);
 
     if (request_irq(MVME147_IRQ_SCSI_PORT, mvme147_intr, 0, "MVME147 SCSI PORT", mvme147_intr))
@@ -112,7 +114,7 @@ int mvme147_detect(struct scsi_host_template *tpnt)
     return 0;
 }
 
-static int mvme147_bus_reset(Scsi_Cmnd *cmd)
+static int mvme147_bus_reset(struct scsi_cmnd *cmd)
 {
 	/* FIXME perform bus-specific reset */
 

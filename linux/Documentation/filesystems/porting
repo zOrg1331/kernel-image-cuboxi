@@ -1,6 +1,6 @@
 Changes since 2.5.0:
 
---- 
+---
 [recommended]
 
 New helpers: sb_bread(), sb_getblk(), sb_find_get_block(), set_bh(),
@@ -10,7 +10,7 @@ Use them.
 
 (sb_find_get_block() replaces 2.4's get_hash_table())
 
---- 
+---
 [recommended]
 
 New methods: ->alloc_inode() and ->destroy_inode().
@@ -28,14 +28,14 @@ Declare
 
 Use FOO_I(inode) instead of &inode->u.foo_inode_i;
 
-Add foo_alloc_inode() and foo_destory_inode() - the former should allocate
+Add foo_alloc_inode() and foo_destroy_inode() - the former should allocate
 foo_inode_info and return the address of ->vfs_inode, the latter should free
 FOO_I(inode) (see in-tree filesystems for examples).
 
 Make them ->alloc_inode and ->destroy_inode in your super_operations.
 
-Keep in mind that now you need explicit initialization of private data -
-typically in ->read_inode() and after getting an inode from new_inode().
+Keep in mind that now you need explicit initialization of private data
+typically between calling iget_locked() and unlocking the inode.
 
 At some point that will become mandatory.
 
@@ -107,7 +107,7 @@ free to drop it...
 ---
 [informational]
 
-->link() callers hold ->i_sem on the object we are linking to.  Some of your
+->link() callers hold ->i_mutex on the object we are linking to.  Some of your
 problems might be over...
 
 ---
@@ -130,9 +130,9 @@ went in - and hadn't been documented ;-/).  Just remove it from fs_flags
 ---
 [mandatory]
 
-->setattr() is called without BKL now.  Caller _always_ holds ->i_sem, so
-watch for ->i_sem-grabbing code that might be used by your ->setattr().
-Callers of notify_change() need ->i_sem now.
+->setattr() is called without BKL now.  Caller _always_ holds ->i_mutex, so
+watch for ->i_mutex-grabbing code that might be used by your ->setattr().
+Callers of notify_change() need ->i_mutex now.
 
 ---
 [recommended]
@@ -140,7 +140,7 @@ Callers of notify_change() need ->i_sem now.
 New super_block field "struct export_operations *s_export_op" for
 explicit support for exporting, e.g. via NFS.  The structure is fully
 documented at its declaration in include/linux/fs.h, and in
-Documentation/filesystems/Exporting.
+Documentation/filesystems/nfs/Exporting.
 
 Briefly it allows for the definition of decode_fh and encode_fh operations
 to encode and decode filehandles, and allows the filesystem to use
@@ -173,10 +173,10 @@ should be a non-blocking function that initializes those parts of a
 newly created inode to allow the test function to succeed. 'data' is
 passed as an opaque value to both test and set functions.
 
-When the inode has been created by iget5_locked(), it will be returned with
-the I_NEW flag set and will still be locked. read_inode has not been
-called so the file system still has to finalize the initialization. Once
-the inode is initialized it must be unlocked by calling unlock_new_inode().
+When the inode has been created by iget5_locked(), it will be returned with the
+I_NEW flag set and will still be locked.  The filesystem then needs to finalize
+the initialization. Once the inode is initialized it must be unlocked by
+calling unlock_new_inode().
 
 The filesystem is responsible for setting (and possibly testing) i_ino
 when appropriate. There is also a simpler iget_locked function that
@@ -184,11 +184,19 @@ just takes the superblock and inode number as arguments and does the
 test and set for you.
 
 e.g.
-       inode = iget_locked(sb, ino);
-       if (inode->i_state & I_NEW) {
-               read_inode_from_disk(inode);
-               unlock_new_inode(inode);
-       }
+	inode = iget_locked(sb, ino);
+	if (inode->i_state & I_NEW) {
+		err = read_inode_from_disk(inode);
+		if (err < 0) {
+			iget_failed(inode);
+			return err;
+		}
+		unlock_new_inode(inode);
+	}
+
+Note that if the process of setting up a new inode fails, then iget_failed()
+should be called on the inode to render it dead, and an appropriate error
+should be passed back to the caller.
 
 ---
 [recommended]

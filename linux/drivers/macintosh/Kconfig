@@ -1,6 +1,15 @@
 
-menu "Macintosh device drivers"
-	depends on PPC || MAC
+menuconfig MACINTOSH_DRIVERS
+	bool "Macintosh device drivers"
+	depends on PPC || MAC || X86
+	default y if (PPC_PMAC || MAC)
+	---help---
+	  Say Y here to get to see options for devices used with Macintosh
+	  computers. This option alone does not add any kernel code.
+
+	  If you say N, all options in this submenu will be skipped and disabled.
+
+if MACINTOSH_DRIVERS
 
 config ADB
 	bool "Apple Desktop Bus (ADB) support"
@@ -109,11 +118,12 @@ config PMAC_SMU
 
 config PMAC_APM_EMU
 	tristate "APM emulation"
-	depends on PPC_PMAC && PPC32 && PM && ADB_PMU
+	select APM_EMULATION
+	depends on ADB_PMU && PM && PPC32
 
 config PMAC_MEDIABAY
 	bool "Support PowerBook hotswap media bay"
-	depends on PPC_PMAC && PPC32
+	depends on PPC_PMAC && PPC32 && BLOCK
 	help
 	  This option adds support for older PowerBook's hotswap media bay
 	  that can contains batteries, floppy drives, or IDE devices. PCI
@@ -128,7 +138,7 @@ config PMAC_BACKLIGHT
 	  Say Y here to enable Macintosh specific extensions of the generic
 	  backlight code. With this enabled, the brightness keys on older
 	  PowerBooks will be enabled so you can change the screen brightness.
-	  Newer models should use an userspace daemon like pbbuttonsd.
+	  Newer models should use a userspace daemon like pbbuttonsd.
 
 config PMAC_BACKLIGHT_LEGACY
 	bool "Provide legacy ioctl's on /dev/pmu for the backlight"
@@ -162,7 +172,7 @@ config INPUT_ADBHID
 
 config MAC_EMUMOUSEBTN
 	bool "Support for mouse button 2+3 emulation"
-	depends on INPUT_ADBHID
+	select INPUT
 	help
 	  This provides generic support for emulating the 2nd and 3rd mouse
 	  button with keypresses.  If you say Y here, the emulation is still
@@ -186,7 +196,7 @@ config THERM_ADT746X
 	depends on I2C && I2C_POWERMAC && PPC_PMAC && !PPC_PMAC64
 	help
 	  This driver provides some thermostat and fan control for the
-          iBook G4, and the ATI based aluminium PowerBooks, allowing slighlty
+          iBook G4, and the ATI based aluminium PowerBooks, allowing slightly
 	  better fan behaviour by default, and some manual control.
 
 config THERM_PM72
@@ -224,8 +234,23 @@ config WINDFARM_PM112
 	  which are the recent dual and quad G5 machines using the
 	  970MP dual-core processor.
 
+config WINDFARM_PM121
+	tristate "Support for thermal management on PowerMac12,1"
+	depends on WINDFARM && I2C && PMAC_SMU
+	select I2C_POWERMAC
+	help
+	  This driver provides thermal control for the PowerMac12,1
+	  which is the iMac G5 (iSight).
+
 config ANSLCD
 	tristate "Support for ANS LCD display"
 	depends on ADB_CUDA && PPC_PMAC
 
-endmenu
+config PMAC_RACKMETER
+	tristate "Support for Apple XServe front panel LEDs"
+	depends on PPC_PMAC
+	help
+	  This driver provides some support to control the front panel
+          blue LEDs "vu-meter" of the XServer macs.
+
+endif # MACINTOSH_DRIVERS

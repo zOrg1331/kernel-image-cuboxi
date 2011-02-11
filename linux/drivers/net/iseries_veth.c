@@ -73,7 +73,7 @@
 #include <asm/abs_addr.h>
 #include <asm/iseries/mf.h>
 #include <asm/uaccess.h>
-
+#include <asm/firmware.h>
 #include <asm/iseries/hv_lp_config.h>
 #include <asm/iseries/hv_types.h>
 #include <asm/iseries/hv_lp_event.h>
@@ -166,7 +166,7 @@ struct veth_msg {
 
 struct veth_lpar_connection {
 	HvLpIndex remote_lp;
-	struct work_struct statemachine_wq;
+	struct delayed_work statemachine_wq;
 	struct veth_msg *msgs;
 	int num_events;
 	struct veth_cap_data local_caps;
@@ -196,7 +196,6 @@ struct veth_lpar_connection {
 
 struct veth_port {
 	struct device *dev;
-	struct net_device_stats stats;
 	u64 mac_addr;
 	HvLpIndexMap lpar_map;
 
@@ -309,7 +308,8 @@ static void veth_complete_allocation(void *parm, int number)
 
 static int veth_allocate_events(HvLpIndex rlp, int number)
 {
-	struct veth_allocation vc = { COMPLETION_INITIALIZER(vc.c), 0 };
+	struct veth_allocation vc =
+		{ COMPLETION_INITIALIZER_ONSTACK(vc.c), 0 };
 
 	mf_allocate_lp_events(rlp, HvLpEvent_Type_VirtualLan,
 			    sizeof(struct veth_lpevent), number,
@@ -384,7 +384,7 @@ static struct attribute *veth_cnx_default_attrs[] = {
 	NULL
 };
 
-static struct sysfs_ops veth_cnx_sysfs_ops = {
+static const struct sysfs_ops veth_cnx_sysfs_ops = {
 		.show = veth_cnx_attribute_show
 };
 
@@ -429,7 +429,7 @@ SIMPLE_PORT_ATTR(promiscuous);
 SIMPLE_PORT_ATTR(num_mcast);
 CUSTOM_PORT_ATTR(lpar_map, "0x%X\n", port->lpar_map);
 CUSTOM_PORT_ATTR(stopped_map, "0x%X\n", port->stopped_map);
-CUSTOM_PORT_ATTR(mac_addr, "0x%lX\n", port->mac_addr);
+CUSTOM_PORT_ATTR(mac_addr, "0x%llX\n", port->mac_addr);
 
 #define GET_PORT_ATTR(_name)	(&veth_port_attr_##_name.attr)
 static struct attribute *veth_port_default_attrs[] = {
@@ -441,7 +441,7 @@ static struct attribute *veth_port_default_attrs[] = {
 	NULL
 };
 
-static struct sysfs_ops veth_port_sysfs_ops = {
+static const struct sysfs_ops veth_port_sysfs_ops = {
 	.show = veth_port_attribute_show
 };
 
@@ -456,7 +456,7 @@ static struct kobj_type veth_port_ktype = {
 
 static inline void veth_kick_statemachine(struct veth_lpar_connection *cnx)
 {
-	schedule_work(&cnx->statemachine_wq);
+	schedule_delayed_work(&cnx->statemachine_wq, 0);
 }
 
 static void veth_take_cap(struct veth_lpar_connection *cnx,
@@ -495,7 +495,7 @@ static void veth_take_cap_ack(struct veth_lpar_connection *cnx,
 			   cnx->remote_lp);
 	} else {
 		memcpy(&cnx->cap_ack_event, event,
-		       sizeof(&cnx->cap_ack_event));
+		       sizeof(cnx->cap_ack_event));
 		cnx->state |= VETH_STATE_GOTCAPACK;
 		veth_kick_statemachine(cnx);
 	}
@@ -586,7 +586,7 @@ static void veth_handle_int(struct veth_lpevent *event)
 	};
 }
 
-static void veth_handle_event(struct HvLpEvent *event, struct pt_regs *regs)
+static void veth_handle_event(struct HvLpEvent *event)
 {
 	struct veth_lpevent *veth_event = (struct veth_lpevent *)event;
 
@@ -638,9 +638,11 @@ static int veth_process_caps(struct veth_lpar_connection *cnx)
 }
 
 /* FIXME: The gotos here are a bit dubious */
-static void veth_statemachine(void *p)
+static void veth_statemachine(struct work_struct *work)
 {
-	struct veth_lpar_connection *cnx = (struct veth_lpar_connection *)p;
+	struct veth_lpar_connection *cnx =
+		container_of(work, struct veth_lpar_connection,
+			     statemachine_wq.work);
 	int rlp = cnx->remote_lp;
 	int rc;
 
@@ -814,20 +816,19 @@ static int veth_init_connection(u8 rlp)
 {
 	struct veth_lpar_connection *cnx;
 	struct veth_msg *msgs;
-	int i, rc;
+	int i;
 
 	if ( (rlp == this_lp)
 	     || ! HvLpConfig_doLpsCommunicateOnVirtualLan(this_lp, rlp) )
 		return 0;
 
-	cnx = kmalloc(sizeof(*cnx), GFP_KERNEL);
+	cnx = kzalloc(sizeof(*cnx), GFP_KERNEL);
 	if (! cnx)
 		return -ENOMEM;
-	memset(cnx, 0, sizeof(*cnx));
 
 	cnx->remote_lp = rlp;
 	spin_lock_init(&cnx->lock);
-	INIT_WORK(&cnx->statemachine_wq, veth_statemachine, cnx);
+	INIT_DELAYED_WORK(&cnx->statemachine_wq, veth_statemachine);
 
 	init_timer(&cnx->ack_timer);
 	cnx->ack_timer.function = veth_timed_ack;
@@ -844,20 +845,15 @@ static int veth_init_connection(u8 rlp)
 
 	/* This gets us 1 reference, which is held on behalf of the driver
 	 * infrastructure. It's released at module unload. */
-	kobject_init(&cnx->kobject);
-	cnx->kobject.ktype = &veth_lpar_connection_ktype;
-	rc = kobject_set_name(&cnx->kobject, "cnx%.2d", rlp);
-	if (rc != 0)
-		return rc;
+	kobject_init(&cnx->kobject, &veth_lpar_connection_ktype);
 
-	msgs = kmalloc(VETH_NUMBUFFERS * sizeof(struct veth_msg), GFP_KERNEL);
+	msgs = kcalloc(VETH_NUMBUFFERS, sizeof(struct veth_msg), GFP_KERNEL);
 	if (! msgs) {
 		veth_error("Can't allocate buffers for LPAR %d.\n", rlp);
 		return -ENOMEM;
 	}
 
 	cnx->msgs = msgs;
-	memset(msgs, 0, VETH_NUMBUFFERS * sizeof(struct veth_msg));
 
 	for (i = 0; i < VETH_NUMBUFFERS; i++) {
 		msgs[i].token = i;
@@ -936,9 +932,6 @@ static void veth_release_connection(struct kobject *kobj)
 
 static int veth_open(struct net_device *dev)
 {
-	struct veth_port *port = (struct veth_port *) dev->priv;
-
-	memset(&port->stats, 0, sizeof (port->stats));
 	netif_start_queue(dev);
 	return 0;
 }
@@ -947,13 +940,6 @@ static int veth_close(struct net_device *dev)
 {
 	netif_stop_queue(dev);
 	return 0;
-}
-
-static struct net_device_stats *veth_get_stats(struct net_device *dev)
-{
-	struct veth_port *port = (struct veth_port *) dev->priv;
-
-	return &port->stats;
 }
 
 static int veth_change_mtu(struct net_device *dev, int new_mtu)
@@ -966,7 +952,7 @@ static int veth_change_mtu(struct net_device *dev, int new_mtu)
 
 static void veth_set_multicast_list(struct net_device *dev)
 {
-	struct veth_port *port = (struct veth_port *) dev->priv;
+	struct veth_port *port = netdev_priv(dev);
 	unsigned long flags;
 
 	write_lock_irqsave(&port->mcast_gate, flags);
@@ -1029,13 +1015,23 @@ static u32 veth_get_link(struct net_device *dev)
 	return 1;
 }
 
-static struct ethtool_ops ops = {
+static const struct ethtool_ops ops = {
 	.get_drvinfo = veth_get_drvinfo,
 	.get_settings = veth_get_settings,
 	.get_link = veth_get_link,
 };
 
-static struct net_device * __init veth_probe_one(int vlan,
+static const struct net_device_ops veth_netdev_ops = {
+	.ndo_open		= veth_open,
+	.ndo_stop		= veth_close,
+	.ndo_start_xmit		= veth_start_xmit,
+	.ndo_change_mtu		= veth_change_mtu,
+	.ndo_set_multicast_list	= veth_set_multicast_list,
+	.ndo_set_mac_address	= NULL,
+	.ndo_validate_addr	= eth_validate_addr,
+};
+
+static struct net_device *veth_probe_one(int vlan,
 		struct vio_dev *vio_dev)
 {
 	struct net_device *dev;
@@ -1058,7 +1054,7 @@ static struct net_device * __init veth_probe_one(int vlan,
 		return NULL;
 	}
 
-	port = (struct veth_port *) dev->priv;
+	port = netdev_priv(dev);
 
 	spin_lock_init(&port->queue_lock);
 	rwlock_init(&port->mcast_gate);
@@ -1081,13 +1077,7 @@ static struct net_device * __init veth_probe_one(int vlan,
 
 	memcpy(&port->mac_addr, mac_addr, ETH_ALEN);
 
-	dev->open = veth_open;
-	dev->hard_start_xmit = veth_start_xmit;
-	dev->stop = veth_close;
-	dev->get_stats = veth_get_stats;
-	dev->change_mtu = veth_change_mtu;
-	dev->set_mac_address = NULL;
-	dev->set_multicast_list = veth_set_multicast_list;
+	dev->netdev_ops = &veth_netdev_ops;
 	SET_ETHTOOL_OPS(dev, &ops);
 
 	SET_NETDEV_DEV(dev, vdev);
@@ -1099,11 +1089,8 @@ static struct net_device * __init veth_probe_one(int vlan,
 		return NULL;
 	}
 
-	kobject_init(&port->kobject);
-	port->kobject.parent = &dev->class_dev.kobj;
-	port->kobject.ktype  = &veth_port_ktype;
-	kobject_set_name(&port->kobject, "veth_port");
-	if (0 != kobject_add(&port->kobject))
+	kobject_init(&port->kobject, &veth_port_ktype);
+	if (0 != kobject_add(&port->kobject, &dev->dev.kobj, "veth_port"))
 		veth_error("Failed adding port for %s to sysfs.\n", dev->name);
 
 	veth_info("%s attached to iSeries vlan %d (LPAR map = 0x%.4X)\n",
@@ -1120,7 +1107,7 @@ static int veth_transmit_to_one(struct sk_buff *skb, HvLpIndex rlp,
 				struct net_device *dev)
 {
 	struct veth_lpar_connection *cnx = veth_cnx[rlp];
-	struct veth_port *port = (struct veth_port *) dev->priv;
+	struct veth_port *port = netdev_priv(dev);
 	HvLpEvent_Rc rc;
 	struct veth_msg *msg = NULL;
 	unsigned long flags;
@@ -1146,7 +1133,7 @@ static int veth_transmit_to_one(struct sk_buff *skb, HvLpIndex rlp,
 	msg->data.addr[0] = dma_map_single(port->dev, skb->data,
 				skb->len, DMA_TO_DEVICE);
 
-	if (dma_mapping_error(msg->data.addr[0]))
+	if (dma_mapping_error(port->dev, msg->data.addr[0]))
 		goto recycle_and_drop;
 
 	msg->dev = port->dev;
@@ -1183,7 +1170,6 @@ static void veth_transmit_to_many(struct sk_buff *skb,
 					  HvLpIndexMap lpmask,
 					  struct net_device *dev)
 {
-	struct veth_port *port = (struct veth_port *) dev->priv;
 	int i, success, error;
 
 	success = error = 0;
@@ -1199,18 +1185,18 @@ static void veth_transmit_to_many(struct sk_buff *skb,
 	}
 
 	if (error)
-		port->stats.tx_errors++;
+		dev->stats.tx_errors++;
 
 	if (success) {
-		port->stats.tx_packets++;
-		port->stats.tx_bytes += skb->len;
+		dev->stats.tx_packets++;
+		dev->stats.tx_bytes += skb->len;
 	}
 }
 
 static int veth_start_xmit(struct sk_buff *skb, struct net_device *dev)
 {
 	unsigned char *frame = skb->data;
-	struct veth_port *port = (struct veth_port *) dev->priv;
+	struct veth_port *port = netdev_priv(dev);
 	HvLpIndexMap lpmask;
 
 	if (! (frame[0] & 0x01)) {
@@ -1219,7 +1205,7 @@ static int veth_start_xmit(struct sk_buff *skb, struct net_device *dev)
 
 		if ( ! ((1 << rlp) & port->lpar_map) ) {
 			dev_kfree_skb(skb);
-			return 0;
+			return NETDEV_TX_OK;
 		}
 
 		lpmask = 1 << rlp;
@@ -1231,7 +1217,7 @@ static int veth_start_xmit(struct sk_buff *skb, struct net_device *dev)
 
 	dev_kfree_skb(skb);
 
-	return 0;
+	return NETDEV_TX_OK;
 }
 
 /* You must hold the connection's lock when you call this function. */
@@ -1245,7 +1231,7 @@ static void veth_recycle_msg(struct veth_lpar_connection *cnx,
 		dma_address = msg->data.addr[0];
 		dma_length = msg->data.len[0];
 
-		if (!dma_mapping_error(dma_address))
+		if (!dma_mapping_error(msg->dev, dma_address))
 			dma_unmap_single(msg->dev, dma_address, dma_length,
 					DMA_TO_DEVICE);
 
@@ -1274,7 +1260,7 @@ static void veth_wake_queues(struct veth_lpar_connection *cnx)
 		if (! dev)
 			continue;
 
-		port = (struct veth_port *)dev->priv;
+		port = netdev_priv(dev);
 
 		if (! (port->lpar_map & (1<<cnx->remote_lp)))
 			continue;
@@ -1303,7 +1289,7 @@ static void veth_stop_queues(struct veth_lpar_connection *cnx)
 		if (! dev)
 			continue;
 
-		port = (struct veth_port *)dev->priv;
+		port = netdev_priv(dev);
 
 		/* If this cnx is not on the vlan for this port, continue */
 		if (! (port->lpar_map & (1 << cnx->remote_lp)))
@@ -1525,7 +1511,7 @@ static void veth_receive(struct veth_lpar_connection *cnx,
 			continue;
 		}
 
-		port = (struct veth_port *)dev->priv;
+		port = netdev_priv(dev);
 		dest = *((u64 *) skb->data) & 0xFFFFFFFFFFFF0000;
 
 		if ((vlan > HVMAXARCHITECTEDVIRTUALLANS) || !port) {
@@ -1538,12 +1524,11 @@ static void veth_receive(struct veth_lpar_connection *cnx,
 		}
 
 		skb_put(skb, length);
-		skb->dev = dev;
 		skb->protocol = eth_type_trans(skb, dev);
 		skb->ip_summed = CHECKSUM_NONE;
 		netif_rx(skb);	/* send it up */
-		port->stats.rx_packets++;
-		port->stats.rx_bytes += length;
+		dev->stats.rx_packets++;
+		dev->stats.rx_bytes += length;
 	} while (startchunk += nchunks, startchunk < VETH_MAX_FRAMES_PER_MSG);
 
 	/* Ack it */
@@ -1666,7 +1651,7 @@ static struct vio_driver veth_driver = {
  * Module initialization/cleanup
  */
 
-void __exit veth_module_cleanup(void)
+static void __exit veth_module_cleanup(void)
 {
 	int i;
 	struct veth_lpar_connection *cnx;
@@ -1695,10 +1680,13 @@ void __exit veth_module_cleanup(void)
 }
 module_exit(veth_module_cleanup);
 
-int __init veth_module_init(void)
+static int __init veth_module_init(void)
 {
 	int i;
 	int rc;
+
+	if (!firmware_has_feature(FW_FEATURE_ISERIES))
+		return -ENODEV;
 
 	this_lp = HvLpConfig_getLpIndex_outline();
 
@@ -1722,9 +1710,9 @@ int __init veth_module_init(void)
 			continue;
 
 		kobj = &veth_cnx[i]->kobject;
-		kobj->parent = &veth_driver.driver.kobj;
 		/* If the add failes, complain but otherwise continue */
-		if (0 != kobject_add(kobj))
+		if (0 != driver_add_kobj(&veth_driver.driver, kobj,
+					"cnx%.2d", veth_cnx[i]->remote_lp))
 			veth_error("cnx %d: Failed adding to sysfs.\n", i);
 	}
 

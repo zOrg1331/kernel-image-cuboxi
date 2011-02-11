@@ -16,6 +16,8 @@
 #ifndef FS_ENET_PD_H
 #define FS_ENET_PD_H
 
+#include <linux/string.h>
+#include <linux/of_mdio.h>
 #include <asm/types.h>
 
 #define FS_ENET_NAME	"fs_enet"
@@ -55,6 +57,30 @@ static inline int fs_get_scc_index(enum fs_id id)
 	return -1;
 }
 
+static inline int fs_fec_index2id(int index)
+{
+	int id = fsid_fec1 + index - 1;
+	if (id >= fsid_fec1 && id <= fsid_fec2)
+		return id;
+	return FS_MAX_INDEX;
+		}
+
+static inline int fs_fcc_index2id(int index)
+{
+	int id = fsid_fcc1 + index - 1;
+	if (id >= fsid_fcc1 && id <= fsid_fcc3)
+		return id;
+	return FS_MAX_INDEX;
+}
+
+static inline int fs_scc_index2id(int index)
+{
+	int id = fsid_scc1 + index - 1;
+	if (id >= fsid_scc1 && id <= fsid_scc4)
+		return id;
+	return FS_MAX_INDEX;
+}
+
 enum fs_mii_method {
 	fsmii_fixed,
 	fsmii_fec,
@@ -78,37 +104,34 @@ struct fs_mii_bb_platform_info {
 	struct fs_mii_bit 	mdio_dir;
 	struct fs_mii_bit 	mdio_dat;
 	struct fs_mii_bit	mdc_dat;
-	int mdio_port;	/* port & bit for MDIO */
-	int mdio_bit;
-	int mdc_port;	/* port & bit for MDC  */
-	int mdc_bit;
 	int delay;	/* delay in us         */
 	int irq[32]; 	/* irqs per phy's */
 };
 
 struct fs_platform_info {
-	
-	void(*init_ioports)(void);
+
+	void(*init_ioports)(struct fs_platform_info *);
 	/* device specific information */
 	int fs_no;		/* controller index            */
+	char fs_type[4];	/* controller type             */
 
 	u32 cp_page;		/* CPM page */
 	u32 cp_block;		/* CPM sblock */
-	
+	u32 cp_command;		/* CPM page/sblock/mcn */
+
 	u32 clk_trx;		/* some stuff for pins & mux configuration*/
+	u32 clk_rx;
+	u32 clk_tx;
 	u32 clk_route;
 	u32 clk_mask;
-	
+
 	u32 mem_offset;
 	u32 dpram_offset;
 	u32 fcc_regs_c;
 	
 	u32 device_flags;
 
-	int phy_addr;		/* the phy address (-1 no phy) */
-	const char*	bus_id;
-	int phy_irq;		/* the phy irq (if it exists)  */
-
+	struct device_node *phy_node;
 	const struct fs_mii_bus_info *bus_info;
 
 	int rx_ring, tx_ring;	/* number of buffers on rx     */
@@ -124,4 +147,16 @@ struct fs_mii_fec_platform_info {
 	u32 irq[32];
 	u32 mii_speed;
 };
+
+static inline int fs_get_id(struct fs_platform_info *fpi)
+{
+	if(strstr(fpi->fs_type, "SCC"))
+		return fs_scc_index2id(fpi->fs_no);
+	if(strstr(fpi->fs_type, "FCC"))
+		return fs_fcc_index2id(fpi->fs_no);
+	if(strstr(fpi->fs_type, "FEC"))
+		return fs_fec_index2id(fpi->fs_no);
+	return fpi->fs_no;
+}
+
 #endif

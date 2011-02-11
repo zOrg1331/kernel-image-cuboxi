@@ -16,6 +16,7 @@
 
 #include <linux/kernel.h>
 #include <linux/mm.h>
+#include <linux/nmi.h>
 #include <linux/swap.h>
 #include <linux/bootmem.h>
 #include <linux/acpi.h>
@@ -35,9 +36,10 @@ struct early_node_data {
 	struct ia64_node_data *node_data;
 	unsigned long pernode_addr;
 	unsigned long pernode_size;
-	struct bootmem_data bootmem_data;
 	unsigned long num_physpages;
+#ifdef CONFIG_ZONE_DMA
 	unsigned long num_dma_physpages;
+#endif
 	unsigned long min_pfn;
 	unsigned long max_pfn;
 };
@@ -45,7 +47,7 @@ struct early_node_data {
 static struct early_node_data mem_data[MAX_NUMNODES] __initdata;
 static nodemask_t memory_less_mask __initdata;
 
-static pg_data_t *pgdat_list[MAX_NUMNODES];
+pg_data_t *pgdat_list[MAX_NUMNODES];
 
 /*
  * To prevent cache aliasing effects, align per-node structures so that they
@@ -72,22 +74,19 @@ static pg_data_t *pgdat_list[MAX_NUMNODES];
 static int __init build_node_maps(unsigned long start, unsigned long len,
 				  int node)
 {
-	unsigned long cstart, epfn, end = start + len;
-	struct bootmem_data *bdp = &mem_data[node].bootmem_data;
+	unsigned long spfn, epfn, end = start + len;
+	struct bootmem_data *bdp = &bootmem_node_data[node];
 
 	epfn = GRANULEROUNDUP(end) >> PAGE_SHIFT;
-	cstart = GRANULEROUNDDOWN(start);
+	spfn = GRANULEROUNDDOWN(start) >> PAGE_SHIFT;
 
 	if (!bdp->node_low_pfn) {
-		bdp->node_boot_start = cstart;
+		bdp->node_min_pfn = spfn;
 		bdp->node_low_pfn = epfn;
 	} else {
-		bdp->node_boot_start = min(cstart, bdp->node_boot_start);
+		bdp->node_min_pfn = min(spfn, bdp->node_min_pfn);
 		bdp->node_low_pfn = max(epfn, bdp->node_low_pfn);
 	}
-
-	min_low_pfn = min(min_low_pfn, bdp->node_boot_start>>PAGE_SHIFT);
-	max_low_pfn = max(max_low_pfn, bdp->node_low_pfn);
 
 	return 0;
 }
@@ -104,7 +103,7 @@ static int __meminit early_nr_cpus_node(int node)
 {
 	int cpu, n = 0;
 
-	for (cpu = 0; cpu < NR_CPUS; cpu++)
+	for_each_possible_early_cpu(cpu)
 		if (node == node_cpuid[cpu].nid)
 			n++;
 
@@ -124,6 +123,7 @@ static unsigned long __meminit compute_pernodesize(int node)
 	pernodesize += node * L1_CACHE_BYTES;
 	pernodesize += L1_CACHE_ALIGN(sizeof(pg_data_t));
 	pernodesize += L1_CACHE_ALIGN(sizeof(struct ia64_node_data));
+	pernodesize += L1_CACHE_ALIGN(sizeof(pg_data_t));
 	pernodesize = PAGE_ALIGN(pernodesize);
 	return pernodesize;
 }
@@ -142,8 +142,12 @@ static void *per_cpu_node_setup(void *cpu_data, int node)
 #ifdef CONFIG_SMP
 	int cpu;
 
-	for (cpu = 0; cpu < NR_CPUS; cpu++) {
-		if (node == node_cpuid[cpu].nid) {
+	for_each_possible_early_cpu(cpu) {
+		if (cpu == 0) {
+			void *cpu0_data = __cpu0_per_cpu;
+			__per_cpu_offset[cpu] = (char*)cpu0_data -
+				__per_cpu_start;
+		} else if (node == node_cpuid[cpu].nid) {
 			memcpy(__va(cpu_data), __phys_per_cpu_start,
 			       __per_cpu_end - __per_cpu_start);
 			__per_cpu_offset[cpu] = (char*)__va(cpu_data) -
@@ -166,7 +170,7 @@ static void __init fill_pernode(int node, unsigned long pernode,
 {
 	void *cpu_data;
 	int cpus = early_nr_cpus_node(node);
-	struct bootmem_data *bdp = &mem_data[node].bootmem_data;
+	struct bootmem_data *bdp = &bootmem_node_data[node];
 
 	mem_data[node].pernode_addr = pernode;
 	mem_data[node].pernode_size = pernodesize;
@@ -221,20 +225,21 @@ static void __init fill_pernode(int node, unsigned long pernode,
 static int __init find_pernode_space(unsigned long start, unsigned long len,
 				     int node)
 {
-	unsigned long epfn;
+	unsigned long spfn, epfn;
 	unsigned long pernodesize = 0, pernode, pages, mapsize;
-	struct bootmem_data *bdp = &mem_data[node].bootmem_data;
+	struct bootmem_data *bdp = &bootmem_node_data[node];
 
+	spfn = start >> PAGE_SHIFT;
 	epfn = (start + len) >> PAGE_SHIFT;
 
-	pages = bdp->node_low_pfn - (bdp->node_boot_start >> PAGE_SHIFT);
+	pages = bdp->node_low_pfn - bdp->node_min_pfn;
 	mapsize = bootmem_bootmap_pages(pages) << PAGE_SHIFT;
 
 	/*
 	 * Make sure this memory falls within this node's usable memory
 	 * since we may have thrown some away in build_maps().
 	 */
-	if (start < bdp->node_boot_start || epfn > bdp->node_low_pfn)
+	if (spfn < bdp->node_min_pfn || epfn > bdp->node_low_pfn)
 		return 0;
 
 	/* Don't setup this node's local space twice... */
@@ -296,15 +301,15 @@ static void __init reserve_pernode_space(void)
 		bdp = pdp->bdata;
 
 		/* First the bootmem_map itself */
-		pages = bdp->node_low_pfn - (bdp->node_boot_start>>PAGE_SHIFT);
+		pages = bdp->node_low_pfn - bdp->node_min_pfn;
 		size = bootmem_bootmap_pages(pages) << PAGE_SHIFT;
 		base = __pa(bdp->node_bootmem_map);
-		reserve_bootmem_node(pdp, base, size);
+		reserve_bootmem_node(pdp, base, size, BOOTMEM_DEFAULT);
 
 		/* Now the per-node space */
 		size = mem_data[node].pernode_size;
 		base = __pa(mem_data[node].pernode_addr);
-		reserve_bootmem_node(pdp, base, size);
+		reserve_bootmem_node(pdp, base, size, BOOTMEM_DEFAULT);
 	}
 }
 
@@ -318,7 +323,7 @@ static void __meminit scatter_node_data(void)
 	 * node_online_map is not set for hot-added nodes at this time,
 	 * because we are halfway through initialization of the new node's
 	 * structures.  If for_each_online_node() is used, a new node's
-	 * pg_data_ptrs will be not initialized. Insted of using it,
+	 * pg_data_ptrs will be not initialized. Instead of using it,
 	 * pgdat_list[] is checked.
 	 */
 	for_each_node(node) {
@@ -345,7 +350,7 @@ static void __init initialize_pernode_data(void)
 
 #ifdef CONFIG_SMP
 	/* Set the node_data pointer for each per-cpu struct */
-	for (cpu = 0; cpu < NR_CPUS; cpu++) {
+	for_each_possible_early_cpu(cpu) {
 		node = node_cpuid[cpu].nid;
 		per_cpu(cpu_info, cpu).node_data = mem_data[node].node_data;
 	}
@@ -412,37 +417,6 @@ static void __init memory_less_nodes(void)
 	return;
 }
 
-#ifdef CONFIG_SPARSEMEM
-/**
- * register_sparse_mem - notify SPARSEMEM that this memory range exists.
- * @start: physical start of range
- * @end: physical end of range
- * @arg: unused
- *
- * Simply calls SPARSEMEM to register memory section(s).
- */
-static int __init register_sparse_mem(unsigned long start, unsigned long end,
-	void *arg)
-{
-	int nid;
-
-	start = __pa(start) >> PAGE_SHIFT;
-	end = __pa(end) >> PAGE_SHIFT;
-	nid = early_pfn_to_nid(start);
-	memory_present(nid, start, end);
-
-	return 0;
-}
-
-static void __init arch_sparse_init(void)
-{
-	efi_memmap_walk(register_sparse_mem, NULL);
-	sparse_init();
-}
-#else
-#define arch_sparse_init() do {} while (0)
-#endif
-
 /**
  * find_memory - walk the EFI memory map and setup the bootmem allocator
  *
@@ -467,12 +441,16 @@ void __init find_memory(void)
 	/* These actually end up getting called by call_pernode_memory() */
 	efi_memmap_walk(filter_rsvd_memory, build_node_maps);
 	efi_memmap_walk(filter_rsvd_memory, find_pernode_space);
+	efi_memmap_walk(find_max_min_low_pfn, NULL);
 
 	for_each_online_node(node)
-		if (mem_data[node].bootmem_data.node_low_pfn) {
+		if (bootmem_node_data[node].node_low_pfn) {
 			node_clear(node, memory_less_mask);
 			mem_data[node].min_pfn = ~0UL;
 		}
+
+	efi_memmap_walk(filter_memory, register_active_ranges);
+
 	/*
 	 * Initialize the boot memory maps in reverse order since that's
 	 * what the bootmem allocator expects
@@ -486,14 +464,14 @@ void __init find_memory(void)
 		else if (node_isset(node, memory_less_mask))
 			continue;
 
-		bdp = &mem_data[node].bootmem_data;
+		bdp = &bootmem_node_data[node];
 		pernode = mem_data[node].pernode_addr;
 		pernodesize = mem_data[node].pernode_size;
 		map = pernode + pernodesize;
 
 		init_bootmem_node(pgdat_list[node],
 				  map>>PAGE_SHIFT,
-				  bdp->node_boot_start>>PAGE_SHIFT,
+				  bdp->node_min_pfn,
 				  bdp->node_low_pfn);
 	}
 
@@ -520,13 +498,9 @@ void __cpuinit *per_cpu_init(void)
 	int cpu;
 	static int first_time = 1;
 
-
-	if (smp_processor_id() != 0)
-		return __per_cpu_start + __per_cpu_offset[smp_processor_id()];
-
 	if (first_time) {
 		first_time = 0;
-		for (cpu = 0; cpu < NR_CPUS; cpu++)
+		for_each_possible_early_cpu(cpu)
 			per_cpu(local_per_cpu_offset, cpu) = __per_cpu_offset[cpu];
 	}
 
@@ -547,19 +521,20 @@ void show_mem(void)
 	unsigned long total_present = 0;
 	pg_data_t *pgdat;
 
-	printk("Mem-info:\n");
+	printk(KERN_INFO "Mem-info:\n");
 	show_free_areas();
-	printk("Free swap:       %6ldkB\n", nr_swap_pages<<(PAGE_SHIFT-10));
+	printk(KERN_INFO "Node memory in pages:\n");
 	for_each_online_pgdat(pgdat) {
 		unsigned long present;
 		unsigned long flags;
 		int shared = 0, cached = 0, reserved = 0;
 
-		printk("Node ID: %d\n", pgdat->node_id);
 		pgdat_resize_lock(pgdat, &flags);
 		present = pgdat->node_present_pages;
 		for(i = 0; i < pgdat->node_spanned_pages; i++) {
 			struct page *page;
+			if (unlikely(i % MAX_ORDER_NR_PAGES == 0))
+				touch_nmi_watchdog();
 			if (pfn_valid(pgdat->node_start_pfn + i))
 				page = pfn_to_page(pgdat->node_start_pfn + i);
 			else {
@@ -579,18 +554,17 @@ void show_mem(void)
 		total_reserved += reserved;
 		total_cached += cached;
 		total_shared += shared;
-		printk("\t%ld pages of RAM\n", present);
-		printk("\t%d reserved pages\n", reserved);
-		printk("\t%d pages shared\n", shared);
-		printk("\t%d pages swap cached\n", cached);
+		printk(KERN_INFO "Node %4d:  RAM: %11ld, rsvd: %8d, "
+		       "shrd: %10d, swpd: %10d\n", pgdat->node_id,
+		       present, reserved, shared, cached);
 	}
-	printk("%ld pages of RAM\n", total_present);
-	printk("%d reserved pages\n", total_reserved);
-	printk("%d pages shared\n", total_shared);
-	printk("%d pages swap cached\n", total_cached);
-	printk("Total of %ld pages in page table cache\n",
-		pgtable_quicklist_total_size());
-	printk("%d free buffer pages\n", nr_free_buffer_pages());
+	printk(KERN_INFO "%ld pages of RAM\n", total_present);
+	printk(KERN_INFO "%d reserved pages\n", total_reserved);
+	printk(KERN_INFO "%d pages shared\n", total_shared);
+	printk(KERN_INFO "%d pages swap cached\n", total_cached);
+	printk(KERN_INFO "Total of %ld pages in page table cache\n",
+	       quicklist_total_size());
+	printk(KERN_INFO "%d free buffer pages\n", nr_free_buffer_pages());
 }
 
 /**
@@ -655,11 +629,12 @@ static __init int count_node_pages(unsigned long start, unsigned long len, int n
 	unsigned long end = start + len;
 
 	mem_data[node].num_physpages += len >> PAGE_SHIFT;
+#ifdef CONFIG_ZONE_DMA
 	if (start <= __pa(MAX_DMA_ADDRESS))
 		mem_data[node].num_dma_physpages +=
 			(min(end, __pa(MAX_DMA_ADDRESS)) - start) >>PAGE_SHIFT;
+#endif
 	start = GRANULEROUNDDOWN(start);
-	start = ORDERROUNDDOWN(start);
 	end = GRANULEROUNDUP(end);
 	mem_data[node].max_pfn = max(mem_data[node].max_pfn,
 				     end >> PAGE_SHIFT);
@@ -678,16 +653,17 @@ static __init int count_node_pages(unsigned long start, unsigned long len, int n
 void __init paging_init(void)
 {
 	unsigned long max_dma;
-	unsigned long zones_size[MAX_NR_ZONES];
-	unsigned long zholes_size[MAX_NR_ZONES];
 	unsigned long pfn_offset = 0;
+	unsigned long max_pfn = 0;
 	int node;
+	unsigned long max_zone_pfns[MAX_NR_ZONES];
 
 	max_dma = virt_to_phys((void *) MAX_DMA_ADDRESS) >> PAGE_SHIFT;
 
-	arch_sparse_init();
-
 	efi_memmap_walk(filter_rsvd_memory, count_node_pages);
+
+	sparse_memory_present_with_active_regions(MAX_NUMNODES);
+	sparse_init();
 
 #ifdef CONFIG_VIRTUAL_MEM_MAP
 	vmalloc_end -= PAGE_ALIGN(ALIGN(max_low_pfn, MAX_ORDER_NR_PAGES) *
@@ -698,50 +674,27 @@ void __init paging_init(void)
 #endif
 
 	for_each_online_node(node) {
-		memset(zones_size, 0, sizeof(zones_size));
-		memset(zholes_size, 0, sizeof(zholes_size));
-
 		num_physpages += mem_data[node].num_physpages;
-
-		if (mem_data[node].min_pfn >= max_dma) {
-			/* All of this node's memory is above ZONE_DMA */
-			zones_size[ZONE_NORMAL] = mem_data[node].max_pfn -
-				mem_data[node].min_pfn;
-			zholes_size[ZONE_NORMAL] = mem_data[node].max_pfn -
-				mem_data[node].min_pfn -
-				mem_data[node].num_physpages;
-		} else if (mem_data[node].max_pfn < max_dma) {
-			/* All of this node's memory is in ZONE_DMA */
-			zones_size[ZONE_DMA] = mem_data[node].max_pfn -
-				mem_data[node].min_pfn;
-			zholes_size[ZONE_DMA] = mem_data[node].max_pfn -
-				mem_data[node].min_pfn -
-				mem_data[node].num_dma_physpages;
-		} else {
-			/* This node has memory in both zones */
-			zones_size[ZONE_DMA] = max_dma -
-				mem_data[node].min_pfn;
-			zholes_size[ZONE_DMA] = zones_size[ZONE_DMA] -
-				mem_data[node].num_dma_physpages;
-			zones_size[ZONE_NORMAL] = mem_data[node].max_pfn -
-				max_dma;
-			zholes_size[ZONE_NORMAL] = zones_size[ZONE_NORMAL] -
-				(mem_data[node].num_physpages -
-				 mem_data[node].num_dma_physpages);
-		}
-
 		pfn_offset = mem_data[node].min_pfn;
 
 #ifdef CONFIG_VIRTUAL_MEM_MAP
 		NODE_DATA(node)->node_mem_map = vmem_map + pfn_offset;
 #endif
-		free_area_init_node(node, NODE_DATA(node), zones_size,
-				    pfn_offset, zholes_size);
+		if (mem_data[node].max_pfn > max_pfn)
+			max_pfn = mem_data[node].max_pfn;
 	}
+
+	memset(max_zone_pfns, 0, sizeof(max_zone_pfns));
+#ifdef CONFIG_ZONE_DMA
+	max_zone_pfns[ZONE_DMA] = max_dma;
+#endif
+	max_zone_pfns[ZONE_NORMAL] = max_pfn;
+	free_area_init_nodes(max_zone_pfns);
 
 	zero_page_memmap_ptr = virt_to_page(ia64_imva(empty_zero_page));
 }
 
+#ifdef CONFIG_MEMORY_HOTPLUG
 pg_data_t *arch_alloc_nodedata(int nid)
 {
 	unsigned long size = compute_pernodesize(nid);
@@ -759,3 +712,12 @@ void arch_refresh_nodedata(int update_node, pg_data_t *update_pgdat)
 	pgdat_list[update_node] = update_pgdat;
 	scatter_node_data();
 }
+#endif
+
+#ifdef CONFIG_SPARSEMEM_VMEMMAP
+int __meminit vmemmap_populate(struct page *start_page,
+						unsigned long size, int node)
+{
+	return vmemmap_populate_basepages(start_page, size, node);
+}
+#endif

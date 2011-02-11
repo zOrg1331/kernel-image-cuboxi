@@ -10,7 +10,6 @@
 #include <linux/sched.h>
 #include <linux/mm.h>
 #include <linux/smp.h>
-#include <linux/smp_lock.h>
 #include <linux/sem.h>
 #include <linux/msg.h>
 #include <linux/shm.h>
@@ -18,63 +17,14 @@
 #include <linux/syscalls.h>
 #include <linux/mman.h>
 #include <linux/file.h>
-#include <linux/utsname.h>
+#include <linux/fs.h>
+#include <linux/ipc.h>
 
 #include <asm/setup.h>
 #include <asm/uaccess.h>
 #include <asm/cachectl.h>
 #include <asm/traps.h>
-#include <asm/ipc.h>
-
-/*
- * sys_pipe() is the normal C calling standard for creating
- * a pipe. It's not the way unix traditionally does this, though.
- */
-asmlinkage int sys_pipe(unsigned long * fildes)
-{
-	int fd[2];
-	int error;
-
-	error = do_pipe(fd);
-	if (!error) {
-		if (copy_to_user(fildes, fd, 2*sizeof(int)))
-			error = -EFAULT;
-	}
-	return error;
-}
-
-/* common code for old and new mmaps */
-static inline long do_mmap2(
-	unsigned long addr, unsigned long len,
-	unsigned long prot, unsigned long flags,
-	unsigned long fd, unsigned long pgoff)
-{
-	int error = -EBADF;
-	struct file * file = NULL;
-
-	flags &= ~(MAP_EXECUTABLE | MAP_DENYWRITE);
-	if (!(flags & MAP_ANONYMOUS)) {
-		file = fget(fd);
-		if (!file)
-			goto out;
-	}
-
-	down_write(&current->mm->mmap_sem);
-	error = do_mmap_pgoff(file, addr, len, prot, flags, pgoff);
-	up_write(&current->mm->mmap_sem);
-
-	if (file)
-		fput(file);
-out:
-	return error;
-}
-
-asmlinkage long sys_mmap2(unsigned long addr, unsigned long len,
-	unsigned long prot, unsigned long flags,
-	unsigned long fd, unsigned long pgoff)
-{
-	return do_mmap2(addr, len, prot, flags, fd, pgoff);
-}
+#include <asm/unistd.h>
 
 /*
  * Perform the select(nd, in, out, ex, tv) and mmap() system
@@ -104,57 +54,11 @@ asmlinkage int old_mmap(struct mmap_arg_struct *arg)
 	if (a.offset & ~PAGE_MASK)
 		goto out;
 
-	a.flags &= ~(MAP_EXECUTABLE | MAP_DENYWRITE);
-
-	error = do_mmap2(a.addr, a.len, a.prot, a.flags, a.fd, a.offset >> PAGE_SHIFT);
+	error = sys_mmap_pgoff(a.addr, a.len, a.prot, a.flags, a.fd,
+			       a.offset >> PAGE_SHIFT);
 out:
 	return error;
 }
-
-#if 0 /* DAVIDM - do we want this */
-struct mmap_arg_struct64 {
-	__u32 addr;
-	__u32 len;
-	__u32 prot;
-	__u32 flags;
-	__u64 offset; /* 64 bits */
-	__u32 fd;
-};
-
-asmlinkage long sys_mmap64(struct mmap_arg_struct64 *arg)
-{
-	int error = -EFAULT;
-	struct file * file = NULL;
-	struct mmap_arg_struct64 a;
-	unsigned long pgoff;
-
-	if (copy_from_user(&a, arg, sizeof(a)))
-		return -EFAULT;
-
-	if ((long)a.offset & ~PAGE_MASK)
-		return -EINVAL;
-
-	pgoff = a.offset >> PAGE_SHIFT;
-	if ((a.offset >> PAGE_SHIFT) != pgoff)
-		return -EINVAL;
-
-	if (!(a.flags & MAP_ANONYMOUS)) {
-		error = -EBADF;
-		file = fget(a.fd);
-		if (!file)
-			goto out;
-	}
-	a.flags &= ~(MAP_EXECUTABLE | MAP_DENYWRITE);
-
-	down_write(&current->mm->mmap_sem);
-	error = do_mmap_pgoff(file, a.addr, a.len, a.prot, a.flags, pgoff);
-	up_write(&current->mm->mmap_sem);
-	if (file)
-		fput(file);
-out:
-	return error;
-}
-#endif
 
 struct sel_arg_struct {
 	unsigned long n;
@@ -280,3 +184,26 @@ asmlinkage void syscall_print(void *dummy,...)
                ((regs->pc)&0xffffff)-2,regs->orig_er0,regs->er1,regs->er2,regs->er3,regs->er0);
 }
 #endif
+
+/*
+ * Do a system call from kernel instead of calling sys_execve so we
+ * end up with proper pt_regs.
+ */
+int kernel_execve(const char *filename, char *const argv[], char *const envp[])
+{
+	register long res __asm__("er0");
+	register char *const *_c __asm__("er3") = envp;
+	register char *const *_b __asm__("er2") = argv;
+	register const char * _a __asm__("er1") = filename;
+	__asm__ __volatile__ ("mov.l %1,er0\n\t"
+			"trapa	#0\n\t"
+			: "=r" (res)
+			: "g" (__NR_execve),
+			  "g" (_a),
+			  "g" (_b),
+			  "g" (_c)
+			: "cc", "memory");
+	return res;
+}
+
+

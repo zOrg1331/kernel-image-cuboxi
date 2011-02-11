@@ -184,39 +184,27 @@ int spi_bitbang_setup(struct spi_device *spi)
 	struct spi_bitbang_cs	*cs = spi->controller_state;
 	struct spi_bitbang	*bitbang;
 	int			retval;
+	unsigned long		flags;
 
 	bitbang = spi_master_get_devdata(spi->master);
 
-	/* REVISIT: some systems will want to support devices using lsb-first
-	 * bit encodings on the wire.  In pure software that would be trivial,
-	 * just bitbang_txrx_le_cphaX() routines shifting the other way, and
-	 * some hardware controllers also have this support.
-	 */
-	if ((spi->mode & SPI_LSB_FIRST) != 0)
-		return -EINVAL;
-
 	if (!cs) {
-		cs = kzalloc(sizeof *cs, SLAB_KERNEL);
+		cs = kzalloc(sizeof *cs, GFP_KERNEL);
 		if (!cs)
 			return -ENOMEM;
 		spi->controller_state = cs;
 	}
-
-	if (!spi->bits_per_word)
-		spi->bits_per_word = 8;
 
 	/* per-word shift register access, in hardware or bitbanging */
 	cs->txrx_word = bitbang->txrx_word[spi->mode & (SPI_CPOL|SPI_CPHA)];
 	if (!cs->txrx_word)
 		return -EINVAL;
 
-	retval = spi_bitbang_setup_transfer(spi, NULL);
+	retval = bitbang->setup_transfer(spi, NULL);
 	if (retval < 0)
 		return retval;
 
-	dev_dbg(&spi->dev, "%s, mode %d, %u bits/w, %u nsec/bit\n",
-			__FUNCTION__, spi->mode & (SPI_CPOL | SPI_CPHA),
-			spi->bits_per_word, 2 * cs->nsecs);
+	dev_dbg(&spi->dev, "%s, %u nsec/bit\n", __func__, 2 * cs->nsecs);
 
 	/* NOTE we _need_ to call chipselect() early, ideally with adapter
 	 * setup, unless the hardware defaults cooperate to avoid confusion
@@ -224,12 +212,12 @@ int spi_bitbang_setup(struct spi_device *spi)
 	 */
 
 	/* deselect chip (low or high) */
-	spin_lock(&bitbang->lock);
+	spin_lock_irqsave(&bitbang->lock, flags);
 	if (!bitbang->busy) {
 		bitbang->chipselect(spi, BITBANG_CS_INACTIVE);
 		ndelay(cs->nsecs);
 	}
-	spin_unlock(&bitbang->lock);
+	spin_unlock_irqrestore(&bitbang->lock, flags);
 
 	return 0;
 }
@@ -238,7 +226,7 @@ EXPORT_SYMBOL_GPL(spi_bitbang_setup);
 /**
  * spi_bitbang_cleanup - default cleanup for per-word I/O loops
  */
-void spi_bitbang_cleanup(const struct spi_device *spi)
+void spi_bitbang_cleanup(struct spi_device *spi)
 {
 	kfree(spi->controller_state);
 }
@@ -265,10 +253,16 @@ static int spi_bitbang_bufs(struct spi_device *spi, struct spi_transfer *t)
  * Drivers can provide word-at-a-time i/o primitives, or provide
  * transfer-at-a-time ones to leverage dma or fifo hardware.
  */
-static void bitbang_work(void *_bitbang)
+static void bitbang_work(struct work_struct *work)
 {
-	struct spi_bitbang	*bitbang = _bitbang;
+	struct spi_bitbang	*bitbang =
+		container_of(work, struct spi_bitbang, work);
 	unsigned long		flags;
+	int			do_setup = -1;
+	int			(*setup_transfer)(struct spi_device *,
+					struct spi_transfer *);
+
+	setup_transfer = bitbang->setup_transfer;
 
 	spin_lock_irqsave(&bitbang->lock, flags);
 	bitbang->busy = 1;
@@ -280,8 +274,6 @@ static void bitbang_work(void *_bitbang)
 		unsigned		tmp;
 		unsigned		cs_change;
 		int			status;
-		int			(*setup_transfer)(struct spi_device *,
-						struct spi_transfer *);
 
 		m = container_of(bitbang->queue.next, struct spi_message,
 				queue);
@@ -298,23 +290,19 @@ static void bitbang_work(void *_bitbang)
 		tmp = 0;
 		cs_change = 1;
 		status = 0;
-		setup_transfer = NULL;
 
 		list_for_each_entry (t, &m->transfers, transfer_list) {
-			if (bitbang->shutdown) {
-				status = -ESHUTDOWN;
-				break;
-			}
 
-			/* override or restore speed and wordsize */
-			if (t->speed_hz || t->bits_per_word) {
-				setup_transfer = bitbang->setup_transfer;
+			/* override speed or wordsize? */
+			if (t->speed_hz || t->bits_per_word)
+				do_setup = 1;
+
+			/* init (-1) or override (1) transfer params */
+			if (do_setup != 0) {
 				if (!setup_transfer) {
 					status = -ENOPROTOOPT;
 					break;
 				}
-			}
-			if (setup_transfer) {
 				status = setup_transfer(spi, t);
 				if (status < 0)
 					break;
@@ -348,12 +336,14 @@ static void bitbang_work(void *_bitbang)
 					t->rx_dma = t->tx_dma = 0;
 				status = bitbang->txrx_bufs(spi, t);
 			}
+			if (status > 0)
+				m->actual_length += status;
 			if (status != t->len) {
-				if (status > 0)
-					status = -EMSGSIZE;
+				/* always report some kind of error */
+				if (status >= 0)
+					status = -EREMOTEIO;
 				break;
 			}
-			m->actual_length += status;
 			status = 0;
 
 			/* protocol tweaks before next transfer */
@@ -376,9 +366,10 @@ static void bitbang_work(void *_bitbang)
 		m->status = status;
 		m->complete(m->context);
 
-		/* restore speed and wordsize */
-		if (setup_transfer)
+		/* restore speed and wordsize if it was overridden */
+		if (do_setup == 1)
 			setup_transfer(spi, NULL);
+		do_setup = 0;
 
 		/* normally deactivate chipselect ... unless no error and
 		 * cs_change has hinted that the next message will probably
@@ -409,8 +400,6 @@ int spi_bitbang_transfer(struct spi_device *spi, struct spi_message *m)
 	m->status = -EINPROGRESS;
 
 	bitbang = spi_master_get_devdata(spi->master);
-	if (bitbang->shutdown)
-		return -ESHUTDOWN;
 
 	spin_lock_irqsave(&bitbang->lock, flags);
 	if (!spi->max_speed_hz)
@@ -441,9 +430,10 @@ EXPORT_SYMBOL_GPL(spi_bitbang_transfer);
  * hardware that basically exposes a shift register) or per-spi_transfer
  * (which takes better advantage of hardware like fifos or DMA engines).
  *
- * Drivers using per-word I/O loops should use (or call) spi_bitbang_setup and
- * spi_bitbang_cleanup to handle those spi master methods.  Those methods are
- * the defaults if the bitbang->txrx_bufs routine isn't initialized.
+ * Drivers using per-word I/O loops should use (or call) spi_bitbang_setup,
+ * spi_bitbang_cleanup and spi_bitbang_setup_transfer to handle those spi
+ * master methods.  Those methods are the defaults if the bitbang->txrx_bufs
+ * routine isn't initialized.
  *
  * This routine registers the spi_master, which will process requests in a
  * dedicated task, keeping IRQs unblocked most of the time.  To stop
@@ -456,9 +446,12 @@ int spi_bitbang_start(struct spi_bitbang *bitbang)
 	if (!bitbang->master || !bitbang->chipselect)
 		return -EINVAL;
 
-	INIT_WORK(&bitbang->work, bitbang_work, bitbang);
+	INIT_WORK(&bitbang->work, bitbang_work);
 	spin_lock_init(&bitbang->lock);
 	INIT_LIST_HEAD(&bitbang->queue);
+
+	if (!bitbang->master->mode_bits)
+		bitbang->master->mode_bits = SPI_CPOL | SPI_CPHA | bitbang->flags;
 
 	if (!bitbang->master->transfer)
 		bitbang->master->transfer = spi_bitbang_transfer;
@@ -478,7 +471,7 @@ int spi_bitbang_start(struct spi_bitbang *bitbang)
 	/* this task is the only thing to touch the SPI bits */
 	bitbang->busy = 0;
 	bitbang->workqueue = create_singlethread_workqueue(
-			bitbang->master->cdev.dev->bus_id);
+			dev_name(bitbang->master->dev.parent));
 	if (bitbang->workqueue == NULL) {
 		status = -EBUSY;
 		goto err1;
@@ -505,27 +498,11 @@ EXPORT_SYMBOL_GPL(spi_bitbang_start);
  */
 int spi_bitbang_stop(struct spi_bitbang *bitbang)
 {
-	unsigned	limit = 500;
+	spi_unregister_master(bitbang->master);
 
-	spin_lock_irq(&bitbang->lock);
-	bitbang->shutdown = 0;
-	while (!list_empty(&bitbang->queue) && limit--) {
-		spin_unlock_irq(&bitbang->lock);
-
-		dev_dbg(bitbang->master->cdev.dev, "wait for queue\n");
-		msleep(10);
-
-		spin_lock_irq(&bitbang->lock);
-	}
-	spin_unlock_irq(&bitbang->lock);
-	if (!list_empty(&bitbang->queue)) {
-		dev_err(bitbang->master->cdev.dev, "queue didn't empty\n");
-		return -EBUSY;
-	}
+	WARN_ON(!list_empty(&bitbang->queue));
 
 	destroy_workqueue(bitbang->workqueue);
-
-	spi_unregister_master(bitbang->master);
 
 	return 0;
 }

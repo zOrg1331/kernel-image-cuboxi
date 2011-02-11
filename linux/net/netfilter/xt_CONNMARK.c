@@ -1,8 +1,10 @@
-/* This kernel module is used to modify the connection mark values, or
- * to optionally restore the skb nfmark from the connection mark
+/*
+ *	xt_CONNMARK - Netfilter module to modify the connection mark values
  *
- * Copyright (C) 2002,2004 MARA Systems AB <http://www.marasystems.com>
- * by Henrik Nordstrom <hno@marasystems.com>
+ *	Copyright (C) 2002,2004 MARA Systems AB <http://www.marasystems.com>
+ *	by Henrik Nordstrom <hno@marasystems.com>
+ *	Copyright © CC Computer Consultants GmbH, 2007 - 2008
+ *	Jan Engelhardt <jengelh@computergmbh.de>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -23,120 +25,89 @@
 #include <linux/ip.h>
 #include <net/checksum.h>
 
-MODULE_AUTHOR("Henrik Nordstrom <hno@marasytems.com>");
-MODULE_DESCRIPTION("IP tables CONNMARK matching module");
+MODULE_AUTHOR("Henrik Nordstrom <hno@marasystems.com>");
+MODULE_DESCRIPTION("Xtables: connection mark modification");
 MODULE_LICENSE("GPL");
 MODULE_ALIAS("ipt_CONNMARK");
+MODULE_ALIAS("ip6t_CONNMARK");
 
 #include <linux/netfilter/x_tables.h>
 #include <linux/netfilter/xt_CONNMARK.h>
-#include <net/netfilter/nf_conntrack_compat.h>
+#include <net/netfilter/nf_conntrack_ecache.h>
 
 static unsigned int
-target(struct sk_buff **pskb,
-       const struct net_device *in,
-       const struct net_device *out,
-       unsigned int hooknum,
-       const struct xt_target *target,
-       const void *targinfo,
-       void *userinfo)
+connmark_tg(struct sk_buff *skb, const struct xt_target_param *par)
 {
-	const struct xt_connmark_target_info *markinfo = targinfo;
-	u_int32_t diff;
-	u_int32_t nfmark;
+	const struct xt_connmark_tginfo1 *info = par->targinfo;
+	enum ip_conntrack_info ctinfo;
+	struct nf_conn *ct;
 	u_int32_t newmark;
-	u_int32_t ctinfo;
-	u_int32_t *ctmark = nf_ct_get_mark(*pskb, &ctinfo);
 
-	if (ctmark) {
-	    switch(markinfo->mode) {
-	    case XT_CONNMARK_SET:
-		newmark = (*ctmark & ~markinfo->mask) | markinfo->mark;
-		if (newmark != *ctmark)
-		    *ctmark = newmark;
+	ct = nf_ct_get(skb, &ctinfo);
+	if (ct == NULL)
+		return XT_CONTINUE;
+
+	switch (info->mode) {
+	case XT_CONNMARK_SET:
+		newmark = (ct->mark & ~info->ctmask) ^ info->ctmark;
+		if (ct->mark != newmark) {
+			ct->mark = newmark;
+			nf_conntrack_event_cache(IPCT_MARK, ct);
+		}
 		break;
-	    case XT_CONNMARK_SAVE:
-		newmark = (*ctmark & ~markinfo->mask) | ((*pskb)->nfmark & markinfo->mask);
-		if (*ctmark != newmark)
-		    *ctmark = newmark;
+	case XT_CONNMARK_SAVE:
+		newmark = (ct->mark & ~info->ctmask) ^
+		          (skb->mark & info->nfmask);
+		if (ct->mark != newmark) {
+			ct->mark = newmark;
+			nf_conntrack_event_cache(IPCT_MARK, ct);
+		}
 		break;
-	    case XT_CONNMARK_RESTORE:
-		nfmark = (*pskb)->nfmark;
-		diff = (*ctmark ^ nfmark) & markinfo->mask;
-		if (diff != 0)
-		    (*pskb)->nfmark = nfmark ^ diff;
+	case XT_CONNMARK_RESTORE:
+		newmark = (skb->mark & ~info->nfmask) ^
+		          (ct->mark & info->ctmask);
+		skb->mark = newmark;
 		break;
-	    }
 	}
 
 	return XT_CONTINUE;
 }
 
-static int
-checkentry(const char *tablename,
-	   const void *entry,
-	   const struct xt_target *target,
-	   void *targinfo,
-	   unsigned int targinfosize,
-	   unsigned int hook_mask)
+static bool connmark_tg_check(const struct xt_tgchk_param *par)
 {
-	struct xt_connmark_target_info *matchinfo = targinfo;
-
-	if (matchinfo->mode == XT_CONNMARK_RESTORE) {
-	    if (strcmp(tablename, "mangle") != 0) {
-		    printk(KERN_WARNING "CONNMARK: restore can only be called from \"mangle\" table, not \"%s\"\n", tablename);
-		    return 0;
-	    }
+	if (nf_ct_l3proto_try_module_get(par->family) < 0) {
+		printk(KERN_WARNING "cannot load conntrack support for "
+		       "proto=%u\n", par->family);
+		return false;
 	}
-
-	if (matchinfo->mark > 0xffffffff || matchinfo->mask > 0xffffffff) {
-		printk(KERN_WARNING "CONNMARK: Only supports 32bit mark\n");
-		return 0;
-	}
-
-	return 1;
+	return true;
 }
 
-static struct xt_target connmark_reg = {
-	.name		= "CONNMARK",
-	.target		= target,
-	.targetsize	= sizeof(struct xt_connmark_target_info),
-	.checkentry	= checkentry,
-	.family		= AF_INET,
-	.me		= THIS_MODULE
+static void connmark_tg_destroy(const struct xt_tgdtor_param *par)
+{
+	nf_ct_l3proto_module_put(par->family);
+}
+
+static struct xt_target connmark_tg_reg __read_mostly = {
+	.name           = "CONNMARK",
+	.revision       = 1,
+	.family         = NFPROTO_UNSPEC,
+	.checkentry     = connmark_tg_check,
+	.target         = connmark_tg,
+	.targetsize     = sizeof(struct xt_connmark_tginfo1),
+	.destroy        = connmark_tg_destroy,
+	.me             = THIS_MODULE,
 };
 
-static struct xt_target connmark6_reg = {
-	.name		= "CONNMARK",
-	.target		= target,
-	.targetsize	= sizeof(struct xt_connmark_target_info),
-	.checkentry	= checkentry,
-	.family		= AF_INET6,
-	.me		= THIS_MODULE
-};
-
-static int __init xt_connmark_init(void)
+static int __init connmark_tg_init(void)
 {
-	int ret;
-
-	need_conntrack();
-
-	ret = xt_register_target(&connmark_reg);
-	if (ret)
-		return ret;
-
-	ret = xt_register_target(&connmark6_reg);
-	if (ret)
-		xt_unregister_target(&connmark_reg);
-
-	return ret;
+	return xt_register_target(&connmark_tg_reg);
 }
 
-static void __exit xt_connmark_fini(void)
+static void __exit connmark_tg_exit(void)
 {
-	xt_unregister_target(&connmark_reg);
-	xt_unregister_target(&connmark6_reg);
+	xt_unregister_target(&connmark_tg_reg);
 }
 
-module_init(xt_connmark_init);
-module_exit(xt_connmark_fini);
+module_init(connmark_tg_init);
+module_exit(connmark_tg_exit);

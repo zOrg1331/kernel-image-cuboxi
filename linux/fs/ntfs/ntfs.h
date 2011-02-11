@@ -61,15 +61,15 @@ extern const struct address_space_operations ntfs_aops;
 extern const struct address_space_operations ntfs_mst_aops;
 
 extern const struct  file_operations ntfs_file_ops;
-extern struct inode_operations ntfs_file_inode_ops;
+extern const struct inode_operations ntfs_file_inode_ops;
 
 extern const struct  file_operations ntfs_dir_ops;
-extern struct inode_operations ntfs_dir_inode_ops;
+extern const struct inode_operations ntfs_dir_inode_ops;
 
 extern const struct  file_operations ntfs_empty_file_ops;
-extern struct inode_operations ntfs_empty_inode_ops;
+extern const struct inode_operations ntfs_empty_inode_ops;
 
-extern struct export_operations ntfs_export_ops;
+extern const struct export_operations ntfs_export_ops;
 
 /**
  * NTFS_SB - return the ntfs volume given a vfs super block
@@ -105,7 +105,7 @@ extern int pre_write_mst_fixup(NTFS_RECORD *b, const u32 size);
 extern void post_write_mst_fixup(NTFS_RECORD *b);
 
 /* From fs/ntfs/unistr.c */
-extern BOOL ntfs_are_names_equal(const ntfschar *s1, size_t s1_len,
+extern bool ntfs_are_names_equal(const ntfschar *s1, size_t s1_len,
 		const ntfschar *s2, size_t s2_len,
 		const IGNORE_CASE_BOOL ic,
 		const ntfschar *upcase, const u32 upcase_size);

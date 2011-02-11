@@ -43,7 +43,7 @@ struct hppa_dma_ops *hppa_dma_ops __read_mostly;
 EXPORT_SYMBOL(hppa_dma_ops);
 
 static struct device root = {
-	.bus_id = "parisc",
+	.init_name = "parisc",
 };
 
 static inline int check_dev(struct device *dev)
@@ -393,7 +393,8 @@ EXPORT_SYMBOL(print_pci_hwpath);
 static void setup_bus_id(struct parisc_device *padev)
 {
 	struct hardware_path path;
-	char *output = padev->dev.bus_id;
+	char name[20];
+	char *output = name;
 	int i;
 
 	get_node_path(padev->dev.parent, &path);
@@ -404,6 +405,7 @@ static void setup_bus_id(struct parisc_device *padev)
 		output += sprintf(output, "%u:", (unsigned char) path.bc[i]);
 	}
 	sprintf(output, "%u", (unsigned char) padev->hw_path);
+	dev_set_name(&padev->dev, name);
 }
 
 struct parisc_device * create_tree_node(char id, struct device *parent)
@@ -424,7 +426,10 @@ struct parisc_device * create_tree_node(char id, struct device *parent)
 	/* make the generic dma mask a pointer to the parisc one */
 	dev->dev.dma_mask = &dev->dma_mask;
 	dev->dev.coherent_dma_mask = dev->dma_mask;
-	device_register(&dev->dev);
+	if (device_register(&dev->dev)) {
+		kfree(dev);
+		return NULL;
+	}
 
 	return dev;
 }
@@ -544,6 +549,38 @@ static int parisc_generic_match(struct device *dev, struct device_driver *drv)
 	return match_device(to_parisc_driver(drv), to_parisc_device(dev));
 }
 
+static ssize_t make_modalias(struct device *dev, char *buf)
+{
+	const struct parisc_device *padev = to_parisc_device(dev);
+	const struct parisc_device_id *id = &padev->id;
+
+	return sprintf(buf, "parisc:t%02Xhv%04Xrev%02Xsv%08X\n",
+		(u8)id->hw_type, (u16)id->hversion, (u8)id->hversion_rev,
+		(u32)id->sversion);
+}
+
+static int parisc_uevent(struct device *dev, struct kobj_uevent_env *env)
+{
+	const struct parisc_device *padev;
+	char modalias[40];
+
+	if (!dev)
+		return -ENODEV;
+
+	padev = to_parisc_device(dev);
+	if (!padev)
+		return -ENODEV;
+
+	if (add_uevent_var(env, "PARISC_NAME=%s", padev->name))
+		return -ENOMEM;
+
+	make_modalias(dev, modalias);
+	if (add_uevent_var(env, "MODALIAS=%s", modalias))
+		return -ENOMEM;
+
+	return 0;
+}
+
 #define pa_dev_attr(name, field, format_string)				\
 static ssize_t name##_show(struct device *dev, struct device_attribute *attr, char *buf)		\
 {									\
@@ -559,18 +596,25 @@ pa_dev_attr(rev, id.hversion_rev, "0x%x\n");
 pa_dev_attr_id(hversion, "0x%03x\n");
 pa_dev_attr_id(sversion, "0x%05x\n");
 
+static ssize_t modalias_show(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	return make_modalias(dev, buf);
+}
+
 static struct device_attribute parisc_device_attrs[] = {
 	__ATTR_RO(irq),
 	__ATTR_RO(hw_type),
 	__ATTR_RO(rev),
 	__ATTR_RO(hversion),
 	__ATTR_RO(sversion),
+	__ATTR_RO(modalias),
 	__ATTR_NULL,
 };
 
 struct bus_type parisc_bus_type = {
 	.name = "parisc",
 	.match = parisc_generic_match,
+	.uevent = parisc_uevent,
 	.dev_attrs = parisc_device_attrs,
 	.probe = parisc_driver_probe,
 	.remove = parisc_driver_remove,
@@ -686,7 +730,9 @@ parse_tree_node(struct device *parent, int index, struct hardware_path *modpath)
 		.fn	= check_parent,
 	};
 
-	device_for_each_child(parent, &recurse_data, descend_children);
+	if (device_for_each_child(parent, &recurse_data, descend_children))
+		/* nothing */;
+
 	return d.dev;
 }
 
@@ -832,8 +878,8 @@ static void print_parisc_device(struct parisc_device *dev)
 	static int count;
 
 	print_pa_hwpath(dev, hw_path);
-	printk(KERN_INFO "%d. %s at 0x%lx [%s] { %d, 0x%x, 0x%.3x, 0x%.5x }",
-		++count, dev->name, dev->hpa.start, hw_path, dev->id.hw_type,
+	printk(KERN_INFO "%d. %s at 0x%p [%s] { %d, 0x%x, 0x%.3x, 0x%.5x }",
+		++count, dev->name, (void*) dev->hpa.start, hw_path, dev->id.hw_type,
 		dev->id.hversion_rev, dev->id.hversion, dev->id.sversion);
 
 	if (dev->num_addrs) {
@@ -850,8 +896,10 @@ static void print_parisc_device(struct parisc_device *dev)
  */
 void init_parisc_bus(void)
 {
-	bus_register(&parisc_bus_type);
-	device_register(&root);
+	if (bus_register(&parisc_bus_type))
+		panic("Could not register PA-RISC bus type\n");
+	if (device_register(&root))
+		panic("Could not register PA-RISC root device\n");
 	get_device(&root);
 }
 

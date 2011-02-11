@@ -17,11 +17,9 @@
 #include <linux/init.h>
 #include <linux/fb.h>
 #include <linux/mm.h>
+#include <linux/of_device.h>
 
 #include <asm/io.h>
-#include <asm/oplib.h>
-#include <asm/prom.h>
-#include <asm/of_device.h>
 #include <asm/fbio.h>
 
 #include "sbuslib.h"
@@ -113,9 +111,7 @@ struct bw2_par {
 	u32			flags;
 #define BW2_FLAG_BLANKED	0x00000001
 
-	unsigned long		physbase;
 	unsigned long		which_io;
-	unsigned long		fbsize;
 };
 
 /**
@@ -169,25 +165,22 @@ static int bw2_mmap(struct fb_info *info, struct vm_area_struct *vma)
 	struct bw2_par *par = (struct bw2_par *)info->par;
 
 	return sbusfb_mmap_helper(bw2_mmap_map,
-				  par->physbase, par->fbsize,
+				  info->fix.smem_start, info->fix.smem_len,
 				  par->which_io,
 				  vma);
 }
 
 static int bw2_ioctl(struct fb_info *info, unsigned int cmd, unsigned long arg)
 {
-	struct bw2_par *par = (struct bw2_par *) info->par;
-
 	return sbusfb_ioctl_helper(cmd, arg, info,
-				   FBTYPE_SUN2BW, 1, par->fbsize);
+				   FBTYPE_SUN2BW, 1, info->fix.smem_len);
 }
 
 /*
  *  Initialisation
  */
 
-static void
-bw2_init_fix(struct fb_info *info, int linebytes)
+static void __devinit bw2_init_fix(struct fb_info *info, int linebytes)
 {
 	strlcpy(info->fix.id, "bwtwo", sizeof(info->fix.id));
 
@@ -199,43 +192,44 @@ bw2_init_fix(struct fb_info *info, int linebytes)
 	info->fix.accel = FB_ACCEL_SUN_BWTWO;
 }
 
-static u8 bw2regs_1600[] __initdata = {
+static u8 bw2regs_1600[] __devinitdata = {
 	0x14, 0x8b,	0x15, 0x28,	0x16, 0x03,	0x17, 0x13,
 	0x18, 0x7b,	0x19, 0x05,	0x1a, 0x34,	0x1b, 0x2e,
 	0x1c, 0x00,	0x1d, 0x0a,	0x1e, 0xff,	0x1f, 0x01,
 	0x10, 0x21,	0
 };
 
-static u8 bw2regs_ecl[] __initdata = {
+static u8 bw2regs_ecl[] __devinitdata = {
 	0x14, 0x65,	0x15, 0x1e,	0x16, 0x04,	0x17, 0x0c,
 	0x18, 0x5e,	0x19, 0x03,	0x1a, 0xa7,	0x1b, 0x23,
 	0x1c, 0x00,	0x1d, 0x08,	0x1e, 0xff,	0x1f, 0x01,
 	0x10, 0x20,	0
 };
 
-static u8 bw2regs_analog[] __initdata = {
+static u8 bw2regs_analog[] __devinitdata = {
 	0x14, 0xbb,	0x15, 0x2b,	0x16, 0x03,	0x17, 0x13,
 	0x18, 0xb0,	0x19, 0x03,	0x1a, 0xa6,	0x1b, 0x22,
 	0x1c, 0x01,	0x1d, 0x05,	0x1e, 0xff,	0x1f, 0x01,
 	0x10, 0x20,	0
 };
 
-static u8 bw2regs_76hz[] __initdata = {
+static u8 bw2regs_76hz[] __devinitdata = {
 	0x14, 0xb7,	0x15, 0x27,	0x16, 0x03,	0x17, 0x0f,
 	0x18, 0xae,	0x19, 0x03,	0x1a, 0xae,	0x1b, 0x2a,
 	0x1c, 0x01,	0x1d, 0x09,	0x1e, 0xff,	0x1f, 0x01,
 	0x10, 0x24,	0
 };
 
-static u8 bw2regs_66hz[] __initdata = {
+static u8 bw2regs_66hz[] __devinitdata = {
 	0x14, 0xbb,	0x15, 0x2b,	0x16, 0x04,	0x17, 0x14,
 	0x18, 0xae,	0x19, 0x03,	0x1a, 0xa8,	0x1b, 0x24,
 	0x1c, 0x01,	0x1d, 0x05,	0x1e, 0xff,	0x1f, 0x01,
 	0x10, 0x20,	0
 };
 
-static void bw2_do_default_mode(struct bw2_par *par, struct fb_info *info,
-				int *linebytes)
+static int __devinit bw2_do_default_mode(struct bw2_par *par,
+					 struct fb_info *info,
+					 int *linebytes)
 {
 	u8 status, mon;
 	u8 *p;
@@ -266,108 +260,115 @@ static void bw2_do_default_mode(struct bw2_par *par, struct fb_info *info,
 		break;
 
 	case BWTWO_SR_ID_NOCONN:
-		return;
+		return 0;
 
 	default:
-		prom_printf("bw2: can't handle SR %02x\n",
-			    status);
-		prom_halt();
+		printk(KERN_ERR "bw2: can't handle SR %02x\n",
+		       status);
+		return -EINVAL;
 	}
 	for ( ; *p; p += 2) {
 		u8 __iomem *regp = &((u8 __iomem *)par->regs)[p[0]];
 		sbus_writeb(p[1], regp);
 	}
+	return 0;
 }
 
-struct all_info {
-	struct fb_info info;
-	struct bw2_par par;
-};
-
-static int __devinit bw2_init_one(struct of_device *op)
+static int __devinit bw2_probe(struct of_device *op, const struct of_device_id *match)
 {
 	struct device_node *dp = op->node;
-	struct all_info *all;
+	struct fb_info *info;
+	struct bw2_par *par;
 	int linebytes, err;
 
-	all = kzalloc(sizeof(*all), GFP_KERNEL);
-	if (!all)
-		return -ENOMEM;
+	info = framebuffer_alloc(sizeof(struct bw2_par), &op->dev);
 
-	spin_lock_init(&all->par.lock);
+	err = -ENOMEM;
+	if (!info)
+		goto out_err;
+	par = info->par;
 
-	all->par.physbase = op->resource[0].start;
-	all->par.which_io = op->resource[0].flags & IORESOURCE_BITS;
+	spin_lock_init(&par->lock);
 
-	sbusfb_fill_var(&all->info.var, dp->node, 1);
+	info->fix.smem_start = op->resource[0].start;
+	par->which_io = op->resource[0].flags & IORESOURCE_BITS;
+
+	sbusfb_fill_var(&info->var, dp, 1);
 	linebytes = of_getintprop_default(dp, "linebytes",
-					  all->info.var.xres);
+					  info->var.xres);
 
-	all->info.var.red.length = all->info.var.green.length =
-		all->info.var.blue.length = all->info.var.bits_per_pixel;
-	all->info.var.red.offset = all->info.var.green.offset =
-		all->info.var.blue.offset = 0;
+	info->var.red.length = info->var.green.length =
+		info->var.blue.length = info->var.bits_per_pixel;
+	info->var.red.offset = info->var.green.offset =
+		info->var.blue.offset = 0;
 
-	all->par.regs = of_ioremap(&op->resource[0], BWTWO_REGISTER_OFFSET,
-				   sizeof(struct bw2_regs), "bw2 regs");
+	par->regs = of_ioremap(&op->resource[0], BWTWO_REGISTER_OFFSET,
+			       sizeof(struct bw2_regs), "bw2 regs");
+	if (!par->regs)
+		goto out_release_fb;
 
-	if (!of_find_property(dp, "width", NULL))
-		bw2_do_default_mode(&all->par, &all->info, &linebytes);
-
-	all->par.fbsize = PAGE_ALIGN(linebytes * all->info.var.yres);
-
-	all->info.flags = FBINFO_DEFAULT;
-	all->info.fbops = &bw2_ops;
-
-	all->info.screen_base =
-		sbus_ioremap(&op->resource[0], 0, all->par.fbsize, "bw2 ram");
-	all->info.par = &all->par;
-
-	bw2_blank(0, &all->info);
-
-	bw2_init_fix(&all->info, linebytes);
-
-	err= register_framebuffer(&all->info);
-	if (err < 0) {
-		of_iounmap(all->par.regs, sizeof(struct bw2_regs));
-		of_iounmap(all->info.screen_base, all->par.fbsize);
-		kfree(all);
-		return err;
+	if (!of_find_property(dp, "width", NULL)) {
+		err = bw2_do_default_mode(par, info, &linebytes);
+		if (err)
+			goto out_unmap_regs;
 	}
 
-	dev_set_drvdata(&op->dev, all);
+	info->fix.smem_len = PAGE_ALIGN(linebytes * info->var.yres);
 
-	printk("%s: bwtwo at %lx:%lx\n",
-	       dp->full_name,
-	       all->par.which_io, all->par.physbase);
+	info->flags = FBINFO_DEFAULT;
+	info->fbops = &bw2_ops;
+
+	info->screen_base = of_ioremap(&op->resource[0], 0,
+				       info->fix.smem_len, "bw2 ram");
+	if (!info->screen_base)
+		goto out_unmap_regs;
+
+	bw2_blank(FB_BLANK_UNBLANK, info);
+
+	bw2_init_fix(info, linebytes);
+
+	err = register_framebuffer(info);
+	if (err < 0)
+		goto out_unmap_screen;
+
+	dev_set_drvdata(&op->dev, info);
+
+	printk(KERN_INFO "%s: bwtwo at %lx:%lx\n",
+	       dp->full_name, par->which_io, info->fix.smem_start);
+
+	return 0;
+
+out_unmap_screen:
+	of_iounmap(&op->resource[0], info->screen_base, info->fix.smem_len);
+
+out_unmap_regs:
+	of_iounmap(&op->resource[0], par->regs, sizeof(struct bw2_regs));
+
+out_release_fb:
+	framebuffer_release(info);
+
+out_err:
+	return err;
+}
+
+static int __devexit bw2_remove(struct of_device *op)
+{
+	struct fb_info *info = dev_get_drvdata(&op->dev);
+	struct bw2_par *par = info->par;
+
+	unregister_framebuffer(info);
+
+	of_iounmap(&op->resource[0], par->regs, sizeof(struct bw2_regs));
+	of_iounmap(&op->resource[0], info->screen_base, info->fix.smem_len);
+
+	framebuffer_release(info);
+
+	dev_set_drvdata(&op->dev, NULL);
 
 	return 0;
 }
 
-static int __devinit bw2_probe(struct of_device *dev, const struct of_device_id *match)
-{
-	struct of_device *op = to_of_device(&dev->dev);
-
-	return bw2_init_one(op);
-}
-
-static int __devexit bw2_remove(struct of_device *dev)
-{
-	struct all_info *all = dev_get_drvdata(&dev->dev);
-
-	unregister_framebuffer(&all->info);
-
-	of_iounmap(all->par.regs, sizeof(struct bw2_regs));
-	of_iounmap(all->info.screen_base, all->par.fbsize);
-
-	kfree(all);
-
-	dev_set_drvdata(&dev->dev, NULL);
-
-	return 0;
-}
-
-static struct of_device_id bw2_match[] = {
+static const struct of_device_id bw2_match[] = {
 	{
 		.name = "bwtwo",
 	},
@@ -392,9 +393,8 @@ static int __init bw2_init(void)
 
 static void __exit bw2_exit(void)
 {
-	return of_unregister_driver(&bw2_driver);
+	of_unregister_driver(&bw2_driver);
 }
-
 
 module_init(bw2_init);
 module_exit(bw2_exit);

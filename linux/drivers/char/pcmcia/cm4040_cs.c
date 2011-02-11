@@ -26,6 +26,7 @@
 #include <linux/fs.h>
 #include <linux/delay.h>
 #include <linux/poll.h>
+#include <linux/smp_lock.h>
 #include <linux/wait.h>
 #include <asm/uaccess.h>
 #include <asm/io.h>
@@ -41,13 +42,13 @@
 
 
 #ifdef PCMCIA_DEBUG
-#define reader_to_dev(x)	(&handle_to_dev(x->p_dev->handle))
+#define reader_to_dev(x)	(&handle_to_dev(x->p_dev))
 static int pc_debug = PCMCIA_DEBUG;
 module_param(pc_debug, int, 0600);
 #define DEBUGP(n, rdr, x, args...) do { 				\
 	if (pc_debug >= (n)) 						\
 		dev_printk(KERN_DEBUG, reader_to_dev(rdr), "%s:" x, 	\
-			   __FUNCTION__ , ##args); 			\
+			   __func__ , ##args); 			\
 	} while (0)
 #else
 #define DEBUGP(n, rdr, x, args...)
@@ -273,6 +274,7 @@ static ssize_t cm4040_read(struct file *filp, char __user *buf,
 	DEBUGP(6, dev, "BytesToRead=%lu\n", bytes_to_read);
 
 	min_bytes_to_read = min(count, bytes_to_read + 5);
+	min_bytes_to_read = min_t(size_t, min_bytes_to_read, READ_WRITE_BUFFER_SIZE);
 
 	DEBUGP(6, dev, "Min=%lu\n", min_bytes_to_read);
 
@@ -340,7 +342,7 @@ static ssize_t cm4040_write(struct file *filp, const char __user *buf,
 		return 0;
 	}
 
-	if (count < 5) {
+	if ((count < 5) || (count > READ_WRITE_BUFFER_SIZE)) {
 		DEBUGP(2, dev, "<- cm4040_write buffersize=%Zd < 5\n", count);
 		return -EIO;
 	}
@@ -447,23 +449,30 @@ static int cm4040_open(struct inode *inode, struct file *filp)
 	struct reader_dev *dev;
 	struct pcmcia_device *link;
 	int minor = iminor(inode);
+	int ret;
 
 	if (minor >= CM_MAX_DEV)
 		return -ENODEV;
 
+	lock_kernel();
 	link = dev_table[minor];
-	if (link == NULL || !pcmcia_dev_present(link))
-		return -ENODEV;
+	if (link == NULL || !pcmcia_dev_present(link)) {
+		ret = -ENODEV;
+		goto out;
+	}
 
-	if (link->open)
-		return -EBUSY;
+	if (link->open) {
+		ret = -EBUSY;
+		goto out;
+	}
 
 	dev = link->priv;
 	filp->private_data = dev;
 
 	if (filp->f_flags & O_NONBLOCK) {
 		DEBUGP(4, dev, "filep->f_flags O_NONBLOCK set\n");
-		return -EAGAIN;
+		ret = -EAGAIN;
+		goto out;
 	}
 
 	link->open = 1;
@@ -472,7 +481,10 @@ static int cm4040_open(struct inode *inode, struct file *filp)
 	mod_timer(&dev->poll_timer, jiffies + POLL_PERIOD);
 
 	DEBUGP(2, dev, "<- cm4040_open (successfully)\n");
-	return nonseekable_open(inode, filp);
+	ret = nonseekable_open(inode, filp);
+out:
+	unlock_kernel();
+	return ret;
 }
 
 static int cm4040_close(struct inode *inode, struct file *filp)
@@ -514,83 +526,49 @@ static void cm4040_reader_release(struct pcmcia_device *link)
 	return;
 }
 
+static int cm4040_config_check(struct pcmcia_device *p_dev,
+			       cistpl_cftable_entry_t *cfg,
+			       cistpl_cftable_entry_t *dflt,
+			       unsigned int vcc,
+			       void *priv_data)
+{
+	int rc;
+	if (!cfg->io.nwin)
+		return -ENODEV;
+
+	/* Get the IOaddr */
+	p_dev->io.BasePort1 = cfg->io.win[0].base;
+	p_dev->io.NumPorts1 = cfg->io.win[0].len;
+	p_dev->io.Attributes1 = IO_DATA_PATH_WIDTH_AUTO;
+	if (!(cfg->io.flags & CISTPL_IO_8BIT))
+		p_dev->io.Attributes1 = IO_DATA_PATH_WIDTH_16;
+	if (!(cfg->io.flags & CISTPL_IO_16BIT))
+		p_dev->io.Attributes1 = IO_DATA_PATH_WIDTH_8;
+	p_dev->io.IOAddrLines = cfg->io.flags & CISTPL_IO_LINES_MASK;
+
+	rc = pcmcia_request_io(p_dev, &p_dev->io);
+	dev_printk(KERN_INFO, &handle_to_dev(p_dev),
+		   "pcmcia_request_io returned 0x%x\n", rc);
+	return rc;
+}
+
+
 static int reader_config(struct pcmcia_device *link, int devno)
 {
 	struct reader_dev *dev;
-	tuple_t tuple;
-	cisparse_t parse;
-	u_char buf[64];
-	int fail_fn, fail_rc;
-	int rc;
-
-	tuple.DesiredTuple = CISTPL_CONFIG;
-	tuple.Attributes = 0;
-	tuple.TupleData = buf;
-	tuple.TupleDataMax = sizeof(buf);
- 	tuple.TupleOffset = 0;
-
-	if ((fail_rc = pcmcia_get_first_tuple(link, &tuple)) != CS_SUCCESS) {
-		fail_fn = GetFirstTuple;
-		goto cs_failed;
-	}
-	if ((fail_rc = pcmcia_get_tuple_data(link, &tuple)) != CS_SUCCESS) {
-		fail_fn = GetTupleData;
-		goto cs_failed;
-	}
-	if ((fail_rc = pcmcia_parse_tuple(link, &tuple, &parse))
-							!= CS_SUCCESS) {
-		fail_fn = ParseTuple;
-		goto cs_failed;
-	}
-
-	link->conf.ConfigBase = parse.config.base;
-	link->conf.Present = parse.config.rmask[0];
+	int fail_rc;
 
 	link->io.BasePort2 = 0;
 	link->io.NumPorts2 = 0;
 	link->io.Attributes2 = 0;
-	tuple.DesiredTuple = CISTPL_CFTABLE_ENTRY;
-	for (rc = pcmcia_get_first_tuple(link, &tuple);
-	     rc == CS_SUCCESS;
-	     rc = pcmcia_get_next_tuple(link, &tuple)) {
-		rc = pcmcia_get_tuple_data(link, &tuple);
-		if (rc != CS_SUCCESS)
-			continue;
-		rc = pcmcia_parse_tuple(link, &tuple, &parse);
-		if (rc != CS_SUCCESS)
-			continue;
 
-		link->conf.ConfigIndex = parse.cftable_entry.index;
-
-		if (!parse.cftable_entry.io.nwin)
-			continue;
-
-		link->io.BasePort1 = parse.cftable_entry.io.win[0].base;
-		link->io.NumPorts1 = parse.cftable_entry.io.win[0].len;
-		link->io.Attributes1 = IO_DATA_PATH_WIDTH_AUTO;
-		if (!(parse.cftable_entry.io.flags & CISTPL_IO_8BIT))
-			link->io.Attributes1 = IO_DATA_PATH_WIDTH_16;
-		if (!(parse.cftable_entry.io.flags & CISTPL_IO_16BIT))
-			link->io.Attributes1 = IO_DATA_PATH_WIDTH_8;
-		link->io.IOAddrLines = parse.cftable_entry.io.flags
-						& CISTPL_IO_LINES_MASK;
-		rc = pcmcia_request_io(link, &link->io);
-
-		dev_printk(KERN_INFO, &handle_to_dev(link), "foo");
-		if (rc == CS_SUCCESS)
-			break;
-		else
-			dev_printk(KERN_INFO, &handle_to_dev(link),
-				   "pcmcia_request_io failed 0x%x\n", rc);
-	}
-	if (rc != CS_SUCCESS)
+	if (pcmcia_loop_config(link, cm4040_config_check, NULL))
 		goto cs_release;
 
 	link->conf.IntType = 00000002;
 
-	if ((fail_rc = pcmcia_request_configuration(link,&link->conf))
-								!=CS_SUCCESS) {
-		fail_fn = RequestConfiguration;
+	fail_rc = pcmcia_request_configuration(link, &link->conf);
+	if (fail_rc != 0) {
 		dev_printk(KERN_INFO, &handle_to_dev(link),
 			   "pcmcia_request_configuration failed 0x%x\n",
 			   fail_rc);
@@ -609,8 +587,6 @@ static int reader_config(struct pcmcia_device *link, int devno)
 
 	return 0;
 
-cs_failed:
-	cs_error(link, fail_fn, fail_rc);
 cs_release:
 	reader_release(link);
 	return -ENODEV;
@@ -618,7 +594,7 @@ cs_release:
 
 static void reader_release(struct pcmcia_device *link)
 {
-	cm4040_reader_release(link->priv);
+	cm4040_reader_release(link);
 	pcmcia_disable_device(link);
 }
 
@@ -652,15 +628,16 @@ static int reader_probe(struct pcmcia_device *link)
 	init_waitqueue_head(&dev->poll_wait);
 	init_waitqueue_head(&dev->read_wait);
 	init_waitqueue_head(&dev->write_wait);
-	init_timer(&dev->poll_timer);
-	dev->poll_timer.function = &cm4040_do_poll;
+	setup_timer(&dev->poll_timer, cm4040_do_poll, 0);
 
 	ret = reader_config(link, i);
-	if (ret)
+	if (ret) {
+		dev_table[i] = NULL;
+		kfree(dev);
 		return ret;
+	}
 
-	class_device_create(cmx_class, NULL, MKDEV(major, i), NULL,
-			    "cmx%d", i);
+	device_create(cmx_class, NULL, MKDEV(major, i), NULL, "cmx%d", i);
 
 	return 0;
 }
@@ -683,7 +660,7 @@ static void reader_detach(struct pcmcia_device *link)
 	dev_table[devno] = NULL;
 	kfree(dev);
 
-	class_device_destroy(cmx_class, MKDEV(major, devno));
+	device_destroy(cmx_class, MKDEV(major, devno));
 
 	return;
 }
@@ -721,19 +698,21 @@ static int __init cm4040_init(void)
 
 	printk(KERN_INFO "%s\n", version);
 	cmx_class = class_create(THIS_MODULE, "cardman_4040");
-	if (!cmx_class)
-		return -1;
+	if (IS_ERR(cmx_class))
+		return PTR_ERR(cmx_class);
 
 	major = register_chrdev(0, DEVICE_NAME, &reader_fops);
 	if (major < 0) {
 		printk(KERN_WARNING MODULE_NAME
 			": could not get major number\n");
-		return -1;
+		class_destroy(cmx_class);
+		return major;
 	}
 
 	rc = pcmcia_register_driver(&reader_driver);
 	if (rc < 0) {
 		unregister_chrdev(major, DEVICE_NAME);
+		class_destroy(cmx_class);
 		return rc;
 	}
 

@@ -17,7 +17,6 @@
 #include <linux/ptrace.h>
 #include <linux/slab.h>
 #include <linux/user.h>
-#include <linux/a.out.h>
 #include <linux/tty.h>
 #include <linux/major.h>
 #include <linux/interrupt.h>
@@ -28,18 +27,15 @@
 #include <linux/adb.h>
 #include <linux/module.h>
 #include <linux/delay.h>
-#include <linux/ide.h>
 #include <linux/console.h>
 #include <linux/seq_file.h>
 #include <linux/root_dev.h>
 #include <linux/initrd.h>
-#include <linux/module.h>
 #include <linux/timer.h>
 
 #include <asm/io.h>
 #include <asm/pgtable.h>
 #include <asm/prom.h>
-#include <asm/gg2.h>
 #include <asm/pci-bridge.h>
 #include <asm/dma.h>
 #include <asm/machdep.h>
@@ -53,6 +49,7 @@
 #include <asm/xmon.h>
 
 #include "chrp.h"
+#include "gg2.h"
 
 void rtas_indicator_progress(char *, unsigned short);
 
@@ -65,14 +62,10 @@ static struct mpic *chrp_mpic;
 DEFINE_PER_CPU(struct timer_list, heartbeat_timer);
 unsigned long event_scan_interval;
 
-/*
- * XXX this should be in xmon.h, but putting it there means xmon.h
- * has to include <linux/interrupt.h> (to get irqreturn_t), which
- * causes all sorts of problems.  -- paulus
- */
-extern irqreturn_t xmon_irq(int, void *, struct pt_regs *);
-
 extern unsigned long loops_per_jiffy;
+
+/* To be replaced by RTAS when available */
+static unsigned int __iomem *briq_SPOR;
 
 #ifdef CONFIG_SMP
 extern struct smp_ops_t chrp_smp_ops;
@@ -92,6 +85,15 @@ static const char *gg2_cachemodes[4] = {
 	"Disabled", "Write-Through", "Copy-Back", "Transparent Mode"
 };
 
+static const char *chrp_names[] = {
+	"Unknown",
+	"","","",
+	"Motorola",
+	"IBM or Longtrail",
+	"Genesi Pegasos",
+	"Total Impact Briq"
+};
+
 void chrp_show_cpuinfo(struct seq_file *m)
 {
 	int i, sdramen;
@@ -99,13 +101,13 @@ void chrp_show_cpuinfo(struct seq_file *m)
 	struct device_node *root;
 	const char *model = "";
 
-	root = find_path_device("/");
+	root = of_find_node_by_path("/");
 	if (root)
-		model = get_property(root, "model", NULL);
+		model = of_get_property(root, "model", NULL);
 	seq_printf(m, "machine\t\t: CHRP %s\n", model);
 
 	/* longtrail (goldengate) stuff */
-	if (!strncmp(model, "IBM,LongTrail", 13)) {
+	if (model && !strncmp(model, "IBM,LongTrail", 13)) {
 		/* VLSI VAS96011/12 `Golden Gate 2' */
 		/* Memory banks */
 		sdramen = (in_le32(gg2_pci_config_base + GG2_PCI_DRAM_CTRL)
@@ -149,6 +151,7 @@ void chrp_show_cpuinfo(struct seq_file *m)
 			   gg2_cachetypes[(t>>2) & 3],
 			   gg2_cachemodes[t & 3]);
 	}
+	of_node_put(root);
 }
 
 /*
@@ -192,14 +195,21 @@ static void __init sio_fixup_irq(const char *name, u8 device, u8 level,
 static void __init sio_init(void)
 {
 	struct device_node *root;
+	const char *model;
 
-	if ((root = find_path_device("/")) &&
-	    !strncmp(get_property(root, "model", NULL), "IBM,LongTrail", 13)) {
+	root = of_find_node_by_path("/");
+	if (!root)
+		return;
+
+	model = of_get_property(root, "model", NULL);
+	if (model && !strncmp(model, "IBM,LongTrail", 13)) {
 		/* logical device 0 (KBC/Keyboard) */
 		sio_fixup_irq("keyboard", 0, 1, 2);
 		/* select logical device 1 (KBC/Mouse) */
 		sio_fixup_irq("mouse", 1, 12, 2);
 	}
+
+	of_node_put(root);
 }
 
 
@@ -212,13 +222,12 @@ static void __init pegasos_set_l2cr(void)
 		return;
 
 	/* Enable L2 cache if needed */
-	np = find_type_devices("cpu");
+	np = of_find_node_by_type(NULL, "cpu");
 	if (np != NULL) {
-		unsigned int *l2cr = (unsigned int *)
-			get_property (np, "l2cr", NULL);
+		const unsigned int *l2cr = of_get_property(np, "l2cr", NULL);
 		if (l2cr == NULL) {
 			printk ("Pegasos l2cr : no cpu l2cr property found\n");
-			return;
+			goto out;
 		}
 		if (!((*l2cr) & 0x80000000)) {
 			printk ("Pegasos l2cr : L2 cache was not active, "
@@ -227,29 +236,96 @@ static void __init pegasos_set_l2cr(void)
 			_set_L2CR((*l2cr) | 0x80000000);
 		}
 	}
+out:
+	of_node_put(np);
+}
+
+static void briq_restart(char *cmd)
+{
+	local_irq_disable();
+	if (briq_SPOR)
+		out_be32(briq_SPOR, 0);
+	for(;;);
+}
+
+/*
+ * Per default, input/output-device points to the keyboard/screen
+ * If no card is installed, the built-in serial port is used as a fallback.
+ * But unfortunately, the firmware does not connect /chosen/{stdin,stdout}
+ * the the built-in serial node. Instead, a /failsafe node is created.
+ */
+static void chrp_init_early(void)
+{
+	struct device_node *node;
+	const char *property;
+
+	if (strstr(cmd_line, "console="))
+		return;
+	/* find the boot console from /chosen/stdout */
+	if (!of_chosen)
+		return;
+	node = of_find_node_by_path("/");
+	if (!node)
+		return;
+	property = of_get_property(node, "model", NULL);
+	if (!property)
+		goto out_put;
+	if (strcmp(property, "Pegasos2"))
+		goto out_put;
+	/* this is a Pegasos2 */
+	property = of_get_property(of_chosen, "linux,stdout-path", NULL);
+	if (!property)
+		goto out_put;
+	of_node_put(node);
+	node = of_find_node_by_path(property);
+	if (!node)
+		return;
+	property = of_get_property(node, "device_type", NULL);
+	if (!property)
+		goto out_put;
+	if (strcmp(property, "serial"))
+		goto out_put;
+	/*
+	 * The 9pin connector is either /failsafe
+	 * or /pci@80000000/isa@C/serial@i2F8
+	 * The optional graphics card has also type 'serial' in VGA mode.
+	 */
+	property = of_get_property(node, "name", NULL);
+	if (!property)
+		goto out_put;
+	if (!strcmp(property, "failsafe") || !strcmp(property, "serial"))
+		add_preferred_console("ttyS", 0, NULL);
+out_put:
+	of_node_put(node);
 }
 
 void __init chrp_setup_arch(void)
 {
-	struct device_node *root = find_path_device ("/");
-	char *machine = NULL;
+	struct device_node *root = of_find_node_by_path("/");
+	const char *machine = NULL;
 
 	/* init to some ~sane value until calibrate_delay() runs */
 	loops_per_jiffy = 50000000/HZ;
 
 	if (root)
-		machine = get_property(root, "model", NULL);
+		machine = of_get_property(root, "model", NULL);
 	if (machine && strncmp(machine, "Pegasos", 7) == 0) {
 		_chrp_type = _CHRP_Pegasos;
 	} else if (machine && strncmp(machine, "IBM", 3) == 0) {
 		_chrp_type = _CHRP_IBM;
 	} else if (machine && strncmp(machine, "MOT", 3) == 0) {
 		_chrp_type = _CHRP_Motorola;
+	} else if (machine && strncmp(machine, "TotalImpact,BRIQ-1", 18) == 0) {
+		_chrp_type = _CHRP_briq;
+		/* Map the SPOR register on briq and change the restart hook */
+		briq_SPOR = ioremap(0xff0000e8, 4);
+		ppc_md.restart = briq_restart;
 	} else {
 		/* Let's assume it is an IBM chrp if all else fails */
 		_chrp_type = _CHRP_IBM;
 	}
-	printk("chrp type = %x\n", _chrp_type);
+	of_node_put(root);
+	printk("chrp type = %x [%s]\n", _chrp_type, chrp_names[_chrp_type]);
 
 	rtas_initialize();
 	if (rtas_token("display-character") >= 0)
@@ -261,16 +337,6 @@ void __init chrp_setup_arch(void)
 		ppc_md.get_rtc_time	= rtas_get_rtc_time;
 		ppc_md.set_rtc_time	= rtas_set_rtc_time;
 	}
-
-#ifdef CONFIG_BLK_DEV_INITRD
-	/* this is fine for chrp */
-	initrd_below_start_ok = 1;
-
-	if (initrd_start)
-		ROOT_DEV = Root_RAM0;
-	else
-#endif
-		ROOT_DEV = Root_SDA2; /* sda2 (sda1 is for the kernel) */
 
 	/* On pegasos, enable the L2 cache if not already done by OF */
 	pegasos_set_l2cr();
@@ -311,12 +377,11 @@ chrp_event_scan(unsigned long unused)
 		  jiffies + event_scan_interval);
 }
 
-static void chrp_8259_cascade(unsigned int irq, struct irq_desc *desc,
-			      struct pt_regs *regs)
+static void chrp_8259_cascade(unsigned int irq, struct irq_desc *desc)
 {
-	unsigned int cascade_irq = i8259_irq(regs);
+	unsigned int cascade_irq = i8259_irq();
 	if (cascade_irq != NO_IRQ)
-		generic_handle_irq(cascade_irq, regs);
+		generic_handle_irq(cascade_irq);
 	desc->chip->eoi(irq);
 }
 
@@ -328,7 +393,7 @@ static void __init chrp_find_openpic(void)
 	struct device_node *np, *root;
 	int len, i, j;
 	int isu_size, idu_size;
-	unsigned int *iranges, *opprop = NULL;
+	const unsigned int *iranges, *opprop = NULL;
 	int oplen = 0;
 	unsigned long opaddr;
 	int na = 1;
@@ -338,9 +403,8 @@ static void __init chrp_find_openpic(void)
 		return;
 	root = of_find_node_by_path("/");
 	if (root) {
-		opprop = (unsigned int *) get_property
-			(root, "platform-open-pic", &oplen);
-		na = prom_n_addr_cells(root);
+		opprop = of_get_property(root, "platform-open-pic", &oplen);
+		na = of_n_addr_cells(root);
 	}
 	if (opprop && oplen >= na * sizeof(unsigned int)) {
 		opaddr = opprop[na-1];	/* assume 32-bit */
@@ -356,7 +420,7 @@ static void __init chrp_find_openpic(void)
 
 	printk(KERN_INFO "OpenPIC at %lx\n", opaddr);
 
-	iranges = (unsigned int *) get_property(np, "interrupt-ranges", &len);
+	iranges = of_get_property(np, "interrupt-ranges", &len);
 	if (iranges == NULL)
 		len = 0;	/* non-distributed mpic */
 	else
@@ -405,10 +469,9 @@ static void __init chrp_find_openpic(void)
 	of_node_put(np);
 }
 
-#if defined(CONFIG_VT) && defined(CONFIG_INPUT_ADBHID) && defined(XMON)
+#if defined(CONFIG_VT) && defined(CONFIG_INPUT_ADBHID) && defined(CONFIG_XMON)
 static struct irqaction xmon_irqaction = {
 	.handler = xmon_irq,
-	.mask = CPU_MASK_NONE,
 	.name = "XMON break",
 };
 #endif
@@ -421,7 +484,7 @@ static void __init chrp_find_8259(void)
 
 	/* Look for cascade */
 	for_each_node_by_type(np, "interrupt-controller")
-		if (device_is_compatible(np, "chrp,iic")) {
+		if (of_device_is_compatible(np, "chrp,iic")) {
 			pic = np;
 			break;
 		}
@@ -441,22 +504,25 @@ static void __init chrp_find_8259(void)
 	 * Also, Pegasos-type platforms don't have a proper node to start
 	 * from anyway
 	 */
-	for (np = find_devices("pci"); np != NULL; np = np->next) {
-		unsigned int *addrp = (unsigned int *)
-			get_property(np, "8259-interrupt-acknowledge", NULL);
+	for_each_node_by_name(np, "pci") {
+		const unsigned int *addrp = of_get_property(np,
+				"8259-interrupt-acknowledge", NULL);
 
 		if (addrp == NULL)
 			continue;
-		chrp_int_ack = addrp[prom_n_addr_cells(np)-1];
+		chrp_int_ack = addrp[of_n_addr_cells(np)-1];
 		break;
 	}
+	of_node_put(np);
 	if (np == NULL)
 		printk(KERN_WARNING "Cannot find PCI interrupt acknowledge"
 		       " address, polling\n");
 
 	i8259_init(pic, chrp_int_ack);
-	if (ppc_md.get_irq == NULL)
+	if (ppc_md.get_irq == NULL) {
 		ppc_md.get_irq = i8259_irq;
+		irq_set_default_host(i8259_get_host());
+	}
 	if (chrp_mpic != NULL) {
 		cascade_irq = irq_of_parse_and_map(pic, 0);
 		if (cascade_irq == NO_IRQ)
@@ -469,7 +535,7 @@ static void __init chrp_find_8259(void)
 
 void __init chrp_init_IRQ(void)
 {
-#if defined(CONFIG_VT) && defined(CONFIG_INPUT_ADBHID) && defined(XMON)
+#if defined(CONFIG_VT) && defined(CONFIG_INPUT_ADBHID) && defined(CONFIG_XMON)
 	struct device_node *kbd;
 #endif
 	chrp_find_openpic();
@@ -486,13 +552,14 @@ void __init chrp_init_IRQ(void)
 	if (_chrp_type == _CHRP_Pegasos)
 		ppc_md.get_irq        = i8259_irq;
 
-#if defined(CONFIG_VT) && defined(CONFIG_INPUT_ADBHID) && defined(XMON)
+#if defined(CONFIG_VT) && defined(CONFIG_INPUT_ADBHID) && defined(CONFIG_XMON)
 	/* see if there is a keyboard in the device tree
 	   with a parent of type "adb" */
-	for (kbd = find_devices("keyboard"); kbd; kbd = kbd->next)
+	for_each_node_by_name(kbd, "keyboard")
 		if (kbd->parent && kbd->parent->type
 		    && strcmp(kbd->parent->type, "adb") == 0)
 			break;
+	of_node_put(kbd);
 	if (kbd)
 		setup_irq(HYDRA_INT_ADB_NMI, &xmon_irqaction);
 #endif
@@ -502,7 +569,7 @@ void __init
 chrp_init2(void)
 {
 	struct device_node *device;
-	unsigned int *p = NULL;
+	const unsigned int *p = NULL;
 
 #ifdef CONFIG_NVRAM
 	chrp_nvram_init();
@@ -518,10 +585,9 @@ chrp_init2(void)
 	/* Get the event scan rate for the rtas so we know how
 	 * often it expects a heartbeat. -- Cort
 	 */
-	device = find_devices("rtas");
+	device = of_find_node_by_name(NULL, "rtas");
 	if (device)
-		p = (unsigned int *) get_property
-			(device, "rtas-event-scan-rate", NULL);
+		p = of_get_property(device, "rtas-event-scan-rate", NULL);
 	if (p && *p) {
 		/*
 		 * Arrange to call chrp_event_scan at least *p times
@@ -548,6 +614,7 @@ chrp_init2(void)
 		printk("RTAS Event Scan Rate: %u (%lu jiffies)\n",
 		       *p, interval);
 	}
+	of_node_put(device);
 
 	if (ppc_md.progress)
 		ppc_md.progress("  Have fun!    ", 0x7777);
@@ -565,7 +632,6 @@ static int __init chrp_probe(void)
 	ISA_DMA_THRESHOLD = ~0L;
 	DMA_MODE_READ = 0x44;
 	DMA_MODE_WRITE = 0x48;
-	isa_io_base = CHRP_ISA_IO_BASE;		/* default value */
 
 	return 1;
 }
@@ -575,9 +641,9 @@ define_machine(chrp) {
 	.probe			= chrp_probe,
 	.setup_arch		= chrp_setup_arch,
 	.init			= chrp_init2,
+	.init_early		= chrp_init_early,
 	.show_cpuinfo		= chrp_show_cpuinfo,
 	.init_IRQ		= chrp_init_IRQ,
-	.pcibios_fixup		= chrp_pcibios_fixup,
 	.restart		= rtas_restart,
 	.power_off		= rtas_power_off,
 	.halt			= rtas_halt,

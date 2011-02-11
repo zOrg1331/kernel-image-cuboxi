@@ -5,7 +5,7 @@
  *
  * Copyright (C) 2004 Nokia Corporation
  * Written by Tony Lindgren <tony@atomide.com>
- * Major cleanups by Juha Yrjölä <juha.yrjola@nokia.com>
+ * Major cleanups by Juha YrjÃ¶lÃ¤ <juha.yrjola@nokia.com>
  *
  * Completely re-written to support various OMAP chips with bank specific
  * interrupt handlers.
@@ -40,15 +40,13 @@
 #include <linux/module.h>
 #include <linux/sched.h>
 #include <linux/interrupt.h>
-#include <linux/ptrace.h>
+#include <linux/io.h>
 
-#include <asm/hardware.h>
+#include <mach/hardware.h>
 #include <asm/irq.h>
 #include <asm/mach/irq.h>
-#include <asm/arch/gpio.h>
-#include <asm/arch/cpu.h>
-
-#include <asm/io.h>
+#include <mach/gpio.h>
+#include <mach/cpu.h>
 
 #define IRQ_BANK(irq) ((irq) >> 5)
 #define IRQ_BIT(irq)  ((irq) & 0x1f)
@@ -147,6 +145,14 @@ static struct omap_irq_bank omap730_irq_banks[] = {
 };
 #endif
 
+#ifdef CONFIG_ARCH_OMAP850
+static struct omap_irq_bank omap850_irq_banks[] = {
+	{ .base_reg = OMAP_IH1_BASE,		.trigger_map = 0xb3f8e22f },
+	{ .base_reg = OMAP_IH2_BASE,		.trigger_map = 0xfdb9c1f2 },
+	{ .base_reg = OMAP_IH2_BASE + 0x100,	.trigger_map = 0x800040f3 },
+};
+#endif
+
 #ifdef CONFIG_ARCH_OMAP15XX
 static struct omap_irq_bank omap1510_irq_banks[] = {
 	{ .base_reg = OMAP_IH1_BASE,		.trigger_map = 0xb3febfff },
@@ -186,6 +192,12 @@ void __init omap_init_irq(void)
 		irq_bank_count = ARRAY_SIZE(omap730_irq_banks);
 	}
 #endif
+#ifdef CONFIG_ARCH_OMAP850
+	if (cpu_is_omap850()) {
+		irq_banks = omap850_irq_banks;
+		irq_bank_count = ARRAY_SIZE(omap850_irq_banks);
+	}
+#endif
 #ifdef CONFIG_ARCH_OMAP15XX
 	if (cpu_is_omap1510()) {
 		irq_banks = omap1510_irq_banks;
@@ -216,9 +228,8 @@ void __init omap_init_irq(void)
 	irq_bank_writel(0x03, 1, IRQ_CONTROL_REG_OFFSET);
 
 	/* Enable interrupts in global mask */
-	if (cpu_is_omap730()) {
+	if (cpu_is_omap7xx())
 		irq_bank_writel(0x0, 0, IRQ_GMR_REG_OFFSET);
-	}
 
 	/* Install the interrupt handlers for each bank */
 	for (i = 0; i < irq_bank_count; i++) {
@@ -229,7 +240,7 @@ void __init omap_init_irq(void)
 			omap_irq_set_cfg(j, 0, 0, irq_trigger);
 
 			set_irq_chip(j, &omap_irq_chip);
-			set_irq_handler(j, do_level_IRQ);
+			set_irq_handler(j, handle_level_irq);
 			set_irq_flags(j, IRQF_VALID);
 		}
 	}
@@ -238,7 +249,9 @@ void __init omap_init_irq(void)
 
 	if (cpu_is_omap730())
 		omap_unmask_irq(INT_730_IH2_IRQ);
-	else if (cpu_is_omap1510())
+	else if (cpu_is_omap850())
+		omap_unmask_irq(INT_850_IH2_IRQ);
+	else if (cpu_is_omap15xx())
 		omap_unmask_irq(INT_1510_IH2_IRQ);
 	else if (cpu_is_omap16xx())
 		omap_unmask_irq(INT_1610_IH2_IRQ);

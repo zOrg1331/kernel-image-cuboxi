@@ -1,7 +1,7 @@
 TCP protocol
 ============
 
-Last updated: 21 June 2005
+Last updated: 9 February 2008
 
 Contents
 ========
@@ -52,9 +52,9 @@ research and RFC's before developing new modules.
 The method that is used to determine which congestion control mechanism is
 determined by the setting of the sysctl net.ipv4.tcp_congestion_control.
 The default congestion control will be the last one registered (LIFO);
-so if you built everything as modules. the default will be reno. If you
-build with the default's from Kconfig, then BIC will be builtin (not a module)
-and it will end up the default.
+so if you built everything as modules, the default will be reno. If you
+build with the defaults from Kconfig, then CUBIC will be builtin (not a
+module) and it will end up the default.
 
 If you really want a particular default value then you will need
 to set it with the sysctl.  If you use a sysctl, the module will be autoloaded
@@ -62,7 +62,7 @@ if needed and you will get the expected protocol. If you ask for an
 unknown congestion method, then the sysctl attempt will fail.
 
 If you remove a tcp congestion control module, then you will get the next
-available one. Since reno can not be built as a module, and can not be
+available one. Since reno cannot be built as a module, and cannot be
 deleted, it will always be available.
 
 How the new TCP output machine [nyi] works.

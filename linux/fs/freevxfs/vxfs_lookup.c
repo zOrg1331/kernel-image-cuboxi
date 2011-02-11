@@ -52,7 +52,7 @@
 static struct dentry *	vxfs_lookup(struct inode *, struct dentry *, struct nameidata *);
 static int		vxfs_readdir(struct file *, void *, filldir_t);
 
-struct inode_operations vxfs_dir_inode_ops = {
+const struct inode_operations vxfs_dir_inode_ops = {
 	.lookup =		vxfs_lookup,
 };
 
@@ -213,10 +213,10 @@ vxfs_lookup(struct inode *dip, struct dentry *dp, struct nameidata *nd)
 	lock_kernel();
 	ino = vxfs_inode_by_name(dip, dp);
 	if (ino) {
-		ip = iget(dip->i_sb, ino);
-		if (!ip) {
+		ip = vxfs_iget(dip->i_sb, ino);
+		if (IS_ERR(ip)) {
 			unlock_kernel();
-			return ERR_PTR(-EACCES);
+			return ERR_CAST(ip);
 		}
 	}
 	unlock_kernel();
@@ -240,7 +240,7 @@ vxfs_lookup(struct inode *dip, struct dentry *dp, struct nameidata *nd)
 static int
 vxfs_readdir(struct file *fp, void *retp, filldir_t filler)
 {
-	struct inode		*ip = fp->f_dentry->d_inode;
+	struct inode		*ip = fp->f_path.dentry->d_inode;
 	struct super_block	*sbp = ip->i_sb;
 	u_long			bsize = sbp->s_blocksize;
 	u_long			page, npages, block, pblocks, nblocks, offset;

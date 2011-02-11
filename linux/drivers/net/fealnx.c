@@ -25,8 +25,8 @@
 */
 
 #define DRV_NAME	"fealnx"
-#define DRV_VERSION	"2.51"
-#define DRV_RELDATE	"Nov-17-2001"
+#define DRV_VERSION	"2.52"
+#define DRV_RELDATE	"Sep-11-2006"
 
 static int debug;		/* 1-> print debug message */
 static int max_interrupt_work = 20;
@@ -90,10 +90,11 @@ static int full_duplex[MAX_UNITS] = { -1, -1, -1, -1, -1, -1, -1, -1 };
 #include <asm/processor.h>	/* Processor type for cache alignment. */
 #include <asm/io.h>
 #include <asm/uaccess.h>
+#include <asm/byteorder.h>
 
 /* These identify the driver base version and may not be removed. */
-static char version[] =
-KERN_INFO DRV_NAME ".c:v" DRV_VERSION " " DRV_RELDATE "\n";
+static const char version[] __devinitconst =
+	KERN_INFO DRV_NAME ".c:v" DRV_VERSION " " DRV_RELDATE "\n";
 
 
 /* This driver was written to use PCI memory space, however some x86 systems
@@ -111,7 +112,6 @@ MODULE_AUTHOR("Myson or whoever");
 MODULE_DESCRIPTION("Myson MTD-8xx 100/10M Ethernet PCI Adapter Driver");
 MODULE_LICENSE("GPL");
 module_param(max_interrupt_work, int, 0);
-//MODULE_PARM(min_pci_latency, "i");
 module_param(debug, int, 0);
 module_param(rx_copybreak, int, 0);
 module_param(multicast_filter_limit, int, 0);
@@ -431,16 +431,16 @@ static void getlinktype(struct net_device *dev);
 static void getlinkstatus(struct net_device *dev);
 static void netdev_timer(unsigned long data);
 static void reset_timer(unsigned long data);
-static void tx_timeout(struct net_device *dev);
+static void fealnx_tx_timeout(struct net_device *dev);
 static void init_ring(struct net_device *dev);
-static int start_tx(struct sk_buff *skb, struct net_device *dev);
-static irqreturn_t intr_handler(int irq, void *dev_instance, struct pt_regs *regs);
+static netdev_tx_t start_tx(struct sk_buff *skb, struct net_device *dev);
+static irqreturn_t intr_handler(int irq, void *dev_instance);
 static int netdev_rx(struct net_device *dev);
 static void set_rx_mode(struct net_device *dev);
 static void __set_rx_mode(struct net_device *dev);
 static struct net_device_stats *get_stats(struct net_device *dev);
 static int mii_ioctl(struct net_device *dev, struct ifreq *rq, int cmd);
-static struct ethtool_ops netdev_ethtool_ops;
+static const struct ethtool_ops netdev_ethtool_ops;
 static int netdev_close(struct net_device *dev);
 static void reset_rx_descriptors(struct net_device *dev);
 static void reset_tx_descriptors(struct net_device *dev);
@@ -467,6 +467,18 @@ static void stop_nic_rxtx(void __iomem *ioaddr, long crvalue)
 	}
 }
 
+static const struct net_device_ops netdev_ops = {
+	.ndo_open		= netdev_open,
+	.ndo_stop		= netdev_close,
+	.ndo_start_xmit		= start_tx,
+	.ndo_get_stats 		= get_stats,
+	.ndo_set_multicast_list = set_rx_mode,
+	.ndo_do_ioctl		= mii_ioctl,
+	.ndo_tx_timeout		= fealnx_tx_timeout,
+	.ndo_change_mtu		= eth_change_mtu,
+	.ndo_set_mac_address 	= eth_mac_addr,
+	.ndo_validate_addr	= eth_validate_addr,
+};
 
 static int __devinit fealnx_init_one(struct pci_dev *pdev,
 				     const struct pci_device_id *ent)
@@ -486,23 +498,23 @@ static int __devinit fealnx_init_one(struct pci_dev *pdev,
 #else
 	int bar = 1;
 #endif
-	
+
 /* when built into the kernel, we only print version if device is found */
 #ifndef MODULE
 	static int printed_version;
 	if (!printed_version++)
 		printk(version);
 #endif
-	
+
 	card_idx++;
 	sprintf(boardname, "fealnx%d", card_idx);
-	
+
 	option = card_idx < MAX_UNITS ? options[card_idx] : 0;
 
 	i = pci_enable_device(pdev);
 	if (i) return i;
 	pci_set_master(pdev);
-	
+
 	len = pci_resource_len(pdev, bar);
 	if (len < MIN_REGION_SIZE) {
 		dev_err(&pdev->dev,
@@ -513,7 +525,7 @@ static int __devinit fealnx_init_one(struct pci_dev *pdev,
 	i = pci_request_regions(pdev, boardname);
 	if (i)
 		return i;
-	
+
 	irq = pdev->irq;
 
 	ioaddr = pci_iomap(pdev, bar, len);
@@ -527,7 +539,6 @@ static int __devinit fealnx_init_one(struct pci_dev *pdev,
 		err = -ENOMEM;
 		goto err_out_unmap;
 	}
-	SET_MODULE_OWNER(dev);
 	SET_NETDEV_DEV(dev, &pdev->dev);
 
 	/* read ethernet id */
@@ -573,7 +584,8 @@ static int __devinit fealnx_init_one(struct pci_dev *pdev,
 	if (np->flags == HAS_MII_XCVR) {
 		int phy, phy_idx = 0;
 
-		for (phy = 1; phy < 32 && phy_idx < 4; phy++) {
+		for (phy = 1; phy < 32 && phy_idx < ARRAY_SIZE(np->phys);
+			       phy++) {
 			int mii_status = mdio_read(dev, phy, 1);
 
 			if (mii_status != 0xffff && mii_status != 0x0000) {
@@ -650,26 +662,17 @@ static int __devinit fealnx_init_one(struct pci_dev *pdev,
 		np->mii.force_media = 1;
 	}
 
-	/* The chip-specific entries in the device structure. */
-	dev->open = &netdev_open;
-	dev->hard_start_xmit = &start_tx;
-	dev->stop = &netdev_close;
-	dev->get_stats = &get_stats;
-	dev->set_multicast_list = &set_rx_mode;
-	dev->do_ioctl = &mii_ioctl;
+	dev->netdev_ops = &netdev_ops;
 	dev->ethtool_ops = &netdev_ethtool_ops;
-	dev->tx_timeout = &tx_timeout;
 	dev->watchdog_timeo = TX_TIMEOUT;
-	
+
 	err = register_netdev(dev);
 	if (err)
 		goto err_out_free_tx;
 
-	printk(KERN_INFO "%s: %s at %p, ",
-	       dev->name, skel_netdrv_tbl[chip_id].chip_name, ioaddr);
-	for (i = 0; i < 5; i++)
-		printk("%2.2x:", dev->dev_addr[i]);
-	printk("%2.2x, IRQ %d.\n", dev->dev_addr[i], irq);
+	printk(KERN_INFO "%s: %s at %p, %pM, IRQ %d.\n",
+	       dev->name, skel_netdrv_tbl[chip_id].chip_name, ioaddr,
+	       dev->dev_addr, irq);
 
 	return 0;
 
@@ -864,40 +867,20 @@ static int netdev_open(struct net_device *dev)
 	   Wait the specified 50 PCI cycles after a reset by initializing
 	   Tx and Rx queues and the address filter list.
 	   FIXME (Ueimor): optimistic for alpha + posted writes ? */
-#if defined(__powerpc__) || defined(__sparc__)
-// 89/9/1 modify, 
-//   np->bcrvalue=0x04 | 0x0x38;  /* big-endian, 256 burst length */
-	np->bcrvalue = 0x04 | 0x10;	/* big-endian, tx 8 burst length */
-	np->crvalue = 0xe00;	/* rx 128 burst length */
-#elif defined(__alpha__) || defined(__x86_64__)
-// 89/9/1 modify, 
-//   np->bcrvalue=0x38;           /* little-endian, 256 burst length */
+
 	np->bcrvalue = 0x10;	/* little-endian, 8 burst length */
-	np->crvalue = 0xe00;	/* rx 128 burst length */
-#elif defined(__i386__)
-#if defined(MODULE)
-// 89/9/1 modify, 
-//   np->bcrvalue=0x38;           /* little-endian, 256 burst length */
-	np->bcrvalue = 0x10;	/* little-endian, 8 burst length */
-	np->crvalue = 0xe00;	/* rx 128 burst length */
-#else
-	/* When not a module we can work around broken '486 PCI boards. */
-#define x86 boot_cpu_data.x86
-// 89/9/1 modify, 
-//   np->bcrvalue=(x86 <= 4 ? 0x10 : 0x38);
-	np->bcrvalue = 0x10;
-	np->crvalue = (x86 <= 4 ? 0xa00 : 0xe00);
-	if (x86 <= 4)
-		printk(KERN_INFO "%s: This is a 386/486 PCI system, setting burst "
-		       "length to %x.\n", dev->name, (x86 <= 4 ? 0x10 : 0x38));
+#ifdef __BIG_ENDIAN
+	np->bcrvalue |= 0x04;	/* big-endian */
 #endif
-#else
-// 89/9/1 modify,
-//   np->bcrvalue=0x38;
-	np->bcrvalue = 0x10;
-	np->crvalue = 0xe00;	/* rx 128 burst length */
-#warning Processor architecture undefined!
+
+#if defined(__i386__) && !defined(MODULE)
+	if (boot_cpu_data.x86 <= 4)
+		np->crvalue = 0xa00;
+	else
 #endif
+		np->crvalue = 0xe00;	/* rx 128 burst length */
+
+
 // 89/12/29 add,
 // 90/1/16 modify,
 //   np->imrvalue=FBE|TUNF|CNTOVF|RBU|TI|RI;
@@ -1160,7 +1143,7 @@ static void reset_and_disable_rxtx(struct net_device *dev)
 	/* Reset the chip to erase previous misconfiguration. */
 	iowrite32(0x00000001, ioaddr + BCR);
 
-	/* Ueimor: wait for 50 PCI cycles (and flush posted writes btw). 
+	/* Ueimor: wait for 50 PCI cycles (and flush posted writes btw).
 	   We surely wait too long (address+data phase). Who cares? */
 	while (--delay) {
 		ioread32(ioaddr + BCR);
@@ -1213,33 +1196,36 @@ static void reset_timer(unsigned long data)
 	reset_tx_descriptors(dev); */
 	enable_rxtx(dev);
 	netif_start_queue(dev); /* FIXME: or netif_wake_queue(dev); ? */
-		
+
 	np->reset_timer_armed = 0;
 
 	spin_unlock_irqrestore(&np->lock, flags);
 }
 
 
-static void tx_timeout(struct net_device *dev)
+static void fealnx_tx_timeout(struct net_device *dev)
 {
 	struct netdev_private *np = netdev_priv(dev);
 	void __iomem *ioaddr = np->mem;
 	unsigned long flags;
 	int i;
 
-	printk(KERN_WARNING "%s: Transmit timed out, status %8.8x,"
-	       " resetting...\n", dev->name, ioread32(ioaddr + ISR));
+	printk(KERN_WARNING
+	       "%s: Transmit timed out, status %8.8x, resetting...\n",
+	       dev->name, ioread32(ioaddr + ISR));
 
 	{
 		printk(KERN_DEBUG "  Rx ring %p: ", np->rx_ring);
 		for (i = 0; i < RX_RING_SIZE; i++)
-			printk(" %8.8x", (unsigned int) np->rx_ring[i].status);
-		printk("\n" KERN_DEBUG "  Tx ring %p: ", np->tx_ring);
+			printk(KERN_CONT " %8.8x",
+			       (unsigned int) np->rx_ring[i].status);
+		printk(KERN_CONT "\n");
+		printk(KERN_DEBUG "  Tx ring %p: ", np->tx_ring);
 		for (i = 0; i < TX_RING_SIZE; i++)
-			printk(" %4.4x", np->tx_ring[i].status);
-		printk("\n");
+			printk(KERN_CONT " %4.4x", np->tx_ring[i].status);
+		printk(KERN_CONT "\n");
 	}
-	
+
 	spin_lock_irqsave(&np->lock, flags);
 
 	reset_and_disable_rxtx(dev);
@@ -1319,7 +1305,7 @@ static void init_ring(struct net_device *dev)
 }
 
 
-static int start_tx(struct sk_buff *skb, struct net_device *dev)
+static netdev_tx_t start_tx(struct sk_buff *skb, struct net_device *dev)
 {
 	struct netdev_private *np = netdev_priv(dev);
 	unsigned long flags;
@@ -1392,7 +1378,7 @@ static int start_tx(struct sk_buff *skb, struct net_device *dev)
 	dev->trans_start = jiffies;
 
 	spin_unlock_irqrestore(&np->lock, flags);
-	return 0;
+	return NETDEV_TX_OK;
 }
 
 
@@ -1453,7 +1439,7 @@ static void reset_rx_descriptors(struct net_device *dev)
 
 /* The interrupt handler does all of the Rx thread work and cleans up
    after the Tx thread. */
-static irqreturn_t intr_handler(int irq, void *dev_instance, struct pt_regs *rgs)
+static irqreturn_t intr_handler(int irq, void *dev_instance)
 {
 	struct net_device *dev = (struct net_device *) dev_instance;
 	struct netdev_private *np = netdev_priv(dev);
@@ -1509,7 +1495,7 @@ static irqreturn_t intr_handler(int irq, void *dev_instance, struct pt_regs *rgs
 				stop_nic_rx(ioaddr, np->crvalue);
 				reset_rx_descriptors(dev);
 				iowrite32(np->crvalue, ioaddr + TCRRCR);
-			}				
+			}
 		}
 
 		while (np->really_tx_count) {
@@ -1571,7 +1557,7 @@ static irqreturn_t intr_handler(int irq, void *dev_instance, struct pt_regs *rgs
 			}
 			num_tx++;
 		}		/* end of for loop */
-		
+
 		if (num_tx && np->free_tx_count >= 2)
 			netif_wake_queue(dev);
 
@@ -1719,7 +1705,6 @@ static int netdev_rx(struct net_device *dev)
 			   to a minimally-sized skbuff. */
 			if (pkt_len < rx_copybreak &&
 			    (skb = dev_alloc_skb(pkt_len + 2)) != NULL) {
-				skb->dev = dev;
 				skb_reserve(skb, 2);	/* 16 byte align the IP header */
 				pci_dma_sync_single_for_cpu(np->pci_dev,
 							    np->cur_rx->buffer,
@@ -1728,8 +1713,8 @@ static int netdev_rx(struct net_device *dev)
 				/* Call copy + cksum if available. */
 
 #if ! defined(__alpha__)
-				eth_copy_and_sum(skb, 
-					np->cur_rx->skbuff->data, pkt_len, 0);
+				skb_copy_to_linear_data(skb,
+					np->cur_rx->skbuff->data, pkt_len);
 				skb_put(skb, pkt_len);
 #else
 				memcpy(skb_put(skb, pkt_len),
@@ -1750,7 +1735,6 @@ static int netdev_rx(struct net_device *dev)
 			}
 			skb->protocol = eth_type_trans(skb, dev);
 			netif_rx(skb);
-			dev->last_rx = jiffies;
 			np->stats.rx_packets++;
 			np->stats.rx_bytes += pkt_len;
 		}
@@ -1800,8 +1784,6 @@ static void __set_rx_mode(struct net_device *dev)
 	u32 rx_mode;
 
 	if (dev->flags & IFF_PROMISC) {	/* Set promiscuous. */
-		/* Unconditionally log net taps. */
-		printk(KERN_NOTICE "%s: Promiscuous mode enabled.\n", dev->name);
 		memset(mc_filter, 0xff, sizeof(mc_filter));
 		rx_mode = CR_W_PROM | CR_W_AB | CR_W_AM;
 	} else if ((dev->mc_count > multicast_filter_limit)
@@ -1887,7 +1869,7 @@ static void netdev_set_msglevel(struct net_device *dev, u32 value)
 	debug = value;
 }
 
-static struct ethtool_ops netdev_ethtool_ops = {
+static const struct ethtool_ops netdev_ethtool_ops = {
 	.get_drvinfo		= netdev_get_drvinfo,
 	.get_settings		= netdev_get_settings,
 	.set_settings		= netdev_set_settings,
@@ -1895,8 +1877,6 @@ static struct ethtool_ops netdev_ethtool_ops = {
 	.get_link		= netdev_get_link,
 	.get_msglevel		= netdev_get_msglevel,
 	.set_msglevel		= netdev_set_msglevel,
-	.get_sg			= ethtool_op_get_sg,
-	.get_tx_csum		= ethtool_op_get_tx_csum,
 };
 
 static int mii_ioctl(struct net_device *dev, struct ifreq *rq, int cmd)
@@ -1984,7 +1964,7 @@ static int __init fealnx_init(void)
 	printk(version);
 #endif
 
-	return pci_module_init(&fealnx_driver);
+	return pci_register_driver(&fealnx_driver);
 }
 
 static void __exit fealnx_exit(void)

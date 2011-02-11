@@ -26,23 +26,20 @@
 #define _BTTVP_H_
 
 #include <linux/version.h>
-#define BTTV_VERSION_CODE KERNEL_VERSION(0,9,16)
+#define BTTV_VERSION_CODE KERNEL_VERSION(0,9,18)
 
 #include <linux/types.h>
 #include <linux/wait.h>
 #include <linux/i2c.h>
 #include <linux/i2c-algo-bit.h>
-#include <linux/videodev.h>
-#include <media/v4l2-common.h>
 #include <linux/pci.h>
 #include <linux/input.h>
 #include <linux/mutex.h>
-#include <asm/scatterlist.h>
+#include <linux/scatterlist.h>
 #include <asm/io.h>
-
+#include <media/v4l2-common.h>
 #include <linux/device.h>
-#include <media/video-buf.h>
-#include <media/tuner.h>
+#include <media/videobuf-dma-sg.h>
 #include <media/tveeprom.h>
 #include <media/ir-common.h>
 
@@ -66,16 +63,27 @@
 #define RISC_SLOT_LOOP        14
 
 #define RESOURCE_OVERLAY       1
-#define RESOURCE_VIDEO         2
+#define RESOURCE_VIDEO_STREAM  2
 #define RESOURCE_VBI           4
+#define RESOURCE_VIDEO_READ    8
 
 #define RAW_LINES            640
 #define RAW_BPL             1024
 
 #define UNSET (-1U)
 
-#define clamp(x, low, high) min (max (low, x), high)
+/* Min. value in VDELAY register. */
+#define MIN_VDELAY 2
+/* Even to get Cb first, odd for Cr. */
+#define MAX_HDELAY (0x3FF & -2)
+/* Limits scaled width, which must be a multiple of 4. */
+#define MAX_HACTIVE (0x3FF & -4)
 
+#define BTTV_NORMS    (\
+		V4L2_STD_PAL    | V4L2_STD_PAL_N | \
+		V4L2_STD_PAL_Nc | V4L2_STD_SECAM | \
+		V4L2_STD_NTSC   | V4L2_STD_PAL_M | \
+		V4L2_STD_PAL_60)
 /* ---------------------------------------------------------- */
 
 struct bttv_tvnorm {
@@ -92,14 +100,18 @@ struct bttv_tvnorm {
 	u16   vtotal;
 	int   sram;
 	/* ITU-R frame line number of the first VBI line we can
-	   capture, of the first and second field. */
+	   capture, of the first and second field. The last possible line
+	   is determined by cropcap.bounds. */
 	u16   vbistart[2];
+	/* Horizontally this counts fCLKx1 samples following the leading
+	   edge of the horizontal sync pulse, vertically ITU-R frame line
+	   numbers of the first field times two (2, 4, 6, ... 524 or 624). */
+	struct v4l2_cropcap cropcap;
 };
 extern const struct bttv_tvnorm bttv_tvnorms[];
 
 struct bttv_format {
 	char *name;
-	int  palette;         /* video4linux 1      */
 	int  fourcc;          /* video4linux 2      */
 	int  btformat;        /* BT848_COLOR_FMT_*  */
 	int  btswap;          /* BT848_COLOR_CTL_*  */
@@ -122,12 +134,15 @@ struct bttv_buffer {
 
 	/* bttv specific */
 	const struct bttv_format   *fmt;
-	int                        tvnorm;
+	unsigned int               tvnorm;
 	int                        btformat;
 	int                        btswap;
 	struct bttv_geometry       geo;
 	struct btcx_riscmem        top;
 	struct btcx_riscmem        bottom;
+	struct v4l2_rect           crop;
+	unsigned int               vbi_skip[2];
+	unsigned int               vbi_count[2];
 };
 
 struct bttv_buffer_set {
@@ -138,12 +153,40 @@ struct bttv_buffer_set {
 };
 
 struct bttv_overlay {
-	int                    tvnorm;
+	unsigned int           tvnorm;
 	struct v4l2_rect       w;
 	enum v4l2_field        field;
 	struct v4l2_clip       *clips;
 	int                    nclips;
 	int                    setup_ok;
+};
+
+struct bttv_vbi_fmt {
+	struct v4l2_vbi_format fmt;
+
+	/* fmt.start[] and count[] refer to this video standard. */
+	const struct bttv_tvnorm *tvnorm;
+
+	/* Earliest possible start of video capturing with this
+	   v4l2_vbi_format, in struct bttv_crop.rect units. */
+	__s32                  end;
+};
+
+/* bttv-vbi.c */
+void bttv_vbi_fmt_reset(struct bttv_vbi_fmt *f, unsigned int norm);
+
+struct bttv_crop {
+	/* A cropping rectangle in struct bttv_tvnorm.cropcap units. */
+	struct v4l2_rect       rect;
+
+	/* Scaled image size limits with this crop rect. Divide
+	   max_height, but not min_height, by two when capturing
+	   single fields. See also bttv_crop_reset() and
+	   bttv_crop_adjust() in bttv-driver.c. */
+	__s32                  min_scaled_width;
+	__s32                  min_scaled_height;
+	__s32                  max_scaled_width;
+	__s32                  max_scaled_height;
 };
 
 struct bttv_fh {
@@ -160,13 +203,19 @@ struct bttv_fh {
 	int                      width;
 	int                      height;
 
-	/* current settings */
+	/* video overlay */
 	const struct bttv_format *ovfmt;
 	struct bttv_overlay      ov;
 
-	/* video overlay */
+	/* Application called VIDIOC_S_CROP. */
+	int                      do_crop;
+
+	/* vbi capture */
 	struct videobuf_queue    vbi;
-	int                      lines;
+	/* Current VBI capture window as seen through this fh (cannot
+	   be global for compatibility with earlier drivers). Protected
+	   by struct bttv.lock and struct bttv_fh.vbi.lock. */
+	struct bttv_vbi_fmt      vbi_fmt;
 };
 
 /* ---------------------------------------------------------- */
@@ -176,7 +225,8 @@ struct bttv_fh {
 int bttv_risc_packed(struct bttv *btv, struct btcx_riscmem *risc,
 		     struct scatterlist *sglist,
 		     unsigned int offset, unsigned int bpl,
-		     unsigned int pitch, unsigned int lines);
+		     unsigned int pitch, unsigned int skip_lines,
+		     unsigned int store_lines);
 
 /* control dma register + risc main loop */
 void bttv_set_dma(struct bttv *btv, int override);
@@ -202,20 +252,23 @@ int bttv_overlay_risc(struct bttv *btv, struct bttv_overlay *ov,
 /* ---------------------------------------------------------- */
 /* bttv-vbi.c                                                 */
 
-void bttv_vbi_try_fmt(struct bttv_fh *fh, struct v4l2_format *f);
-void bttv_vbi_get_fmt(struct bttv_fh *fh, struct v4l2_format *f);
-void bttv_vbi_setlines(struct bttv_fh *fh, struct bttv *btv, int lines);
+int bttv_try_fmt_vbi_cap(struct file *file, void *fh, struct v4l2_format *f);
+int bttv_g_fmt_vbi_cap(struct file *file, void *fh, struct v4l2_format *f);
+int bttv_s_fmt_vbi_cap(struct file *file, void *fh, struct v4l2_format *f);
 
 extern struct videobuf_queue_ops bttv_vbi_qops;
 
 /* ---------------------------------------------------------- */
 /* bttv-gpio.c */
 
-
 extern struct bus_type bttv_sub_bus_type;
 int bttv_sub_add_device(struct bttv_core *core, char *name);
 int bttv_sub_del_devices(struct bttv_core *core);
 
+/* ---------------------------------------------------------- */
+/* bttv-cards.c                                               */
+
+extern int no_overlay;
 
 /* ---------------------------------------------------------- */
 /* bttv-driver.c                                              */
@@ -226,6 +279,7 @@ extern unsigned int bttv_debug;
 extern unsigned int bttv_gpio;
 extern void bttv_gpio_tracking(struct bttv *btv, char *comment);
 extern int init_bttv_i2c(struct bttv *btv);
+extern void init_bttv_i2c_ir(struct bttv *btv);
 extern int fini_bttv_i2c(struct bttv *btv);
 
 #define bttv_printk if (bttv_verbose) printk
@@ -233,9 +287,8 @@ extern int fini_bttv_i2c(struct bttv *btv);
 #define d2printk if (bttv_debug >= 2) printk
 
 #define BTTV_MAX_FBUF   0x208000
-#define VBIBUF_SIZE     (2048*VBI_MAXLINES*2)
-#define BTTV_TIMEOUT    (HZ/2) /* 0.5 seconds */
-#define BTTV_FREE_IDLE  (HZ)   /* one second */
+#define BTTV_TIMEOUT    msecs_to_jiffies(500)    /* 0.5 seconds */
+#define BTTV_FREE_IDLE  msecs_to_jiffies(1000)   /* one second */
 
 
 struct bttv_pll_info {
@@ -276,7 +329,8 @@ struct bttv {
 	unsigned int cardid;   /* pci subsystem id (bt878 based ones) */
 	unsigned int tuner_type;  /* tuner chip type */
 	unsigned int tda9887_conf;
-	unsigned int svhs;
+	unsigned int svhs, dig;
+	unsigned int has_saa6588:1;
 	struct bttv_pll_info pll;
 	int triton1;
 	int gpioirq;
@@ -287,7 +341,9 @@ struct bttv {
 	/* old gpio interface */
 	wait_queue_head_t gpioq;
 	int shutdown;
-	void (*audio_hook)(struct bttv *btv, struct video_audio *v, int set);
+
+	void (*volume_gpio)(struct bttv *btv, __u16 volume);
+	void (*audio_mode_gpio)(struct bttv *btv, struct v4l2_tuner *tuner, int set);
 
 	/* new gpio interface */
 	spinlock_t gpio_lock;
@@ -298,8 +354,8 @@ struct bttv {
 	int                        i2c_state, i2c_rc;
 	int                        i2c_done;
 	wait_queue_head_t          i2c_queue;
-	struct i2c_client 	  *i2c_msp34xx_client;
-	struct i2c_client 	  *i2c_tvaudio_client;
+	struct v4l2_subdev 	  *sd_msp34xx;
+	struct v4l2_subdev 	  *sd_tvaudio;
 
 	/* video4linux (1) */
 	struct video_device *video_dev;
@@ -308,13 +364,12 @@ struct bttv {
 
 	/* infrared remote */
 	int has_remote;
-	struct bttv_ir *remote;
+	struct card_ir *remote;
 
 	/* locking */
 	spinlock_t s_lock;
 	struct mutex lock;
 	int resources;
-	struct mutex reslock;
 #ifdef VIDIOC_G_PRIORITY
 	struct v4l2_prio_state prio;
 #endif
@@ -324,7 +379,8 @@ struct bttv {
 	unsigned int audio;
 	unsigned int mute;
 	unsigned long freq;
-	int tvnorm,hue,contrast,bright,saturation;
+	unsigned int tvnorm;
+	int hue, contrast, bright, saturation;
 	struct v4l2_framebuffer fbuf;
 	unsigned int field_count;
 
@@ -384,16 +440,41 @@ struct bttv {
 
 	unsigned int users;
 	struct bttv_fh init;
+
+	/* used to make dvb-bt8xx autoloadable */
+	struct work_struct request_module_wk;
+
+	/* Default (0) and current (1) video capturing and overlay
+	   cropping parameters in bttv_tvnorm.cropcap units. Protected
+	   by bttv.lock. */
+	struct bttv_crop crop[2];
+
+	/* Earliest possible start of video capturing in
+	   bttv_tvnorm.cropcap line units. Set by check_alloc_btres()
+	   and free_btres(). Protected by bttv.lock. */
+	__s32			vbi_end;
+
+	/* Latest possible end of VBI capturing (= crop[x].rect.top when
+	   VIDEO_RESOURCES are locked). Set by check_alloc_btres()
+	   and free_btres(). Protected by bttv.lock. */
+	__s32			crop_start;
 };
 
-/* our devices */
-#define BTTV_MAX 16
-extern unsigned int bttv_num;
-extern struct bttv bttvs[BTTV_MAX];
+static inline struct bttv *to_bttv(struct v4l2_device *v4l2_dev)
+{
+	return container_of(v4l2_dev, struct bttv, c.v4l2_dev);
+}
 
-/* private ioctls */
-#define BTTV_VERSION            _IOR('v' , BASE_VIDIOCPRIVATE+6, int)
-#define BTTV_VBISIZE            _IOR('v' , BASE_VIDIOCPRIVATE+8, int)
+/* our devices */
+#define BTTV_MAX 32
+extern unsigned int bttv_num;
+extern struct bttv *bttvs[BTTV_MAX];
+
+static inline unsigned int bttv_muxsel(const struct bttv *btv,
+				       unsigned int input)
+{
+	return (bttv_tvcards[btv->c.type].muxsel >> (input * 2)) & 3;
+}
 
 #endif
 

@@ -282,7 +282,7 @@ static void bluecard_write_wakeup(bluecard_info_t *info)
 		clear_bit(ready_bit, &(info->tx_state));
 
 		if (bt_cb(skb)->pkt_type & 0x80) {
-			DECLARE_WAIT_QUEUE_HEAD(wq);
+			DECLARE_WAIT_QUEUE_HEAD_ONSTACK(wq);
 			DEFINE_WAIT(wait);
 
 			unsigned char baud_reg;
@@ -461,20 +461,20 @@ static void bluecard_receive(bluecard_info_t *info, unsigned int offset)
 				switch (info->rx_state) {
 
 				case RECV_WAIT_EVENT_HEADER:
-					eh = (struct hci_event_hdr *)(info->rx_skb->data);
+					eh = hci_event_hdr(info->rx_skb);
 					info->rx_state = RECV_WAIT_DATA;
 					info->rx_count = eh->plen;
 					break;
 
 				case RECV_WAIT_ACL_HEADER:
-					ah = (struct hci_acl_hdr *)(info->rx_skb->data);
+					ah = hci_acl_hdr(info->rx_skb);
 					dlen = __le16_to_cpu(ah->dlen);
 					info->rx_state = RECV_WAIT_DATA;
 					info->rx_count = dlen;
 					break;
 
 				case RECV_WAIT_SCO_HEADER:
-					sh = (struct hci_sco_hdr *)(info->rx_skb->data);
+					sh = hci_sco_hdr(info->rx_skb);
 					info->rx_state = RECV_WAIT_DATA;
 					info->rx_count = sh->dlen;
 					break;
@@ -497,16 +497,13 @@ static void bluecard_receive(bluecard_info_t *info, unsigned int offset)
 }
 
 
-static irqreturn_t bluecard_interrupt(int irq, void *dev_inst, struct pt_regs *regs)
+static irqreturn_t bluecard_interrupt(int irq, void *dev_inst)
 {
 	bluecard_info_t *info = dev_inst;
 	unsigned int iobase;
 	unsigned char reg;
 
-	if (!info || !info->hdev) {
-		BT_ERR("Call of irq %d for unknown device", irq);
-		return IRQ_NONE;
-	}
+	BUG_ON(!info->hdev);
 
 	if (!test_bit(CARD_READY, &(info->hw_state)))
 		return IRQ_HANDLED;
@@ -870,7 +867,7 @@ static int bluecard_probe(struct pcmcia_device *link)
 
 	link->io.Attributes1 = IO_DATA_PATH_WIDTH_8;
 	link->io.NumPorts1 = 8;
-	link->irq.Attributes = IRQ_TYPE_EXCLUSIVE | IRQ_HANDLE_PRESENT;
+	link->irq.Attributes = IRQ_TYPE_DYNAMIC_SHARING | IRQ_HANDLE_PRESENT;
 	link->irq.IRQInfo1 = IRQ_LEVEL_ID;
 
 	link->irq.Handler = bluecard_interrupt;
@@ -892,43 +889,10 @@ static void bluecard_detach(struct pcmcia_device *link)
 }
 
 
-static int first_tuple(struct pcmcia_device *handle, tuple_t *tuple, cisparse_t *parse)
-{
-	int i;
-
-	i = pcmcia_get_first_tuple(handle, tuple);
-	if (i != CS_SUCCESS)
-		return CS_NO_MORE_ITEMS;
-
-	i = pcmcia_get_tuple_data(handle, tuple);
-	if (i != CS_SUCCESS)
-		return i;
-
-	return pcmcia_parse_tuple(handle, tuple, parse);
-}
-
 static int bluecard_config(struct pcmcia_device *link)
 {
 	bluecard_info_t *info = link->priv;
-	tuple_t tuple;
-	u_short buf[256];
-	cisparse_t parse;
-	int i, n, last_ret, last_fn;
-
-	tuple.TupleData = (cisdata_t *)buf;
-	tuple.TupleOffset = 0;
-	tuple.TupleDataMax = 255;
-	tuple.Attributes = 0;
-
-	/* Get configuration register information */
-	tuple.DesiredTuple = CISTPL_CONFIG;
-	last_ret = first_tuple(link, &tuple, &parse);
-	if (last_ret != CS_SUCCESS) {
-		last_fn = ParseTuple;
-		goto cs_failed;
-	}
-	link->conf.ConfigBase = parse.config.base;
-	link->conf.Present = parse.config.rmask[0];
+	int i, n;
 
 	link->conf.ConfigIndex = 0x20;
 	link->io.NumPorts1 = 64;
@@ -937,23 +901,23 @@ static int bluecard_config(struct pcmcia_device *link)
 	for (n = 0; n < 0x400; n += 0x40) {
 		link->io.BasePort1 = n ^ 0x300;
 		i = pcmcia_request_io(link, &link->io);
-		if (i == CS_SUCCESS)
+		if (i == 0)
 			break;
 	}
 
-	if (i != CS_SUCCESS) {
+	if (i != 0) {
 		cs_error(link, RequestIO, i);
 		goto failed;
 	}
 
 	i = pcmcia_request_irq(link, &link->irq);
-	if (i != CS_SUCCESS) {
+	if (i != 0) {
 		cs_error(link, RequestIRQ, i);
 		link->irq.AssignedIRQ = 0;
 	}
 
 	i = pcmcia_request_configuration(link, &link->conf);
-	if (i != CS_SUCCESS) {
+	if (i != 0) {
 		cs_error(link, RequestConfiguration, i);
 		goto failed;
 	}
@@ -965,9 +929,6 @@ static int bluecard_config(struct pcmcia_device *link)
 	link->dev_node = &info->node;
 
 	return 0;
-
-cs_failed:
-	cs_error(link, last_fn, last_ret);
 
 failed:
 	bluecard_release(link);

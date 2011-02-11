@@ -1,88 +1,52 @@
 /*
- * Copyright (C) 2004 PathScale, Inc
+ * Copyright (C) 2006 - 2007 Jeff Dike (jdike@{addtoit,linux.intel}.com)
  * Licensed under the GPL
  */
 
 #include <errno.h>
-#include <string.h>
-#include <setjmp.h>
-#include "ptrace_user.h"
-#include "uml-config.h"
-#include "skas_ptregs.h"
-#include "registers.h"
+#include <sys/ptrace.h>
+#define __FRAME_OFFSETS
+#include <asm/ptrace.h>
+#include "kern_constants.h"
+#include "longjmp.h"
 #include "user.h"
 
-/* These are set once at boot time and not changed thereafter */
-
-static unsigned long exec_regs[HOST_FRAME_SIZE];
-static unsigned long exec_fp_regs[HOST_FP_SIZE];
-
-void init_thread_registers(union uml_pt_regs *to)
+int save_fp_registers(int pid, unsigned long *fp_regs)
 {
-	memcpy(to->skas.regs, exec_regs, sizeof(to->skas.regs));
-	memcpy(to->skas.fp, exec_fp_regs, sizeof(to->skas.fp));
+	if (ptrace(PTRACE_GETFPREGS, pid, 0, fp_regs) < 0)
+		return -errno;
+	return 0;
 }
 
-static int move_registers(int pid, int int_op, int fp_op,
-			  union uml_pt_regs *regs)
+int restore_fp_registers(int pid, unsigned long *fp_regs)
 {
-	if(ptrace(int_op, pid, 0, regs->skas.regs) < 0)
-		return(-errno);
-
-	if(ptrace(fp_op, pid, 0, regs->skas.fp) < 0)
-		return(-errno);
-
-	return(0);
+	if (ptrace(PTRACE_SETFPREGS, pid, 0, fp_regs) < 0)
+		return -errno;
+	return 0;
 }
 
-void save_registers(int pid, union uml_pt_regs *regs)
+unsigned long get_thread_reg(int reg, jmp_buf *buf)
 {
-	int err;
-
-	err = move_registers(pid, PTRACE_GETREGS, PTRACE_GETFPREGS, regs);
-	if(err)
-		panic("save_registers - saving registers failed, errno = %d\n",
-		      -err);
+	switch (reg) {
+	case RIP:
+		return buf[0]->__rip;
+	case RSP:
+		return buf[0]->__rsp;
+	case RBP:
+		return buf[0]->__rbp;
+	default:
+		printk(UM_KERN_ERR "get_thread_regs - unknown register %d\n",
+		       reg);
+		return 0;
+	}
 }
 
-void restore_registers(int pid, union uml_pt_regs *regs)
+int get_fp_registers(int pid, unsigned long *regs)
 {
-	int err;
-
-	err = move_registers(pid, PTRACE_SETREGS, PTRACE_SETFPREGS, regs);
-	if(err)
-		panic("restore_registers - saving registers failed, "
-		      "errno = %d\n", -err);
+	return save_fp_registers(pid, regs);
 }
 
-void init_registers(int pid)
+int put_fp_registers(int pid, unsigned long *regs)
 {
-	int err;
-
-	err = ptrace(PTRACE_GETREGS, pid, 0, exec_regs);
-	if(err)
-		panic("check_ptrace : PTRACE_GETREGS failed, errno = %d",
-		      errno);
-
-	err = ptrace(PTRACE_GETFPREGS, pid, 0, exec_fp_regs);
-	if(err)
-		panic("check_ptrace : PTRACE_GETFPREGS failed, errno = %d",
-		      errno);
-}
-
-void get_safe_registers(unsigned long *regs, unsigned long *fp_regs)
-{
-	memcpy(regs, exec_regs, HOST_FRAME_SIZE * sizeof(unsigned long));
-	if(fp_regs != NULL)
-		memcpy(fp_regs, exec_fp_regs,
-		       HOST_FP_SIZE * sizeof(unsigned long));
-}
-
-void get_thread_regs(union uml_pt_regs *uml_regs, void *buffer)
-{
-	struct __jmp_buf_tag *jmpbuf = buffer;
-
-	UPT_SET(uml_regs, RIP, jmpbuf->__jmpbuf[JB_PC]);
-	UPT_SET(uml_regs, RSP, jmpbuf->__jmpbuf[JB_RSP]);
-	UPT_SET(uml_regs, RBP, jmpbuf->__jmpbuf[JB_RBP]);
+	return restore_fp_registers(pid, regs);
 }

@@ -18,15 +18,14 @@
  */
 
 #include <linux/module.h>
-#include <linux/sched.h>
 #include <linux/ptrace.h>
 #include <linux/interrupt.h>
 #include <linux/init.h>
 #include <linux/input.h>
+#include <linux/io.h>
 
-#include <asm/hardware.h>
+#include <mach/hardware.h>
 #include <asm/irq.h>
-#include <asm/io.h>
 #include <asm/hardware/iomd.h>
 
 MODULE_AUTHOR("Vojtech Pavlik, Russell King");
@@ -36,7 +35,7 @@ MODULE_LICENSE("GPL");
 static short rpcmouse_lastx, rpcmouse_lasty;
 static struct input_dev *rpcmouse_dev;
 
-static irqreturn_t rpcmouse_irq(int irq, void *dev_id, struct pt_regs *regs)
+static irqreturn_t rpcmouse_irq(int irq, void *dev_id)
 {
 	struct input_dev *dev = dev_id;
 	short x, y, dx, dy, b;
@@ -50,8 +49,6 @@ static irqreturn_t rpcmouse_irq(int irq, void *dev_id, struct pt_regs *regs)
 
 	rpcmouse_lastx = x;
 	rpcmouse_lasty = y;
-
-	input_regs(dev, regs);
 
 	input_report_rel(dev, REL_X, dx);
 	input_report_rel(dev, REL_Y, -dy);
@@ -68,7 +65,10 @@ static irqreturn_t rpcmouse_irq(int irq, void *dev_id, struct pt_regs *regs)
 
 static int __init rpcmouse_init(void)
 {
-	if (!(rpcmouse_dev = input_allocate_device()))
+	int err;
+
+	rpcmouse_dev = input_allocate_device();
+	if (!rpcmouse_dev)
 		return -ENOMEM;
 
 	rpcmouse_dev->name = "Acorn RiscPC Mouse";
@@ -78,22 +78,32 @@ static int __init rpcmouse_init(void)
 	rpcmouse_dev->id.product = 0x0001;
 	rpcmouse_dev->id.version = 0x0100;
 
-	rpcmouse_dev->evbit[0] = BIT(EV_KEY) | BIT(EV_REL);
-	rpcmouse_dev->keybit[LONG(BTN_LEFT)] = BIT(BTN_LEFT) | BIT(BTN_MIDDLE) | BIT(BTN_RIGHT);
-	rpcmouse_dev->relbit[0]	= BIT(REL_X) | BIT(REL_Y);
+	rpcmouse_dev->evbit[0] = BIT_MASK(EV_KEY) | BIT_MASK(EV_REL);
+	rpcmouse_dev->keybit[BIT_WORD(BTN_LEFT)] = BIT_MASK(BTN_LEFT) |
+		BIT_MASK(BTN_MIDDLE) | BIT_MASK(BTN_RIGHT);
+	rpcmouse_dev->relbit[0]	= BIT_MASK(REL_X) | BIT_MASK(REL_Y);
 
 	rpcmouse_lastx = (short) iomd_readl(IOMD_MOUSEX);
 	rpcmouse_lasty = (short) iomd_readl(IOMD_MOUSEY);
 
 	if (request_irq(IRQ_VSYNCPULSE, rpcmouse_irq, IRQF_SHARED, "rpcmouse", rpcmouse_dev)) {
 		printk(KERN_ERR "rpcmouse: unable to allocate VSYNC interrupt\n");
-		input_free_device(rpcmouse_dev);
-		return -EBUSY;
+		err = -EBUSY;
+		goto err_free_dev;
 	}
 
-	input_register_device(rpcmouse_dev);
+	err = input_register_device(rpcmouse_dev);
+	if (err)
+		goto err_free_irq;
 
 	return 0;
+
+ err_free_irq:
+	free_irq(IRQ_VSYNCPULSE, rpcmouse_dev);
+ err_free_dev:
+	input_free_device(rpcmouse_dev);
+
+	return err;
 }
 
 static void __exit rpcmouse_exit(void)

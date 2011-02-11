@@ -26,7 +26,6 @@
 #include <linux/init.h>
 #include <linux/platform_device.h>
 
-#include <asm/uaccess.h>
 #include "sdum.h"
 #include "fbcommon.h"
 
@@ -101,7 +100,6 @@ static int rgbfb_remove(struct platform_device *pdev)
 		fb_dealloc_cmap(&info->cmap);
 		framebuffer_release(info);
 		platform_set_drvdata(pdev, NULL);
-		kfree(info);
 	}
 
 	pnx4008_free_dum_channel(channel_owned, pdev->id);
@@ -154,7 +152,8 @@ static int __devinit rgbfb_probe(struct platform_device *pdev)
 			goto err1;
 	}
 
-	if (!fb_get_options("pnxrgbfb", &option) && !strcmp(option, "nocursor"))
+	if (!fb_get_options("pnxrgbfb", &option) && option &&
+			!strcmp(option, "nocursor"))
 		rgbfb_ops.fb_cursor = no_cursor;
 
 	info->node = -1;
@@ -168,30 +167,28 @@ static int __devinit rgbfb_probe(struct platform_device *pdev)
 
 	ret = fb_alloc_cmap(&info->cmap, 256, 0);
 	if (ret < 0)
-		goto err2;
+		goto err1;
 
 	ret = register_framebuffer(info);
 	if (ret < 0)
-		goto err3;
+		goto err2;
 	platform_set_drvdata(pdev, info);
 
 	return 0;
 
-err3:
-	fb_dealloc_cmap(&info->cmap);
 err2:
-	framebuffer_release(info);
+	fb_dealloc_cmap(&info->cmap);
 err1:
 	pnx4008_free_dum_channel(channel_owned, pdev->id);
 err0:
-	kfree(info);
+	framebuffer_release(info);
 err:
 	return ret;
 }
 
 static struct platform_driver rgbfb_driver = {
 	.driver = {
-		.name = "rgbfb",
+		.name = "pnx4008-rgbfb",
 	},
 	.probe = rgbfb_probe,
 	.remove = rgbfb_remove,

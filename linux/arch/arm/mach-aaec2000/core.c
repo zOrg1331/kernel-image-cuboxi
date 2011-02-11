@@ -19,8 +19,9 @@
 #include <linux/interrupt.h>
 #include <linux/timex.h>
 #include <linux/signal.h>
+#include <linux/clk.h>
 
-#include <asm/hardware.h>
+#include <mach/hardware.h>
 #include <asm/irq.h>
 #include <asm/sizes.h>
 
@@ -30,7 +31,6 @@
 #include <asm/mach/map.h>
 
 #include "core.h"
-#include "clock.h"
 
 /*
  * Common I/O mapping:
@@ -82,7 +82,7 @@ static void aaec2000_int_unmask(unsigned int irq)
 	IRQ_INTENS |= (1 << irq);
 }
 
-static struct irqchip aaec2000_irq_chip = {
+static struct irq_chip aaec2000_irq_chip = {
 	.ack	= aaec2000_int_ack,
 	.mask	= aaec2000_int_mask,
 	.unmask	= aaec2000_int_unmask,
@@ -93,7 +93,7 @@ void __init aaec2000_init_irq(void)
 	unsigned int i;
 
 	for (i = 0; i < NR_IRQS; i++) {
-		set_irq_handler(i, do_level_IRQ);
+		set_irq_handler(i, handle_level_irq);
 		set_irq_chip(i, &aaec2000_irq_chip);
 		set_irq_flags(i, IRQF_VALID);
 	}
@@ -127,22 +127,18 @@ static unsigned long aaec2000_gettimeoffset(void)
 
 /* We enter here with IRQs enabled */
 static irqreturn_t
-aaec2000_timer_interrupt(int irq, void *dev_id, struct pt_regs *regs)
+aaec2000_timer_interrupt(int irq, void *dev_id)
 {
 	/* TODO: Check timer accuracy */
-	write_seqlock(&xtime_lock);
-
-	timer_tick(regs);
+	timer_tick();
 	TIMER1_CLEAR = 1;
-
-	write_sequnlock(&xtime_lock);
 
 	return IRQ_HANDLED;
 }
 
 static struct irqaction aaec2000_timer_irq = {
 	.name		= "AAEC-2000 Timer Tick",
-	.flags		= IRQF_DISABLED | IRQF_TIMER,
+	.flags		= IRQF_DISABLED | IRQF_TIMER | IRQF_IRQPOLL,
 	.handler	= aaec2000_timer_interrupt,
 };
 
@@ -216,7 +212,7 @@ static struct clcd_board clcd_plat_data = {
 
 static struct amba_device clcd_device = {
 	.dev		= {
-		.bus_id			= "mb:16",
+		.init_name		= "mb:16",
 		.coherent_dma_mask	= ~0,
 		.platform_data		= &clcd_plat_data,
 	},
@@ -233,9 +229,28 @@ static struct amba_device *amba_devs[] __initdata = {
 	&clcd_device,
 };
 
-static struct clk aaec2000_clcd_clk = {
-	.name = "CLCDCLK",
-};
+void clk_disable(struct clk *clk)
+{
+}
+
+int clk_set_rate(struct clk *clk, unsigned long rate)
+{
+	return 0;
+}
+
+int clk_enable(struct clk *clk)
+{
+	return 0;
+}
+
+struct clk *clk_get(struct device *dev, const char *id)
+{
+	return dev && strcmp(dev_name(dev), "mb:16") == 0 ? NULL : ERR_PTR(-ENOENT);
+}
+
+void clk_put(struct clk *clk)
+{
+}
 
 void __init aaec2000_set_clcd_plat_data(struct aaec2000_clcd_info *clcd)
 {
@@ -268,8 +283,6 @@ static struct platform_device aaec2000_flash_device = {
 static int __init aaec2000_init(void)
 {
 	int i;
-
-	clk_register(&aaec2000_clcd_clk);
 
 	for (i = 0; i < ARRAY_SIZE(amba_devs); i++) {
 		struct amba_device *d = amba_devs[i];

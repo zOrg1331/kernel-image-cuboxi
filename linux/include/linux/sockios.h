@@ -72,8 +72,8 @@
 #define SIOCGIFTXQLEN	0x8942		/* Get the tx queue length	*/
 #define SIOCSIFTXQLEN	0x8943		/* Set the tx queue length 	*/
 
-#define SIOCGIFDIVERT	0x8944		/* Frame diversion support */
-#define SIOCSIFDIVERT	0x8945		/* Set frame diversion options */
+/* SIOCGIFDIVERT was:	0x8944		Frame diversion support */
+/* SIOCSIFDIVERT was:	0x8945		Set frame diversion options */
 
 #define SIOCETHTOOL	0x8946		/* Ethtool interface		*/
 
@@ -121,6 +121,9 @@
 #define SIOCBRDELBR     0x89a1		/* remove bridge device         */
 #define SIOCBRADDIF	0x89a2		/* add interface to bridge      */
 #define SIOCBRDELIF	0x89a3		/* remove interface from bridge */
+
+/* hardware time stamping: parameters in linux/net_tstamp.h */
+#define SIOCSHWTSTAMP   0x89b0
 
 /* Device private ioctl calls */
 

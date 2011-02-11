@@ -52,10 +52,11 @@
 #include <asm/numa.h>
 #include <asm/sal.h>
 #include <asm/cyclone.h>
+#include <asm/xen/hypervisor.h>
 
 #define BAD_MADT_ENTRY(entry, end) (                                        \
 		(!entry) || (unsigned long)entry + sizeof(*entry) > end ||  \
-		((acpi_table_entry_header *)entry)->length < sizeof(*entry))
+		((struct acpi_subtable_header *)entry)->length < sizeof(*entry))
 
 #define PREFIX			"ACPI: "
 
@@ -64,24 +65,37 @@ EXPORT_SYMBOL(pm_idle);
 void (*pm_power_off) (void);
 EXPORT_SYMBOL(pm_power_off);
 
-unsigned char acpi_kbd_controller_present = 1;
-unsigned char acpi_legacy_devices;
-
+u32 acpi_rsdt_forced;
 unsigned int acpi_cpei_override;
 unsigned int acpi_cpei_phys_cpuid;
 
-#define MAX_SAPICS 256
-u16 ia64_acpiid_to_sapicid[MAX_SAPICS] = {[0 ... MAX_SAPICS - 1] = -1 };
+unsigned long acpi_wakeup_address = 0;
 
-EXPORT_SYMBOL(ia64_acpiid_to_sapicid);
+#ifdef CONFIG_IA64_GENERIC
+static unsigned long __init acpi_find_rsdp(void)
+{
+	unsigned long rsdp_phys = 0;
 
-const char *acpi_get_sysname(void)
+	if (efi.acpi20 != EFI_INVALID_TABLE_ADDR)
+		rsdp_phys = efi.acpi20;
+	else if (efi.acpi != EFI_INVALID_TABLE_ADDR)
+		printk(KERN_WARNING PREFIX
+		       "v1.0/r0.71 tables no longer supported\n");
+	return rsdp_phys;
+}
+#endif
+
+const char __init *
+acpi_get_sysname(void)
 {
 #ifdef CONFIG_IA64_GENERIC
 	unsigned long rsdp_phys;
-	struct acpi20_table_rsdp *rsdp;
+	struct acpi_table_rsdp *rsdp;
 	struct acpi_table_xsdt *xsdt;
 	struct acpi_table_header *hdr;
+#ifdef CONFIG_DMAR
+	u64 i, nentries;
+#endif
 
 	rsdp_phys = acpi_find_rsdp();
 	if (!rsdp_phys) {
@@ -90,16 +104,16 @@ const char *acpi_get_sysname(void)
 		return "dig";
 	}
 
-	rsdp = (struct acpi20_table_rsdp *)__va(rsdp_phys);
-	if (strncmp(rsdp->signature, RSDP_SIG, sizeof(RSDP_SIG) - 1)) {
+	rsdp = (struct acpi_table_rsdp *)__va(rsdp_phys);
+	if (strncmp(rsdp->signature, ACPI_SIG_RSDP, sizeof(ACPI_SIG_RSDP) - 1)) {
 		printk(KERN_ERR
 		       "ACPI 2.0 RSDP signature incorrect, default to \"dig\"\n");
 		return "dig";
 	}
 
-	xsdt = (struct acpi_table_xsdt *)__va(rsdp->xsdt_address);
+	xsdt = (struct acpi_table_xsdt *)__va(rsdp->xsdt_physical_address);
 	hdr = &xsdt->header;
-	if (strncmp(hdr->signature, XSDT_SIG, sizeof(XSDT_SIG) - 1)) {
+	if (strncmp(hdr->signature, ACPI_SIG_XSDT, sizeof(ACPI_SIG_XSDT) - 1)) {
 		printk(KERN_ERR
 		       "ACPI 2.0 XSDT signature incorrect, default to \"dig\"\n");
 		return "dig";
@@ -108,8 +122,25 @@ const char *acpi_get_sysname(void)
 	if (!strcmp(hdr->oem_id, "HP")) {
 		return "hpzx1";
 	} else if (!strcmp(hdr->oem_id, "SGI")) {
-		return "sn2";
+		if (!strcmp(hdr->oem_table_id + 4, "UV"))
+			return "uv";
+		else
+			return "sn2";
+	} else if (xen_pv_domain() && !strcmp(hdr->oem_id, "XEN")) {
+		return "xen";
 	}
+
+#ifdef CONFIG_DMAR
+	/* Look for Intel IOMMU */
+	nentries = (hdr->length - sizeof(*hdr)) /
+			 sizeof(xsdt->table_offset_entry[0]);
+	for (i = 0; i < nentries; i++) {
+		hdr = __va(xsdt->table_offset_entry[i]);
+		if (strncmp(hdr->signature, ACPI_SIG_DMAR,
+			sizeof(ACPI_SIG_DMAR) - 1) == 0)
+			return "dig_vtd";
+	}
+#endif
 
 	return "dig";
 #else
@@ -121,8 +152,14 @@ const char *acpi_get_sysname(void)
 	return "hpzx1_swiotlb";
 # elif defined (CONFIG_IA64_SGI_SN2)
 	return "sn2";
+# elif defined (CONFIG_IA64_SGI_UV)
+	return "uv";
 # elif defined (CONFIG_IA64_DIG)
 	return "dig";
+# elif defined (CONFIG_IA64_XEN_GUEST)
+	return "xen";
+# elif defined(CONFIG_IA64_DIG_VTD)
+	return "dig_vtd";
 # else
 #	error Unknown platform.  Fix acpi.c.
 # endif
@@ -157,27 +194,30 @@ int acpi_request_vector(u32 int_type)
 	return vector;
 }
 
-char *__acpi_map_table(unsigned long phys_addr, unsigned long size)
+char *__init __acpi_map_table(unsigned long phys_addr, unsigned long size)
 {
 	return __va(phys_addr);
+}
+
+void __init __acpi_unmap_table(char *map, unsigned long size)
+{
 }
 
 /* --------------------------------------------------------------------------
                             Boot-time Table Parsing
    -------------------------------------------------------------------------- */
 
-static int total_cpus __initdata;
 static int available_cpus __initdata;
 struct acpi_table_madt *acpi_madt __initdata;
 static u8 has_8259;
 
 static int __init
-acpi_parse_lapic_addr_ovr(acpi_table_entry_header * header,
+acpi_parse_lapic_addr_ovr(struct acpi_subtable_header * header,
 			  const unsigned long end)
 {
-	struct acpi_table_lapic_addr_ovr *lapic;
+	struct acpi_madt_local_apic_override *lapic;
 
-	lapic = (struct acpi_table_lapic_addr_ovr *)header;
+	lapic = (struct acpi_madt_local_apic_override *)header;
 
 	if (BAD_MADT_ENTRY(lapic, end))
 		return -EINVAL;
@@ -190,22 +230,19 @@ acpi_parse_lapic_addr_ovr(acpi_table_entry_header * header,
 }
 
 static int __init
-acpi_parse_lsapic(acpi_table_entry_header * header, const unsigned long end)
+acpi_parse_lsapic(struct acpi_subtable_header * header, const unsigned long end)
 {
-	struct acpi_table_lsapic *lsapic;
+	struct acpi_madt_local_sapic *lsapic;
 
-	lsapic = (struct acpi_table_lsapic *)header;
+	lsapic = (struct acpi_madt_local_sapic *)header;
 
-	if (BAD_MADT_ENTRY(lsapic, end))
-		return -EINVAL;
+	/*Skip BAD_MADT_ENTRY check, as lsapic size could vary */
 
-	if (lsapic->flags.enabled) {
+	if (lsapic->lapic_flags & ACPI_MADT_ENABLED) {
 #ifdef CONFIG_SMP
 		smp_boot_data.cpu_phys_id[available_cpus] =
 		    (lsapic->id << 8) | lsapic->eid;
 #endif
-		ia64_acpiid_to_sapicid[lsapic->acpi_id] =
-		    (lsapic->id << 8) | lsapic->eid;
 		++available_cpus;
 	}
 
@@ -214,11 +251,11 @@ acpi_parse_lsapic(acpi_table_entry_header * header, const unsigned long end)
 }
 
 static int __init
-acpi_parse_lapic_nmi(acpi_table_entry_header * header, const unsigned long end)
+acpi_parse_lapic_nmi(struct acpi_subtable_header * header, const unsigned long end)
 {
-	struct acpi_table_lapic_nmi *lacpi_nmi;
+	struct acpi_madt_local_apic_nmi *lacpi_nmi;
 
-	lacpi_nmi = (struct acpi_table_lapic_nmi *)header;
+	lacpi_nmi = (struct acpi_madt_local_apic_nmi *)header;
 
 	if (BAD_MADT_ENTRY(lacpi_nmi, end))
 		return -EINVAL;
@@ -228,11 +265,11 @@ acpi_parse_lapic_nmi(acpi_table_entry_header * header, const unsigned long end)
 }
 
 static int __init
-acpi_parse_iosapic(acpi_table_entry_header * header, const unsigned long end)
+acpi_parse_iosapic(struct acpi_subtable_header * header, const unsigned long end)
 {
-	struct acpi_table_iosapic *iosapic;
+	struct acpi_madt_io_sapic *iosapic;
 
-	iosapic = (struct acpi_table_iosapic *)header;
+	iosapic = (struct acpi_madt_io_sapic *)header;
 
 	if (BAD_MADT_ENTRY(iosapic, end))
 		return -EINVAL;
@@ -243,13 +280,13 @@ acpi_parse_iosapic(acpi_table_entry_header * header, const unsigned long end)
 static unsigned int __initdata acpi_madt_rev;
 
 static int __init
-acpi_parse_plat_int_src(acpi_table_entry_header * header,
+acpi_parse_plat_int_src(struct acpi_subtable_header * header,
 			const unsigned long end)
 {
-	struct acpi_table_plat_int_src *plintsrc;
+	struct acpi_madt_interrupt_source *plintsrc;
 	int vector;
 
-	plintsrc = (struct acpi_table_plat_int_src *)header;
+	plintsrc = (struct acpi_madt_interrupt_source *)header;
 
 	if (BAD_MADT_ENTRY(plintsrc, end))
 		return -EINVAL;
@@ -260,19 +297,19 @@ acpi_parse_plat_int_src(acpi_table_entry_header * header,
 	 */
 	vector = iosapic_register_platform_intr(plintsrc->type,
 						plintsrc->global_irq,
-						plintsrc->iosapic_vector,
+						plintsrc->io_sapic_vector,
 						plintsrc->eid,
 						plintsrc->id,
-						(plintsrc->flags.polarity ==
-						 1) ? IOSAPIC_POL_HIGH :
-						IOSAPIC_POL_LOW,
-						(plintsrc->flags.trigger ==
-						 1) ? IOSAPIC_EDGE :
-						IOSAPIC_LEVEL);
+						((plintsrc->inti_flags & ACPI_MADT_POLARITY_MASK) ==
+						 ACPI_MADT_POLARITY_ACTIVE_HIGH) ?
+						IOSAPIC_POL_HIGH : IOSAPIC_POL_LOW,
+						((plintsrc->inti_flags & ACPI_MADT_TRIGGER_MASK) ==
+						 ACPI_MADT_TRIGGER_EDGE) ?
+						IOSAPIC_EDGE : IOSAPIC_LEVEL);
 
 	platform_intr_list[plintsrc->type] = vector;
 	if (acpi_madt_rev > 1) {
-		acpi_cpei_override = plintsrc->plint_flags.cpei_override_flag;
+		acpi_cpei_override = plintsrc->flags & ACPI_MADT_CPEI_OVERRIDE;
 	}
 
 	/*
@@ -327,30 +364,32 @@ unsigned int get_cpei_target_cpu(void)
 }
 
 static int __init
-acpi_parse_int_src_ovr(acpi_table_entry_header * header,
+acpi_parse_int_src_ovr(struct acpi_subtable_header * header,
 		       const unsigned long end)
 {
-	struct acpi_table_int_src_ovr *p;
+	struct acpi_madt_interrupt_override *p;
 
-	p = (struct acpi_table_int_src_ovr *)header;
+	p = (struct acpi_madt_interrupt_override *)header;
 
 	if (BAD_MADT_ENTRY(p, end))
 		return -EINVAL;
 
-	iosapic_override_isa_irq(p->bus_irq, p->global_irq,
-				 (p->flags.polarity ==
-				  1) ? IOSAPIC_POL_HIGH : IOSAPIC_POL_LOW,
-				 (p->flags.trigger ==
-				  1) ? IOSAPIC_EDGE : IOSAPIC_LEVEL);
+	iosapic_override_isa_irq(p->source_irq, p->global_irq,
+				 ((p->inti_flags & ACPI_MADT_POLARITY_MASK) ==
+				  ACPI_MADT_POLARITY_ACTIVE_HIGH) ?
+				 IOSAPIC_POL_HIGH : IOSAPIC_POL_LOW,
+				 ((p->inti_flags & ACPI_MADT_TRIGGER_MASK) ==
+				 ACPI_MADT_TRIGGER_EDGE) ?
+				 IOSAPIC_EDGE : IOSAPIC_LEVEL);
 	return 0;
 }
 
 static int __init
-acpi_parse_nmi_src(acpi_table_entry_header * header, const unsigned long end)
+acpi_parse_nmi_src(struct acpi_subtable_header * header, const unsigned long end)
 {
-	struct acpi_table_nmi_src *nmi_src;
+	struct acpi_madt_nmi_source *nmi_src;
 
-	nmi_src = (struct acpi_table_nmi_src *)header;
+	nmi_src = (struct acpi_madt_nmi_source *)header;
 
 	if (BAD_MADT_ENTRY(nmi_src, end))
 		return -EINVAL;
@@ -374,12 +413,12 @@ static void __init acpi_madt_oem_check(char *oem_id, char *oem_table_id)
 	}
 }
 
-static int __init acpi_parse_madt(unsigned long phys_addr, unsigned long size)
+static int __init acpi_parse_madt(struct acpi_table_header *table)
 {
-	if (!phys_addr || !size)
+	if (!table)
 		return -EINVAL;
 
-	acpi_madt = (struct acpi_table_madt *)__va(phys_addr);
+	acpi_madt = (struct acpi_table_madt *)table;
 
 	acpi_madt_rev = acpi_madt->header.revision;
 
@@ -387,14 +426,14 @@ static int __init acpi_parse_madt(unsigned long phys_addr, unsigned long size)
 #ifdef CONFIG_ITANIUM
 	has_8259 = 1;		/* Firmware on old Itanium systems is broken */
 #else
-	has_8259 = acpi_madt->flags.pcat_compat;
+	has_8259 = acpi_madt->flags & ACPI_MADT_PCAT_COMPAT;
 #endif
 	iosapic_system_init(has_8259);
 
 	/* Get base address of IPI Message Block */
 
-	if (acpi_madt->lapic_address)
-		ipi_base_addr = ioremap(acpi_madt->lapic_address, 0);
+	if (acpi_madt->address)
+		ipi_base_addr = ioremap(acpi_madt->address, 0);
 
 	printk(KERN_INFO PREFIX "Local APIC address %p\n", ipi_base_addr);
 
@@ -415,24 +454,26 @@ static u32 __devinitdata pxm_flag[PXM_FLAG_LEN];
 #define pxm_bit_set(bit)	(set_bit(bit,(void *)pxm_flag))
 #define pxm_bit_test(bit)	(test_bit(bit,(void *)pxm_flag))
 static struct acpi_table_slit __initdata *slit_table;
+cpumask_t early_cpu_possible_map = CPU_MASK_NONE;
 
-static int get_processor_proximity_domain(struct acpi_table_processor_affinity *pa)
+static int get_processor_proximity_domain(struct acpi_srat_cpu_affinity *pa)
 {
 	int pxm;
 
-	pxm = pa->proximity_domain;
+	pxm = pa->proximity_domain_lo;
 	if (ia64_platform_is("sn2"))
-		pxm += pa->reserved[0] << 8;
+		pxm += pa->proximity_domain_hi[0] << 8;
 	return pxm;
 }
 
-static int get_memory_proximity_domain(struct acpi_table_memory_affinity *ma)
+static int get_memory_proximity_domain(struct acpi_srat_mem_affinity *ma)
 {
 	int pxm;
 
 	pxm = ma->proximity_domain;
-	if (ia64_platform_is("sn2"))
-		pxm += ma->reserved1[0] << 8;
+	if (!ia64_platform_is("sn2"))
+		pxm &= 0xff;
+
 	return pxm;
 }
 
@@ -445,23 +486,22 @@ void __init acpi_numa_slit_init(struct acpi_table_slit *slit)
 	u32 len;
 
 	len = sizeof(struct acpi_table_header) + 8
-	    + slit->localities * slit->localities;
+	    + slit->locality_count * slit->locality_count;
 	if (slit->header.length != len) {
 		printk(KERN_ERR
 		       "ACPI 2.0 SLIT: size mismatch: %d expected, %d actual\n",
 		       len, slit->header.length);
-		memset(numa_slit, 10, sizeof(numa_slit));
 		return;
 	}
 	slit_table = slit;
 }
 
 void __init
-acpi_numa_processor_affinity_init(struct acpi_table_processor_affinity *pa)
+acpi_numa_processor_affinity_init(struct acpi_srat_cpu_affinity *pa)
 {
 	int pxm;
 
-	if (!pa->flags.enabled)
+	if (!(pa->flags & ACPI_SRAT_CPU_ENABLED))
 		return;
 
 	pxm = get_processor_proximity_domain(pa);
@@ -470,14 +510,15 @@ acpi_numa_processor_affinity_init(struct acpi_table_processor_affinity *pa)
 	pxm_bit_set(pxm);
 
 	node_cpuid[srat_num_cpus].phys_id =
-	    (pa->apic_id << 8) | (pa->lsapic_eid);
+	    (pa->apic_id << 8) | (pa->local_sapic_eid);
 	/* nid should be overridden as logical node id later */
 	node_cpuid[srat_num_cpus].nid = pxm;
+	cpu_set(srat_num_cpus, early_cpu_possible_map);
 	srat_num_cpus++;
 }
 
 void __init
-acpi_numa_memory_affinity_init(struct acpi_table_memory_affinity *ma)
+acpi_numa_memory_affinity_init(struct acpi_srat_mem_affinity *ma)
 {
 	unsigned long paddr, size;
 	int pxm;
@@ -486,13 +527,11 @@ acpi_numa_memory_affinity_init(struct acpi_table_memory_affinity *ma)
 	pxm = get_memory_proximity_domain(ma);
 
 	/* fill node memory chunk structure */
-	paddr = ma->base_addr_hi;
-	paddr = (paddr << 32) | ma->base_addr_lo;
-	size = ma->length_hi;
-	size = (size << 32) | ma->length_lo;
+	paddr = ma->base_address;
+	size = ma->length;
 
 	/* Ignore disabled entries */
-	if (!ma->flags.enabled)
+	if (!(ma->flags & ACPI_SRAT_MEM_ENABLED))
 		return;
 
 	/* record this node in proximity bitmap */
@@ -552,7 +591,7 @@ void __init acpi_numa_arch_fixup(void)
 	}
 
 	/* set logical node id in cpu structure */
-	for (i = 0; i < srat_num_cpus; i++)
+	for_each_possible_early_cpu(i)
 		node_cpuid[i].nid = pxm_to_node(node_cpuid[i].nid);
 
 	printk(KERN_INFO "Number of logical nodes in system = %d\n",
@@ -560,19 +599,25 @@ void __init acpi_numa_arch_fixup(void)
 	printk(KERN_INFO "Number of memory chunks in system = %d\n",
 	       num_node_memblks);
 
-	if (!slit_table)
+	if (!slit_table) {
+		for (i = 0; i < MAX_NUMNODES; i++)
+			for (j = 0; j < MAX_NUMNODES; j++)
+				node_distance(i, j) = i == j ? LOCAL_DISTANCE :
+							REMOTE_DISTANCE;
 		return;
+	}
+
 	memset(numa_slit, -1, sizeof(numa_slit));
-	for (i = 0; i < slit_table->localities; i++) {
+	for (i = 0; i < slit_table->locality_count; i++) {
 		if (!pxm_bit_test(i))
 			continue;
 		node_from = pxm_to_node(i);
-		for (j = 0; j < slit_table->localities; j++) {
+		for (j = 0; j < slit_table->locality_count; j++) {
 			if (!pxm_bit_test(j))
 				continue;
 			node_to = pxm_to_node(j);
 			node_distance(node_from, node_to) =
-			    slit_table->entry[i * slit_table->localities + j];
+			    slit_table->entry[i * slit_table->locality_count + j];
 		}
 	}
 
@@ -591,8 +636,11 @@ void __init acpi_numa_arch_fixup(void)
  * success: return IRQ number (>=0)
  * failure: return < 0
  */
-int acpi_register_gsi(u32 gsi, int triggering, int polarity)
+int acpi_register_gsi(struct device *dev, u32 gsi, int triggering, int polarity)
 {
+	if (acpi_irq_model == ACPI_IRQ_MODEL_PLATFORM)
+		return gsi;
+
 	if (has_8259 && gsi < 16)
 		return isa_irq_to_vector(gsi);
 
@@ -605,50 +653,59 @@ int acpi_register_gsi(u32 gsi, int triggering, int polarity)
 				     IOSAPIC_LEVEL);
 }
 
-EXPORT_SYMBOL(acpi_register_gsi);
-
 void acpi_unregister_gsi(u32 gsi)
 {
+	if (acpi_irq_model == ACPI_IRQ_MODEL_PLATFORM)
+		return;
+
+	if (has_8259 && gsi < 16)
+		return;
+
 	iosapic_unregister_intr(gsi);
 }
 
-EXPORT_SYMBOL(acpi_unregister_gsi);
-
-static int __init acpi_parse_fadt(unsigned long phys_addr, unsigned long size)
+static int __init acpi_parse_fadt(struct acpi_table_header *table)
 {
 	struct acpi_table_header *fadt_header;
-	struct fadt_descriptor *fadt;
+	struct acpi_table_fadt *fadt;
 
-	if (!phys_addr || !size)
+	if (!table)
 		return -EINVAL;
 
-	fadt_header = (struct acpi_table_header *)__va(phys_addr);
+	fadt_header = (struct acpi_table_header *)table;
 	if (fadt_header->revision != 3)
 		return -ENODEV;	/* Only deal with ACPI 2.0 FADT */
 
-	fadt = (struct fadt_descriptor *)fadt_header;
+	fadt = (struct acpi_table_fadt *)fadt_header;
 
-	if (!(fadt->iapc_boot_arch & BAF_8042_KEYBOARD_CONTROLLER))
-		acpi_kbd_controller_present = 0;
-
-	if (fadt->iapc_boot_arch & BAF_LEGACY_DEVICES)
-		acpi_legacy_devices = 1;
-
-	acpi_register_gsi(fadt->sci_int, ACPI_LEVEL_SENSITIVE, ACPI_ACTIVE_LOW);
+	acpi_register_gsi(NULL, fadt->sci_interrupt, ACPI_LEVEL_SENSITIVE,
+				 ACPI_ACTIVE_LOW);
 	return 0;
 }
 
-unsigned long __init acpi_find_rsdp(void)
+int __init early_acpi_boot_init(void)
 {
-	unsigned long rsdp_phys = 0;
+	int ret;
 
-	if (efi.acpi20 != EFI_INVALID_TABLE_ADDR)
-		rsdp_phys = efi.acpi20;
-	else if (efi.acpi != EFI_INVALID_TABLE_ADDR)
-		printk(KERN_WARNING PREFIX
-		       "v1.0/r0.71 tables no longer supported\n");
-	return rsdp_phys;
+	/*
+	 * do a partial walk of MADT to determine how many CPUs
+	 * we have including offline CPUs
+	 */
+	if (acpi_table_parse(ACPI_SIG_MADT, acpi_parse_madt)) {
+		printk(KERN_ERR PREFIX "Can't find MADT\n");
+		return 0;
+	}
+
+	ret = acpi_table_parse_madt(ACPI_MADT_TYPE_LOCAL_SAPIC,
+		acpi_parse_lsapic, NR_CPUS);
+	if (ret < 1)
+		printk(KERN_ERR PREFIX
+		       "Error parsing MADT - no LAPIC entries\n");
+
+	return 0;
 }
+
+
 
 int __init acpi_boot_init(void)
 {
@@ -661,7 +718,7 @@ int __init acpi_boot_init(void)
 	 * information -- the successor to MPS tables.
 	 */
 
-	if (acpi_table_parse(ACPI_APIC, acpi_parse_madt) < 1) {
+	if (acpi_table_parse(ACPI_SIG_MADT, acpi_parse_madt)) {
 		printk(KERN_ERR PREFIX "Can't find MADT\n");
 		goto skip_madt;
 	}
@@ -669,40 +726,37 @@ int __init acpi_boot_init(void)
 	/* Local APIC */
 
 	if (acpi_table_parse_madt
-	    (ACPI_MADT_LAPIC_ADDR_OVR, acpi_parse_lapic_addr_ovr, 0) < 0)
+	    (ACPI_MADT_TYPE_LOCAL_APIC_OVERRIDE, acpi_parse_lapic_addr_ovr, 0) < 0)
 		printk(KERN_ERR PREFIX
 		       "Error parsing LAPIC address override entry\n");
 
-	if (acpi_table_parse_madt(ACPI_MADT_LSAPIC, acpi_parse_lsapic, NR_CPUS)
-	    < 1)
-		printk(KERN_ERR PREFIX
-		       "Error parsing MADT - no LAPIC entries\n");
-
-	if (acpi_table_parse_madt(ACPI_MADT_LAPIC_NMI, acpi_parse_lapic_nmi, 0)
+	if (acpi_table_parse_madt(ACPI_MADT_TYPE_LOCAL_APIC_NMI, acpi_parse_lapic_nmi, 0)
 	    < 0)
 		printk(KERN_ERR PREFIX "Error parsing LAPIC NMI entry\n");
 
 	/* I/O APIC */
 
 	if (acpi_table_parse_madt
-	    (ACPI_MADT_IOSAPIC, acpi_parse_iosapic, NR_IOSAPICS) < 1)
-		printk(KERN_ERR PREFIX
-		       "Error parsing MADT - no IOSAPIC entries\n");
+	    (ACPI_MADT_TYPE_IO_SAPIC, acpi_parse_iosapic, NR_IOSAPICS) < 1) {
+		if (!ia64_platform_is("sn2"))
+			printk(KERN_ERR PREFIX
+			       "Error parsing MADT - no IOSAPIC entries\n");
+	}
 
 	/* System-Level Interrupt Routing */
 
 	if (acpi_table_parse_madt
-	    (ACPI_MADT_PLAT_INT_SRC, acpi_parse_plat_int_src,
+	    (ACPI_MADT_TYPE_INTERRUPT_SOURCE, acpi_parse_plat_int_src,
 	     ACPI_MAX_PLATFORM_INTERRUPTS) < 0)
 		printk(KERN_ERR PREFIX
 		       "Error parsing platform interrupt source entry\n");
 
 	if (acpi_table_parse_madt
-	    (ACPI_MADT_INT_SRC_OVR, acpi_parse_int_src_ovr, 0) < 0)
+	    (ACPI_MADT_TYPE_INTERRUPT_OVERRIDE, acpi_parse_int_src_ovr, 0) < 0)
 		printk(KERN_ERR PREFIX
 		       "Error parsing interrupt source overrides entry\n");
 
-	if (acpi_table_parse_madt(ACPI_MADT_NMI_SRC, acpi_parse_nmi_src, 0) < 0)
+	if (acpi_table_parse_madt(ACPI_MADT_TYPE_NMI_SOURCE, acpi_parse_nmi_src, 0) < 0)
 		printk(KERN_ERR PREFIX "Error parsing NMI SRC entry\n");
       skip_madt:
 
@@ -712,7 +766,7 @@ int __init acpi_boot_init(void)
 	 * gets interrupts such as power and sleep buttons.  If it's not
 	 * on a Legacy interrupt, it needs to be setup.
 	 */
-	if (acpi_table_parse(ACPI_FADT, acpi_parse_fadt) < 1)
+	if (acpi_table_parse(ACPI_SIG_FADT, acpi_parse_fadt))
 		printk(KERN_ERR PREFIX "Can't find FADT\n");
 
 #ifdef CONFIG_SMP
@@ -748,16 +802,15 @@ int __init acpi_boot_init(void)
 
 int acpi_gsi_to_irq(u32 gsi, unsigned int *irq)
 {
-	int vector;
+	int tmp;
 
 	if (has_8259 && gsi < 16)
 		*irq = isa_irq_to_vector(gsi);
 	else {
-		vector = gsi_to_vector(gsi);
-		if (vector == -1)
+		tmp = gsi_to_irq(gsi);
+		if (tmp == -1)
 			return -1;
-
-		*irq = vector;
+		*irq = tmp;
 	}
 	return 0;
 }
@@ -767,20 +820,23 @@ int acpi_gsi_to_irq(u32 gsi, unsigned int *irq)
  */
 #ifdef CONFIG_ACPI_HOTPLUG_CPU
 static
-int acpi_map_cpu2node(acpi_handle handle, int cpu, long physid)
+int acpi_map_cpu2node(acpi_handle handle, int cpu, int physid)
 {
 #ifdef CONFIG_ACPI_NUMA
 	int pxm_id;
+	int nid;
 
 	pxm_id = acpi_get_pxm(handle);
-
 	/*
-	 * Assuming that the container driver would have set the proximity
-	 * domain and would have initialized pxm_to_node(pxm_id) && pxm_flag
+	 * We don't have cpu-only-node hotadd. But if the system equips
+	 * SRAT table, pxm is already found and node is ready.
+  	 * So, just pxm_to_nid(pxm) is OK.
+	 * This code here is for the system which doesn't have full SRAT
+  	 * table for possible cpus.
 	 */
-	node_cpuid[cpu].nid = (pxm_id < 0) ? 0 : pxm_to_node(pxm_id);
-
+	nid = acpi_map_pxm_to_node(pxm_id);
 	node_cpuid[cpu].phys_id = physid;
+	node_cpuid[cpu].nid = nid;
 #endif
 	return (0);
 }
@@ -798,7 +854,7 @@ static __init int setup_additional_cpus(char *s)
 early_param("additional_cpus", setup_additional_cpus);
 
 /*
- * cpu_possible_map should be static, it cannot change as cpu's
+ * cpu_possible_map should be static, it cannot change as CPUs
  * are onlined, or offlined. The reason is per-cpu data-structures
  * are allocated by some modules at init time, and dont expect to
  * do this dynamically on cpu arrival/departure.
@@ -835,17 +891,16 @@ __init void prefill_possible_map(void)
 		possible, max((possible - available_cpus), 0));
 
 	for (i = 0; i < possible; i++)
-		cpu_set(i, cpu_possible_map);
+		set_cpu_possible(i, true);
 }
 
 int acpi_map_lsapic(acpi_handle handle, int *pcpu)
 {
 	struct acpi_buffer buffer = { ACPI_ALLOCATE_BUFFER, NULL };
 	union acpi_object *obj;
-	struct acpi_table_lsapic *lsapic;
+	struct acpi_madt_local_sapic *lsapic;
 	cpumask_t tmp_map;
-	long physid;
-	int cpu;
+	int cpu, physid;
 
 	if (ACPI_FAILURE(acpi_evaluate_object(handle, "_MAT", NULL, &buffer)))
 		return -EINVAL;
@@ -854,16 +909,16 @@ int acpi_map_lsapic(acpi_handle handle, int *pcpu)
 		return -EINVAL;
 
 	obj = buffer.pointer;
-	if (obj->type != ACPI_TYPE_BUFFER ||
-	    obj->buffer.length < sizeof(*lsapic)) {
+	if (obj->type != ACPI_TYPE_BUFFER)
+	{
 		kfree(buffer.pointer);
 		return -EINVAL;
 	}
 
-	lsapic = (struct acpi_table_lsapic *)obj->buffer.pointer;
+	lsapic = (struct acpi_madt_local_sapic *)obj->buffer.pointer;
 
-	if ((lsapic->header.type != ACPI_MADT_LSAPIC) ||
-	    (!lsapic->flags.enabled)) {
+	if ((lsapic->header.type != ACPI_MADT_TYPE_LOCAL_SAPIC) ||
+	    (!(lsapic->lapic_flags & ACPI_MADT_ENABLED))) {
 		kfree(buffer.pointer);
 		return -EINVAL;
 	}
@@ -874,16 +929,15 @@ int acpi_map_lsapic(acpi_handle handle, int *pcpu)
 	buffer.length = ACPI_ALLOCATE_BUFFER;
 	buffer.pointer = NULL;
 
-	cpus_complement(tmp_map, cpu_present_map);
-	cpu = first_cpu(tmp_map);
-	if (cpu >= NR_CPUS)
+	cpumask_complement(&tmp_map, cpu_present_mask);
+	cpu = cpumask_first(&tmp_map);
+	if (cpu >= nr_cpu_ids)
 		return -EINVAL;
 
 	acpi_map_cpu2node(handle, cpu, physid);
 
 	cpu_set(cpu, cpu_present_map);
 	ia64_cpu_to_sapicid[cpu] = physid;
-	ia64_acpiid_to_sapicid[lsapic->acpi_id] = ia64_cpu_to_sapicid[cpu];
 
 	*pcpu = cpu;
 	return (0);
@@ -893,14 +947,6 @@ EXPORT_SYMBOL(acpi_map_lsapic);
 
 int acpi_unmap_lsapic(int cpu)
 {
-	int i;
-
-	for (i = 0; i < MAX_SAPICS; i++) {
-		if (ia64_acpiid_to_sapicid[i] == ia64_cpu_to_sapicid[cpu]) {
-			ia64_acpiid_to_sapicid[i] = -1;
-			break;
-		}
-	}
 	ia64_cpu_to_sapicid[cpu] = -1;
 	cpu_clear(cpu, cpu_present_map);
 
@@ -920,7 +966,7 @@ acpi_map_iosapic(acpi_handle handle, u32 depth, void *context, void **ret)
 {
 	struct acpi_buffer buffer = { ACPI_ALLOCATE_BUFFER, NULL };
 	union acpi_object *obj;
-	struct acpi_table_iosapic *iosapic;
+	struct acpi_madt_io_sapic *iosapic;
 	unsigned int gsi_base;
 	int pxm, node;
 
@@ -938,9 +984,9 @@ acpi_map_iosapic(acpi_handle handle, u32 depth, void *context, void **ret)
 		return AE_OK;
 	}
 
-	iosapic = (struct acpi_table_iosapic *)obj->buffer.pointer;
+	iosapic = (struct acpi_madt_io_sapic *)obj->buffer.pointer;
 
-	if (iosapic->header.type != ACPI_MADT_IOSAPIC) {
+	if (iosapic->header.type != ACPI_MADT_TYPE_IO_SAPIC) {
 		kfree(buffer.pointer);
 		return AE_OK;
 	}
@@ -960,7 +1006,7 @@ acpi_map_iosapic(acpi_handle handle, u32 depth, void *context, void **ret)
 	node = pxm_to_node(pxm);
 
 	if (node >= MAX_NUMNODES || !node_online(node) ||
-	    cpus_empty(node_to_cpumask(node)))
+	    cpumask_empty(cpumask_of_node(node)))
 		return AE_OK;
 
 	/* We know a gsi to node mapping! */
@@ -978,7 +1024,7 @@ acpi_map_iosapics (void)
 fs_initcall(acpi_map_iosapics);
 #endif				/* CONFIG_ACPI_NUMA */
 
-int acpi_register_ioapic(acpi_handle handle, u64 phys_addr, u32 gsi_base)
+int __ref acpi_register_ioapic(acpi_handle handle, u64 phys_addr, u32 gsi_base)
 {
 	int err;
 
@@ -1000,5 +1046,22 @@ int acpi_unregister_ioapic(acpi_handle handle, u32 gsi_base)
 }
 
 EXPORT_SYMBOL(acpi_unregister_ioapic);
+
+/*
+ * acpi_save_state_mem() - save kernel state
+ *
+ * TBD when when IA64 starts to support suspend...
+ */
+int acpi_save_state_mem(void) { return 0; } 
+
+/*
+ * acpi_restore_state()
+ */
+void acpi_restore_state_mem(void) {}
+
+/*
+ * do_suspend_lowlevel()
+ */
+void do_suspend_lowlevel(void) {}
 
 #endif				/* CONFIG_ACPI */

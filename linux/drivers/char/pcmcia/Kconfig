@@ -21,6 +21,7 @@ config SYNCLINK_CS
 config CARDMAN_4000
 	tristate "Omnikey Cardman 4000 support"
 	depends on PCMCIA
+	select BITREVERSE
 	help
 	  Enable support for the Omnikey Cardman 4000 PCMCIA Smartcard
 	  reader.
@@ -41,6 +42,15 @@ config CARDMAN_4040
 	  PC/SC ifdhandler provided from the Omnikey homepage
 	  (http://www.omnikey.com/), or a current development version of OpenCT
 	  (http://www.opensc.org/).
+
+config IPWIRELESS
+	tristate "IPWireless 3G UMTS PCMCIA card support"
+	depends on PCMCIA && NETDEVICES
+	select PPP
+	help
+	  This is a driver for 3G UMTS PCMCIA card from IPWireless company. In
+	  some countries (for example Czech Republic, T-Mobile ISP) this card
+	  is shipped for service called UMTS 4G.
 
 endmenu
 

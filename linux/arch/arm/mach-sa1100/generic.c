@@ -18,16 +18,21 @@
 #include <linux/ioport.h>
 #include <linux/sched.h>	/* just for sched_clock() - funny that */
 #include <linux/platform_device.h>
+#include <linux/cnt32_to_63.h>
 
 #include <asm/div64.h>
-#include <asm/hardware.h>
+#include <mach/hardware.h>
 #include <asm/system.h>
 #include <asm/pgtable.h>
 #include <asm/mach/map.h>
 #include <asm/mach/flash.h>
 #include <asm/irq.h>
+#include <asm/gpio.h>
 
 #include "generic.h"
+
+unsigned int reset_status;
+EXPORT_SYMBOL(reset_status);
 
 #define NR_FREQS	16
 
@@ -37,7 +42,7 @@
 static const unsigned short cclk_frequency_100khz[NR_FREQS] = {
 	 590,	/*  59.0 MHz */
 	 737,	/*  73.7 MHz */
-	 885, 	/*  88.5 MHz */
+	 885,	/*  88.5 MHz */
 	1032,	/* 103.2 MHz */
 	1180,	/* 118.0 MHz */
 	1327,	/* 132.7 MHz */
@@ -47,10 +52,10 @@ static const unsigned short cclk_frequency_100khz[NR_FREQS] = {
 	1917,	/* 191.7 MHz */
 	2064,	/* 206.4 MHz */
 	2212,	/* 221.2 MHz */
-	2359,   /* 235.9 MHz */
-	2507,   /* 250.7 MHz */
-	2654,   /* 265.4 MHz */
-	2802    /* 280.2 MHz */
+	2359,	/* 235.9 MHz */
+	2507,	/* 250.7 MHz */
+	2654,	/* 265.4 MHz */
+	2802	/* 280.2 MHz */
 };
 
 #if defined(CONFIG_CPU_FREQ_SA1100) || defined(CONFIG_CPU_FREQ_SA1110)
@@ -108,7 +113,7 @@ unsigned int sa11x0_getspeed(unsigned int cpu)
 #else
 /*
  * We still need to provide this so building without cpufreq works.
- */ 
+ */
 unsigned int cpufreq_get(unsigned int cpu)
 {
 	return cclk_frequency_100khz[PPCR & 0xf] * 100;
@@ -118,15 +123,21 @@ EXPORT_SYMBOL(cpufreq_get);
 
 /*
  * This is the SA11x0 sched_clock implementation.  This has
- * a resolution of 271ns, and a maximum value of 1165s.
+ * a resolution of 271ns, and a maximum value of 32025597s (370 days).
+ *
+ * The return value is guaranteed to be monotonic in that range as
+ * long as there is always less than 582 seconds between successive
+ * calls to this function.
+ *
  *  ( * 1E9 / 3686400 => * 78125 / 288)
  */
 unsigned long long sched_clock(void)
 {
-	unsigned long long v;
+	unsigned long long v = cnt32_to_63(OSCR);
 
-	v = (unsigned long long)OSCR * 78125;
-	do_div(v, 288);
+	/* the <<1 gets rid of the cnt_32_to_63 top bit saving on a bic insn */
+	v *= 78125<<1;
+	do_div(v, 288<<1);
 
 	return v;
 }
@@ -278,7 +289,7 @@ static struct platform_device sa11x0pcmcia_device = {
 };
 
 static struct platform_device sa11x0mtd_device = {
-	.name		= "flash",
+	.name		= "sa1100-mtd",
 	.id		= -1,
 };
 
@@ -378,7 +389,7 @@ EXPORT_SYMBOL(sa1100fb_lcd_power);
  */
 
 static struct map_desc standard_io_desc[] __initdata = {
-  	{	/* PCM */
+	{	/* PCM */
 		.virtual	=  0xf8000000,
 		.pfn		= __phys_to_pfn(0x80000000),
 		.length		= 0x00100000,
@@ -431,7 +442,7 @@ void __init sa1110_mb_disable(void)
  * If the system is going to use the SA-1111 DMA engines, set up
  * the memory bus request/grant pins.
  */
-void __init sa1110_mb_enable(void)
+void __devinit sa1110_mb_enable(void)
 {
 	unsigned long flags;
 

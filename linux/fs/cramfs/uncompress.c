@@ -50,7 +50,7 @@ int cramfs_uncompress_block(void *dst, int dstlen, void *src, int srclen)
 err:
 	printk("Error %d while decompressing!\n", err);
 	printk("%p(%d)->%p(%d)\n", src, srclen, dst, dstlen);
-	return 0;
+	return -EIO;
 }
 
 int cramfs_uncompress_init(void)
@@ -68,11 +68,10 @@ int cramfs_uncompress_init(void)
 	return 0;
 }
 
-int cramfs_uncompress_exit(void)
+void cramfs_uncompress_exit(void)
 {
 	if (!--initialized) {
 		zlib_inflateEnd(&stream);
 		vfree(stream.workspace);
 	}
-	return 0;
 }

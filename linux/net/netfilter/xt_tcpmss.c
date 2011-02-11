@@ -18,28 +18,25 @@
 #include <linux/netfilter_ipv4/ip_tables.h>
 #include <linux/netfilter_ipv6/ip6_tables.h>
 
-#define TH_SYN 0x02
-
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Marc Boucher <marc@mbsi.ca>");
-MODULE_DESCRIPTION("iptables TCP MSS match module");
+MODULE_DESCRIPTION("Xtables: TCP MSS match");
 MODULE_ALIAS("ipt_tcpmss");
+MODULE_ALIAS("ip6t_tcpmss");
 
-/* Returns 1 if the mss option is set and matched by the range, 0 otherwise */
-static inline int
-mssoption_match(u_int16_t min, u_int16_t max,
-		const struct sk_buff *skb,
-		unsigned int protoff,
-		int invert,
-		int *hotdrop)
+static bool
+tcpmss_mt(const struct sk_buff *skb, const struct xt_match_param *par)
 {
-	struct tcphdr _tcph, *th;
+	const struct xt_tcpmss_match_info *info = par->matchinfo;
+	const struct tcphdr *th;
+	struct tcphdr _tcph;
 	/* tcp.doff is only 4 bits, ie. max 15 * 4 bytes */
-	u8 _opt[15 * 4 - sizeof(_tcph)], *op;
+	const u_int8_t *op;
+	u8 _opt[15 * 4 - sizeof(_tcph)];
 	unsigned int i, optlen;
 
 	/* If we don't have the whole header, drop packet. */
-	th = skb_header_pointer(skb, protoff, sizeof(_tcph), &_tcph);
+	th = skb_header_pointer(skb, par->thoff, sizeof(_tcph), &_tcph);
 	if (th == NULL)
 		goto dropit;
 
@@ -52,7 +49,7 @@ mssoption_match(u_int16_t min, u_int16_t max,
 		goto out;
 
 	/* Truncated options. */
-	op = skb_header_pointer(skb, protoff + sizeof(*th), optlen, _opt);
+	op = skb_header_pointer(skb, par->thoff + sizeof(*th), optlen, _opt);
 	if (op == NULL)
 		goto dropit;
 
@@ -63,74 +60,51 @@ mssoption_match(u_int16_t min, u_int16_t max,
 			u_int16_t mssval;
 
 			mssval = (op[i+2] << 8) | op[i+3];
-			
-			return (mssval >= min && mssval <= max) ^ invert;
+
+			return (mssval >= info->mss_min &&
+				mssval <= info->mss_max) ^ info->invert;
 		}
-		if (op[i] < 2) i++;
-		else i += op[i+1]?:1;
+		if (op[i] < 2)
+			i++;
+		else
+			i += op[i+1] ? : 1;
 	}
 out:
-	return invert;
+	return info->invert;
 
- dropit:
-	*hotdrop = 1;
-	return 0;
+dropit:
+	*par->hotdrop = true;
+	return false;
 }
 
-static int
-match(const struct sk_buff *skb,
-      const struct net_device *in,
-      const struct net_device *out,
-      const struct xt_match *match,
-      const void *matchinfo,
-      int offset,
-      unsigned int protoff,
-      int *hotdrop)
-{
-	const struct xt_tcpmss_match_info *info = matchinfo;
-
-	return mssoption_match(info->mss_min, info->mss_max, skb, protoff,
-			       info->invert, hotdrop);
-}
-
-static struct xt_match tcpmss_match = {
-	.name		= "tcpmss",
-	.match		= match,
-	.matchsize	= sizeof(struct xt_tcpmss_match_info),
-	.proto		= IPPROTO_TCP,
-	.family		= AF_INET,
-	.me		= THIS_MODULE,
+static struct xt_match tcpmss_mt_reg[] __read_mostly = {
+	{
+		.name		= "tcpmss",
+		.family		= NFPROTO_IPV4,
+		.match		= tcpmss_mt,
+		.matchsize	= sizeof(struct xt_tcpmss_match_info),
+		.proto		= IPPROTO_TCP,
+		.me		= THIS_MODULE,
+	},
+	{
+		.name		= "tcpmss",
+		.family		= NFPROTO_IPV6,
+		.match		= tcpmss_mt,
+		.matchsize	= sizeof(struct xt_tcpmss_match_info),
+		.proto		= IPPROTO_TCP,
+		.me		= THIS_MODULE,
+	},
 };
 
-static struct xt_match tcpmss6_match = {
-	.name		= "tcpmss",
-	.match		= match,
-	.matchsize	= sizeof(struct xt_tcpmss_match_info),
-	.proto		= IPPROTO_TCP,
-	.family		= AF_INET6,
-	.me		= THIS_MODULE,
-};
-
-
-static int __init xt_tcpmss_init(void)
+static int __init tcpmss_mt_init(void)
 {
-	int ret;
-	ret = xt_register_match(&tcpmss_match);
-	if (ret)
-		return ret;
-
-	ret = xt_register_match(&tcpmss6_match);
-	if (ret)
-		xt_unregister_match(&tcpmss_match);
-
-	return ret;
+	return xt_register_matches(tcpmss_mt_reg, ARRAY_SIZE(tcpmss_mt_reg));
 }
 
-static void __exit xt_tcpmss_fini(void)
+static void __exit tcpmss_mt_exit(void)
 {
-	xt_unregister_match(&tcpmss6_match);
-	xt_unregister_match(&tcpmss_match);
+	xt_unregister_matches(tcpmss_mt_reg, ARRAY_SIZE(tcpmss_mt_reg));
 }
 
-module_init(xt_tcpmss_init);
-module_exit(xt_tcpmss_fini);
+module_init(tcpmss_mt_init);
+module_exit(tcpmss_mt_exit);

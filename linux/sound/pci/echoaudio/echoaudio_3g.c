@@ -40,8 +40,7 @@ static int check_asic_status(struct echoaudio *chip)
 	if (wait_handshake(chip))
 		return -EIO;
 
-	chip->comm_page->ext_box_status =
-		__constant_cpu_to_le32(E3G_ASIC_NOT_LOADED);
+	chip->comm_page->ext_box_status = cpu_to_le32(E3G_ASIC_NOT_LOADED);
 	chip->asic_loaded = FALSE;
 	clear_handshake(chip);
 	send_vector(chip, DSP_VC_TEST_ASIC);
@@ -103,9 +102,11 @@ static int set_digital_mode(struct echoaudio *chip, u8 mode)
 	int err, i, o;
 
 	/* All audio channels must be closed before changing the digital mode */
-	snd_assert(!chip->pipe_alloc_mask, return -EAGAIN);
+	if (snd_BUG_ON(chip->pipe_alloc_mask))
+		return -EAGAIN;
 
-	snd_assert(chip->digital_modes & (1 << mode), return -EINVAL);
+	if (snd_BUG_ON(!(chip->digital_modes & (1 << mode))))
+		return -EINVAL;
 
 	previous_mode = chip->digital_mode;
 	err = dsp_set_digital_mode(chip, mode);
@@ -233,8 +234,8 @@ static int load_asic(struct echoaudio *chip)
 
 	chip->asic_code = &card_fw[FW_3G_ASIC];
 
-	/* Now give the new ASIC a little time to set up */
-	mdelay(2);
+	/* Now give the new ASIC some time to set up */
+	msleep(1000);
 	/* See if it worked */
 	box_type = check_asic_status(chip);
 
@@ -267,8 +268,9 @@ static int set_sample_rate(struct echoaudio *chip, u32 rate)
 		return 0;
 	}
 
-	snd_assert(rate < 50000 || chip->digital_mode != DIGITAL_MODE_ADAT,
-		   return -EINVAL);
+	if (snd_BUG_ON(rate >= 50000 &&
+		       chip->digital_mode == DIGITAL_MODE_ADAT))
+		return -EINVAL;
 
 	clock = 0;
 	control_reg = le32_to_cpu(chip->comm_page->control_register);

@@ -25,13 +25,13 @@
 #include <linux/ioport.h>
 #include <linux/slab.h>
 #include <linux/delay.h>
+#include <linux/io.h>
 
-#include <asm/io.h>
 #include <asm/irq.h>
 #include <asm/pgtable.h>
 #include <asm/page.h>
 #include <asm/system.h>
-#include <asm/hardware.h>
+#include <mach/hardware.h>
 #include <asm/mach-types.h>
 
 #include <asm/mach/pci.h>
@@ -261,14 +261,16 @@ int __init ixdp2800_pci_init(void)
 
 		pci_common_init(&ixdp2800_pci);
 		if (ixdp2x00_master_npu()) {
-			dev = pci_find_slot(1, IXDP2800_SLAVE_ENET_DEVFN);
+			dev = pci_get_bus_and_slot(1, IXDP2800_SLAVE_ENET_DEVFN);
 			pci_remove_bus_device(dev);
+			pci_dev_put(dev);
 
 			ixdp2800_master_enable_slave();
 			ixdp2800_master_wait_for_slave_bus_scan();
 		} else {
-			dev = pci_find_slot(1, IXDP2800_MASTER_ENET_DEVFN);
+			dev = pci_get_bus_and_slot(1, IXDP2800_MASTER_ENET_DEVFN);
 			pci_remove_bus_device(dev);
+			pci_dev_put(dev);
 		}
 	}
 
@@ -277,7 +279,7 @@ int __init ixdp2800_pci_init(void)
 
 subsys_initcall(ixdp2800_pci_init);
 
-void ixdp2800_init_irq(void)
+void __init ixdp2800_init_irq(void)
 {
 	ixdp2x00_init_irq(IXDP2800_CPLD_INT_STAT, IXDP2800_CPLD_INT_MASK, IXDP2800_NR_IRQS);
 }

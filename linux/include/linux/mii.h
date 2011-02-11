@@ -56,8 +56,8 @@
 #define BMSR_ANEGCOMPLETE       0x0020  /* Auto-negotiation complete   */
 #define BMSR_RESV               0x00c0  /* Unused...                   */
 #define BMSR_ESTATEN		0x0100	/* Extended Status in R15 */
-#define BMSR_100FULL2		0x0200	/* Can do 100BASE-T2 HDX */
-#define BMSR_100HALF2		0x0400	/* Can do 100BASE-T2 FDX */
+#define BMSR_100HALF2           0x0200  /* Can do 100BASE-T2 HDX */
+#define BMSR_100FULL2           0x0400  /* Can do 100BASE-T2 FDX */
 #define BMSR_10HALF             0x0800  /* Can do 10mbps, half-duplex  */
 #define BMSR_10FULL             0x1000  /* Can do 10mbps, full-duplex  */
 #define BMSR_100HALF            0x2000  /* Can do 100mbps, half-duplex */
@@ -134,6 +134,10 @@
 #define LPA_1000REMRXOK         0x1000  /* Link partner remote receiver status */
 #define LPA_1000FULL            0x0800  /* Link partner 1000BASE-T full duplex */
 #define LPA_1000HALF            0x0400  /* Link partner 1000BASE-T half duplex */
+
+/* Flow control flags */
+#define FLOW_CTRL_TX		0x01
+#define FLOW_CTRL_RX		0x02
 
 /* This structure is used in all SIOCxMIIxxx ioctl calls */
 struct mii_ioctl_data {
@@ -233,6 +237,45 @@ static inline unsigned int mii_duplex (unsigned int duplex_lock,
 	if (mii_nway_result(negotiated) & LPA_DUPLEX)
 		return 1;
 	return 0;
+}
+
+/**
+ * mii_advertise_flowctrl - get flow control advertisement flags
+ * @cap: Flow control capabilities (FLOW_CTRL_RX, FLOW_CTRL_TX or both)
+ */
+static inline u16 mii_advertise_flowctrl(int cap)
+{
+	u16 adv = 0;
+
+	if (cap & FLOW_CTRL_RX)
+		adv = ADVERTISE_PAUSE_CAP | ADVERTISE_PAUSE_ASYM;
+	if (cap & FLOW_CTRL_TX)
+		adv ^= ADVERTISE_PAUSE_ASYM;
+
+	return adv;
+}
+
+/**
+ * mii_resolve_flowctrl_fdx
+ * @lcladv: value of MII ADVERTISE register
+ * @rmtadv: value of MII LPA register
+ *
+ * Resolve full duplex flow control as per IEEE 802.3-2005 table 28B-3
+ */
+static inline u8 mii_resolve_flowctrl_fdx(u16 lcladv, u16 rmtadv)
+{
+	u8 cap = 0;
+
+	if (lcladv & rmtadv & ADVERTISE_PAUSE_CAP) {
+		cap = FLOW_CTRL_TX | FLOW_CTRL_RX;
+	} else if (lcladv & rmtadv & ADVERTISE_PAUSE_ASYM) {
+		if (lcladv & ADVERTISE_PAUSE_CAP)
+			cap = FLOW_CTRL_RX;
+		else if (rmtadv & ADVERTISE_PAUSE_CAP)
+			cap = FLOW_CTRL_TX;
+	}
+
+	return cap;
 }
 
 #endif /* __KERNEL__ */

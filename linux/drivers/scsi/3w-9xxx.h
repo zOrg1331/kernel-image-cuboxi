@@ -1,10 +1,11 @@
 /*
    3w-9xxx.h -- 3ware 9000 Storage Controller device driver for Linux.
 
-   Written By: Adam Radford <linuxraid@amcc.com>
-   Modifications By: Tom Couch <linuxraid@amcc.com>
+   Written By: Adam Radford <linuxraid@lsi.com>
+   Modifications By: Tom Couch <linuxraid@lsi.com>
 
-   Copyright (C) 2004-2006 Applied Micro Circuits Corporation.
+   Copyright (C) 2004-2009 Applied Micro Circuits Corporation.
+   Copyright (C) 2010 LSI Corporation.
 
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
@@ -40,10 +41,10 @@
    Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 
    Bugs/Comments/Suggestions should be mailed to:
-   linuxraid@amcc.com
+   linuxraid@lsi.com
 
    For more information, goto:
-   http://www.amcc.com
+   http://www.lsi.com
 */
 
 #ifndef _3W_9XXX_H
@@ -289,7 +290,6 @@ static twa_message_type twa_error_table[] = {
 #define TW_STATUS_VALID_INTERRUPT              0x00DF0000
 
 /* PCI related defines */
-#define TW_NUMDEVICES 1
 #define TW_PCI_CLEAR_PARITY_ERRORS 0xc100
 #define TW_PCI_CLEAR_PCI_ABORT     0x2000
 
@@ -320,8 +320,8 @@ static twa_message_type twa_error_table[] = {
 
 /* Compatibility defines */
 #define TW_9000_ARCH_ID 0x5
-#define TW_CURRENT_DRIVER_SRL 30
-#define TW_CURRENT_DRIVER_BUILD 80
+#define TW_CURRENT_DRIVER_SRL 35
+#define TW_CURRENT_DRIVER_BUILD 0
 #define TW_CURRENT_DRIVER_BRANCH 0
 
 /* Phase defines */
@@ -335,6 +335,7 @@ static twa_message_type twa_error_table[] = {
 #define TW_ALIGNMENT_9000                     4  /* 4 bytes */
 #define TW_ALIGNMENT_9000_SGL                 0x3
 #define TW_MAX_UNITS			      16
+#define TW_MAX_UNITS_9650SE		      32
 #define TW_INIT_MESSAGE_CREDITS		      0x100
 #define TW_INIT_COMMAND_PACKET_SIZE	      0x3
 #define TW_INIT_COMMAND_PACKET_SIZE_EXTENDED  0x6
@@ -352,9 +353,9 @@ static twa_message_type twa_error_table[] = {
 #define TW_MAX_RESET_TRIES		      2
 #define TW_MAX_CMDS_PER_LUN		      254
 #define TW_MAX_RESPONSE_DRAIN		      256
-#define TW_MAX_AEN_DRAIN		      40
+#define TW_MAX_AEN_DRAIN		      255
 #define TW_IN_RESET                           2
-#define TW_IN_CHRDEV_IOCTL                    3
+#define TW_USING_MSI			      3
 #define TW_IN_ATTENTION_LOOP		      4
 #define TW_MAX_SECTORS                        256
 #define TW_AEN_WAIT_TIME                      1000
@@ -417,6 +418,12 @@ static twa_message_type twa_error_table[] = {
 #ifndef PCI_DEVICE_ID_3WARE_9550SX
 #define PCI_DEVICE_ID_3WARE_9550SX 0x1003
 #endif
+#ifndef PCI_DEVICE_ID_3WARE_9650SE
+#define PCI_DEVICE_ID_3WARE_9650SE 0x1004
+#endif
+#ifndef PCI_DEVICE_ID_3WARE_9690SA
+#define PCI_DEVICE_ID_3WARE_9690SA 0x1005
+#endif
 
 /* Bitmask macros to eliminate bitfields */
 
@@ -442,6 +449,7 @@ static twa_message_type twa_error_table[] = {
 #define TW_CONTROL_REG_ADDR(x) (x->base_addr)
 #define TW_STATUS_REG_ADDR(x) ((unsigned char __iomem *)x->base_addr + 0x4)
 #define TW_COMMAND_QUEUE_REG_ADDR(x) (sizeof(dma_addr_t) > 4 ? ((unsigned char __iomem *)x->base_addr + 0x20) : ((unsigned char __iomem *)x->base_addr + 0x8))
+#define TW_COMMAND_QUEUE_REG_ADDR_LARGE(x) ((unsigned char __iomem *)x->base_addr + 0x20)
 #define TW_RESPONSE_QUEUE_REG_ADDR(x) ((unsigned char __iomem *)x->base_addr + 0xC)
 #define TW_RESPONSE_QUEUE_REG_ADDR_LARGE(x) ((unsigned char __iomem *)x->base_addr + 0x30)
 #define TW_CLEAR_ALL_INTERRUPTS(x) (writel(TW_STATUS_VALID_INTERRUPT, TW_CONTROL_REG_ADDR(x)))
@@ -626,6 +634,9 @@ typedef struct TAG_TW_Compatibility_Info
 	unsigned short driver_srl_low;
 	unsigned short driver_branch_low;
 	unsigned short driver_build_low;
+	unsigned short fw_on_ctlr_srl;
+	unsigned short fw_on_ctlr_branch;
+	unsigned short fw_on_ctlr_build;
 } TW_Compatibility_Info;
 
 #pragma pack()
@@ -668,9 +679,7 @@ typedef struct TAG_TW_Device_Extension {
 	wait_queue_head_t	ioctl_wqueue;
 	struct mutex		ioctl_lock;
 	char			aen_clobber;
-	unsigned short		working_srl;
-	unsigned short		working_branch;
-	unsigned short		working_build;
+	TW_Compatibility_Info	tw_compat_info;
 } TW_Device_Extension;
 
 #endif /* _3W_9XXX_H */

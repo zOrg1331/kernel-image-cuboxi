@@ -27,16 +27,10 @@
 #define O2NET_MSG_KEEP_REQ_MAGIC  ((u16)0xfa57)
 #define O2NET_MSG_KEEP_RESP_MAGIC ((u16)0xfa58)
 
-/* same as hb delay, we're waiting for another node to recognize our hb */
-#define O2NET_RECONNECT_DELAY_MS	O2HB_REGION_TIMEOUT_MS
-
 /* we're delaying our quorum decision so that heartbeat will have timed
  * out truly dead nodes by the time we come around to making decisions
  * on their number */
 #define O2NET_QUORUM_DELAY_MS	((o2hb_dead_threshold + 2) * O2HB_REGION_TIMEOUT_MS)
-
-#define O2NET_KEEPALIVE_DELAY_SECS	5
-#define O2NET_IDLE_TIMEOUT_SECS		10
 
 /* 
  * This version number represents quite a lot, unfortunately.  It not
@@ -44,14 +38,51 @@
  * locking semantics of the file system using the protocol.  It should 
  * be somewhere else, I'm sure, but right now it isn't.
  *
+ * With version 11, we separate out the filesystem locking portion.  The
+ * filesystem now has a major.minor version it negotiates.  Version 11
+ * introduces this negotiation to the o2dlm protocol, and as such the
+ * version here in tcp_internal.h should not need to be bumped for
+ * filesystem locking changes.
+ *
+ * New in version 11
+ * 	- Negotiation of filesystem locking in the dlm join.
+ *
+ * New in version 10:
+ * 	- Meta/data locks combined
+ *
+ * New in version 9:
+ * 	- All votes removed
+ *
+ * New in version 8:
+ * 	- Replace delete inode votes with a cluster lock
+ *
+ * New in version 7:
+ * 	- DLM join domain includes the live nodemap
+ *
+ * New in version 6:
+ * 	- DLM lockres remote refcount fixes.
+ *
+ * New in version 5:
+ * 	- Network timeout checking protocol
+ *
+ * New in version 4:
+ * 	- Remove i_generation from lock names for better stat performance.
+ *
+ * New in version 3:
+ * 	- Replace dentry votes with a cluster lock
+ *
  * New in version 2:
  * 	- full 64 bit i_size in the metadata lock lvbs
  * 	- introduction of "rw" lock and pushing meta/data locking down
  */
-#define O2NET_PROTOCOL_VERSION 2ULL
+#define O2NET_PROTOCOL_VERSION 11ULL
 struct o2net_handshake {
 	__be64	protocol_version;
 	__be64	connector_id;
+	__be32  o2hb_heartbeat_timeout_ms;
+	__be32  o2net_idle_timeout_ms;
+	__be32  o2net_keepalive_delay_ms;
+	__be32  o2net_reconnect_delay_ms;
 };
 
 struct o2net_node {
@@ -64,6 +95,8 @@ struct o2net_node {
 	unsigned			nn_sc_valid:1;
 	/* if this is set tx just returns it */
 	int				nn_persistent_error;
+	/* It is only set to 1 after the idle time out. */
+	atomic_t			nn_timeout;
 
 	/* threads waiting for an sc to arrive wait on the wq for generation
 	 * to increase.  it is increased when a connecting socket succeeds
@@ -80,18 +113,18 @@ struct o2net_node {
 	 * connect attempt fails and so can be self-arming.  shutdown is
 	 * careful to first mark the nn such that no connects will be attempted
 	 * before canceling delayed connect work and flushing the queue. */
-	struct work_struct		nn_connect_work;
+	struct delayed_work		nn_connect_work;
 	unsigned long			nn_last_connect_attempt;
 
 	/* this is queued as nodes come up and is canceled when a connection is
 	 * established.  this expiring gives up on the node and errors out
 	 * transmits */
-	struct work_struct		nn_connect_expired;
+	struct delayed_work		nn_connect_expired;
 
 	/* after we give up on a socket we wait a while before deciding
 	 * that it is still heartbeating and that we should do some
 	 * quorum work */
-	struct work_struct		nn_still_up;
+	struct delayed_work		nn_still_up;
 };
 
 struct o2net_sock_container {
@@ -123,7 +156,7 @@ struct o2net_sock_container {
 	struct work_struct	sc_shutdown_work;
 
 	struct timer_list	sc_idle_timeout;
-	struct work_struct	sc_keepalive_work;
+	struct delayed_work	sc_keepalive_work;
 
 	unsigned		sc_handshake_ok:1;
 
@@ -133,7 +166,9 @@ struct o2net_sock_container {
 	/* original handlers for the sockets */
 	void			(*sc_state_change)(struct sock *sk);
 	void			(*sc_data_ready)(struct sock *sk, int bytes);
-
+#ifdef CONFIG_DEBUG_FS
+	struct list_head        sc_net_debug_item;
+#endif
 	struct timeval 		sc_tv_timer;
 	struct timeval 		sc_tv_data_ready;
 	struct timeval 		sc_tv_advance_start;
@@ -142,6 +177,8 @@ struct o2net_sock_container {
 	struct timeval 		sc_tv_func_stop;
 	u32			sc_msg_key;
 	u16			sc_msg_type;
+
+	struct mutex		sc_send_lock;
 };
 
 struct o2net_msg_handler {
@@ -151,6 +188,8 @@ struct o2net_msg_handler {
 	u32			nh_key;
 	o2net_msg_handler_func	*nh_func;
 	o2net_msg_handler_func	*nh_func_data;
+	o2net_post_msg_handler_func
+				*nh_post_func;
 	struct kref		nh_kref;
 	struct list_head	nh_unregister_item;
 };
@@ -170,5 +209,25 @@ struct o2net_status_wait {
 	wait_queue_head_t	ns_wq;
 	struct list_head	ns_node_item;
 };
+
+#ifdef CONFIG_DEBUG_FS
+/* just for state dumps */
+struct o2net_send_tracking {
+	struct list_head		st_net_debug_item;
+	struct task_struct		*st_task;
+	struct o2net_sock_container	*st_sc;
+	u32				st_id;
+	u32				st_msg_type;
+	u32				st_msg_key;
+	u8				st_node;
+	struct timeval			st_sock_time;
+	struct timeval			st_send_time;
+	struct timeval			st_status_time;
+};
+#else
+struct o2net_send_tracking {
+	u32	dummy;
+};
+#endif	/* CONFIG_DEBUG_FS */
 
 #endif /* O2CLUSTER_TCP_INTERNAL_H */

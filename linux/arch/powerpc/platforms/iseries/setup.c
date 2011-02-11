@@ -21,12 +21,14 @@
 #include <linux/smp.h>
 #include <linux/param.h>
 #include <linux/string.h>
-#include <linux/initrd.h>
 #include <linux/seq_file.h>
 #include <linux/kdev_t.h>
+#include <linux/kexec.h>
 #include <linux/major.h>
 #include <linux/root_dev.h>
 #include <linux/kernel.h>
+#include <linux/hrtimer.h>
+#include <linux/tick.h>
 
 #include <asm/processor.h>
 #include <asm/machdep.h>
@@ -42,7 +44,6 @@
 #include <asm/time.h>
 #include <asm/paca.h>
 #include <asm/cache.h>
-#include <asm/sections.h>
 #include <asm/abs_addr.h>
 #include <asm/iseries/hv_lp_config.h>
 #include <asm/iseries/hv_call_event.h>
@@ -59,9 +60,11 @@
 #include "irq.h"
 #include "vpd_areas.h"
 #include "processor_vpd.h"
+#include "it_lp_naca.h"
 #include "main_store.h"
 #include "call_sm.h"
 #include "call_hpt.h"
+#include "pci.h"
 
 #ifdef DEBUG
 #define DBG(fmt...) udbg_printf(fmt)
@@ -73,16 +76,7 @@
 static unsigned long build_iSeries_Memory_Map(void);
 static void iseries_shared_idle(void);
 static void iseries_dedicated_idle(void);
-#ifdef CONFIG_PCI
-extern void iSeries_pci_final_fixup(void);
-#else
-static void iSeries_pci_final_fixup(void) { }
-#endif
 
-extern int rd_size;		/* Defined in drivers/block/rd.c */
-
-extern unsigned long iSeries_recal_tb;
-extern unsigned long iSeries_recal_titan;
 
 struct MemoryBlock {
 	unsigned long absStart;
@@ -115,13 +109,13 @@ static unsigned long iSeries_process_Condor_mainstore_vpd(
 	 * correctly.
 	 */
 	mb_array[0].logicalStart = 0;
-	mb_array[0].logicalEnd = 0x100000000;
+	mb_array[0].logicalEnd = 0x100000000UL;
 	mb_array[0].absStart = 0;
-	mb_array[0].absEnd = 0x100000000;
+	mb_array[0].absEnd = 0x100000000UL;
 
 	if (holeSize) {
 		numMemoryBlocks = 2;
-		holeStart = holeStart & 0x000fffffffffffff;
+		holeStart = holeStart & 0x000fffffffffffffUL;
 		holeStart = addr_to_chunk(holeStart);
 		holeFirstChunk = holeStart;
 		holeSize = addr_to_chunk(holeSize);
@@ -131,9 +125,9 @@ static unsigned long iSeries_process_Condor_mainstore_vpd(
 		mb_array[0].logicalEnd = holeFirstChunk;
 		mb_array[0].absEnd = holeFirstChunk;
 		mb_array[1].logicalStart = holeFirstChunk;
-		mb_array[1].logicalEnd = 0x100000000 - holeSizeChunks;
+		mb_array[1].logicalEnd = 0x100000000UL - holeSizeChunks;
 		mb_array[1].absStart = holeFirstChunk + holeSizeChunks;
-		mb_array[1].absEnd = 0x100000000;
+		mb_array[1].absEnd = 0x100000000UL;
 	}
 	return numMemoryBlocks;
 }
@@ -237,9 +231,9 @@ static unsigned long iSeries_process_Regatta_mainstore_vpd(
 				mb_array[i].logicalEnd,
 				mb_array[i].absStart, mb_array[i].absEnd);
 		mb_array[i].absStart = addr_to_chunk(mb_array[i].absStart &
-				0x000fffffffffffff);
+				0x000fffffffffffffUL);
 		mb_array[i].absEnd = addr_to_chunk(mb_array[i].absEnd &
-				0x000fffffffffffff);
+				0x000fffffffffffffUL);
 		mb_array[i].logicalStart =
 			addr_to_chunk(mb_array[i].logicalStart);
 		mb_array[i].logicalEnd = addr_to_chunk(mb_array[i].logicalEnd);
@@ -294,26 +288,8 @@ static void __init iSeries_init_early(void)
 {
 	DBG(" -> iSeries_init_early()\n");
 
-#if defined(CONFIG_BLK_DEV_INITRD)
-	/*
-	 * If the init RAM disk has been configured and there is
-	 * a non-zero starting address for it, set it up
-	 */
-	if (naca.xRamDisk) {
-		initrd_start = (unsigned long)__va(naca.xRamDisk);
-		initrd_end = initrd_start + naca.xRamDiskSize * HW_PAGE_SIZE;
-		initrd_below_start_ok = 1;	// ramdisk in kernel space
-		ROOT_DEV = Root_RAM0;
-		if (((rd_size * 1024) / HW_PAGE_SIZE) < naca.xRamDiskSize)
-			rd_size = (naca.xRamDiskSize * HW_PAGE_SIZE) / 1024;
-	} else
-#endif /* CONFIG_BLK_DEV_INITRD */
-	{
-	    /* ROOT_DEV = MKDEV(VIODASD_MAJOR, 1); */
-	}
-
-	iSeries_recal_tb = get_tb();
-	iSeries_recal_titan = HvCallXm_loadTod();
+	/* Snapshot the timebase, for use in later recalibration */
+	iSeries_time_init_early();
 
 	/*
 	 * Initialize the DMA/TCE management
@@ -330,17 +306,6 @@ static void __init iSeries_init_early(void)
 
 	mf_init();
 
-	/* If we were passed an initrd, set the ROOT_DEV properly if the values
-	 * look sensible. If not, clear initrd reference.
-	 */
-#ifdef CONFIG_BLK_DEV_INITRD
-	if (initrd_start >= KERNELBASE && initrd_end >= KERNELBASE &&
-	    initrd_end > initrd_start)
-		ROOT_DEV = Root_RAM0;
-	else
-		initrd_start = initrd_end = 0;
-#endif /* CONFIG_BLK_DEV_INITRD */
-
 	DBG(" <- iSeries_init_early()\n");
 }
 
@@ -352,7 +317,7 @@ struct mschunks_map mschunks_map = {
 };
 EXPORT_SYMBOL(mschunks_map);
 
-void mschunks_alloc(unsigned long num_chunks)
+static void mschunks_alloc(unsigned long num_chunks)
 {
 	klimit = _ALIGN(klimit, sizeof(u32));
 	mschunks_map.mapping = (u32 *)klimit;
@@ -531,6 +496,8 @@ static void __init iSeries_setup_arch(void)
 			itVpdAreas.xSlicMaxLogicalProcs);
 	printk("Max physical processors = %d\n",
 			itVpdAreas.xSlicMaxPhysicalProcs);
+
+	iSeries_pcibios_init();
 }
 
 static void iSeries_show_cpuinfo(struct seq_file *m)
@@ -558,7 +525,8 @@ static void __init iSeries_fixup_klimit(void)
 static int __init iSeries_src_init(void)
 {
         /* clear the progress line */
-        ppc_md.progress(" ", 0xffff);
+	if (firmware_has_feature(FW_FEATURE_ISERIES))
+		ppc_md.progress(" ", 0xffff);
         return 0;
 }
 
@@ -594,6 +562,7 @@ static void yield_shared_processor(void)
 static void iseries_shared_idle(void)
 {
 	while (1) {
+		tick_nohz_stop_sched_tick(1);
 		while (!need_resched() && !hvlpevent_is_pending()) {
 			local_irq_disable();
 			ppc64_runlatch_off();
@@ -607,6 +576,7 @@ static void iseries_shared_idle(void)
 		}
 
 		ppc64_runlatch_on();
+		tick_nohz_restart_sched_tick();
 
 		if (hvlpevent_is_pending())
 			process_iSeries_events();
@@ -622,6 +592,7 @@ static void iseries_dedicated_idle(void)
 	set_thread_flag(TIF_POLLING_NRFLAG);
 
 	while (1) {
+		tick_nohz_stop_sched_tick(1);
 		if (!need_resched()) {
 			while (!need_resched()) {
 				ppc64_runlatch_off();
@@ -638,15 +609,22 @@ static void iseries_dedicated_idle(void)
 		}
 
 		ppc64_runlatch_on();
+		tick_nohz_restart_sched_tick();
 		preempt_enable_no_resched();
 		schedule();
 		preempt_disable();
 	}
 }
 
-#ifndef CONFIG_PCI
-void __init iSeries_init_IRQ(void) { }
-#endif
+static void __iomem *iseries_ioremap(phys_addr_t address, unsigned long size,
+				     unsigned long flags, void *caller)
+{
+	return (void __iomem *)address;
+}
+
+static void iseries_iounmap(volatile void __iomem *token)
+{
+}
 
 static int __init iseries_probe(void)
 {
@@ -654,37 +632,57 @@ static int __init iseries_probe(void)
 	if (!of_flat_dt_is_compatible(root, "IBM,iSeries"))
 		return 0;
 
-	powerpc_firmware_features |= FW_FEATURE_ISERIES;
-	powerpc_firmware_features |= FW_FEATURE_LPAR;
-
 	hpte_init_iSeries();
+	/* iSeries does not support 16M pages */
+	cur_cpu_spec->cpu_features &= ~CPU_FTR_16M_PAGE;
 
 	return 1;
 }
 
+#ifdef CONFIG_KEXEC
+static int iseries_kexec_prepare(struct kimage *image)
+{
+	return -ENOSYS;
+}
+#endif
+
 define_machine(iseries) {
-	.name		= "iSeries",
-	.setup_arch	= iSeries_setup_arch,
-	.show_cpuinfo	= iSeries_show_cpuinfo,
-	.init_IRQ	= iSeries_init_IRQ,
-	.get_irq	= iSeries_get_irq,
-	.init_early	= iSeries_init_early,
-	.pcibios_fixup	= iSeries_pci_final_fixup,
-	.restart	= mf_reboot,
-	.power_off	= mf_power_off,
-	.halt		= mf_power_off,
-	.get_boot_time	= iSeries_get_boot_time,
-	.set_rtc_time	= iSeries_set_rtc_time,
-	.get_rtc_time	= iSeries_get_rtc_time,
-	.calibrate_decr	= generic_calibrate_decr,
-	.progress	= iSeries_progress,
-	.probe		= iseries_probe,
+	.name			= "iSeries",
+	.setup_arch		= iSeries_setup_arch,
+	.show_cpuinfo		= iSeries_show_cpuinfo,
+	.init_IRQ		= iSeries_init_IRQ,
+	.get_irq		= iSeries_get_irq,
+	.init_early		= iSeries_init_early,
+	.pcibios_fixup		= iSeries_pci_final_fixup,
+	.pcibios_fixup_resources= iSeries_pcibios_fixup_resources,
+	.restart		= mf_reboot,
+	.power_off		= mf_power_off,
+	.halt			= mf_power_off,
+	.get_boot_time		= iSeries_get_boot_time,
+	.set_rtc_time		= iSeries_set_rtc_time,
+	.get_rtc_time		= iSeries_get_rtc_time,
+	.calibrate_decr		= generic_calibrate_decr,
+	.progress		= iSeries_progress,
+	.probe			= iseries_probe,
+	.ioremap		= iseries_ioremap,
+	.iounmap		= iseries_iounmap,
+#ifdef CONFIG_KEXEC
+	.machine_kexec_prepare	= iseries_kexec_prepare,
+#endif
 	/* XXX Implement enable_pmcs for iSeries */
 };
 
 void * __init iSeries_early_setup(void)
 {
 	unsigned long phys_mem_size;
+
+	/* Identify CPU type. This is done again by the common code later
+	 * on but calling this function multiple times is fine.
+	 */
+	identify_cpu(0, mfspr(SPRN_PVR));
+
+	powerpc_firmware_features |= FW_FEATURE_ISERIES;
+	powerpc_firmware_features |= FW_FEATURE_LPAR;
 
 	iSeries_fixup_klimit();
 

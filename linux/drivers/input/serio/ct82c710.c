@@ -1,6 +1,4 @@
 /*
- * $Id: ct82c710.c,v 1.11 2001/09/25 10:12:07 vojtech Exp $
- *
  *  Copyright (c) 1999-2001 Vojtech Pavlik
  */
 
@@ -71,9 +69,9 @@ static struct resource ct82c710_iores;
  * is waiting in the 82C710.
  */
 
-static irqreturn_t ct82c710_interrupt(int cpl, void *dev_id, struct pt_regs * regs)
+static irqreturn_t ct82c710_interrupt(int cpl, void *dev_id)
 {
-	return serio_interrupt(ct82c710_port, inb(CT82C710_DATA), 0, regs);
+	return serio_interrupt(ct82c710_port, inb(CT82C710_DATA), 0);
 }
 
 /*

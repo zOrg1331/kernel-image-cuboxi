@@ -23,7 +23,6 @@
 #include "hostap_wlan.h"
 
 
-static char *version = PRISM2_VERSION " (Jouni Malinen <jkmaline@cc.hut.fi>)";
 static char *dev_info = "hostap_plx";
 
 
@@ -32,7 +31,6 @@ MODULE_DESCRIPTION("Support for Intersil Prism2-based 802.11 wireless LAN "
 		   "cards (PLX).");
 MODULE_SUPPORTED_DEVICE("Intersil Prism2-based WLAN cards (PLX)");
 MODULE_LICENSE("GPL");
-MODULE_VERSION(PRISM2_VERSION);
 
 
 static int ignore_cis;
@@ -364,7 +362,7 @@ static int prism2_plx_check_cis(void __iomem *attr_mem, int attr_len,
 
 	pos = 0;
 	while (pos < CIS_MAX_LEN - 1 && cis[pos] != CISTPL_END) {
-		if (pos + cis[pos + 1] >= CIS_MAX_LEN)
+		if (pos + 2 + cis[pos + 1] > CIS_MAX_LEN)
 			goto cis_error;
 
 		switch (cis[pos]) {
@@ -391,7 +389,7 @@ static int prism2_plx_check_cis(void __iomem *attr_mem, int attr_len,
 			break;
 
 		case CISTPL_MANFID:
-			if (cis[pos + 1] < 5)
+			if (cis[pos + 1] < 4)
 				goto cis_error;
 			manfid1 = cis[pos + 2] + (cis[pos + 3] << 8);
 			manfid2 = cis[pos + 4] + (cis[pos + 5] << 8);
@@ -437,7 +435,7 @@ static int prism2_plx_probe(struct pci_dev *pdev,
 	unsigned long pccard_attr_mem;
 	unsigned int pccard_attr_len;
 	void __iomem *attr_mem = NULL;
-	unsigned int cor_offset, cor_index;
+	unsigned int cor_offset = 0, cor_index = 0;
 	u32 reg;
 	local_info_t *local = NULL;
 	struct net_device *dev = NULL;
@@ -447,10 +445,9 @@ static int prism2_plx_probe(struct pci_dev *pdev,
 	int tmd7160;
 	struct hostap_plx_priv *hw_priv;
 
-	hw_priv = kmalloc(sizeof(*hw_priv), GFP_KERNEL);
+	hw_priv = kzalloc(sizeof(*hw_priv), GFP_KERNEL);
 	if (hw_priv == NULL)
 		return -ENOMEM;
-	memset(hw_priv, 0, sizeof(*hw_priv));
 
 	if (pci_enable_device(pdev))
 		goto err_out_free;
@@ -611,29 +608,23 @@ static void prism2_plx_remove(struct pci_dev *pdev)
 
 MODULE_DEVICE_TABLE(pci, prism2_plx_id_table);
 
-static struct pci_driver prism2_plx_drv_id = {
+static struct pci_driver prism2_plx_driver = {
 	.name		= "hostap_plx",
 	.id_table	= prism2_plx_id_table,
 	.probe		= prism2_plx_probe,
 	.remove		= prism2_plx_remove,
-	.suspend	= NULL,
-	.resume		= NULL,
-	.enable_wake	= NULL
 };
 
 
 static int __init init_prism2_plx(void)
 {
-	printk(KERN_INFO "%s: %s\n", dev_info, version);
-
-	return pci_register_driver(&prism2_plx_drv_id);
+	return pci_register_driver(&prism2_plx_driver);
 }
 
 
 static void __exit exit_prism2_plx(void)
 {
-	pci_unregister_driver(&prism2_plx_drv_id);
-	printk(KERN_INFO "%s: Driver unloaded\n", dev_info);
+	pci_unregister_driver(&prism2_plx_driver);
 }
 
 

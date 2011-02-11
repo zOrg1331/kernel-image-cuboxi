@@ -24,6 +24,8 @@ struct vp702x_fe_state {
 	struct dvb_frontend fe;
 	struct dvb_usb_device *d;
 
+	struct dvb_frontend_ops ops;
+
 	fe_sec_voltage_t voltage;
 	fe_sec_tone_mode_t tone_mode;
 
@@ -65,15 +67,12 @@ static int vp702x_fe_read_status(struct dvb_frontend* fe, fe_status_t *status)
 {
 	struct vp702x_fe_state *st = fe->demodulator_priv;
 	vp702x_fe_refresh_state(st);
-	deb_fe("%s\n",__FUNCTION__);
+	deb_fe("%s\n",__func__);
 
 	if (st->lock == 0)
 		*status = FE_HAS_LOCK | FE_HAS_SYNC | FE_HAS_VITERBI | FE_HAS_SIGNAL | FE_HAS_CARRIER;
 	else
 		*status = 0;
-
-	deb_fe("real state: %x\n",*status);
-	*status = 0x1f;
 
 	if (*status & FE_HAS_LOCK)
 		st->status_check_interval = 1000;
@@ -122,7 +121,7 @@ static int vp702x_fe_read_snr(struct dvb_frontend* fe, u16 *snr)
 
 static int vp702x_fe_get_tune_settings(struct dvb_frontend* fe, struct dvb_frontend_tune_settings *tune)
 {
-	deb_fe("%s\n",__FUNCTION__);
+	deb_fe("%s\n",__func__);
 	tune->min_delay_ms = 2000;
 	return 0;
 }
@@ -171,8 +170,6 @@ static int vp702x_fe_set_frontend(struct dvb_frontend* fe,
 	st->status_check_interval = 250;
 	st->next_status_check = jiffies;
 
-	vp702x_usb_in_op(st->d, RESET_TUNER, 0, 0, NULL, 0);
-	msleep(30);
 	vp702x_usb_inout_op(st->d,cmd,8,ibuf,10,100);
 
 	if (ibuf[2] == 0 && ibuf[3] == 0)
@@ -183,10 +180,24 @@ static int vp702x_fe_set_frontend(struct dvb_frontend* fe,
 	return 0;
 }
 
+static int vp702x_fe_init(struct dvb_frontend *fe)
+{
+	struct vp702x_fe_state *st = fe->demodulator_priv;
+	deb_fe("%s\n",__func__);
+	vp702x_usb_in_op(st->d, RESET_TUNER, 0, 0, NULL, 0);
+	return 0;
+}
+
+static int vp702x_fe_sleep(struct dvb_frontend *fe)
+{
+	deb_fe("%s\n",__func__);
+	return 0;
+}
+
 static int vp702x_fe_get_frontend(struct dvb_frontend* fe,
 				  struct dvb_frontend_parameters *fep)
 {
-	deb_fe("%s\n",__FUNCTION__);
+	deb_fe("%s\n",__func__);
 	return 0;
 }
 
@@ -197,7 +208,7 @@ static int vp702x_fe_send_diseqc_msg (struct dvb_frontend* fe,
 	u8 cmd[8],ibuf[10];
 	memset(cmd,0,8);
 
-	deb_fe("%s\n",__FUNCTION__);
+	deb_fe("%s\n",__func__);
 
 	if (m->msg_len > 4)
 		return -EINVAL;
@@ -219,7 +230,7 @@ static int vp702x_fe_send_diseqc_msg (struct dvb_frontend* fe,
 
 static int vp702x_fe_send_diseqc_burst (struct dvb_frontend* fe, fe_sec_mini_cmd_t burst)
 {
-	deb_fe("%s\n",__FUNCTION__);
+	deb_fe("%s\n",__func__);
 	return 0;
 }
 
@@ -227,7 +238,7 @@ static int vp702x_fe_set_tone(struct dvb_frontend* fe, fe_sec_tone_mode_t tone)
 {
 	struct vp702x_fe_state *st = fe->demodulator_priv;
 	u8 ibuf[10];
-	deb_fe("%s\n",__FUNCTION__);
+	deb_fe("%s\n",__func__);
 
 	st->tone_mode = tone;
 
@@ -252,7 +263,7 @@ static int vp702x_fe_set_voltage (struct dvb_frontend* fe, fe_sec_voltage_t
 {
 	struct vp702x_fe_state *st = fe->demodulator_priv;
 	u8 ibuf[10];
-	deb_fe("%s\n",__FUNCTION__);
+	deb_fe("%s\n",__func__);
 
 	st->voltage = voltage;
 
@@ -318,8 +329,8 @@ static struct dvb_frontend_ops vp702x_fe_ops = {
 	},
 	.release = vp702x_fe_release,
 
-	.init = NULL,
-	.sleep = NULL,
+	.init  = vp702x_fe_init,
+	.sleep = vp702x_fe_sleep,
 
 	.set_frontend = vp702x_fe_set_frontend,
 	.get_frontend = vp702x_fe_get_frontend,

@@ -13,6 +13,7 @@
 #include <linux/smp_lock.h>
 #include <linux/ctype.h>
 #include <linux/net.h>
+#include <linux/sched.h>
 
 #include <linux/smb_fs.h>
 #include <linux/smb_mount.h>
@@ -42,7 +43,7 @@ const struct file_operations smb_dir_operations =
 	.open		= smb_dir_open,
 };
 
-struct inode_operations smb_dir_inode_operations =
+const struct inode_operations smb_dir_inode_operations =
 {
 	.create		= smb_create,
 	.lookup		= smb_lookup,
@@ -54,7 +55,7 @@ struct inode_operations smb_dir_inode_operations =
 	.setattr	= smb_notify_change,
 };
 
-struct inode_operations smb_dir_inode_operations_unix =
+const struct inode_operations smb_dir_inode_operations_unix =
 {
 	.create		= smb_create,
 	.lookup		= smb_lookup,
@@ -78,7 +79,7 @@ struct inode_operations smb_dir_inode_operations_unix =
 static int 
 smb_readdir(struct file *filp, void *dirent, filldir_t filldir)
 {
-	struct dentry *dentry = filp->f_dentry;
+	struct dentry *dentry = filp->f_path.dentry;
 	struct inode *dir = dentry->d_inode;
 	struct smb_sb_info *server = server_from_dentry(dentry);
 	union  smb_dir_cache *cache = NULL;
@@ -238,12 +239,12 @@ out:
 static int
 smb_dir_open(struct inode *dir, struct file *file)
 {
-	struct dentry *dentry = file->f_dentry;
+	struct dentry *dentry = file->f_path.dentry;
 	struct smb_sb_info *server;
 	int error = 0;
 
 	VERBOSE("(%s/%s)\n", dentry->d_parent->d_name.name,
-		file->f_dentry->d_name.name);
+		file->f_path.dentry->d_name.name);
 
 	/*
 	 * Directory timestamps in the core protocol aren't updated
@@ -276,7 +277,7 @@ static int smb_hash_dentry(struct dentry *, struct qstr *);
 static int smb_compare_dentry(struct dentry *, struct qstr *, struct qstr *);
 static int smb_delete_dentry(struct dentry *);
 
-static struct dentry_operations smbfs_dentry_operations =
+static const struct dentry_operations smbfs_dentry_operations =
 {
 	.d_revalidate	= smb_lookup_validate,
 	.d_hash		= smb_hash_dentry,
@@ -284,7 +285,7 @@ static struct dentry_operations smbfs_dentry_operations =
 	.d_delete	= smb_delete_dentry,
 };
 
-static struct dentry_operations smbfs_dentry_operations_case =
+static const struct dentry_operations smbfs_dentry_operations_case =
 {
 	.d_revalidate	= smb_lookup_validate,
 	.d_delete	= smb_delete_dentry,
@@ -666,8 +667,7 @@ smb_make_node(struct inode *dir, struct dentry *dentry, int mode, dev_t dev)
 
 	attr.ia_valid = ATTR_MODE | ATTR_UID | ATTR_GID;
 	attr.ia_mode = mode;
-	attr.ia_uid = current->euid;
-	attr.ia_gid = current->egid;
+	current_euid_egid(&attr.ia_uid, &attr.ia_gid);
 
 	if (!new_valid_dev(dev))
 		return -EINVAL;

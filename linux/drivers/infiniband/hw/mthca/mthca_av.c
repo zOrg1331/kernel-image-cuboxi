@@ -29,11 +29,8 @@
  * ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
  * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  * SOFTWARE.
- *
- * $Id: mthca_av.c 1349 2004-12-16 21:09:43Z roland $
  */
 
-#include <linux/init.h>
 #include <linux/string.h>
 #include <linux/slab.h>
 
@@ -90,7 +87,7 @@ static enum ib_rate tavor_rate_to_ib(u8 mthca_rate, u8 port_rate)
 	case MTHCA_RATE_TAVOR_1X:     return IB_RATE_2_5_GBPS;
 	case MTHCA_RATE_TAVOR_1X_DDR: return IB_RATE_5_GBPS;
 	case MTHCA_RATE_TAVOR_4X:     return IB_RATE_10_GBPS;
-	default:		      return port_rate;
+	default:		      return mult_to_ib_rate(port_rate);
 	}
 }
 
@@ -190,7 +187,7 @@ int mthca_create_ah(struct mthca_dev *dev,
 on_hca_fail:
 	if (ah->type == MTHCA_AH_PCI_POOL) {
 		ah->av = pci_pool_alloc(dev->av_table.pool,
-					SLAB_ATOMIC, &ah->avdma);
+					GFP_ATOMIC, &ah->avdma);
 		if (!ah->av)
 			return -ENOMEM;
 
@@ -280,6 +277,7 @@ int mthca_read_ah(struct mthca_dev *dev, struct mthca_ah *ah,
 			(be32_to_cpu(ah->av->sl_tclass_flowlabel) >> 20) & 0xff;
 		header->grh.flow_label    =
 			ah->av->sl_tclass_flowlabel & cpu_to_be32(0xfffff);
+		header->grh.hop_limit     = ah->av->hop_limit;
 		ib_get_cached_gid(&dev->ib_dev,
 				  be32_to_cpu(ah->av->port_pd) >> 24,
 				  ah->av->gid_index % dev->limits.gid_table_len,
@@ -323,7 +321,7 @@ int mthca_ah_query(struct ib_ah *ibah, struct ib_ah_attr *attr)
 	return 0;
 }
 
-int __devinit mthca_init_av_table(struct mthca_dev *dev)
+int mthca_init_av_table(struct mthca_dev *dev)
 {
 	int err;
 

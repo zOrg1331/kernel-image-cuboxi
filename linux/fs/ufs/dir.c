@@ -18,10 +18,10 @@
 
 #include <linux/time.h>
 #include <linux/fs.h>
-#include <linux/ufs_fs.h>
-#include <linux/smp_lock.h>
-#include <linux/sched.h>
+#include <linux/swap.h>
 
+#include "ufs_fs.h"
+#include "ufs.h"
 #include "swab.h"
 #include "util.h"
 
@@ -40,12 +40,18 @@ static inline int ufs_match(struct super_block *sb, int len,
 	return !memcmp(name, de->d_name, len);
 }
 
-static int ufs_commit_chunk(struct page *page, unsigned from, unsigned to)
+static int ufs_commit_chunk(struct page *page, loff_t pos, unsigned len)
 {
-	struct inode *dir = page->mapping->host;
+	struct address_space *mapping = page->mapping;
+	struct inode *dir = mapping->host;
 	int err = 0;
+
 	dir->i_version++;
-	page->mapping->a_ops->commit_write(NULL, page, from, to);
+	block_write_end(NULL, mapping, pos, len, len, page, NULL);
+	if (pos+len > dir->i_size) {
+		i_size_write(dir, pos+len);
+		mark_inode_dirty(dir);
+	}
 	if (IS_DIRSYNC(dir))
 		err = write_one_page(page, 1);
 	else
@@ -83,16 +89,20 @@ ino_t ufs_inode_by_name(struct inode *dir, struct dentry *dentry)
 void ufs_set_link(struct inode *dir, struct ufs_dir_entry *de,
 		  struct page *page, struct inode *inode)
 {
-	unsigned from = (char *) de - (char *) page_address(page);
-	unsigned to = from + fs16_to_cpu(dir->i_sb, de->d_reclen);
+	loff_t pos = page_offset(page) +
+			(char *) de - (char *) page_address(page);
+	unsigned len = fs16_to_cpu(dir->i_sb, de->d_reclen);
 	int err;
 
 	lock_page(page);
-	err = page->mapping->a_ops->prepare_write(NULL, page, from, to);
+	err = __ufs_write_begin(NULL, page->mapping, pos, len,
+				AOP_FLAG_UNINTERRUPTIBLE, &page, NULL);
 	BUG_ON(err);
+
 	de->d_ino = cpu_to_fs32(dir->i_sb, inode->i_ino);
 	ufs_set_de_type(dir->i_sb, de, inode->i_mode);
-	err = ufs_commit_chunk(page, from, to);
+
+	err = ufs_commit_chunk(page, pos, len);
 	ufs_put_page(page);
 	dir->i_mtime = dir->i_ctime = CURRENT_TIME_SEC;
 	mark_inode_dirty(dir);
@@ -106,12 +116,13 @@ static void ufs_check_page(struct page *page)
 	char *kaddr = page_address(page);
 	unsigned offs, rec_len;
 	unsigned limit = PAGE_CACHE_SIZE;
+	const unsigned chunk_mask = UFS_SB(sb)->s_uspi->s_dirblksize - 1;
 	struct ufs_dir_entry *p;
 	char *error;
 
 	if ((dir->i_size >> PAGE_CACHE_SHIFT) == page->index) {
 		limit = dir->i_size & ~PAGE_CACHE_MASK;
-		if (limit & (UFS_SECTOR_SIZE - 1))
+		if (limit & chunk_mask)
 			goto Ebadsize;
 		if (!limit)
 			goto out;
@@ -126,7 +137,7 @@ static void ufs_check_page(struct page *page)
 			goto Ealign;
 		if (rec_len < UFS_DIR_REC_LEN(ufs_get_de_namlen(sb, p)))
 			goto Enamelen;
-		if (((offs + rec_len - 1) ^ offs) & ~(UFS_SECTOR_SIZE-1))
+		if (((offs + rec_len - 1) ^ offs) & ~chunk_mask)
 			goto Espan;
 		if (fs32_to_cpu(sb, p->d_ino) > (UFS_SB(sb)->s_uspi->s_ipg *
 						  UFS_SB(sb)->s_uspi->s_ncg))
@@ -168,7 +179,7 @@ bad_entry:
 	goto fail;
 Eend:
 	p = (struct ufs_dir_entry *)(kaddr + offs);
-	ufs_error (sb, "ext2_check_page",
+	ufs_error(sb, __func__,
 		   "entry in directory #%lu spans the page boundary"
 		   "offset=%lu",
 		   dir->i_ino, (page->index<<PAGE_CACHE_SHIFT)+offs);
@@ -180,13 +191,9 @@ fail:
 static struct page *ufs_get_page(struct inode *dir, unsigned long n)
 {
 	struct address_space *mapping = dir->i_mapping;
-	struct page *page = read_cache_page(mapping, n,
-				(filler_t*)mapping->a_ops->readpage, NULL);
+	struct page *page = read_mapping_page(mapping, n, NULL);
 	if (!IS_ERR(page)) {
-		wait_on_page_locked(page);
 		kmap(page);
-		if (!PageUptodate(page))
-			goto fail;
 		if (!PageChecked(page))
 			ufs_check_page(page);
 		if (PageError(page))
@@ -277,7 +284,7 @@ struct ufs_dir_entry *ufs_find_entry(struct inode *dir, struct dentry *dentry,
 			kaddr += ufs_last_byte(dir, n) - reclen;
 			while ((char *) de <= kaddr) {
 				if (de->d_reclen == 0) {
-					ufs_error(dir->i_sb, __FUNCTION__,
+					ufs_error(dir->i_sb, __func__,
 						  "zero-length directory entry");
 					ufs_put_page(page);
 					goto out;
@@ -310,13 +317,14 @@ int ufs_add_link(struct dentry *dentry, struct inode *inode)
 	int namelen = dentry->d_name.len;
 	struct super_block *sb = dir->i_sb;
 	unsigned reclen = UFS_DIR_REC_LEN(namelen);
+	const unsigned int chunk_size = UFS_SB(sb)->s_uspi->s_dirblksize;
 	unsigned short rec_len, name_len;
 	struct page *page = NULL;
 	struct ufs_dir_entry *de;
 	unsigned long npages = ufs_dir_pages(dir);
 	unsigned long n;
 	char *kaddr;
-	unsigned from, to;
+	loff_t pos;
 	int err;
 
 	UFSD("ENTER, name %s, namelen %u\n", name, namelen);
@@ -342,13 +350,13 @@ int ufs_add_link(struct dentry *dentry, struct inode *inode)
 			if ((char *)de == dir_end) {
 				/* We hit i_size */
 				name_len = 0;
-				rec_len = UFS_SECTOR_SIZE;
-				de->d_reclen = cpu_to_fs16(sb, UFS_SECTOR_SIZE);
+				rec_len = chunk_size;
+				de->d_reclen = cpu_to_fs16(sb, chunk_size);
 				de->d_ino = 0;
 				goto got_it;
 			}
 			if (de->d_reclen == 0) {
-				ufs_error(dir->i_sb, __FUNCTION__,
+				ufs_error(dir->i_sb, __func__,
 					  "zero-length directory entry");
 				err = -EIO;
 				goto out_unlock;
@@ -371,9 +379,10 @@ int ufs_add_link(struct dentry *dentry, struct inode *inode)
 	return -EINVAL;
 
 got_it:
-	from = (char*)de - (char*)page_address(page);
-	to = from + rec_len;
-	err = page->mapping->a_ops->prepare_write(NULL, page, from, to);
+	pos = page_offset(page) +
+			(char*)de - (char*)page_address(page);
+	err = __ufs_write_begin(NULL, page->mapping, pos, rec_len,
+				AOP_FLAG_UNINTERRUPTIBLE, &page, NULL);
 	if (err)
 		goto out_unlock;
 	if (de->d_ino) {
@@ -390,7 +399,7 @@ got_it:
 	de->d_ino = cpu_to_fs32(sb, inode->i_ino);
 	ufs_set_de_type(sb, de, inode->i_mode);
 
-	err = ufs_commit_chunk(page, from, to);
+	err = ufs_commit_chunk(page, pos, rec_len);
 	dir->i_mtime = dir->i_ctime = CURRENT_TIME_SEC;
 
 	mark_inode_dirty(dir);
@@ -426,12 +435,12 @@ static int
 ufs_readdir(struct file *filp, void *dirent, filldir_t filldir)
 {
 	loff_t pos = filp->f_pos;
-	struct inode *inode = filp->f_dentry->d_inode;
+	struct inode *inode = filp->f_path.dentry->d_inode;
 	struct super_block *sb = inode->i_sb;
 	unsigned int offset = pos & ~PAGE_CACHE_MASK;
 	unsigned long n = pos >> PAGE_CACHE_SHIFT;
 	unsigned long npages = ufs_dir_pages(inode);
-	unsigned chunk_mask = ~(UFS_SECTOR_SIZE - 1);
+	unsigned chunk_mask = ~(UFS_SB(sb)->s_uspi->s_dirblksize - 1);
 	int need_revalidate = filp->f_version != inode->i_version;
 	unsigned flags = UFS_SB(sb)->s_flags;
 
@@ -447,7 +456,7 @@ ufs_readdir(struct file *filp, void *dirent, filldir_t filldir)
 		struct page *page = ufs_get_page(inode, n);
 
 		if (IS_ERR(page)) {
-			ufs_error(sb, __FUNCTION__,
+			ufs_error(sb, __func__,
 				  "bad page in #%lu",
 				  inode->i_ino);
 			filp->f_pos += PAGE_CACHE_SIZE - offset;
@@ -466,7 +475,7 @@ ufs_readdir(struct file *filp, void *dirent, filldir_t filldir)
 		limit = kaddr + ufs_last_byte(inode, n) - UFS_DIR_REC_LEN(1);
 		for ( ;(char*)de <= limit; de = ufs_next_entry(sb, de)) {
 			if (de->d_reclen == 0) {
-				ufs_error(sb, __FUNCTION__,
+				ufs_error(sb, __func__,
 					"zero-length directory entry");
 				ufs_put_page(page);
 				return -EIO;
@@ -511,8 +520,9 @@ int ufs_delete_entry(struct inode *inode, struct ufs_dir_entry *dir,
 	struct super_block *sb = inode->i_sb;
 	struct address_space *mapping = page->mapping;
 	char *kaddr = page_address(page);
-	unsigned from = ((char*)dir - kaddr) & ~(UFS_SECTOR_SIZE - 1);
+	unsigned from = ((char*)dir - kaddr) & ~(UFS_SB(sb)->s_uspi->s_dirblksize - 1);
 	unsigned to = ((char*)dir - kaddr) + fs16_to_cpu(sb, dir->d_reclen);
+	loff_t pos;
 	struct ufs_dir_entry *pde = NULL;
 	struct ufs_dir_entry *de = (struct ufs_dir_entry *) (kaddr + from);
 	int err;
@@ -526,7 +536,7 @@ int ufs_delete_entry(struct inode *inode, struct ufs_dir_entry *dir,
 
 	while ((char*)de < (char*)dir) {
 		if (de->d_reclen == 0) {
-			ufs_error(inode->i_sb, __FUNCTION__,
+			ufs_error(inode->i_sb, __func__,
 				  "zero-length directory entry");
 			err = -EIO;
 			goto out;
@@ -536,13 +546,16 @@ int ufs_delete_entry(struct inode *inode, struct ufs_dir_entry *dir,
 	}
 	if (pde)
 		from = (char*)pde - (char*)page_address(page);
+
+	pos = page_offset(page) + from;
 	lock_page(page);
-	err = mapping->a_ops->prepare_write(NULL, page, from, to);
+	err = __ufs_write_begin(NULL, mapping, pos, to - from,
+				AOP_FLAG_UNINTERRUPTIBLE, &page, NULL);
 	BUG_ON(err);
 	if (pde)
-		pde->d_reclen = cpu_to_fs16(sb, to-from);
+		pde->d_reclen = cpu_to_fs16(sb, to - from);
 	dir->d_ino = 0;
-	err = ufs_commit_chunk(page, from, to);
+	err = ufs_commit_chunk(page, pos, to - from);
 	inode->i_ctime = inode->i_mtime = CURRENT_TIME_SEC;
 	mark_inode_dirty(inode);
 out:
@@ -556,20 +569,22 @@ int ufs_make_empty(struct inode * inode, struct inode *dir)
 	struct super_block * sb = dir->i_sb;
 	struct address_space *mapping = inode->i_mapping;
 	struct page *page = grab_cache_page(mapping, 0);
+	const unsigned int chunk_size = UFS_SB(sb)->s_uspi->s_dirblksize;
 	struct ufs_dir_entry * de;
 	char *base;
 	int err;
 
 	if (!page)
 		return -ENOMEM;
-	kmap(page);
-	err = mapping->a_ops->prepare_write(NULL, page, 0, UFS_SECTOR_SIZE);
+
+	err = __ufs_write_begin(NULL, mapping, 0, chunk_size,
+				AOP_FLAG_UNINTERRUPTIBLE, &page, NULL);
 	if (err) {
 		unlock_page(page);
 		goto fail;
 	}
 
-
+	kmap(page);
 	base = (char*)page_address(page);
 	memset(base, 0, PAGE_CACHE_SIZE);
 
@@ -584,13 +599,13 @@ int ufs_make_empty(struct inode * inode, struct inode *dir)
 		((char *)de + fs16_to_cpu(sb, de->d_reclen));
 	de->d_ino = cpu_to_fs32(sb, dir->i_ino);
 	ufs_set_de_type(sb, de, dir->i_mode);
-	de->d_reclen = cpu_to_fs16(sb, UFS_SECTOR_SIZE - UFS_DIR_REC_LEN(1));
+	de->d_reclen = cpu_to_fs16(sb, chunk_size - UFS_DIR_REC_LEN(1));
 	ufs_set_de_namlen(sb, de, 2);
 	strcpy (de->d_name, "..");
-
-	err = ufs_commit_chunk(page, 0, UFS_SECTOR_SIZE);
-fail:
 	kunmap(page);
+
+	err = ufs_commit_chunk(page, 0, chunk_size);
+fail:
 	page_cache_release(page);
 	return err;
 }
@@ -618,7 +633,7 @@ int ufs_empty_dir(struct inode * inode)
 
 		while ((char *)de <= kaddr) {
 			if (de->d_reclen == 0) {
-				ufs_error(inode->i_sb, __FUNCTION__,
+				ufs_error(inode->i_sb, __func__,
 					"zero-length directory entry: "
 					"kaddr=%p, de=%p\n", kaddr, de);
 				goto not_empty;
@@ -651,5 +666,6 @@ not_empty:
 const struct file_operations ufs_dir_operations = {
 	.read		= generic_read_dir,
 	.readdir	= ufs_readdir,
-	.fsync		= file_fsync,
+	.fsync		= simple_fsync,
+	.llseek		= generic_file_llseek,
 };

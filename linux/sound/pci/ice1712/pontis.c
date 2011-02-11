@@ -21,7 +21,6 @@
  *
  */
 
-#include <sound/driver.h>
 #include <asm/io.h>
 #include <linux/delay.h>
 #include <linux/interrupt.h>
@@ -31,6 +30,7 @@
 
 #include <sound/core.h>
 #include <sound/info.h>
+#include <sound/tlv.h>
 
 #include "ice1712.h"
 #include "envy24ht.h"
@@ -43,7 +43,8 @@
 /* WM8776 registers */
 #define WM_HP_ATTEN_L		0x00	/* headphone left attenuation */
 #define WM_HP_ATTEN_R		0x01	/* headphone left attenuation */
-#define WM_HP_MASTER		0x02	/* headphone master (both channels), override LLR */
+#define WM_HP_MASTER		0x02	/* headphone master (both channels) */
+					/* override LLR */
 #define WM_DAC_ATTEN_L		0x03	/* digital left attenuation */
 #define WM_DAC_ATTEN_R		0x04
 #define WM_DAC_MASTER		0x05
@@ -215,14 +216,7 @@ static int wm_adc_vol_put(struct snd_kcontrol *kcontrol, struct snd_ctl_elem_val
 /*
  * ADC input mux mixer control
  */
-static int wm_adc_mux_info(struct snd_kcontrol *kcontrol, struct snd_ctl_elem_info *uinfo)
-{
-	uinfo->type = SNDRV_CTL_ELEM_TYPE_BOOLEAN;
-	uinfo->count = 1;
-	uinfo->value.integer.min = 0;
-	uinfo->value.integer.max = 1;
-	return 0;
-}
+#define wm_adc_mux_info		snd_ctl_boolean_mono_info
 
 static int wm_adc_mux_get(struct snd_kcontrol *kcontrol, struct snd_ctl_elem_value *ucontrol)
 {
@@ -253,20 +247,13 @@ static int wm_adc_mux_put(struct snd_kcontrol *kcontrol, struct snd_ctl_elem_val
 		wm_put(ice, WM_ADC_MUX, nval);
 	}
 	mutex_unlock(&ice->gpio_mutex);
-	return 0;
+	return change;
 }
 
 /*
  * Analog bypass (In -> Out)
  */
-static int wm_bypass_info(struct snd_kcontrol *kcontrol, struct snd_ctl_elem_info *uinfo)
-{
-	uinfo->type = SNDRV_CTL_ELEM_TYPE_BOOLEAN;
-	uinfo->count = 1;
-	uinfo->value.integer.min = 0;
-	uinfo->value.integer.max = 1;
-	return 0;
-}
+#define wm_bypass_info		snd_ctl_boolean_mono_info
 
 static int wm_bypass_get(struct snd_kcontrol *kcontrol, struct snd_ctl_elem_value *ucontrol)
 {
@@ -301,14 +288,7 @@ static int wm_bypass_put(struct snd_kcontrol *kcontrol, struct snd_ctl_elem_valu
 /*
  * Left/Right swap
  */
-static int wm_chswap_info(struct snd_kcontrol *kcontrol, struct snd_ctl_elem_info *uinfo)
-{
-	uinfo->type = SNDRV_CTL_ELEM_TYPE_BOOLEAN;
-	uinfo->count = 1;
-	uinfo->value.integer.min = 0;
-	uinfo->value.integer.max = 1;
-	return 0;
-}
+#define wm_chswap_info		snd_ctl_boolean_mono_info
 
 static int wm_chswap_get(struct snd_kcontrol *kcontrol, struct snd_ctl_elem_value *ucontrol)
 {
@@ -433,7 +413,7 @@ static unsigned int spi_read(struct snd_ice1712 *ice, unsigned int dev, unsigned
  */
 static int cs_source_info(struct snd_kcontrol *kcontrol, struct snd_ctl_elem_info *uinfo)
 {
-	static char *texts[] = {
+	static const char * const texts[] = {
 		"Coax",		/* RXP0 */
 		"Optical",	/* RXP1 */
 		"CD",		/* RXP2 */
@@ -471,7 +451,7 @@ static int cs_source_put(struct snd_kcontrol *kcontrol, struct snd_ctl_elem_valu
 		change = 1;
 	}
 	mutex_unlock(&ice->gpio_mutex);
-	return 0;
+	return change;
 }
 
 
@@ -564,6 +544,8 @@ static int pontis_gpio_data_put(struct snd_kcontrol *kcontrol, struct snd_ctl_el
 	return changed;
 }
 
+static const DECLARE_TLV_DB_SCALE(db_scale_volume, -6400, 50, 1);
+
 /*
  * mixers
  */
@@ -571,17 +553,23 @@ static int pontis_gpio_data_put(struct snd_kcontrol *kcontrol, struct snd_ctl_el
 static struct snd_kcontrol_new pontis_controls[] __devinitdata = {
 	{
 		.iface = SNDRV_CTL_ELEM_IFACE_MIXER,
+		.access = (SNDRV_CTL_ELEM_ACCESS_READWRITE |
+			   SNDRV_CTL_ELEM_ACCESS_TLV_READ),
 		.name = "PCM Playback Volume",
 		.info = wm_dac_vol_info,
 		.get = wm_dac_vol_get,
 		.put = wm_dac_vol_put,
+		.tlv = { .p = db_scale_volume },
 	},
 	{
 		.iface = SNDRV_CTL_ELEM_IFACE_MIXER,
+		.access = (SNDRV_CTL_ELEM_ACCESS_READWRITE |
+			   SNDRV_CTL_ELEM_ACCESS_TLV_READ),
 		.name = "Capture Volume",
 		.info = wm_adc_vol_info,
 		.get = wm_adc_vol_get,
 		.put = wm_adc_vol_put,
+		.tlv = { .p = db_scale_volume },
 	},
 	{
 		.iface = SNDRV_CTL_ELEM_IFACE_MIXER,
@@ -732,7 +720,7 @@ static int __devinit pontis_add_controls(struct snd_ice1712 *ice)
  */
 static int __devinit pontis_init(struct snd_ice1712 *ice)
 {
-	static unsigned short wm_inits[] = {
+	static const unsigned short wm_inits[] = {
 		/* These come first to reduce init pop noise */
 		WM_ADC_MUX,	0x00c0,	/* ADC mute */
 		WM_DAC_MUTE,	0x0001,	/* DAC softmute */
@@ -741,7 +729,7 @@ static int __devinit pontis_init(struct snd_ice1712 *ice)
 		WM_POWERDOWN,	0x0008,	/* All power-up except HP */
 		WM_RESET,	0x0000,	/* reset */
 	};
-	static unsigned short wm_inits2[] = {
+	static const unsigned short wm_inits2[] = {
 		WM_MASTER_CTRL,	0x0022,	/* 256fs, slave mode */
 		WM_DAC_INT,	0x0022,	/* I2S, normal polarity, 24bit */
 		WM_ADC_INT,	0x0022,	/* I2S, normal polarity, 24bit */
@@ -753,7 +741,7 @@ static int __devinit pontis_init(struct snd_ice1712 *ice)
 		WM_DAC_ATTEN_L,	0x0100,	/* DAC 0dB */
 		WM_DAC_ATTEN_R,	0x0000,	/* DAC 0dB */
 		WM_DAC_ATTEN_R,	0x0100,	/* DAC 0dB */
-		// WM_DAC_MASTER,	0x0100,	/* DAC master muted */
+		/* WM_DAC_MASTER,	0x0100, */	/* DAC master muted */
 		WM_PHASE_SWAP,	0x0000,	/* phase normal */
 		WM_DAC_CTRL2,	0x0000,	/* no deemphasis, no ZFLG */
 		WM_ADC_ATTEN_L,	0x0000,	/* ADC muted */
@@ -767,7 +755,7 @@ static int __devinit pontis_init(struct snd_ice1712 *ice)
 		WM_DAC_MUTE,	0x0000,	/* DAC unmute */
 		WM_ADC_MUX,	0x0003,	/* ADC unmute, both CD/Line On */
 	};
-	static unsigned char cs_inits[] = {
+	static const unsigned char cs_inits[] = {
 		0x04,	0x80,	/* RUN, RXP0 */
 		0x05,	0x05,	/* slave, 24bit */
 		0x01,	0x00,
@@ -818,19 +806,19 @@ static int __devinit pontis_init(struct snd_ice1712 *ice)
  */
 
 static unsigned char pontis_eeprom[] __devinitdata = {
-	0x08,	/* SYSCONF: clock 256, mpu401, spdif-in/ADC, 1DAC */
-	0x80,	/* ACLINK: I2S */
-	0xf8,	/* I2S: vol, 96k, 24bit, 192k */
-	0xc3,	/* SPDIF: out-en, out-int, spdif-in */
-	0x07,	/* GPIO_DIR */
-	0x00,	/* GPIO_DIR1 */
-	0x00,	/* GPIO_DIR2 (ignored) */
-	0x0f,	/* GPIO_MASK (4-7 reserved for CS8416) */
-	0xff,	/* GPIO_MASK1 */
-	0x00,	/* GPIO_MASK2 (ignored) */
-	0x06,	/* GPIO_STATE (0-low, 1-high, 2-high) */
-	0x00,	/* GPIO_STATE1 */
-	0x00,	/* GPIO_STATE2 (ignored) */
+	[ICE_EEP2_SYSCONF]     = 0x08,	/* clock 256, mpu401, spdif-in/ADC, 1DAC */
+	[ICE_EEP2_ACLINK]      = 0x80,	/* I2S */
+	[ICE_EEP2_I2S]         = 0xf8,	/* vol, 96k, 24bit, 192k */
+	[ICE_EEP2_SPDIF]       = 0xc3,	/* out-en, out-int, spdif-in */
+	[ICE_EEP2_GPIO_DIR]    = 0x07,
+	[ICE_EEP2_GPIO_DIR1]   = 0x00,
+	[ICE_EEP2_GPIO_DIR2]   = 0x00,	/* ignored */
+	[ICE_EEP2_GPIO_MASK]   = 0x0f,	/* 4-7 reserved for CS8416 */
+	[ICE_EEP2_GPIO_MASK1]  = 0xff,
+	[ICE_EEP2_GPIO_MASK2]  = 0x00,	/* ignored */
+	[ICE_EEP2_GPIO_STATE]  = 0x06,	/* 0-low, 1-high, 2-high */
+	[ICE_EEP2_GPIO_STATE1] = 0x00,
+	[ICE_EEP2_GPIO_STATE2] = 0x00,	/* ignored */
 };
 
 /* entry point */

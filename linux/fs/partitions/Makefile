@@ -2,7 +2,7 @@
 # Makefile for the linux kernel.
 #
 
-obj-y := check.o
+obj-$(CONFIG_BLOCK) := check.o
 
 obj-$(CONFIG_ACORN_PARTITION) += acorn.o
 obj-$(CONFIG_AMIGA_PARTITION) += amiga.o
@@ -17,3 +17,4 @@ obj-$(CONFIG_ULTRIX_PARTITION) += ultrix.o
 obj-$(CONFIG_IBM_PARTITION) += ibm.o
 obj-$(CONFIG_EFI_PARTITION) += efi.o
 obj-$(CONFIG_KARMA_PARTITION) += karma.o
+obj-$(CONFIG_SYSV68_PARTITION) += sysv68.o

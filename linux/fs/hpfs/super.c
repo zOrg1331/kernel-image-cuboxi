@@ -11,6 +11,9 @@
 #include <linux/parser.h>
 #include <linux/init.h>
 #include <linux/statfs.h>
+#include <linux/magic.h>
+#include <linux/sched.h>
+#include <linux/smp_lock.h>
 
 /* Mark the filesystem dirty, so that chkdsk checks it when os/2 booted */
 
@@ -45,21 +48,17 @@ static void unmark_dirty(struct super_block *s)
 }
 
 /* Filesystem error... */
+static char err_buf[1024];
 
-#define ERR_BUF_SIZE 1024
-
-void hpfs_error(struct super_block *s, char *m,...)
+void hpfs_error(struct super_block *s, const char *fmt, ...)
 {
-	char *buf;
-	va_list l;
-	va_start(l, m);
-	if (!(buf = kmalloc(ERR_BUF_SIZE, GFP_KERNEL)))
-		printk("HPFS: No memory for error message '%s'\n",m);
-	else if (vsprintf(buf, m, l) >= ERR_BUF_SIZE)
-		printk("HPFS: Grrrr... Kernel memory corrupted ... going on, but it'll crash very soon :-(\n");
-	printk("HPFS: filesystem error: ");
-	if (buf) printk("%s", buf);
-	else printk("%s\n",m);
+	va_list args;
+
+	va_start(args, fmt);
+	vsnprintf(err_buf, sizeof(err_buf), fmt, args);
+	va_end(args);
+
+	printk("HPFS: filesystem error: %s", err_buf);
 	if (!hpfs_sb(s)->sb_was_error) {
 		if (hpfs_sb(s)->sb_err == 2) {
 			printk("; crashing the system because you wanted it\n");
@@ -75,7 +74,6 @@ void hpfs_error(struct super_block *s, char *m,...)
 		} else if (s->s_flags & MS_RDONLY) printk("; going on - but anything won't be destroyed because it's read-only\n");
 		else printk("; corrupted filesystem mounted read/write - your computer will explode within 20 seconds ... but you wanted it so!\n");
 	} else printk("\n");
-	kfree(buf);
 	hpfs_sb(s)->sb_was_error = 1;
 }
 
@@ -102,11 +100,16 @@ int hpfs_stop_cycles(struct super_block *s, int key, int *c1, int *c2,
 static void hpfs_put_super(struct super_block *s)
 {
 	struct hpfs_sb_info *sbi = hpfs_sb(s);
+
+	lock_kernel();
+
 	kfree(sbi->sb_cp_table);
 	kfree(sbi->sb_bmp_dir);
 	unmark_dirty(s);
 	s->s_fs_info = NULL;
 	kfree(sbi);
+
+	unlock_kernel();
 }
 
 unsigned hpfs_count_one_bitmap(struct super_block *s, secno secno)
@@ -139,6 +142,7 @@ static int hpfs_statfs(struct dentry *dentry, struct kstatfs *buf)
 {
 	struct super_block *s = dentry->d_sb;
 	struct hpfs_sb_info *sbi = hpfs_sb(s);
+	u64 id = huge_encode_dev(s->s_bdev->bd_dev);
 	lock_kernel();
 
 	/*if (sbi->sb_n_free == -1) {*/
@@ -152,6 +156,8 @@ static int hpfs_statfs(struct dentry *dentry, struct kstatfs *buf)
 	buf->f_bavail = sbi->sb_n_free;
 	buf->f_files = sbi->sb_dirband_size / 4;
 	buf->f_ffree = sbi->sb_n_free_dnodes;
+	buf->f_fsid.val[0] = (u32)id;
+	buf->f_fsid.val[1] = (u32)(id >> 32);
 	buf->f_namelen = 254;
 
 	unlock_kernel();
@@ -159,12 +165,12 @@ static int hpfs_statfs(struct dentry *dentry, struct kstatfs *buf)
 	return 0;
 }
 
-static kmem_cache_t * hpfs_inode_cachep;
+static struct kmem_cache * hpfs_inode_cachep;
 
 static struct inode *hpfs_alloc_inode(struct super_block *sb)
 {
 	struct hpfs_inode_info *ei;
-	ei = (struct hpfs_inode_info *)kmem_cache_alloc(hpfs_inode_cachep, SLAB_NOFS);
+	ei = (struct hpfs_inode_info *)kmem_cache_alloc(hpfs_inode_cachep, GFP_NOFS);
 	if (!ei)
 		return NULL;
 	ei->vfs_inode.i_version = 1;
@@ -176,25 +182,22 @@ static void hpfs_destroy_inode(struct inode *inode)
 	kmem_cache_free(hpfs_inode_cachep, hpfs_i(inode));
 }
 
-static void init_once(void * foo, kmem_cache_t * cachep, unsigned long flags)
+static void init_once(void *foo)
 {
 	struct hpfs_inode_info *ei = (struct hpfs_inode_info *) foo;
 
-	if ((flags & (SLAB_CTOR_VERIFY|SLAB_CTOR_CONSTRUCTOR)) ==
-	    SLAB_CTOR_CONSTRUCTOR) {
-		mutex_init(&ei->i_mutex);
-		mutex_init(&ei->i_parent_mutex);
-		inode_init_once(&ei->vfs_inode);
-	}
+	mutex_init(&ei->i_mutex);
+	mutex_init(&ei->i_parent_mutex);
+	inode_init_once(&ei->vfs_inode);
 }
- 
+
 static int init_inodecache(void)
 {
 	hpfs_inode_cachep = kmem_cache_create("hpfs_inode_cache",
 					     sizeof(struct hpfs_inode_info),
 					     0, (SLAB_RECLAIM_ACCOUNT|
 						SLAB_MEM_SPREAD),
-					     init_once, NULL);
+					     init_once);
 	if (hpfs_inode_cachep == NULL)
 		return -ENOMEM;
 	return 0;
@@ -202,8 +205,7 @@ static int init_inodecache(void)
 
 static void destroy_inodecache(void)
 {
-	if (kmem_cache_destroy(hpfs_inode_cachep))
-		printk(KERN_INFO "hpfs_inode_cache: not all structures were freed\n");
+	kmem_cache_destroy(hpfs_inode_cachep);
 }
 
 /*
@@ -222,7 +224,7 @@ enum {
 	Opt_timeshift, Opt_err,
 };
 
-static match_table_t tokens = {
+static const match_table_t tokens = {
 	{Opt_help, "help"},
 	{Opt_uid, "uid=%u"},
 	{Opt_gid, "gid=%u"},
@@ -393,9 +395,12 @@ static int hpfs_remount_fs(struct super_block *s, int *flags, char *data)
 	int lowercase, conv, eas, chk, errs, chkdsk, timeshift;
 	int o;
 	struct hpfs_sb_info *sbi = hpfs_sb(s);
+	char *new_opts = kstrdup(data, GFP_KERNEL);
 	
 	*flags |= MS_NOATIME;
 	
+	lock_kernel();
+	lock_super(s);
 	uid = sbi->sb_uid; gid = sbi->sb_gid;
 	umask = 0777 & ~sbi->sb_mode;
 	lowercase = sbi->sb_lowercase; conv = sbi->sb_conv;
@@ -405,15 +410,15 @@ static int hpfs_remount_fs(struct super_block *s, int *flags, char *data)
 	if (!(o = parse_opts(data, &uid, &gid, &umask, &lowercase, &conv,
 	    &eas, &chk, &errs, &chkdsk, &timeshift))) {
 		printk("HPFS: bad mount options.\n");
-	    	return 1;
+		goto out_err;
 	}
 	if (o == 2) {
 		hpfs_help();
-		return 1;
+		goto out_err;
 	}
 	if (timeshift != sbi->sb_timeshift) {
 		printk("HPFS: timeshift can't be changed using remount.\n");
-		return 1;
+		goto out_err;
 	}
 
 	unmark_dirty(s);
@@ -426,12 +431,22 @@ static int hpfs_remount_fs(struct super_block *s, int *flags, char *data)
 
 	if (!(*flags & MS_RDONLY)) mark_dirty(s);
 
+	replace_mount_options(s, new_opts);
+
+	unlock_super(s);
+	unlock_kernel();
 	return 0;
+
+out_err:
+	unlock_super(s);
+	unlock_kernel();
+	kfree(new_opts);
+	return -EINVAL;
 }
 
 /* Super operations */
 
-static struct super_operations hpfs_sops =
+static const struct super_operations hpfs_sops =
 {
 	.alloc_inode	= hpfs_alloc_inode,
 	.destroy_inode	= hpfs_destroy_inode,
@@ -439,6 +454,7 @@ static struct super_operations hpfs_sops =
 	.put_super	= hpfs_put_super,
 	.statfs		= hpfs_statfs,
 	.remount_fs	= hpfs_remount_fs,
+	.show_options	= generic_show_options,
 };
 
 static int hpfs_fill_super(struct super_block *s, void *options, int silent)
@@ -461,20 +477,21 @@ static int hpfs_fill_super(struct super_block *s, void *options, int silent)
 
 	int o;
 
-	sbi = kmalloc(sizeof(*sbi), GFP_KERNEL);
+	save_mount_options(s, options);
+
+	sbi = kzalloc(sizeof(*sbi), GFP_KERNEL);
 	if (!sbi)
 		return -ENOMEM;
 	s->s_fs_info = sbi;
-	memset(sbi, 0, sizeof(*sbi));
 
 	sbi->sb_bmp_dir = NULL;
 	sbi->sb_cp_table = NULL;
 
 	init_MUTEX(&sbi->hpfs_creation_de);
 
-	uid = current->uid;
-	gid = current->gid;
-	umask = current->fs->umask;
+	uid = current_uid();
+	gid = current_gid();
+	umask = current_umask();
 	lowercase = 0;
 	conv = CONV_BINARY;
 	eas = 2;

@@ -24,8 +24,8 @@
 */
 
 #define DRV_NAME	"yellowfin"
-#define DRV_VERSION	"2.0"
-#define DRV_RELDATE	"Jun 27, 2006"
+#define DRV_VERSION	"2.1"
+#define DRV_RELDATE	"Sep 11, 2006"
 
 #define PFX DRV_NAME ": "
 
@@ -107,10 +107,9 @@ static int gx_fix;
 #include <asm/io.h>
 
 /* These identify the driver base version and may not be removed. */
-static char version[] __devinitdata =
-KERN_INFO DRV_NAME ".c:v1.05  1/09/2001  Written by Donald Becker <becker@scyld.com>\n"
-KERN_INFO "  http://www.scyld.com/network/yellowfin.html\n"
-KERN_INFO "  (unofficial 2.4.x port, " DRV_VERSION ", " DRV_RELDATE ")\n";
+static const char version[] __devinitconst =
+  KERN_INFO DRV_NAME ".c:v1.05  1/09/2001  Written by Donald Becker <becker@scyld.com>\n"
+  "  (unofficial 2.4.x port, " DRV_VERSION ", " DRV_RELDATE ")\n";
 
 MODULE_AUTHOR("Donald Becker <becker@scyld.com>");
 MODULE_DESCRIPTION("Packet Engines Yellowfin G-NIC Gigabit Ethernet driver");
@@ -137,7 +136,7 @@ MODULE_PARM_DESC(gx_fix, "G-NIC: enable GX server chipset bug workaround (0-1)")
 I. Board Compatibility
 
 This device driver is designed for the Packet Engines "Yellowfin" Gigabit
-Ethernet adapter.  The G-NIC 64-bit PCI card is supported, as well as the 
+Ethernet adapter.  The G-NIC 64-bit PCI card is supported, as well as the
 Symbios 53C885E dual function chip.
 
 II. Board-specific settings
@@ -208,7 +207,7 @@ IVc. Errata
 See Packet Engines confidential appendix (prototype chips only).
 */
 
-
+
 
 enum capability_flags {
 	HasMII=1, FullTxStatus=2, IsGigabit=4, HasMulticastBug=8, FullRxStatus=16,
@@ -266,10 +265,10 @@ enum yellowfin_offsets {
 /* The Yellowfin Rx and Tx buffer descriptors.
    Elements are written as 32 bit for endian portability. */
 struct yellowfin_desc {
-	u32 dbdma_cmd;
-	u32 addr;
-	u32 branch_addr;
-	u32 result_status;
+	__le32 dbdma_cmd;
+	__le32 addr;
+	__le32 branch_addr;
+	__le32 result_status;
 };
 
 struct tx_status_words {
@@ -319,7 +318,6 @@ struct yellowfin_private {
 	dma_addr_t tx_status_dma;
 
 	struct timer_list timer;	/* Media selection timer. */
-	struct net_device_stats stats;
 	/* Frequently used and paired value: keep adjacent for cache effect. */
 	int chip_id, drv_flags;
 	struct pci_dev *pci_dev;
@@ -348,16 +346,27 @@ static int netdev_ioctl(struct net_device *dev, struct ifreq *rq, int cmd);
 static int yellowfin_open(struct net_device *dev);
 static void yellowfin_timer(unsigned long data);
 static void yellowfin_tx_timeout(struct net_device *dev);
-static void yellowfin_init_ring(struct net_device *dev);
-static int yellowfin_start_xmit(struct sk_buff *skb, struct net_device *dev);
-static irqreturn_t yellowfin_interrupt(int irq, void *dev_instance, struct pt_regs *regs);
+static int yellowfin_init_ring(struct net_device *dev);
+static netdev_tx_t yellowfin_start_xmit(struct sk_buff *skb,
+					struct net_device *dev);
+static irqreturn_t yellowfin_interrupt(int irq, void *dev_instance);
 static int yellowfin_rx(struct net_device *dev);
 static void yellowfin_error(struct net_device *dev, int intr_status);
 static int yellowfin_close(struct net_device *dev);
-static struct net_device_stats *yellowfin_get_stats(struct net_device *dev);
 static void set_rx_mode(struct net_device *dev);
-static struct ethtool_ops ethtool_ops;
+static const struct ethtool_ops ethtool_ops;
 
+static const struct net_device_ops netdev_ops = {
+	.ndo_open 		= yellowfin_open,
+	.ndo_stop 		= yellowfin_close,
+	.ndo_start_xmit 	= yellowfin_start_xmit,
+	.ndo_set_multicast_list = set_rx_mode,
+	.ndo_change_mtu		= eth_change_mtu,
+	.ndo_validate_addr	= eth_validate_addr,
+	.ndo_set_mac_address 	= eth_mac_addr,
+	.ndo_do_ioctl 		= netdev_ioctl,
+	.ndo_tx_timeout 	= yellowfin_tx_timeout,
+};
 
 static int __devinit yellowfin_init_one(struct pci_dev *pdev,
 					const struct pci_device_id *ent)
@@ -377,7 +386,7 @@ static int __devinit yellowfin_init_one(struct pci_dev *pdev,
 #else
 	int bar = 1;
 #endif
-	
+
 /* when built into the kernel, we only print version if device is found */
 #ifndef MODULE
 	static int printed_version;
@@ -393,7 +402,6 @@ static int __devinit yellowfin_init_one(struct pci_dev *pdev,
 		printk (KERN_ERR PFX "cannot allocate ethernet device\n");
 		return -ENOMEM;
 	}
-	SET_MODULE_OWNER(dev);
 	SET_NETDEV_DEV(dev, &pdev->dev);
 
 	np = netdev_priv(dev);
@@ -468,14 +476,8 @@ static int __devinit yellowfin_init_one(struct pci_dev *pdev,
 		np->duplex_lock = 1;
 
 	/* The Yellowfin-specific entries in the device structure. */
-	dev->open = &yellowfin_open;
-	dev->hard_start_xmit = &yellowfin_start_xmit;
-	dev->stop = &yellowfin_close;
-	dev->get_stats = &yellowfin_get_stats;
-	dev->set_multicast_list = &set_rx_mode;
-	dev->do_ioctl = &netdev_ioctl;
+	dev->netdev_ops = &netdev_ops;
 	SET_ETHTOOL_OPS(dev, &ethtool_ops);
-	dev->tx_timeout = yellowfin_tx_timeout;
 	dev->watchdog_timeo = TX_TIMEOUT;
 
 	if (mtu)
@@ -485,12 +487,10 @@ static int __devinit yellowfin_init_one(struct pci_dev *pdev,
 	if (i)
 		goto err_out_unmap_status;
 
-	printk(KERN_INFO "%s: %s type %8x at %p, ",
+	printk(KERN_INFO "%s: %s type %8x at %p, %pM, IRQ %d.\n",
 		   dev->name, pci_id_tbl[chip_idx].name,
-		   ioread32(ioaddr + ChipRev), ioaddr);
-	for (i = 0; i < 5; i++)
-			printk("%2.2x:", dev->dev_addr[i]);
-	printk("%2.2x, IRQ %d.\n", dev->dev_addr[i], irq);
+		   ioread32(ioaddr + ChipRev), ioaddr,
+		   dev->dev_addr, irq);
 
 	if (np->drv_flags & HasMII) {
 		int phy, phy_idx = 0;
@@ -508,11 +508,11 @@ static int __devinit yellowfin_init_one(struct pci_dev *pdev,
 	}
 
 	find_cnt++;
-	
+
 	return 0;
 
 err_out_unmap_status:
-        pci_free_consistent(pdev, STATUS_TOTAL_SIZE, np->tx_status, 
+        pci_free_consistent(pdev, STATUS_TOTAL_SIZE, np->tx_status,
 		np->tx_status_dma);
 err_out_unmap_rx:
         pci_free_consistent(pdev, RX_TOTAL_SIZE, np->rx_ring, np->rx_ring_dma);
@@ -569,24 +569,29 @@ static void mdio_write(void __iomem *ioaddr, int phy_id, int location, int value
 	return;
 }
 
-
+
 static int yellowfin_open(struct net_device *dev)
 {
 	struct yellowfin_private *yp = netdev_priv(dev);
 	void __iomem *ioaddr = yp->base;
-	int i;
+	int i, ret;
 
 	/* Reset the chip. */
 	iowrite32(0x80000000, ioaddr + DMACtrl);
 
-	i = request_irq(dev->irq, &yellowfin_interrupt, IRQF_SHARED, dev->name, dev);
-	if (i) return i;
+	ret = request_irq(dev->irq, &yellowfin_interrupt, IRQF_SHARED, dev->name, dev);
+	if (ret)
+		return ret;
 
 	if (yellowfin_debug > 1)
 		printk(KERN_DEBUG "%s: yellowfin_open() irq %d.\n",
 			   dev->name, dev->irq);
 
-	yellowfin_init_ring(dev);
+	ret = yellowfin_init_ring(dev);
+	if (ret) {
+		free_irq(dev->irq, dev);
+		return ret;
+	}
 
 	iowrite32(yp->rx_ring_dma, ioaddr + RxPtr);
 	iowrite32(yp->tx_ring_dma, ioaddr + TxPtr);
@@ -673,7 +678,7 @@ static void yellowfin_timer(unsigned long data)
 				   dev->name, yp->phys[0], bmsr, lpa);
 
 		yp->full_duplex = mii_duplex(yp->duplex_lock, negotiated);
-			
+
 		iowrite16(0x101C | (yp->full_duplex ? 2 : 0), ioaddr + Cnfg);
 
 		if (bmsr & BMSR_LSTATUS)
@@ -701,12 +706,15 @@ static void yellowfin_tx_timeout(struct net_device *dev)
 		int i;
 		printk(KERN_WARNING "  Rx ring %p: ", yp->rx_ring);
 		for (i = 0; i < RX_RING_SIZE; i++)
-			printk(" %8.8x", yp->rx_ring[i].result_status);
-		printk("\n"KERN_WARNING"  Tx ring %p: ", yp->tx_ring);
+			printk(KERN_CONT " %8.8x",
+			       yp->rx_ring[i].result_status);
+		printk(KERN_CONT "\n");
+		printk(KERN_WARNING"  Tx ring %p: ", yp->tx_ring);
 		for (i = 0; i < TX_RING_SIZE; i++)
-			printk(" %4.4x /%8.8x", yp->tx_status[i].tx_errs,
-				   yp->tx_ring[i].result_status);
-		printk("\n");
+			printk(KERN_CONT " %4.4x /%8.8x",
+			       yp->tx_status[i].tx_errs,
+			       yp->tx_ring[i].result_status);
+		printk(KERN_CONT "\n");
 	}
 
 	/* If the hardware is found to hang regularly, we will update the code
@@ -718,15 +726,15 @@ static void yellowfin_tx_timeout(struct net_device *dev)
 	if (yp->cur_tx - yp->dirty_tx < TX_QUEUE_SIZE)
 		netif_wake_queue (dev);		/* Typical path */
 
-	dev->trans_start = jiffies;
-	yp->stats.tx_errors++;
+	dev->trans_start = jiffies; /* prevent tx timeout */
+	dev->stats.tx_errors++;
 }
 
 /* Initialize the Rx and Tx rings, along with various 'dev' bits. */
-static void yellowfin_init_ring(struct net_device *dev)
+static int yellowfin_init_ring(struct net_device *dev)
 {
 	struct yellowfin_private *yp = netdev_priv(dev);
-	int i;
+	int i, j;
 
 	yp->tx_full = 0;
 	yp->cur_rx = yp->cur_tx = 0;
@@ -751,6 +759,11 @@ static void yellowfin_init_ring(struct net_device *dev)
 		yp->rx_ring[i].addr = cpu_to_le32(pci_map_single(yp->pci_dev,
 			skb->data, yp->rx_buf_sz, PCI_DMA_FROMDEVICE));
 	}
+	if (i != RX_RING_SIZE) {
+		for (j = 0; j < i; j++)
+			dev_kfree_skb(yp->rx_skbuff[j]);
+		return -ENOMEM;
+	}
 	yp->rx_ring[i-1].dbdma_cmd = cpu_to_le32(CMD_STOP);
 	yp->dirty_rx = (unsigned int)(i - RX_RING_SIZE);
 
@@ -767,8 +780,6 @@ static void yellowfin_init_ring(struct net_device *dev)
 	yp->tx_ring[--i].dbdma_cmd = cpu_to_le32(CMD_STOP | BRANCH_ALWAYS);
 #else
 {
-	int j;
-
 	/* Tx ring needs a pair of descriptors, the second for the status. */
 	for (i = 0; i < TX_RING_SIZE; i++) {
 		j = 2*i;
@@ -776,14 +787,14 @@ static void yellowfin_init_ring(struct net_device *dev)
 		/* Branch on Tx error. */
 		yp->tx_ring[j].dbdma_cmd = cpu_to_le32(CMD_STOP);
 		yp->tx_ring[j].branch_addr = cpu_to_le32(yp->tx_ring_dma +
-			(j+1)*sizeof(struct yellowfin_desc);
+			(j+1)*sizeof(struct yellowfin_desc));
 		j++;
 		if (yp->flags & FullTxStatus) {
 			yp->tx_ring[j].dbdma_cmd =
 				cpu_to_le32(CMD_TXSTATUS | sizeof(*yp->tx_status));
 			yp->tx_ring[j].request_cnt = sizeof(*yp->tx_status);
 			yp->tx_ring[j].addr = cpu_to_le32(yp->tx_status_dma +
-				i*sizeof(struct tx_status_words);
+				i*sizeof(struct tx_status_words));
 		} else {
 			/* Symbios chips write only tx_errs word. */
 			yp->tx_ring[j].dbdma_cmd =
@@ -792,10 +803,10 @@ static void yellowfin_init_ring(struct net_device *dev)
 			/* Om pade ummmmm... */
 			yp->tx_ring[j].addr = cpu_to_le32(yp->tx_status_dma +
 				i*sizeof(struct tx_status_words) +
-				&(yp->tx_status[0].tx_errs) - 
+				&(yp->tx_status[0].tx_errs) -
 				&(yp->tx_status[0]));
 		}
-		yp->tx_ring[j].branch_addr = cpu_to_le32(yp->tx_ring_dma + 
+		yp->tx_ring[j].branch_addr = cpu_to_le32(yp->tx_ring_dma +
 			((j+1)%(2*TX_RING_SIZE))*sizeof(struct yellowfin_desc));
 	}
 	/* Wrap ring */
@@ -803,10 +814,11 @@ static void yellowfin_init_ring(struct net_device *dev)
 }
 #endif
 	yp->tx_tail_desc = &yp->tx_status[0];
-	return;
+	return 0;
 }
 
-static int yellowfin_start_xmit(struct sk_buff *skb, struct net_device *dev)
+static netdev_tx_t yellowfin_start_xmit(struct sk_buff *skb,
+					struct net_device *dev)
 {
 	struct yellowfin_private *yp = netdev_priv(dev);
 	unsigned entry;
@@ -828,14 +840,14 @@ static int yellowfin_start_xmit(struct sk_buff *skb, struct net_device *dev)
 			if (skb_padto(skb, len)) {
 				yp->tx_skbuff[entry] = NULL;
 				netif_wake_queue(dev);
-				return 0;
+				return NETDEV_TX_OK;
 			}
 		}
 	}
 	yp->tx_skbuff[entry] = skb;
 
 #ifdef NO_TXSTATS
-	yp->tx_ring[entry].addr = cpu_to_le32(pci_map_single(yp->pci_dev, 
+	yp->tx_ring[entry].addr = cpu_to_le32(pci_map_single(yp->pci_dev,
 		skb->data, len, PCI_DMA_TODEVICE));
 	yp->tx_ring[entry].result_status = 0;
 	if (entry >= TX_RING_SIZE-1) {
@@ -851,9 +863,9 @@ static int yellowfin_start_xmit(struct sk_buff *skb, struct net_device *dev)
 	yp->cur_tx++;
 #else
 	yp->tx_ring[entry<<1].request_cnt = len;
-	yp->tx_ring[entry<<1].addr = cpu_to_le32(pci_map_single(yp->pci_dev, 
+	yp->tx_ring[entry<<1].addr = cpu_to_le32(pci_map_single(yp->pci_dev,
 		skb->data, len, PCI_DMA_TODEVICE));
-	/* The input_last (status-write) command is constant, but we must 
+	/* The input_last (status-write) command is constant, but we must
 	   rewrite the subsequent 'stop' command. */
 
 	yp->cur_tx++;
@@ -877,18 +889,17 @@ static int yellowfin_start_xmit(struct sk_buff *skb, struct net_device *dev)
 		netif_start_queue (dev);		/* Typical path */
 	else
 		yp->tx_full = 1;
-	dev->trans_start = jiffies;
 
 	if (yellowfin_debug > 4) {
 		printk(KERN_DEBUG "%s: Yellowfin transmit frame #%d queued in slot %d.\n",
 			   dev->name, yp->cur_tx, entry);
 	}
-	return 0;
+	return NETDEV_TX_OK;
 }
 
 /* The interrupt handler does all of the Rx thread work and cleans up
    after the Tx thread. */
-static irqreturn_t yellowfin_interrupt(int irq, void *dev_instance, struct pt_regs *regs)
+static irqreturn_t yellowfin_interrupt(int irq, void *dev_instance)
 {
 	struct net_device *dev = dev_instance;
 	struct yellowfin_private *yp;
@@ -896,16 +907,9 @@ static irqreturn_t yellowfin_interrupt(int irq, void *dev_instance, struct pt_re
 	int boguscnt = max_interrupt_work;
 	unsigned int handled = 0;
 
-#ifndef final_version			/* Can never occur. */
-	if (dev == NULL) {
-		printk (KERN_ERR "yellowfin_interrupt(): irq %d for unknown device.\n", irq);
-		return IRQ_NONE;
-	}
-#endif
-
 	yp = netdev_priv(dev);
 	ioaddr = yp->base;
-	
+
 	spin_lock (&yp->lock);
 
 	do {
@@ -932,10 +936,10 @@ static irqreturn_t yellowfin_interrupt(int irq, void *dev_instance, struct pt_re
 			if (yp->tx_ring[entry].result_status == 0)
 				break;
 			skb = yp->tx_skbuff[entry];
-			yp->stats.tx_packets++;
-			yp->stats.tx_bytes += skb->len;
+			dev->stats.tx_packets++;
+			dev->stats.tx_bytes += skb->len;
 			/* Free the original skb. */
-			pci_unmap_single(yp->pci_dev, yp->tx_ring[entry].addr,
+			pci_unmap_single(yp->pci_dev, le32_to_cpu(yp->tx_ring[entry].addr),
 				skb->len, PCI_DMA_TODEVICE);
 			dev_kfree_skb_irq(skb);
 			yp->tx_skbuff[entry] = NULL;
@@ -977,24 +981,24 @@ static irqreturn_t yellowfin_interrupt(int irq, void *dev_instance, struct pt_re
 						printk(KERN_DEBUG "%s: Transmit error, Tx status %4.4x.\n",
 							   dev->name, tx_errs);
 #endif
-					yp->stats.tx_errors++;
-					if (tx_errs & 0xF800) yp->stats.tx_aborted_errors++;
-					if (tx_errs & 0x0800) yp->stats.tx_carrier_errors++;
-					if (tx_errs & 0x2000) yp->stats.tx_window_errors++;
-					if (tx_errs & 0x8000) yp->stats.tx_fifo_errors++;
+					dev->stats.tx_errors++;
+					if (tx_errs & 0xF800) dev->stats.tx_aborted_errors++;
+					if (tx_errs & 0x0800) dev->stats.tx_carrier_errors++;
+					if (tx_errs & 0x2000) dev->stats.tx_window_errors++;
+					if (tx_errs & 0x8000) dev->stats.tx_fifo_errors++;
 				} else {
 #ifndef final_version
 					if (yellowfin_debug > 4)
 						printk(KERN_DEBUG "%s: Normal transmit, Tx status %4.4x.\n",
 							   dev->name, tx_errs);
 #endif
-					yp->stats.tx_bytes += skb->len;
-					yp->stats.collisions += tx_errs & 15;
-					yp->stats.tx_packets++;
+					dev->stats.tx_bytes += skb->len;
+					dev->stats.collisions += tx_errs & 15;
+					dev->stats.tx_packets++;
 				}
 				/* Free the original skb. */
-				pci_unmap_single(yp->pci_dev, 
-					yp->tx_ring[entry<<1].addr, skb->len, 
+				pci_unmap_single(yp->pci_dev,
+					yp->tx_ring[entry<<1].addr, skb->len,
 					PCI_DMA_TODEVICE);
 				dev_kfree_skb_irq(skb);
 				yp->tx_skbuff[entry] = 0;
@@ -1069,13 +1073,13 @@ static int yellowfin_rx(struct net_device *dev)
 
 		if(!desc->result_status)
 			break;
-		pci_dma_sync_single_for_cpu(yp->pci_dev, desc->addr,
+		pci_dma_sync_single_for_cpu(yp->pci_dev, le32_to_cpu(desc->addr),
 			yp->rx_buf_sz, PCI_DMA_FROMDEVICE);
 		desc_status = le32_to_cpu(desc->result_status) >> 16;
 		buf_addr = rx_skb->data;
-		data_size = (le32_to_cpu(desc->dbdma_cmd) - 
+		data_size = (le32_to_cpu(desc->dbdma_cmd) -
 			le32_to_cpu(desc->result_status)) & 0xffff;
-		frame_status = le16_to_cpu(get_unaligned((s16*)&(buf_addr[data_size - 2])));
+		frame_status = get_unaligned_le16(&(buf_addr[data_size - 2]));
 		if (yellowfin_debug > 4)
 			printk(KERN_DEBUG "  yellowfin_rx() status was %4.4x.\n",
 				   frame_status);
@@ -1085,39 +1089,37 @@ static int yellowfin_rx(struct net_device *dev)
 			if (data_size != 0)
 				printk(KERN_WARNING "%s: Oversized Ethernet frame spanned multiple buffers,"
 					   " status %4.4x, data_size %d!\n", dev->name, desc_status, data_size);
-			yp->stats.rx_length_errors++;
+			dev->stats.rx_length_errors++;
 		} else if ((yp->drv_flags & IsGigabit)  &&  (frame_status & 0x0038)) {
 			/* There was a error. */
 			if (yellowfin_debug > 3)
 				printk(KERN_DEBUG "  yellowfin_rx() Rx error was %4.4x.\n",
 					   frame_status);
-			yp->stats.rx_errors++;
-			if (frame_status & 0x0060) yp->stats.rx_length_errors++;
-			if (frame_status & 0x0008) yp->stats.rx_frame_errors++;
-			if (frame_status & 0x0010) yp->stats.rx_crc_errors++;
-			if (frame_status < 0) yp->stats.rx_dropped++;
+			dev->stats.rx_errors++;
+			if (frame_status & 0x0060) dev->stats.rx_length_errors++;
+			if (frame_status & 0x0008) dev->stats.rx_frame_errors++;
+			if (frame_status & 0x0010) dev->stats.rx_crc_errors++;
+			if (frame_status < 0) dev->stats.rx_dropped++;
 		} else if ( !(yp->drv_flags & IsGigabit)  &&
 				   ((buf_addr[data_size-1] & 0x85) || buf_addr[data_size-2] & 0xC0)) {
 			u8 status1 = buf_addr[data_size-2];
 			u8 status2 = buf_addr[data_size-1];
-			yp->stats.rx_errors++;
-			if (status1 & 0xC0) yp->stats.rx_length_errors++;
-			if (status2 & 0x03) yp->stats.rx_frame_errors++;
-			if (status2 & 0x04) yp->stats.rx_crc_errors++;
-			if (status2 & 0x80) yp->stats.rx_dropped++;
+			dev->stats.rx_errors++;
+			if (status1 & 0xC0) dev->stats.rx_length_errors++;
+			if (status2 & 0x03) dev->stats.rx_frame_errors++;
+			if (status2 & 0x04) dev->stats.rx_crc_errors++;
+			if (status2 & 0x80) dev->stats.rx_dropped++;
 #ifdef YF_PROTOTYPE		/* Support for prototype hardware errata. */
 		} else if ((yp->flags & HasMACAddrBug)  &&
 			memcmp(le32_to_cpu(yp->rx_ring_dma +
 				entry*sizeof(struct yellowfin_desc)),
-				dev->dev_addr, 6) != 0 && 
+				dev->dev_addr, 6) != 0 &&
 			memcmp(le32_to_cpu(yp->rx_ring_dma +
 				entry*sizeof(struct yellowfin_desc)),
 				"\377\377\377\377\377\377", 6) != 0) {
 			if (bogus_rx++ == 0)
-				printk(KERN_WARNING "%s: Bad frame to %2.2x:%2.2x:%2.2x:%2.2x:"
-					   "%2.2x:%2.2x.\n",
-					   dev->name, buf_addr[0], buf_addr[1], buf_addr[2],
-					   buf_addr[3], buf_addr[4], buf_addr[5]);
+				printk(KERN_WARNING "%s: Bad frame to %pM\n",
+					   dev->name, buf_addr);
 #endif
 		} else {
 			struct sk_buff *skb;
@@ -1135,28 +1137,27 @@ static int yellowfin_rx(struct net_device *dev)
 			   without copying to a properly sized skbuff. */
 			if (pkt_len > rx_copybreak) {
 				skb_put(skb = rx_skb, pkt_len);
-				pci_unmap_single(yp->pci_dev, 
-					yp->rx_ring[entry].addr, 
-					yp->rx_buf_sz, 
+				pci_unmap_single(yp->pci_dev,
+					le32_to_cpu(yp->rx_ring[entry].addr),
+					yp->rx_buf_sz,
 					PCI_DMA_FROMDEVICE);
 				yp->rx_skbuff[entry] = NULL;
 			} else {
 				skb = dev_alloc_skb(pkt_len + 2);
 				if (skb == NULL)
 					break;
-				skb->dev = dev;
 				skb_reserve(skb, 2);	/* 16 byte align the IP header */
-				eth_copy_and_sum(skb, rx_skb->data, pkt_len, 0);
+				skb_copy_to_linear_data(skb, rx_skb->data, pkt_len);
 				skb_put(skb, pkt_len);
-				pci_dma_sync_single_for_device(yp->pci_dev, desc->addr,
-											   yp->rx_buf_sz,
-											   PCI_DMA_FROMDEVICE);
+				pci_dma_sync_single_for_device(yp->pci_dev,
+								le32_to_cpu(desc->addr),
+								yp->rx_buf_sz,
+								PCI_DMA_FROMDEVICE);
 			}
 			skb->protocol = eth_type_trans(skb, dev);
 			netif_rx(skb);
-			dev->last_rx = jiffies;
-			yp->stats.rx_packets++;
-			yp->stats.rx_bytes += pkt_len;
+			dev->stats.rx_packets++;
+			dev->stats.rx_bytes += pkt_len;
 		}
 		entry = (++yp->cur_rx) % RX_RING_SIZE;
 	}
@@ -1190,15 +1191,13 @@ static int yellowfin_rx(struct net_device *dev)
 
 static void yellowfin_error(struct net_device *dev, int intr_status)
 {
-	struct yellowfin_private *yp = netdev_priv(dev);
-
 	printk(KERN_ERR "%s: Something Wicked happened! %4.4x.\n",
 		   dev->name, intr_status);
 	/* Hmmmmm, it's not clear what to do here. */
 	if (intr_status & (IntrTxPCIErr | IntrTxPCIFault))
-		yp->stats.tx_errors++;
+		dev->stats.tx_errors++;
 	if (intr_status & (IntrRxPCIErr | IntrRxPCIFault))
-		yp->stats.rx_errors++;
+		dev->stats.rx_errors++;
 }
 
 static int yellowfin_close(struct net_device *dev)
@@ -1230,20 +1229,20 @@ static int yellowfin_close(struct net_device *dev)
 
 #if defined(__i386__)
 	if (yellowfin_debug > 2) {
-		printk("\n"KERN_DEBUG"  Tx ring at %8.8llx:\n",
+		printk(KERN_DEBUG"  Tx ring at %8.8llx:\n",
 				(unsigned long long)yp->tx_ring_dma);
 		for (i = 0; i < TX_RING_SIZE*2; i++)
-			printk(" %c #%d desc. %8.8x %8.8x %8.8x %8.8x.\n",
+			printk(KERN_DEBUG " %c #%d desc. %8.8x %8.8x %8.8x %8.8x.\n",
 				   ioread32(ioaddr + TxPtr) == (long)&yp->tx_ring[i] ? '>' : ' ',
 				   i, yp->tx_ring[i].dbdma_cmd, yp->tx_ring[i].addr,
 				   yp->tx_ring[i].branch_addr, yp->tx_ring[i].result_status);
 		printk(KERN_DEBUG "  Tx status %p:\n", yp->tx_status);
 		for (i = 0; i < TX_RING_SIZE; i++)
-			printk("   #%d status %4.4x %4.4x %4.4x %4.4x.\n",
+			printk(KERN_DEBUG "   #%d status %4.4x %4.4x %4.4x %4.4x.\n",
 				   i, yp->tx_status[i].tx_cnt, yp->tx_status[i].tx_errs,
 				   yp->tx_status[i].total_tx_cnt, yp->tx_status[i].paused);
 
-		printk("\n"KERN_DEBUG "  Rx ring %8.8llx:\n",
+		printk(KERN_DEBUG "  Rx ring %8.8llx:\n",
 				(unsigned long long)yp->rx_ring_dma);
 		for (i = 0; i < RX_RING_SIZE; i++) {
 			printk(KERN_DEBUG " %c #%d desc. %8.8x %8.8x %8.8x\n",
@@ -1268,7 +1267,7 @@ static int yellowfin_close(struct net_device *dev)
 	/* Free all the skbuffs in the Rx queue. */
 	for (i = 0; i < RX_RING_SIZE; i++) {
 		yp->rx_ring[i].dbdma_cmd = cpu_to_le32(CMD_STOP);
-		yp->rx_ring[i].addr = 0xBADF00D0; /* An invalid address. */
+		yp->rx_ring[i].addr = cpu_to_le32(0xBADF00D0); /* An invalid address. */
 		if (yp->rx_skbuff[i]) {
 			dev_kfree_skb(yp->rx_skbuff[i]);
 		}
@@ -1290,12 +1289,6 @@ static int yellowfin_close(struct net_device *dev)
 	return 0;
 }
 
-static struct net_device_stats *yellowfin_get_stats(struct net_device *dev)
-{
-	struct yellowfin_private *yp = netdev_priv(dev);
-	return &yp->stats;
-}
-
 /* Set or clear the multicast filter for this adaptor. */
 
 static void set_rx_mode(struct net_device *dev)
@@ -1307,8 +1300,6 @@ static void set_rx_mode(struct net_device *dev)
 	/* Stop the Rx process to change any value. */
 	iowrite16(cfg_value & ~0x1000, ioaddr + Cnfg);
 	if (dev->flags & IFF_PROMISC) {			/* Set promiscuous. */
-		/* Unconditionally log net taps. */
-		printk(KERN_NOTICE "%s: Promiscuous mode enabled.\n", dev->name);
 		iowrite16(0x000F, ioaddr + AddrMode);
 	} else if ((dev->mc_count > 64)  ||  (dev->flags & IFF_ALLMULTI)) {
 		/* Too many to filter well, or accept all multicasts. */
@@ -1354,7 +1345,7 @@ static void yellowfin_get_drvinfo(struct net_device *dev, struct ethtool_drvinfo
 	strcpy(info->bus_info, pci_name(np->pci_dev));
 }
 
-static struct ethtool_ops ethtool_ops = {
+static const struct ethtool_ops ethtool_ops = {
 	.get_drvinfo = yellowfin_get_drvinfo
 };
 
@@ -1374,8 +1365,6 @@ static int netdev_ioctl(struct net_device *dev, struct ifreq *rq, int cmd)
 		return 0;
 
 	case SIOCSMIIREG:		/* Write MII PHY register. */
-		if (!capable(CAP_NET_ADMIN))
-			return -EPERM;
 		if (data->phy_id == np->phys[0]) {
 			u16 value = data->val_in;
 			switch (data->reg_num) {
@@ -1405,7 +1394,7 @@ static void __devexit yellowfin_remove_one (struct pci_dev *pdev)
 	BUG_ON(!dev);
 	np = netdev_priv(dev);
 
-        pci_free_consistent(pdev, STATUS_TOTAL_SIZE, np->tx_status, 
+        pci_free_consistent(pdev, STATUS_TOTAL_SIZE, np->tx_status,
 		np->tx_status_dma);
 	pci_free_consistent(pdev, RX_TOTAL_SIZE, np->rx_ring, np->rx_ring_dma);
 	pci_free_consistent(pdev, TX_TOTAL_SIZE, np->tx_ring, np->tx_ring_dma);
@@ -1434,7 +1423,7 @@ static int __init yellowfin_init (void)
 #ifdef MODULE
 	printk(version);
 #endif
-	return pci_module_init (&yellowfin_driver);
+	return pci_register_driver(&yellowfin_driver);
 }
 
 
@@ -1446,14 +1435,3 @@ static void __exit yellowfin_cleanup (void)
 
 module_init(yellowfin_init);
 module_exit(yellowfin_cleanup);
-
-/*
- * Local variables:
- *  compile-command: "gcc -DMODULE -Wall -Wstrict-prototypes -O6 -c yellowfin.c"
- *  compile-command-alphaLX: "gcc -DMODULE -Wall -Wstrict-prototypes -O2 -c yellowfin.c -fomit-frame-pointer -fno-strength-reduce -mno-fp-regs -Wa,-m21164a -DBWX_USABLE -DBWIO_ENABLED"
- *  simple-compile-command: "gcc -DMODULE -O6 -c yellowfin.c"
- *  c-indent-level: 4
- *  c-basic-offset: 4
- *  tab-width: 4
- * End:
- */

@@ -1,24 +1,28 @@
-//
-// assembly portion of the IA64 MCA handling
-//
-// Mods by cfleck to integrate into kernel build
-// 00/03/15 davidm Added various stop bits to get a clean compile
-//
-// 00/03/29 cfleck Added code to save INIT handoff state in pt_regs format, switch to temp
-//		   kstack, switch modes, jump to C INIT handler
-//
-// 02/01/04 J.Hall <jenna.s.hall@intel.com>
-//		   Before entering virtual mode code:
-//		   1. Check for TLB CPU error
-//		   2. Restore current thread pointer to kr6
-//		   3. Move stack ptr 16 bytes to conform to C calling convention
-//
-// 04/11/12 Russ Anderson <rja@sgi.com>
-//		   Added per cpu MCA/INIT stack save areas.
-//
-// 12/08/05 Keith Owens <kaos@sgi.com>
-//		   Use per cpu MCA/INIT stacks for all data.
-//
+/*
+ * File:	mca_asm.S
+ * Purpose:	assembly portion of the IA64 MCA handling
+ *
+ * Mods by cfleck to integrate into kernel build
+ *
+ * 2000-03-15 David Mosberger-Tang <davidm@hpl.hp.com>
+ *		Added various stop bits to get a clean compile
+ *
+ * 2000-03-29 Chuck Fleckenstein <cfleck@co.intel.com>
+ *		Added code to save INIT handoff state in pt_regs format,
+ *		switch to temp kstack, switch modes, jump to C INIT handler
+ *
+ * 2002-01-04 J.Hall <jenna.s.hall@intel.com>
+ *		Before entering virtual mode code:
+ *		 1. Check for TLB CPU error
+ *		 2. Restore current thread pointer to kr6
+ *		 3. Move stack ptr 16 bytes to conform to C calling convention
+ *
+ * 2004-11-12 Russ Anderson <rja@sgi.com>
+ *		Added per cpu MCA/INIT stack save areas.
+ *
+ * 2005-12-08 Keith Owens <kaos@sgi.com>
+ *		Use per cpu MCA/INIT stacks for all data.
+ */
 #include <linux/threads.h>
 
 #include <asm/asmmacro.h>
@@ -36,6 +40,7 @@
 
 	.global ia64_do_tlb_purge
 	.global ia64_os_mca_dispatch
+	.global ia64_os_init_on_kdump
 	.global ia64_os_init_dispatch_monarch
 	.global ia64_os_init_dispatch_slave
 
@@ -101,14 +106,6 @@ ia64_do_tlb_purge:
 	;;
 	srlz.d
 	;;
-	// 2. Purge DTR for PERCPU data.
-	movl r16=PERCPU_ADDR
-	mov r18=PERCPU_PAGE_SHIFT<<2
-	;;
-	ptr.d r16,r18
-	;;
-	srlz.d
-	;;
 	// 3. Purge ITR for PAL code.
 	GET_THIS_PADDR(r2, ia64_mca_pal_base)
 	;;
@@ -141,14 +138,6 @@ ia64_do_tlb_purge:
 //StartMain////////////////////////////////////////////////////////////////////
 
 ia64_os_mca_dispatch:
-	// Serialize all MCA processing
-	mov	r3=1;;
-	LOAD_PHYSICAL(p0,r2,ia64_mca_serialize);;
-ia64_os_mca_spin:
-	xchg4	r4=[r2],r3;;
-	cmp.ne	p6,p0=r4,r0
-(p6)	br ia64_os_mca_spin
-
 	mov r3=IA64_MCA_CPU_MCA_STACK_OFFSET	// use the MCA stack
 	LOAD_PHYSICAL(p0,r2,1f)			// return address
 	mov r19=1				// All MCA events are treated as monarch (for now)
@@ -196,22 +185,6 @@ ia64_reload_tr:
 	srlz.i
 	srlz.d
 	;;
-	// 2. Reload DTR register for PERCPU data.
-	GET_THIS_PADDR(r2, ia64_mca_per_cpu_pte)
-	;;
-	movl r16=PERCPU_ADDR		// vaddr
-	movl r18=PERCPU_PAGE_SHIFT<<2
-	;;
-	mov cr.itir=r18
-	mov cr.ifa=r16
-	;;
-	ld8 r18=[r2]			// load per-CPU PTE
-	mov r16=IA64_TR_PERCPU_DATA;
-	;;
-	itr.d dtr[r16]=r18
-	;;
-	srlz.d
-	;;
 	// 3. Reload ITR for PAL code.
 	GET_THIS_PADDR(r2, ia64_mca_pal_pte)
 	;;
@@ -247,8 +220,13 @@ ia64_reload_tr:
 	mov r20=IA64_TR_CURRENT_STACK
 	;;
 	itr.d dtr[r20]=r16
+	GET_THIS_PADDR(r2, ia64_mca_tr_reload)
+	mov r18 = 1
 	;;
 	srlz.d
+	;;
+	st8 [r2] =r18
+	;;
 
 done_tlb_purge_and_reload:
 
@@ -315,15 +293,30 @@ END(ia64_os_mca_virtual_begin)
 
 	mov		b0=r12			// SAL_CHECK return address
 
-	// release lock
-	LOAD_PHYSICAL(p0,r3,ia64_mca_serialize);;
-	st4.rel		[r3]=r0
-
 	br		b0
 
 //EndMain//////////////////////////////////////////////////////////////////////
 
 //StartMain////////////////////////////////////////////////////////////////////
+
+//
+// NOP init handler for kdump.  In panic situation, we may receive INIT
+// while kernel transition.  Since we initialize registers on leave from
+// current kernel, no longer monarch/slave handlers of current kernel in
+// virtual mode are called safely.
+// We can unregister these init handlers from SAL, however then the INIT
+// will result in warmboot by SAL and we cannot retrieve the crashdump.
+// Therefore register this NOP function to SAL, to prevent entering virtual
+// mode and resulting warmboot by SAL.
+//
+ia64_os_init_on_kdump:
+	mov		r8=r0		// IA64_INIT_RESUME
+	mov             r9=r10		// SAL_GP
+	mov		r22=r17		// *minstate
+	;;
+	mov		r10=r0		// return to same context
+	mov		b0=r12		// SAL_CHECK return address
+	br		b0
 
 //
 // SAL to OS entry point for INIT on all processors.  This has been defined for
@@ -1025,18 +1018,13 @@ ia64_old_stack:
 
 ia64_set_kernel_registers:
 	add temp3=MCA_SP_OFFSET, r3
-	add temp4=MCA_SOS_OFFSET+SOS(OS_GP), r3
 	mov b0=r2		// save return address
 	GET_IA64_MCA_DATA(temp1)
 	;;
-	add temp4=temp4, temp1	// &struct ia64_sal_os_state.os_gp
 	add r12=temp1, temp3	// kernel stack pointer on MCA/INIT stack
 	add r13=temp1, r3	// set current to start of MCA/INIT stack
 	add r20=temp1, r3	// physical start of MCA/INIT stack
 	;;
-	ld8 r1=[temp4]		// OS GP from SAL OS state
-	;;
-	DATA_PA_TO_VA(r1,temp1)
 	DATA_PA_TO_VA(r12,temp2)
 	DATA_PA_TO_VA(r13,temp3)
 	;;
@@ -1067,6 +1055,10 @@ ia64_set_kernel_registers:
 	mov cr.itir=r18
 	mov cr.ifa=r13
 	mov r20=IA64_TR_CURRENT_STACK
+
+	movl r17=FPSR_DEFAULT
+	;;
+	mov.m ar.fpsr=r17			// set ar.fpsr to kernel default value
 	;;
 	itr.d dtr[r20]=r21
 	;;
@@ -1101,3 +1093,30 @@ GLOBAL_ENTRY(ia64_get_rnat)
 	mov ar.rsc=3
 	br.ret.sptk.many rp
 END(ia64_get_rnat)
+
+
+// void ia64_set_psr_mc(void)
+//
+// Set psr.mc bit to mask MCA/INIT.
+GLOBAL_ENTRY(ia64_set_psr_mc)
+	rsm psr.i | psr.ic		// disable interrupts
+	;;
+	srlz.d
+	;;
+	mov r14 = psr			// get psr{36:35,31:0}
+	movl r15 = 1f
+	;;
+	dep r14 = -1, r14, PSR_MC, 1	// set psr.mc
+	;;
+	dep r14 = -1, r14, PSR_IC, 1	// set psr.ic
+	;;
+	dep r14 = -1, r14, PSR_BN, 1	// keep bank1 in use
+	;;
+	mov cr.ipsr = r14
+	mov cr.ifs = r0
+	mov cr.iip = r15
+	;;
+	rfi
+1:
+	br.ret.sptk.many rp
+END(ia64_set_psr_mc)

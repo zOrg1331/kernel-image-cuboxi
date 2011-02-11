@@ -14,6 +14,7 @@
 
 #include <linux/mm.h>
 #include <linux/module.h>
+#include <linux/hardirq.h>
 #include <asm/mmu_context.h>
 #include <asm/cacheflush.h>
 #include <asm/hardirq.h>
@@ -21,8 +22,10 @@
 #include <asm/system.h>
 #include <asm/pgalloc.h>
 
-unsigned long asid_cache = ASID_FIRST_VERSION;
+unsigned long asid_cache = ASID_USER_FIRST;
 void bad_page_fault(struct pt_regs*, unsigned long, int);
+
+#undef DEBUG_PAGE_FAULT
 
 /*
  * This routine handles page faults.  It determines the address,
@@ -41,6 +44,7 @@ void do_page_fault(struct pt_regs *regs)
 	siginfo_t info;
 
 	int is_write, is_exec;
+	int fault;
 
 	info.si_code = SEGV_MAPERR;
 
@@ -58,12 +62,12 @@ void do_page_fault(struct pt_regs *regs)
 		return;
 	}
 
-	is_write = (exccause == XCHAL_EXCCAUSE_STORE_CACHE_ATTRIBUTE) ? 1 : 0;
-	is_exec =  (exccause == XCHAL_EXCCAUSE_ITLB_PRIVILEGE ||
-		    exccause == XCHAL_EXCCAUSE_ITLB_MISS ||
-		    exccause == XCHAL_EXCCAUSE_FETCH_CACHE_ATTRIBUTE) ? 1 : 0;
+	is_write = (exccause == EXCCAUSE_STORE_CACHE_ATTRIBUTE) ? 1 : 0;
+	is_exec =  (exccause == EXCCAUSE_ITLB_PRIVILEGE ||
+		    exccause == EXCCAUSE_ITLB_MISS ||
+		    exccause == EXCCAUSE_FETCH_CACHE_ATTRIBUTE) ? 1 : 0;
 
-#if 0
+#ifdef DEBUG_PAGE_FAULT
 	printk("[%s:%d:%08x:%d:%08x:%s%s]\n", current->comm, current->pid,
 	       address, exccause, regs->pc, is_write? "w":"", is_exec? "x":"");
 #endif
@@ -102,20 +106,18 @@ good_area:
 	 * the fault.
 	 */
 survive:
-	switch (handle_mm_fault(mm, vma, address, is_write)) {
-	case VM_FAULT_MINOR:
-		current->min_flt++;
-		break;
-	case VM_FAULT_MAJOR:
-		current->maj_flt++;
-		break;
-	case VM_FAULT_SIGBUS:
-		goto do_sigbus;
-	case VM_FAULT_OOM:
-		goto out_of_memory;
-	default:
+	fault = handle_mm_fault(mm, vma, address, is_write ? FAULT_FLAG_WRITE : 0);
+	if (unlikely(fault & VM_FAULT_ERROR)) {
+		if (fault & VM_FAULT_OOM)
+			goto out_of_memory;
+		else if (fault & VM_FAULT_SIGBUS)
+			goto do_sigbus;
 		BUG();
 	}
+	if (fault & VM_FAULT_MAJOR)
+		current->maj_flt++;
+	else
+		current->min_flt++;
 
 	up_read(&mm->mmap_sem);
 	return;
@@ -144,14 +146,14 @@ bad_area:
 	 */
 out_of_memory:
 	up_read(&mm->mmap_sem);
-	if (current->pid == 1) {
+	if (is_global_init(current)) {
 		yield();
 		down_read(&mm->mmap_sem);
 		goto survive;
 	}
 	printk("VM: killing process %s\n", current->comm);
 	if (user_mode(regs))
-		do_exit(SIGKILL);
+		do_group_exit(SIGKILL);
 	bad_page_fault(regs, address, SIGKILL);
 	return;
 
@@ -220,7 +222,7 @@ bad_page_fault(struct pt_regs *regs, unsigned long address, int sig)
 
 	/* Are we prepared to handle this kernel fault?  */
 	if ((entry = search_exception_tables(regs->pc)) != NULL) {
-#if 1
+#ifdef DEBUG_PAGE_FAULT
 		printk(KERN_DEBUG "%s: Exception at pc=%#010lx (%lx)\n",
 				current->comm, regs->pc, entry->fixup);
 #endif

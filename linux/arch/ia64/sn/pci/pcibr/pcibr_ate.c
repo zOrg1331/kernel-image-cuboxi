@@ -30,7 +30,7 @@ static void mark_ate(struct ate_resource *ate_resource, int start, int number,
 
 /*
  * find_free_ate:  Find the first free ate index starting from the given
- *		   index for the desired consequtive count.
+ *		   index for the desired consecutive count.
  */
 static int find_free_ate(struct ate_resource *ate_resource, int start,
 			 int count)
@@ -54,6 +54,8 @@ static int find_free_ate(struct ate_resource *ate_resource, int start,
 					break;
 				}
 			}
+			if (i >= ate_resource->num_ate)
+				return -1;
 		} else
 			index++;	/* Try next ate */
 	}
@@ -88,7 +90,7 @@ static inline int alloc_ate_resource(struct ate_resource *ate_resource,
 		return -1;
 
 	/*
-	 * Find the required number of free consequtive ates.
+	 * Find the required number of free consecutive ates.
 	 */
 	start_index =
 	    find_free_ate(ate_resource, ate_resource->lowest_free_index,
@@ -105,7 +107,7 @@ static inline int alloc_ate_resource(struct ate_resource *ate_resource,
 /*
  * Allocate "count" contiguous Bridge Address Translation Entries
  * on the specified bridge to be used for PCI to XTALK mappings.
- * Indices in rm map range from 1..num_entries.  Indicies returned
+ * Indices in rm map range from 1..num_entries.  Indices returned
  * to caller range from 0..num_entries-1.
  *
  * Return the start index on success, -1 on failure.
@@ -126,7 +128,7 @@ int pcibr_ate_alloc(struct pcibus_info *pcibus_info, int count)
  * Setup an Address Translation Entry as specified.  Use either the Bridge
  * internal maps or the external map RAM, as appropriate.
  */
-static inline u64 *pcibr_ate_addr(struct pcibus_info *pcibus_info,
+static inline u64 __iomem *pcibr_ate_addr(struct pcibus_info *pcibus_info,
 				       int ate_index)
 {
 	if (ate_index < pcibus_info->pbi_int_ate_size) {
@@ -160,7 +162,7 @@ void pcibr_ate_free(struct pcibus_info *pcibus_info, int index)
 
 	volatile u64 ate;
 	int count;
-	u64 flags;
+	unsigned long flags;
 
 	if (pcibr_invalidate_ate) {
 		/* For debugging purposes, clear the valid bit in the ATE */

@@ -21,20 +21,18 @@
 #include <linux/moduleparam.h>
 #include <linux/init.h>
 #include <linux/smp.h>
-#include <linux/smp_lock.h>
 #include <linux/sched.h>
 #include <linux/completion.h>
 #include <linux/delay.h>
 #include <linux/string.h>
 #include <linux/input.h>
 #include <linux/device.h>
-#include <linux/suspend.h>
+#include <linux/freezer.h>
 #include <linux/slab.h>
 #include <linux/kthread.h>
 
-#include <asm/dma.h>
-#include <asm/semaphore.h>
-#include <asm/arch/collie.h>
+#include <mach/dma.h>
+#include <mach/collie.h>
 #include <asm/mach-types.h>
 
 #include "ucb1x00.h"
@@ -58,6 +56,7 @@ static int adcsync;
 static inline void ucb1x00_ts_evt_add(struct ucb1x00_ts *ts, u16 pressure, u16 x, u16 y)
 {
 	struct input_dev *idev = ts->idev;
+
 	input_report_abs(idev, ABS_X, x);
 	input_report_abs(idev, ABS_Y, y);
 	input_report_abs(idev, ABS_PRESSURE, pressure);
@@ -67,6 +66,7 @@ static inline void ucb1x00_ts_evt_add(struct ucb1x00_ts *ts, u16 pressure, u16 x
 static inline void ucb1x00_ts_event_release(struct ucb1x00_ts *ts)
 {
 	struct input_dev *idev = ts->idev;
+
 	input_report_abs(idev, ABS_PRESSURE, 0);
 	input_sync(idev);
 }
@@ -189,6 +189,7 @@ static inline unsigned int ucb1x00_ts_read_yres(struct ucb1x00_ts *ts)
 static inline int ucb1x00_ts_pen_down(struct ucb1x00_ts *ts)
 {
 	unsigned int val = ucb1x00_reg_read(ts->ucb, UCB_TS_CR);
+
 	if (machine_is_collie())
 		return (!(val & (UCB_TS_CR_TSPX_LOW)));
 	else
@@ -203,19 +204,10 @@ static inline int ucb1x00_ts_pen_down(struct ucb1x00_ts *ts)
 static int ucb1x00_thread(void *_ts)
 {
 	struct ucb1x00_ts *ts = _ts;
-	struct task_struct *tsk = current;
-	DECLARE_WAITQUEUE(wait, tsk);
-	int valid;
+	DECLARE_WAITQUEUE(wait, current);
+	int valid = 0;
 
-	/*
-	 * We could run as a real-time thread.  However, thus far
-	 * this doesn't seem to be necessary.
-	 */
-//	tsk->policy = SCHED_FIFO;
-//	tsk->rt_priority = 1;
-
-	valid = 0;
-
+	set_freezable();
 	add_wait_queue(&ts->irq_wait, &wait);
 	while (!kthread_should_stop()) {
 		unsigned int x, y, p;
@@ -241,7 +233,7 @@ static int ucb1x00_thread(void *_ts)
 
 
 		if (ucb1x00_ts_pen_down(ts)) {
-			set_task_state(tsk, TASK_INTERRUPTIBLE);
+			set_current_state(TASK_INTERRUPTIBLE);
 
 			ucb1x00_enable_irq(ts->ucb, UCB_IRQ_TSPX, machine_is_collie() ? UCB_RISING : UCB_FALLING);
 			ucb1x00_disable(ts->ucb);
@@ -269,7 +261,7 @@ static int ucb1x00_thread(void *_ts)
 				valid = 1;
 			}
 
-			set_task_state(tsk, TASK_INTERRUPTIBLE);
+			set_current_state(TASK_INTERRUPTIBLE);
 			timeout = HZ / 100;
 		}
 
@@ -291,13 +283,14 @@ static int ucb1x00_thread(void *_ts)
 static void ucb1x00_ts_irq(int idx, void *id)
 {
 	struct ucb1x00_ts *ts = id;
+
 	ucb1x00_disable_irq(ts->ucb, UCB_IRQ_TSPX, UCB_FALLING);
 	wake_up(&ts->irq_wait);
 }
 
 static int ucb1x00_ts_open(struct input_dev *idev)
 {
-	struct ucb1x00_ts *ts = idev->private;
+	struct ucb1x00_ts *ts = input_get_drvdata(idev);
 	int ret = 0;
 
 	BUG_ON(ts->rtask);
@@ -334,7 +327,7 @@ static int ucb1x00_ts_open(struct input_dev *idev)
  */
 static void ucb1x00_ts_close(struct input_dev *idev)
 {
-	struct ucb1x00_ts *ts = idev->private;
+	struct ucb1x00_ts *ts = input_get_drvdata(idev);
 
 	if (ts->rtask)
 		kthread_stop(ts->rtask);
@@ -372,36 +365,44 @@ static int ucb1x00_ts_resume(struct ucb1x00_dev *dev)
 static int ucb1x00_ts_add(struct ucb1x00_dev *dev)
 {
 	struct ucb1x00_ts *ts;
+	struct input_dev *idev;
+	int err;
 
 	ts = kzalloc(sizeof(struct ucb1x00_ts), GFP_KERNEL);
-	if (!ts)
-		return -ENOMEM;
-
-	ts->idev = input_allocate_device();
-	if (!ts->idev) {
-		kfree(ts);
-		return -ENOMEM;
+	idev = input_allocate_device();
+	if (!ts || !idev) {
+		err = -ENOMEM;
+		goto fail;
 	}
 
 	ts->ucb = dev->ucb;
+	ts->idev = idev;
 	ts->adcsync = adcsync ? UCB_SYNC : UCB_NOSYNC;
 
-	ts->idev->private = ts;
-	ts->idev->name       = "Touchscreen panel";
-	ts->idev->id.product = ts->ucb->id;
-	ts->idev->open       = ucb1x00_ts_open;
-	ts->idev->close      = ucb1x00_ts_close;
+	idev->name       = "Touchscreen panel";
+	idev->id.product = ts->ucb->id;
+	idev->open       = ucb1x00_ts_open;
+	idev->close      = ucb1x00_ts_close;
 
-	__set_bit(EV_ABS, ts->idev->evbit);
-	__set_bit(ABS_X, ts->idev->absbit);
-	__set_bit(ABS_Y, ts->idev->absbit);
-	__set_bit(ABS_PRESSURE, ts->idev->absbit);
+	__set_bit(EV_ABS, idev->evbit);
+	__set_bit(ABS_X, idev->absbit);
+	__set_bit(ABS_Y, idev->absbit);
+	__set_bit(ABS_PRESSURE, idev->absbit);
 
-	input_register_device(ts->idev);
+	input_set_drvdata(idev, ts);
+
+	err = input_register_device(idev);
+	if (err)
+		goto fail;
 
 	dev->priv = ts;
 
 	return 0;
+
+ fail:
+	input_free_device(idev);
+	kfree(ts);
+	return err;
 }
 
 static void ucb1x00_ts_remove(struct ucb1x00_dev *dev)

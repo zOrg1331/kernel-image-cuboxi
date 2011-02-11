@@ -13,6 +13,7 @@
 #include <linux/kexec.h>
 #include <linux/smp.h>
 #include <linux/thread_info.h>
+#include <linux/init_task.h>
 #include <linux/errno.h>
 
 #include <asm/page.h>
@@ -31,8 +32,8 @@ int default_machine_kexec_prepare(struct kimage *image)
 	unsigned long begin, end;	/* limits of segment */
 	unsigned long low, high;	/* limits of blocked memory range */
 	struct device_node *node;
-	unsigned long *basep;
-	unsigned int *sizep;
+	const unsigned long *basep;
+	const unsigned int *sizep;
 
 	if (!ppc_md.hpte_clear_all)
 		return -ENOENT;
@@ -72,10 +73,8 @@ int default_machine_kexec_prepare(struct kimage *image)
 	/* We also should not overwrite the tce tables */
 	for (node = of_find_node_by_type(NULL, "pci"); node != NULL;
 			node = of_find_node_by_type(node, "pci")) {
-		basep = (unsigned long *)get_property(node, "linux,tce-base",
-							NULL);
-		sizep = (unsigned int *)get_property(node, "linux,tce-size",
-							NULL);
+		basep = of_get_property(node, "linux,tce-base", NULL);
+		sizep = of_get_property(node, "linux,tce-size", NULL);
 		if (basep == NULL || sizep == NULL)
 			continue;
 
@@ -156,33 +155,41 @@ void kexec_copy_flush(struct kimage *image)
 
 #ifdef CONFIG_SMP
 
-/* FIXME: we should schedule this function to be called on all cpus based
- * on calling the interrupts, but we would like to call it off irq level
- * so that the interrupt controller is clean.
- */
-void kexec_smp_down(void *arg)
+static u8 kexec_all_irq_disabled;
+u8 kexec_state[NR_CPUS] = {0};
+
+static void kexec_smp_down(void *arg)
 {
+	int my_cpu = get_cpu();
+
+	local_irq_disable();
+	mb(); /* make sure our irqs are disabled before we say they are */
+	kexec_state[my_cpu] = KEXEC_STATE_IRQS_OFF;
+	while(kexec_all_irq_disabled == 0)
+		cpu_relax();
+	mb(); /* make sure all irqs are disabled before this */
+	/*
+	 * Now every CPU has IRQs off, we can clear out any pending
+	 * IPIs and be sure that no more will come in after this.
+	 */
 	if (ppc_md.kexec_cpu_down)
 		ppc_md.kexec_cpu_down(0, 1);
 
-	local_irq_disable();
 	kexec_smp_wait();
 	/* NOTREACHED */
 }
 
-static void kexec_prepare_cpus(void)
+static void kexec_prepare_cpus_wait(int wait_state)
 {
 	int my_cpu, i, notified=-1;
 
-	smp_call_function(kexec_smp_down, NULL, 0, /* wait */0);
 	my_cpu = get_cpu();
-
-	/* check the others cpus are now down (via paca hw cpu id == -1) */
+	/* Make sure each CPU has at least made it to the state we need */
 	for (i=0; i < NR_CPUS; i++) {
 		if (i == my_cpu)
 			continue;
 
-		while (paca[i].hw_cpu_id != -1) {
+		while (kexec_state[i] < wait_state) {
 			barrier();
 			if (!cpu_possible(i)) {
 				printk("kexec: cpu %d hw_cpu_id %d is not"
@@ -202,20 +209,37 @@ static void kexec_prepare_cpus(void)
 			}
 			if (i != notified) {
 				printk( "kexec: waiting for cpu %d (physical"
-						" %d) to go down\n",
-						i, paca[i].hw_cpu_id);
+						" %d) to enter %i state\n",
+					i, paca[i].hw_cpu_id, wait_state);
 				notified = i;
 			}
 		}
 	}
+	mb();
+}
+
+static void kexec_prepare_cpus(void)
+{
+	int my_cpu = get_cpu();
+
+	smp_call_function(kexec_smp_down, NULL, /* wait */0);
+	local_irq_disable();
+	mb(); /* make sure IRQs are disabled before we say they are */
+	kexec_state[my_cpu] = KEXEC_STATE_IRQS_OFF;
+
+	kexec_prepare_cpus_wait(KEXEC_STATE_IRQS_OFF);
+	/* we are sure every CPU has IRQs off at this point */
+	kexec_all_irq_disabled = 1;
 
 	/* after we tell the others to go down */
 	if (ppc_md.kexec_cpu_down)
 		ppc_md.kexec_cpu_down(0, 0);
 
-	put_cpu();
+	/* Before removing MMU mapings,
+	 * make sure all CPUs have entered real mode */
+	kexec_prepare_cpus_wait(KEXEC_STATE_REAL_MODE);
 
-	local_irq_disable();
+	put_cpu();
 }
 
 #else /* ! SMP */
@@ -251,8 +275,8 @@ static void kexec_prepare_cpus(void)
  * We could use a smaller stack if we don't care about anything using
  * current, but that audit has not been performed.
  */
-union thread_union kexec_stack
-	__attribute__((__section__(".data.init_task"))) = { };
+static union thread_union kexec_stack __init_task_data =
+	{ };
 
 /* Our assembly helper, in kexec_stub.S */
 extern NORET_TYPE void kexec_sequence(void *newstack, unsigned long start,
@@ -272,8 +296,8 @@ void default_machine_kexec(struct kimage *image)
         * using debugger IPI.
         */
 
-       if (crashing_cpu == -1)
-               kexec_prepare_cpus();
+	if (crashing_cpu == -1)
+		kexec_prepare_cpus();
 
 	/* switch to a staticly allocated stack.  Based on irq stack code.
 	 * XXX: the task struct will likely be invalid once we do the copy!
@@ -291,95 +315,46 @@ void default_machine_kexec(struct kimage *image)
 }
 
 /* Values we need to export to the second kernel via the device tree. */
-static unsigned long htab_base, kernel_end;
+static unsigned long htab_base;
 
 static struct property htab_base_prop = {
 	.name = "linux,htab-base",
 	.length = sizeof(unsigned long),
-	.value = (unsigned char *)&htab_base,
+	.value = &htab_base,
 };
 
 static struct property htab_size_prop = {
 	.name = "linux,htab-size",
 	.length = sizeof(unsigned long),
-	.value = (unsigned char *)&htab_size_bytes,
+	.value = &htab_size_bytes,
 };
 
-static struct property kernel_end_prop = {
-	.name = "linux,kernel-end",
-	.length = sizeof(unsigned long),
-	.value = (unsigned char *)&kernel_end,
-};
-
-static void __init export_htab_values(void)
+static int __init export_htab_values(void)
 {
 	struct device_node *node;
+	struct property *prop;
+
+	/* On machines with no htab htab_address is NULL */
+	if (!htab_address)
+		return -ENODEV;
 
 	node = of_find_node_by_path("/chosen");
 	if (!node)
-		return;
+		return -ENODEV;
 
-	kernel_end = __pa(_end);
-	prom_add_property(node, &kernel_end_prop);
-
-	/* On machines with no htab htab_address is NULL */
-	if (NULL == htab_address)
-		goto out;
+	/* remove any stale propertys so ours can be found */
+	prop = of_find_property(node, htab_base_prop.name, NULL);
+	if (prop)
+		prom_remove_property(node, prop);
+	prop = of_find_property(node, htab_size_prop.name, NULL);
+	if (prop)
+		prom_remove_property(node, prop);
 
 	htab_base = __pa(htab_address);
 	prom_add_property(node, &htab_base_prop);
 	prom_add_property(node, &htab_size_prop);
 
- out:
 	of_node_put(node);
-}
-
-static struct property crashk_base_prop = {
-	.name = "linux,crashkernel-base",
-	.length = sizeof(unsigned long),
-	.value = (unsigned char *)&crashk_res.start,
-};
-
-static unsigned long crashk_size;
-
-static struct property crashk_size_prop = {
-	.name = "linux,crashkernel-size",
-	.length = sizeof(unsigned long),
-	.value = (unsigned char *)&crashk_size,
-};
-
-static void __init export_crashk_values(void)
-{
-	struct device_node *node;
-	struct property *prop;
-
-	node = of_find_node_by_path("/chosen");
-	if (!node)
-		return;
-
-	/* There might be existing crash kernel properties, but we can't
-	 * be sure what's in them, so remove them. */
-	prop = of_find_property(node, "linux,crashkernel-base", NULL);
-	if (prop)
-		prom_remove_property(node, prop);
-
-	prop = of_find_property(node, "linux,crashkernel-size", NULL);
-	if (prop)
-		prom_remove_property(node, prop);
-
-	if (crashk_res.start != 0) {
-		prom_add_property(node, &crashk_base_prop);
-		crashk_size = crashk_res.end - crashk_res.start + 1;
-		prom_add_property(node, &crashk_size_prop);
-	}
-
-	of_node_put(node);
-}
-
-static int __init kexec_setup(void)
-{
-	export_htab_values();
-	export_crashk_values();
 	return 0;
 }
-__initcall(kexec_setup);
+late_initcall(export_htab_values);

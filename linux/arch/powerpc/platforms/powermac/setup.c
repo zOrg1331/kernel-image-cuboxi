@@ -33,7 +33,6 @@
 #include <linux/ptrace.h>
 #include <linux/slab.h>
 #include <linux/user.h>
-#include <linux/a.out.h>
 #include <linux/tty.h>
 #include <linux/string.h>
 #include <linux/delay.h>
@@ -42,7 +41,6 @@
 #include <linux/initrd.h>
 #include <linux/vt_kern.h>
 #include <linux/console.h>
-#include <linux/ide.h>
 #include <linux/pci.h>
 #include <linux/adb.h>
 #include <linux/cuda.h>
@@ -52,6 +50,9 @@
 #include <linux/root_dev.h>
 #include <linux/bitops.h>
 #include <linux/suspend.h>
+#include <linux/of_device.h>
+#include <linux/of_platform.h>
+#include <linux/lmb.h>
 
 #include <asm/reg.h>
 #include <asm/sections.h>
@@ -59,7 +60,6 @@
 #include <asm/system.h>
 #include <asm/pgtable.h>
 #include <asm/io.h>
-#include <asm/kexec.h>
 #include <asm/pci-bridge.h>
 #include <asm/ohare.h>
 #include <asm/mediabay.h>
@@ -69,12 +69,10 @@
 #include <asm/btext.h>
 #include <asm/pmac_feature.h>
 #include <asm/time.h>
-#include <asm/of_device.h>
 #include <asm/mmu_context.h>
 #include <asm/iommu.h>
 #include <asm/smu.h>
 #include <asm/pmc.h>
-#include <asm/lmb.h>
 #include <asm/udbg.h>
 
 #include "pmac.h"
@@ -94,11 +92,8 @@ extern struct machdep_calls pmac_md;
 #define DEFAULT_ROOT_DEVICE Root_SDA1	/* sda1 - slightly silly choice */
 
 #ifdef CONFIG_PPC64
-#include <asm/udbg.h>
 int sccdbg;
 #endif
-
-extern void zs_kgdb_hook(int tty_num);
 
 sys_ctrler_t sys_ctrler = SYS_CTRLER_UNKNOWN;
 EXPORT_SYMBOL(sys_ctrler);
@@ -108,15 +103,10 @@ unsigned long smu_cmdbuf_abs;
 EXPORT_SYMBOL(smu_cmdbuf_abs);
 #endif
 
-#ifdef CONFIG_SMP
-extern struct smp_ops_t psurge_smp_ops;
-extern struct smp_ops_t core99_smp_ops;
-#endif /* CONFIG_SMP */
-
 static void pmac_show_cpuinfo(struct seq_file *m)
 {
 	struct device_node *np;
-	char *pp;
+	const char *pp;
 	int plen;
 	int mbmodel;
 	unsigned int mbflags;
@@ -134,12 +124,12 @@ static void pmac_show_cpuinfo(struct seq_file *m)
 	seq_printf(m, "machine\t\t: ");
 	np = of_find_node_by_path("/");
 	if (np != NULL) {
-		pp = (char *) get_property(np, "model", NULL);
+		pp = of_get_property(np, "model", NULL);
 		if (pp != NULL)
 			seq_printf(m, "%s\n", pp);
 		else
 			seq_printf(m, "PowerMac\n");
-		pp = (char *) get_property(np, "compatible", &plen);
+		pp = of_get_property(np, "compatible", &plen);
 		if (pp != NULL) {
 			seq_printf(m, "motherboard\t:");
 			while (plen > 0) {
@@ -163,13 +153,13 @@ static void pmac_show_cpuinfo(struct seq_file *m)
 	if (np == NULL)
 		np = of_find_node_by_type(NULL, "cache");
 	if (np != NULL) {
-		unsigned int *ic = (unsigned int *)
-			get_property(np, "i-cache-size", NULL);
-		unsigned int *dc = (unsigned int *)
-			get_property(np, "d-cache-size", NULL);
+		const unsigned int *ic =
+			of_get_property(np, "i-cache-size", NULL);
+		const unsigned int *dc =
+			of_get_property(np, "d-cache-size", NULL);
 		seq_printf(m, "L2 cache\t:");
 		has_l2cache = 1;
-		if (get_property(np, "cache-unified", NULL) != 0 && dc) {
+		if (of_get_property(np, "cache-unified", NULL) != 0 && dc) {
 			seq_printf(m, " %dK unified", *dc / 1024);
 		} else {
 			if (ic)
@@ -178,7 +168,7 @@ static void pmac_show_cpuinfo(struct seq_file *m)
 				seq_printf(m, "%s %dK data",
 					   (ic? " +": ""), *dc / 1024);
 		}
-		pp = get_property(np, "ram-type", NULL);
+		pp = of_get_property(np, "ram-type", NULL);
 		if (pp)
 			seq_printf(m, " %s", pp);
 		seq_printf(m, "\n");
@@ -193,8 +183,11 @@ static void pmac_show_cpuinfo(struct seq_file *m)
 #ifndef CONFIG_ADB_CUDA
 int find_via_cuda(void)
 {
-	if (!find_devices("via-cuda"))
+	struct device_node *dn = of_find_node_by_name(NULL, "via-cuda");
+
+	if (!dn)
 		return 0;
+	of_node_put(dn);
 	printk("WARNING ! Your machine is CUDA-based but your kernel\n");
 	printk("          wasn't compiled with CONFIG_ADB_CUDA option !\n");
 	return 0;
@@ -204,8 +197,11 @@ int find_via_cuda(void)
 #ifndef CONFIG_ADB_PMU
 int find_via_pmu(void)
 {
-	if (!find_devices("via-pmu"))
+	struct device_node *dn = of_find_node_by_name(NULL, "via-pmu");
+
+	if (!dn)
 		return 0;
+	of_node_put(dn);
 	printk("WARNING ! Your machine is PMU-based but your kernel\n");
 	printk("          wasn't compiled with CONFIG_ADB_PMU option !\n");
 	return 0;
@@ -225,6 +221,8 @@ static volatile u32 *sysctrl_regs;
 
 static void __init ohare_init(void)
 {
+	struct device_node *dn;
+
 	/* this area has the CPU identification register
 	   and some registers used by smp boards */
 	sysctrl_regs = (volatile u32 *) ioremap(0xf8000000, 0x1000);
@@ -234,7 +232,9 @@ static void __init ohare_init(void)
 	 * We assume that we have a PSX memory controller iff
 	 * we have an ohare I/O controller.
 	 */
-	if (find_devices("ohare") != NULL) {
+	dn = of_find_node_by_name(NULL, "ohare");
+	if (dn) {
+		of_node_put(dn);
 		if (((sysctrl_regs[2] >> 24) & 0xf) >= 3) {
 			if (sysctrl_regs[4] & 0x10)
 				sysctrl_regs[4] |= 0x04000020;
@@ -250,18 +250,19 @@ static void __init l2cr_init(void)
 {
 	/* Checks "l2cr-value" property in the registry */
 	if (cpu_has_feature(CPU_FTR_L2CR)) {
-		struct device_node *np = find_devices("cpus");
+		struct device_node *np = of_find_node_by_name(NULL, "cpus");
 		if (np == 0)
-			np = find_type_devices("cpu");
+			np = of_find_node_by_type(NULL, "cpu");
 		if (np != 0) {
-			unsigned int *l2cr = (unsigned int *)
-				get_property(np, "l2cr-value", NULL);
+			const unsigned int *l2cr =
+				of_get_property(np, "l2cr-value", NULL);
 			if (l2cr != 0) {
 				ppc_override_l2cr = 1;
 				ppc_override_l2cr_value = *l2cr;
 				_set_L2CR(0);
 				_set_L2CR(ppc_override_l2cr_value);
 			}
+			of_node_put(np);
 		}
 	}
 
@@ -277,7 +278,7 @@ static void __init l2cr_init(void)
 static void __init pmac_setup_arch(void)
 {
 	struct device_node *cpu, *ic;
-	int *fp;
+	const int *fp;
 	unsigned long pvr;
 
 	pvr = PVR_VER(mfspr(SPRN_PVR));
@@ -287,7 +288,7 @@ static void __init pmac_setup_arch(void)
 	loops_per_jiffy = 50000000 / HZ;
 	cpu = of_find_node_by_type(NULL, "cpu");
 	if (cpu != NULL) {
-		fp = (int *) get_property(cpu, "clock-frequency", NULL);
+		fp = of_get_property(cpu, "clock-frequency", NULL);
 		if (fp != NULL) {
 			if (pvr >= 0x30 && pvr < 0x80)
 				/* PPC970 etc. */
@@ -303,9 +304,7 @@ static void __init pmac_setup_arch(void)
 	}
 
 	/* See if newworld or oldworld */
-	for (ic = NULL; (ic = of_find_all_nodes(ic)) != NULL; )
-		if (get_property(ic, "interrupt-controller", NULL))
-			break;
+	ic = of_find_node_with_property(NULL, "interrupt-controller");
 	if (ic) {
 		pmac_newworld = 1;
 		of_node_put(ic);
@@ -319,15 +318,12 @@ static void __init pmac_setup_arch(void)
 	l2cr_init();
 #endif /* CONFIG_PPC32 */
 
-#ifdef CONFIG_KGDB
-	zs_kgdb_hook(0);
-#endif
-
 	find_via_cuda();
 	find_via_pmu();
 	smu_init();
 
-#if defined(CONFIG_NVRAM) || defined(CONFIG_PPC64)
+#if defined(CONFIG_NVRAM) || defined(CONFIG_NVRAM_MODULE) || \
+    defined(CONFIG_PPC64)
 	pmac_nvram_init();
 #endif
 
@@ -340,16 +336,6 @@ static void __init pmac_setup_arch(void)
 		ROOT_DEV = DEFAULT_ROOT_DEVICE;
 #endif
 
-#ifdef CONFIG_SMP
-	/* Check for Core99 */
-	if (find_devices("uni-n") || find_devices("u3") || find_devices("u4"))
-		smp_ops = &core99_smp_ops;
-#ifdef CONFIG_PPC32
-	else
-		smp_ops = &psurge_smp_ops;
-#endif
-#endif /* CONFIG_SMP */
-
 #ifdef CONFIG_ADB
 	if (strstr(cmd_line, "adb_sync")) {
 		extern int __adb_probe_sync;
@@ -358,148 +344,33 @@ static void __init pmac_setup_arch(void)
 #endif /* CONFIG_ADB */
 }
 
-char *bootpath;
-char *bootdevice;
-void *boot_host;
-int boot_target;
-int boot_part;
-extern dev_t boot_dev;
-
 #ifdef CONFIG_SCSI
-void __init note_scsi_host(struct device_node *node, void *host)
+void note_scsi_host(struct device_node *node, void *host)
 {
-	int l;
-	char *p;
-
-	l = strlen(node->full_name);
-	if (bootpath != NULL && bootdevice != NULL
-	    && strncmp(node->full_name, bootdevice, l) == 0
-	    && (bootdevice[l] == '/' || bootdevice[l] == 0)) {
-		boot_host = host;
-		/*
-		 * There's a bug in OF 1.0.5.  (Why am I not surprised.)
-		 * If you pass a path like scsi/sd@1:0 to canon, it returns
-		 * something like /bandit@F2000000/gc@10/53c94@10000/sd@0,0
-		 * That is, the scsi target number doesn't get preserved.
-		 * So we pick the target number out of bootpath and use that.
-		 */
-		p = strstr(bootpath, "/sd@");
-		if (p != NULL) {
-			p += 4;
-			boot_target = simple_strtoul(p, NULL, 10);
-			p = strchr(p, ':');
-			if (p != NULL)
-				boot_part = simple_strtoul(p + 1, NULL, 10);
-		}
-	}
 }
 EXPORT_SYMBOL(note_scsi_host);
 #endif
-
-#if defined(CONFIG_BLK_DEV_IDE) && defined(CONFIG_BLK_DEV_IDE_PMAC)
-static dev_t __init find_ide_boot(void)
-{
-	char *p;
-	int n;
-	dev_t __init pmac_find_ide_boot(char *bootdevice, int n);
-
-	if (bootdevice == NULL)
-		return 0;
-	p = strrchr(bootdevice, '/');
-	if (p == NULL)
-		return 0;
-	n = p - bootdevice;
-
-	return pmac_find_ide_boot(bootdevice, n);
-}
-#endif /* CONFIG_BLK_DEV_IDE && CONFIG_BLK_DEV_IDE_PMAC */
-
-static void __init find_boot_device(void)
-{
-#if defined(CONFIG_BLK_DEV_IDE) && defined(CONFIG_BLK_DEV_IDE_PMAC)
-	boot_dev = find_ide_boot();
-#endif
-}
-
-/* TODO: Merge the suspend-to-ram with the common code !!!
- * currently, this is a stub implementation for suspend-to-disk
- * only
- */
-
-#ifdef CONFIG_SOFTWARE_SUSPEND
-
-static int pmac_pm_prepare(suspend_state_t state)
-{
-	printk(KERN_DEBUG "%s(%d)\n", __FUNCTION__, state);
-
-	return 0;
-}
-
-static int pmac_pm_enter(suspend_state_t state)
-{
-	printk(KERN_DEBUG "%s(%d)\n", __FUNCTION__, state);
-
-	/* Giveup the lazy FPU & vec so we don't have to back them
-	 * up from the low level code
-	 */
-	enable_kernel_fp();
-
-#ifdef CONFIG_ALTIVEC
-	if (cur_cpu_spec->cpu_features & CPU_FTR_ALTIVEC)
-		enable_kernel_altivec();
-#endif /* CONFIG_ALTIVEC */
-
-	return 0;
-}
-
-static int pmac_pm_finish(suspend_state_t state)
-{
-	printk(KERN_DEBUG "%s(%d)\n", __FUNCTION__, state);
-
-	/* Restore userland MMU context */
-	set_context(current->active_mm->context.id, current->active_mm->pgd);
-
-	return 0;
-}
-
-static int pmac_pm_valid(suspend_state_t state)
-{
-	switch (state) {
-	case PM_SUSPEND_DISK:
-		return 1;
-	/* can't do any other states via generic mechanism yet */
-	default:
-		return 0;
-	}
-}
-
-static struct pm_ops pmac_pm_ops = {
-	.pm_disk_mode	= PM_DISK_SHUTDOWN,
-	.prepare	= pmac_pm_prepare,
-	.enter		= pmac_pm_enter,
-	.finish		= pmac_pm_finish,
-	.valid		= pmac_pm_valid,
-};
-
-#endif /* CONFIG_SOFTWARE_SUSPEND */
 
 static int initializing = 1;
 
 static int pmac_late_init(void)
 {
 	initializing = 0;
-#ifdef CONFIG_SOFTWARE_SUSPEND
-	pm_set_ops(&pmac_pm_ops);
-#endif /* CONFIG_SOFTWARE_SUSPEND */
+	/* this is udbg (which is __init) and we can later use it during
+	 * cpu hotplug (in smp_core99_kick_cpu) */
+	ppc_md.progress = NULL;
 	return 0;
 }
+machine_late_initcall(powermac, pmac_late_init);
 
-late_initcall(pmac_late_init);
-
-/* can't be __init - can be called whenever a disk is first accessed */
-void note_bootable_part(dev_t dev, int part, int goodness)
+/*
+ * This is __init_refok because we check for "initializing" before
+ * touching any of the __init sensitive things and "initializing"
+ * will be false after __init time. This can't be __init because it
+ * can be called whenever a disk is first accessed.
+ */
+void __init_refok note_bootable_part(dev_t dev, int part, int goodness)
 {
-	static int found_boot = 0;
 	char *p;
 
 	if (!initializing)
@@ -507,19 +378,12 @@ void note_bootable_part(dev_t dev, int part, int goodness)
 	if ((goodness <= current_root_goodness) &&
 	    ROOT_DEV != DEFAULT_ROOT_DEVICE)
 		return;
-	p = strstr(saved_command_line, "root=");
-	if (p != NULL && (p == saved_command_line || p[-1] == ' '))
+	p = strstr(boot_command_line, "root=");
+	if (p != NULL && (p == boot_command_line || p[-1] == ' '))
 		return;
 
-	if (!found_boot) {
-		find_boot_device();
-		found_boot = 1;
-	}
-	if (!boot_dev || dev == boot_dev) {
-		ROOT_DEV = dev + part;
-		boot_dev = 0;
-		current_root_goodness = goodness;
-	}
+	ROOT_DEV = dev + part;
+	current_root_goodness = goodness;
 }
 
 #ifdef CONFIG_ADB_CUDA
@@ -615,15 +479,14 @@ static void __init pmac_init_early(void)
 #ifdef CONFIG_PPC64
 	iommu_init_early_dart();
 #endif
-}
 
-/*
- * pmac has no legacy IO, anything calling this function has to
- * fail or bad things will happen
- */
-static int pmac_check_legacy_ioport(unsigned int baseport)
-{
-	return -ENODEV;
+	/* SMP Init has to be done early as we need to patch up
+	 * cpu_possible_map before interrupt stacks are allocated
+	 * or kaboom...
+	 */
+#ifdef CONFIG_SMP
+	pmac_setup_smp();
+#endif
 }
 
 static int __init pmac_declare_of_platform_devices(void)
@@ -632,9 +495,6 @@ static int __init pmac_declare_of_platform_devices(void)
 
 	if (machine_is(chrp))
 		return -1;
-
-	if (!machine_is(powermac))
-		return 0;
 
 	np = of_find_node_by_name(NULL, "valkyrie");
 	if (np)
@@ -650,8 +510,79 @@ static int __init pmac_declare_of_platform_devices(void)
 
 	return 0;
 }
+machine_device_initcall(powermac, pmac_declare_of_platform_devices);
 
-device_initcall(pmac_declare_of_platform_devices);
+#ifdef CONFIG_SERIAL_PMACZILOG_CONSOLE
+/*
+ * This is called very early, as part of console_init() (typically just after
+ * time_init()). This function is respondible for trying to find a good
+ * default console on serial ports. It tries to match the open firmware
+ * default output with one of the available serial console drivers.
+ */
+static int __init check_pmac_serial_console(void)
+{
+	struct device_node *prom_stdout = NULL;
+	int offset = 0;
+	const char *name;
+#ifdef CONFIG_SERIAL_PMACZILOG_TTYS
+	char *devname = "ttyS";
+#else
+	char *devname = "ttyPZ";
+#endif
+
+	pr_debug(" -> check_pmac_serial_console()\n");
+
+	/* The user has requested a console so this is already set up. */
+	if (strstr(boot_command_line, "console=")) {
+		pr_debug(" console was specified !\n");
+		return -EBUSY;
+	}
+
+	if (!of_chosen) {
+		pr_debug(" of_chosen is NULL !\n");
+		return -ENODEV;
+	}
+
+	/* We are getting a weird phandle from OF ... */
+	/* ... So use the full path instead */
+	name = of_get_property(of_chosen, "linux,stdout-path", NULL);
+	if (name == NULL) {
+		pr_debug(" no linux,stdout-path !\n");
+		return -ENODEV;
+	}
+	prom_stdout = of_find_node_by_path(name);
+	if (!prom_stdout) {
+		pr_debug(" can't find stdout package %s !\n", name);
+		return -ENODEV;
+	}
+	pr_debug("stdout is %s\n", prom_stdout->full_name);
+
+	name = of_get_property(prom_stdout, "name", NULL);
+	if (!name) {
+		pr_debug(" stdout package has no name !\n");
+		goto not_found;
+	}
+
+	if (strcmp(name, "ch-a") == 0)
+		offset = 0;
+	else if (strcmp(name, "ch-b") == 0)
+		offset = 1;
+	else
+		goto not_found;
+	of_node_put(prom_stdout);
+
+	pr_debug("Found serial console at %s%d\n", devname, offset);
+
+	return add_preferred_console(devname, offset, NULL);
+
+ not_found:
+	pr_debug("No preferred console found !\n");
+	of_node_put(prom_stdout);
+	return -ENODEV;
+}
+console_initcall(check_pmac_serial_console);
+
+#endif /* CONFIG_SERIAL_PMACZILOG_CONSOLE */
 
 /*
  * Called very early, MMU is off, device-tree isn't unflattened
@@ -678,19 +609,9 @@ static int __init pmac_probe(void)
 
 #ifdef CONFIG_PPC32
 	/* isa_io_base gets set in pmac_pci_init */
-	isa_mem_base = PMAC_ISA_MEM_BASE;
-	pci_dram_offset = PMAC_PCI_DRAM_OFFSET;
 	ISA_DMA_THRESHOLD = ~0L;
 	DMA_MODE_READ = 1;
 	DMA_MODE_WRITE = 2;
-
-#if defined(CONFIG_BLK_DEV_IDE) || defined(CONFIG_BLK_DEV_IDE_MODULE)
-#ifdef CONFIG_BLK_DEV_IDE_PMAC
-        ppc_ide_md.ide_init_hwif	= pmac_ide_init_hwif_ports;
-        ppc_ide_md.default_io_base	= pmac_ide_get_base;
-#endif /* CONFIG_BLK_DEV_IDE_PMAC */
-#endif /* defined(CONFIG_BLK_DEV_IDE) || defined(CONFIG_BLK_DEV_IDE_MODULE) */
-
 #endif /* CONFIG_PPC32 */
 
 #ifdef CONFIG_PMAC_SMU
@@ -709,17 +630,64 @@ static int __init pmac_probe(void)
 /* Move that to pci.c */
 static int pmac_pci_probe_mode(struct pci_bus *bus)
 {
-	struct device_node *node = bus->sysdata;
+	struct device_node *node = pci_bus_to_OF_node(bus);
 
 	/* We need to use normal PCI probing for the AGP bus,
 	 * since the device for the AGP bridge isn't in the tree.
+	 * Same for the PCIe host on U4 and the HT host bridge.
 	 */
-	if (bus->self == NULL && (device_is_compatible(node, "u3-agp") ||
-				  device_is_compatible(node, "u4-pcie")))
+	if (bus->self == NULL && (of_device_is_compatible(node, "u3-agp") ||
+				  of_device_is_compatible(node, "u4-pcie") ||
+				  of_device_is_compatible(node, "u3-ht")))
 		return PCI_PROBE_NORMAL;
 	return PCI_PROBE_DEVTREE;
 }
-#endif
+
+#ifdef CONFIG_HOTPLUG_CPU
+/* access per cpu vars from generic smp.c */
+DECLARE_PER_CPU(int, cpu_state);
+
+static void pmac_cpu_die(void)
+{
+	/*
+	 * turn off as much as possible, we'll be
+	 * kicked out as this will only be invoked
+	 * on core99 platforms for now ...
+	 */
+
+	printk(KERN_INFO "CPU#%d offline\n", smp_processor_id());
+	__get_cpu_var(cpu_state) = CPU_DEAD;
+	smp_wmb();
+
+	/*
+	 * during the path that leads here preemption is disabled,
+	 * reenable it now so that when coming up preempt count is
+	 * zero correctly
+	 */
+	preempt_enable();
+
+	/*
+	 * hard-disable interrupts for the non-NAP case, the NAP code
+	 * needs to re-enable interrupts (but soft-disables them)
+	 */
+	hard_irq_disable();
+
+	while (1) {
+		/* let's not take timer interrupts too often ... */
+		set_dec(0x7fffffff);
+
+		/* should always be true at this point */
+		if (cpu_has_feature(CPU_FTR_CAN_NAP))
+			power4_cpu_offline_powersave();
+		else {
+			HMT_low();
+			HMT_very_low();
+		}
+	}
+}
+#endif /* CONFIG_HOTPLUG_CPU */
+
+#endif /* CONFIG_PPC64 */
 
 define_machine(powermac) {
 	.name			= "PowerMac",
@@ -729,7 +697,7 @@ define_machine(powermac) {
 	.show_cpuinfo		= pmac_show_cpuinfo,
 	.init_IRQ		= pmac_pic_init,
 	.get_irq		= NULL,	/* changed later */
-	.pcibios_fixup		= pmac_pcibios_fixup,
+	.pci_irq_fixup		= pmac_pci_irq_fixup,
 	.restart		= pmac_restart,
 	.power_off		= pmac_power_off,
 	.halt			= pmac_halt,
@@ -739,17 +707,11 @@ define_machine(powermac) {
 	.get_rtc_time		= pmac_get_rtc_time,
 	.calibrate_decr		= pmac_calibrate_decr,
 	.feature_call		= pmac_do_feature_call,
-	.check_legacy_ioport	= pmac_check_legacy_ioport,
 	.progress		= udbg_progress,
 #ifdef CONFIG_PPC64
 	.pci_probe_mode		= pmac_pci_probe_mode,
 	.power_save		= power4_idle,
 	.enable_pmcs		= power4_enable_pmcs,
-#ifdef CONFIG_KEXEC
-	.machine_kexec		= default_machine_kexec,
-	.machine_kexec_prepare	= default_machine_kexec_prepare,
-	.machine_crash_shutdown	= default_machine_crash_shutdown,
-#endif
 #endif /* CONFIG_PPC64 */
 #ifdef CONFIG_PPC32
 	.pcibios_enable_device_hook = pmac_pci_enable_device_hook,
@@ -757,6 +719,9 @@ define_machine(powermac) {
 	.phys_mem_access_prot	= pci_phys_mem_access_prot,
 #endif
 #if defined(CONFIG_HOTPLUG_CPU) && defined(CONFIG_PPC64)
+	.cpu_die		= pmac_cpu_die,
+#endif
+#if defined(CONFIG_HOTPLUG_CPU) && defined(CONFIG_PPC32)
 	.cpu_die		= generic_mach_cpu_die,
 #endif
 };

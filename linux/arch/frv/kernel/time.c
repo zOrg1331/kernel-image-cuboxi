@@ -10,7 +10,6 @@
  * 2 of the License, or (at your option) any later version.
  */
 
-#include <linux/config.h> /* CONFIG_HEARTBEAT */
 #include <linux/module.h>
 #include <linux/errno.h>
 #include <linux/sched.h>
@@ -26,7 +25,6 @@
 #include <asm/timer-regs.h>
 #include <asm/mb-regs.h>
 #include <asm/mb86943a.h>
-#include <asm/irq-routing.h>
 
 #include <linux/timex.h>
 
@@ -42,10 +40,12 @@ unsigned long __nongprelbss __dsu_clock_speed_HZ;
 unsigned long __nongprelbss __serial_clock_speed_HZ;
 unsigned long __delay_loops_MHz;
 
-static irqreturn_t timer_interrupt(int irq, void *dummy, struct pt_regs *regs);
+static irqreturn_t timer_interrupt(int irq, void *dummy);
 
 static struct irqaction timer_irq  = {
-	timer_interrupt, IRQF_DISABLED, CPU_MASK_NONE, "timer", NULL, NULL
+	.handler = timer_interrupt,
+	.flags = IRQF_DISABLED,
+	.name = "timer",
 };
 
 static inline int set_rtc_mmss(unsigned long nowtime)
@@ -57,23 +57,22 @@ static inline int set_rtc_mmss(unsigned long nowtime)
  * timer_interrupt() needs to keep up the real-time clock,
  * as well as call the "do_timer()" routine every clocktick
  */
-static irqreturn_t timer_interrupt(int irq, void *dummy, struct pt_regs * regs)
+static irqreturn_t timer_interrupt(int irq, void *dummy)
 {
 	/* last time the cmos clock got updated */
 	static long last_rtc_update = 0;
 
+	profile_tick(CPU_PROFILING);
 	/*
 	 * Here we are in the timer irq handler. We just have irqs locally
 	 * disabled but we don't know if the timer_bh is running on the other
-	 * CPU. We need to avoid to SMP race with it. NOTE: we don' t need
+	 * CPU. We need to avoid to SMP race with it. NOTE: we don't need
 	 * the irq version of write_lock because as just said we have irq
 	 * locally disabled. -arca
 	 */
 	write_seqlock(&xtime_lock);
 
-	do_timer(regs);
-	update_process_times(user_mode(regs));
-	profile_tick(CPU_PROFILING, regs);
+	do_timer(1);
 
 	/*
 	 * If we have an externally synchronized Linux clock, then update
@@ -98,6 +97,9 @@ static irqreturn_t timer_interrupt(int irq, void *dummy, struct pt_regs * regs)
 #endif /* CONFIG_HEARTBEAT */
 
 	write_sequnlock(&xtime_lock);
+
+	update_process_times(user_mode(get_irq_regs()));
+
 	return IRQ_HANDLED;
 }
 
@@ -125,7 +127,7 @@ void time_init(void)
 
 	/* FIX by dqg : Set to zero for platforms that don't have tod */
 	/* without this time is undefined and can overflow time_t, causing  */
-	/* very stange errors */
+	/* very strange errors */
 	year = 1980;
 	mon = day = 1;
 	hour = min = sec = 0;

@@ -6,7 +6,7 @@
 
 void dn_process_int(unsigned int irq, struct pt_regs *fp)
 {
-	m68k_handle_int(irq, fp);
+	__m68k_handle_int(irq, fp);
 
 	*(volatile unsigned char *)(pica)=0x20;
 	*(volatile unsigned char *)(picb)=0x20;
@@ -31,13 +31,13 @@ void apollo_irq_shutdown(unsigned int irq)
 
 static struct irq_controller apollo_irq_controller = {
 	.name           = "apollo",
-	.lock           = SPIN_LOCK_UNLOCKED,
+	.lock           = __SPIN_LOCK_UNLOCKED(apollo_irq_controller.lock),
 	.startup        = apollo_irq_startup,
 	.shutdown       = apollo_irq_shutdown,
 };
 
 
-void dn_init_IRQ(void)
+void __init dn_init_IRQ(void)
 {
 	m68k_setup_user_interrupt(VEC_USER + 96, 16, dn_process_int);
 	m68k_setup_irq_controller(&apollo_irq_controller, IRQ_APOLLO, 16);

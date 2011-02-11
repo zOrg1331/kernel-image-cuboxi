@@ -1,6 +1,6 @@
 /*
  *  The driver for the Yamaha's DS1/DS1E cards
- *  Copyright (c) by Jaroslav Kysela <perex@suse.cz>
+ *  Copyright (c) by Jaroslav Kysela <perex@perex.cz>
  *
  *
  *   This program is free software; you can redistribute it and/or modify
@@ -19,7 +19,6 @@
  *
  */
 
-#include <sound/driver.h>
 #include <linux/init.h>
 #include <linux/pci.h>
 #include <linux/time.h>
@@ -30,7 +29,7 @@
 #include <sound/opl3.h>
 #include <sound/initval.h>
 
-MODULE_AUTHOR("Jaroslav Kysela <perex@suse.cz>");
+MODULE_AUTHOR("Jaroslav Kysela <perex@perex.cz>");
 MODULE_DESCRIPTION("Yamaha DS-1 PCI");
 MODULE_LICENSE("GPL");
 MODULE_SUPPORTED_DEVICE("{{Yamaha,YMF724},"
@@ -49,7 +48,6 @@ static long mpu_port[SNDRV_CARDS];
 static long joystick_port[SNDRV_CARDS];
 #endif
 static int rear_switch[SNDRV_CARDS];
-static int rear_swap[SNDRV_CARDS] = { [0 ... (SNDRV_CARDS-1)] = 1 };
 
 module_param_array(index, int, NULL, 0444);
 MODULE_PARM_DESC(index, "Index value for the Yamaha DS-1 PCI soundcard.");
@@ -67,16 +65,14 @@ MODULE_PARM_DESC(joystick_port, "Joystick port address");
 #endif
 module_param_array(rear_switch, bool, NULL, 0444);
 MODULE_PARM_DESC(rear_switch, "Enable shared rear/line-in switch");
-module_param_array(rear_swap, bool, NULL, 0444);
-MODULE_PARM_DESC(rear_swap, "Swap rear channels (must be enabled for correct IEC958 (S/PDIF)) output");
 
 static struct pci_device_id snd_ymfpci_ids[] = {
-        { 0x1073, 0x0004, PCI_ANY_ID, PCI_ANY_ID, 0, 0, 0, },   /* YMF724 */
-        { 0x1073, 0x000d, PCI_ANY_ID, PCI_ANY_ID, 0, 0, 0, },   /* YMF724F */
-        { 0x1073, 0x000a, PCI_ANY_ID, PCI_ANY_ID, 0, 0, 0, },   /* YMF740 */
-        { 0x1073, 0x000c, PCI_ANY_ID, PCI_ANY_ID, 0, 0, 0, },   /* YMF740C */
-        { 0x1073, 0x0010, PCI_ANY_ID, PCI_ANY_ID, 0, 0, 0, },   /* YMF744 */
-        { 0x1073, 0x0012, PCI_ANY_ID, PCI_ANY_ID, 0, 0, 0, },   /* YMF754 */
+	{ PCI_VDEVICE(YAMAHA, 0x0004), 0, },   /* YMF724 */
+	{ PCI_VDEVICE(YAMAHA, 0x000d), 0, },   /* YMF724F */
+	{ PCI_VDEVICE(YAMAHA, 0x000a), 0, },   /* YMF740 */
+	{ PCI_VDEVICE(YAMAHA, 0x000c), 0, },   /* YMF740C */
+	{ PCI_VDEVICE(YAMAHA, 0x0010), 0, },   /* YMF744 */
+	{ PCI_VDEVICE(YAMAHA, 0x0012), 0, },   /* YMF754 */
 	{ 0, }
 };
 
@@ -191,9 +187,9 @@ static int __devinit snd_card_ymfpci_probe(struct pci_dev *pci,
 		return -ENOENT;
 	}
 
-	card = snd_card_new(index[dev], id[dev], THIS_MODULE, 0);
-	if (card == NULL)
-		return -ENOMEM;
+	err = snd_card_create(index[dev], id[dev], THIS_MODULE, 0, &card);
+	if (err < 0)
+		return err;
 
 	switch (pci_id->device) {
 	case 0x0004: str = "YMF724";  model = "DS-1"; break;
@@ -298,7 +294,7 @@ static int __devinit snd_card_ymfpci_probe(struct pci_dev *pci,
 		snd_card_free(card);
 		return err;
 	}
-	if ((err = snd_ymfpci_mixer(chip, rear_switch[dev], rear_swap[dev])) < 0) {
+	if ((err = snd_ymfpci_mixer(chip, rear_switch[dev])) < 0) {
 		snd_card_free(card);
 		return err;
 	}

@@ -43,6 +43,9 @@
 
 #define PFX "IPMI poweroff: "
 
+static void ipmi_po_smi_gone(int if_num);
+static void ipmi_po_new_smi(int if_num, struct device *device);
+
 /* Definitions for controlling power off (if the system supports it).  It
  * conveniently matches the IPMI chassis control values. */
 #define IPMI_CHASSIS_POWER_DOWN		0	/* power down, the default. */
@@ -51,9 +54,43 @@
 /* the IPMI data command */
 static int poweroff_powercycle;
 
+/* Which interface to use, -1 means the first we see. */
+static int ifnum_to_use = -1;
+
+/* Our local state. */
+static int ready;
+static ipmi_user_t ipmi_user;
+static int ipmi_ifnum;
+static void (*specific_poweroff_func)(ipmi_user_t user);
+
+/* Holds the old poweroff function so we can restore it on removal. */
+static void (*old_poweroff_func)(void);
+
+static int set_param_ifnum(const char *val, struct kernel_param *kp)
+{
+	int rv = param_set_int(val, kp);
+	if (rv)
+		return rv;
+	if ((ifnum_to_use < 0) || (ifnum_to_use == ipmi_ifnum))
+		return 0;
+
+	ipmi_po_smi_gone(ipmi_ifnum);
+	ipmi_po_new_smi(ifnum_to_use, NULL);
+	return 0;
+}
+
+module_param_call(ifnum_to_use, set_param_ifnum, param_get_int,
+		  &ifnum_to_use, 0644);
+MODULE_PARM_DESC(ifnum_to_use, "The interface number to use for the watchdog "
+		 "timer.  Setting to -1 defaults to the first registered "
+		 "interface");
+
 /* parameter definition to allow user to flag power cycle */
 module_param(poweroff_powercycle, int, 0644);
-MODULE_PARM_DESC(poweroff_powercycle, " Set to non-zero to enable power cycle instead of power down. Power cycle is contingent on hardware support, otherwise it defaults back to power down.");
+MODULE_PARM_DESC(poweroff_powercycle,
+		 " Set to non-zero to enable power cycle instead of power"
+		 " down. Power cycle is contingent on hardware support,"
+		 " otherwise it defaults back to power down.");
 
 /* Stuff from the get device id command. */
 static unsigned int mfg_id;
@@ -61,22 +98,25 @@ static unsigned int prod_id;
 static unsigned char capabilities;
 static unsigned char ipmi_version;
 
-/* We use our own messages for this operation, we don't let the system
-   allocate them, since we may be in a panic situation.  The whole
-   thing is single-threaded, anyway, so multiple messages are not
-   required. */
+/*
+ * We use our own messages for this operation, we don't let the system
+ * allocate them, since we may be in a panic situation.  The whole
+ * thing is single-threaded, anyway, so multiple messages are not
+ * required.
+ */
+static atomic_t dummy_count = ATOMIC_INIT(0);
 static void dummy_smi_free(struct ipmi_smi_msg *msg)
 {
+	atomic_dec(&dummy_count);
 }
 static void dummy_recv_free(struct ipmi_recv_msg *msg)
 {
+	atomic_dec(&dummy_count);
 }
-static struct ipmi_smi_msg halt_smi_msg =
-{
+static struct ipmi_smi_msg halt_smi_msg = {
 	.done = dummy_smi_free
 };
-static struct ipmi_recv_msg halt_recv_msg =
-{
+static struct ipmi_recv_msg halt_recv_msg = {
 	.done = dummy_recv_free
 };
 
@@ -93,8 +133,7 @@ static void receive_handler(struct ipmi_recv_msg *recv_msg, void *handler_data)
 		complete(comp);
 }
 
-static struct ipmi_user_hndl ipmi_poweroff_handler =
-{
+static struct ipmi_user_hndl ipmi_poweroff_handler = {
 	.ipmi_recv_hndl = receive_handler
 };
 
@@ -118,17 +157,28 @@ static int ipmi_request_wait_for_response(ipmi_user_t            user,
 	return halt_recv_msg.msg.data[0];
 }
 
-/* We are in run-to-completion mode, no completion is desired. */
+/* Wait for message to complete, spinning. */
 static int ipmi_request_in_rc_mode(ipmi_user_t            user,
 				   struct ipmi_addr       *addr,
 				   struct kernel_ipmi_msg *send_msg)
 {
 	int rv;
 
+	atomic_set(&dummy_count, 2);
 	rv = ipmi_request_supply_msgs(user, addr, 0, send_msg, NULL,
 				      &halt_smi_msg, &halt_recv_msg, 0);
-	if (rv)
+	if (rv) {
+		atomic_set(&dummy_count, 0);
 		return rv;
+	}
+
+	/*
+	 * Spin until our message is done.
+	 */
+	while (atomic_read(&dummy_count) > 0) {
+		ipmi_poll_interface(user);
+		cpu_relax();
+	}
 
 	return halt_recv_msg.msg.data[0];
 }
@@ -142,19 +192,55 @@ static int ipmi_request_in_rc_mode(ipmi_user_t            user,
 #define IPMI_ATCA_GET_ADDR_INFO_CMD	0x01
 #define IPMI_PICMG_ID			0
 
-static int ipmi_atca_detect (ipmi_user_t user)
+#define IPMI_NETFN_OEM				0x2e
+#define IPMI_ATCA_PPS_GRACEFUL_RESTART		0x11
+#define IPMI_ATCA_PPS_IANA			"\x00\x40\x0A"
+#define IPMI_MOTOROLA_MANUFACTURER_ID		0x0000A1
+#define IPMI_MOTOROLA_PPS_IPMC_PRODUCT_ID	0x0051
+
+static void (*atca_oem_poweroff_hook)(ipmi_user_t user);
+
+static void pps_poweroff_atca(ipmi_user_t user)
+{
+	struct ipmi_system_interface_addr smi_addr;
+	struct kernel_ipmi_msg            send_msg;
+	int                               rv;
+	/*
+	 * Configure IPMI address for local access
+	 */
+	smi_addr.addr_type = IPMI_SYSTEM_INTERFACE_ADDR_TYPE;
+	smi_addr.channel = IPMI_BMC_CHANNEL;
+	smi_addr.lun = 0;
+
+	printk(KERN_INFO PFX "PPS powerdown hook used");
+
+	send_msg.netfn = IPMI_NETFN_OEM;
+	send_msg.cmd = IPMI_ATCA_PPS_GRACEFUL_RESTART;
+	send_msg.data = IPMI_ATCA_PPS_IANA;
+	send_msg.data_len = 3;
+	rv = ipmi_request_in_rc_mode(user,
+				     (struct ipmi_addr *) &smi_addr,
+				     &send_msg);
+	if (rv && rv != IPMI_UNKNOWN_ERR_COMPLETION_CODE) {
+		printk(KERN_ERR PFX "Unable to send ATCA ,"
+		       " IPMI error 0x%x\n", rv);
+	}
+	return;
+}
+
+static int ipmi_atca_detect(ipmi_user_t user)
 {
 	struct ipmi_system_interface_addr smi_addr;
 	struct kernel_ipmi_msg            send_msg;
 	int                               rv;
 	unsigned char                     data[1];
 
-        /*
-         * Configure IPMI address for local access
-         */
-        smi_addr.addr_type = IPMI_SYSTEM_INTERFACE_ADDR_TYPE;
-        smi_addr.channel = IPMI_BMC_CHANNEL;
-        smi_addr.lun = 0;
+	/*
+	 * Configure IPMI address for local access
+	 */
+	smi_addr.addr_type = IPMI_SYSTEM_INTERFACE_ADDR_TYPE;
+	smi_addr.channel = IPMI_BMC_CHANNEL;
+	smi_addr.lun = 0;
 
 	/*
 	 * Use get address info to check and see if we are ATCA
@@ -167,22 +253,31 @@ static int ipmi_atca_detect (ipmi_user_t user)
 	rv = ipmi_request_wait_for_response(user,
 					    (struct ipmi_addr *) &smi_addr,
 					    &send_msg);
+
+	printk(KERN_INFO PFX "ATCA Detect mfg 0x%X prod 0x%X\n",
+	       mfg_id, prod_id);
+	if ((mfg_id == IPMI_MOTOROLA_MANUFACTURER_ID)
+	    && (prod_id == IPMI_MOTOROLA_PPS_IPMC_PRODUCT_ID)) {
+		printk(KERN_INFO PFX
+		       "Installing Pigeon Point Systems Poweroff Hook\n");
+		atca_oem_poweroff_hook = pps_poweroff_atca;
+	}
 	return !rv;
 }
 
-static void ipmi_poweroff_atca (ipmi_user_t user)
+static void ipmi_poweroff_atca(ipmi_user_t user)
 {
 	struct ipmi_system_interface_addr smi_addr;
 	struct kernel_ipmi_msg            send_msg;
 	int                               rv;
 	unsigned char                     data[4];
 
-        /*
-         * Configure IPMI address for local access
-         */
-        smi_addr.addr_type = IPMI_SYSTEM_INTERFACE_ADDR_TYPE;
-        smi_addr.channel = IPMI_BMC_CHANNEL;
-        smi_addr.lun = 0;
+	/*
+	 * Configure IPMI address for local access
+	 */
+	smi_addr.addr_type = IPMI_SYSTEM_INTERFACE_ADDR_TYPE;
+	smi_addr.channel = IPMI_BMC_CHANNEL;
+	smi_addr.lun = 0;
 
 	printk(KERN_INFO PFX "Powering down via ATCA power command\n");
 
@@ -196,16 +291,24 @@ static void ipmi_poweroff_atca (ipmi_user_t user)
 	data[2] = 0; /* Power Level */
 	data[3] = 0; /* Don't change saved presets */
 	send_msg.data = data;
-	send_msg.data_len = sizeof (data);
+	send_msg.data_len = sizeof(data);
 	rv = ipmi_request_in_rc_mode(user,
 				     (struct ipmi_addr *) &smi_addr,
 				     &send_msg);
-	if (rv) {
+	/*
+	 * At this point, the system may be shutting down, and most
+	 * serial drivers (if used) will have interrupts turned off
+	 * it may be better to ignore IPMI_UNKNOWN_ERR_COMPLETION_CODE
+	 * return code
+	 */
+	if (rv && rv != IPMI_UNKNOWN_ERR_COMPLETION_CODE) {
 		printk(KERN_ERR PFX "Unable to send ATCA powerdown message,"
 		       " IPMI error 0x%x\n", rv);
 		goto out;
 	}
 
+	if (atca_oem_poweroff_hook)
+		atca_oem_poweroff_hook(user);
  out:
 	return;
 }
@@ -226,13 +329,13 @@ static void ipmi_poweroff_atca (ipmi_user_t user)
 #define IPMI_CPI1_PRODUCT_ID		0x000157
 #define IPMI_CPI1_MANUFACTURER_ID	0x0108
 
-static int ipmi_cpi1_detect (ipmi_user_t user)
+static int ipmi_cpi1_detect(ipmi_user_t user)
 {
 	return ((mfg_id == IPMI_CPI1_MANUFACTURER_ID)
 		&& (prod_id == IPMI_CPI1_PRODUCT_ID));
 }
 
-static void ipmi_poweroff_cpi1 (ipmi_user_t user)
+static void ipmi_poweroff_cpi1(ipmi_user_t user)
 {
 	struct ipmi_system_interface_addr smi_addr;
 	struct ipmi_ipmb_addr             ipmb_addr;
@@ -244,12 +347,12 @@ static void ipmi_poweroff_cpi1 (ipmi_user_t user)
 	unsigned char                     aer_addr;
 	unsigned char                     aer_lun;
 
-        /*
-         * Configure IPMI address for local access
-         */
-        smi_addr.addr_type = IPMI_SYSTEM_INTERFACE_ADDR_TYPE;
-        smi_addr.channel = IPMI_BMC_CHANNEL;
-        smi_addr.lun = 0;
+	/*
+	 * Configure IPMI address for local access
+	 */
+	smi_addr.addr_type = IPMI_SYSTEM_INTERFACE_ADDR_TYPE;
+	smi_addr.channel = IPMI_BMC_CHANNEL;
+	smi_addr.lun = 0;
 
 	printk(KERN_INFO PFX "Powering down via CPI1 power command\n");
 
@@ -341,7 +444,7 @@ static void ipmi_poweroff_cpi1 (ipmi_user_t user)
  */
 
 #define DELL_IANA_MFR_ID {0xA2, 0x02, 0x00}
-static int ipmi_dell_chassis_detect (ipmi_user_t user)
+static int ipmi_dell_chassis_detect(ipmi_user_t user)
 {
 	const char ipmi_version_major = ipmi_version & 0xF;
 	const char ipmi_version_minor = (ipmi_version >> 4) & 0xF;
@@ -360,25 +463,25 @@ static int ipmi_dell_chassis_detect (ipmi_user_t user)
 #define IPMI_NETFN_CHASSIS_REQUEST	0
 #define IPMI_CHASSIS_CONTROL_CMD	0x02
 
-static int ipmi_chassis_detect (ipmi_user_t user)
+static int ipmi_chassis_detect(ipmi_user_t user)
 {
 	/* Chassis support, use it. */
 	return (capabilities & 0x80);
 }
 
-static void ipmi_poweroff_chassis (ipmi_user_t user)
+static void ipmi_poweroff_chassis(ipmi_user_t user)
 {
 	struct ipmi_system_interface_addr smi_addr;
 	struct kernel_ipmi_msg            send_msg;
 	int                               rv;
 	unsigned char                     data[1];
 
-        /*
-         * Configure IPMI address for local access
-         */
-        smi_addr.addr_type = IPMI_SYSTEM_INTERFACE_ADDR_TYPE;
-        smi_addr.channel = IPMI_BMC_CHANNEL;
-        smi_addr.lun = 0;
+	/*
+	 * Configure IPMI address for local access
+	 */
+	smi_addr.addr_type = IPMI_SYSTEM_INTERFACE_ADDR_TYPE;
+	smi_addr.channel = IPMI_BMC_CHANNEL;
+	smi_addr.lun = 0;
 
  powercyclefailed:
 	printk(KERN_INFO PFX "Powering %s via IPMI chassis control command\n",
@@ -440,25 +543,14 @@ static struct poweroff_function poweroff_functions[] = {
 		      / sizeof(struct poweroff_function))
 
 
-/* Our local state. */
-static int ready = 0;
-static ipmi_user_t ipmi_user;
-static void (*specific_poweroff_func)(ipmi_user_t user) = NULL;
-
-/* Holds the old poweroff function so we can restore it on removal. */
-static void (*old_poweroff_func)(void);
-
-
 /* Called on a powerdown request. */
-static void ipmi_poweroff_function (void)
+static void ipmi_poweroff_function(void)
 {
 	if (!ready)
 		return;
 
 	/* Use run-to-completion mode, since interrupts may be off. */
-	ipmi_user_set_run_to_completion(ipmi_user, 1);
 	specific_poweroff_func(ipmi_user);
-	ipmi_user_set_run_to_completion(ipmi_user, 0);
 }
 
 /* Wait for an IPMI interface to be installed, the first one installed
@@ -473,6 +565,9 @@ static void ipmi_po_new_smi(int if_num, struct device *device)
 	if (ready)
 		return;
 
+	if ((ifnum_to_use >= 0) && (ifnum_to_use != if_num))
+		return;
+
 	rv = ipmi_create_user(if_num, &ipmi_poweroff_handler, NULL,
 			      &ipmi_user);
 	if (rv) {
@@ -481,13 +576,15 @@ static void ipmi_po_new_smi(int if_num, struct device *device)
 		return;
 	}
 
-        /*
-         * Do a get device ide and store some results, since this is
+	ipmi_ifnum = if_num;
+
+	/*
+	 * Do a get device ide and store some results, since this is
 	 * used by several functions.
-         */
-        smi_addr.addr_type = IPMI_SYSTEM_INTERFACE_ADDR_TYPE;
-        smi_addr.channel = IPMI_BMC_CHANNEL;
-        smi_addr.lun = 0;
+	 */
+	smi_addr.addr_type = IPMI_SYSTEM_INTERFACE_ADDR_TYPE;
+	smi_addr.channel = IPMI_BMC_CHANNEL;
+	smi_addr.lun = 0;
 
 	send_msg.netfn = IPMI_NETFN_APP_REQUEST;
 	send_msg.cmd = IPMI_GET_DEVICE_ID_CMD;
@@ -541,13 +638,18 @@ static void ipmi_po_new_smi(int if_num, struct device *device)
 
 static void ipmi_po_smi_gone(int if_num)
 {
-	/* This can never be called, because once poweroff driver is
-	   registered, the interface can't go away until the power
-	   driver is unregistered. */
+	if (!ready)
+		return;
+
+	if (ipmi_ifnum != if_num)
+		return;
+
+	ready = 0;
+	ipmi_destroy_user(ipmi_user);
+	pm_power_off = old_poweroff_func;
 }
 
-static struct ipmi_smi_watcher smi_watcher =
-{
+static struct ipmi_smi_watcher smi_watcher = {
 	.owner    = THIS_MODULE,
 	.new_smi  = ipmi_po_new_smi,
 	.smi_gone = ipmi_po_smi_gone
@@ -589,18 +691,18 @@ static struct ctl_table_header *ipmi_table_header;
 /*
  * Startup and shutdown functions.
  */
-static int ipmi_poweroff_init (void)
+static int __init ipmi_poweroff_init(void)
 {
 	int rv;
 
-	printk ("Copyright (C) 2004 MontaVista Software -"
-		" IPMI Powerdown via sys_reboot.\n");
+	printk(KERN_INFO "Copyright (C) 2004 MontaVista Software -"
+	       " IPMI Powerdown via sys_reboot.\n");
 
 	if (poweroff_powercycle)
 		printk(KERN_INFO PFX "Power cycle is enabled.\n");
 
 #ifdef CONFIG_PROC_FS
-	ipmi_table_header = register_sysctl_table(ipmi_root_table, 1);
+	ipmi_table_header = register_sysctl_table(ipmi_root_table);
 	if (!ipmi_table_header) {
 		printk(KERN_ERR PFX "Unable to register powercycle sysctl\n");
 		rv = -ENOMEM;
@@ -616,14 +718,14 @@ static int ipmi_poweroff_init (void)
 		printk(KERN_ERR PFX "Unable to register SMI watcher: %d\n", rv);
 		goto out_err;
 	}
-#endif
 
  out_err:
+#endif
 	return rv;
 }
 
 #ifdef MODULE
-static __exit void ipmi_poweroff_cleanup(void)
+static void __exit ipmi_poweroff_cleanup(void)
 {
 	int rv;
 

@@ -523,6 +523,7 @@ static int w100fb_set_par(struct fb_info *info)
 		info->fix.ywrapstep = 0;
 		info->fix.line_length = par->xres * BITS_PER_PIXEL / 8;
 
+		mutex_lock(&info->mm_lock);
 		if ((par->xres*par->yres*BITS_PER_PIXEL/8) > (MEM_INT_SIZE+1)) {
 			par->extmem_active = 1;
 			info->fix.smem_len = par->mach->mem->size+1;
@@ -530,6 +531,7 @@ static int w100fb_set_par(struct fb_info *info)
 			par->extmem_active = 0;
 			info->fix.smem_len = MEM_INT_SIZE+1;
 		}
+		mutex_unlock(&info->mm_lock);
 
 		w100fb_activate_var(par);
 	}
@@ -660,7 +662,7 @@ int __init w100fb_probe(struct platform_device *pdev)
 			err = -ENODEV;
 			goto out;
 	}
-	printk(" at 0x%08lx.\n", mem->start+W100_CFG_BASE);
+	printk(" at 0x%08lx.\n", (unsigned long) mem->start+W100_CFG_BASE);
 
 	/* Remap the framebuffer */
 	remapped_fbuf = ioremap_nocache(mem->start+MEM_WINDOW_BASE, MEM_WINDOW_SIZE);
@@ -746,23 +748,27 @@ int __init w100fb_probe(struct platform_device *pdev)
 		goto out;
 	}
 
-	w100fb_set_par(info);
-
 	if (register_framebuffer(info) < 0) {
 		err = -EINVAL;
 		goto out;
 	}
 
-	device_create_file(&pdev->dev, &dev_attr_fastpllclk);
-	device_create_file(&pdev->dev, &dev_attr_reg_read);
-	device_create_file(&pdev->dev, &dev_attr_reg_write);
-	device_create_file(&pdev->dev, &dev_attr_flip);
+	err = device_create_file(&pdev->dev, &dev_attr_fastpllclk);
+	err |= device_create_file(&pdev->dev, &dev_attr_reg_read);
+	err |= device_create_file(&pdev->dev, &dev_attr_reg_write);
+	err |= device_create_file(&pdev->dev, &dev_attr_flip);
+
+	if (err != 0)
+		printk(KERN_WARNING "fb%d: failed to register attributes (%d)\n",
+				info->node, err);
 
 	printk(KERN_INFO "fb%d: %s frame buffer device\n", info->node, info->fix.id);
 	return 0;
 out:
-	fb_dealloc_cmap(&info->cmap);
-	kfree(info->pseudo_palette);
+	if (info) {
+		fb_dealloc_cmap(&info->cmap);
+		kfree(info->pseudo_palette);
+	}
 	if (remapped_fbuf != NULL)
 		iounmap(remapped_fbuf);
 	if (remapped_regs != NULL)
@@ -997,6 +1003,7 @@ static struct w100_pll_info xtal_14318000[] = {
 static struct w100_pll_info xtal_16000000[] = {
 	/*freq     M   N_int    N_fac  tfgoal  lock_time */
 	{ 72,      1,   8,       0,     0xe0,        48}, /* tfgoal guessed */
+	{ 80,      1,   9,       0,     0xe0,        13}, /* tfgoal guessed */
 	{ 95,      1,   10,      7,     0xe0,        38}, /* tfgoal guessed */
 	{ 96,      1,   11,      0,     0xe0,        36}, /* tfgoal guessed */
 	{  0,      0,   0,       0,        0,         0},

@@ -1,6 +1,4 @@
 /*
- * $Id: h3600_ts_input.c,v 1.4 2002/01/23 06:39:37 jsimmons Exp $
- *
  *  Copyright (c) 2001 "Crazy" James Simmons jsimmons@transvirtual.com
  *
  *  Sponsored by Transvirtual Technology.
@@ -41,8 +39,8 @@
 #include <linux/delay.h>
 
 /* SA1100 serial defines */
-#include <asm/arch/hardware.h>
-#include <asm/arch/irqs.h>
+#include <mach/hardware.h>
+#include <mach/irqs.h>
 
 #define DRIVER_DESC	"H3600 touchscreen driver"
 
@@ -106,28 +104,26 @@ struct h3600_dev {
 	char phys[32];
 };
 
-static irqreturn_t action_button_handler(int irq, void *dev_id, struct pt_regs *regs)
+static irqreturn_t action_button_handler(int irq, void *dev_id)
 {
 	int down = (GPLR & GPIO_BITSY_ACTION_BUTTON) ? 0 : 1;
-	struct input_dev *dev = (struct input_dev *) dev_id;
+	struct input_dev *dev = dev_id;
 
-	input_regs(dev, regs);
 	input_report_key(dev, KEY_ENTER, down);
 	input_sync(dev);
 
 	return IRQ_HANDLED;
 }
 
-static irqreturn_t npower_button_handler(int irq, void *dev_id, struct pt_regs *regs)
+static irqreturn_t npower_button_handler(int irq, void *dev_id)
 {
 	int down = (GPLR & GPIO_BITSY_NPOWER_BUTTON) ? 0 : 1;
-	struct input_dev *dev = (struct input_dev *) dev_id;
+	struct input_dev *dev = dev_id;
 
 	/*
 	 * This interrupt is only called when we release the key. So we have
 	 * to fake a key press.
 	 */
-	input_regs(dev, regs);
 	input_report_key(dev, KEY_SUSPEND, 1);
 	input_report_key(dev, KEY_SUSPEND, down);
 	input_sync(dev);
@@ -149,12 +145,13 @@ enum flite_pwr {
 unsigned int h3600_flite_power(struct input_dev *dev, enum flite_pwr pwr)
 {
 	unsigned char brightness = (pwr == FLITE_PWR_OFF) ? 0 : flite_brightness;
-	struct h3600_dev *ts = dev->private;
+	struct h3600_dev *ts = input_get_drvdata(dev);
 
 	/* Must be in this order */
-	ts->serio->write(ts->serio, 1);
-	ts->serio->write(ts->serio, pwr);
-	ts->serio->write(ts->serio, brightness);
+	serio_write(ts->serio, 1);
+	serio_write(ts->serio, pwr);
+	serio_write(ts->serio, brightness);
+
 	return 0;
 }
 
@@ -165,13 +162,11 @@ unsigned int h3600_flite_power(struct input_dev *dev, enum flite_pwr pwr)
  * packets. Some packets coming from serial are not touchscreen related. In
  * this case we send them off to be processed elsewhere.
  */
-static void h3600ts_process_packet(struct h3600_dev *ts, struct pt_regs *regs)
+static void h3600ts_process_packet(struct h3600_dev *ts)
 {
 	struct input_dev *dev = ts->dev;
 	static int touched = 0;
 	int key, down = 0;
-
-	input_regs(dev, regs);
 
 	switch (ts->event) {
 		/*
@@ -264,11 +259,11 @@ static int h3600ts_event(struct input_dev *dev, unsigned int type,
 			 unsigned int code, int value)
 {
 #if 0
-	struct h3600_dev *ts = dev->private;
+	struct h3600_dev *ts = input_get_drvdata(dev);
 
 	switch (type) {
 		case EV_LED: {
-		//	ts->serio->write(ts->serio, SOME_CMD);
+		//	serio_write(ts->serio, SOME_CMD);
 			return 0;
 		}
 	}
@@ -301,7 +296,7 @@ static int state;
 #define STATE_EOF       3       /* state where we decode checksum or EOF */
 
 static irqreturn_t h3600ts_interrupt(struct serio *serio, unsigned char data,
-                                     unsigned int flags, struct pt_regs *regs)
+                                     unsigned int flags)
 {
 	struct h3600_dev *ts = serio_get_drvdata(serio);
 
@@ -333,7 +328,7 @@ static irqreturn_t h3600ts_interrupt(struct serio *serio, unsigned char data,
 		case STATE_EOF:
 			state = STATE_SOF;
 			if (data == CHAR_EOF || data == ts->chksum)
-				h3600ts_process_packet(ts, regs);
+				h3600ts_process_packet(ts);
 			break;
 		default:
 			printk("Error3\n");
@@ -371,13 +366,15 @@ static int h3600ts_connect(struct serio *serio, struct serio_driver *drv)
 	input_dev->id.vendor = SERIO_H3600;
 	input_dev->id.product = 0x0666;  /* FIXME !!! We can ask the hardware */
 	input_dev->id.version = 0x0100;
-	input_dev->cdev.dev = &serio->dev;
-	input_dev->private = ts;
+	input_dev->dev.parent = &serio->dev;
+
+	input_set_drvdata(input_dev, ts);
 
 	input_dev->event = h3600ts_event;
 
-	input_dev->evbit[0] = BIT(EV_KEY) | BIT(EV_ABS) | BIT(EV_LED) | BIT(EV_PWR);
-	input_dev->ledbit[0] = BIT(LED_SLEEP);
+	input_dev->evbit[0] = BIT_MASK(EV_KEY) | BIT_MASK(EV_ABS) |
+		BIT_MASK(EV_LED) | BIT_MASK(EV_PWR);
+	input_dev->ledbit[0] = BIT_MASK(LED_SLEEP);
 	input_set_abs_params(input_dev, ABS_X, 60, 985, 0, 0);
 	input_set_abs_params(input_dev, ABS_Y, 35, 1024, 0, 0);
 
@@ -482,8 +479,7 @@ static struct serio_driver h3600ts_drv = {
 
 static int __init h3600ts_init(void)
 {
-	serio_register_driver(&h3600ts_drv);
-	return 0;
+	return serio_register_driver(&h3600ts_drv);
 }
 
 static void __exit h3600ts_exit(void)

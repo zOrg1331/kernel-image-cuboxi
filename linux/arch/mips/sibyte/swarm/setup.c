@@ -43,7 +43,7 @@
 #elif defined(CONFIG_SIBYTE_SB1250) || defined(CONFIG_SIBYTE_BCM112X)
 #include <asm/sibyte/sb1250_regs.h>
 #else
-#error invalid SiByte board configuation
+#error invalid SiByte board configuration
 #endif
 #include <asm/sibyte/sb1250_genbus.h>
 #include <asm/sibyte/board.h>
@@ -53,7 +53,7 @@ extern void bcm1480_setup(void);
 #elif defined(CONFIG_SIBYTE_SB1250) || defined(CONFIG_SIBYTE_BCM112X)
 extern void sb1250_setup(void);
 #else
-#error invalid SiByte board configuation
+#error invalid SiByte board configuration
 #endif
 
 extern int xicor_probe(void);
@@ -69,31 +69,6 @@ const char *get_system_type(void)
 	return "SiByte " SIBYTE_BOARD_NAME;
 }
 
-void __init swarm_time_init(void)
-{
-#if defined(CONFIG_SIBYTE_SB1250) || defined(CONFIG_SIBYTE_BCM112X)
-	/* Setup HPT */
-	sb1250_hpt_setup();
-#endif
-}
-
-void __init plat_timer_setup(struct irqaction *irq)
-{
-        /*
-         * we don't set up irqaction, because we will deliver timer
-         * interrupts through low-level (direct) meachanism.
-         */
-
-        /* We only need to setup the generic timer */
-#if defined(CONFIG_SIBYTE_BCM1x55) || defined(CONFIG_SIBYTE_BCM1x80)
-	bcm1480_time_init();
-#elif defined(CONFIG_SIBYTE_SB1250) || defined(CONFIG_SIBYTE_BCM112X)
-	sb1250_time_init();
-#else
-#error invalid SiByte board configuation
-#endif
-}
-
 int swarm_be_handler(struct pt_regs *regs, int is_fixup)
 {
 	if (!is_fixup && (regs->cp0_cause & 4)) {
@@ -104,6 +79,51 @@ int swarm_be_handler(struct pt_regs *regs, int is_fixup)
 	return (is_fixup ? MIPS_BE_FIXUP : MIPS_BE_FATAL);
 }
 
+enum swarm_rtc_type {
+	RTC_NONE,
+	RTC_XICOR,
+	RTC_M4LT81
+};
+
+enum swarm_rtc_type swarm_rtc_type;
+
+void read_persistent_clock(struct timespec *ts)
+{
+	unsigned long sec;
+
+	switch (swarm_rtc_type) {
+	case RTC_XICOR:
+		sec = xicor_get_time();
+		break;
+
+	case RTC_M4LT81:
+		sec = m41t81_get_time();
+		break;
+
+	case RTC_NONE:
+	default:
+		sec = mktime(2000, 1, 1, 0, 0, 0);
+		break;
+	}
+	ts->tv_sec = sec;
+	ts->tv_nsec = 0;
+}
+
+int rtc_mips_set_time(unsigned long sec)
+{
+	switch (swarm_rtc_type) {
+	case RTC_XICOR:
+		return xicor_set_time(sec);
+
+	case RTC_M4LT81:
+		return m41t81_set_time(sec);
+
+	case RTC_NONE:
+	default:
+		return -1;
+	}
+}
+
 void __init plat_mem_setup(void)
 {
 #if defined(CONFIG_SIBYTE_BCM1x55) || defined(CONFIG_SIBYTE_BCM1x80)
@@ -111,39 +131,17 @@ void __init plat_mem_setup(void)
 #elif defined(CONFIG_SIBYTE_SB1250) || defined(CONFIG_SIBYTE_BCM112X)
 	sb1250_setup();
 #else
-#error invalid SiByte board configuation
+#error invalid SiByte board configuration
 #endif
 
 	panic_timeout = 5;  /* For debug.  */
 
-	board_time_init = swarm_time_init;
 	board_be_handler = swarm_be_handler;
 
-	if (xicor_probe()) {
-		printk("swarm setup: Xicor 1241 RTC detected.\n");
-		rtc_mips_get_time = xicor_get_time;
-		rtc_mips_set_time = xicor_set_time;
-	}
-
-	if (m41t81_probe()) {
-		printk("swarm setup: M41T81 RTC detected.\n");
-		rtc_mips_get_time = m41t81_get_time;
-		rtc_mips_set_time = m41t81_set_time;
-	}
-
-	printk("This kernel optimized for "
-#ifdef CONFIG_SIMULATION
-	       "simulation"
-#else
-	       "board"
-#endif
-	       " runs "
-#ifdef CONFIG_SIBYTE_CFE
-	       "with"
-#else
-	       "without"
-#endif
-	       " CFE\n");
+	if (xicor_probe())
+		swarm_rtc_type = RTC_XICOR;
+	if (m41t81_probe())
+		swarm_rtc_type = RTC_M4LT81;
 
 #ifdef CONFIG_VT
 	screen_info = (struct screen_info) {
@@ -169,17 +167,19 @@ void __init plat_mem_setup(void)
 #define LEDS_PHYS MLEDS_PHYS
 #endif
 
-#define setled(index, c) \
-  ((unsigned char *)(IOADDR(LEDS_PHYS)+0x20))[(3-(index))<<3] = (c)
 void setleds(char *str)
 {
+	void *reg;
 	int i;
+
 	for (i = 0; i < 4; i++) {
-		if (!str[i]) {
-			setled(i, ' ');
-		} else {
-			setled(i, str[i]);
-		}
+		reg = IOADDR(LEDS_PHYS) + 0x20 + ((3 - i) << 3);
+
+		if (!str[i])
+			writeb(' ', reg);
+		else
+			writeb(str[i], reg);
 	}
 }
-#endif
+
+#endif /* LEDS_PHYS */

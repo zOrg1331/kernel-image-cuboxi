@@ -2,7 +2,7 @@
 #define __SOUND_AC97_CODEC_H
 
 /*
- *  Copyright (c) by Jaroslav Kysela <perex@suse.cz>
+ *  Copyright (c) by Jaroslav Kysela <perex@perex.cz>
  *  Universal interface for Audio Codec '97
  *
  *  For more details look to AC '97 component specification revision 2.1
@@ -27,9 +27,13 @@
 
 #include <linux/bitops.h>
 #include <linux/device.h>
+#include <linux/workqueue.h>
 #include "pcm.h"
 #include "control.h"
 #include "info.h"
+
+/* maximum number of devices on the AC97 bus */
+#define	AC97_BUS_MAX_DEVICES	4
 
 /*
  *  AC'97 codec registers
@@ -139,6 +143,20 @@
 #define AC97_GP_DRSS_MASK	0x0c00	/* double rate slot select */
 #define AC97_GP_DRSS_1011	0x0000	/* LR(C) 10+11(+12) */
 #define AC97_GP_DRSS_78		0x0400	/* LR 7+8 */
+
+/* powerdown bits */
+#define AC97_PD_ADC_STATUS	0x0001	/* ADC status (RO) */
+#define AC97_PD_DAC_STATUS	0x0002	/* DAC status (RO) */
+#define AC97_PD_MIXER_STATUS	0x0004	/* Analog mixer status (RO) */
+#define AC97_PD_VREF_STATUS	0x0008	/* Vref status (RO) */
+#define AC97_PD_PR0		0x0100	/* Power down PCM ADCs and input MUX */
+#define AC97_PD_PR1		0x0200	/* Power down PCM front DAC */
+#define AC97_PD_PR2		0x0400	/* Power down Mixer (Vref still on) */
+#define AC97_PD_PR3		0x0800	/* Power down Mixer (Vref off) */
+#define AC97_PD_PR4		0x1000	/* Power down AC-Link */
+#define AC97_PD_PR5		0x2000	/* Disable internal clock usage */
+#define AC97_PD_PR6		0x4000	/* Headphone amplifier */
+#define AC97_PD_EAPD		0x8000	/* External Amplifer Power Down (EAPD) */
 
 /* extended audio ID bit defines */
 #define AC97_EI_VRA		0x0001	/* Variable bit rate supported */
@@ -266,10 +284,12 @@
 /* specific - Analog Devices */
 #define AC97_AD_TEST		0x5a	/* test register */
 #define AC97_AD_TEST2		0x5c	/* undocumented test register 2 */
+#define AC97_AD_HPFD_SHIFT	12	/* High Pass Filter Disable */
 #define AC97_AD_CODEC_CFG	0x70	/* codec configuration */
 #define AC97_AD_JACK_SPDIF	0x72	/* Jack Sense & S/PDIF */
 #define AC97_AD_SERIAL_CFG	0x74	/* Serial Configuration */
 #define AC97_AD_MISC		0x76	/* Misc Control Bits */
+#define AC97_AD_VREFD_SHIFT	2	/* V_REFOUT Disable (AD1888) */
 
 /* specific - Cirrus Logic */
 #define AC97_CSR_ACMODE		0x5e	/* AC Mode Register */
@@ -330,9 +350,9 @@
 #define AC97_ALC650_GPIO_STATUS		0x78
 #define AC97_ALC650_CLOCK		0x7a
 
-/* specific - Yamaha YMF753 */
-#define AC97_YMF753_DIT_CTRL2	0x66	/* DIT Control 2 */
-#define AC97_YMF753_3D_MODE_SEL	0x68	/* 3D Mode Select */
+/* specific - Yamaha YMF7x3 */
+#define AC97_YMF7X3_DIT_CTRL	0x66	/* DIT Control (YMF743) / 2 (YMF753) */
+#define AC97_YMF7X3_3D_MODE_SEL	0x68	/* 3D Mode Select */
 
 /* specific - C-Media */
 #define AC97_CM9738_VENDOR_CTRL	0x5a
@@ -359,6 +379,8 @@
 #define AC97_SCAP_INV_EAPD	(1<<7)	/* inverted EAPD */
 #define AC97_SCAP_DETECT_BY_VENDOR (1<<8) /* use vendor registers for read tests */
 #define AC97_SCAP_NO_SPDIF	(1<<9)	/* don't build SPDIF controls */
+#define AC97_SCAP_EAPD_LED	(1<<10)	/* EAPD as mute LED */
+#define AC97_SCAP_POWER_SAVE	(1<<11)	/* capable for aggresive power-saving */
 
 /* ac97->flags */
 #define AC97_HAS_PC_BEEP	(1<<0)	/* force PC Speaker usage */
@@ -380,6 +402,7 @@
 #define AC97_HAS_NO_TONE	(1<<16) /* no Tone volume */
 #define AC97_HAS_NO_STD_PCM	(1<<17)	/* no standard AC97 PCM volume and mute */
 #define AC97_HAS_NO_AUX		(1<<18) /* no standard AC97 AUX volume and mute */
+#define AC97_HAS_8CH		(1<<19) /* supports 8-channel output */
 
 /* rates indexes */
 #define AC97_RATES_FRONT_DAC	0
@@ -409,6 +432,7 @@ struct snd_ac97_build_ops {
 
 struct snd_ac97_bus_ops {
 	void (*reset) (struct snd_ac97 *ac97);
+	void (*warm_reset)(struct snd_ac97 *ac97);
 	void (*write) (struct snd_ac97 *ac97, unsigned short reg, unsigned short val);
 	unsigned short (*read) (struct snd_ac97 *ac97, unsigned short reg);
 	void (*wait) (struct snd_ac97 *ac97);
@@ -485,12 +509,19 @@ struct snd_ac97 {
 			unsigned short id[3];		// codec IDs (lower 16-bit word)
 			unsigned short pcmreg[3];	// PCM registers
 			unsigned short codec_cfg[3];	// CODEC_CFG bits
+			unsigned char swap_mic_linein;	// AD1986/AD1986A only
+			unsigned char lo_as_master;	/* LO as master */
 		} ad18xx;
 		unsigned int dev_flags;		/* device specific */
 	} spec;
 	/* jack-sharing info */
 	unsigned char indep_surround;
 	unsigned char channel_mode;
+
+#ifdef CONFIG_SND_AC97_POWER_SAVE
+	unsigned int power_up;	/* power states */
+	struct delayed_work power_work;
+#endif
 	struct device dev;
 };
 
@@ -532,6 +563,15 @@ unsigned short snd_ac97_read(struct snd_ac97 *ac97, unsigned short reg);
 void snd_ac97_write_cache(struct snd_ac97 *ac97, unsigned short reg, unsigned short value);
 int snd_ac97_update(struct snd_ac97 *ac97, unsigned short reg, unsigned short value);
 int snd_ac97_update_bits(struct snd_ac97 *ac97, unsigned short reg, unsigned short mask, unsigned short value);
+#ifdef CONFIG_SND_AC97_POWER_SAVE
+int snd_ac97_update_power(struct snd_ac97 *ac97, int reg, int powerup);
+#else
+static inline int snd_ac97_update_power(struct snd_ac97 *ac97, int reg,
+					int powerup)
+{
+	return 0;
+}
+#endif
 #ifdef CONFIG_PM
 void snd_ac97_suspend(struct snd_ac97 *ac97);
 void snd_ac97_resume(struct snd_ac97 *ac97);
@@ -583,6 +623,7 @@ struct ac97_pcm {
 		     copy_flag: 1,	   /* lowlevel driver must fill all entries */
 		     spdif: 1;		   /* spdif pcm */
 	unsigned short aslots;		   /* active slots */
+	unsigned short cur_dbl;		   /* current double-rate state */
 	unsigned int rates;		   /* available rates */
 	struct {
 		unsigned short slots;	   /* driver input: requested AC97 slot numbers */
@@ -603,5 +644,11 @@ int snd_ac97_pcm_double_rate_rules(struct snd_pcm_runtime *runtime);
 
 /* ad hoc AC97 device driver access */
 extern struct bus_type ac97_bus_type;
+
+/* AC97 platform_data adding function */
+static inline void snd_ac97_dev_add_pdata(struct snd_ac97 *ac97, void *data)
+{
+	ac97->dev.platform_data = data;
+}
 
 #endif /* __SOUND_AC97_CODEC_H */

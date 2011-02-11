@@ -14,14 +14,11 @@
 #include <linux/kernel.h>
 #include <linux/mm.h>
 #include <linux/smp.h>
-#include <linux/smp_lock.h>
 #include <linux/stddef.h>
 #include <linux/unistd.h>
 #include <linux/ptrace.h>
 #include <linux/slab.h>
 #include <linux/user.h>
-#include <linux/a.out.h>
-#include <linux/utsname.h>
 #include <linux/time.h>
 #include <linux/major.h>
 #include <linux/stat.h>
@@ -47,6 +44,7 @@
  * Power off function, if any
  */
 void (*pm_power_off)(void) = machine_power_off;
+EXPORT_SYMBOL(pm_power_off);
 
 void
 cpu_idle(void)
@@ -94,7 +92,8 @@ common_shutdown_1(void *generic_ptr)
 	if (cpuid != boot_cpuid) {
 		flags |= 0x00040000UL; /* "remain halted" */
 		*pflags = flags;
-		cpu_clear(cpuid, cpu_present_map);
+		set_cpu_present(cpuid, false);
+		set_cpu_possible(cpuid, false);
 		halt();
 	}
 #endif
@@ -120,7 +119,8 @@ common_shutdown_1(void *generic_ptr)
 
 #ifdef CONFIG_SMP
 	/* Wait for the secondaries to halt. */
-	cpu_clear(boot_cpuid, cpu_present_map);
+	set_cpu_present(boot_cpuid, false);
+	set_cpu_possible(boot_cpuid, false);
 	while (cpus_weight(cpu_present_map))
 		barrier();
 #endif
@@ -161,7 +161,7 @@ common_shutdown(int mode, char *restart_cmd)
 	struct halt_info args;
 	args.mode = mode;
 	args.restart_cmd = restart_cmd;
-	on_each_cpu(common_shutdown_1, &args, 1, 0);
+	on_each_cpu(common_shutdown_1, &args, 0);
 }
 
 void
@@ -205,6 +205,7 @@ start_thread(struct pt_regs * regs, unsigned long pc, unsigned long sp)
 	regs->ps = 8;
 	wrusp(sp);
 }
+EXPORT_SYMBOL(start_thread);
 
 /*
  * Free current thread data structures etc..
@@ -270,7 +271,7 @@ alpha_vfork(struct pt_regs *regs)
  */
 
 int
-copy_thread(int nr, unsigned long clone_flags, unsigned long usp,
+copy_thread(unsigned long clone_flags, unsigned long usp,
 	    unsigned long unused,
 	    struct task_struct * p, struct pt_regs * regs)
 {
@@ -314,67 +315,6 @@ copy_thread(int nr, unsigned long clone_flags, unsigned long usp,
 		childti->pcb.unique = settls;
 
 	return 0;
-}
-
-/*
- * Fill in the user structure for an ECOFF core dump.
- */
-void
-dump_thread(struct pt_regs * pt, struct user * dump)
-{
-	/* switch stack follows right below pt_regs: */
-	struct switch_stack * sw = ((struct switch_stack *) pt) - 1;
-
-	dump->magic = CMAGIC;
-	dump->start_code  = current->mm->start_code;
-	dump->start_data  = current->mm->start_data;
-	dump->start_stack = rdusp() & ~(PAGE_SIZE - 1);
-	dump->u_tsize = ((current->mm->end_code - dump->start_code)
-			 >> PAGE_SHIFT);
-	dump->u_dsize = ((current->mm->brk + PAGE_SIZE-1 - dump->start_data)
-			 >> PAGE_SHIFT);
-	dump->u_ssize = (current->mm->start_stack - dump->start_stack
-			 + PAGE_SIZE-1) >> PAGE_SHIFT;
-
-	/*
-	 * We store the registers in an order/format that is
-	 * compatible with DEC Unix/OSF/1 as this makes life easier
-	 * for gdb.
-	 */
-	dump->regs[EF_V0]  = pt->r0;
-	dump->regs[EF_T0]  = pt->r1;
-	dump->regs[EF_T1]  = pt->r2;
-	dump->regs[EF_T2]  = pt->r3;
-	dump->regs[EF_T3]  = pt->r4;
-	dump->regs[EF_T4]  = pt->r5;
-	dump->regs[EF_T5]  = pt->r6;
-	dump->regs[EF_T6]  = pt->r7;
-	dump->regs[EF_T7]  = pt->r8;
-	dump->regs[EF_S0]  = sw->r9;
-	dump->regs[EF_S1]  = sw->r10;
-	dump->regs[EF_S2]  = sw->r11;
-	dump->regs[EF_S3]  = sw->r12;
-	dump->regs[EF_S4]  = sw->r13;
-	dump->regs[EF_S5]  = sw->r14;
-	dump->regs[EF_S6]  = sw->r15;
-	dump->regs[EF_A3]  = pt->r19;
-	dump->regs[EF_A4]  = pt->r20;
-	dump->regs[EF_A5]  = pt->r21;
-	dump->regs[EF_T8]  = pt->r22;
-	dump->regs[EF_T9]  = pt->r23;
-	dump->regs[EF_T10] = pt->r24;
-	dump->regs[EF_T11] = pt->r25;
-	dump->regs[EF_RA]  = pt->r26;
-	dump->regs[EF_T12] = pt->r27;
-	dump->regs[EF_AT]  = pt->r28;
-	dump->regs[EF_SP]  = rdusp();
-	dump->regs[EF_PS]  = pt->ps;
-	dump->regs[EF_PC]  = pt->pc;
-	dump->regs[EF_GP]  = pt->gp;
-	dump->regs[EF_A0]  = pt->r16;
-	dump->regs[EF_A1]  = pt->r17;
-	dump->regs[EF_A2]  = pt->r18;
-	memcpy((char *)dump->regs + EF_SIZE, sw->fp, 32 * 8);
 }
 
 /*
@@ -424,6 +364,7 @@ dump_elf_thread(elf_greg_t *dest, struct pt_regs *pt, struct thread_info *ti)
 	   useful value of the thread's UNIQUE field.  */
 	dest[32] = ti->pcb.unique;
 }
+EXPORT_SYMBOL(dump_elf_thread);
 
 int
 dump_elf_task(elf_greg_t *dest, struct task_struct *task)
@@ -431,6 +372,7 @@ dump_elf_task(elf_greg_t *dest, struct task_struct *task)
 	dump_elf_thread(dest, task_pt_regs(task), task_thread_info(task));
 	return 1;
 }
+EXPORT_SYMBOL(dump_elf_task);
 
 int
 dump_elf_task_fp(elf_fpreg_t *dest, struct task_struct *task)
@@ -439,6 +381,7 @@ dump_elf_task_fp(elf_fpreg_t *dest, struct task_struct *task)
 	memcpy(dest, sw->fp, 32 * 8);
 	return 1;
 }
+EXPORT_SYMBOL(dump_elf_task_fp);
 
 /*
  * sys_execve() executes a new program.

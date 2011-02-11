@@ -4,7 +4,6 @@
 
 
 #include <linux/module.h>
-#include <linux/sched.h>
 #include <linux/atmdev.h>
 #include <linux/capability.h>
 #include <linux/kernel.h>
@@ -13,14 +12,6 @@
 
 #include "common.h"
 #include "protocols.h"
-
-
-#if 0
-#define DPRINTK(format,args...) printk(KERN_DEBUG format,##args)
-#else
-#define DPRINTK(format,args...)
-#endif
-
 
 /*
  * SKB == NULL indicates that the link is being closed
@@ -41,8 +32,8 @@ static void atm_pop_raw(struct atm_vcc *vcc,struct sk_buff *skb)
 {
 	struct sock *sk = sk_atm(vcc);
 
-	DPRINTK("APopR (%d) %d -= %d\n", vcc->vci, sk->sk_wmem_alloc,
-		skb->truesize);
+	pr_debug("APopR (%d) %d -= %d\n", vcc->vci,
+		sk_wmem_alloc_get(sk), skb->truesize);
 	atomic_sub(skb->truesize, &sk->sk_wmem_alloc);
 	dev_kfree_skb_any(skb);
 	sk->sk_write_space(sk);
@@ -56,12 +47,12 @@ static int atm_send_aal0(struct atm_vcc *vcc,struct sk_buff *skb)
 	 * still work
 	 */
 	if (!capable(CAP_NET_ADMIN) &&
-            (((u32 *) skb->data)[0] & (ATM_HDR_VPI_MASK | ATM_HDR_VCI_MASK)) !=
-            ((vcc->vpi << ATM_HDR_VPI_SHIFT) | (vcc->vci << ATM_HDR_VCI_SHIFT)))
+	    (((u32 *) skb->data)[0] & (ATM_HDR_VPI_MASK | ATM_HDR_VCI_MASK)) !=
+	    ((vcc->vpi << ATM_HDR_VPI_SHIFT) | (vcc->vci << ATM_HDR_VCI_SHIFT)))
 	    {
 		kfree_skb(skb);
 		return -EADDRNOTAVAIL;
-        }
+	}
 	return vcc->dev->ops->send(vcc,skb);
 }
 

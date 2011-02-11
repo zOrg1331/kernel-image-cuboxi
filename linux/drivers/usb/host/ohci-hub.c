@@ -1,9 +1,9 @@
 /*
  * OHCI HCD (Host Controller Driver) for USB.
- * 
+ *
  * (C) Copyright 1999 Roman Weissgaerber <weissg@vienna.at>
  * (C) Copyright 2000-2004 David Brownell <dbrownell@users.sourceforge.net>
- * 
+ *
  * This file is licenced under GPL
  */
 
@@ -23,40 +23,31 @@
 		(temp & RH_PS_PSSC) ? " PSSC" : "", \
 		(temp & RH_PS_PESC) ? " PESC" : "", \
 		(temp & RH_PS_CSC) ? " CSC" : "", \
- 		\
+		\
 		(temp & RH_PS_LSDA) ? " LSDA" : "", \
 		(temp & RH_PS_PPS) ? " PPS" : "", \
 		(temp & RH_PS_PRS) ? " PRS" : "", \
 		(temp & RH_PS_POCI) ? " POCI" : "", \
 		(temp & RH_PS_PSS) ? " PSS" : "", \
- 		\
+		\
 		(temp & RH_PS_PES) ? " PES" : "", \
 		(temp & RH_PS_CCS) ? " CCS" : "" \
 		);
 
 /*-------------------------------------------------------------------------*/
 
-#ifdef	CONFIG_PM
-
 #define OHCI_SCHED_ENABLES \
 	(OHCI_CTRL_CLE|OHCI_CTRL_BLE|OHCI_CTRL_PLE|OHCI_CTRL_IE)
 
-static void dl_done_list (struct ohci_hcd *, struct pt_regs *);
-static void finish_unlinks (struct ohci_hcd *, u16 , struct pt_regs *);
-static int ohci_restart (struct ohci_hcd *ohci);
+static void dl_done_list (struct ohci_hcd *);
+static void finish_unlinks (struct ohci_hcd *, u16);
 
-static int ohci_bus_suspend (struct usb_hcd *hcd)
+#ifdef	CONFIG_PM
+static int ohci_rh_suspend (struct ohci_hcd *ohci, int autostop)
+__releases(ohci->lock)
+__acquires(ohci->lock)
 {
-	struct ohci_hcd		*ohci = hcd_to_ohci (hcd);
 	int			status = 0;
-	unsigned long		flags;
-
-	spin_lock_irqsave (&ohci->lock, flags);
-
-	if (unlikely(!test_bit(HCD_FLAG_HW_ACCESSIBLE, &hcd->flags))) {
-		spin_unlock_irqrestore (&ohci->lock, flags);
-		return -ESHUTDOWN;
-	}
 
 	ohci->hc_control = ohci_readl (ohci, &ohci->regs->control);
 	switch (ohci->hc_control & OHCI_CTRL_HCFS) {
@@ -72,15 +63,16 @@ static int ohci_bus_suspend (struct usb_hcd *hcd)
 		ohci_dbg (ohci, "needs reinit!\n");
 		goto done;
 	case OHCI_USB_SUSPEND:
-		ohci_dbg (ohci, "already suspended\n");
-		goto done;
+		if (!ohci->autostop) {
+			ohci_dbg (ohci, "already suspended\n");
+			goto done;
+		}
 	}
-	ohci_dbg (ohci, "suspend root hub\n");
+	ohci_dbg (ohci, "%s root hub\n",
+			autostop ? "auto-stop" : "suspend");
 
 	/* First stop any processing */
-	if (ohci->hc_control & OHCI_SCHED_ENABLES) {
-		int		limit;
-
+	if (!autostop && (ohci->hc_control & OHCI_SCHED_ENABLES)) {
 		ohci->hc_control &= ~OHCI_SCHED_ENABLES;
 		ohci_writel (ohci, ohci->hc_control, &ohci->regs->control);
 		ohci->hc_control = ohci_readl (ohci, &ohci->regs->control);
@@ -90,27 +82,22 @@ static int ohci_bus_suspend (struct usb_hcd *hcd)
 		 * then the last WDH could take 6+ msec
 		 */
 		ohci_dbg (ohci, "stopping schedules ...\n");
-		limit = 2000;
-		while (limit > 0) {
-			udelay (250);
-			limit =- 250;
-			if (ohci_readl (ohci, &ohci->regs->intrstatus)
-					& OHCI_INTR_SF)
-				break;
-		}
-		dl_done_list (ohci, NULL);
-		mdelay (7);
+		ohci->autostop = 0;
+		spin_unlock_irq (&ohci->lock);
+		msleep (8);
+		spin_lock_irq (&ohci->lock);
 	}
-	dl_done_list (ohci, NULL);
-	finish_unlinks (ohci, ohci_frame_no(ohci), NULL);
-	ohci_writel (ohci, ohci_readl (ohci, &ohci->regs->intrstatus),
-			&ohci->regs->intrstatus);
+	dl_done_list (ohci);
+	finish_unlinks (ohci, ohci_frame_no(ohci));
 
 	/* maybe resume can wake root hub */
-	if (device_may_wakeup(&ohci_to_hcd(ohci)->self.root_hub->dev))
+	if (ohci_to_hcd(ohci)->self.root_hub->do_remote_wakeup || autostop) {
 		ohci->hc_control |= OHCI_CTRL_RWE;
-	else
+	} else {
+		ohci_writel(ohci, OHCI_INTR_RHSC | OHCI_INTR_RD,
+				&ohci->regs->intrdisable);
 		ohci->hc_control &= ~OHCI_CTRL_RWE;
+	}
 
 	/* Suspend hub ... this is the "global (to this bus) suspend" mode,
 	 * which doesn't imply ports will first be individually suspended.
@@ -121,13 +108,12 @@ static int ohci_bus_suspend (struct usb_hcd *hcd)
 	(void) ohci_readl (ohci, &ohci->regs->control);
 
 	/* no resumes until devices finish suspending */
-	ohci->next_statechange = jiffies + msecs_to_jiffies (5);
+	if (!autostop) {
+		ohci->next_statechange = jiffies + msecs_to_jiffies (5);
+		ohci->autostop = 0;
+	}
 
 done:
-	/* external suspend vs self autosuspend ... same effect */
-	if (status == 0)
-		usb_hcd_suspend_root_hub(hcd);
-	spin_unlock_irqrestore (&ohci->lock, flags);
 	return status;
 }
 
@@ -140,24 +126,16 @@ static inline struct ed *find_head (struct ed *ed)
 }
 
 /* caller has locked the root hub */
-static int ohci_bus_resume (struct usb_hcd *hcd)
+static int ohci_rh_resume (struct ohci_hcd *ohci)
+__releases(ohci->lock)
+__acquires(ohci->lock)
 {
-	struct ohci_hcd		*ohci = hcd_to_ohci (hcd);
+	struct usb_hcd		*hcd = ohci_to_hcd (ohci);
 	u32			temp, enables;
 	int			status = -EINPROGRESS;
-	unsigned long		flags;
+	int			autostopped = ohci->autostop;
 
-	if (time_before (jiffies, ohci->next_statechange))
-		msleep(5);
-
-	spin_lock_irqsave (&ohci->lock, flags);
-
-	if (unlikely(!test_bit(HCD_FLAG_HW_ACCESSIBLE, &hcd->flags))) {
-		spin_unlock_irqrestore (&ohci->lock, flags);
-		return -ESHUTDOWN;
-	}
-
-
+	ohci->autostop = 0;
 	ohci->hc_control = ohci_readl (ohci, &ohci->regs->control);
 
 	if (ohci->hc_control & (OHCI_CTRL_IR | OHCI_SCHED_ENABLES)) {
@@ -177,11 +155,13 @@ static int ohci_bus_resume (struct usb_hcd *hcd)
 		ohci->hc_control |= OHCI_USB_RESUME;
 		ohci_writel (ohci, ohci->hc_control, &ohci->regs->control);
 		(void) ohci_readl (ohci, &ohci->regs->control);
-		ohci_dbg (ohci, "resume root hub\n");
+		ohci_dbg (ohci, "%s root hub\n",
+				autostopped ? "auto-start" : "resume");
 		break;
 	case OHCI_USB_RESUME:
 		/* HCFS changes sometime after INTR_RD */
-		ohci_info (ohci, "wakeup\n");
+		ohci_dbg(ohci, "%swakeup root hub\n",
+				autostopped ? "auto-" : "");
 		break;
 	case OHCI_USB_OPER:
 		/* this can happen after resuming a swsusp snapshot */
@@ -192,26 +172,23 @@ static int ohci_bus_resume (struct usb_hcd *hcd)
 		ohci_dbg (ohci, "lost power\n");
 		status = -EBUSY;
 	}
-	spin_unlock_irqrestore (&ohci->lock, flags);
 	if (status == -EBUSY) {
-		(void) ohci_init (ohci);
-		return ohci_restart (ohci);
+		if (!autostopped) {
+			spin_unlock_irq (&ohci->lock);
+			(void) ohci_init (ohci);
+			status = ohci_restart (ohci);
+
+			usb_root_hub_lost_power(hcd->self.root_hub);
+
+			spin_lock_irq (&ohci->lock);
+		}
+		return status;
 	}
 	if (status != -EINPROGRESS)
 		return status;
-
-	temp = ohci->num_ports;
-	enables = 0;
-	while (temp--) {
-		u32 stat = ohci_readl (ohci,
-				       &ohci->regs->roothub.portstatus [temp]);
-
-		/* force global, not selective, resume */
-		if (!(stat & RH_PS_PSS))
-			continue;
-		ohci_writel (ohci, RH_PS_POCI,
-				&ohci->regs->roothub.portstatus [temp]);
-	}
+	if (autostopped)
+		goto skip_resume;
+	spin_unlock_irq (&ohci->lock);
 
 	/* Some controllers (lucent erratum) need extra-long delays */
 	msleep (20 /* usb 11.5.1.10 */ + 12 /* 32 msec counter */ + 1);
@@ -220,6 +197,7 @@ static int ohci_bus_resume (struct usb_hcd *hcd)
 	temp &= OHCI_CTRL_HCFS;
 	if (temp != OHCI_USB_RESUME) {
 		ohci_err (ohci, "controller won't resume\n");
+		spin_lock_irq(&ohci->lock);
 		return -EBUSY;
 	}
 
@@ -234,17 +212,21 @@ static int ohci_bus_resume (struct usb_hcd *hcd)
 	/* Sometimes PCI D3 suspend trashes frame timings ... */
 	periodic_reinit (ohci);
 
+	/* the following code is executed with ohci->lock held and
+	 * irqs disabled if and only if autostopped is true
+	 */
+
+skip_resume:
 	/* interrupts might have been disabled */
 	ohci_writel (ohci, OHCI_INTR_INIT, &ohci->regs->intrenable);
 	if (ohci->ed_rm_list)
 		ohci_writel (ohci, OHCI_INTR_SF, &ohci->regs->intrenable);
-	ohci_writel (ohci, ohci_readl (ohci, &ohci->regs->intrstatus),
-			&ohci->regs->intrstatus);
 
 	/* Then re-enable operations */
 	ohci_writel (ohci, OHCI_USB_OPER, &ohci->regs->control);
 	(void) ohci_readl (ohci, &ohci->regs->control);
-	msleep (3);
+	if (!autostopped)
+		msleep (3);
 
 	temp = ohci->hc_control;
 	temp &= OHCI_CTRL_RWC;
@@ -254,10 +236,14 @@ static int ohci_bus_resume (struct usb_hcd *hcd)
 	(void) ohci_readl (ohci, &ohci->regs->control);
 
 	/* TRSMRCY */
-	msleep (10);
+	if (!autostopped) {
+		msleep (10);
+		spin_lock_irq (&ohci->lock);
+	}
+	/* now ohci->lock is always held and irqs are always disabled */
 
-	/* keep it alive for ~5x suspend + resume costs */
-	ohci->next_statechange = jiffies + msecs_to_jiffies (250);
+	/* keep it alive for more than ~5x suspend + resume costs */
+	ohci->next_statechange = jiffies + STATECHANGE_DELAY;
 
 	/* maybe turn schedules back on */
 	enables = 0;
@@ -291,6 +277,202 @@ static int ohci_bus_resume (struct usb_hcd *hcd)
 	return 0;
 }
 
+static int ohci_bus_suspend (struct usb_hcd *hcd)
+{
+	struct ohci_hcd		*ohci = hcd_to_ohci (hcd);
+	int			rc;
+
+	spin_lock_irq (&ohci->lock);
+
+	if (unlikely(!test_bit(HCD_FLAG_HW_ACCESSIBLE, &hcd->flags)))
+		rc = -ESHUTDOWN;
+	else
+		rc = ohci_rh_suspend (ohci, 0);
+	spin_unlock_irq (&ohci->lock);
+	return rc;
+}
+
+static int ohci_bus_resume (struct usb_hcd *hcd)
+{
+	struct ohci_hcd		*ohci = hcd_to_ohci (hcd);
+	int			rc;
+
+	if (time_before (jiffies, ohci->next_statechange))
+		msleep(5);
+
+	spin_lock_irq (&ohci->lock);
+
+	if (unlikely(!test_bit(HCD_FLAG_HW_ACCESSIBLE, &hcd->flags)))
+		rc = -ESHUTDOWN;
+	else
+		rc = ohci_rh_resume (ohci);
+	spin_unlock_irq (&ohci->lock);
+
+	/* poll until we know a device is connected or we autostop */
+	if (rc == 0)
+		usb_hcd_poll_rh_status(hcd);
+	return rc;
+}
+
+/* Carry out the final steps of resuming the controller device */
+static void ohci_finish_controller_resume(struct usb_hcd *hcd)
+{
+	struct ohci_hcd		*ohci = hcd_to_ohci(hcd);
+	int			port;
+	bool			need_reinit = false;
+
+	/* See if the controller is already running or has been reset */
+	ohci->hc_control = ohci_readl(ohci, &ohci->regs->control);
+	if (ohci->hc_control & (OHCI_CTRL_IR | OHCI_SCHED_ENABLES)) {
+		need_reinit = true;
+	} else {
+		switch (ohci->hc_control & OHCI_CTRL_HCFS) {
+		case OHCI_USB_OPER:
+		case OHCI_USB_RESET:
+			need_reinit = true;
+		}
+	}
+
+	/* If needed, reinitialize and suspend the root hub */
+	if (need_reinit) {
+		spin_lock_irq(&ohci->lock);
+		hcd->state = HC_STATE_RESUMING;
+		ohci_rh_resume(ohci);
+		hcd->state = HC_STATE_QUIESCING;
+		ohci_rh_suspend(ohci, 0);
+		hcd->state = HC_STATE_SUSPENDED;
+		spin_unlock_irq(&ohci->lock);
+	}
+
+	/* Normally just turn on port power and enable interrupts */
+	else {
+		ohci_dbg(ohci, "powerup ports\n");
+		for (port = 0; port < ohci->num_ports; port++)
+			ohci_writel(ohci, RH_PS_PPS,
+					&ohci->regs->roothub.portstatus[port]);
+
+		ohci_writel(ohci, OHCI_INTR_MIE, &ohci->regs->intrenable);
+		ohci_readl(ohci, &ohci->regs->intrenable);
+		msleep(20);
+	}
+}
+
+/* Carry out polling-, autostop-, and autoresume-related state changes */
+static int ohci_root_hub_state_changes(struct ohci_hcd *ohci, int changed,
+		int any_connected, int rhsc_status)
+{
+	int	poll_rh = 1;
+	int	rhsc_enable;
+
+	/* Some broken controllers never turn off RHCS in the interrupt
+	 * status register.  For their sake we won't re-enable RHSC
+	 * interrupts if the interrupt bit is already active.
+	 */
+	rhsc_enable = ohci_readl(ohci, &ohci->regs->intrenable) &
+			OHCI_INTR_RHSC;
+
+	switch (ohci->hc_control & OHCI_CTRL_HCFS) {
+	case OHCI_USB_OPER:
+		/* If no status changes are pending, enable RHSC interrupts. */
+		if (!rhsc_enable && !rhsc_status && !changed) {
+			rhsc_enable = OHCI_INTR_RHSC;
+			ohci_writel(ohci, rhsc_enable, &ohci->regs->intrenable);
+		}
+
+		/* Keep on polling until we know a device is connected
+		 * and RHSC is enabled, or until we autostop.
+		 */
+		if (!ohci->autostop) {
+			if (any_connected ||
+					!device_may_wakeup(&ohci_to_hcd(ohci)
+						->self.root_hub->dev)) {
+				if (rhsc_enable)
+					poll_rh = 0;
+			} else {
+				ohci->autostop = 1;
+				ohci->next_statechange = jiffies + HZ;
+			}
+
+		/* if no devices have been attached for one second, autostop */
+		} else {
+			if (changed || any_connected) {
+				ohci->autostop = 0;
+				ohci->next_statechange = jiffies +
+						STATECHANGE_DELAY;
+			} else if (time_after_eq(jiffies,
+						ohci->next_statechange)
+					&& !ohci->ed_rm_list
+					&& !(ohci->hc_control &
+						OHCI_SCHED_ENABLES)) {
+				ohci_rh_suspend(ohci, 1);
+				if (rhsc_enable)
+					poll_rh = 0;
+			}
+		}
+		break;
+
+	case OHCI_USB_SUSPEND:
+	case OHCI_USB_RESUME:
+		/* if there is a port change, autostart or ask to be resumed */
+		if (changed) {
+			if (ohci->autostop)
+				ohci_rh_resume(ohci);
+			else
+				usb_hcd_resume_root_hub(ohci_to_hcd(ohci));
+
+		/* If remote wakeup is disabled, stop polling */
+		} else if (!ohci->autostop &&
+				!ohci_to_hcd(ohci)->self.root_hub->
+					do_remote_wakeup) {
+			poll_rh = 0;
+
+		} else {
+			/* If no status changes are pending,
+			 * enable RHSC interrupts
+			 */
+			if (!rhsc_enable && !rhsc_status) {
+				rhsc_enable = OHCI_INTR_RHSC;
+				ohci_writel(ohci, rhsc_enable,
+						&ohci->regs->intrenable);
+			}
+			/* Keep polling until RHSC is enabled */
+			if (rhsc_enable)
+				poll_rh = 0;
+		}
+		break;
+	}
+	return poll_rh;
+}
+
+#else	/* CONFIG_PM */
+
+static inline int ohci_rh_resume(struct ohci_hcd *ohci)
+{
+	return 0;
+}
+
+/* Carry out polling-related state changes.
+ * autostop isn't used when CONFIG_PM is turned off.
+ */
+static int ohci_root_hub_state_changes(struct ohci_hcd *ohci, int changed,
+		int any_connected, int rhsc_status)
+{
+	/* If RHSC is enabled, don't poll */
+	if (ohci_readl(ohci, &ohci->regs->intrenable) & OHCI_INTR_RHSC)
+		return 0;
+
+	/* If status changes are pending, continue polling.
+	 * Conversely, if no status changes are pending but the RHSC
+	 * status bit was set, then RHSC may be broken so continue polling.
+	 */
+	if (changed || rhsc_status)
+		return 1;
+
+	/* It's safe to re-enable RHSC interrupts */
+	ohci_writel(ohci, OHCI_INTR_RHSC, &ohci->regs->intrenable);
+	return 0;
+}
+
 #endif	/* CONFIG_PM */
 
 /*-------------------------------------------------------------------------*/
@@ -302,19 +484,13 @@ ohci_hub_status_data (struct usb_hcd *hcd, char *buf)
 {
 	struct ohci_hcd	*ohci = hcd_to_ohci (hcd);
 	int		i, changed = 0, length = 1;
-	int		can_suspend = device_may_wakeup(&hcd->self.root_hub->dev);
+	int		any_connected = 0;
+	int		rhsc_status;
 	unsigned long	flags;
 
 	spin_lock_irqsave (&ohci->lock, flags);
-
-	/* handle autosuspended root:  finish resuming before
-	 * letting khubd or root hub timer see state changes.
-	 */
-	if (unlikely((ohci->hc_control & OHCI_CTRL_HCFS) != OHCI_USB_OPER
-		     || !HC_IS_RUNNING(hcd->state))) {
-		can_suspend = 0;
+	if (!test_bit(HCD_FLAG_HW_ACCESSIBLE, &hcd->flags))
 		goto done;
-	}
 
 	/* undocumented erratum seen on at least rev D */
 	if ((ohci->flags & OHCI_QUIRK_AMD756)
@@ -335,9 +511,17 @@ ohci_hub_status_data (struct usb_hcd *hcd, char *buf)
 		length++;
 	}
 
+	/* Clear the RHSC status flag before reading the port statuses */
+	ohci_writel(ohci, OHCI_INTR_RHSC, &ohci->regs->intrstatus);
+	rhsc_status = ohci_readl(ohci, &ohci->regs->intrstatus) &
+			OHCI_INTR_RHSC;
+
 	/* look at each port */
 	for (i = 0; i < ohci->num_ports; i++) {
 		u32	status = roothub_portstatus (ohci, i);
+
+		/* can't autostop if ports are connected */
+		any_connected |= (status & RH_PS_CCS);
 
 		if (status & (RH_PS_CSC | RH_PS_PESC | RH_PS_PSSC
 				| RH_PS_OCIC | RH_PS_PRSC)) {
@@ -346,39 +530,14 @@ ohci_hub_status_data (struct usb_hcd *hcd, char *buf)
 			    buf [0] |= 1 << (i + 1);
 			else
 			    buf [1] |= 1 << (i - 7);
-			continue;
 		}
-
-		/* can suspend if no ports are enabled; or if all all
-		 * enabled ports are suspended AND remote wakeup is on.
-		 */
-		if (!(status & RH_PS_CCS))
-			continue;
-		if ((status & RH_PS_PSS) && can_suspend)
-			continue;
-		can_suspend = 0;
 	}
+
+	hcd->poll_rh = ohci_root_hub_state_changes(ohci, changed,
+			any_connected, rhsc_status);
+
 done:
 	spin_unlock_irqrestore (&ohci->lock, flags);
-
-#ifdef CONFIG_PM
-	/* save power by suspending idle root hubs;
-	 * INTR_RD wakes us when there's work
-	 */
-	if (can_suspend
-			&& !changed
-			&& !ohci->ed_rm_list
-			&& ((OHCI_CTRL_HCFS | OHCI_SCHED_ENABLES)
-					& ohci->hc_control)
-				== OHCI_USB_OPER
-			&& time_after (jiffies, ohci->next_statechange)
-			&& usb_trylock_device (hcd->self.root_hub) == 0
-			) {
-		ohci_vdbg (ohci, "autosuspend\n");
-		(void) ohci_bus_suspend (hcd);
-		usb_unlock_device (hcd->self.root_hub);
-	}
-#endif
 
 	return changed ? length : 0;
 }
@@ -404,7 +563,7 @@ ohci_hub_descriptor (
 	temp = 0;
 	if (rh & RH_A_NPS)		/* no power switching? */
 	    temp |= 0x0002;
-	if (rh & RH_A_PSM) 		/* per-port power switching? */
+	if (rh & RH_A_PSM)		/* per-port power switching? */
 	    temp |= 0x0001;
 	if (rh & RH_A_NOCP)		/* no overcurrent reporting? */
 	    temp |= 0x0010;
@@ -446,8 +605,6 @@ static int ohci_start_port_reset (struct usb_hcd *hcd, unsigned port)
 	return 0;
 }
 
-static void start_hnp(struct ohci_hcd *ohci);
-
 #else
 
 #define	ohci_start_port_reset		NULL
@@ -475,25 +632,43 @@ static void start_hnp(struct ohci_hcd *ohci);
 #define tick_before(t1,t2) ((s16)(((s16)(t1))-((s16)(t2))) < 0)
 
 /* called from some task, normally khubd */
-static inline void root_port_reset (struct ohci_hcd *ohci, unsigned port)
+static inline int root_port_reset (struct ohci_hcd *ohci, unsigned port)
 {
 	__hc32 __iomem *portstat = &ohci->regs->roothub.portstatus [port];
-	u32	temp;
+	u32	temp = 0;
 	u16	now = ohci_readl(ohci, &ohci->regs->fmnumber);
 	u16	reset_done = now + PORT_RESET_MSEC;
+	int	limit_1 = DIV_ROUND_UP(PORT_RESET_MSEC, PORT_RESET_HW_MSEC);
 
 	/* build a "continuous enough" reset signal, with up to
 	 * 3msec gap between pulses.  scheduler HZ==100 must work;
 	 * this might need to be deadline-scheduled.
 	 */
 	do {
+		int limit_2;
+
 		/* spin until any current reset finishes */
-		for (;;) {
+		limit_2 = PORT_RESET_HW_MSEC * 2;
+		while (--limit_2 >= 0) {
 			temp = ohci_readl (ohci, portstat);
+			/* handle e.g. CardBus eject */
+			if (temp == ~(u32)0)
+				return -ESHUTDOWN;
 			if (!(temp & RH_PS_PRS))
 				break;
 			udelay (500);
-		} 
+		}
+
+		/* timeout (a hardware error) has been observed when
+		 * EHCI sets CF while this driver is resetting a port;
+		 * presumably other disconnect paths might do it too.
+		 */
+		if (limit_2 < 0) {
+			ohci_dbg(ohci,
+				"port[%d] reset timeout, stat %08x\n",
+				port, temp);
+			break;
+		}
 
 		if (!(temp & RH_PS_CCS))
 			break;
@@ -504,8 +679,13 @@ static inline void root_port_reset (struct ohci_hcd *ohci, unsigned port)
 		ohci_writel (ohci, RH_PS_PRS, portstat);
 		msleep(PORT_RESET_HW_MSEC);
 		now = ohci_readl(ohci, &ohci->regs->fmnumber);
-	} while (tick_before(now, reset_done));
-	/* caller synchronizes using PRSC */
+	} while (tick_before(now, reset_done) && --limit_1 >= 0);
+
+	/* caller synchronizes using PRSC ... and handles PRS
+	 * still being set when this returns.
+	 */
+
+	return 0;
 }
 
 static int ohci_hub_control (
@@ -517,7 +697,7 @@ static int ohci_hub_control (
 	u16		wLength
 ) {
 	struct ohci_hcd	*ohci = hcd_to_ohci (hcd);
-	int		ports = hcd_to_bus (hcd)->root_hub->maxchild;
+	int		ports = ohci->num_ports;
 	u32		temp;
 	int		retval = 0;
 
@@ -550,9 +730,6 @@ static int ohci_hub_control (
 			break;
 		case USB_PORT_FEAT_SUSPEND:
 			temp = RH_PS_POCI;
-			if ((ohci->hc_control & OHCI_CTRL_HCFS)
-					!= OHCI_USB_OPER)
-				usb_hcd_resume_root_hub(hcd);
 			break;
 		case USB_PORT_FEAT_C_SUSPEND:
 			temp = RH_PS_PSSC;
@@ -581,14 +758,14 @@ static int ohci_hub_control (
 		break;
 	case GetHubStatus:
 		temp = roothub_status (ohci) & ~(RH_HS_CRWE | RH_HS_DRWE);
-		put_unaligned(cpu_to_le32 (temp), (__le32 *) buf);
+		put_unaligned_le32(temp, buf);
 		break;
 	case GetPortStatus:
 		if (!wIndex || wIndex > ports)
 			goto error;
 		wIndex--;
 		temp = roothub_portstatus (ohci, wIndex);
-		put_unaligned(cpu_to_le32 (temp), (__le32 *) buf);
+		put_unaligned_le32(temp, buf);
 
 #ifndef	OHCI_VERBOSE_DEBUG
 	if (*(u16*)(buf+2))	/* only if wPortChange is interesting */
@@ -614,7 +791,7 @@ static int ohci_hub_control (
 #ifdef	CONFIG_USB_OTG
 			if (hcd->self.otg_port == (wIndex + 1)
 					&& hcd->self.b_hnp_enable)
-				start_hnp(ohci);
+				ohci->start_hnp(ohci);
 			else
 #endif
 			ohci_writel (ohci, RH_PS_PSS,
@@ -625,7 +802,7 @@ static int ohci_hub_control (
 				&ohci->regs->roothub.portstatus [wIndex]);
 			break;
 		case USB_PORT_FEAT_RESET:
-			root_port_reset (ohci, wIndex);
+			retval = root_port_reset (ohci, wIndex);
 			break;
 		default:
 			goto error;

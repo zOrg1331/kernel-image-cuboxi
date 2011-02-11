@@ -1,7 +1,5 @@
 /*======================================================================
 
-  $Id: slram.c,v 1.36 2005/11/07 11:14:25 gleixner Exp $
-
   This driver provides a method to access memory not used by the kernel
   itself (i.e. if the kernel commandline mem=xxx is used). To actually
   use slram at least mtdblock or mtdchar is required (for block or
@@ -35,7 +33,6 @@
 #include <asm/uaccess.h>
 #include <linux/types.h>
 #include <linux/kernel.h>
-#include <linux/sched.h>
 #include <linux/ptrace.h>
 #include <linux/slab.h>
 #include <linux/string.h>
@@ -77,8 +74,9 @@ static char *map;
 static slram_mtd_list_t *slram_mtdlist = NULL;
 
 static int slram_erase(struct mtd_info *, struct erase_info *);
-static int slram_point(struct mtd_info *, loff_t, size_t, size_t *, u_char **);
-static void slram_unpoint(struct mtd_info *, u_char *, loff_t,	size_t);
+static int slram_point(struct mtd_info *, loff_t, size_t, size_t *, void **,
+		resource_size_t *);
+static void slram_unpoint(struct mtd_info *, loff_t, size_t);
 static int slram_read(struct mtd_info *, loff_t, size_t, size_t *, u_char *);
 static int slram_write(struct mtd_info *, loff_t, size_t, size_t *, const u_char *);
 
@@ -105,19 +103,23 @@ static int slram_erase(struct mtd_info *mtd, struct erase_info *instr)
 }
 
 static int slram_point(struct mtd_info *mtd, loff_t from, size_t len,
-		size_t *retlen, u_char **mtdbuf)
+		size_t *retlen, void **virt, resource_size_t *phys)
 {
 	slram_priv_t *priv = mtd->priv;
+
+	/* can we return a physical address with this driver? */
+	if (phys)
+		return -EINVAL;
 
 	if (from + len > mtd->size)
 		return -EINVAL;
 
-	*mtdbuf = priv->start + from;
+	*virt = priv->start + from;
 	*retlen = len;
 	return(0);
 }
 
-static void slram_unpoint(struct mtd_info *mtd, u_char *addr, loff_t from, size_t len)
+static void slram_unpoint(struct mtd_info *mtd, loff_t from, size_t len)
 {
 }
 
@@ -168,19 +170,16 @@ static int register_device(char *name, unsigned long start, unsigned long length
 		E("slram: Cannot allocate new MTD device.\n");
 		return(-ENOMEM);
 	}
-	(*curmtd)->mtdinfo = kmalloc(sizeof(struct mtd_info), GFP_KERNEL);
+	(*curmtd)->mtdinfo = kzalloc(sizeof(struct mtd_info), GFP_KERNEL);
 	(*curmtd)->next = NULL;
 
 	if ((*curmtd)->mtdinfo)	{
-		memset((char *)(*curmtd)->mtdinfo, 0, sizeof(struct mtd_info));
 		(*curmtd)->mtdinfo->priv =
-			kmalloc(sizeof(slram_priv_t), GFP_KERNEL);
+			kzalloc(sizeof(slram_priv_t), GFP_KERNEL);
 
 		if (!(*curmtd)->mtdinfo->priv) {
 			kfree((*curmtd)->mtdinfo);
 			(*curmtd)->mtdinfo = NULL;
-		} else {
-			memset((*curmtd)->mtdinfo->priv,0,sizeof(slram_priv_t));
 		}
 	}
 
@@ -268,22 +267,28 @@ static int parse_cmdline(char *devname, char *szstart, char *szlength)
 	if (*(szlength) != '+') {
 		devlength = simple_strtoul(szlength, &buffer, 0);
 		devlength = handle_unit(devlength, buffer) - devstart;
+		if (devlength < devstart)
+			goto err_out;
+
+		devlength -= devstart;
 	} else {
 		devlength = simple_strtoul(szlength + 1, &buffer, 0);
 		devlength = handle_unit(devlength, buffer);
 	}
 	T("slram: devname=%s, devstart=0x%lx, devlength=0x%lx\n",
 			devname, devstart, devlength);
-	if ((devstart < 0) || (devlength < 0) || (devlength % SLRAM_BLK_SZ != 0)) {
-		E("slram: Illegal start / length parameter.\n");
-		return(-EINVAL);
-	}
+	if (devlength % SLRAM_BLK_SZ != 0)
+		goto err_out;
 
 	if ((devstart = register_device(devname, devstart, devlength))){
 		unregister_devices();
 		return((int)devstart);
 	}
 	return(0);
+
+err_out:
+	E("slram: Illegal length parameter.\n");
+	return(-EINVAL);
 }
 
 #ifndef MODULE
@@ -298,7 +303,7 @@ __setup("slram=", mtd_slram_setup);
 
 #endif
 
-static int init_slram(void)
+static int __init init_slram(void)
 {
 	char *devname;
 	int i;
@@ -336,7 +341,7 @@ static int init_slram(void)
 #else
 	int count;
 
-	for (count = 0; (map[count]) && (count < SLRAM_MAX_DEVICES_PARAMS);
+	for (count = 0; count < SLRAM_MAX_DEVICES_PARAMS && map[count];
 			count++) {
 	}
 

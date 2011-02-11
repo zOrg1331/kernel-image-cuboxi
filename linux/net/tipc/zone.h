@@ -1,6 +1,6 @@
 /*
  * net/tipc/zone.h: Include file for TIPC zone management routines
- * 
+ *
  * Copyright (c) 2000-2006, Ericsson AB
  * Copyright (c) 2005-2006, Wind River Systems
  * All rights reserved.
@@ -47,14 +47,14 @@
  * @clusters: array of pointers to all clusters within zone
  * @links: number of (unicast) links to zone
  */
- 
+
 struct _zone {
 	u32 addr;
 	struct cluster *clusters[2]; /* currently limited to just 1 cluster */
 	u32 links;
 };
 
-struct node *tipc_zone_select_remote_node(struct _zone *z_ptr, u32 addr, u32 ref);
+struct tipc_node *tipc_zone_select_remote_node(struct _zone *z_ptr, u32 addr, u32 ref);
 u32 tipc_zone_select_router(struct _zone *z_ptr, u32 addr, u32 ref);
 void tipc_zone_remove_as_router(struct _zone *z_ptr, u32 router);
 void tipc_zone_send_external_routes(struct _zone *z_ptr, u32 dest);

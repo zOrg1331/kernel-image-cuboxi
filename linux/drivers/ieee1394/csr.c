@@ -17,11 +17,13 @@
  *
  */
 
-#include <linux/string.h>
+#include <linux/jiffies.h>
+#include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/moduleparam.h>
 #include <linux/param.h>
 #include <linux/spinlock.h>
+#include <linux/string.h>
 
 #include "csr1212.h"
 #include "ieee1394_types.h"
@@ -66,22 +68,22 @@ static struct hpsb_highlevel csr_highlevel = {
 	.host_reset =	host_reset,
 };
 
-static struct hpsb_address_ops map_ops = {
+static const struct hpsb_address_ops map_ops = {
 	.read = read_maps,
 };
 
-static struct hpsb_address_ops fcp_ops = {
+static const struct hpsb_address_ops fcp_ops = {
 	.write = write_fcp,
 };
 
-static struct hpsb_address_ops reg_ops = {
+static const struct hpsb_address_ops reg_ops = {
 	.read = read_regs,
 	.write = write_regs,
 	.lock = lock_regs,
 	.lock64 = lock64_regs,
 };
 
-static struct hpsb_address_ops config_rom_ops = {
+static const struct hpsb_address_ops config_rom_ops = {
 	.read = read_config_rom,
 };
 
@@ -131,8 +133,7 @@ static void host_reset(struct hpsb_host *host)
                 host->csr.state &= ~0x100;
         }
 
-        host->csr.topology_map[1] =
-                cpu_to_be32(be32_to_cpu(host->csr.topology_map[1]) + 1);
+	be32_add_cpu(&host->csr.topology_map[1], 1);
         host->csr.topology_map[2] = cpu_to_be32(host->node_count << 16
                                                 | host->selfid_count);
         host->csr.topology_map[0] =
@@ -140,8 +141,7 @@ static void host_reset(struct hpsb_host *host)
                             | csr_crc16(host->csr.topology_map + 1,
                                         host->selfid_count + 2));
 
-        host->csr.speed_map[1] =
-                cpu_to_be32(be32_to_cpu(host->csr.speed_map[1]) + 1);
+	be32_add_cpu(&host->csr.speed_map[1], 1);
         host->csr.speed_map[0] = cpu_to_be32(0x3f1 << 16
                                              | csr_crc16(host->csr.speed_map+1,
                                                          0x3f1));
@@ -149,32 +149,17 @@ static void host_reset(struct hpsb_host *host)
 
 /*
  * HI == seconds (bits 0:2)
- * LO == fraction units of 1/8000 of a second, as per 1394 (bits 19:31)
+ * LO == fractions of a second in units of 125usec (bits 19:31)
  *
- * Convert to units and then to HZ, for comparison to jiffies.
- *
- * By default this will end up being 800 units, or 100ms (125usec per
- * unit).
- *
- * NOTE: The spec says 1/8000, but also says we can compute based on 1/8192
- * like CSR specifies. Should make our math less complex.
+ * Convert SPLIT_TIMEOUT to jiffies.
+ * The default and minimum as per 1394a-2000 clause 8.3.2.2.6 is 100ms.
  */
 static inline void calculate_expire(struct csr_control *csr)
 {
-	unsigned long units;
+	unsigned int usecs = (csr->split_timeout_hi & 7) * 1000000 +
+			     (csr->split_timeout_lo >> 19) * 125;
 
-	/* Take the seconds, and convert to units */
-	units = (unsigned long)(csr->split_timeout_hi & 0x07) << 13;
-
-	/* Add in the fractional units */
-	units += (unsigned long)(csr->split_timeout_lo >> 19);
-
-	/* Convert to jiffies */
-	csr->expire = (unsigned long)(units * HZ) >> 13UL;
-
-	/* Just to keep from rounding low */
-	csr->expire++;
-
+	csr->expire = usecs_to_jiffies(usecs > 100000 ? usecs : 100000);
 	HPSB_VERBOSE("CSR: setting expire to %lu, HZ=%u", csr->expire, HZ);
 }
 
@@ -232,7 +217,7 @@ static void add_host(struct hpsb_host *host)
 
 	host->csr.generation = 2;
 
-	bus_info[1] = __constant_cpu_to_be32(0x31333934);
+	bus_info[1] = IEEE1394_BUSID_MAGIC;
 	bus_info[2] = cpu_to_be32((hpsb_disable_irm ? 0 : 1 << CSR_IRMC_SHIFT) |
 				  (1 << CSR_CMC_SHIFT) |
 				  (1 << CSR_ISC_SHIFT) |
@@ -265,7 +250,7 @@ static void remove_host(struct hpsb_host *host)
 {
 	quadlet_t bus_info[CSR_BUS_INFO_SIZE];
 
-	bus_info[1] = __constant_cpu_to_be32(0x31333934);
+	bus_info[1] = IEEE1394_BUSID_MAGIC;
 	bus_info[2] = cpu_to_be32((0 << CSR_IRMC_SHIFT) |
 				  (0 << CSR_CMC_SHIFT) |
 				  (0 << CSR_ISC_SHIFT) |

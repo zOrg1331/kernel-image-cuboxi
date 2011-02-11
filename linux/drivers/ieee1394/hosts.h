@@ -2,16 +2,18 @@
 #define _IEEE1394_HOSTS_H
 
 #include <linux/device.h>
-#include <linux/wait.h>
 #include <linux/list.h>
 #include <linux/timer.h>
-#include <linux/skbuff.h>
+#include <linux/types.h>
+#include <linux/workqueue.h>
+#include <asm/atomic.h>
 
-#include <asm/semaphore.h>
+struct pci_dev;
+struct module;
 
 #include "ieee1394_types.h"
 #include "csr.h"
-
+#include "highlevel.h"
 
 struct hpsb_packet;
 struct hpsb_iso;
@@ -23,17 +25,13 @@ struct hpsb_host {
 
 	atomic_t generation;
 
-	struct sk_buff_head pending_packet_queue;
-
+	struct list_head pending_packets;
 	struct timer_list timeout;
 	unsigned long timeout_interval;
-
-	unsigned char iso_listen_count[64];
 
 	int node_count;      /* number of identified nodes on this bus */
 	int selfid_count;    /* total number of SelfIDs received */
 	int nodes_active;    /* number of nodes with active link layer */
-	u8 speed[ALL_NODES]; /* speed between each node and local node */
 
 	nodeid_t node_id;    /* node ID of this host */
 	nodeid_t irm_id;     /* ID of this bus' isochronous resource manager */
@@ -53,31 +51,32 @@ struct hpsb_host {
 	int reset_retries;
 	quadlet_t *topology_map;
 	u8 *speed_map;
-	struct csr_control csr;
-
-	/* Per node tlabel pool allocation */
-	struct hpsb_tlabel_pool tpool[ALL_NODES];
-
-	struct hpsb_host_driver *driver;
-
-	struct pci_dev *pdev;
 
 	int id;
-
+	struct hpsb_host_driver *driver;
+	struct pci_dev *pdev;
 	struct device device;
-	struct class_device class_dev;
+	struct device host_dev;
 
-	int update_config_rom;
-	struct work_struct delayed_reset;
-
-	unsigned int config_roms;
+	struct delayed_work delayed_reset;
+	unsigned config_roms:31;
+	unsigned update_config_rom:1;
 
 	struct list_head addr_space;
 	u64 low_addr_space;	/* upper bound of physical DMA area */
 	u64 middle_addr_space;	/* upper bound of posted write area */
+
+	u8 speed[ALL_NODES];	/* speed between each node and local node */
+
+	/* per node tlabel allocation */
+	u8 next_tl[ALL_NODES];
+	struct { DECLARE_BITMAP(map, 64); } tl_pool[ALL_NODES];
+
+	struct csr_control csr;
+
+	struct hpsb_address_serve dummy_zero_addr;
+	struct hpsb_address_serve dummy_max_addr;
 };
-
-
 
 enum devctl_cmd {
 	/* Host is requested to reset its bus and cancel all outstanding async
@@ -102,17 +101,11 @@ enum devctl_cmd {
 	/* Cancel all outstanding async requests without resetting the bus.
 	 * Return void. */
 	CANCEL_REQUESTS,
-
-	/* Start or stop receiving isochronous channel in arg.  Return void.
-	 * This acts as an optimization hint, hosts are not required not to
-	 * listen on unrequested channels. */
-	ISO_LISTEN_CHANNEL,
-	ISO_UNLISTEN_CHANNEL
 };
 
 enum isoctl_cmd {
 	/* rawiso API - see iso.h for the meanings of these commands
-	   (they correspond exactly to the hpsb_iso_* API functions)
+	 * (they correspond exactly to the hpsb_iso_* API functions)
 	 * INIT = allocate resources
 	 * START = begin transmission/reception
 	 * STOP = halt transmission/reception
@@ -160,7 +153,8 @@ struct hpsb_host_driver {
 	/* The hardware driver may optionally support a function that is used
 	 * to set the hardware ConfigROM if the hardware supports handling
 	 * reads to the ConfigROM on its own. */
-	void (*set_hw_config_rom) (struct hpsb_host *host, quadlet_t *config_rom);
+	void (*set_hw_config_rom)(struct hpsb_host *host,
+				  __be32 *config_rom);
 
 	/* This function shall implement packet transmission based on
 	 * packet->type.  It shall CRC both parts of the packet (unless
@@ -170,20 +164,21 @@ struct hpsb_host_driver {
 	 * called.  Return 0 on success, negative errno on failure.
 	 * NOTE: The function must be callable in interrupt context.
 	 */
-	int (*transmit_packet) (struct hpsb_host *host,
-				struct hpsb_packet *packet);
+	int (*transmit_packet)(struct hpsb_host *host,
+			       struct hpsb_packet *packet);
 
 	/* This function requests miscellanous services from the driver, see
 	 * above for command codes and expected actions.  Return -1 for unknown
 	 * command, though that should never happen.
 	 */
-	int (*devctl) (struct hpsb_host *host, enum devctl_cmd command, int arg);
+	int (*devctl)(struct hpsb_host *host, enum devctl_cmd command, int arg);
 
 	 /* ISO transmission/reception functions. Return 0 on success, -1
 	  * (or -EXXX errno code) on failure. If the low-level driver does not
 	  * support the new ISO API, set isoctl to NULL.
 	  */
-	int (*isoctl) (struct hpsb_iso *iso, enum isoctl_cmd command, unsigned long arg);
+	int (*isoctl)(struct hpsb_iso *iso, enum isoctl_cmd command,
+		      unsigned long arg);
 
 	/* This function is mainly to redirect local CSR reads/locks to the iso
 	 * management registers (bus manager id, bandwidth available, channels
@@ -196,24 +191,11 @@ struct hpsb_host_driver {
 				 quadlet_t data, quadlet_t compare);
 };
 
-
 struct hpsb_host *hpsb_alloc_host(struct hpsb_host_driver *drv, size_t extra,
 				  struct device *dev);
 int hpsb_add_host(struct hpsb_host *host);
-void hpsb_remove_host(struct hpsb_host *h);
-
-/* The following 2 functions are deprecated and will be removed when the
- * raw1394/libraw1394 update is complete. */
-int hpsb_update_config_rom(struct hpsb_host *host,
-      const quadlet_t *new_rom, size_t size, unsigned char rom_version);
-int hpsb_get_config_rom(struct hpsb_host *host, quadlet_t *buffer,
-      size_t buffersize, size_t *rom_size, unsigned char *rom_version);
-
-/* Updates the configuration rom image of a host.  rom_version must be the
- * current version, otherwise it will fail with return value -1. If this
- * host does not support config-rom-update, it will return -EINVAL.
- * Return value 0 indicates success.
- */
+void hpsb_resume_host(struct hpsb_host *host);
+void hpsb_remove_host(struct hpsb_host *host);
 int hpsb_update_config_rom_image(struct hpsb_host *host);
 
 #endif /* _IEEE1394_HOSTS_H */

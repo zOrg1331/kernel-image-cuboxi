@@ -1,6 +1,4 @@
 /*
- * $Id: amijoy.c,v 1.13 2002/01/22 20:26:32 vojtech Exp $
- *
  *  Copyright (c) 1998-2001 Vojtech Pavlik
  */
 
@@ -32,7 +30,6 @@
 #include <linux/errno.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
-#include <linux/moduleparam.h>
 #include <linux/init.h>
 #include <linux/input.h>
 #include <linux/interrupt.h>
@@ -50,14 +47,12 @@ static int amijoy[2] = { 0, 1 };
 module_param_array_named(map, amijoy, uint, NULL, 0);
 MODULE_PARM_DESC(map, "Map of attached joysticks in form of <a>,<b> (default is 0,1)");
 
-__obsolete_setup("amijoy=");
-
 static int amijoy_used;
 static DEFINE_MUTEX(amijoy_mutex);
 static struct input_dev *amijoy_dev[2];
 static char *amijoy_phys[2] = { "amijoy/input0", "amijoy/input1" };
 
-static irqreturn_t amijoy_interrupt(int irq, void *dummy, struct pt_regs *fp)
+static irqreturn_t amijoy_interrupt(int irq, void *dummy)
 {
 	int i, data = 0, button = 0;
 
@@ -68,8 +63,6 @@ static irqreturn_t amijoy_interrupt(int irq, void *dummy, struct pt_regs *fp)
 				case 0: data = ~amiga_custom.joy0dat; button = (~ciaa.pra >> 6) & 1; break;
 				case 1: data = ~amiga_custom.joy1dat; button = (~ciaa.pra >> 7) & 1; break;
 			}
-
-			input_regs(amijoy_dev[i], fp);
 
 			input_report_key(amijoy_dev[i], BTN_TRIGGER, button);
 
@@ -141,15 +134,20 @@ static int __init amijoy_init(void)
 		amijoy_dev[i]->open = amijoy_open;
 		amijoy_dev[i]->close = amijoy_close;
 
-		amijoy_dev[i]->evbit[0] = BIT(EV_KEY) | BIT(EV_ABS);
-		amijoy_dev[i]->absbit[0] = BIT(ABS_X) | BIT(ABS_Y);
-		amijoy_dev[i]->keybit[LONG(BTN_LEFT)] = BIT(BTN_LEFT) | BIT(BTN_MIDDLE) | BIT(BTN_RIGHT);
+		amijoy_dev[i]->evbit[0] = BIT_MASK(EV_KEY) | BIT_MASK(EV_ABS);
+		amijoy_dev[i]->absbit[0] = BIT_MASK(ABS_X) | BIT_MASK(ABS_Y);
+		amijoy_dev[i]->keybit[BIT_WORD(BTN_LEFT)] = BIT_MASK(BTN_LEFT) |
+			BIT_MASK(BTN_MIDDLE) | BIT_MASK(BTN_RIGHT);
 		for (j = 0; j < 2; j++) {
 			amijoy_dev[i]->absmin[ABS_X + j] = -1;
 			amijoy_dev[i]->absmax[ABS_X + j] = 1;
 		}
 
-		input_register_device(amijoy_dev[i]);
+		err = input_register_device(amijoy_dev[i]);
+		if (err) {
+			input_free_device(amijoy_dev[i]);
+			goto fail;
+		}
 	}
 	return 0;
 

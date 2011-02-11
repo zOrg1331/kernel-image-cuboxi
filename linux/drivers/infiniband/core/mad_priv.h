@@ -2,6 +2,7 @@
  * Copyright (c) 2004, 2005, Voltaire, Inc. All rights reserved.
  * Copyright (c) 2005 Intel Corporation. All rights reserved.
  * Copyright (c) 2005 Sun Microsystems, Inc. All rights reserved.
+ * Copyright (c) 2009 HNR Consulting. All rights reserved.
  *
  * This software is available to you under a choice of one of two
  * licenses.  You may choose to be licensed under the terms of the GNU
@@ -30,16 +31,13 @@
  * ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
  * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  * SOFTWARE.
- *
- * $Id: mad_priv.h 5596 2006-03-03 01:00:07Z sean.hefty $
  */
 
 #ifndef __IB_MAD_PRIV_H__
 #define __IB_MAD_PRIV_H__
 
 #include <linux/completion.h>
-#include <linux/pci.h>
-#include <linux/kthread.h>
+#include <linux/err.h>
 #include <linux/workqueue.h>
 #include <rdma/ib_mad.h>
 #include <rdma/ib_smi.h>
@@ -52,6 +50,8 @@
 /* QP and CQ parameters */
 #define IB_MAD_QP_SEND_SIZE	128
 #define IB_MAD_QP_RECV_SIZE	512
+#define IB_MAD_QP_MIN_SIZE	64
+#define IB_MAD_QP_MAX_SIZE	8192
 #define IB_MAD_SEND_REQ_MAX_SG	2
 #define IB_MAD_RECV_REQ_MAX_SG	1
 
@@ -73,7 +73,7 @@ struct ib_mad_private_header {
 	struct ib_mad_list_head mad_list;
 	struct ib_mad_recv_wc recv_wc;
 	struct ib_wc wc;
-	DECLARE_PCI_UNMAP_ADDR(mapping)
+	u64 mapping;
 } __attribute__ ((packed));
 
 struct ib_mad_private {
@@ -102,7 +102,7 @@ struct ib_mad_agent_private {
 	struct list_head send_list;
 	struct list_head wait_list;
 	struct list_head done_list;
-	struct work_struct timed_work;
+	struct delayed_work timed_work;
 	unsigned long timeout;
 	struct list_head local_list;
 	struct work_struct local_work;
@@ -126,13 +126,14 @@ struct ib_mad_send_wr_private {
 	struct list_head agent_list;
 	struct ib_mad_agent_private *mad_agent_priv;
 	struct ib_mad_send_buf send_buf;
-	DECLARE_PCI_UNMAP_ADDR(header_mapping)
-	DECLARE_PCI_UNMAP_ADDR(payload_mapping)
+	u64 header_mapping;
+	u64 payload_mapping;
 	struct ib_send_wr send_wr;
 	struct ib_sge sg_list[IB_MAD_SEND_REQ_MAX_SG];
 	__be64 tid;
 	unsigned long timeout;
-	int retries;
+	int max_retries;
+	int retries_left;
 	int retry;
 	int refcount;
 	enum ib_wc_status status;

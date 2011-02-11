@@ -25,9 +25,9 @@
 #include <linux/ptrace.h>
 #include <linux/slab.h>
 #include <linux/user.h>
-#include <linux/a.out.h>
 #include <linux/interrupt.h>
 #include <linux/reboot.h>
+#include <linux/fs.h>
 
 #include <asm/uaccess.h>
 #include <asm/system.h>
@@ -199,7 +199,7 @@ asmlinkage int m68k_clone(struct pt_regs *regs)
         return do_fork(clone_flags, newsp, regs, 0, NULL, NULL);
 }
 
-int copy_thread(int nr, unsigned long clone_flags,
+int copy_thread(unsigned long clone_flags,
 		unsigned long usp, unsigned long topstk,
 		struct task_struct * p, struct pt_regs * regs)
 {
@@ -301,7 +301,7 @@ void dump(struct pt_regs *fp)
 			(int) current->mm->end_data,
 			(int) current->mm->end_data,
 			(int) current->mm->brk);
-		printk(KERN_EMERG "USER-STACK=%08x  KERNEL-STACK=%08x\n\n",
+		printk(KERN_EMERG "USER-STACK=%08x KERNEL-STACK=%08x\n\n",
 			(int) current->mm->start_stack,
 			(int)(((unsigned long) current) + THREAD_SIZE));
 	}
@@ -312,36 +312,35 @@ void dump(struct pt_regs *fp)
 		fp->d0, fp->d1, fp->d2, fp->d3);
 	printk(KERN_EMERG "d4: %08lx    d5: %08lx    a0: %08lx    a1: %08lx\n",
 		fp->d4, fp->d5, fp->a0, fp->a1);
-	printk(KERN_EMERG "\nUSP: %08x   TRAPFRAME: %08x\n", (unsigned int) rdusp(),
-		(unsigned int) fp);
+	printk(KERN_EMERG "\nUSP: %08x   TRAPFRAME: %08x\n",
+		(unsigned int) rdusp(), (unsigned int) fp);
 
 	printk(KERN_EMERG "\nCODE:");
 	tp = ((unsigned char *) fp->pc) - 0x20;
 	for (sp = (unsigned long *) tp, i = 0; (i < 0x40);  i += 4) {
 		if ((i % 0x10) == 0)
-			printk(KERN_EMERG "\n%08x: ", (int) (tp + i));
-		printk(KERN_EMERG "%08x ", (int) *sp++);
+			printk(KERN_EMERG "%08x: ", (int) (tp + i));
+		printk("%08x ", (int) *sp++);
 	}
 	printk(KERN_EMERG "\n");
 
-	printk(KERN_EMERG "\nKERNEL STACK:");
+	printk(KERN_EMERG "KERNEL STACK:");
 	tp = ((unsigned char *) fp) - 0x40;
 	for (sp = (unsigned long *) tp, i = 0; (i < 0xc0); i += 4) {
 		if ((i % 0x10) == 0)
-			printk(KERN_EMERG "\n%08x: ", (int) (tp + i));
-		printk(KERN_EMERG "%08x ", (int) *sp++);
+			printk(KERN_EMERG "%08x: ", (int) (tp + i));
+		printk("%08x ", (int) *sp++);
 	}
 	printk(KERN_EMERG "\n");
-	printk(KERN_EMERG "\n");
 
-	printk(KERN_EMERG "\nUSER STACK:");
+	printk(KERN_EMERG "USER STACK:");
 	tp = (unsigned char *) (rdusp() - 0x10);
 	for (sp = (unsigned long *) tp, i = 0; (i < 0x80); i += 4) {
 		if ((i % 0x10) == 0)
-			printk(KERN_EMERG "\n%08x: ", (int) (tp + i));
-		printk(KERN_EMERG "%08x ", (int) *sp++);
+			printk(KERN_EMERG "%08x: ", (int) (tp + i));
+		printk("%08x ", (int) *sp++);
 	}
-	printk(KERN_EMERG "\n\n");
+	printk(KERN_EMERG "\n");
 }
 
 /*
@@ -377,7 +376,7 @@ unsigned long get_wchan(struct task_struct *p)
 	fp = ((struct switch_stack *)p->thread.ksp)->a6;
 	do {
 		if (fp < stack_page+sizeof(struct thread_info) ||
-		    fp >= 8184+stack_page)
+		    fp >= THREAD_SIZE-8+stack_page)
 			return 0;
 		pc = ((unsigned long *)fp)[1];
 		if (!in_sched_functions(pc))

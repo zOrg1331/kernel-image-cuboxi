@@ -23,12 +23,12 @@
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/types.h>
+#include <linux/io.h>
 
-#include <asm/hardware.h>
-#include <asm/io.h>
+#include <mach/hardware.h>
 #include <asm/page.h>
 
-static void __iomem *__isamem_convert_addr(void __iomem *addr)
+static void __iomem *__isamem_convert_addr(const volatile void __iomem *addr)
 {
 	u32 ret, a = (u32 __force) addr;
 
@@ -63,7 +63,7 @@ static void __iomem *__isamem_convert_addr(void __iomem *addr)
 /*
  * read[bwl] and write[bwl]
  */
-u8 __readb(void __iomem *addr)
+u8 __readb(const volatile void __iomem *addr)
 {
 	void __iomem *a = __isamem_convert_addr(addr);
 	u32 ret;
@@ -75,7 +75,7 @@ u8 __readb(void __iomem *addr)
 	return ret;
 }
 
-u16 __readw(void __iomem *addr)
+u16 __readw(const volatile void __iomem *addr)
 {
 	void __iomem *a = __isamem_convert_addr(addr);
 
@@ -85,7 +85,7 @@ u16 __readw(void __iomem *addr)
 	return __raw_readw(a);
 }
 
-u32 __readl(void __iomem *addr)
+u32 __readl(const volatile void __iomem *addr)
 {
 	void __iomem *a = __isamem_convert_addr(addr);
 	u32 ret;
@@ -101,6 +101,26 @@ u32 __readl(void __iomem *addr)
 EXPORT_SYMBOL(__readb);
 EXPORT_SYMBOL(__readw);
 EXPORT_SYMBOL(__readl);
+
+void readsw(const void __iomem *addr, void *data, int len)
+{
+	void __iomem *a = __isamem_convert_addr(addr);
+
+	BUG_ON((unsigned long)addr & 1);
+
+	__raw_readsw(a, data, len);
+}
+EXPORT_SYMBOL(readsw);
+
+void readsl(const void __iomem *addr, void *data, int len)
+{
+	void __iomem *a = __isamem_convert_addr(addr);
+
+	BUG_ON((unsigned long)addr & 3);
+
+	__raw_readsl(a, data, len);
+}
+EXPORT_SYMBOL(readsl);
 
 void __writeb(u8 val, void __iomem *addr)
 {
@@ -136,6 +156,26 @@ void __writel(u32 val, void __iomem *addr)
 EXPORT_SYMBOL(__writeb);
 EXPORT_SYMBOL(__writew);
 EXPORT_SYMBOL(__writel);
+
+void writesw(void __iomem *addr, const void *data, int len)
+{
+	void __iomem *a = __isamem_convert_addr(addr);
+
+	BUG_ON((unsigned long)addr & 1);
+
+	__raw_writesw(a, data, len);
+}
+EXPORT_SYMBOL(writesw);
+
+void writesl(void __iomem *addr, const void *data, int len)
+{
+	void __iomem *a = __isamem_convert_addr(addr);
+
+	BUG_ON((unsigned long)addr & 3);
+
+	__raw_writesl(a, data, len);
+}
+EXPORT_SYMBOL(writesl);
 
 #define SUPERIO_PORT(p) \
 	(((p) >> 3) == (0x3f8 >> 3) || \

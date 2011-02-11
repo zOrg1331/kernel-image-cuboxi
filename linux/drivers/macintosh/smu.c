@@ -12,13 +12,14 @@
  *  - maybe add timeout to commands ?
  *  - blocking version of time functions
  *  - polling version of i2c commands (including timer that works with
- *    interrutps off)
+ *    interrupts off)
  *  - maybe avoid some data copies with i2c by directly using the smu cmd
  *    buffer and a lower level internal interface
  *  - understand SMU -> CPU events and implement reception of them via
  *    the userland interface
  */
 
+#include <linux/smp_lock.h>
 #include <linux/types.h>
 #include <linux/kernel.h>
 #include <linux/device.h>
@@ -35,6 +36,8 @@
 #include <linux/sysdev.h>
 #include <linux/poll.h>
 #include <linux/mutex.h>
+#include <linux/of_device.h>
+#include <linux/of_platform.h>
 
 #include <asm/byteorder.h>
 #include <asm/io.h>
@@ -45,7 +48,6 @@
 #include <asm/sections.h>
 #include <asm/abs_addr.h>
 #include <asm/uaccess.h>
-#include <asm/of_device.h>
 
 #define VERSION "0.7"
 #define AUTHOR  "(c) 2005 Benjamin Herrenschmidt, IBM Corp."
@@ -84,6 +86,7 @@ struct smu_device {
 	u32			cmd_buf_abs;	/* command buffer absolute */
 	struct list_head	cmd_list;
 	struct smu_cmd		*cmd_cur;	/* pending command */
+	int			broken_nap;
 	struct list_head	cmd_i2c_list;
 	struct smu_i2c_cmd	*cmd_i2c_cur;	/* pending i2c command */
 	struct timer_list	i2c_timer;
@@ -134,6 +137,19 @@ static void smu_start_cmd(void)
 	fend = faddr + smu->cmd_buf->length + 2;
 	flush_inval_dcache_range(faddr, fend);
 
+
+	/* We also disable NAP mode for the duration of the command
+	 * on U3 based machines.
+	 * This is slightly racy as it can be written back to 1 by a sysctl
+	 * but that never happens in practice. There seem to be an issue with
+	 * U3 based machines such as the iMac G5 where napping for the
+	 * whole duration of the command prevents the SMU from fetching it
+	 * from memory. This might be related to the strange i2c based
+	 * mechanism the SMU uses to access memory.
+	 */
+	if (smu->broken_nap)
+		powersave_nap = 0;
+
 	/* This isn't exactly a DMA mapping here, I suspect
 	 * the SMU is actually communicating with us via i2c to the
 	 * northbridge or the CPU to access RAM.
@@ -145,7 +161,7 @@ static void smu_start_cmd(void)
 }
 
 
-static irqreturn_t smu_db_intr(int irq, void *arg, struct pt_regs *regs)
+static irqreturn_t smu_db_intr(int irq, void *arg)
 {
 	unsigned long flags;
 	struct smu_cmd *cmd;
@@ -178,7 +194,7 @@ static irqreturn_t smu_db_intr(int irq, void *arg, struct pt_regs *regs)
 		/* CPU might have brought back the cache line, so we need
 		 * to flush again before peeking at the SMU response. We
 		 * flush the entire buffer for now as we haven't read the
-		 * reply lenght (it's only 2 cache lines anyway)
+		 * reply length (it's only 2 cache lines anyway)
 		 */
 		faddr = (unsigned long)smu->cmd_buf;
 		flush_inval_dcache_range(faddr, faddr + 256);
@@ -210,6 +226,10 @@ static irqreturn_t smu_db_intr(int irq, void *arg, struct pt_regs *regs)
 	misc = cmd->misc;
 	mb();
 	cmd->status = rc;
+
+	/* Re-enable NAP mode */
+	if (smu->broken_nap)
+		powersave_nap = 1;
  bail:
 	/* Start next command if any */
 	smu_start_cmd();
@@ -224,7 +244,7 @@ static irqreturn_t smu_db_intr(int irq, void *arg, struct pt_regs *regs)
 }
 
 
-static irqreturn_t smu_msg_intr(int irq, void *arg, struct pt_regs *regs)
+static irqreturn_t smu_msg_intr(int irq, void *arg)
 {
 	/* I don't quite know what to do with this one, we seem to never
 	 * receive it, so I suspect we have to arm it someway in the SMU
@@ -309,7 +329,7 @@ void smu_poll(void)
 
 	gpio = pmac_do_feature_call(PMAC_FTR_READ_GPIO, NULL, smu->doorbell);
 	if ((gpio & 7) == 7)
-		smu_db_intr(smu->db_irq, smu, NULL);
+		smu_db_intr(smu->db_irq, smu);
 }
 EXPORT_SYMBOL(smu_poll);
 
@@ -454,23 +474,22 @@ EXPORT_SYMBOL(smu_present);
 int __init smu_init (void)
 {
 	struct device_node *np;
-	u32 *data;
+	const u32 *data;
+	int ret = 0;
 
         np = of_find_node_by_type(NULL, "smu");
         if (np == NULL)
 		return -ENODEV;
 
-	printk(KERN_INFO "SMU driver %s %s\n", VERSION, AUTHOR);
+	printk(KERN_INFO "SMU: Driver %s %s\n", VERSION, AUTHOR);
 
 	if (smu_cmdbuf_abs == 0) {
 		printk(KERN_ERR "SMU: Command buffer not allocated !\n");
-		return -EINVAL;
+		ret = -EINVAL;
+		goto fail_np;
 	}
 
 	smu = alloc_bootmem(sizeof(struct smu_device));
-	if (smu == NULL)
-		return -ENOMEM;
-	memset(smu, 0, sizeof(*smu));
 
 	spin_lock_init(&smu->lock);
 	INIT_LIST_HEAD(&smu->cmd_list);
@@ -488,14 +507,14 @@ int __init smu_init (void)
 	smu->db_node = of_find_node_by_name(NULL, "smu-doorbell");
 	if (smu->db_node == NULL) {
 		printk(KERN_ERR "SMU: Can't find doorbell GPIO !\n");
-		goto fail;
+		ret = -ENXIO;
+		goto fail_bootmem;
 	}
-	data = (u32 *)get_property(smu->db_node, "reg", NULL);
+	data = of_get_property(smu->db_node, "reg", NULL);
 	if (data == NULL) {
-		of_node_put(smu->db_node);
-		smu->db_node = NULL;
 		printk(KERN_ERR "SMU: Can't find doorbell GPIO address !\n");
-		goto fail;
+		ret = -ENXIO;
+		goto fail_db_node;
 	}
 
 	/* Current setup has one doorbell GPIO that does both doorbell
@@ -511,7 +530,7 @@ int __init smu_init (void)
 		smu->msg_node = of_find_node_by_name(NULL, "smu-interrupt");
 		if (smu->msg_node == NULL)
 			break;
-		data = (u32 *)get_property(smu->msg_node, "reg", NULL);
+		data = of_get_property(smu->msg_node, "reg", NULL);
 		if (data == NULL) {
 			of_node_put(smu->msg_node);
 			smu->msg_node = NULL;
@@ -529,16 +548,29 @@ int __init smu_init (void)
 	smu->db_buf = ioremap(0x8000860c, 0x1000);
 	if (smu->db_buf == NULL) {
 		printk(KERN_ERR "SMU: Can't map doorbell buffer pointer !\n");
-		goto fail;
+		ret = -ENXIO;
+		goto fail_msg_node;
 	}
+
+	/* U3 has an issue with NAP mode when issuing SMU commands */
+	smu->broken_nap = pmac_get_uninorth_variant() < 4;
+	if (smu->broken_nap)
+		printk(KERN_INFO "SMU: using NAP mode workaround\n");
 
 	sys_ctrler = SYS_CTRLER_SMU;
 	return 0;
 
- fail:
+fail_msg_node:
+	if (smu->msg_node)
+		of_node_put(smu->msg_node);
+fail_db_node:
+	of_node_put(smu->db_node);
+fail_bootmem:
+	free_bootmem((unsigned long)smu, sizeof(struct smu_device));
 	smu = NULL;
-	return -ENXIO;
-
+fail_np:
+	of_node_put(np);
+	return ret;
 }
 
 
@@ -600,17 +632,17 @@ core_initcall(smu_late_init);
  * sysfs visibility
  */
 
-static void smu_expose_childs(void *unused)
+static void smu_expose_childs(struct work_struct *unused)
 {
 	struct device_node *np;
 
 	for (np = NULL; (np = of_get_next_child(smu->of_node, np)) != NULL;)
-		if (device_is_compatible(np, "smu-sensors"))
+		if (of_device_is_compatible(np, "smu-sensors"))
 			of_platform_device_create(np, "smu-sensors",
 						  &smu->of_dev->dev);
 }
 
-static DECLARE_WORK(smu_expose_childs_work, smu_expose_childs, NULL);
+static DECLARE_WORK(smu_expose_childs_work, smu_expose_childs);
 
 static int smu_platform_probe(struct of_device* dev,
 			      const struct of_device_id *match)
@@ -653,7 +685,7 @@ static int __init smu_init_sysfs(void)
 	 * I'm a bit too far from figuring out how that works with those
 	 * new chipsets, but that will come back and bite us
 	 */
-	of_register_driver(&smu_of_platform_driver);
+	of_register_platform_driver(&smu_of_platform_driver);
 	return 0;
 }
 
@@ -870,7 +902,7 @@ int smu_queue_i2c(struct smu_i2c_cmd *cmd)
 
 static int smu_read_datablock(u8 *dest, unsigned int addr, unsigned int len)
 {
-	DECLARE_COMPLETION(comp);
+	DECLARE_COMPLETION_ONSTACK(comp);
 	unsigned int chunk;
 	struct smu_cmd cmd;
 	int rc;
@@ -917,7 +949,7 @@ static int smu_read_datablock(u8 *dest, unsigned int addr, unsigned int len)
 
 static struct smu_sdbp_header *smu_create_sdb_partition(int id)
 {
-	DECLARE_COMPLETION(comp);
+	DECLARE_COMPLETION_ONSTACK(comp);
 	struct smu_simple_cmd cmd;
 	unsigned int addr, len, tlen;
 	struct smu_sdbp_header *hdr;
@@ -944,14 +976,14 @@ static struct smu_sdbp_header *smu_create_sdb_partition(int id)
 	 */
 	tlen = sizeof(struct property) + len + 18;
 
-	prop = kcalloc(tlen, 1, GFP_KERNEL);
+	prop = kzalloc(tlen, GFP_KERNEL);
 	if (prop == NULL)
 		return NULL;
 	hdr = (struct smu_sdbp_header *)(prop + 1);
 	prop->name = ((char *)prop) + tlen - 18;
 	sprintf(prop->name, "sdb-partition-%02x", id);
 	prop->length = len;
-	prop->value = (unsigned char *)hdr;
+	prop->value = hdr;
 	prop->next = NULL;
 
 	/* Read the datablock */
@@ -982,11 +1014,11 @@ static struct smu_sdbp_header *smu_create_sdb_partition(int id)
 /* Note: Only allowed to return error code in pointers (using ERR_PTR)
  * when interruptible is 1
  */
-struct smu_sdbp_header *__smu_get_sdb_partition(int id, unsigned int *size,
-						int interruptible)
+const struct smu_sdbp_header *__smu_get_sdb_partition(int id,
+		unsigned int *size, int interruptible)
 {
 	char pname[32];
-	struct smu_sdbp_header *part;
+	const struct smu_sdbp_header *part;
 
 	if (!smu)
 		return NULL;
@@ -1003,8 +1035,7 @@ struct smu_sdbp_header *__smu_get_sdb_partition(int id, unsigned int *size,
 	} else
 		mutex_lock(&smu_part_access);
 
-	part = (struct smu_sdbp_header *)get_property(smu->of_node,
-						      pname, size);
+	part = of_get_property(smu->of_node, pname, size);
 	if (part == NULL) {
 		DPRINTK("trying to extract from SMU ...\n");
 		part = smu_create_sdb_partition(id);
@@ -1015,7 +1046,7 @@ struct smu_sdbp_header *__smu_get_sdb_partition(int id, unsigned int *size,
 	return part;
 }
 
-struct smu_sdbp_header *smu_get_sdb_partition(int id, unsigned int *size)
+const struct smu_sdbp_header *smu_get_sdb_partition(int id, unsigned int *size)
 {
 	return __smu_get_sdb_partition(id, size, 0);
 }
@@ -1053,18 +1084,19 @@ static int smu_open(struct inode *inode, struct file *file)
 	struct smu_private *pp;
 	unsigned long flags;
 
-	pp = kmalloc(sizeof(struct smu_private), GFP_KERNEL);
+	pp = kzalloc(sizeof(struct smu_private), GFP_KERNEL);
 	if (pp == 0)
 		return -ENOMEM;
-	memset(pp, 0, sizeof(struct smu_private));
 	spin_lock_init(&pp->lock);
 	pp->mode = smu_file_commands;
 	init_waitqueue_head(&pp->wait);
 
+	lock_kernel();
 	spin_lock_irqsave(&smu_clist_lock, flags);
 	list_add(&pp->list, &smu_clist);
 	spin_unlock_irqrestore(&smu_clist_lock, flags);
 	file->private_data = pp;
+	unlock_kernel();
 
 	return 0;
 }
@@ -1094,7 +1126,7 @@ static ssize_t smu_write(struct file *file, const char __user *buf,
 		pp->mode = smu_file_events;
 		return 0;
 	} else if (hdr.cmdtype == SMU_CMDTYPE_GET_PARTITION) {
-		struct smu_sdbp_header *part;
+		const struct smu_sdbp_header *part;
 		part = __smu_get_sdb_partition(hdr.cmd, NULL, 1);
 		if (part == NULL)
 			return -EINVAL;
@@ -1259,9 +1291,9 @@ static int smu_release(struct inode *inode, struct file *file)
 			set_current_state(TASK_UNINTERRUPTIBLE);
 			if (pp->cmd.status != 1)
 				break;
-			spin_lock_irqsave(&pp->lock, flags);
-			schedule();
 			spin_unlock_irqrestore(&pp->lock, flags);
+			schedule();
+			spin_lock_irqsave(&pp->lock, flags);
 		}
 		set_current_state(TASK_RUNNING);
 		remove_wait_queue(&pp->wait, &wait);
@@ -1277,7 +1309,7 @@ static int smu_release(struct inode *inode, struct file *file)
 }
 
 
-static struct file_operations smu_device_fops = {
+static const struct file_operations smu_device_fops = {
 	.llseek		= no_llseek,
 	.read		= smu_read,
 	.write		= smu_write,

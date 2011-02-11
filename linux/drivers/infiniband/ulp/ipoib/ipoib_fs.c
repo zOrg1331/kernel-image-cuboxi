@@ -28,8 +28,6 @@
  * ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
  * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  * SOFTWARE.
- *
- * $Id: ipoib_fs.c 1389 2004-12-27 22:56:47Z roland $
  */
 
 #include <linux/err.h>
@@ -124,7 +122,7 @@ static int ipoib_mcg_seq_show(struct seq_file *file, void *iter_ptr)
 	return 0;
 }
 
-static struct seq_operations ipoib_mcg_seq_ops = {
+static const struct seq_operations ipoib_mcg_seq_ops = {
 	.start = ipoib_mcg_seq_start,
 	.next  = ipoib_mcg_seq_next,
 	.stop  = ipoib_mcg_seq_stop,
@@ -141,12 +139,12 @@ static int ipoib_mcg_open(struct inode *inode, struct file *file)
 		return ret;
 
 	seq = file->private_data;
-	seq->private = inode->u.generic_ip;
+	seq->private = inode->i_private;
 
 	return 0;
 }
 
-static struct file_operations ipoib_mcg_fops = {
+static const struct file_operations ipoib_mcg_fops = {
 	.owner   = THIS_MODULE,
 	.open    = ipoib_mcg_open,
 	.read    = seq_read,
@@ -230,7 +228,7 @@ static int ipoib_path_seq_show(struct seq_file *file, void *iter_ptr)
 	return 0;
 }
 
-static struct seq_operations ipoib_path_seq_ops = {
+static const struct seq_operations ipoib_path_seq_ops = {
 	.start = ipoib_path_seq_start,
 	.next  = ipoib_path_seq_next,
 	.stop  = ipoib_path_seq_stop,
@@ -247,12 +245,12 @@ static int ipoib_path_open(struct inode *inode, struct file *file)
 		return ret;
 
 	seq = file->private_data;
-	seq->private = inode->u.generic_ip;
+	seq->private = inode->i_private;
 
 	return 0;
 }
 
-static struct file_operations ipoib_path_fops = {
+static const struct file_operations ipoib_path_fops = {
 	.owner   = THIS_MODULE,
 	.open    = ipoib_path_open,
 	.read    = seq_read,

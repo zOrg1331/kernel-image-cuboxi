@@ -26,7 +26,7 @@
  * The hangcheck-timer driver uses the TSC to catch delays that
  * jiffies does not notice.  A timer is set.  When the timer fires, it
  * checks whether it was delayed and if that delay exceeds a given
- * margin of error.  The hangcheck_tick module paramter takes the timer
+ * margin of error.  The hangcheck_tick module parameter takes the timer
  * duration in seconds.  The hangcheck_margin parameter defines the
  * margin of error, in seconds.  The defaults are 60 seconds for the
  * timer and 180 seconds for the margin of error.  IOW, a timer is set
@@ -44,12 +44,11 @@
 #include <linux/fs.h>
 #include <linux/mm.h>
 #include <linux/reboot.h>
-#include <linux/smp_lock.h>
 #include <linux/init.h>
 #include <linux/delay.h>
 #include <asm/uaccess.h>
 #include <linux/sysrq.h>
-
+#include <linux/timer.h>
 
 #define VERSION_STR "0.9.0"
 
@@ -117,7 +116,7 @@ __setup("hcheck_reboot", hangcheck_parse_reboot);
 __setup("hcheck_dump_tasks", hangcheck_parse_dump_tasks);
 #endif /* not MODULE */
 
-#if defined(CONFIG_X86_64) || defined(CONFIG_S390)
+#if defined(CONFIG_S390)
 # define HAVE_MONOTONIC
 # define TIMER_FREQ 1000000000ULL
 #elif defined(CONFIG_IA64)
@@ -159,7 +158,7 @@ static void hangcheck_fire(unsigned long data)
 		if (hangcheck_dump_tasks) {
 			printk(KERN_CRIT "Hangcheck: Task state:\n");
 #ifdef CONFIG_MAGIC_SYSRQ
-			handle_sysrq('t', NULL, NULL);
+			handle_sysrq('t', NULL);
 #endif  /* CONFIG_MAGIC_SYSRQ */
 		}
 		if (hangcheck_reboot) {

@@ -4,7 +4,7 @@
  *      - Jay Schulist <jschlst@samba.org>
  *
  *	With more than a little help from;
- *	- Alan Cox <Alan.Cox@linux.org> 
+ *	- Alan Cox <alan@lxorguk.ukuu.org.uk>
  *
  *      Derived from:
  *      - skeleton.c: A network driver outline for linux.
@@ -69,6 +69,7 @@ static const char *version =
 #include <linux/atalk.h>
 #include <linux/spinlock.h>
 #include <linux/bitops.h>
+#include <linux/jiffies.h>
 
 #include <asm/system.h>
 #include <asm/io.h>
@@ -170,7 +171,6 @@ static unsigned int cops_debug = COPS_DEBUG;
 
 struct cops_local
 {
-        struct net_device_stats stats;
         int board;			/* Holds what board type is. */
 	int nodeid;			/* Set to 1 once have nodeid. */
         unsigned char node_acquire;	/* Node ID when acquired. */
@@ -188,19 +188,15 @@ static void cops_reset (struct net_device *dev, int sleep);
 static void cops_load (struct net_device *dev);
 static int  cops_nodeid (struct net_device *dev, int nodeid);
 
-static irqreturn_t cops_interrupt (int irq, void *dev_id, struct pt_regs *regs);
+static irqreturn_t cops_interrupt (int irq, void *dev_id);
 static void cops_poll (unsigned long ltdev);
 static void cops_timeout(struct net_device *dev);
 static void cops_rx (struct net_device *dev);
-static int  cops_send_packet (struct sk_buff *skb, struct net_device *dev);
+static netdev_tx_t  cops_send_packet (struct sk_buff *skb,
+					    struct net_device *dev);
 static void set_multicast_list (struct net_device *dev);
-static int  cops_hard_header (struct sk_buff *skb, struct net_device *dev,
-			      unsigned short type, void *daddr, void *saddr, 
-			      unsigned len);
-
 static int  cops_ioctl (struct net_device *dev, struct ifreq *rq, int cmd);
 static int  cops_close (struct net_device *dev);
-static struct net_device_stats *cops_get_stats (struct net_device *dev);
 
 static void cleanup_card(struct net_device *dev)
 {
@@ -235,8 +231,6 @@ struct net_device * __init cops_probe(int unit)
 		base_addr = dev->base_addr = io;
 	}
 
-	SET_MODULE_OWNER(dev);
-
 	if (base_addr > 0x1ff) {    /* Check a single specified location. */
 		err = cops_probe1(dev, base_addr);
 	} else if (base_addr != 0) { /* Don't probe at all. */
@@ -264,6 +258,15 @@ out:
 	free_netdev(dev);
 	return ERR_PTR(err);
 }
+
+static const struct net_device_ops cops_netdev_ops = {
+	.ndo_open               = cops_open,
+        .ndo_stop               = cops_close,
+	.ndo_start_xmit   	= cops_send_packet,
+	.ndo_tx_timeout		= cops_timeout,
+        .ndo_do_ioctl           = cops_ioctl,
+	.ndo_set_multicast_list = set_multicast_list,
+};
 
 /*
  *      This is the real probe routine. Linux has a history of friendly device
@@ -333,22 +336,14 @@ static int __init cops_probe1(struct net_device *dev, int ioaddr)
 	dev->base_addr = ioaddr;
 
         lp = netdev_priv(dev);
-        memset(lp, 0, sizeof(struct cops_local));
         spin_lock_init(&lp->lock);
 
 	/* Copy local board variable to lp struct. */
 	lp->board               = board;
 
-	dev->hard_start_xmit    = cops_send_packet;
-	dev->tx_timeout		= cops_timeout;
+	dev->netdev_ops 	= &cops_netdev_ops;
 	dev->watchdog_timeo	= HZ * 2;
-	dev->hard_header	= cops_hard_header;
-        dev->get_stats          = cops_get_stats;
-	dev->open               = cops_open;
-        dev->stop               = cops_close;
-        dev->do_ioctl           = cops_ioctl;
-	dev->set_multicast_list = set_multicast_list;
-        dev->mc_list            = NULL;
+
 
 	/* Tell the user where the card is and what mode we're in. */
 	if(board==DAYNA)
@@ -505,19 +500,13 @@ static void cops_reset(struct net_device *dev, int sleep)
         {
                 outb(0, ioaddr+DAYNA_RESET);	/* Assert the reset port */
                 inb(ioaddr+DAYNA_RESET);	/* Clear the reset */
-                if(sleep)
-                {
-                        long snap=jiffies;
-
-			/* Let card finish initializing, about 1/3 second */
-	                while(jiffies-snap<HZ/3)
-                                schedule();
-                }
-                else
-                        mdelay(333);
+		if (sleep)
+			msleep(333);
+		else
+			mdelay(333);
         }
+
 	netif_wake_queue(dev);
-	return;
 }
 
 static void cops_load (struct net_device *dev)
@@ -721,7 +710,7 @@ static void cops_poll(unsigned long ltdev)
  *      The typical workload of the driver:
  *      Handle the network interface interrupts.
  */
-static irqreturn_t cops_interrupt(int irq, void *dev_id, struct pt_regs * regs)
+static irqreturn_t cops_interrupt(int irq, void *dev_id)
 {
         struct net_device *dev = dev_id;
         struct cops_local *lp;
@@ -809,7 +798,7 @@ static void cops_rx(struct net_device *dev)
         {
                 printk(KERN_WARNING "%s: Memory squeeze, dropping packet.\n",
 			dev->name);
-                lp->stats.rx_dropped++;
+                dev->stats.rx_dropped++;
                 while(pkt_len--)        /* Discard packet */
                         inb(ioaddr);
                 spin_unlock_irqrestore(&lp->lock, flags);
@@ -831,7 +820,7 @@ static void cops_rx(struct net_device *dev)
         {
 		printk(KERN_WARNING "%s: Bad packet length of %d bytes.\n", 
 			dev->name, pkt_len);
-                lp->stats.tx_errors++;
+                dev->stats.tx_errors++;
                 dev_kfree_skb_any(skb);
                 return;
         }
@@ -848,22 +837,21 @@ static void cops_rx(struct net_device *dev)
         if(rsp_type != LAP_RESPONSE)
         {
                 printk(KERN_WARNING "%s: Bad packet type %d.\n", dev->name, rsp_type);
-                lp->stats.tx_errors++;
+                dev->stats.tx_errors++;
                 dev_kfree_skb_any(skb);
                 return;
         }
 
-        skb->mac.raw    = skb->data;    /* Point to entire packet. */
+        skb_reset_mac_header(skb);    /* Point to entire packet. */
         skb_pull(skb,3);
-        skb->h.raw      = skb->data;    /* Point to data (Skip header). */
+        skb_reset_transport_header(skb);    /* Point to data (Skip header). */
 
         /* Update the counters. */
-        lp->stats.rx_packets++;
-        lp->stats.rx_bytes += skb->len;
+        dev->stats.rx_packets++;
+        dev->stats.rx_bytes += skb->len;
 
         /* Send packet to a higher place. */
         netif_rx(skb);
-	dev->last_rx = jiffies;
 }
 
 static void cops_timeout(struct net_device *dev)
@@ -871,7 +859,7 @@ static void cops_timeout(struct net_device *dev)
         struct cops_local *lp = netdev_priv(dev);
         int ioaddr = dev->base_addr;
 
-	lp->stats.tx_errors++;
+	dev->stats.tx_errors++;
         if(lp->board==TANGENT)
         {
 		if((inb(ioaddr+TANG_CARD_STATUS)&TANG_TX_READY)==0)
@@ -888,7 +876,8 @@ static void cops_timeout(struct net_device *dev)
  *	Make the card transmit a LocalTalk packet.
  */
 
-static int cops_send_packet(struct sk_buff *skb, struct net_device *dev)
+static netdev_tx_t cops_send_packet(struct sk_buff *skb,
+					  struct net_device *dev)
 {
         struct cops_local *lp = netdev_priv(dev);
         int ioaddr = dev->base_addr;
@@ -929,11 +918,11 @@ static int cops_send_packet(struct sk_buff *skb, struct net_device *dev)
 	spin_unlock_irqrestore(&lp->lock, flags);	/* Restore interrupts. */
 
 	/* Done sending packet, update counters and cleanup. */
-	lp->stats.tx_packets++;
-	lp->stats.tx_bytes += skb->len;
+	dev->stats.tx_packets++;
+	dev->stats.tx_bytes += skb->len;
 	dev->trans_start = jiffies;
 	dev_kfree_skb (skb);
-        return 0;
+        return NETDEV_TX_OK;
 }
 
 /*
@@ -944,19 +933,6 @@ static void set_multicast_list(struct net_device *dev)
 {
         if(cops_debug >= 3)
 		printk("%s: set_multicast_list executed\n", dev->name);
-}
-
-/*
- *      Another Dummy function to keep the Appletalk layer happy.
- */
- 
-static int cops_hard_header(struct sk_buff *skb, struct net_device *dev,
-			    unsigned short type, void *daddr, void *saddr, 
-			    unsigned len)
-{
-        if(cops_debug >= 3)
-                printk("%s: cops_hard_header executed. Wow!\n", dev->name);
-        return 0;
 }
 
 /*
@@ -1012,15 +988,6 @@ static int cops_close(struct net_device *dev)
         return 0;
 }
 
-/*
- *      Get the current statistics.
- *      This may be called with the card open or closed.
- */
-static struct net_device_stats *cops_get_stats(struct net_device *dev)
-{
-        struct cops_local *lp = netdev_priv(dev);
-        return &lp->stats;
-}
 
 #ifdef MODULE
 static struct net_device *cops_dev;
@@ -1030,7 +997,7 @@ module_param(io, int, 0);
 module_param(irq, int, 0);
 module_param(board_type, int, 0);
 
-int __init init_module(void)
+static int __init cops_module_init(void)
 {
 	if (io == 0)
 		printk(KERN_WARNING "%s: You shouldn't autoprobe with insmod\n",
@@ -1041,18 +1008,12 @@ int __init init_module(void)
         return 0;
 }
 
-void cleanup_module(void)
+static void __exit cops_module_exit(void)
 {
 	unregister_netdev(cops_dev);
 	cleanup_card(cops_dev);
 	free_netdev(cops_dev);
 }
+module_init(cops_module_init);
+module_exit(cops_module_exit);
 #endif /* MODULE */
-
-/*
- * Local variables:
- *  compile-command: "gcc -DMODVERSIONS -DMODULE -D__KERNEL__ -Wall -Wstrict-prototypes -O2 -c cops.c"
- *  c-basic-offset: 4
- *  c-file-offsets: ((substatement-open . 0))
- * End:
- */

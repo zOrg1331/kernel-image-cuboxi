@@ -82,7 +82,7 @@ MODULE_DEVICE_TABLE(parisc, gscps2_device_tbl);
 #define GSC_ID_MOUSE		1
 
 
-static irqreturn_t gscps2_interrupt(int irq, void *dev, struct pt_regs *regs);
+static irqreturn_t gscps2_interrupt(int irq, void *dev);
 
 #define BUFFER_SIZE 0x0f
 
@@ -141,7 +141,7 @@ static void gscps2_flush(struct gscps2port *ps2port)
 /*
  * gscps2_writeb_output() - write a byte to the port
  *
- * returns 1 on sucess, 0 on error
+ * returns 1 on success, 0 on error
  */
 
 static inline int gscps2_writeb_output(struct gscps2port *ps2port, u8 data)
@@ -166,7 +166,7 @@ static inline int gscps2_writeb_output(struct gscps2port *ps2port, u8 data)
 
 	/* make sure any received data is returned as fast as possible */
 	/* this is important e.g. when we set the LEDs on the keyboard */
-	gscps2_interrupt(0, NULL, NULL);
+	gscps2_interrupt(0, NULL);
 
 	return 1;
 }
@@ -226,7 +226,7 @@ static LIST_HEAD(ps2port_list);
  * later.
  */
 
-static irqreturn_t gscps2_interrupt(int irq, void *dev, struct pt_regs *regs)
+static irqreturn_t gscps2_interrupt(int irq, void *dev)
 {
 	struct gscps2port *ps2port;
 
@@ -267,7 +267,7 @@ static irqreturn_t gscps2_interrupt(int irq, void *dev, struct pt_regs *regs)
 	    rxflags =	((status & GSC_STAT_TERR) ? SERIO_TIMEOUT : 0 ) |
 			((status & GSC_STAT_PERR) ? SERIO_PARITY  : 0 );
 
-	    serio_interrupt(ps2port->port, data, rxflags, regs);
+	    serio_interrupt(ps2port->port, data, rxflags);
 
 	  } /* while() */
 
@@ -306,7 +306,7 @@ static int gscps2_open(struct serio *port)
 	/* enable it */
 	gscps2_enable(ps2port, ENABLE);
 
-	gscps2_interrupt(0, NULL, NULL);
+	gscps2_interrupt(0, NULL);
 
 	return 0;
 }
@@ -340,8 +340,8 @@ static int __init gscps2_probe(struct parisc_device *dev)
 	if (dev->id.sversion == 0x96)
 		hpa += GSC_DINO_OFFSET;
 
-	ps2port = kmalloc(sizeof(struct gscps2port), GFP_KERNEL);
-	serio = kmalloc(sizeof(struct serio), GFP_KERNEL);
+	ps2port = kzalloc(sizeof(struct gscps2port), GFP_KERNEL);
+	serio = kzalloc(sizeof(struct serio), GFP_KERNEL);
 	if (!ps2port || !serio) {
 		ret = -ENOMEM;
 		goto fail_nomem;
@@ -349,8 +349,6 @@ static int __init gscps2_probe(struct parisc_device *dev)
 
 	dev_set_drvdata(&dev->dev, ps2port);
 
-	memset(ps2port, 0, sizeof(struct gscps2port));
-	memset(serio, 0, sizeof(struct serio));
 	ps2port->port = serio;
 	ps2port->padev = dev;
 	ps2port->addr = ioremap_nocache(hpa, GSC_STATUS + 4);
@@ -361,7 +359,7 @@ static int __init gscps2_probe(struct parisc_device *dev)
 
 	snprintf(serio->name, sizeof(serio->name), "GSC PS/2 %s",
 		 (ps2port->id == GSC_ID_KEYBOARD) ? "keyboard" : "mouse");
-	strlcpy(serio->phys, dev->dev.bus_id, sizeof(serio->phys));
+	strlcpy(serio->phys, dev_name(&dev->dev), sizeof(serio->phys));
 	serio->id.type		= SERIO_8042;
 	serio->write		= gscps2_write;
 	serio->open		= gscps2_open;

@@ -7,7 +7,7 @@
  * NOTE: most of the structure definitions here are endian dependent.
  * If you want to use this driver on big endian machines, the data
  * and pad structure members must be exchanged. Also, the structures
- * need to be changed accordingly to the bus size. 
+ * need to be changed accordingly to the bus size.
  *
  * 981229 MSch:	did just that for the 68k Mac port (32 bit, big endian)
  *
@@ -181,7 +181,7 @@
 
 #define SONIC_TCR_DEFAULT       0x0000
 
-/* 
+/*
  * Constants for the SONIC_INTERRUPT_MASK and
  * SONIC_INTERRUPT_STATUS registers.
  */
@@ -328,7 +328,7 @@ struct sonic_local {
 
 static int sonic_open(struct net_device *dev);
 static int sonic_send_packet(struct sk_buff *skb, struct net_device *dev);
-static irqreturn_t sonic_interrupt(int irq, void *dev_id, struct pt_regs *regs);
+static irqreturn_t sonic_interrupt(int irq, void *dev_id);
 static void sonic_rx(struct net_device *dev);
 static int sonic_close(struct net_device *dev);
 static struct net_device_stats *sonic_get_stats(struct net_device *dev);
@@ -371,7 +371,7 @@ static inline __u16 sonic_buf_get(void* base, int bitmode,
 static inline void sonic_cda_put(struct net_device* dev, int entry,
 				 int offset, __u16 val)
 {
-	struct sonic_local* lp = (struct sonic_local *) dev->priv;
+	struct sonic_local *lp = netdev_priv(dev);
 	sonic_buf_put(lp->cda, lp->dma_bitmode,
 		      (entry * SIZEOF_SONIC_CD) + offset, val);
 }
@@ -379,27 +379,27 @@ static inline void sonic_cda_put(struct net_device* dev, int entry,
 static inline __u16 sonic_cda_get(struct net_device* dev, int entry,
 				  int offset)
 {
-	struct sonic_local* lp = (struct sonic_local *) dev->priv;
+	struct sonic_local *lp = netdev_priv(dev);
 	return sonic_buf_get(lp->cda, lp->dma_bitmode,
 			     (entry * SIZEOF_SONIC_CD) + offset);
 }
 
 static inline void sonic_set_cam_enable(struct net_device* dev, __u16 val)
 {
-	struct sonic_local* lp = (struct sonic_local *) dev->priv;
+	struct sonic_local *lp = netdev_priv(dev);
 	sonic_buf_put(lp->cda, lp->dma_bitmode, SONIC_CDA_CAM_ENABLE, val);
 }
 
 static inline __u16 sonic_get_cam_enable(struct net_device* dev)
 {
-	struct sonic_local* lp = (struct sonic_local *) dev->priv;
+	struct sonic_local *lp = netdev_priv(dev);
 	return sonic_buf_get(lp->cda, lp->dma_bitmode, SONIC_CDA_CAM_ENABLE);
 }
 
 static inline void sonic_tda_put(struct net_device* dev, int entry,
 				 int offset, __u16 val)
 {
-	struct sonic_local* lp = (struct sonic_local *) dev->priv;
+	struct sonic_local *lp = netdev_priv(dev);
 	sonic_buf_put(lp->tda, lp->dma_bitmode,
 		      (entry * SIZEOF_SONIC_TD) + offset, val);
 }
@@ -407,7 +407,7 @@ static inline void sonic_tda_put(struct net_device* dev, int entry,
 static inline __u16 sonic_tda_get(struct net_device* dev, int entry,
 				  int offset)
 {
-	struct sonic_local* lp = (struct sonic_local *) dev->priv;
+	struct sonic_local *lp = netdev_priv(dev);
 	return sonic_buf_get(lp->tda, lp->dma_bitmode,
 			     (entry * SIZEOF_SONIC_TD) + offset);
 }
@@ -415,7 +415,7 @@ static inline __u16 sonic_tda_get(struct net_device* dev, int entry,
 static inline void sonic_rda_put(struct net_device* dev, int entry,
 				 int offset, __u16 val)
 {
-	struct sonic_local* lp = (struct sonic_local *) dev->priv;
+	struct sonic_local *lp = netdev_priv(dev);
 	sonic_buf_put(lp->rda, lp->dma_bitmode,
 		      (entry * SIZEOF_SONIC_RD) + offset, val);
 }
@@ -423,7 +423,7 @@ static inline void sonic_rda_put(struct net_device* dev, int entry,
 static inline __u16 sonic_rda_get(struct net_device* dev, int entry,
 				  int offset)
 {
-	struct sonic_local* lp = (struct sonic_local *) dev->priv;
+	struct sonic_local *lp = netdev_priv(dev);
 	return sonic_buf_get(lp->rda, lp->dma_bitmode,
 			     (entry * SIZEOF_SONIC_RD) + offset);
 }
@@ -431,7 +431,7 @@ static inline __u16 sonic_rda_get(struct net_device* dev, int entry,
 static inline void sonic_rra_put(struct net_device* dev, int entry,
 				 int offset, __u16 val)
 {
-	struct sonic_local* lp = (struct sonic_local *) dev->priv;
+	struct sonic_local *lp = netdev_priv(dev);
 	sonic_buf_put(lp->rra, lp->dma_bitmode,
 		      (entry * SIZEOF_SONIC_RR) + offset, val);
 }
@@ -439,7 +439,7 @@ static inline void sonic_rra_put(struct net_device* dev, int entry,
 static inline __u16 sonic_rra_get(struct net_device* dev, int entry,
 				  int offset)
 {
-	struct sonic_local* lp = (struct sonic_local *) dev->priv;
+	struct sonic_local *lp = netdev_priv(dev);
 	return sonic_buf_get(lp->rra, lp->dma_bitmode,
 			     (entry * SIZEOF_SONIC_RR) + offset);
 }

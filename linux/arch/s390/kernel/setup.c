@@ -14,6 +14,9 @@
  * This file handles the architecture-dependent parts of initialization
  */
 
+#define KMSG_COMPONENT "setup"
+#define pr_fmt(fmt) KMSG_COMPONENT ": " fmt
+
 #include <linux/errno.h>
 #include <linux/module.h>
 #include <linux/sched.h>
@@ -24,7 +27,6 @@
 #include <linux/ptrace.h>
 #include <linux/slab.h>
 #include <linux/user.h>
-#include <linux/a.out.h>
 #include <linux/tty.h>
 #include <linux/ioport.h>
 #include <linux/delay.h>
@@ -33,11 +35,16 @@
 #include <linux/bootmem.h>
 #include <linux/root_dev.h>
 #include <linux/console.h>
-#include <linux/seq_file.h>
 #include <linux/kernel_stat.h>
 #include <linux/device.h>
 #include <linux/notifier.h>
+#include <linux/pfn.h>
+#include <linux/ctype.h>
+#include <linux/reboot.h>
+#include <linux/topology.h>
+#include <linux/ftrace.h>
 
+#include <asm/ipl.h>
 #include <asm/uaccess.h>
 #include <asm/system.h>
 #include <asm/smp.h>
@@ -48,23 +55,46 @@
 #include <asm/page.h>
 #include <asm/ptrace.h>
 #include <asm/sections.h>
+#include <asm/ebcdic.h>
+#include <asm/compat.h>
+#include <asm/kvm_virtio.h>
+
+long psw_kernel_bits	= (PSW_BASE_BITS | PSW_MASK_DAT | PSW_ASC_PRIMARY |
+			   PSW_MASK_MCHECK | PSW_DEFAULT_KEY);
+long psw_user_bits	= (PSW_BASE_BITS | PSW_MASK_DAT | PSW_ASC_HOME |
+			   PSW_MASK_IO | PSW_MASK_EXT | PSW_MASK_MCHECK |
+			   PSW_MASK_PSTATE | PSW_DEFAULT_KEY);
+
+/*
+ * User copy operations.
+ */
+struct uaccess_ops uaccess;
+EXPORT_SYMBOL(uaccess);
 
 /*
  * Machine setup..
  */
 unsigned int console_mode = 0;
+EXPORT_SYMBOL(console_mode);
+
 unsigned int console_devno = -1;
+EXPORT_SYMBOL(console_devno);
+
 unsigned int console_irq = -1;
-unsigned long memory_size = 0;
-unsigned long machine_flags = 0;
-struct {
-	unsigned long addr, size, type;
-} memory_chunk[MEMORY_CHUNKS] = { { 0 } };
-#define CHUNK_READ_WRITE 0
-#define CHUNK_READ_ONLY 1
+EXPORT_SYMBOL(console_irq);
+
+unsigned long elf_hwcap = 0;
+char elf_platform[ELF_PLATFORM_SIZE];
+
+struct mem_chunk __initdata memory_chunk[MEMORY_CHUNKS];
 volatile int __cpu_logical_map[NR_CPUS]; /* logical cpu to cpu address */
-unsigned long __initdata zholes_size[MAX_NR_ZONES];
-static unsigned long __initdata memory_end;
+
+int __initdata memory_end_set;
+unsigned long __initdata memory_end;
+
+/* An array with a pointer to the lowcore of every CPU. */
+struct _lowcore *lowcore_ptr[NR_CPUS];
+EXPORT_SYMBOL(lowcore_ptr);
 
 /*
  * This is set up by the setup-routine at boot-time
@@ -87,15 +117,12 @@ static struct resource data_resource = {
 /*
  * cpu_init() initializes state that is per-CPU.
  */
-void __devinit cpu_init (void)
+void __cpuinit cpu_init(void)
 {
-        int addr = hard_smp_processor_id();
-
         /*
          * Store processor id in lowcore (used e.g. in timer_interrupt)
          */
-        asm volatile ("stidp %0": "=m" (S390_lowcore.cpu_data.cpu_id));
-        S390_lowcore.cpu_data.cpu_addr = addr;
+	get_cpu_id(&S390_lowcore.cpu_id);
 
         /*
          * Force FPU initialization:
@@ -105,79 +132,9 @@ void __devinit cpu_init (void)
 
 	atomic_inc(&init_mm.mm_count);
 	current->active_mm = &init_mm;
-        if (current->mm)
-                BUG();
+	BUG_ON(current->mm);
         enter_lazy_tlb(&init_mm, current);
 }
-
-/*
- * VM halt and poweroff setup routines
- */
-char vmhalt_cmd[128] = "";
-char vmpoff_cmd[128] = "";
-char vmpanic_cmd[128] = "";
-
-static inline void strncpy_skip_quote(char *dst, char *src, int n)
-{
-        int sx, dx;
-
-        dx = 0;
-        for (sx = 0; src[sx] != 0; sx++) {
-                if (src[sx] == '"') continue;
-                dst[dx++] = src[sx];
-                if (dx >= n) break;
-        }
-}
-
-static int __init vmhalt_setup(char *str)
-{
-        strncpy_skip_quote(vmhalt_cmd, str, 127);
-        vmhalt_cmd[127] = 0;
-        return 1;
-}
-
-__setup("vmhalt=", vmhalt_setup);
-
-static int __init vmpoff_setup(char *str)
-{
-        strncpy_skip_quote(vmpoff_cmd, str, 127);
-        vmpoff_cmd[127] = 0;
-        return 1;
-}
-
-__setup("vmpoff=", vmpoff_setup);
-
-static int vmpanic_notify(struct notifier_block *self, unsigned long event,
-			  void *data)
-{
-	if (MACHINE_IS_VM && strlen(vmpanic_cmd) > 0)
-		cpcmd(vmpanic_cmd, NULL, 0, NULL);
-
-	return NOTIFY_OK;
-}
-
-#define PANIC_PRI_VMPANIC	0
-
-static struct notifier_block vmpanic_nb = {
-	.notifier_call = vmpanic_notify,
-	.priority = PANIC_PRI_VMPANIC
-};
-
-static int __init vmpanic_setup(char *str)
-{
-	static int register_done __initdata = 0;
-
-	strncpy_skip_quote(vmpanic_cmd, str, 127);
-	vmpanic_cmd[127] = 0;
-	if (!register_done) {
-		register_done = 1;
-		atomic_notifier_chain_register(&panic_notifier_list,
-					       &vmpanic_nb);
-	}
-	return 1;
-}
-
-__setup("vmpanic=", vmpanic_setup);
 
 /*
  * condev= and conmode= setup parameter.
@@ -197,9 +154,19 @@ static int __init condev_setup(char *str)
 
 __setup("condev=", condev_setup);
 
+static void __init set_preferred_console(void)
+{
+	if (MACHINE_IS_KVM)
+		add_preferred_console("hvc", 0, NULL);
+	else if (CONSOLE_IS_3215 || CONSOLE_IS_SCLP)
+		add_preferred_console("ttyS", 0, NULL);
+	else if (CONSOLE_IS_3270)
+		add_preferred_console("tty3270", 0, NULL);
+}
+
 static int __init conmode_setup(char *str)
 {
-#if defined(CONFIG_SCLP_CONSOLE)
+#if defined(CONFIG_SCLP_CONSOLE) || defined(CONFIG_SCLP_VT220_CONSOLE)
 	if (strncmp(str, "hwc", 4) == 0 || strncmp(str, "sclp", 5) == 0)
                 SET_CONSOLE_SCLP;
 #endif
@@ -211,6 +178,7 @@ static int __init conmode_setup(char *str)
 	if (strncmp(str, "3270", 5) == 0)
 		SET_CONSOLE_3270;
 #endif
+	set_preferred_console();
         return 1;
 }
 
@@ -222,11 +190,11 @@ static void __init conmode_default(void)
 	char *ptr;
 
         if (MACHINE_IS_VM) {
-		__cpcmd("QUERY CONSOLE", query_buffer, 1024, NULL);
+		cpcmd("QUERY CONSOLE", query_buffer, 1024, NULL);
 		console_devno = simple_strtoul(query_buffer + 5, NULL, 16);
 		ptr = strstr(query_buffer, "SUBCHANNEL =");
 		console_irq = simple_strtoul(ptr + 13, NULL, 16);
-		__cpcmd("QUERY TERM", query_buffer, 1024, NULL);
+		cpcmd("QUERY TERM", query_buffer, 1024, NULL);
 		ptr = strstr(query_buffer, "CONMODE");
 		/*
 		 * Set the conmode to 3215 so that the device recognition 
@@ -235,9 +203,9 @@ static void __init conmode_default(void)
 		 * 3215 and the 3270 driver will try to access the console
 		 * device (3215 as console and 3270 as normal tty).
 		 */
-		__cpcmd("TERM CONMODE 3215", NULL, 0, NULL);
+		cpcmd("TERM CONMODE 3215", NULL, 0, NULL);
 		if (ptr == NULL) {
-#if defined(CONFIG_SCLP_CONSOLE)
+#if defined(CONFIG_SCLP_CONSOLE) || defined(CONFIG_SCLP_VT220_CONSOLE)
 			SET_CONSOLE_SCLP;
 #endif
 			return;
@@ -247,7 +215,7 @@ static void __init conmode_default(void)
 			SET_CONSOLE_3270;
 #elif defined(CONFIG_TN3215_CONSOLE)
 			SET_CONSOLE_3215;
-#elif defined(CONFIG_SCLP_CONSOLE)
+#elif defined(CONFIG_SCLP_CONSOLE) || defined(CONFIG_SCLP_VT220_CONSOLE)
 			SET_CONSOLE_SCLP;
 #endif
 		} else if (strncmp(ptr + 8, "3215", 4) == 0) {
@@ -255,65 +223,36 @@ static void __init conmode_default(void)
 			SET_CONSOLE_3215;
 #elif defined(CONFIG_TN3270_CONSOLE)
 			SET_CONSOLE_3270;
-#elif defined(CONFIG_SCLP_CONSOLE)
+#elif defined(CONFIG_SCLP_CONSOLE) || defined(CONFIG_SCLP_VT220_CONSOLE)
 			SET_CONSOLE_SCLP;
 #endif
 		}
-        } else if (MACHINE_IS_P390) {
-#if defined(CONFIG_TN3215_CONSOLE)
-		SET_CONSOLE_3215;
-#elif defined(CONFIG_TN3270_CONSOLE)
-		SET_CONSOLE_3270;
-#endif
 	} else {
-#if defined(CONFIG_SCLP_CONSOLE)
+#if defined(CONFIG_SCLP_CONSOLE) || defined(CONFIG_SCLP_VT220_CONSOLE)
 		SET_CONSOLE_SCLP;
 #endif
 	}
 }
 
-#ifdef CONFIG_SMP
-extern void machine_restart_smp(char *);
-extern void machine_halt_smp(void);
-extern void machine_power_off_smp(void);
-
-void (*_machine_restart)(char *command) = machine_restart_smp;
-void (*_machine_halt)(void) = machine_halt_smp;
-void (*_machine_power_off)(void) = machine_power_off_smp;
-#else
-/*
- * Reboot, halt and power_off routines for non SMP.
- */
-extern void reipl(unsigned long devno);
-extern void reipl_diag(void);
-static void do_machine_restart_nonsmp(char * __unused)
+#ifdef CONFIG_ZFCPDUMP
+static void __init setup_zfcpdump(unsigned int console_devno)
 {
-	reipl_diag();
+	static char str[41];
 
-	if (MACHINE_IS_VM)
-		cpcmd ("IPL", NULL, 0, NULL);
+	if (ipl_info.type != IPL_TYPE_FCP_DUMP)
+		return;
+	if (console_devno != -1)
+		sprintf(str, " cio_ignore=all,!0.0.%04x,!0.0.%04x",
+			ipl_info.data.fcp.dev_id.devno, console_devno);
 	else
-		reipl (0x10000 | S390_lowcore.ipl_device);
+		sprintf(str, " cio_ignore=all,!0.0.%04x",
+			ipl_info.data.fcp.dev_id.devno);
+	strcat(boot_command_line, str);
+	console_loglevel = 2;
 }
-
-static void do_machine_halt_nonsmp(void)
-{
-        if (MACHINE_IS_VM && strlen(vmhalt_cmd) > 0)
-                cpcmd(vmhalt_cmd, NULL, 0, NULL);
-        signal_processor(smp_processor_id(), sigp_stop_and_store_status);
-}
-
-static void do_machine_power_off_nonsmp(void)
-{
-        if (MACHINE_IS_VM && strlen(vmpoff_cmd) > 0)
-                cpcmd(vmpoff_cmd, NULL, 0, NULL);
-        signal_processor(smp_processor_id(), sigp_stop_and_store_status);
-}
-
-void (*_machine_restart)(char *command) = do_machine_restart_nonsmp;
-void (*_machine_halt)(void) = do_machine_halt_nonsmp;
-void (*_machine_power_off)(void) = do_machine_power_off_nonsmp;
-#endif
+#else
+static inline void setup_zfcpdump(unsigned int console_devno) {}
+#endif /* CONFIG_ZFCPDUMP */
 
  /*
  * Reboot, halt and power_off stubs. They just call _machine_restart,
@@ -322,7 +261,7 @@ void (*_machine_power_off)(void) = do_machine_power_off_nonsmp;
 
 void machine_restart(char *command)
 {
-	if (!in_interrupt() || oops_in_progress)
+	if ((!in_interrupt() && !in_atomic()) || oops_in_progress)
 		/*
 		 * Only unblank the console if we are called in enabled
 		 * context or a bust_spinlocks cleared the way for us.
@@ -358,53 +297,107 @@ void machine_power_off(void)
  */
 void (*pm_power_off)(void) = machine_power_off;
 
-static void __init
-add_memory_hole(unsigned long start, unsigned long end)
-{
-	unsigned long dma_pfn = MAX_DMA_ADDRESS >> PAGE_SHIFT;
-
-	if (end <= dma_pfn)
-		zholes_size[ZONE_DMA] += end - start + 1;
-	else if (start > dma_pfn)
-		zholes_size[ZONE_NORMAL] += end - start + 1;
-	else {
-		zholes_size[ZONE_DMA] += dma_pfn - start + 1;
-		zholes_size[ZONE_NORMAL] += end - dma_pfn;
-	}
-}
-
 static int __init early_parse_mem(char *p)
 {
 	memory_end = memparse(p, &p);
+	memory_end_set = 1;
 	return 0;
 }
 early_param("mem", early_parse_mem);
 
-/*
- * "ipldelay=XXX[sm]" sets ipl delay in seconds or minutes
- */
-static int __init early_parse_ipldelay(char *p)
+unsigned int user_mode = HOME_SPACE_MODE;
+EXPORT_SYMBOL_GPL(user_mode);
+
+static int set_amode_and_uaccess(unsigned long user_amode,
+				 unsigned long user32_amode)
 {
-	unsigned long delay = 0;
+	psw_user_bits = PSW_BASE_BITS | PSW_MASK_DAT | user_amode |
+			PSW_MASK_IO | PSW_MASK_EXT | PSW_MASK_MCHECK |
+			PSW_MASK_PSTATE | PSW_DEFAULT_KEY;
+#ifdef CONFIG_COMPAT
+	psw_user32_bits = PSW_BASE32_BITS | PSW_MASK_DAT | user_amode |
+			  PSW_MASK_IO | PSW_MASK_EXT | PSW_MASK_MCHECK |
+			  PSW_MASK_PSTATE | PSW_DEFAULT_KEY;
+	psw32_user_bits = PSW32_BASE_BITS | PSW32_MASK_DAT | user32_amode |
+			  PSW32_MASK_IO | PSW32_MASK_EXT | PSW32_MASK_MCHECK |
+			  PSW32_MASK_PSTATE;
+#endif
+	psw_kernel_bits = PSW_BASE_BITS | PSW_MASK_DAT | PSW_ASC_HOME |
+			  PSW_MASK_MCHECK | PSW_DEFAULT_KEY;
 
-	delay = simple_strtoul(p, &p, 0);
-
-	switch (*p) {
-	case 's':
-	case 'S':
-		delay *= 1000000;
-		break;
-	case 'm':
-	case 'M':
-		delay *= 60 * 1000000;
+	if (MACHINE_HAS_MVCOS) {
+		memcpy(&uaccess, &uaccess_mvcos_switch, sizeof(uaccess));
+		return 1;
+	} else {
+		memcpy(&uaccess, &uaccess_pt, sizeof(uaccess));
+		return 0;
 	}
+}
 
-	/* now wait for the requested amount of time */
-	udelay(delay);
-
+/*
+ * Switch kernel/user addressing modes?
+ */
+static int __init early_parse_switch_amode(char *p)
+{
+	if (user_mode != SECONDARY_SPACE_MODE)
+		user_mode = PRIMARY_SPACE_MODE;
 	return 0;
 }
-early_param("ipldelay", early_parse_ipldelay);
+early_param("switch_amode", early_parse_switch_amode);
+
+static int __init early_parse_user_mode(char *p)
+{
+	if (p && strcmp(p, "primary") == 0)
+		user_mode = PRIMARY_SPACE_MODE;
+#ifdef CONFIG_S390_EXEC_PROTECT
+	else if (p && strcmp(p, "secondary") == 0)
+		user_mode = SECONDARY_SPACE_MODE;
+#endif
+	else if (!p || strcmp(p, "home") == 0)
+		user_mode = HOME_SPACE_MODE;
+	else
+		return 1;
+	return 0;
+}
+early_param("user_mode", early_parse_user_mode);
+
+#ifdef CONFIG_S390_EXEC_PROTECT
+/*
+ * Enable execute protection?
+ */
+static int __init early_parse_noexec(char *p)
+{
+	if (!strncmp(p, "off", 3))
+		return 0;
+	user_mode = SECONDARY_SPACE_MODE;
+	return 0;
+}
+early_param("noexec", early_parse_noexec);
+#endif /* CONFIG_S390_EXEC_PROTECT */
+
+static void setup_addressing_mode(void)
+{
+	if (user_mode == SECONDARY_SPACE_MODE) {
+		if (set_amode_and_uaccess(PSW_ASC_SECONDARY,
+					  PSW32_ASC_SECONDARY))
+			pr_info("Execute protection active, "
+				"mvcos available\n");
+		else
+			pr_info("Execute protection active, "
+				"mvcos not available\n");
+	} else if (user_mode == PRIMARY_SPACE_MODE) {
+		if (set_amode_and_uaccess(PSW_ASC_PRIMARY, PSW32_ASC_PRIMARY))
+			pr_info("Address spaces switched, "
+				"mvcos available\n");
+		else
+			pr_info("Address spaces switched, "
+				"mvcos not available\n");
+	}
+#ifdef CONFIG_TRACE_IRQFLAGS
+	sysc_restore_trace_psw.mask = psw_kernel_bits & ~PSW_MASK_MCHECK;
+	io_restore_trace_psw.mask = psw_kernel_bits & ~PSW_MASK_MCHECK;
+#endif
+}
 
 static void __init
 setup_lowcore(void)
@@ -422,22 +415,23 @@ setup_lowcore(void)
 	lc->restart_psw.mask = PSW_BASE_BITS | PSW_DEFAULT_KEY;
 	lc->restart_psw.addr =
 		PSW_ADDR_AMODE | (unsigned long) restart_int_handler;
-	lc->external_new_psw.mask = PSW_KERNEL_BITS;
+	if (user_mode != HOME_SPACE_MODE)
+		lc->restart_psw.mask |= PSW_ASC_HOME;
+	lc->external_new_psw.mask = psw_kernel_bits;
 	lc->external_new_psw.addr =
 		PSW_ADDR_AMODE | (unsigned long) ext_int_handler;
-	lc->svc_new_psw.mask = PSW_KERNEL_BITS | PSW_MASK_IO | PSW_MASK_EXT;
+	lc->svc_new_psw.mask = psw_kernel_bits | PSW_MASK_IO | PSW_MASK_EXT;
 	lc->svc_new_psw.addr = PSW_ADDR_AMODE | (unsigned long) system_call;
-	lc->program_new_psw.mask = PSW_KERNEL_BITS;
+	lc->program_new_psw.mask = psw_kernel_bits;
 	lc->program_new_psw.addr =
 		PSW_ADDR_AMODE | (unsigned long)pgm_check_handler;
 	lc->mcck_new_psw.mask =
-		PSW_KERNEL_BITS & ~PSW_MASK_MCHECK & ~PSW_MASK_DAT;
+		psw_kernel_bits & ~PSW_MASK_MCHECK & ~PSW_MASK_DAT;
 	lc->mcck_new_psw.addr =
 		PSW_ADDR_AMODE | (unsigned long) mcck_int_handler;
-	lc->io_new_psw.mask = PSW_KERNEL_BITS;
+	lc->io_new_psw.mask = psw_kernel_bits;
 	lc->io_new_psw.addr = PSW_ADDR_AMODE | (unsigned long) io_int_handler;
-	lc->ipl_device = S390_lowcore.ipl_device;
-	lc->jiffy_timer = -1LL;
+	lc->clock_comparator = -1ULL;
 	lc->kernel_stack = ((unsigned long) &init_thread_union) + THREAD_SIZE;
 	lc->async_stack = (unsigned long)
 		__alloc_bootmem(ASYNC_SIZE, ASYNC_SIZE, 0) + ASYNC_SIZE;
@@ -445,21 +439,34 @@ setup_lowcore(void)
 		__alloc_bootmem(PAGE_SIZE, PAGE_SIZE, 0) + PAGE_SIZE;
 	lc->current_task = (unsigned long) init_thread_union.thread_info.task;
 	lc->thread_info = (unsigned long) &init_thread_union;
+	lc->machine_flags = S390_lowcore.machine_flags;
 #ifndef CONFIG_64BIT
 	if (MACHINE_HAS_IEEE) {
 		lc->extended_save_area_addr = (__u32)
 			__alloc_bootmem(PAGE_SIZE, PAGE_SIZE, 0);
 		/* enable extended save area */
-		ctl_set_bit(14, 29);
+		__ctl_set_bit(14, 29);
 	}
+#else
+	lc->vdso_per_cpu_data = (unsigned long) &lc->paste[0];
 #endif
+	lc->sync_enter_timer = S390_lowcore.sync_enter_timer;
+	lc->async_enter_timer = S390_lowcore.async_enter_timer;
+	lc->exit_timer = S390_lowcore.exit_timer;
+	lc->user_timer = S390_lowcore.user_timer;
+	lc->system_timer = S390_lowcore.system_timer;
+	lc->steal_timer = S390_lowcore.steal_timer;
+	lc->last_update_timer = S390_lowcore.last_update_timer;
+	lc->last_update_clock = S390_lowcore.last_update_clock;
+	lc->ftrace_func = S390_lowcore.ftrace_func;
 	set_prefix((u32)(unsigned long) lc);
+	lowcore_ptr[0] = lc;
 }
 
 static void __init
 setup_resources(void)
 {
-	struct resource *res;
+	struct resource *res, *sub_res;
 	int i;
 
 	code_resource.start = (unsigned long) &_text;
@@ -467,7 +474,9 @@ setup_resources(void)
 	data_resource.start = (unsigned long) &_etext;
 	data_resource.end = (unsigned long) &_edata - 1;
 
-	for (i = 0; i < MEMORY_CHUNKS && memory_chunk[i].size > 0; i++) {
+	for (i = 0; i < MEMORY_CHUNKS; i++) {
+		if (!memory_chunk[i].size)
+			continue;
 		res = alloc_bootmem_low(sizeof(struct resource));
 		res->flags = IORESOURCE_BUSY | IORESOURCE_MEM;
 		switch (memory_chunk[i].type) {
@@ -484,94 +493,307 @@ setup_resources(void)
 		res->start = memory_chunk[i].addr;
 		res->end = memory_chunk[i].addr +  memory_chunk[i].size - 1;
 		request_resource(&iomem_resource, res);
-		request_resource(res, &code_resource);
-		request_resource(res, &data_resource);
+
+		if (code_resource.start >= res->start  &&
+			code_resource.start <= res->end &&
+			code_resource.end > res->end) {
+			sub_res = alloc_bootmem_low(sizeof(struct resource));
+			memcpy(sub_res, &code_resource,
+				sizeof(struct resource));
+			sub_res->end = res->end;
+			code_resource.start = res->end + 1;
+			request_resource(res, sub_res);
+		}
+
+		if (code_resource.start >= res->start &&
+			code_resource.start <= res->end &&
+			code_resource.end <= res->end)
+			request_resource(res, &code_resource);
+
+		if (data_resource.start >= res->start &&
+			data_resource.start <= res->end &&
+			data_resource.end > res->end) {
+			sub_res = alloc_bootmem_low(sizeof(struct resource));
+			memcpy(sub_res, &data_resource,
+				sizeof(struct resource));
+			sub_res->end = res->end;
+			data_resource.start = res->end + 1;
+			request_resource(res, sub_res);
+		}
+
+		if (data_resource.start >= res->start &&
+			data_resource.start <= res->end &&
+			data_resource.end <= res->end)
+			request_resource(res, &data_resource);
 	}
+}
+
+unsigned long real_memory_size;
+EXPORT_SYMBOL_GPL(real_memory_size);
+
+static void __init setup_memory_end(void)
+{
+	unsigned long memory_size;
+	unsigned long max_mem;
+	int i;
+
+#ifdef CONFIG_ZFCPDUMP
+	if (ipl_info.type == IPL_TYPE_FCP_DUMP) {
+		memory_end = ZFCPDUMP_HSA_SIZE;
+		memory_end_set = 1;
+	}
+#endif
+	memory_size = 0;
+	memory_end &= PAGE_MASK;
+
+	max_mem = memory_end ? min(VMEM_MAX_PHYS, memory_end) : VMEM_MAX_PHYS;
+	memory_end = min(max_mem, memory_end);
+
+	/*
+	 * Make sure all chunks are MAX_ORDER aligned so we don't need the
+	 * extra checks that HOLES_IN_ZONE would require.
+	 */
+	for (i = 0; i < MEMORY_CHUNKS; i++) {
+		unsigned long start, end;
+		struct mem_chunk *chunk;
+		unsigned long align;
+
+		chunk = &memory_chunk[i];
+		align = 1UL << (MAX_ORDER + PAGE_SHIFT - 1);
+		start = (chunk->addr + align - 1) & ~(align - 1);
+		end = (chunk->addr + chunk->size) & ~(align - 1);
+		if (start >= end)
+			memset(chunk, 0, sizeof(*chunk));
+		else {
+			chunk->addr = start;
+			chunk->size = end - start;
+		}
+	}
+
+	for (i = 0; i < MEMORY_CHUNKS; i++) {
+		struct mem_chunk *chunk = &memory_chunk[i];
+
+		real_memory_size = max(real_memory_size,
+				       chunk->addr + chunk->size);
+		if (chunk->addr >= max_mem) {
+			memset(chunk, 0, sizeof(*chunk));
+			continue;
+		}
+		if (chunk->addr + chunk->size > max_mem)
+			chunk->size = max_mem - chunk->addr;
+		memory_size = max(memory_size, chunk->addr + chunk->size);
+	}
+	if (!memory_end)
+		memory_end = memory_size;
 }
 
 static void __init
 setup_memory(void)
 {
         unsigned long bootmap_size;
-	unsigned long start_pfn, end_pfn, init_pfn;
-	unsigned long last_rw_end;
+	unsigned long start_pfn, end_pfn;
 	int i;
 
 	/*
 	 * partially used pages are not usable - thus
 	 * we are rounding upwards:
 	 */
-	start_pfn = (__pa(&_end) + PAGE_SIZE - 1) >> PAGE_SHIFT;
-	end_pfn = max_pfn = memory_end >> PAGE_SHIFT;
+	start_pfn = PFN_UP(__pa(&_end));
+	end_pfn = max_pfn = PFN_DOWN(memory_end);
 
-	/* Initialize storage key for kernel pages */
-	for (init_pfn = 0 ; init_pfn < start_pfn; init_pfn++)
-		page_set_storage_key(init_pfn << PAGE_SHIFT, PAGE_DEFAULT_KEY);
+#ifdef CONFIG_BLK_DEV_INITRD
+	/*
+	 * Move the initrd in case the bitmap of the bootmem allocater
+	 * would overwrite it.
+	 */
+
+	if (INITRD_START && INITRD_SIZE) {
+		unsigned long bmap_size;
+		unsigned long start;
+
+		bmap_size = bootmem_bootmap_pages(end_pfn - start_pfn + 1);
+		bmap_size = PFN_PHYS(bmap_size);
+
+		if (PFN_PHYS(start_pfn) + bmap_size > INITRD_START) {
+			start = PFN_PHYS(start_pfn) + bmap_size + PAGE_SIZE;
+
+			if (start + INITRD_SIZE > memory_end) {
+				pr_err("initrd extends beyond end of "
+				       "memory (0x%08lx > 0x%08lx) "
+				       "disabling initrd\n",
+				       start + INITRD_SIZE, memory_end);
+				INITRD_START = INITRD_SIZE = 0;
+			} else {
+				pr_info("Moving initrd (0x%08lx -> "
+					"0x%08lx, size: %ld)\n",
+					INITRD_START, start, INITRD_SIZE);
+				memmove((void *) start, (void *) INITRD_START,
+					INITRD_SIZE);
+				INITRD_START = start;
+			}
+		}
+	}
+#endif
 
 	/*
-	 * Initialize the boot-time allocator (with low memory only):
+	 * Initialize the boot-time allocator
 	 */
 	bootmap_size = init_bootmem(start_pfn, end_pfn);
 
 	/*
 	 * Register RAM areas with the bootmem allocator.
 	 */
-	last_rw_end = start_pfn;
 
 	for (i = 0; i < MEMORY_CHUNKS && memory_chunk[i].size > 0; i++) {
-		unsigned long start_chunk, end_chunk;
+		unsigned long start_chunk, end_chunk, pfn;
 
 		if (memory_chunk[i].type != CHUNK_READ_WRITE)
 			continue;
-		start_chunk = (memory_chunk[i].addr + PAGE_SIZE - 1);
-		start_chunk >>= PAGE_SHIFT;
-		end_chunk = (memory_chunk[i].addr + memory_chunk[i].size);
-		end_chunk >>= PAGE_SHIFT;
-		if (start_chunk < start_pfn)
-			start_chunk = start_pfn;
-		if (end_chunk > end_pfn)
-			end_chunk = end_pfn;
-		if (start_chunk < end_chunk) {
-			/* Initialize storage key for RAM pages */
-			for (init_pfn = start_chunk ; init_pfn < end_chunk;
-			     init_pfn++)
-				page_set_storage_key(init_pfn << PAGE_SHIFT,
-						     PAGE_DEFAULT_KEY);
-			free_bootmem(start_chunk << PAGE_SHIFT,
-				     (end_chunk - start_chunk) << PAGE_SHIFT);
-			if (last_rw_end < start_chunk)
-				add_memory_hole(last_rw_end, start_chunk - 1);
-			last_rw_end = end_chunk;
-		}
+		start_chunk = PFN_DOWN(memory_chunk[i].addr);
+		end_chunk = start_chunk + PFN_DOWN(memory_chunk[i].size);
+		end_chunk = min(end_chunk, end_pfn);
+		if (start_chunk >= end_chunk)
+			continue;
+		add_active_range(0, start_chunk, end_chunk);
+		pfn = max(start_chunk, start_pfn);
+		for (; pfn < end_chunk; pfn++)
+			page_set_storage_key(PFN_PHYS(pfn), PAGE_DEFAULT_KEY);
 	}
 
 	psw_set_key(PAGE_DEFAULT_KEY);
 
-	if (last_rw_end < end_pfn - 1)
-		add_memory_hole(last_rw_end, end_pfn - 1);
+	free_bootmem_with_active_regions(0, max_pfn);
 
+	/*
+	 * Reserve memory used for lowcore/command line/kernel image.
+	 */
+	reserve_bootmem(0, (unsigned long)_ehead, BOOTMEM_DEFAULT);
+	reserve_bootmem((unsigned long)_stext,
+			PFN_PHYS(start_pfn) - (unsigned long)_stext,
+			BOOTMEM_DEFAULT);
 	/*
 	 * Reserve the bootmem bitmap itself as well. We do this in two
 	 * steps (first step was init_bootmem()) because this catches
 	 * the (very unlikely) case of us accidentally initializing the
 	 * bootmem allocator with an invalid RAM area.
 	 */
-	reserve_bootmem(start_pfn << PAGE_SHIFT, bootmap_size);
+	reserve_bootmem(start_pfn << PAGE_SHIFT, bootmap_size,
+			BOOTMEM_DEFAULT);
 
 #ifdef CONFIG_BLK_DEV_INITRD
-	if (INITRD_START) {
+	if (INITRD_START && INITRD_SIZE) {
 		if (INITRD_START + INITRD_SIZE <= memory_end) {
-			reserve_bootmem(INITRD_START, INITRD_SIZE);
+			reserve_bootmem(INITRD_START, INITRD_SIZE,
+					BOOTMEM_DEFAULT);
 			initrd_start = INITRD_START;
 			initrd_end = initrd_start + INITRD_SIZE;
 		} else {
-			printk("initrd extends beyond end of memory "
-			       "(0x%08lx > 0x%08lx)\ndisabling initrd\n",
+			pr_err("initrd extends beyond end of "
+			       "memory (0x%08lx > 0x%08lx) "
+			       "disabling initrd\n",
 			       initrd_start + INITRD_SIZE, memory_end);
 			initrd_start = initrd_end = 0;
 		}
 	}
 #endif
+}
+
+/*
+ * Setup hardware capabilities.
+ */
+static void __init setup_hwcaps(void)
+{
+	static const int stfl_bits[6] = { 0, 2, 7, 17, 19, 21 };
+	unsigned long long facility_list_extended;
+	unsigned int facility_list;
+	int i;
+
+	facility_list = stfl();
+	/*
+	 * The store facility list bits numbers as found in the principles
+	 * of operation are numbered with bit 1UL<<31 as number 0 to
+	 * bit 1UL<<0 as number 31.
+	 *   Bit 0: instructions named N3, "backported" to esa-mode
+	 *   Bit 2: z/Architecture mode is active
+	 *   Bit 7: the store-facility-list-extended facility is installed
+	 *   Bit 17: the message-security assist is installed
+	 *   Bit 19: the long-displacement facility is installed
+	 *   Bit 21: the extended-immediate facility is installed
+	 *   Bit 22: extended-translation facility 3 is installed
+	 *   Bit 30: extended-translation facility 3 enhancement facility
+	 * These get translated to:
+	 *   HWCAP_S390_ESAN3 bit 0, HWCAP_S390_ZARCH bit 1,
+	 *   HWCAP_S390_STFLE bit 2, HWCAP_S390_MSA bit 3,
+	 *   HWCAP_S390_LDISP bit 4, HWCAP_S390_EIMM bit 5 and
+	 *   HWCAP_S390_ETF3EH bit 8 (22 && 30).
+	 */
+	for (i = 0; i < 6; i++)
+		if (facility_list & (1UL << (31 - stfl_bits[i])))
+			elf_hwcap |= 1UL << i;
+
+	if ((facility_list & (1UL << (31 - 22)))
+	    && (facility_list & (1UL << (31 - 30))))
+		elf_hwcap |= HWCAP_S390_ETF3EH;
+
+	/*
+	 * Check for additional facilities with store-facility-list-extended.
+	 * stfle stores doublewords (8 byte) with bit 1ULL<<63 as bit 0
+	 * and 1ULL<<0 as bit 63. Bits 0-31 contain the same information
+	 * as stored by stfl, bits 32-xxx contain additional facilities.
+	 * How many facility words are stored depends on the number of
+	 * doublewords passed to the instruction. The additional facilites
+	 * are:
+	 *   Bit 42: decimal floating point facility is installed
+	 *   Bit 44: perform floating point operation facility is installed
+	 * translated to:
+	 *   HWCAP_S390_DFP bit 6 (42 && 44).
+	 */
+	if ((elf_hwcap & (1UL << 2)) &&
+	    __stfle(&facility_list_extended, 1) > 0) {
+		if ((facility_list_extended & (1ULL << (63 - 42)))
+		    && (facility_list_extended & (1ULL << (63 - 44))))
+			elf_hwcap |= HWCAP_S390_DFP;
+	}
+
+	/*
+	 * Huge page support HWCAP_S390_HPAGE is bit 7.
+	 */
+	if (MACHINE_HAS_HPAGE)
+		elf_hwcap |= HWCAP_S390_HPAGE;
+
+	/*
+	 * 64-bit register support for 31-bit processes
+	 * HWCAP_S390_HIGH_GPRS is bit 9.
+	 */
+	elf_hwcap |= HWCAP_S390_HIGH_GPRS;
+
+	switch (S390_lowcore.cpu_id.machine) {
+	case 0x9672:
+#if !defined(CONFIG_64BIT)
+	default:	/* Use "g5" as default for 31 bit kernels. */
+#endif
+		strcpy(elf_platform, "g5");
+		break;
+	case 0x2064:
+	case 0x2066:
+#if defined(CONFIG_64BIT)
+	default:	/* Use "z900" as default for 64 bit kernels. */
+#endif
+		strcpy(elf_platform, "z900");
+		break;
+	case 0x2084:
+	case 0x2086:
+		strcpy(elf_platform, "z990");
+		break;
+	case 0x2094:
+	case 0x2096:
+		strcpy(elf_platform, "z9-109");
+		break;
+	case 0x2097:
+	case 0x2098:
+		strcpy(elf_platform, "z10");
+		break;
+	}
 }
 
 /*
@@ -586,23 +808,30 @@ setup_arch(char **cmdline_p)
          * print what head.S has found out about the machine
          */
 #ifndef CONFIG_64BIT
-	printk((MACHINE_IS_VM) ?
-	       "We are running under VM (31 bit mode)\n" :
-	       "We are running native (31 bit mode)\n");
-	printk((MACHINE_HAS_IEEE) ?
-	       "This machine has an IEEE fpu\n" :
-	       "This machine has no IEEE fpu\n");
+	if (MACHINE_IS_VM)
+		pr_info("Linux is running as a z/VM "
+			"guest operating system in 31-bit mode\n");
+	else
+		pr_info("Linux is running natively in 31-bit mode\n");
+	if (MACHINE_HAS_IEEE)
+		pr_info("The hardware system has IEEE compatible "
+			"floating point units\n");
+	else
+		pr_info("The hardware system has no IEEE compatible "
+			"floating point units\n");
 #else /* CONFIG_64BIT */
-	printk((MACHINE_IS_VM) ?
-	       "We are running under VM (64 bit mode)\n" :
-	       "We are running native (64 bit mode)\n");
+	if (MACHINE_IS_VM)
+		pr_info("Linux is running as a z/VM "
+			"guest operating system in 64-bit mode\n");
+	else if (MACHINE_IS_KVM)
+		pr_info("Linux is running under KVM in 64-bit mode\n");
+	else
+		pr_info("Linux is running natively in 64-bit mode\n");
 #endif /* CONFIG_64BIT */
 
-	/* Save unparsed command line copy for /proc/cmdline */
-	strlcpy(saved_command_line, COMMAND_LINE, COMMAND_LINE_SIZE);
-
-	*cmdline_p = COMMAND_LINE;
-	*(*cmdline_p + COMMAND_LINE_SIZE - 1) = '\0';
+	/* Have one command line that is parsed and saved in /proc/cmdline */
+	/* boot_command_line has been already set up in early.c */
+	*cmdline_p = boot_command_line;
 
         ROOT_DEV = Root_RAM0;
 
@@ -611,31 +840,28 @@ setup_arch(char **cmdline_p)
 	init_mm.end_data = (unsigned long) &_edata;
 	init_mm.brk = (unsigned long) &_end;
 
-	memory_end = memory_size;
+	if (MACHINE_HAS_MVCOS)
+		memcpy(&uaccess, &uaccess_mvcos, sizeof(uaccess));
+	else
+		memcpy(&uaccess, &uaccess_std, sizeof(uaccess));
 
 	parse_early_param();
 
-#ifndef CONFIG_64BIT
-	memory_end &= ~0x400000UL;
-
-        /*
-         * We need some free virtual space to be able to do vmalloc.
-         * On a machine with 2GB memory we make sure that we have at
-         * least 128 MB free space for vmalloc.
-         */
-        if (memory_end > 1920*1024*1024)
-                memory_end = 1920*1024*1024;
-#else /* CONFIG_64BIT */
-	memory_end &= ~0x200000UL;
-#endif /* CONFIG_64BIT */
-
+	setup_ipl();
+	setup_memory_end();
+	setup_addressing_mode();
 	setup_memory();
 	setup_resources();
 	setup_lowcore();
 
         cpu_init();
-        __cpu_logical_map[0] = S390_lowcore.cpu_data.cpu_addr;
-	smp_setup_cpu_possible_map();
+	__cpu_logical_map[0] = stap();
+	s390_init_cpu_topology();
+
+	/*
+	 * Setup capabilities (ELF_HWCAP & ELF_PLATFORM).
+	 */
+	setup_hwcaps();
 
 	/*
 	 * Create kernel page tables and switch to virtual addressing.
@@ -644,290 +870,8 @@ setup_arch(char **cmdline_p)
 
         /* Setup default console */
 	conmode_default();
+	set_preferred_console();
+
+	/* Setup zfcpdump support */
+	setup_zfcpdump(console_devno);
 }
-
-void print_cpu_info(struct cpuinfo_S390 *cpuinfo)
-{
-   printk("cpu %d "
-#ifdef CONFIG_SMP
-           "phys_idx=%d "
-#endif
-           "vers=%02X ident=%06X machine=%04X unused=%04X\n",
-           cpuinfo->cpu_nr,
-#ifdef CONFIG_SMP
-           cpuinfo->cpu_addr,
-#endif
-           cpuinfo->cpu_id.version,
-           cpuinfo->cpu_id.ident,
-           cpuinfo->cpu_id.machine,
-           cpuinfo->cpu_id.unused);
-}
-
-/*
- * show_cpuinfo - Get information on one CPU for use by procfs.
- */
-
-static int show_cpuinfo(struct seq_file *m, void *v)
-{
-        struct cpuinfo_S390 *cpuinfo;
-	unsigned long n = (unsigned long) v - 1;
-
-	preempt_disable();
-	if (!n) {
-		seq_printf(m, "vendor_id       : IBM/S390\n"
-			       "# processors    : %i\n"
-			       "bogomips per cpu: %lu.%02lu\n",
-			       num_online_cpus(), loops_per_jiffy/(500000/HZ),
-			       (loops_per_jiffy/(5000/HZ))%100);
-	}
-	if (cpu_online(n)) {
-#ifdef CONFIG_SMP
-		if (smp_processor_id() == n)
-			cpuinfo = &S390_lowcore.cpu_data;
-		else
-			cpuinfo = &lowcore_ptr[n]->cpu_data;
-#else
-		cpuinfo = &S390_lowcore.cpu_data;
-#endif
-		seq_printf(m, "processor %li: "
-			       "version = %02X,  "
-			       "identification = %06X,  "
-			       "machine = %04X\n",
-			       n, cpuinfo->cpu_id.version,
-			       cpuinfo->cpu_id.ident,
-			       cpuinfo->cpu_id.machine);
-	}
-	preempt_enable();
-        return 0;
-}
-
-static void *c_start(struct seq_file *m, loff_t *pos)
-{
-	return *pos < NR_CPUS ? (void *)((unsigned long) *pos + 1) : NULL;
-}
-static void *c_next(struct seq_file *m, void *v, loff_t *pos)
-{
-	++*pos;
-	return c_start(m, pos);
-}
-static void c_stop(struct seq_file *m, void *v)
-{
-}
-struct seq_operations cpuinfo_op = {
-	.start	= c_start,
-	.next	= c_next,
-	.stop	= c_stop,
-	.show	= show_cpuinfo,
-};
-
-#define DEFINE_IPL_ATTR(_name, _format, _value)			\
-static ssize_t ipl_##_name##_show(struct subsystem *subsys,	\
-		char *page)					\
-{								\
-	return sprintf(page, _format, _value);			\
-}								\
-static struct subsys_attribute ipl_##_name##_attr =		\
-	__ATTR(_name, S_IRUGO, ipl_##_name##_show, NULL);
-
-DEFINE_IPL_ATTR(wwpn, "0x%016llx\n", (unsigned long long)
-		IPL_PARMBLOCK_START->fcp.wwpn);
-DEFINE_IPL_ATTR(lun, "0x%016llx\n", (unsigned long long)
-		IPL_PARMBLOCK_START->fcp.lun);
-DEFINE_IPL_ATTR(bootprog, "%lld\n", (unsigned long long)
-		IPL_PARMBLOCK_START->fcp.bootprog);
-DEFINE_IPL_ATTR(br_lba, "%lld\n", (unsigned long long)
-		IPL_PARMBLOCK_START->fcp.br_lba);
-
-enum ipl_type_type {
-	ipl_type_unknown,
-	ipl_type_ccw,
-	ipl_type_fcp,
-};
-
-static enum ipl_type_type
-get_ipl_type(void)
-{
-	struct ipl_parameter_block *ipl = IPL_PARMBLOCK_START;
-
-	if (!IPL_DEVNO_VALID)
-		return ipl_type_unknown;
-	if (!IPL_PARMBLOCK_VALID)
-		return ipl_type_ccw;
-	if (ipl->hdr.header.version > IPL_MAX_SUPPORTED_VERSION)
-		return ipl_type_unknown;
-	if (ipl->fcp.pbt != IPL_TYPE_FCP)
-		return ipl_type_unknown;
-	return ipl_type_fcp;
-}
-
-static ssize_t
-ipl_type_show(struct subsystem *subsys, char *page)
-{
-	switch (get_ipl_type()) {
-	case ipl_type_ccw:
-		return sprintf(page, "ccw\n");
-	case ipl_type_fcp:
-		return sprintf(page, "fcp\n");
-	default:
-		return sprintf(page, "unknown\n");
-	}
-}
-
-static struct subsys_attribute ipl_type_attr = __ATTR_RO(ipl_type);
-
-static ssize_t
-ipl_device_show(struct subsystem *subsys, char *page)
-{
-	struct ipl_parameter_block *ipl = IPL_PARMBLOCK_START;
-
-	switch (get_ipl_type()) {
-	case ipl_type_ccw:
-		return sprintf(page, "0.0.%04x\n", ipl_devno);
-	case ipl_type_fcp:
-		return sprintf(page, "0.0.%04x\n", ipl->fcp.devno);
-	default:
-		return 0;
-	}
-}
-
-static struct subsys_attribute ipl_device_attr =
-	__ATTR(device, S_IRUGO, ipl_device_show, NULL);
-
-static struct attribute *ipl_fcp_attrs[] = {
-	&ipl_type_attr.attr,
-	&ipl_device_attr.attr,
-	&ipl_wwpn_attr.attr,
-	&ipl_lun_attr.attr,
-	&ipl_bootprog_attr.attr,
-	&ipl_br_lba_attr.attr,
-	NULL,
-};
-
-static struct attribute_group ipl_fcp_attr_group = {
-	.attrs = ipl_fcp_attrs,
-};
-
-static struct attribute *ipl_ccw_attrs[] = {
-	&ipl_type_attr.attr,
-	&ipl_device_attr.attr,
-	NULL,
-};
-
-static struct attribute_group ipl_ccw_attr_group = {
-	.attrs = ipl_ccw_attrs,
-};
-
-static struct attribute *ipl_unknown_attrs[] = {
-	&ipl_type_attr.attr,
-	NULL,
-};
-
-static struct attribute_group ipl_unknown_attr_group = {
-	.attrs = ipl_unknown_attrs,
-};
-
-static ssize_t
-ipl_parameter_read(struct kobject *kobj, char *buf, loff_t off, size_t count)
-{
-	unsigned int size = IPL_PARMBLOCK_SIZE;
-
-	if (off > size)
-		return 0;
-	if (off + count > size)
-		count = size - off;
-
-	memcpy(buf, (void *) IPL_PARMBLOCK_START + off, count);
-	return count;
-}
-
-static struct bin_attribute ipl_parameter_attr = {
-	.attr = {
-		.name = "binary_parameter",
-		.mode = S_IRUGO,
-		.owner = THIS_MODULE,
-	},
-	.size = PAGE_SIZE,
-	.read = &ipl_parameter_read,
-};
-
-static ssize_t
-ipl_scp_data_read(struct kobject *kobj, char *buf, loff_t off, size_t count)
-{
-	unsigned int size =  IPL_PARMBLOCK_START->fcp.scp_data_len;
-	void *scp_data = &IPL_PARMBLOCK_START->fcp.scp_data;
-
-	if (off > size)
-		return 0;
-	if (off + count > size)
-		count = size - off;
-
-	memcpy(buf, scp_data + off, count);
-	return count;
-}
-
-static struct bin_attribute ipl_scp_data_attr = {
-	.attr = {
-		.name = "scp_data",
-		.mode = S_IRUGO,
-		.owner = THIS_MODULE,
-	},
-	.size = PAGE_SIZE,
-	.read = &ipl_scp_data_read,
-};
-
-static decl_subsys(ipl, NULL, NULL);
-
-static int ipl_register_fcp_files(void)
-{
-	int rc;
-
-	rc = sysfs_create_group(&ipl_subsys.kset.kobj,
-				&ipl_fcp_attr_group);
-	if (rc)
-		goto out;
-	rc = sysfs_create_bin_file(&ipl_subsys.kset.kobj,
-				   &ipl_parameter_attr);
-	if (rc)
-		goto out_ipl_parm;
-	rc = sysfs_create_bin_file(&ipl_subsys.kset.kobj,
-				   &ipl_scp_data_attr);
-	if (!rc)
-		goto out;
-
-	sysfs_remove_bin_file(&ipl_subsys.kset.kobj, &ipl_parameter_attr);
-
-out_ipl_parm:
-	sysfs_remove_group(&ipl_subsys.kset.kobj, &ipl_fcp_attr_group);
-out:
-	return rc;
-}
-
-static int __init
-ipl_device_sysfs_register(void) {
-	int rc;
-
-	rc = firmware_register(&ipl_subsys);
-	if (rc)
-		goto out;
-
-	switch (get_ipl_type()) {
-	case ipl_type_ccw:
-		rc = sysfs_create_group(&ipl_subsys.kset.kobj,
-					&ipl_ccw_attr_group);
-		break;
-	case ipl_type_fcp:
-		rc = ipl_register_fcp_files();
-		break;
-	default:
-		rc = sysfs_create_group(&ipl_subsys.kset.kobj,
-					&ipl_unknown_attr_group);
-		break;
-	}
-
-	if (rc)
-		firmware_unregister(&ipl_subsys);
-out:
-	return rc;
-}
-
-__initcall(ipl_device_sysfs_register);

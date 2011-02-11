@@ -1,5 +1,5 @@
 #include <linux/module.h>
-
+#include <linux/dma-mapping.h>
 #include <asm/machvec.h>
 #include <asm/system.h>
 
@@ -12,14 +12,6 @@
 
 struct ia64_machine_vector ia64_mv;
 EXPORT_SYMBOL(ia64_mv);
-
-static __initdata const char *mvec_name;
-static __init int setup_mvec(char *s)
-{
-	mvec_name = s;
-	return 0;
-}
-early_param("machvec", setup_mvec);
 
 static struct ia64_machine_vector * __init
 lookup_machvec (const char *name)
@@ -35,13 +27,13 @@ lookup_machvec (const char *name)
 	return 0;
 }
 
-void
+void __init
 machvec_init (const char *name)
 {
 	struct ia64_machine_vector *mv;
 
 	if (!name)
-		name = mvec_name ? mvec_name : acpi_get_sysname();
+		name = acpi_get_sysname();
 	mv = lookup_machvec(name);
 	if (!mv)
 		panic("generic kernel failed to find machine vector for"
@@ -49,6 +41,23 @@ machvec_init (const char *name)
 
 	ia64_mv = *mv;
 	printk(KERN_INFO "booting generic kernel on platform %s\n", name);
+}
+
+void __init
+machvec_init_from_cmdline(const char *cmdline)
+{
+	char str[64];
+	const char *start;
+	char *end;
+
+	if (! (start = strstr(cmdline, "machvec=")) )
+		return machvec_init(NULL);
+
+	strlcpy(str, start + strlen("machvec="), sizeof(str));
+	if ( (end = strchr(str, ' ')) )
+		*end = '\0';
+
+	return machvec_init(str);
 }
 
 #endif /* CONFIG_IA64_GENERIC */
@@ -60,20 +69,22 @@ machvec_setup (char **arg)
 EXPORT_SYMBOL(machvec_setup);
 
 void
-machvec_timer_interrupt (int irq, void *dev_id, struct pt_regs *regs)
+machvec_timer_interrupt (int irq, void *dev_id)
 {
 }
 EXPORT_SYMBOL(machvec_timer_interrupt);
 
 void
-machvec_dma_sync_single (struct device *hwdev, dma_addr_t dma_handle, size_t size, int dir)
+machvec_dma_sync_single(struct device *hwdev, dma_addr_t dma_handle, size_t size,
+			enum dma_data_direction dir)
 {
 	mb();
 }
 EXPORT_SYMBOL(machvec_dma_sync_single);
 
 void
-machvec_dma_sync_sg (struct device *hwdev, struct scatterlist *sg, int n, int dir)
+machvec_dma_sync_sg(struct device *hwdev, struct scatterlist *sg, int n,
+		    enum dma_data_direction dir)
 {
 	mb();
 }

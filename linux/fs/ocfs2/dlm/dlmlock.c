@@ -30,7 +30,6 @@
 #include <linux/types.h>
 #include <linux/slab.h>
 #include <linux/highmem.h>
-#include <linux/utsname.h>
 #include <linux/init.h>
 #include <linux/sysctl.h>
 #include <linux/random.h>
@@ -53,6 +52,8 @@
 #define MLOG_MASK_PREFIX ML_DLM
 #include "cluster/masklog.h"
 
+static struct kmem_cache *dlm_lock_cache = NULL;
+
 static DEFINE_SPINLOCK(dlm_cookie_lock);
 static u64 dlm_next_cookie = 1;
 
@@ -63,6 +64,22 @@ static void dlm_init_lock(struct dlm_lock *newlock, int type,
 			  u8 node, u64 cookie);
 static void dlm_lock_release(struct kref *kref);
 static void dlm_lock_detach_lockres(struct dlm_lock *lock);
+
+int dlm_init_lock_cache(void)
+{
+	dlm_lock_cache = kmem_cache_create("o2dlm_lock",
+					   sizeof(struct dlm_lock),
+					   0, SLAB_HWCACHE_ALIGN, NULL);
+	if (dlm_lock_cache == NULL)
+		return -ENOMEM;
+	return 0;
+}
+
+void dlm_destroy_lock_cache(void)
+{
+	if (dlm_lock_cache)
+		kmem_cache_destroy(dlm_lock_cache);
+}
 
 /* Tell us whether we can grant a new lock request.
  * locking:
@@ -163,6 +180,10 @@ static enum dlm_status dlmlock_master(struct dlm_ctxt *dlm,
 			kick_thread = 1;
 		}
 	}
+	/* reduce the inflight count, this may result in the lockres
+	 * being purged below during calc_usage */
+	if (lock->ml.node == dlm->node_num)
+		dlm_lockres_drop_inflight_ref(dlm, res);
 
 	spin_unlock(&res->spinlock);
 	wake_up(&res->wq);
@@ -349,7 +370,7 @@ static void dlm_lock_release(struct kref *kref)
 		mlog(0, "freeing kernel-allocated lksb\n");
 		kfree(lock->lksb);
 	}
-	kfree(lock);
+	kmem_cache_free(dlm_lock_cache, lock);
 }
 
 /* associate a lock with it's lockres, getting a ref on the lockres */
@@ -408,13 +429,13 @@ struct dlm_lock * dlm_new_lock(int type, u8 node, u64 cookie,
 	struct dlm_lock *lock;
 	int kernel_allocated = 0;
 
-	lock = kcalloc(1, sizeof(*lock), GFP_NOFS);
+	lock = (struct dlm_lock *) kmem_cache_zalloc(dlm_lock_cache, GFP_NOFS);
 	if (!lock)
 		return NULL;
 
 	if (!lksb) {
 		/* zero memory only if kernel-allocated */
-		lksb = kcalloc(1, sizeof(*lksb), GFP_NOFS);
+		lksb = kzalloc(sizeof(*lksb), GFP_NOFS);
 		if (!lksb) {
 			kfree(lock);
 			return NULL;
@@ -437,7 +458,8 @@ struct dlm_lock * dlm_new_lock(int type, u8 node, u64 cookie,
  *   held on exit:  none
  * returns: DLM_NORMAL, DLM_SYSERR, DLM_IVLOCKID, DLM_NOTQUEUED
  */
-int dlm_create_lock_handler(struct o2net_msg *msg, u32 len, void *data)
+int dlm_create_lock_handler(struct o2net_msg *msg, u32 len, void *data,
+			    void **ret_data)
 {
 	struct dlm_ctxt *dlm = data;
 	struct dlm_create_lock *create = (struct dlm_create_lock *)msg->buf;
@@ -540,8 +562,8 @@ static inline void dlm_get_next_cookie(u8 node_num, u64 *cookie)
 
 enum dlm_status dlmlock(struct dlm_ctxt *dlm, int mode,
 			struct dlm_lockstatus *lksb, int flags,
-			const char *name, dlm_astlockfunc_t *ast, void *data,
-			dlm_bastlockfunc_t *bast)
+			const char *name, int namelen, dlm_astlockfunc_t *ast,
+			void *data, dlm_bastlockfunc_t *bast)
 {
 	enum dlm_status status;
 	struct dlm_lock_resource *res = NULL;
@@ -571,7 +593,7 @@ enum dlm_status dlmlock(struct dlm_ctxt *dlm, int mode,
 	recovery = (flags & LKM_RECOVERY);
 
 	if (recovery &&
-	    (!dlm_is_recovery_lock(name, strlen(name)) || convert) ) {
+	    (!dlm_is_recovery_lock(name, namelen) || convert) ) {
 		dlm_error(status);
 		goto error;
 	}
@@ -643,7 +665,7 @@ retry_convert:
 		}
 
 		status = DLM_IVBUFLEN;
-		if (strlen(name) > DLM_LOCKID_NAME_MAX || strlen(name) < 1) {
+		if (namelen > DLM_LOCKID_NAME_MAX || namelen < 1) {
 			dlm_error(status);
 			goto error;
 		}
@@ -659,7 +681,7 @@ retry_convert:
 			dlm_wait_for_recovery(dlm);
 
 		/* find or create the lock resource */
-		res = dlm_get_lock_resource(dlm, name, flags);
+		res = dlm_get_lock_resource(dlm, name, namelen, flags);
 		if (!res) {
 			status = DLM_IVLOCKID;
 			dlm_error(status);

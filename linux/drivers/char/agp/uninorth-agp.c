@@ -7,6 +7,7 @@
 #include <linux/pagemap.h>
 #include <linux/agp_backend.h>
 #include <linux/delay.h>
+#include <linux/vmalloc.h>
 #include <asm/uninorth.h>
 #include <asm/pci-bridge.h>
 #include <asm/prom.h>
@@ -27,32 +28,44 @@
 static int uninorth_rev;
 static int is_u3;
 
+#define DEFAULT_APERTURE_SIZE 256
+#define DEFAULT_APERTURE_STRING "256"
+static char *aperture = NULL;
 
 static int uninorth_fetch_size(void)
 {
-	int i;
-	u32 temp;
-	struct aper_size_info_32 *values;
+	int i, size = 0;
+	struct aper_size_info_32 *values =
+	    A_SIZE_32(agp_bridge->driver->aperture_sizes);
 
-	pci_read_config_dword(agp_bridge->dev, UNI_N_CFG_GART_BASE, &temp);
-	temp &= ~(0xfffff000);
-	values = A_SIZE_32(agp_bridge->driver->aperture_sizes);
+	if (aperture) {
+		char *save = aperture;
 
-	for (i = 0; i < agp_bridge->driver->num_aperture_sizes; i++) {
-		if (temp == values[i].size_value) {
-			agp_bridge->previous_size =
-			    agp_bridge->current_size = (void *) (values + i);
-			agp_bridge->aperture_size_idx = i;
-			return values[i].size;
+		size = memparse(aperture, &aperture) >> 20;
+		aperture = save;
+
+		for (i = 0; i < agp_bridge->driver->num_aperture_sizes; i++)
+			if (size == values[i].size)
+				break;
+
+		if (i == agp_bridge->driver->num_aperture_sizes) {
+			dev_err(&agp_bridge->dev->dev, "invalid aperture size, "
+				"using default\n");
+			size = 0;
+			aperture = NULL;
 		}
 	}
 
-	agp_bridge->previous_size =
-	    agp_bridge->current_size = (void *) (values + 1);
-	agp_bridge->aperture_size_idx = 1;
-	return values[1].size;
+	if (!size) {
+		for (i = 0; i < agp_bridge->driver->num_aperture_sizes; i++)
+			if (values[i].size == DEFAULT_APERTURE_SIZE)
+				break;
+	}
 
-	return 0;
+	agp_bridge->previous_size =
+	    agp_bridge->current_size = (void *)(values + i);
+	agp_bridge->aperture_size_idx = i;
+	return values[i].size;
 }
 
 static void uninorth_tlbflush(struct agp_memory *mem)
@@ -98,8 +111,8 @@ static int uninorth_configure(void)
 
 	current_size = A_SIZE_32(agp_bridge->current_size);
 
-	printk(KERN_INFO PFX "configuring for size idx: %d\n",
-	       current_size->size_value);
+	dev_info(&agp_bridge->dev->dev, "configuring for size idx: %d\n",
+		 current_size->size_value);
 
 	/* aperture size and gatt addr */
 	pci_write_config_dword(agp_bridge->dev,
@@ -125,7 +138,7 @@ static int uninorth_configure(void)
 	if (is_u3) {
 		pci_write_config_dword(agp_bridge->dev,
 				       UNI_N_CFG_GART_DUMMY_PAGE,
-				       agp_bridge->scratch_page_real >> 12);
+				       page_to_phys(agp_bridge->scratch_page_page) >> 12);
 	}
 
 	return 0;
@@ -136,13 +149,20 @@ static int uninorth_insert_memory(struct agp_memory *mem, off_t pg_start,
 {
 	int i, j, num_entries;
 	void *temp;
+	int mask_type;
 
 	temp = agp_bridge->current_size;
 	num_entries = A_SIZE_32(temp)->num_entries;
 
-	if (type != 0 || mem->type != 0)
+	if (type != mem->type)
+		return -EINVAL;
+
+	mask_type = agp_bridge->driver->agp_type_to_mask_type(agp_bridge, type);
+	if (mask_type != 0) {
 		/* We know nothing of memory types */
 		return -EINVAL;
+	}
+
 	if ((pg_start + mem->page_count) > num_entries)
 		return -EINVAL;
 
@@ -156,14 +176,12 @@ static int uninorth_insert_memory(struct agp_memory *mem, off_t pg_start,
 
 	for (i = 0, j = pg_start; i < mem->page_count; i++, j++) {
 		agp_bridge->gatt_table[j] =
-		    cpu_to_le32((mem->memory[i] & 0xFFFFF000UL) | 0x1UL);
-		flush_dcache_range((unsigned long)__va(mem->memory[i]),
-				   (unsigned long)__va(mem->memory[i])+0x1000);
+			cpu_to_le32((page_to_phys(mem->pages[i]) & 0xFFFFF000UL) | 0x1UL);
+		flush_dcache_range((unsigned long)__va(page_to_phys(mem->pages[i])),
+				   (unsigned long)__va(page_to_phys(mem->pages[i]))+0x1000);
 	}
 	(void)in_le32((volatile u32*)&agp_bridge->gatt_table[pg_start]);
 	mb();
-	flush_dcache_range((unsigned long)&agp_bridge->gatt_table[pg_start],
-		(unsigned long)&agp_bridge->gatt_table[pg_start + mem->page_count]);
 
 	uninorth_tlbflush(mem);
 	return 0;
@@ -174,32 +192,39 @@ static int u3_insert_memory(struct agp_memory *mem, off_t pg_start, int type)
 	int i, num_entries;
 	void *temp;
 	u32 *gp;
+	int mask_type;
 
 	temp = agp_bridge->current_size;
 	num_entries = A_SIZE_32(temp)->num_entries;
 
-	if (type != 0 || mem->type != 0)
+	if (type != mem->type)
+		return -EINVAL;
+
+	mask_type = agp_bridge->driver->agp_type_to_mask_type(agp_bridge, type);
+	if (mask_type != 0) {
 		/* We know nothing of memory types */
 		return -EINVAL;
+	}
+
 	if ((pg_start + mem->page_count) > num_entries)
 		return -EINVAL;
 
 	gp = (u32 *) &agp_bridge->gatt_table[pg_start];
 	for (i = 0; i < mem->page_count; ++i) {
 		if (gp[i]) {
-			printk("u3_insert_memory: entry 0x%x occupied (%x)\n",
-			       i, gp[i]);
+			dev_info(&agp_bridge->dev->dev,
+				 "u3_insert_memory: entry 0x%x occupied (%x)\n",
+				 i, gp[i]);
 			return -EBUSY;
 		}
 	}
 
 	for (i = 0; i < mem->page_count; i++) {
-		gp[i] = (mem->memory[i] >> PAGE_SHIFT) | 0x80000000UL;
-		flush_dcache_range((unsigned long)__va(mem->memory[i]),
-				   (unsigned long)__va(mem->memory[i])+0x1000);
+		gp[i] = (page_to_phys(mem->pages[i]) >> PAGE_SHIFT) | 0x80000000UL;
+		flush_dcache_range((unsigned long)__va(page_to_phys(mem->pages[i])),
+				   (unsigned long)__va(page_to_phys(mem->pages[i]))+0x1000);
 	}
 	mb();
-	flush_dcache_range((unsigned long)gp, (unsigned long) &gp[i]);
 	uninorth_tlbflush(mem);
 
 	return 0;
@@ -218,7 +243,6 @@ int u3_remove_memory(struct agp_memory *mem, off_t pg_start, int type)
 	for (i = 0; i < mem->page_count; ++i)
 		gp[i] = 0;
 	mb();
-	flush_dcache_range((unsigned long)gp, (unsigned long) &gp[i]);
 	uninorth_tlbflush(mem);
 
 	return 0;
@@ -246,7 +270,7 @@ static void uninorth_agp_enable(struct agp_bridge_data *bridge, u32 mode)
 
 	if ((uninorth_rev >= 0x30) && (uninorth_rev <= 0x33)) {
 		/*
-		 * We need to to set REQ_DEPTH to 7 for U3 versions 1.0, 2.1,
+		 * We need to set REQ_DEPTH to 7 for U3 versions 1.0, 2.1,
 		 * 2.2 and 2.3, Darwin do so.
 		 */
 		if ((command >> AGPSTAT_RQ_DEPTH_SHIFT) > 7)
@@ -266,15 +290,15 @@ static void uninorth_agp_enable(struct agp_bridge_data *bridge, u32 mode)
 				       &scratch);
 	} while ((scratch & PCI_AGP_COMMAND_AGP) == 0 && ++timeout < 1000);
 	if ((scratch & PCI_AGP_COMMAND_AGP) == 0)
-		printk(KERN_ERR PFX "failed to write UniNorth AGP"
-		       " command register\n");
+		dev_err(&bridge->dev->dev, "can't write UniNorth AGP "
+			"command register\n");
 
 	if (uninorth_rev >= 0x30) {
 		/* This is an AGP V3 */
-		agp_device_command(command, (status & AGPSTAT_MODE_3_0));
+		agp_device_command(command, (status & AGPSTAT_MODE_3_0) != 0);
 	} else {
 		/* AGP V2 */
-		agp_device_command(command, 0);
+		agp_device_command(command, false);
 	}
 
 	uninorth_tlbflush(NULL);
@@ -320,8 +344,8 @@ static int agp_uninorth_suspend(struct pci_dev *pdev)
 		pci_read_config_dword(device, agp + PCI_AGP_COMMAND, &cmd);
 		if (!(cmd & PCI_AGP_COMMAND_AGP))
 			continue;
-		printk("uninorth-agp: disabling AGP on device %s\n",
-				pci_name(device));
+		dev_info(&pdev->dev, "disabling AGP on device %s\n",
+			 pci_name(device));
 		cmd &= ~PCI_AGP_COMMAND_AGP;
 		pci_write_config_dword(device, agp + PCI_AGP_COMMAND, cmd);
 	}
@@ -331,8 +355,7 @@ static int agp_uninorth_suspend(struct pci_dev *pdev)
 	pci_read_config_dword(pdev, agp + PCI_AGP_COMMAND, &cmd);
 	bridge->dev_private_data = (void *)(long)cmd;
 	if (cmd & PCI_AGP_COMMAND_AGP) {
-		printk("uninorth-agp: disabling AGP on bridge %s\n",
-				pci_name(pdev));
+		dev_info(&pdev->dev, "disabling AGP on bridge\n");
 		cmd &= ~PCI_AGP_COMMAND_AGP;
 		pci_write_config_dword(pdev, agp + PCI_AGP_COMMAND, cmd);
 	}
@@ -372,6 +395,7 @@ static int uninorth_create_gatt_table(struct agp_bridge_data *bridge)
 	int i;
 	void *temp;
 	struct page *page;
+	struct page **pages;
 
 	/* We can't handle 2 level gatt's */
 	if (bridge->driver->size_type == LVL2_APER_SIZE)
@@ -400,21 +424,39 @@ static int uninorth_create_gatt_table(struct agp_bridge_data *bridge)
 	if (table == NULL)
 		return -ENOMEM;
 
+	pages = kmalloc((1 << page_order) * sizeof(struct page*), GFP_KERNEL);
+	if (pages == NULL)
+		goto enomem;
+
 	table_end = table + ((PAGE_SIZE * (1 << page_order)) - 1);
 
-	for (page = virt_to_page(table); page <= virt_to_page(table_end); page++)
+	for (page = virt_to_page(table), i = 0; page <= virt_to_page(table_end);
+	     page++, i++) {
 		SetPageReserved(page);
+		pages[i] = page;
+	}
 
 	bridge->gatt_table_real = (u32 *) table;
-	bridge->gatt_table = (u32 *)table;
-	bridge->gatt_bus_addr = virt_to_gart(table);
+	/* Need to clear out any dirty data still sitting in caches */
+	flush_dcache_range((unsigned long)table,
+			   (unsigned long)(table_end + PAGE_SIZE));
+	bridge->gatt_table = vmap(pages, (1 << page_order), 0, PAGE_KERNEL_NCG);
+
+	if (bridge->gatt_table == NULL)
+		goto enomem;
+
+	bridge->gatt_bus_addr = virt_to_phys(table);
 
 	for (i = 0; i < num_entries; i++)
 		bridge->gatt_table[i] = 0;
 
-	flush_dcache_range((unsigned long)table, (unsigned long)table_end);
-
 	return 0;
+
+enomem:
+	kfree(pages);
+	if (table)
+		free_pages((unsigned long)table, page_order);
+	return -ENOMEM;
 }
 
 static int uninorth_free_gatt_table(struct agp_bridge_data *bridge)
@@ -432,6 +474,7 @@ static int uninorth_free_gatt_table(struct agp_bridge_data *bridge)
 	 * from the table.
 	 */
 
+	vunmap(bridge->gatt_table);
 	table = (char *) bridge->gatt_table_real;
 	table_end = table + ((PAGE_SIZE * (1 << page_order)) - 1);
 
@@ -450,13 +493,11 @@ void null_cache_flush(void)
 
 /* Setup function */
 
-static struct aper_size_info_32 uninorth_sizes[7] =
+static const struct aper_size_info_32 uninorth_sizes[] =
 {
-#if 0 /* Not sure uninorth supports that high aperture sizes */
 	{256, 65536, 6, 64},
 	{128, 32768, 5, 32},
 	{64, 16384, 4, 16},
-#endif
 	{32, 8192, 3, 8},
 	{16, 4096, 2, 4},
 	{8, 2048, 1, 2},
@@ -467,7 +508,7 @@ static struct aper_size_info_32 uninorth_sizes[7] =
  * Not sure that u3 supports that high aperture sizes but it
  * would strange if it did not :)
  */
-static struct aper_size_info_32 u3_sizes[8] =
+static const struct aper_size_info_32 u3_sizes[] =
 {
 	{512, 131072, 7, 128},
 	{256, 65536, 6, 64},
@@ -479,11 +520,11 @@ static struct aper_size_info_32 u3_sizes[8] =
 	{4, 1024, 0, 1}
 };
 
-struct agp_bridge_driver uninorth_agp_driver = {
+const struct agp_bridge_driver uninorth_agp_driver = {
 	.owner			= THIS_MODULE,
 	.aperture_sizes		= (void *)uninorth_sizes,
 	.size_type		= U32_APER_SIZE,
-	.num_aperture_sizes	= 4,
+	.num_aperture_sizes	= ARRAY_SIZE(uninorth_sizes),
 	.configure		= uninorth_configure,
 	.fetch_size		= uninorth_fetch_size,
 	.cleanup		= uninorth_cleanup,
@@ -499,15 +540,18 @@ struct agp_bridge_driver uninorth_agp_driver = {
 	.alloc_by_type		= agp_generic_alloc_by_type,
 	.free_by_type		= agp_generic_free_by_type,
 	.agp_alloc_page		= agp_generic_alloc_page,
+	.agp_alloc_pages	= agp_generic_alloc_pages,
 	.agp_destroy_page	= agp_generic_destroy_page,
-	.cant_use_aperture	= 1,
+	.agp_destroy_pages	= agp_generic_destroy_pages,
+	.agp_type_to_mask_type  = agp_generic_type_to_mask_type,
+	.cant_use_aperture	= true,
 };
 
-struct agp_bridge_driver u3_agp_driver = {
+const struct agp_bridge_driver u3_agp_driver = {
 	.owner			= THIS_MODULE,
 	.aperture_sizes		= (void *)u3_sizes,
 	.size_type		= U32_APER_SIZE,
-	.num_aperture_sizes	= 8,
+	.num_aperture_sizes	= ARRAY_SIZE(u3_sizes),
 	.configure		= uninorth_configure,
 	.fetch_size		= uninorth_fetch_size,
 	.cleanup		= uninorth_cleanup,
@@ -523,9 +567,12 @@ struct agp_bridge_driver u3_agp_driver = {
 	.alloc_by_type		= agp_generic_alloc_by_type,
 	.free_by_type		= agp_generic_free_by_type,
 	.agp_alloc_page		= agp_generic_alloc_page,
+	.agp_alloc_pages	= agp_generic_alloc_pages,
 	.agp_destroy_page	= agp_generic_destroy_page,
-	.cant_use_aperture	= 1,
-	.needs_scratch_page	= 1,
+	.agp_destroy_pages	= agp_generic_destroy_pages,
+	.agp_type_to_mask_type  = agp_generic_type_to_mask_type,
+	.cant_use_aperture	= true,
+	.needs_scratch_page	= true,
 };
 
 static struct agp_device_ids uninorth_agp_device_ids[] __devinitdata = {
@@ -579,14 +626,14 @@ static int __devinit agp_uninorth_probe(struct pci_dev *pdev,
 	/* probe for known chipsets */
 	for (j = 0; devs[j].chipset_name != NULL; ++j) {
 		if (pdev->device == devs[j].device_id) {
-			printk(KERN_INFO PFX "Detected Apple %s chipset\n",
-			       devs[j].chipset_name);
+			dev_info(&pdev->dev, "Apple %s chipset\n",
+				 devs[j].chipset_name);
 			goto found;
 		}
 	}
 
-	printk(KERN_ERR PFX "Unsupported Apple chipset (device id: %04x).\n",
-		pdev->device);
+	dev_err(&pdev->dev, "unsupported Apple chipset [%04x/%04x]\n",
+		pdev->vendor, pdev->device);
 	return -ENODEV;
 
  found:
@@ -601,8 +648,8 @@ static int __devinit agp_uninorth_probe(struct pci_dev *pdev,
 		uninorth_node = of_find_node_by_name(NULL, "u3");
 	}
 	if (uninorth_node) {
-		int *revprop = (int *)
-			get_property(uninorth_node, "device-rev", NULL);
+		const int *revprop = of_get_property(uninorth_node,
+				"device-rev", NULL);
 		if (revprop != NULL)
 			uninorth_rev = *revprop & 0x3f;
 		of_node_put(uninorth_node);
@@ -682,6 +729,12 @@ static void __exit agp_uninorth_cleanup(void)
 
 module_init(agp_uninorth_init);
 module_exit(agp_uninorth_cleanup);
+
+module_param(aperture, charp, 0);
+MODULE_PARM_DESC(aperture,
+		 "Aperture size, must be power of two between 4MB and an\n"
+		 "\t\tupper limit specific to the UniNorth revision.\n"
+		 "\t\tDefault: " DEFAULT_APERTURE_STRING "M");
 
 MODULE_AUTHOR("Ben Herrenschmidt & Paul Mackerras");
 MODULE_LICENSE("GPL");

@@ -11,7 +11,6 @@
  * option) any later version.
  */
 
-#include <linux/config.h>
 #include <linux/stddef.h>
 #include <linux/kernel.h>
 #include <linux/init.h>
@@ -24,6 +23,7 @@
 #include <linux/delay.h>
 #include <linux/seq_file.h>
 #include <linux/root_dev.h>
+#include <linux/of_platform.h>
 
 #include <asm/system.h>
 #include <asm/atomic.h>
@@ -31,20 +31,26 @@
 #include <asm/io.h>
 #include <asm/machdep.h>
 #include <asm/ipic.h>
-#include <asm/bootinfo.h>
 #include <asm/irq.h>
 #include <asm/prom.h>
 #include <asm/udbg.h>
 #include <sysdev/fsl_soc.h>
+#include <sysdev/fsl_pci.h>
 
 #include "mpc83xx.h"
 
-#include <platforms/83xx/mpc834x_sys.h>
+static struct of_device_id __initdata mpc834x_itx_ids[] = {
+	{ .compatible = "fsl,pq2pro-localbus", },
+	{ .compatible = "simple-bus", },
+	{ .compatible = "gianfar", },
+	{},
+};
 
-#ifndef CONFIG_PCI
-unsigned long isa_io_base = 0;
-unsigned long isa_mem_base = 0;
-#endif
+static int __init mpc834x_itx_declare_of_platform_devices(void)
+{
+	return of_platform_bus_probe(NULL, mpc834x_itx_ids, NULL);
+}
+machine_device_initcall(mpc834x_itx, mpc834x_itx_declare_of_platform_devices);
 
 /* ************************************************************************
  *
@@ -53,36 +59,22 @@ unsigned long isa_mem_base = 0;
  */
 static void __init mpc834x_itx_setup_arch(void)
 {
+#ifdef CONFIG_PCI
 	struct device_node *np;
+#endif
 
 	if (ppc_md.progress)
 		ppc_md.progress("mpc834x_itx_setup_arch()", 0);
 
-	np = of_find_node_by_type(NULL, "cpu");
-	if (np != 0) {
-		unsigned int *fp =
-		    (int *)get_property(np, "clock-frequency", NULL);
-		if (fp != 0)
-			loops_per_jiffy = *fp / HZ;
-		else
-			loops_per_jiffy = 50000000 / HZ;
-		of_node_put(np);
-	}
 #ifdef CONFIG_PCI
-	for (np = NULL; (np = of_find_node_by_type(np, "pci")) != NULL;)
-		add_bridge(np);
-
-	ppc_md.pci_exclude_device = mpc83xx_exclude_device;
+	for_each_compatible_node(np, "pci", "fsl,mpc8349-pci")
+		mpc83xx_add_bridge(np);
 #endif
 
-#ifdef  CONFIG_ROOT_NFS
-	ROOT_DEV = Root_NFS;
-#else
-	ROOT_DEV = Root_HDA1;
-#endif
+	mpc834x_usb_cfg();
 }
 
-void __init mpc834x_itx_init_IRQ(void)
+static void __init mpc834x_itx_init_IRQ(void)
 {
 	struct device_node *np;
 
@@ -103,10 +95,9 @@ void __init mpc834x_itx_init_IRQ(void)
  */
 static int __init mpc834x_itx_probe(void)
 {
-	/* We always match for now, eventually we should look at the flat
-	   dev tree to ensure this is the board we are suppose to run on
-	*/
-	return 1;
+        unsigned long root = of_get_flat_dt_root();
+
+        return of_flat_dt_is_compatible(root, "MPC834xMITX");
 }
 
 define_machine(mpc834x_itx) {
@@ -119,7 +110,4 @@ define_machine(mpc834x_itx) {
 	.time_init		= mpc83xx_time_init,
 	.calibrate_decr		= generic_calibrate_decr,
 	.progress		= udbg_progress,
-#ifdef CONFIG_PCI
-	.pcibios_fixup		= mpc83xx_pcibios_fixup,
-#endif
 };

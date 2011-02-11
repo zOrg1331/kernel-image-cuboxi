@@ -12,7 +12,7 @@
  *	- Proteon 1392, 1392+
  *
  *  Maintainer(s):
- *    AF        Adam Fritzler           mid@auk.cx
+ *    AF        Adam Fritzler
  *    JF	Jochen Friedrich	jochen@scram.de
  *
  *  Modification History:
@@ -116,6 +116,8 @@ nodev:
 	return -ENODEV;
 }
 
+static struct net_device_ops proteon_netdev_ops __read_mostly;
+
 static int __init setup_card(struct net_device *dev, struct device *pdev)
 {
 	struct net_local *tp;
@@ -126,7 +128,6 @@ static int __init setup_card(struct net_device *dev, struct device *pdev)
 	if (!dev)
 		return -ENOMEM;
 
-	SET_MODULE_OWNER(dev);
 	if (dev->base_addr)	/* probe specific location */
 		err = proteon_probe1(dev, dev->base_addr);
 	else {
@@ -153,11 +154,8 @@ static int __init setup_card(struct net_device *dev, struct device *pdev)
 		
 	proteon_read_eeprom(dev);
 
-	printk(KERN_DEBUG "proteon.c:    Ring Station Address: ");
-	printk("%2.2x", dev->dev_addr[0]);
-	for (j = 1; j < 6; j++)
-		printk(":%2.2x", dev->dev_addr[j]);
-	printk("\n");
+	printk(KERN_DEBUG "proteon.c:    Ring Station Address: %pM\n",
+	       dev->dev_addr);
 		
 	tp = netdev_priv(dev);
 	tp->setnselout = proteon_setnselout_pins;
@@ -171,8 +169,7 @@ static int __init setup_card(struct net_device *dev, struct device *pdev)
 
 	tp->tmspriv = NULL;
 
-	dev->open = proteon_open;
-	dev->stop = tms380tr_close;
+	dev->netdev_ops = &proteon_netdev_ops;
 
 	if (dev->irq == 0)
 	{
@@ -287,7 +284,7 @@ static void proteon_read_eeprom(struct net_device *dev)
 		dev->dev_addr[i] = proteon_sifreadw(dev, SIFINC) >> 8;
 }
 
-unsigned short proteon_setnselout_pins(struct net_device *dev)
+static unsigned short proteon_setnselout_pins(struct net_device *dev)
 {
 	return 0;
 }
@@ -356,6 +353,10 @@ static int __init proteon_init(void)
 	struct platform_device *pdev;
 	int i, num = 0, err = 0;
 
+	proteon_netdev_ops = tms380tr_netdev_ops;
+	proteon_netdev_ops.ndo_open = proteon_open;
+	proteon_netdev_ops.ndo_stop = tms380tr_close;
+
 	err = platform_driver_register(&proteon_driver);
 	if (err)
 		return err;
@@ -370,6 +371,10 @@ static int __init proteon_init(void)
 		dev->dma = dma[i];
 		pdev = platform_device_register_simple("proteon",
 			i, NULL, 0);
+		if (IS_ERR(pdev)) {
+			free_netdev(dev);
+			continue;
+		}
 		err = setup_card(dev, &pdev->dev);
 		if (!err) {
 			proteon_dev[i] = pdev;
@@ -385,9 +390,10 @@ static int __init proteon_init(void)
 	/* Probe for cards. */
 	if (num == 0) {
 		printk(KERN_NOTICE "proteon.c: No cards found.\n");
-		return (-ENODEV);
+		platform_driver_unregister(&proteon_driver);
+		return -ENODEV;
 	}
-	return (0);
+	return 0;
 }
 
 static void __exit proteon_cleanup(void)

@@ -42,11 +42,10 @@
 #include <linux/proc_fs.h>
 #include <linux/module.h>
 #include <linux/smp.h>
-#include <linux/smp_lock.h>
 #include <linux/timer.h>
 #include <linux/vmalloc.h>
+#include <linux/semaphore.h>
 
-#include <asm/semaphore.h>
 #include <asm/sal.h>
 #include <asm/uaccess.h>
 
@@ -163,7 +162,7 @@ static DEFINE_SPINLOCK(data_saved_lock);
 /** salinfo_platform_oemdata - optional callback to decode oemdata from an error
  * record.
  * @sect_header: pointer to the start of the section to decode.
- * @oemdata: returns vmalloc area containing the decded output.
+ * @oemdata: returns vmalloc area containing the decoded output.
  * @oemdata_size: returns length of decoded output (strlen).
  *
  * Description: If user space asks for oem data to be decoded by the kernel
@@ -193,7 +192,7 @@ struct salinfo_platform_oemdata_parms {
 static void
 salinfo_work_to_do(struct salinfo_data *data)
 {
-	down_trylock(&data->mutex);
+	(void)(down_trylock(&data->mutex) ?: 0);
 	up(&data->mutex);
 }
 
@@ -266,6 +265,7 @@ salinfo_log_wakeup(int type, u8 *buffer, u64 size, int irqsafe)
 /* Check for outstanding MCA/INIT records every minute (arbitrary) */
 #define SALINFO_TIMER_DELAY (60*HZ)
 static struct timer_list salinfo_timer;
+extern void ia64_mlogbuf_dump(void);
 
 static void
 salinfo_timeout_check(struct salinfo_data *data)
@@ -283,6 +283,7 @@ salinfo_timeout_check(struct salinfo_data *data)
 static void
 salinfo_timeout (unsigned long arg)
 {
+	ia64_mlogbuf_dump();
 	salinfo_timeout_check(salinfo_data + SAL_INFO_TYPE_MCA);
 	salinfo_timeout_check(salinfo_data + SAL_INFO_TYPE_INIT);
 	salinfo_timer.expires = jiffies + SALINFO_TIMER_DELAY;
@@ -300,7 +301,7 @@ salinfo_event_open(struct inode *inode, struct file *file)
 static ssize_t
 salinfo_event_read(struct file *file, char __user *buffer, size_t count, loff_t *ppos)
 {
-	struct inode *inode = file->f_dentry->d_inode;
+	struct inode *inode = file->f_path.dentry->d_inode;
 	struct proc_dir_entry *entry = PDE(inode);
 	struct salinfo_data *data = entry->data;
 	char cmd[32];
@@ -316,7 +317,7 @@ retry:
 	}
 
 	n = data->cpu_check;
-	for (i = 0; i < NR_CPUS; i++) {
+	for (i = 0; i < nr_cpu_ids; i++) {
 		if (cpu_isset(n, data->cpu_event)) {
 			if (!cpu_online(n)) {
 				cpu_clear(n, data->cpu_event);
@@ -325,16 +326,18 @@ retry:
 			cpu = n;
 			break;
 		}
-		if (++n == NR_CPUS)
+		if (++n == nr_cpu_ids)
 			n = 0;
 	}
 
 	if (cpu == -1)
 		goto retry;
 
+	ia64_mlogbuf_dump();
+
 	/* for next read, start checking at next CPU */
 	data->cpu_check = cpu;
-	if (++data->cpu_check == NR_CPUS)
+	if (++data->cpu_check == nr_cpu_ids)
 		data->cpu_check = 0;
 
 	snprintf(cmd, sizeof(cmd), "read %d\n", cpu);
@@ -348,7 +351,7 @@ retry:
 	return size;
 }
 
-static struct file_operations salinfo_event_fops = {
+static const struct file_operations salinfo_event_fops = {
 	.open  = salinfo_event_open,
 	.read  = salinfo_event_read,
 };
@@ -460,7 +463,7 @@ retry:
 static ssize_t
 salinfo_log_read(struct file *file, char __user *buffer, size_t count, loff_t *ppos)
 {
-	struct inode *inode = file->f_dentry->d_inode;
+	struct inode *inode = file->f_path.dentry->d_inode;
 	struct proc_dir_entry *entry = PDE(inode);
 	struct salinfo_data *data = entry->data;
 	u8 *buf;
@@ -521,7 +524,7 @@ salinfo_log_clear(struct salinfo_data *data, int cpu)
 static ssize_t
 salinfo_log_write(struct file *file, const char __user *buffer, size_t count, loff_t *ppos)
 {
-	struct inode *inode = file->f_dentry->d_inode;
+	struct inode *inode = file->f_path.dentry->d_inode;
 	struct proc_dir_entry *entry = PDE(inode);
 	struct salinfo_data *data = entry->data;
 	char cmd[32];
@@ -564,15 +567,14 @@ salinfo_log_write(struct file *file, const char __user *buffer, size_t count, lo
 	return count;
 }
 
-static struct file_operations salinfo_data_fops = {
+static const struct file_operations salinfo_data_fops = {
 	.open    = salinfo_log_open,
 	.release = salinfo_log_release,
 	.read    = salinfo_log_read,
 	.write   = salinfo_log_write,
 };
 
-#ifdef	CONFIG_HOTPLUG_CPU
-static int __devinit
+static int __cpuinit
 salinfo_cpu_callback(struct notifier_block *nb, unsigned long action, void *hcpu)
 {
 	unsigned int i, cpu = (unsigned long)hcpu;
@@ -580,6 +582,7 @@ salinfo_cpu_callback(struct notifier_block *nb, unsigned long action, void *hcpu
 	struct salinfo_data *data;
 	switch (action) {
 	case CPU_ONLINE:
+	case CPU_ONLINE_FROZEN:
 		spin_lock_irqsave(&data_saved_lock, flags);
 		for (i = 0, data = salinfo_data;
 		     i < ARRAY_SIZE(salinfo_data);
@@ -590,6 +593,7 @@ salinfo_cpu_callback(struct notifier_block *nb, unsigned long action, void *hcpu
 		spin_unlock_irqrestore(&data_saved_lock, flags);
 		break;
 	case CPU_DEAD:
+	case CPU_DEAD_FROZEN:
 		spin_lock_irqsave(&data_saved_lock, flags);
 		for (i = 0, data = salinfo_data;
 		     i < ARRAY_SIZE(salinfo_data);
@@ -611,12 +615,11 @@ salinfo_cpu_callback(struct notifier_block *nb, unsigned long action, void *hcpu
 	return NOTIFY_OK;
 }
 
-static struct notifier_block salinfo_cpu_notifier =
+static struct notifier_block salinfo_cpu_notifier __cpuinitdata =
 {
 	.notifier_call = salinfo_cpu_callback,
 	.priority = 0,
 };
-#endif	/* CONFIG_HOTPLUG_CPU */
 
 static int __init
 salinfo_init(void)
@@ -645,18 +648,16 @@ salinfo_init(void)
 		if (!dir)
 			continue;
 
-		entry = create_proc_entry("event", S_IRUSR, dir);
+		entry = proc_create_data("event", S_IRUSR, dir,
+					 &salinfo_event_fops, data);
 		if (!entry)
 			continue;
-		entry->data = data;
-		entry->proc_fops = &salinfo_event_fops;
 		*sdir++ = entry;
 
-		entry = create_proc_entry("data", S_IRUSR | S_IWUSR, dir);
+		entry = proc_create_data("data", S_IRUSR | S_IWUSR, dir,
+					 &salinfo_data_fops, data);
 		if (!entry)
 			continue;
-		entry->data = data;
-		entry->proc_fops = &salinfo_data_fops;
 		*sdir++ = entry;
 
 		/* we missed any events before now */

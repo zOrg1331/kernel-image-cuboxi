@@ -4,6 +4,7 @@
 #include <linux/serial_core.h>
 #include <linux/console.h>
 #include <linux/pci.h>
+#include <linux/of_device.h>
 #include <asm/io.h>
 #include <asm/mmu.h>
 #include <asm/prom.h>
@@ -31,6 +32,17 @@ static struct legacy_serial_info {
 	int				irq_check_parent;
 	phys_addr_t			taddr;
 } legacy_serial_infos[MAX_LEGACY_SERIAL_PORTS];
+
+static struct __initdata of_device_id legacy_serial_parents[] = {
+	{.type = "soc",},
+	{.type = "tsi-bridge",},
+	{.type = "opb", },
+	{.compatible = "ibm,opb",},
+	{.compatible = "simple-bus",},
+	{.compatible = "wrs,epld-localbus",},
+	{},
+};
+
 static unsigned int legacy_serial_count;
 static int legacy_serial_console = -1;
 
@@ -39,16 +51,17 @@ static int __init add_legacy_port(struct device_node *np, int want_index,
 				  phys_addr_t taddr, unsigned long irq,
 				  upf_t flags, int irq_check_parent)
 {
-	u32 *clk, *spd, clock = BASE_BAUD * 16;
+	const u32 *clk, *spd;
+	u32 clock = BASE_BAUD * 16;
 	int index;
 
 	/* get clock freq. if present */
-	clk = (u32 *)get_property(np, "clock-frequency", NULL);
+	clk = of_get_property(np, "clock-frequency", NULL);
 	if (clk && *clk)
 		clock = *clk;
 
 	/* get default speed if present */
-	spd = (u32 *)get_property(np, "current-speed", NULL);
+	spd = of_get_property(np, "current-speed", NULL);
 
 	/* If we have a location index, then try to use it */
 	if (want_index >= 0 && want_index < MAX_LEGACY_SERIAL_PORTS)
@@ -113,14 +126,24 @@ static int __init add_legacy_soc_port(struct device_node *np,
 				      struct device_node *soc_dev)
 {
 	u64 addr;
-	u32 *addrp;
-	upf_t flags = UPF_BOOT_AUTOCONF | UPF_SKIP_TEST | UPF_SHARE_IRQ;
+	const u32 *addrp;
+	upf_t flags = UPF_BOOT_AUTOCONF | UPF_SKIP_TEST | UPF_SHARE_IRQ
+		| UPF_FIXED_PORT;
 	struct device_node *tsi = of_get_parent(np);
 
 	/* We only support ports that have a clock frequency properly
 	 * encoded in the device-tree.
 	 */
-	if (get_property(np, "clock-frequency", NULL) == NULL)
+	if (of_get_property(np, "clock-frequency", NULL) == NULL)
+		return -1;
+
+	/* if reg-shift or offset, don't try to use it */
+	if ((of_get_property(np, "reg-shift", NULL) != NULL) ||
+		(of_get_property(np, "reg-offset", NULL) != NULL))
+		return -1;
+
+	/* if rtas uses this device, don't try to use it as well */
+	if (of_get_property(np, "used-by-rtas", NULL) != NULL)
 		return -1;
 
 	/* Get the address */
@@ -144,15 +167,15 @@ static int __init add_legacy_soc_port(struct device_node *np,
 static int __init add_legacy_isa_port(struct device_node *np,
 				      struct device_node *isa_brg)
 {
-	u32 *reg;
-	char *typep;
+	const u32 *reg;
+	const char *typep;
 	int index = -1;
 	u64 taddr;
 
 	DBG(" -> add_legacy_isa_port(%s)\n", np->full_name);
 
 	/* Get the ISA port number */
-	reg = (u32 *)get_property(np, "reg", NULL);
+	reg = of_get_property(np, "reg", NULL);
 	if (reg == NULL)
 		return -1;
 
@@ -163,7 +186,7 @@ static int __init add_legacy_isa_port(struct device_node *np,
 	/* Now look for an "ibm,aix-loc" property that gives us ordering
 	 * if any...
 	 */
-	typep = (char *)get_property(np, "ibm,aix-loc", NULL);
+	typep = of_get_property(np, "ibm,aix-loc", NULL);
 
 	/* If we have a location index, then use it */
 	if (typep && *typep == 'S')
@@ -188,7 +211,7 @@ static int __init add_legacy_pci_port(struct device_node *np,
 				      struct device_node *pci_dev)
 {
 	u64 addr, base;
-	u32 *addrp;
+	const u32 *addrp;
 	unsigned int flags;
 	int iotype, index = -1, lindex = 0;
 
@@ -201,7 +224,7 @@ static int __init add_legacy_pci_port(struct device_node *np,
 	 * compatible UARTs on PCI need all sort of quirks (port offsets
 	 * etc...) that this code doesn't know about
 	 */
-	if (get_property(np, "clock-frequency", NULL) == NULL)
+	if (of_get_property(np, "clock-frequency", NULL) == NULL)
 		return -1;
 
 	/* Get the PCI address. Assume BAR 0 */
@@ -227,7 +250,7 @@ static int __init add_legacy_pci_port(struct device_node *np,
 	 * we get to their "reg" property
 	 */
 	if (np != pci_dev) {
-		u32 *reg = (u32 *)get_property(np, "reg", NULL);
+		const u32 *reg = of_get_property(np, "reg", NULL);
 		if (reg && (*reg < 4))
 			index = lindex = *reg;
 	}
@@ -238,9 +261,9 @@ static int __init add_legacy_pci_port(struct device_node *np,
 	 * doesn't work for these settings, you'll have to add your own special
 	 * cases here
 	 */
-	if (device_is_compatible(pci_dev, "pci13a8,152") ||
-	    device_is_compatible(pci_dev, "pci13a8,154") ||
-	    device_is_compatible(pci_dev, "pci13a8,158")) {
+	if (of_device_is_compatible(pci_dev, "pci13a8,152") ||
+	    of_device_is_compatible(pci_dev, "pci13a8,154") ||
+	    of_device_is_compatible(pci_dev, "pci13a8,158")) {
 		addr += 0x200 * lindex;
 		base += 0x200 * lindex;
 	} else {
@@ -285,13 +308,13 @@ static void __init setup_legacy_serial_console(int console)
 void __init find_legacy_serial_ports(void)
 {
 	struct device_node *np, *stdout = NULL;
-	char *path;
+	const char *path;
 	int index;
 
 	DBG(" -> find_legacy_serial_port()\n");
 
 	/* Now find out if one of these is out firmware console */
-	path = (char *)get_property(of_chosen, "linux,stdout-path", NULL);
+	path = of_get_property(of_chosen, "linux,stdout-path", NULL);
 	if (path != NULL) {
 		stdout = of_find_node_by_path(path);
 		if (stdout)
@@ -300,19 +323,21 @@ void __init find_legacy_serial_ports(void)
 		DBG(" no linux,stdout-path !\n");
 	}
 
-	/* First fill our array with SOC ports */
-	for (np = NULL; (np = of_find_compatible_node(np, "serial", "ns16550")) != NULL;) {
-		struct device_node *soc = of_get_parent(np);
-		if (soc && !strcmp(soc->type, "soc")) {
+	/* Iterate over all the 16550 ports, looking for known parents */
+	for_each_compatible_node(np, "serial", "ns16550") {
+		struct device_node *parent = of_get_parent(np);
+		if (!parent)
+			continue;
+		if (of_match_node(legacy_serial_parents, parent) != NULL) {
 			index = add_legacy_soc_port(np, np);
 			if (index >= 0 && np == stdout)
 				legacy_serial_console = index;
 		}
-		of_node_put(soc);
+		of_node_put(parent);
 	}
 
-	/* First fill our array with ISA ports */
-	for (np = NULL; (np = of_find_node_by_type(np, "serial"));) {
+	/* Next, fill our array with ISA ports */
+	for_each_node_by_type(np, "serial") {
 		struct device_node *isa = of_get_parent(np);
 		if (isa && !strcmp(isa->name, "isa")) {
 			index = add_legacy_isa_port(np, isa);
@@ -320,17 +345,6 @@ void __init find_legacy_serial_ports(void)
 				legacy_serial_console = index;
 		}
 		of_node_put(isa);
-	}
-
-	/* First fill our array with tsi-bridge ports */
-	for (np = NULL; (np = of_find_compatible_node(np, "serial", "ns16550")) != NULL;) {
-		struct device_node *tsi = of_get_parent(np);
-		if (tsi && !strcmp(tsi->type, "tsi-bridge")) {
-			index = add_legacy_soc_port(np, np);
-			if (index >= 0 && np == stdout)
-				legacy_serial_console = index;
-		}
-		of_node_put(tsi);
 	}
 
 #ifdef CONFIG_PCI
@@ -348,11 +362,11 @@ void __init find_legacy_serial_ports(void)
 		/* Check for known pciclass, and also check wether we have
 		 * a device with child nodes for ports or not
 		 */
-		if (device_is_compatible(np, "pciclass,0700") ||
-		    device_is_compatible(np, "pciclass,070002"))
+		if (of_device_is_compatible(np, "pciclass,0700") ||
+		    of_device_is_compatible(np, "pciclass,070002"))
 			pci = np;
-		else if (device_is_compatible(parent, "pciclass,0700") ||
-			 device_is_compatible(parent, "pciclass,070002"))
+		else if (of_device_is_compatible(parent, "pciclass,0700") ||
+			 of_device_is_compatible(parent, "pciclass,070002"))
 			pci = parent;
 		else {
 			of_node_put(parent);
@@ -456,7 +470,7 @@ static int __init serial_dev_init(void)
 
 	/*
 	 * Before we register the platfrom serial devices, we need
-	 * to fixup their interrutps and their IO ports.
+	 * to fixup their interrupts and their IO ports.
 	 */
 	DBG("Fixing serial ports interrupts and IO ports ...\n");
 
@@ -476,28 +490,28 @@ static int __init serial_dev_init(void)
 
 	return platform_device_register(&serial_device);
 }
-arch_initcall(serial_dev_init);
+device_initcall(serial_dev_init);
 
 
+#ifdef CONFIG_SERIAL_8250_CONSOLE
 /*
  * This is called very early, as part of console_init() (typically just after
  * time_init()). This function is respondible for trying to find a good
  * default console on serial ports. It tries to match the open firmware
- * default output with one of the available serial console drivers, either
- * one of the platform serial ports that have been probed earlier by
- * find_legacy_serial_ports() or some more platform specific ones.
+ * default output with one of the available serial console drivers that have
+ * been probed earlier by find_legacy_serial_ports()
  */
 static int __init check_legacy_serial_console(void)
 {
 	struct device_node *prom_stdout = NULL;
-	int speed = 0, offset = 0;
-	char *name;
-	u32 *spd;
+	int i, speed = 0, offset = 0;
+	const char *name;
+	const u32 *spd;
 
 	DBG(" -> check_legacy_serial_console()\n");
 
 	/* The user has requested a console so this is already set up. */
-	if (strstr(saved_command_line, "console=")) {
+	if (strstr(boot_command_line, "console=")) {
 		DBG(" console was specified !\n");
 		return -EBUSY;
 	}
@@ -513,7 +527,7 @@ static int __init check_legacy_serial_console(void)
 	}
 	/* We are getting a weird phandle from OF ... */
 	/* ... So use the full path instead */
-	name = (char *)get_property(of_chosen, "linux,stdout-path", NULL);
+	name = of_get_property(of_chosen, "linux,stdout-path", NULL);
 	if (name == NULL) {
 		DBG(" no linux,stdout-path !\n");
 		return -ENODEV;
@@ -525,40 +539,29 @@ static int __init check_legacy_serial_console(void)
 	}
 	DBG("stdout is %s\n", prom_stdout->full_name);
 
-	name = (char *)get_property(prom_stdout, "name", NULL);
+	name = of_get_property(prom_stdout, "name", NULL);
 	if (!name) {
 		DBG(" stdout package has no name !\n");
 		goto not_found;
 	}
-	spd = (u32 *)get_property(prom_stdout, "current-speed", NULL);
+	spd = of_get_property(prom_stdout, "current-speed", NULL);
 	if (spd)
 		speed = *spd;
 
-	if (0)
-		;
-#ifdef CONFIG_SERIAL_8250_CONSOLE
-	else if (strcmp(name, "serial") == 0) {
-		int i;
-		/* Look for it in probed array */
-		for (i = 0; i < legacy_serial_count; i++) {
-			if (prom_stdout != legacy_serial_infos[i].np)
-				continue;
-			offset = i;
-			speed = legacy_serial_infos[i].speed;
-			break;
-		}
-		if (i >= legacy_serial_count)
-			goto not_found;
-	}
-#endif /* CONFIG_SERIAL_8250_CONSOLE */
-#ifdef CONFIG_SERIAL_PMACZILOG_CONSOLE
-	else if (strcmp(name, "ch-a") == 0)
-		offset = 0;
-	else if (strcmp(name, "ch-b") == 0)
-		offset = 1;
-#endif /* CONFIG_SERIAL_PMACZILOG_CONSOLE */
-	else
+	if (strcmp(name, "serial") != 0)
 		goto not_found;
+
+	/* Look for it in probed array */
+	for (i = 0; i < legacy_serial_count; i++) {
+		if (prom_stdout != legacy_serial_infos[i].np)
+			continue;
+		offset = i;
+		speed = legacy_serial_infos[i].speed;
+		break;
+	}
+	if (i >= legacy_serial_count)
+		goto not_found;
+
 	of_node_put(prom_stdout);
 
 	DBG("Found serial console at ttyS%d\n", offset);
@@ -577,3 +580,4 @@ static int __init check_legacy_serial_console(void)
 }
 console_initcall(check_legacy_serial_console);
 
+#endif /* CONFIG_SERIAL_8250_CONSOLE */

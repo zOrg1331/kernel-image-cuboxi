@@ -78,7 +78,7 @@ static int __devinit start_contest(int cmd, long offset, int num)
 {
 	int i, score=0;
 	u64 tb;
-	long mark;
+	u64 mark;
 
 	tbsync->cmd = cmd;
 
@@ -113,24 +113,23 @@ void __devinit smp_generic_give_timebase(void)
 {
 	int i, score, score2, old, min=0, max=5000, offset=1000;
 
-	printk("Synchronizing timebase\n");
+	pr_debug("Software timebase sync\n");
 
 	/* if this fails then this kernel won't work anyway... */
-	tbsync = kmalloc( sizeof(*tbsync), GFP_KERNEL );
-	memset( tbsync, 0, sizeof(*tbsync) );
+	tbsync = kzalloc( sizeof(*tbsync), GFP_KERNEL );
 	mb();
 	running = 1;
 
 	while (!tbsync->ack)
 		barrier();
 
-	printk("Got ack\n");
+	pr_debug("Got ack\n");
 
 	/* binary search */
 	for (old = -1; old != offset ; offset = (min+max) / 2) {
 		score = start_contest(kSetAndTest, offset, NUM_ITER);
 
-		printk("score %d, offset %d\n", score, offset );
+		pr_debug("score %d, offset %d\n", score, offset );
 
 		if( score > 0 )
 			max = offset;
@@ -141,8 +140,8 @@ void __devinit smp_generic_give_timebase(void)
 	score = start_contest(kSetAndTest, min, NUM_ITER);
 	score2 = start_contest(kSetAndTest, max, NUM_ITER);
 
-	printk("Min %d (score %d), Max %d (score %d)\n",
-	       min, score, max, score2);
+	pr_debug("Min %d (score %d), Max %d (score %d)\n",
+		 min, score, max, score2);
 	score = abs(score);
 	score2 = abs(score2);
 	offset = (score < score2) ? min : max;
@@ -156,7 +155,7 @@ void __devinit smp_generic_give_timebase(void)
 		if (score2 <= score || score2 < 20)
 			break;
 	}
-	printk("Final offset: %d (%d/%d)\n", offset, score2, NUM_ITER );
+	pr_debug("Final offset: %d (%d/%d)\n", offset, score2, NUM_ITER );
 
 	/* exiting */
 	tbsync->cmd = kExit;

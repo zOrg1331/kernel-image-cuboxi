@@ -6,8 +6,6 @@
  *  Derived from drivers/mtd/nand/edb7312.c
  *
  *
- * $Id: ppchameleonevb.c,v 1.7 2005/11/07 11:14:31 gleixner Exp $
- *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
  * published by the Free Software Foundation.
@@ -81,7 +79,7 @@ __setup("ppchameleonevb_fio_pbase=", ppchameleonevb_fio_pbase);
  */
 static struct mtd_partition partition_info_hi[] = {
       { .name = "PPChameleon HI Nand Flash",
-	offset = 0,
+	.offset = 0,
 	.size = 128 * 1024 * 1024
       }
 };
@@ -276,6 +274,7 @@ static int __init ppchameleonevb_init(void)
 	/* Scan to find existence of the device (it could not be mounted) */
 	if (nand_scan(ppchameleon_mtd, 1)) {
 		iounmap((void *)ppchameleon_fio_base);
+		ppchameleon_fio_base = NULL;
 		kfree(ppchameleon_mtd);
 		goto nand_evb_init;
 	}
@@ -314,6 +313,8 @@ static int __init ppchameleonevb_init(void)
 	ppchameleonevb_mtd = kmalloc(sizeof(struct mtd_info) + sizeof(struct nand_chip), GFP_KERNEL);
 	if (!ppchameleonevb_mtd) {
 		printk("Unable to allocate PPChameleonEVB NAND MTD device structure.\n");
+		if (ppchameleon_fio_base)
+			iounmap(ppchameleon_fio_base);
 		return -ENOMEM;
 	}
 
@@ -322,6 +323,8 @@ static int __init ppchameleonevb_init(void)
 	if (!ppchameleonevb_fio_base) {
 		printk("ioremap PPChameleonEVB NAND flash failed\n");
 		kfree(ppchameleonevb_mtd);
+		if (ppchameleon_fio_base)
+			iounmap(ppchameleon_fio_base);
 		return -EIO;
 	}
 
@@ -378,6 +381,8 @@ static int __init ppchameleonevb_init(void)
 	if (nand_scan(ppchameleonevb_mtd, 1)) {
 		iounmap((void *)ppchameleonevb_fio_base);
 		kfree(ppchameleonevb_mtd);
+		if (ppchameleon_fio_base)
+			iounmap(ppchameleon_fio_base);
 		return -ENXIO;
 	}
 #ifdef CONFIG_MTD_PARTITIONS
@@ -417,9 +422,9 @@ static void __exit ppchameleonevb_cleanup(void)
 
 	/* Release iomaps */
 	this = (struct nand_chip *) &ppchameleon_mtd[1];
-	iounmap((void *) this->IO_ADDR_R;
+	iounmap((void *) this->IO_ADDR_R);
 	this = (struct nand_chip *) &ppchameleonevb_mtd[1];
-	iounmap((void *) this->IO_ADDR_R;
+	iounmap((void *) this->IO_ADDR_R);
 
 	/* Free the MTD device structure */
 	kfree (ppchameleon_mtd);

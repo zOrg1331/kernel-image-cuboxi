@@ -25,7 +25,7 @@
  *  To do:
  *    1. Multicast support.
  *
- *  Initial 2.5 cleanup Alan Cox <alan@redhat.com>  2002/10/28
+ *  Initial 2.5 cleanup Alan Cox <alan@lxorguk.ukuu.org.uk>  2002/10/28
  */
 
 #include <linux/module.h>
@@ -41,7 +41,6 @@
 #include <linux/time.h>
 #include <linux/errno.h>
 #include <linux/init.h>
-#include <linux/pci.h>
 #include <linux/mca-legacy.h>
 #include <linux/delay.h>
 #include <linux/netdevice.h>
@@ -49,6 +48,7 @@
 #include <linux/skbuff.h>
 #include <linux/trdevice.h>
 #include <linux/bitops.h>
+#include <linux/firmware.h>
 
 #include <asm/system.h>
 #include <asm/io.h>
@@ -60,9 +60,9 @@
 #endif
 
 #include "smctr.h"               /* Our Stuff */
-#include "smctr_firmware.h"      /* SMC adapter firmware */
 
-static char version[] __initdata = KERN_INFO "smctr.c: v1.4 7/12/00 by jschlst@samba.org\n";
+static const char version[] __initdata =
+	KERN_INFO "smctr.c: v1.4 7/12/00 by jschlst@samba.org\n";
 static const char cardname[] = "smctr";
 
 
@@ -104,7 +104,8 @@ static int smctr_clear_trc_reset(int ioaddr);
 static int smctr_close(struct net_device *dev);
 
 /* D */
-static int smctr_decode_firmware(struct net_device *dev);
+static int smctr_decode_firmware(struct net_device *dev,
+				 const struct firmware *fw);
 static int smctr_disable_16bit(struct net_device *dev);
 static int smctr_disable_adapter_ctrl_store(struct net_device *dev);
 static int smctr_disable_bic_int(struct net_device *dev);
@@ -123,7 +124,6 @@ static unsigned int smctr_get_num_rx_bdbs(struct net_device *dev);
 static int smctr_get_physical_drop_number(struct net_device *dev);
 static __u8 *smctr_get_rx_pointer(struct net_device *dev, short queue);
 static int smctr_get_station_id(struct net_device *dev);
-static struct net_device_stats *smctr_get_stats(struct net_device *dev);
 static FCBlock *smctr_get_tx_fcb(struct net_device *dev, __u16 queue,
         __u16 bytes_count);
 static int smctr_get_upstream_neighbor_addr(struct net_device *dev);
@@ -141,7 +141,7 @@ static int smctr_init_shared_memory(struct net_device *dev);
 static int smctr_init_tx_bdbs(struct net_device *dev);
 static int smctr_init_tx_fcbs(struct net_device *dev);
 static int smctr_internal_self_test(struct net_device *dev);
-static irqreturn_t smctr_interrupt(int irq, void *dev_id, struct pt_regs *regs);
+static irqreturn_t smctr_interrupt(int irq, void *dev_id);
 static int smctr_issue_enable_int_cmd(struct net_device *dev,
         __u16 interrupt_enable_mask);
 static int smctr_issue_int_ack(struct net_device *dev, __u16 iack_code,
@@ -234,7 +234,8 @@ static int smctr_rx_frame(struct net_device *dev);
 
 /* S */
 static int smctr_send_dat(struct net_device *dev);
-static int smctr_send_packet(struct sk_buff *skb, struct net_device *dev);
+static netdev_tx_t smctr_send_packet(struct sk_buff *skb,
+					   struct net_device *dev);
 static int smctr_send_lobe_media_test(struct net_device *dev);
 static int smctr_send_rpt_addr(struct net_device *dev, MAC_HEADER *rmf,
         __u16 correlator);
@@ -749,7 +750,8 @@ static int smctr_close(struct net_device *dev)
         return (0);
 }
 
-static int smctr_decode_firmware(struct net_device *dev)
+static int smctr_decode_firmware(struct net_device *dev,
+				 const struct firmware *fw)
 {
         struct net_local *tp = netdev_priv(dev);
         short bit = 0x80, shift = 12;
@@ -763,10 +765,10 @@ static int smctr_decode_firmware(struct net_device *dev)
         if(smctr_debug > 10)
                 printk(KERN_DEBUG "%s: smctr_decode_firmware\n", dev->name);
 
-        weight  = *(long *)(tp->ptr_ucode + WEIGHT_OFFSET);
-        tsize   = *(__u8 *)(tp->ptr_ucode + TREE_SIZE_OFFSET);
-        tree    = (DECODE_TREE_NODE *)(tp->ptr_ucode + TREE_OFFSET);
-        ucode   = (__u8 *)(tp->ptr_ucode + TREE_OFFSET
+        weight  = *(long *)(fw->data + WEIGHT_OFFSET);
+        tsize   = *(__u8 *)(fw->data + TREE_SIZE_OFFSET);
+        tree    = (DECODE_TREE_NODE *)(fw->data + TREE_OFFSET);
+        ucode   = (__u8 *)(fw->data + TREE_OFFSET
                         + (tsize * sizeof(DECODE_TREE_NODE)));
         mem     = (__u16 *)(tp->ram_access);
 
@@ -1980,7 +1982,7 @@ static int smctr_internal_self_test(struct net_device *dev)
 /*
  * The typical workload of the driver: Handle the network interface interrupts.
  */
-static irqreturn_t smctr_interrupt(int irq, void *dev_id, struct pt_regs *regs)
+static irqreturn_t smctr_interrupt(int irq, void *dev_id)
 {
         struct net_device *dev = dev_id;
         struct net_local *tp;
@@ -1990,15 +1992,8 @@ static irqreturn_t smctr_interrupt(int irq, void *dev_id, struct pt_regs *regs)
         __u8 isb_type, isb_subtype;
         __u16 isb_index;
 
-        if(dev == NULL)
-        {
-                printk(KERN_CRIT "%s: irq %d for unknown device.\n", dev->name, irq);
-                return IRQ_NONE;
-        }
-
         ioaddr = dev->base_addr;
         tp = netdev_priv(dev);
-        
 
         if(tp->status == NOT_INITIALIZED)
                 return IRQ_NONE;
@@ -2318,7 +2313,7 @@ static irqreturn_t smctr_interrupt(int irq, void *dev_id, struct pt_regs *regs)
                                                 && (tp->acb_head->subcmd
                                                 == RW_TRC_STATUS_BLOCK))
                                         {
-                                                if(tp->ptr_bcn_type != 0)
+                                                if(tp->ptr_bcn_type)
                                                 {
                                                         *(tp->ptr_bcn_type)
                                                                 = (__u32)((SBlock *)tp->misc_command_data)->BCN_Type;
@@ -2971,34 +2966,44 @@ static int smctr_link_tx_fcbs_to_bdbs(struct net_device *dev)
 static int smctr_load_firmware(struct net_device *dev)
 {
         struct net_local *tp = netdev_priv(dev);
+	const struct firmware *fw;
         __u16 i, checksum = 0;
         int err = 0;
 
         if(smctr_debug > 10)
                 printk(KERN_DEBUG "%s: smctr_load_firmware\n", dev->name);
 
-        tp->ptr_ucode           = smctr_code;
+	if (request_firmware(&fw, "tr_smctr.bin", &dev->dev)) {
+		printk(KERN_ERR "%s: firmware not found\n", dev->name);
+		return (UCODE_NOT_PRESENT);
+	}
+
         tp->num_of_tx_buffs     = 4;
         tp->mode_bits          |= UMAC;
         tp->receive_mask        = 0;
         tp->max_packet_size     = 4177;
 
         /* Can only upload the firmware once per adapter reset. */
-        if(tp->microcode_version != 0)
-                return (UCODE_PRESENT);
+        if (tp->microcode_version != 0) {
+		err = (UCODE_PRESENT);
+		goto out;
+	}
 
         /* Verify the firmware exists and is there in the right amount. */
-        if((tp->ptr_ucode == 0L)
-                || (*(tp->ptr_ucode + UCODE_VERSION_OFFSET) < UCODE_VERSION))
+        if (!fw->data
+                || (*(fw->data + UCODE_VERSION_OFFSET) < UCODE_VERSION))
         {
-                return (UCODE_NOT_PRESENT);
+                err = (UCODE_NOT_PRESENT);
+		goto out;
         }
 
         /* UCODE_SIZE is not included in Checksum. */
-        for(i = 0; i < *((__u16 *)(tp->ptr_ucode + UCODE_SIZE_OFFSET)); i += 2)
-                checksum += *((__u16 *)(tp->ptr_ucode + 2 + i));
-        if(checksum)
-                return (UCODE_NOT_PRESENT);
+        for(i = 0; i < *((__u16 *)(fw->data + UCODE_SIZE_OFFSET)); i += 2)
+                checksum += *((__u16 *)(fw->data + 2 + i));
+        if (checksum) {
+		err = (UCODE_NOT_PRESENT);
+		goto out;
+	}
 
         /* At this point we have a valid firmware image, lets kick it on up. */
         smctr_enable_adapter_ram(dev);
@@ -3006,7 +3011,7 @@ static int smctr_load_firmware(struct net_device *dev)
         smctr_set_page(dev, (__u8 *)tp->ram_access);
 
         if((smctr_checksum_firmware(dev))
-                || (*(tp->ptr_ucode + UCODE_VERSION_OFFSET)
+                || (*(fw->data + UCODE_VERSION_OFFSET)
                 > tp->microcode_version))
         {
                 smctr_enable_adapter_ctrl_store(dev);
@@ -3015,9 +3020,9 @@ static int smctr_load_firmware(struct net_device *dev)
                 for(i = 0; i < CS_RAM_SIZE; i += 2)
                         *((__u16 *)(tp->ram_access + i)) = 0;
 
-                smctr_decode_firmware(dev);
+                smctr_decode_firmware(dev, fw);
 
-                tp->microcode_version = *(tp->ptr_ucode + UCODE_VERSION_OFFSET);                *((__u16 *)(tp->ram_access + CS_RAM_VERSION_OFFSET))
+                tp->microcode_version = *(fw->data + UCODE_VERSION_OFFSET);                *((__u16 *)(tp->ram_access + CS_RAM_VERSION_OFFSET))
                         = (tp->microcode_version << 8);
                 *((__u16 *)(tp->ram_access + CS_RAM_CHECKSUM_OFFSET))
                         = ~(tp->microcode_version << 8) + 1;
@@ -3031,7 +3036,8 @@ static int smctr_load_firmware(struct net_device *dev)
                 err = UCODE_PRESENT;
 
         smctr_disable_16bit(dev);
-
+ out:
+	release_firmware(fw);
         return (err);
 }
 
@@ -3059,7 +3065,7 @@ static int smctr_load_node_addr(struct net_device *dev)
  * will consequently cause a timeout.
  *
  * NOTE 1: If the monitor_state is MS_BEACON_TEST_STATE, all transmit
- * queues other then the one used for the lobe_media_test should be
+ * queues other than the one used for the lobe_media_test should be
  * disabled.!?
  *
  * NOTE 2: If the monitor_state is MS_BEACON_TEST_STATE and the receive_mask
@@ -3086,11 +3092,7 @@ static int smctr_lobe_media_test(struct net_device *dev)
         /* Setup the lobe media test. */
         smctr_lobe_media_test_cmd(dev);
         if(smctr_wait_cmd(dev))
-        {
-                smctr_reset_adapter(dev);
-                tp->status = CLOSED;
-                return (LOBE_MEDIA_TEST_FAILED);
-        }
+		goto err;
 
         /* Tx lobe media test frames. */
         for(i = 0; i < 1500; ++i)
@@ -3098,20 +3100,12 @@ static int smctr_lobe_media_test(struct net_device *dev)
                 if(smctr_send_lobe_media_test(dev))
                 {
                         if(perror)
-                        {
-                                smctr_reset_adapter(dev);
-                                tp->state = CLOSED;
-                                return (LOBE_MEDIA_TEST_FAILED);
-                        }
+				goto err;
                         else
                         {
                                 perror = 1;
                                 if(smctr_lobe_media_test_cmd(dev))
-                                {
-                                        smctr_reset_adapter(dev);
-                                        tp->state = CLOSED;
-                                        return (LOBE_MEDIA_TEST_FAILED);
-                                }
+					goto err;
                         }
                 }
         }
@@ -3119,28 +3113,24 @@ static int smctr_lobe_media_test(struct net_device *dev)
         if(smctr_send_dat(dev))
         {
                 if(smctr_send_dat(dev))
-                {
-                        smctr_reset_adapter(dev);
-                        tp->state = CLOSED;
-                        return (LOBE_MEDIA_TEST_FAILED);
-                }
+			goto err;
         }
 
         /* Check if any frames received during test. */
         if((tp->rx_fcb_curr[MAC_QUEUE]->frame_status)
                 || (tp->rx_fcb_curr[NON_MAC_QUEUE]->frame_status))
-        {
-                smctr_reset_adapter(dev);
-                tp->state = CLOSED;
-                return (LOBE_MEDIA_TEST_FAILED);
-        }
+			goto err;
 
         /* Set receive mask to "Promisc" mode. */
         tp->receive_mask = saved_rcv_mask;
 
         smctr_chg_rx_mask(dev);
 
-        return (0);
+	 return 0;
+err:
+	smctr_reset_adapter(dev);
+	tp->status = CLOSED;
+	return LOBE_MEDIA_TEST_FAILED;
 }
 
 static int smctr_lobe_media_test_cmd(struct net_device *dev)
@@ -3421,7 +3411,7 @@ static int smctr_make_tx_status_code(struct net_device *dev,
         tsv->svi = TRANSMIT_STATUS_CODE;
         tsv->svl = S_TRANSMIT_STATUS_CODE;
 
-        tsv->svv[0] = ((tx_fstatus & 0x0100 >> 6) || IBM_PASS_SOURCE_ADDR);
+	tsv->svv[0] = ((tx_fstatus & 0x0100 >> 6) | IBM_PASS_SOURCE_ADDR);
 
         /* Stripped frame status of Transmitted Frame */
         tsv->svv[1] = tx_fstatus & 0xff;
@@ -3591,8 +3581,6 @@ struct net_device __init *smctr_probe(int unit)
 	if (!dev)
 		return ERR_PTR(-ENOMEM);
 
-	SET_MODULE_OWNER(dev);
-
 	if (unit >= 0) {
 		sprintf(dev->name, "tr%d", unit);
 		netdev_boot_setup_check(dev);
@@ -3629,6 +3617,14 @@ out:
 	return ERR_PTR(err);
 }
 
+static const struct net_device_ops smctr_netdev_ops = {
+	.ndo_open          = smctr_open,
+	.ndo_stop          = smctr_close,
+	.ndo_start_xmit    = smctr_send_packet,
+	.ndo_tx_timeout	   = smctr_timeout,
+	.ndo_get_stats     = smctr_get_stats,
+	.ndo_set_multicast_list = smctr_set_multicast_list,
+};
 
 static int __init smctr_probe1(struct net_device *dev, int ioaddr)
 {
@@ -3679,13 +3675,8 @@ static int __init smctr_probe1(struct net_device *dev, int ioaddr)
                 (unsigned int)dev->base_addr,
                 dev->irq, tp->rom_base, tp->ram_base);
 
-        dev->open               = smctr_open;
-        dev->stop               = smctr_close;
-        dev->hard_start_xmit    = smctr_send_packet;
-        dev->tx_timeout		= smctr_timeout;
+	dev->netdev_ops = &smctr_netdev_ops;
         dev->watchdog_timeo	= HZ;
-        dev->get_stats          = smctr_get_stats;
-        dev->set_multicast_list = &smctr_set_multicast_list;
         return (0);
 
 out:
@@ -3700,7 +3691,6 @@ static int smctr_process_rx_packet(MAC_HEADER *rmf, __u16 size,
         __u16 rcode, correlator;
         int err = 0;
         __u8 xframe = 1;
-        __u16 tx_fstatus;
 
         rmf->vl = SWAP_BYTES(rmf->vl);
         if(rx_status & FCB_RX_STATUS_DA_MATCHED)
@@ -3791,7 +3781,9 @@ static int smctr_process_rx_packet(MAC_HEADER *rmf, __u16 size,
                                 }
                                 break;
 
-                        case TX_FORWARD:
+                        case TX_FORWARD: {
+        			__u16 uninitialized_var(tx_fstatus);
+
                                 if((rcode = smctr_rcv_tx_forward(dev, rmf))
                                         != POSITIVE_ACK)
                                 {
@@ -3819,6 +3811,7 @@ static int smctr_process_rx_packet(MAC_HEADER *rmf, __u16 size,
                                         }
                                 }
                                 break;
+			}
 
                         /* Received MAC Frames Processed by CRS/REM/RPS. */
                         case RSP:
@@ -3896,17 +3889,15 @@ static int smctr_process_rx_packet(MAC_HEADER *rmf, __u16 size,
 
                 /* Slide data into a sleek skb. */
                 skb_put(skb, skb->len);
-                memcpy(skb->data, rmf, skb->len);
+                skb_copy_to_linear_data(skb, rmf, skb->len);
 
                 /* Update Counters */
                 tp->MacStat.rx_packets++;
                 tp->MacStat.rx_bytes += skb->len;
 
                 /* Kick the packet on up. */
-                skb->dev = dev;
                 skb->protocol = tr_type_trans(skb, dev);
                 netif_rx(skb);
-		dev->last_rx = jiffies;
                 err = 0;
         }
 
@@ -4389,52 +4380,42 @@ static int smctr_ring_status_chg(struct net_device *dev)
         {
                 case RING_RECOVERY:
                         printk(KERN_INFO "%s: Ring Recovery\n", dev->name);
-                        tp->current_ring_status |= RING_RECOVERY;
                         break;
 
                 case SINGLE_STATION:
                         printk(KERN_INFO "%s: Single Statinon\n", dev->name);
-                        tp->current_ring_status |= SINGLE_STATION;
                         break;
 
                 case COUNTER_OVERFLOW:
                         printk(KERN_INFO "%s: Counter Overflow\n", dev->name);
-                        tp->current_ring_status |= COUNTER_OVERFLOW;
                         break;
 
                 case REMOVE_RECEIVED:
                         printk(KERN_INFO "%s: Remove Received\n", dev->name);
-                        tp->current_ring_status |= REMOVE_RECEIVED;
                         break;
 
                 case AUTO_REMOVAL_ERROR:
                         printk(KERN_INFO "%s: Auto Remove Error\n", dev->name);
-                        tp->current_ring_status |= AUTO_REMOVAL_ERROR;
                         break;
 
                 case LOBE_WIRE_FAULT:
                         printk(KERN_INFO "%s: Lobe Wire Fault\n", dev->name);
-                        tp->current_ring_status |= LOBE_WIRE_FAULT;
                         break;
 
                 case TRANSMIT_BEACON:
                         printk(KERN_INFO "%s: Transmit Beacon\n", dev->name);
-                        tp->current_ring_status |= TRANSMIT_BEACON;
                         break;
 
                 case SOFT_ERROR:
                         printk(KERN_INFO "%s: Soft Error\n", dev->name);
-                        tp->current_ring_status |= SOFT_ERROR;
                         break;
 
                 case HARD_ERROR:
                         printk(KERN_INFO "%s: Hard Error\n", dev->name);
-                        tp->current_ring_status |= HARD_ERROR;
                         break;
 
                 case SIGNAL_LOSS:
                         printk(KERN_INFO "%s: Signal Loss\n", dev->name);
-                        tp->current_ring_status |= SIGNAL_LOSS;
                         break;
 
                 default:
@@ -4483,17 +4464,15 @@ static int smctr_rx_frame(struct net_device *dev)
 				if (skb) {
                                 	skb_put(skb, rx_size);
 
-                                	memcpy(skb->data, pbuff, rx_size);
+					skb_copy_to_linear_data(skb, pbuff, rx_size);
 
                                 	/* Update Counters */
                                 	tp->MacStat.rx_packets++;
                                 	tp->MacStat.rx_bytes += skb->len;
 
                                 	/* Kick the packet on up. */
-                                	skb->dev = dev;
                                 	skb->protocol = tr_type_trans(skb, dev);
                                 	netif_rx(skb);
-					dev->last_rx = jiffies;
 				} else {
 				}
                         }
@@ -4593,7 +4572,8 @@ static void smctr_timeout(struct net_device *dev)
 /*
  * Gets skb from system, queues it and checks if it can be sent
  */
-static int smctr_send_packet(struct sk_buff *skb, struct net_device *dev)
+static netdev_tx_t smctr_send_packet(struct sk_buff *skb,
+					   struct net_device *dev)
 {
         struct net_local *tp = netdev_priv(dev);
 
@@ -4607,7 +4587,7 @@ static int smctr_send_packet(struct sk_buff *skb, struct net_device *dev)
         netif_stop_queue(dev);
 
         if(tp->QueueSkb == 0)
-                return (1);     /* Return with tbusy set: queue full */
+                return NETDEV_TX_BUSY;     /* Return with tbusy set: queue full */
 
         tp->QueueSkb--;
         skb_queue_tail(&tp->SendSkbQueue, skb);
@@ -4615,7 +4595,7 @@ static int smctr_send_packet(struct sk_buff *skb, struct net_device *dev)
         if(tp->QueueSkb > 0)
 		netif_wake_queue(dev);
 		
-        return (0);
+        return NETDEV_TX_OK;
 }
 
 static int smctr_send_lobe_media_test(struct net_device *dev)
@@ -5661,6 +5641,7 @@ static int io[SMCTR_MAX_ADAPTERS];
 static int irq[SMCTR_MAX_ADAPTERS];
 
 MODULE_LICENSE("GPL");
+MODULE_FIRMWARE("tr_smctr.bin");
 
 module_param_array(io, int, NULL, 0);
 module_param_array(irq, int, NULL, 0);
@@ -5713,7 +5694,7 @@ int __init init_module(void)
         return found ? 0 : -ENODEV;
 }
 
-void cleanup_module(void)
+void __exit cleanup_module(void)
 {
         int i;
 

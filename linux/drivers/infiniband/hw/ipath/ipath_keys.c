@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2006 QLogic, Inc. All rights reserved.
+ * Copyright (c) 2006, 2007 QLogic Corporation. All rights reserved.
  * Copyright (c) 2005, 2006 PathScale, Inc. All rights reserved.
  *
  * This software is available to you under a choice of one of two
@@ -34,6 +34,7 @@
 #include <asm/io.h>
 
 #include "ipath_verbs.h"
+#include "ipath_kernel.h"
 
 /**
  * ipath_alloc_lkey - allocate an lkey
@@ -60,7 +61,7 @@ int ipath_alloc_lkey(struct ipath_lkey_table *rkt, struct ipath_mregion *mr)
 		r = (r + 1) & (rkt->max - 1);
 		if (r == n) {
 			spin_unlock_irqrestore(&rkt->lock, flags);
-			_VERBS_INFO("LKEY table full\n");
+			ipath_dbg("LKEY table full\n");
 			ret = 0;
 			goto bail;
 		}
@@ -117,29 +118,37 @@ void ipath_free_lkey(struct ipath_lkey_table *rkt, u32 lkey)
  * Check the IB SGE for validity and initialize our internal version
  * of it.
  */
-int ipath_lkey_ok(struct ipath_lkey_table *rkt, struct ipath_sge *isge,
+int ipath_lkey_ok(struct ipath_qp *qp, struct ipath_sge *isge,
 		  struct ib_sge *sge, int acc)
 {
+	struct ipath_lkey_table *rkt = &to_idev(qp->ibqp.device)->lk_table;
 	struct ipath_mregion *mr;
 	unsigned n, m;
 	size_t off;
 	int ret;
 
 	/*
-	 * We use LKEY == zero to mean a physical kmalloc() address.
-	 * This is a bit of a hack since we rely on dma_map_single()
-	 * being reversible by calling bus_to_virt().
+	 * We use LKEY == zero for kernel virtual addresses
+	 * (see ipath_get_dma_mr and ipath_dma.c).
 	 */
 	if (sge->lkey == 0) {
+		/* always a kernel port, no locking needed */
+		struct ipath_pd *pd = to_ipd(qp->ibqp.pd);
+
+		if (pd->user) {
+			ret = 0;
+			goto bail;
+		}
 		isge->mr = NULL;
-		isge->vaddr = bus_to_virt(sge->addr);
+		isge->vaddr = (void *) sge->addr;
 		isge->length = sge->length;
 		isge->sge_length = sge->length;
 		ret = 1;
 		goto bail;
 	}
 	mr = rkt->table[(sge->lkey >> (32 - ib_ipath_lkey_table_size))];
-	if (unlikely(mr == NULL || mr->lkey != sge->lkey)) {
+	if (unlikely(mr == NULL || mr->lkey != sge->lkey ||
+		     qp->ibqp.pd != mr->pd)) {
 		ret = 0;
 		goto bail;
 	}
@@ -187,9 +196,10 @@ bail:
  *
  * Return 1 if successful, otherwise 0.
  */
-int ipath_rkey_ok(struct ipath_ibdev *dev, struct ipath_sge_state *ss,
+int ipath_rkey_ok(struct ipath_qp *qp, struct ipath_sge_state *ss,
 		  u32 len, u64 vaddr, u32 rkey, int acc)
 {
+	struct ipath_ibdev *dev = to_idev(qp->ibqp.device);
 	struct ipath_lkey_table *rkt = &dev->lk_table;
 	struct ipath_sge *sge = &ss->sge;
 	struct ipath_mregion *mr;
@@ -198,12 +208,19 @@ int ipath_rkey_ok(struct ipath_ibdev *dev, struct ipath_sge_state *ss,
 	int ret;
 
 	/*
-	 * We use RKEY == zero for physical addresses
-	 * (see ipath_get_dma_mr).
+	 * We use RKEY == zero for kernel virtual addresses
+	 * (see ipath_get_dma_mr and ipath_dma.c).
 	 */
 	if (rkey == 0) {
+		/* always a kernel port, no locking needed */
+		struct ipath_pd *pd = to_ipd(qp->ibqp.pd);
+
+		if (pd->user) {
+			ret = 0;
+			goto bail;
+		}
 		sge->mr = NULL;
-		sge->vaddr = phys_to_virt(vaddr);
+		sge->vaddr = (void *) vaddr;
 		sge->length = len;
 		sge->sge_length = len;
 		ss->sg_list = NULL;
@@ -213,7 +230,8 @@ int ipath_rkey_ok(struct ipath_ibdev *dev, struct ipath_sge_state *ss,
 	}
 
 	mr = rkt->table[(rkey >> (32 - ib_ipath_lkey_table_size))];
-	if (unlikely(mr == NULL || mr->lkey != rkey)) {
+	if (unlikely(mr == NULL || mr->lkey != rkey ||
+		     qp->ibqp.pd != mr->pd)) {
 		ret = 0;
 		goto bail;
 	}

@@ -9,8 +9,6 @@
 #ifndef _SMB_FS_SB
 #define _SMB_FS_SB
 
-#ifdef __KERNEL__
-
 #include <linux/types.h>
 #include <linux/smb.h>
 
@@ -55,7 +53,7 @@ struct smb_sb_info {
 	 * generation is incremented.
 	 */
 	unsigned int generation;
-	pid_t conn_pid;
+	struct pid *conn_pid;
 	struct smb_conn_opt opt;
 	wait_queue_head_t conn_wq;
 	int conn_complete;
@@ -95,7 +93,5 @@ smb_unlock_server(struct smb_sb_info *server)
 {
 	up(&(server->sem));
 }
-
-#endif /* __KERNEL__ */
 
 #endif

@@ -1,6 +1,4 @@
 /*
- * $Id: rpckbd.c,v 1.7 2001/09/25 10:12:07 vojtech Exp $
- *
  *  Copyright (c) 2000-2001 Vojtech Pavlik
  *  Copyright (c) 2002 Russell King
  */
@@ -35,16 +33,17 @@
 #include <linux/serio.h>
 #include <linux/err.h>
 #include <linux/platform_device.h>
+#include <linux/io.h>
 
 #include <asm/irq.h>
-#include <asm/hardware.h>
-#include <asm/io.h>
+#include <mach/hardware.h>
 #include <asm/hardware/iomd.h>
 #include <asm/system.h>
 
 MODULE_AUTHOR("Vojtech Pavlik, Russell King");
 MODULE_DESCRIPTION("Acorn RiscPC PS/2 keyboard controller driver");
 MODULE_LICENSE("GPL");
+MODULE_ALIAS("platform:kart");
 
 static int rpckbd_write(struct serio *port, unsigned char val)
 {
@@ -56,7 +55,7 @@ static int rpckbd_write(struct serio *port, unsigned char val)
 	return 0;
 }
 
-static irqreturn_t rpckbd_rx(int irq, void *dev_id, struct pt_regs *regs)
+static irqreturn_t rpckbd_rx(int irq, void *dev_id)
 {
 	struct serio *port = dev_id;
 	unsigned int byte;
@@ -65,13 +64,13 @@ static irqreturn_t rpckbd_rx(int irq, void *dev_id, struct pt_regs *regs)
 	while (iomd_readb(IOMD_KCTRL) & (1 << 5)) {
 		byte = iomd_readb(IOMD_KARTRX);
 
-		serio_interrupt(port, byte, 0, regs);
+		serio_interrupt(port, byte, 0);
 		handled = IRQ_HANDLED;
 	}
 	return handled;
 }
 
-static irqreturn_t rpckbd_tx(int irq, void *dev_id, struct pt_regs *regs)
+static irqreturn_t rpckbd_tx(int irq, void *dev_id)
 {
 	return IRQ_HANDLED;
 }
@@ -140,6 +139,7 @@ static struct platform_driver rpckbd_driver = {
 	.remove		= __devexit_p(rpckbd_remove),
 	.driver		= {
 		.name	= "kart",
+		.owner	= THIS_MODULE,
 	},
 };
 

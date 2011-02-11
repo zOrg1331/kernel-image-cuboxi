@@ -9,10 +9,9 @@ else
 endif
 extra-y	+= vmlinux.lds
 
-obj-y	:= entry.o process.o traps.o ints.o dma.o signal.o ptrace.o \
-	   sys_m68k.o time.o semaphore.o setup.o m68k_ksyms.o
+obj-y	:= entry.o process.o traps.o ints.o signal.o ptrace.o module.o \
+	   sys_m68k.o time.o setup.o m68k_ksyms.o devres.o
 
-obj-$(CONFIG_PCI)	+= bios32.o
-obj-$(CONFIG_MODULES)	+= module.o
+devres-y = ../../../kernel/irq/devres.o
 
-EXTRA_AFLAGS := -traditional
+obj-y$(CONFIG_MMU_SUN3) += dma.o	# no, it's not a typo

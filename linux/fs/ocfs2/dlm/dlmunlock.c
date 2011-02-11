@@ -30,7 +30,6 @@
 #include <linux/types.h>
 #include <linux/slab.h>
 #include <linux/highmem.h>
-#include <linux/utsname.h>
 #include <linux/init.h>
 #include <linux/sysctl.h>
 #include <linux/random.h>
@@ -117,12 +116,12 @@ static enum dlm_status dlmunlock_common(struct dlm_ctxt *dlm,
 	else
 		BUG_ON(res->owner == dlm->node_num);
 
-	spin_lock(&dlm->spinlock);
+	spin_lock(&dlm->ast_lock);
 	/* We want to be sure that we're not freeing a lock
 	 * that still has AST's pending... */
 	in_use = !list_empty(&lock->ast_list);
-	spin_unlock(&dlm->spinlock);
-	if (in_use) {
+	spin_unlock(&dlm->ast_lock);
+	if (in_use && !(flags & LKM_CANCEL)) {
 	       mlog(ML_ERROR, "lockres %.*s: Someone is calling dlmunlock "
 		    "while waiting for an ast!", res->lockname.len,
 		    res->lockname.name);
@@ -131,7 +130,7 @@ static enum dlm_status dlmunlock_common(struct dlm_ctxt *dlm,
 
 	spin_lock(&res->spinlock);
 	if (res->state & DLM_LOCK_RES_IN_PROGRESS) {
-		if (master_node) {
+		if (master_node && !(flags & LKM_CANCEL)) {
 			mlog(ML_ERROR, "lockres in progress!\n");
 			spin_unlock(&res->spinlock);
 			return DLM_FORWARD;
@@ -147,6 +146,10 @@ static enum dlm_status dlmunlock_common(struct dlm_ctxt *dlm,
 		goto leave;
 	}
 
+	if (res->state & DLM_LOCK_RES_MIGRATING) {
+		status = DLM_MIGRATING;
+		goto leave;
+	}
 
 	/* see above for what the spec says about
 	 * LKM_CANCEL and the lock queue state */
@@ -244,8 +247,8 @@ leave:
 		/* this should always be coupled with list removal */
 		BUG_ON(!(actions & DLM_UNLOCK_REMOVE_LOCK));
 		mlog(0, "lock %u:%llu should be gone now! refs=%d\n",
-		     dlm_get_lock_cookie_node(lock->ml.cookie),
-		     dlm_get_lock_cookie_seq(lock->ml.cookie),
+		     dlm_get_lock_cookie_node(be64_to_cpu(lock->ml.cookie)),
+		     dlm_get_lock_cookie_seq(be64_to_cpu(lock->ml.cookie)),
 		     atomic_read(&lock->lock_refs.refcount)-1);
 		dlm_lock_put(lock);
 	}
@@ -379,7 +382,8 @@ static enum dlm_status dlm_send_remote_unlock_request(struct dlm_ctxt *dlm,
  * returns: DLM_NORMAL, DLM_BADARGS, DLM_IVLOCKID,
  *          return value from dlmunlock_master
  */
-int dlm_unlock_lock_handler(struct o2net_msg *msg, u32 len, void *data)
+int dlm_unlock_lock_handler(struct o2net_msg *msg, u32 len, void *data,
+			    void **ret_data)
 {
 	struct dlm_ctxt *dlm = data;
 	struct dlm_unlock_lock *unlock = (struct dlm_unlock_lock *)msg->buf;
@@ -502,8 +506,8 @@ not_found:
 	if (!found)
 		mlog(ML_ERROR, "failed to find lock to unlock! "
 			       "cookie=%u:%llu\n",
-			       dlm_get_lock_cookie_node(unlock->cookie),
-			       dlm_get_lock_cookie_seq(unlock->cookie));
+		     dlm_get_lock_cookie_node(be64_to_cpu(unlock->cookie)),
+		     dlm_get_lock_cookie_seq(be64_to_cpu(unlock->cookie)));
 	else
 		dlm_lock_put(lock);
 

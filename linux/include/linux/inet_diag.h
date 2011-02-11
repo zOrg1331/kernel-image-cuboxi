@@ -1,6 +1,8 @@
 #ifndef _INET_DIAG_H_
 #define _INET_DIAG_H_ 1
 
+#include <linux/types.h>
+
 /* Just some random number */
 #define TCPDIAG_GETSOCK 18
 #define DCCPDIAG_GETSOCK 19
@@ -9,10 +11,10 @@
 
 /* Socket identity */
 struct inet_diag_sockid {
-	__u16	idiag_sport;
-	__u16	idiag_dport;
-	__u32	idiag_src[4];
-	__u32	idiag_dst[4];
+	__be16	idiag_sport;
+	__be16	idiag_dport;
+	__be32	idiag_src[4];
+	__be32	idiag_dst[4];
 	__u32	idiag_if;
 	__u32	idiag_cookie[2];
 #define INET_DIAG_NOCOOKIE (~0U)
@@ -67,7 +69,7 @@ struct inet_diag_hostcond {
 	__u8	family;
 	__u8	prefix_len;
 	int	port;
-	__u32	addr[0];
+	__be32	addr[0];
 };
 
 /* Base info structure. It contains socket identity (addrs/ports/cookie)

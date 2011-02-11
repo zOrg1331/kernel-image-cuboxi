@@ -1,5 +1,5 @@
 /*
- * PCI Hot Plug Controller Skeleton Driver - 0.2
+ * PCI Hot Plug Controller Skeleton Driver - 0.3
  *
  * Copyright (C) 2001,2003 Greg Kroah-Hartman (greg@kroah.com)
  * Copyright (C) 2001,2003 IBM Corp.
@@ -21,7 +21,7 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  *
- * This driver is to be used as a skeleton driver to be show how to interface
+ * This driver is to be used as a skeleton driver to show how to interface
  * with the pci hotplug core easily.
  *
  * Send feedback to <greg@kroah.com>
@@ -33,8 +33,8 @@
 #include <linux/kernel.h>
 #include <linux/slab.h>
 #include <linux/pci.h>
+#include <linux/pci_hotplug.h>
 #include <linux/init.h>
-#include "pci_hotplug.h"
 
 #define SLOT_NAME_SIZE	10
 struct slot {
@@ -57,8 +57,6 @@ static LIST_HEAD(slot_list);
 #define err(format, arg...) printk(KERN_ERR "%s: " format "\n", MY_NAME , ## arg)
 #define info(format, arg...) printk(KERN_INFO "%s: " format "\n", MY_NAME , ## arg)
 #define warn(format, arg...) printk(KERN_WARNING "%s: " format "\n", MY_NAME , ## arg)
-
-
 
 /* local variables */
 static int debug;
@@ -84,7 +82,6 @@ static int get_latch_status	(struct hotplug_slot *slot, u8 *value);
 static int get_adapter_status	(struct hotplug_slot *slot, u8 *value);
 
 static struct hotplug_slot_ops skel_hotplug_slot_ops = {
-	.owner =		THIS_MODULE,
 	.enable_slot =		enable_slot,
 	.disable_slot =		disable_slot,
 	.set_attention_status =	set_attention_status,
@@ -100,7 +97,7 @@ static int enable_slot(struct hotplug_slot *hotplug_slot)
 	struct slot *slot = hotplug_slot->private;
 	int retval = 0;
 
-	dbg("%s - physical_slot = %s\n", __FUNCTION__, hotplug_slot->name);
+	dbg("%s - physical_slot = %s\n", __func__, hotplug_slot->name);
 
 	/*
 	 * Fill in code here to enable the specified slot
@@ -109,13 +106,12 @@ static int enable_slot(struct hotplug_slot *hotplug_slot)
 	return retval;
 }
 
-
 static int disable_slot(struct hotplug_slot *hotplug_slot)
 {
 	struct slot *slot = hotplug_slot->private;
 	int retval = 0;
 
-	dbg("%s - physical_slot = %s\n", __FUNCTION__, hotplug_slot->name);
+	dbg("%s - physical_slot = %s\n", __func__, hotplug_slot->name);
 
 	/*
 	 * Fill in code here to disable the specified slot
@@ -129,7 +125,7 @@ static int set_attention_status(struct hotplug_slot *hotplug_slot, u8 status)
 	struct slot *slot = hotplug_slot->private;
 	int retval = 0;
 
-	dbg("%s - physical_slot = %s\n", __FUNCTION__, hotplug_slot->name);
+	dbg("%s - physical_slot = %s\n", __func__, hotplug_slot->name);
 
 	switch (status) {
 		case 0:
@@ -154,7 +150,7 @@ static int hardware_test(struct hotplug_slot *hotplug_slot, u32 value)
 	struct slot *slot = hotplug_slot->private;
 	int retval = 0;
 
-	dbg("%s - physical_slot = %s\n", __FUNCTION__, hotplug_slot->name);
+	dbg("%s - physical_slot = %s\n", __func__, hotplug_slot->name);
 
 	switch (value) {
 		case 0:
@@ -173,7 +169,7 @@ static int get_power_status(struct hotplug_slot *hotplug_slot, u8 *value)
 	struct slot *slot = hotplug_slot->private;
 	int retval = 0;
 
-	dbg("%s - physical_slot = %s\n", __FUNCTION__, hotplug_slot->name);
+	dbg("%s - physical_slot = %s\n", __func__, hotplug_slot->name);
 
 	/*
 	 * Fill in logic to get the current power status of the specific
@@ -188,7 +184,7 @@ static int get_attention_status(struct hotplug_slot *hotplug_slot, u8 *value)
 	struct slot *slot = hotplug_slot->private;
 	int retval = 0;
 
-	dbg("%s - physical_slot = %s\n", __FUNCTION__, hotplug_slot->name);
+	dbg("%s - physical_slot = %s\n", __func__, hotplug_slot->name);
 
 	/*
 	 * Fill in logic to get the current attention status of the specific
@@ -203,7 +199,7 @@ static int get_latch_status(struct hotplug_slot *hotplug_slot, u8 *value)
 	struct slot *slot = hotplug_slot->private;
 	int retval = 0;
 
-	dbg("%s - physical_slot = %s\n", __FUNCTION__, hotplug_slot->name);
+	dbg("%s - physical_slot = %s\n", __func__, hotplug_slot->name);
 
 	/*
 	 * Fill in logic to get the current latch status of the specific
@@ -218,7 +214,7 @@ static int get_adapter_status(struct hotplug_slot *hotplug_slot, u8 *value)
 	struct slot *slot = hotplug_slot->private;
 	int retval = 0;
 
-	dbg("%s - physical_slot = %s\n", __FUNCTION__, hotplug_slot->name);
+	dbg("%s - physical_slot = %s\n", __func__, hotplug_slot->name);
 
 	/*
 	 * Fill in logic to get the current adapter status of the specific
@@ -232,7 +228,7 @@ static void release_slot(struct hotplug_slot *hotplug_slot)
 {
 	struct slot *slot = hotplug_slot->private;
 
-	dbg("%s - physical_slot = %s\n", __FUNCTION__, hotplug_slot->name);
+	dbg("%s - physical_slot = %s\n", __func__, hotplug_slot->name);
 	kfree(slot->hotplug_slot->info);
 	kfree(slot->hotplug_slot);
 	kfree(slot);
@@ -342,7 +338,7 @@ static int __init pcihp_skel_init(void)
 	info(DRIVER_DESC " version: " DRIVER_VERSION "\n");
 	/*
 	 * Do specific initialization stuff for your driver here
-	 * Like initializing your controller hardware (if any) and
+	 * like initializing your controller hardware (if any) and
 	 * determining the number of slots you have in the system
 	 * right now.
 	 */

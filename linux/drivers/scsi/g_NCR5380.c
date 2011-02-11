@@ -103,7 +103,6 @@
 #include <asm/system.h>
 #include <asm/io.h>
 #include <linux/signal.h>
-#include <linux/sched.h>
 #include <linux/blkdev.h>
 #include "scsi.h"
 #include <scsi/scsi_host.h>
@@ -461,7 +460,8 @@ int __init generic_NCR5380_detect(struct scsi_host_template * tpnt)
 			instance->irq = NCR5380_probe_irq(instance, 0xffff);
 
 		if (instance->irq != SCSI_IRQ_NONE)
-			if (request_irq(instance->irq, generic_NCR5380_intr, IRQF_DISABLED, "NCR5380", instance)) {
+			if (request_irq(instance->irq, generic_NCR5380_intr,
+					IRQF_DISABLED, "NCR5380", instance)) {
 				printk(KERN_WARNING "scsi%d : IRQ%d not free, interrupts disabled\n", instance->host_no, instance->irq);
 				instance->irq = SCSI_IRQ_NONE;
 			}
@@ -514,7 +514,7 @@ int generic_NCR5380_release_resources(struct Scsi_Host *instance)
 	NCR5380_setup(instance);
 	
 	if (instance->irq != SCSI_IRQ_NONE)
-		free_irq(instance->irq, NULL);
+		free_irq(instance->irq, instance);
 	NCR5380_exit(instance);
 
 #ifndef CONFIG_SCSI_G_NCR5380_MEM
@@ -557,7 +557,7 @@ generic_NCR5380_biosparam(struct scsi_device *sdev, struct block_device *bdev,
 }
 #endif
 
-#if NCR53C400_PSEUDO_DMA
+#ifdef NCR53C400_PSEUDO_DMA
 
 /**
  *	NCR5380_pread		-	pseudo DMA read
@@ -811,7 +811,6 @@ static int generic_NCR5380_proc_info(struct Scsi_Host *scsi_ptr, char *buffer, c
 	struct NCR5380_hostdata *hostdata;
 #ifdef NCR5380_STATS
 	struct scsi_device *dev;
-	extern const char *const scsi_device_types[MAX_SCSI_DEVICE_CODE];
 #endif
 
 	NCR5380_setup(scsi_ptr);
@@ -851,7 +850,7 @@ static int generic_NCR5380_proc_info(struct Scsi_Host *scsi_ptr, char *buffer, c
 		long tr = hostdata->time_read[dev->id] / HZ;
 		long tw = hostdata->time_write[dev->id] / HZ;
 
-		PRINTP("  T:%d %s " ANDP dev->id ANDP(dev->type < MAX_SCSI_DEVICE_CODE) ? scsi_device_types[(int) dev->type] : "Unknown");
+		PRINTP("  T:%d %s " ANDP dev->id ANDP scsi_device_type(dev->type));
 		for (i = 0; i < 8; i++)
 			if (dev->vendor[i] >= 0x20)
 				*(buffer + (len++)) = dev->vendor[i];

@@ -1,8 +1,10 @@
-/* This kernel module matches connection mark values set by the
- * CONNMARK target
+/*
+ *	xt_connmark - Netfilter module to match connection mark values
  *
- * Copyright (C) 2002,2004 MARA Systems AB <http://www.marasystems.com>
- * by Henrik Nordstrom <hno@marasystems.com>
+ *	Copyright (C) 2002,2004 MARA Systems AB <http://www.marasystems.com>
+ *	by Henrik Nordstrom <hno@marasystems.com>
+ *	Copyright © CC Computer Consultants GmbH, 2007 - 2008
+ *	Jan Engelhardt <jengelh@computergmbh.de>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -21,108 +23,65 @@
 
 #include <linux/module.h>
 #include <linux/skbuff.h>
-
-MODULE_AUTHOR("Henrik Nordstrom <hno@marasytems.com>");
-MODULE_DESCRIPTION("IP tables connmark match module");
-MODULE_LICENSE("GPL");
-MODULE_ALIAS("ipt_connmark");
-
+#include <net/netfilter/nf_conntrack.h>
 #include <linux/netfilter/x_tables.h>
 #include <linux/netfilter/xt_connmark.h>
-#include <net/netfilter/nf_conntrack_compat.h>
 
-static int
-match(const struct sk_buff *skb,
-      const struct net_device *in,
-      const struct net_device *out,
-      const struct xt_match *match,
-      const void *matchinfo,
-      int offset,
-      unsigned int protoff,
-      int *hotdrop)
+MODULE_AUTHOR("Henrik Nordstrom <hno@marasystems.com>");
+MODULE_DESCRIPTION("Xtables: connection mark match");
+MODULE_LICENSE("GPL");
+MODULE_ALIAS("ipt_connmark");
+MODULE_ALIAS("ip6t_connmark");
+
+static bool
+connmark_mt(const struct sk_buff *skb, const struct xt_match_param *par)
 {
-	const struct xt_connmark_info *info = matchinfo;
-	u_int32_t ctinfo;
-	const u_int32_t *ctmark = nf_ct_get_mark(skb, &ctinfo);
-	if (!ctmark)
-		return 0;
+	const struct xt_connmark_mtinfo1 *info = par->matchinfo;
+	enum ip_conntrack_info ctinfo;
+	const struct nf_conn *ct;
 
-	return (((*ctmark) & info->mask) == info->mark) ^ info->invert;
+	ct = nf_ct_get(skb, &ctinfo);
+	if (ct == NULL)
+		return false;
+
+	return ((ct->mark & info->mask) == info->mark) ^ info->invert;
 }
 
-static int
-checkentry(const char *tablename,
-	   const void *ip,
-	   const struct xt_match *match,
-	   void *matchinfo,
-	   unsigned int matchsize,
-	   unsigned int hook_mask)
+static bool connmark_mt_check(const struct xt_mtchk_param *par)
 {
-	struct xt_connmark_info *cm = matchinfo;
-
-	if (cm->mark > 0xffffffff || cm->mask > 0xffffffff) {
-		printk(KERN_WARNING "connmark: only support 32bit mark\n");
-		return 0;
+	if (nf_ct_l3proto_try_module_get(par->family) < 0) {
+		printk(KERN_WARNING "cannot load conntrack support for "
+		       "proto=%u\n", par->family);
+		return false;
 	}
-#if defined(CONFIG_NF_CONNTRACK) || defined(CONFIG_NF_CONNTRACK_MODULE)
-	if (nf_ct_l3proto_try_module_get(match->family) < 0) {
-		printk(KERN_WARNING "can't load nf_conntrack support for "
-				    "proto=%d\n", match->family);
-		return 0;
-	}
-#endif
-	return 1;
+	return true;
 }
 
-static void
-destroy(const struct xt_match *match, void *matchinfo, unsigned int matchsize)
+static void connmark_mt_destroy(const struct xt_mtdtor_param *par)
 {
-#if defined(CONFIG_NF_CONNTRACK) || defined(CONFIG_NF_CONNTRACK_MODULE)
-	nf_ct_l3proto_module_put(match->family);
-#endif
+	nf_ct_l3proto_module_put(par->family);
 }
 
-static struct xt_match connmark_match = {
-	.name		= "connmark",
-	.match		= match,
-	.matchsize	= sizeof(struct xt_connmark_info),
-	.checkentry	= checkentry,
-	.destroy	= destroy,
-	.family		= AF_INET,
-	.me		= THIS_MODULE
+static struct xt_match connmark_mt_reg __read_mostly = {
+	.name           = "connmark",
+	.revision       = 1,
+	.family         = NFPROTO_UNSPEC,
+	.checkentry     = connmark_mt_check,
+	.match          = connmark_mt,
+	.matchsize      = sizeof(struct xt_connmark_mtinfo1),
+	.destroy        = connmark_mt_destroy,
+	.me             = THIS_MODULE,
 };
 
-static struct xt_match connmark6_match = {
-	.name		= "connmark",
-	.match		= match,
-	.matchsize	= sizeof(struct xt_connmark_info),
-	.checkentry	= checkentry,
-	.destroy	= destroy,
-	.family		= AF_INET6,
-	.me		= THIS_MODULE
-};
-
-static int __init xt_connmark_init(void)
+static int __init connmark_mt_init(void)
 {
-	int ret;
-
-	need_conntrack();
-
-	ret = xt_register_match(&connmark_match);
-	if (ret)
-		return ret;
-
-	ret = xt_register_match(&connmark6_match);
-	if (ret)
-		xt_unregister_match(&connmark_match);
-	return ret;
+	return xt_register_match(&connmark_mt_reg);
 }
 
-static void __exit xt_connmark_fini(void)
+static void __exit connmark_mt_exit(void)
 {
-	xt_unregister_match(&connmark6_match);
-	xt_unregister_match(&connmark_match);
+	xt_unregister_match(&connmark_mt_reg);
 }
 
-module_init(xt_connmark_init);
-module_exit(xt_connmark_fini);
+module_init(connmark_mt_init);
+module_exit(connmark_mt_exit);

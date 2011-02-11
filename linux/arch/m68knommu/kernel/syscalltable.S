@@ -18,7 +18,7 @@
 .text
 ALIGN
 ENTRY(sys_call_table)
-	.long sys_ni_syscall	/* 0  -  old "setup()" system call*/
+	.long sys_restart_syscall	/* 0  -  old "setup()" system call */
 	.long sys_exit
 	.long sys_fork
 	.long sys_read
@@ -107,7 +107,7 @@ ENTRY(sys_call_table)
 	.long sys_uselib
 	.long sys_ni_syscall	/* sys_swapon */
 	.long sys_reboot
-	.long old_readdir
+	.long sys_old_readdir
 	.long old_mmap		/* 90 */
 	.long sys_munmap
 	.long sys_truncate
@@ -210,7 +210,7 @@ ENTRY(sys_call_table)
 	.long sys_ni_syscall	/* streams2 */
 	.long sys_vfork		/* 190 */
 	.long sys_getrlimit
-	.long sys_mmap2
+	.long sys_mmap_pgoff
 	.long sys_truncate64
 	.long sys_ftruncate64
 	.long sys_stat64	/* 195 */
@@ -296,10 +296,61 @@ ENTRY(sys_call_table)
 	.long sys_mq_notify	/* 275 */
 	.long sys_mq_getsetattr
 	.long sys_waitid
-	.long sys_ni_syscall	/* sys_setaltroot */
-	.long sys_ni_syscall	/* sys_add_key */
-	.long sys_ni_syscall	/* 280 */ /* sys_request_key */
-	.long sys_ni_syscall	/* sys_keyctl */
+	.long sys_ni_syscall	/* for sys_vserver */
+	.long sys_add_key
+	.long sys_request_key	/* 280 */
+	.long sys_keyctl
+	.long sys_ioprio_set
+	.long sys_ioprio_get
+	.long sys_inotify_init
+	.long sys_inotify_add_watch	/* 285 */
+	.long sys_inotify_rm_watch
+	.long sys_migrate_pages
+	.long sys_openat
+	.long sys_mkdirat
+	.long sys_mknodat		/* 290 */
+	.long sys_fchownat
+	.long sys_futimesat
+	.long sys_fstatat64
+	.long sys_unlinkat
+	.long sys_renameat		/* 295 */
+	.long sys_linkat
+	.long sys_symlinkat
+	.long sys_readlinkat
+	.long sys_fchmodat
+	.long sys_faccessat		/* 300 */
+	.long sys_ni_syscall		/* Reserved for pselect6 */
+	.long sys_ni_syscall		/* Reserved for ppoll */
+	.long sys_unshare
+	.long sys_set_robust_list
+	.long sys_get_robust_list	/* 305 */
+	.long sys_splice
+	.long sys_sync_file_range
+	.long sys_tee
+	.long sys_vmsplice
+	.long sys_move_pages		/* 310 */
+	.long sys_sched_setaffinity
+	.long sys_sched_getaffinity
+	.long sys_kexec_load
+	.long sys_getcpu
+	.long sys_epoll_pwait		/* 315 */
+	.long sys_utimensat
+	.long sys_signalfd
+	.long sys_timerfd_create
+	.long sys_eventfd
+	.long sys_fallocate		/* 320 */
+	.long sys_timerfd_settime
+	.long sys_timerfd_gettime
+	.long sys_signalfd4
+	.long sys_eventfd2
+	.long sys_epoll_create1		/* 325 */
+	.long sys_dup3
+	.long sys_pipe2
+	.long sys_inotify_init1
+	.long sys_preadv
+	.long sys_pwritev		/* 330 */
+	.long sys_rt_tgsigqueueinfo
+	.long sys_perf_event_open
 
 	.rept NR_syscalls-(.-sys_call_table)/4
 		.long sys_ni_syscall

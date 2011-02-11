@@ -1,23 +1,14 @@
 
 #include <linux/irq.h>
+#include <linux/interrupt.h>
 
-void set_pending_irq(unsigned int irq, cpumask_t mask)
+#include "internals.h"
+
+void move_masked_irq(int irq)
 {
-	struct irq_desc *desc = irq_desc + irq;
-	unsigned long flags;
+	struct irq_desc *desc = irq_to_desc(irq);
 
-	spin_lock_irqsave(&desc->lock, flags);
-	desc->move_irq = 1;
-	irq_desc[irq].pending_mask = mask;
-	spin_unlock_irqrestore(&desc->lock, flags);
-}
-
-void move_native_irq(int irq)
-{
-	struct irq_desc *desc = irq_desc + irq;
-	cpumask_t tmp;
-
-	if (likely(!desc->move_irq))
+	if (likely(!(desc->status & IRQ_MOVE_PENDING)))
 		return;
 
 	/*
@@ -28,17 +19,15 @@ void move_native_irq(int irq)
 		return;
 	}
 
-	desc->move_irq = 0;
+	desc->status &= ~IRQ_MOVE_PENDING;
 
-	if (unlikely(cpus_empty(irq_desc[irq].pending_mask)))
+	if (unlikely(cpumask_empty(desc->pending_mask)))
 		return;
 
 	if (!desc->chip->set_affinity)
 		return;
 
 	assert_spin_locked(&desc->lock);
-
-	cpus_and(tmp, irq_desc[irq].pending_mask, cpu_online_map);
 
 	/*
 	 * If there was a valid mask to work with, please
@@ -48,15 +37,32 @@ void move_native_irq(int irq)
 	 * when an active trigger is comming in. This could
 	 * cause some ioapics to mal-function.
 	 * Being paranoid i guess!
+	 *
+	 * For correct operation this depends on the caller
+	 * masking the irqs.
 	 */
-	if (likely(!cpus_empty(tmp))) {
-		if (likely(!(desc->status & IRQ_DISABLED)))
-			desc->chip->disable(irq);
+	if (likely(cpumask_any_and(desc->pending_mask, cpu_online_mask)
+		   < nr_cpu_ids))
+		if (!desc->chip->set_affinity(irq, desc->pending_mask)) {
+			cpumask_copy(desc->affinity, desc->pending_mask);
+			irq_set_thread_affinity(desc);
+		}
 
-		desc->chip->set_affinity(irq,tmp);
-
-		if (likely(!(desc->status & IRQ_DISABLED)))
-			desc->chip->enable(irq);
-	}
-	cpus_clear(irq_desc[irq].pending_mask);
+	cpumask_clear(desc->pending_mask);
 }
+
+void move_native_irq(int irq)
+{
+	struct irq_desc *desc = irq_to_desc(irq);
+
+	if (likely(!(desc->status & IRQ_MOVE_PENDING)))
+		return;
+
+	if (unlikely(desc->status & IRQ_DISABLED))
+		return;
+
+	desc->chip->mask(irq);
+	move_masked_irq(irq);
+	desc->chip->unmask(irq);
+}
+

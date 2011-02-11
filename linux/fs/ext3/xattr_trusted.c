@@ -9,18 +9,15 @@
 #include <linux/string.h>
 #include <linux/capability.h>
 #include <linux/fs.h>
-#include <linux/smp_lock.h>
 #include <linux/ext3_jbd.h>
 #include <linux/ext3_fs.h>
 #include "xattr.h"
-
-#define XATTR_TRUSTED_PREFIX "trusted."
 
 static size_t
 ext3_xattr_trusted_list(struct inode *inode, char *list, size_t list_size,
 			const char *name, size_t name_len)
 {
-	const size_t prefix_len = sizeof(XATTR_TRUSTED_PREFIX)-1;
+	const size_t prefix_len = XATTR_TRUSTED_PREFIX_LEN;
 	const size_t total_len = prefix_len + name_len + 1;
 
 	if (!capable(CAP_SYS_ADMIN))

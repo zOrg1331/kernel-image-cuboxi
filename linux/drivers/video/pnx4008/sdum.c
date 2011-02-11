@@ -30,7 +30,7 @@
 #include <linux/dma-mapping.h>
 #include <linux/clk.h>
 #include <asm/uaccess.h>
-#include <asm/arch/gpio.h>
+#include <mach/gpio.h>
 
 #include "sdum.h"
 #include "fbcommon.h"
@@ -848,7 +848,7 @@ static int sdum_remove(struct platform_device *pdev)
 
 static struct platform_driver sdum_driver = {
 	.driver = {
-		.name = "sdum",
+		.name = "pnx4008-sdum",
 	},
 	.probe = sdum_probe,
 	.remove = sdum_remove,

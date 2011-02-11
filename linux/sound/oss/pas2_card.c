@@ -1,5 +1,5 @@
 /*
- * sound/pas2_card.c
+ * sound/oss/pas2_card.c
  *
  * Detection routine for the Pro Audio Spectrum cards.
  */
@@ -88,7 +88,7 @@ void pas_write(unsigned char data, int ioaddr)
 
 /******************* Begin of the Interrupt Handler ********************/
 
-static irqreturn_t pasintr(int irq, void *dev_id, struct pt_regs *dummy)
+static irqreturn_t pasintr(int irq, void *dev_id)
 {
 	int             status;
 
@@ -156,9 +156,7 @@ static int __init config_pas_hw(struct address_info *hw_config)
 						 * 0x80
 						 */ , 0xB88);
 
-	pas_write(0x80
-		  | joystick?0x40:0
-		  ,0xF388);
+	pas_write(0x80 | (joystick ? 0x40 : 0), 0xF388);
 
 	if (pas_irq < 0 || pas_irq > 15)
 	{

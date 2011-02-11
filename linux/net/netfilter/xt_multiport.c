@@ -1,5 +1,5 @@
-/* Kernel module to match one of a list of TCP/UDP/SCTP/DCCP ports: ports are in
-   the same place so we can treat them as equal. */
+/* Kernel module to match one of a list of TCP/UDP(-Lite)/SCTP/DCCP ports:
+   ports are in the same place so we can treat them as equal. */
 
 /* (C) 1999-2001 Paul `Rusty' Russell
  * (C) 2002-2004 Netfilter Core Team <coreteam@netfilter.org>
@@ -22,7 +22,7 @@
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Netfilter Core Team <coreteam@netfilter.org>");
-MODULE_DESCRIPTION("x_tables multiple port match module");
+MODULE_DESCRIPTION("Xtables: multiple port matching for TCP, UDP, UDP-Lite, SCTP and DCCP");
 MODULE_ALIAS("ipt_multiport");
 MODULE_ALIAS("ip6t_multiport");
 
@@ -33,24 +33,24 @@ MODULE_ALIAS("ip6t_multiport");
 #endif
 
 /* Returns 1 if the port is matched by the test, 0 otherwise. */
-static inline int
-ports_match(const u_int16_t *portlist, enum xt_multiport_flags flags,
-	    u_int8_t count, u_int16_t src, u_int16_t dst)
+static inline bool
+ports_match_v0(const u_int16_t *portlist, enum xt_multiport_flags flags,
+	       u_int8_t count, u_int16_t src, u_int16_t dst)
 {
 	unsigned int i;
 	for (i = 0; i < count; i++) {
 		if (flags != XT_MULTIPORT_DESTINATION && portlist[i] == src)
-			return 1;
+			return true;
 
 		if (flags != XT_MULTIPORT_SOURCE && portlist[i] == dst)
-			return 1;
+			return true;
 	}
 
-	return 0;
+	return false;
 }
 
 /* Returns 1 if the port is matched by the test, 0 otherwise. */
-static inline int
+static inline bool
 ports_match_v1(const struct xt_multiport_v1 *minfo,
 	       u_int16_t src, u_int16_t dst)
 {
@@ -67,94 +67,81 @@ ports_match_v1(const struct xt_multiport_v1 *minfo,
 
 			if (minfo->flags == XT_MULTIPORT_SOURCE
 			    && src >= s && src <= e)
-				return 1 ^ minfo->invert;
+				return true ^ minfo->invert;
 			if (minfo->flags == XT_MULTIPORT_DESTINATION
 			    && dst >= s && dst <= e)
-				return 1 ^ minfo->invert;
+				return true ^ minfo->invert;
 			if (minfo->flags == XT_MULTIPORT_EITHER
 			    && ((dst >= s && dst <= e)
 				|| (src >= s && src <= e)))
-				return 1 ^ minfo->invert;
+				return true ^ minfo->invert;
 		} else {
 			/* exact port matching */
 			duprintf("src or dst matches with %d?\n", s);
 
 			if (minfo->flags == XT_MULTIPORT_SOURCE
 			    && src == s)
-				return 1 ^ minfo->invert;
+				return true ^ minfo->invert;
 			if (minfo->flags == XT_MULTIPORT_DESTINATION
 			    && dst == s)
-				return 1 ^ minfo->invert;
+				return true ^ minfo->invert;
 			if (minfo->flags == XT_MULTIPORT_EITHER
 			    && (src == s || dst == s))
-				return 1 ^ minfo->invert;
+				return true ^ minfo->invert;
 		}
 	}
 
- 	return minfo->invert;
+	return minfo->invert;
 }
 
-static int
-match(const struct sk_buff *skb,
-      const struct net_device *in,
-      const struct net_device *out,
-      const struct xt_match *match,
-      const void *matchinfo,
-      int offset,
-      unsigned int protoff,
-      int *hotdrop)
+static bool
+multiport_mt_v0(const struct sk_buff *skb, const struct xt_match_param *par)
 {
-	u16 _ports[2], *pptr;
-	const struct xt_multiport *multiinfo = matchinfo;
+	const __be16 *pptr;
+	__be16 _ports[2];
+	const struct xt_multiport *multiinfo = par->matchinfo;
 
-	if (offset)
-		return 0;
+	if (par->fragoff != 0)
+		return false;
 
-	pptr = skb_header_pointer(skb, protoff, sizeof(_ports), _ports);
+	pptr = skb_header_pointer(skb, par->thoff, sizeof(_ports), _ports);
 	if (pptr == NULL) {
 		/* We've been asked to examine this packet, and we
 		 * can't.  Hence, no choice but to drop.
 		 */
 		duprintf("xt_multiport: Dropping evil offset=0 tinygram.\n");
-		*hotdrop = 1;
-		return 0;
+		*par->hotdrop = true;
+		return false;
 	}
 
-	return ports_match(multiinfo->ports,
-			   multiinfo->flags, multiinfo->count,
-			   ntohs(pptr[0]), ntohs(pptr[1]));
+	return ports_match_v0(multiinfo->ports, multiinfo->flags,
+	       multiinfo->count, ntohs(pptr[0]), ntohs(pptr[1]));
 }
 
-static int
-match_v1(const struct sk_buff *skb,
-	 const struct net_device *in,
-	 const struct net_device *out,
-	 const struct xt_match *match,
-	 const void *matchinfo,
-	 int offset,
-	 unsigned int protoff,
-	 int *hotdrop)
+static bool
+multiport_mt(const struct sk_buff *skb, const struct xt_match_param *par)
 {
-	u16 _ports[2], *pptr;
-	const struct xt_multiport_v1 *multiinfo = matchinfo;
+	const __be16 *pptr;
+	__be16 _ports[2];
+	const struct xt_multiport_v1 *multiinfo = par->matchinfo;
 
-	if (offset)
-		return 0;
+	if (par->fragoff != 0)
+		return false;
 
-	pptr = skb_header_pointer(skb, protoff, sizeof(_ports), _ports);
+	pptr = skb_header_pointer(skb, par->thoff, sizeof(_ports), _ports);
 	if (pptr == NULL) {
 		/* We've been asked to examine this packet, and we
 		 * can't.  Hence, no choice but to drop.
 		 */
 		duprintf("xt_multiport: Dropping evil offset=0 tinygram.\n");
-		*hotdrop = 1;
-		return 0;
+		*par->hotdrop = true;
+		return false;
 	}
 
 	return ports_match_v1(multiinfo, ntohs(pptr[0]), ntohs(pptr[1]));
 }
 
-static inline int
+static inline bool
 check(u_int16_t proto,
       u_int8_t ip_invflags,
       u_int8_t match_flags,
@@ -162,6 +149,7 @@ check(u_int16_t proto,
 {
 	/* Must specify supported protocol, no unknown flags or bad count */
 	return (proto == IPPROTO_TCP || proto == IPPROTO_UDP
+		|| proto == IPPROTO_UDPLITE
 		|| proto == IPPROTO_SCTP || proto == IPPROTO_DCCP)
 		&& !(ip_invflags & XT_INV_PROTO)
 		&& (match_flags == XT_MULTIPORT_SOURCE
@@ -170,146 +158,91 @@ check(u_int16_t proto,
 		&& count <= XT_MULTI_PORTS;
 }
 
-/* Called when user tries to insert an entry of this type. */
-static int
-checkentry(const char *tablename,
-	   const void *info,
-	   const struct xt_match *match,
-	   void *matchinfo,
-	   unsigned int matchsize,
-	   unsigned int hook_mask)
+static bool multiport_mt_check_v0(const struct xt_mtchk_param *par)
 {
-	const struct ipt_ip *ip = info;
-	const struct xt_multiport *multiinfo = matchinfo;
+	const struct ipt_ip *ip = par->entryinfo;
+	const struct xt_multiport *multiinfo = par->matchinfo;
 
 	return check(ip->proto, ip->invflags, multiinfo->flags,
 		     multiinfo->count);
 }
 
-static int
-checkentry_v1(const char *tablename,
-	      const void *info,
-	      const struct xt_match *match,
-	      void *matchinfo,
-	      unsigned int matchsize,
-	      unsigned int hook_mask)
+static bool multiport_mt_check(const struct xt_mtchk_param *par)
 {
-	const struct ipt_ip *ip = info;
-	const struct xt_multiport_v1 *multiinfo = matchinfo;
+	const struct ipt_ip *ip = par->entryinfo;
+	const struct xt_multiport_v1 *multiinfo = par->matchinfo;
 
 	return check(ip->proto, ip->invflags, multiinfo->flags,
 		     multiinfo->count);
 }
 
-static int
-checkentry6(const char *tablename,
-	    const void *info,
-	    const struct xt_match *match,
-	    void *matchinfo,
-	    unsigned int matchsize,
-	    unsigned int hook_mask)
+static bool multiport_mt6_check_v0(const struct xt_mtchk_param *par)
 {
-	const struct ip6t_ip6 *ip = info;
-	const struct xt_multiport *multiinfo = matchinfo;
+	const struct ip6t_ip6 *ip = par->entryinfo;
+	const struct xt_multiport *multiinfo = par->matchinfo;
 
 	return check(ip->proto, ip->invflags, multiinfo->flags,
 		     multiinfo->count);
 }
 
-static int
-checkentry6_v1(const char *tablename,
-	       const void *info,
-	       const struct xt_match *match,
-	       void *matchinfo,
-	       unsigned int matchsize,
-	       unsigned int hook_mask)
+static bool multiport_mt6_check(const struct xt_mtchk_param *par)
 {
-	const struct ip6t_ip6 *ip = info;
-	const struct xt_multiport_v1 *multiinfo = matchinfo;
+	const struct ip6t_ip6 *ip = par->entryinfo;
+	const struct xt_multiport_v1 *multiinfo = par->matchinfo;
 
 	return check(ip->proto, ip->invflags, multiinfo->flags,
 		     multiinfo->count);
 }
 
-static struct xt_match multiport_match = {
-	.name		= "multiport",
-	.revision	= 0,
-	.matchsize	= sizeof(struct xt_multiport),
-	.match		= &match,
-	.checkentry	= &checkentry,
-	.family		= AF_INET,
-	.me		= THIS_MODULE,
+static struct xt_match multiport_mt_reg[] __read_mostly = {
+	{
+		.name		= "multiport",
+		.family		= NFPROTO_IPV4,
+		.revision	= 0,
+		.checkentry	= multiport_mt_check_v0,
+		.match		= multiport_mt_v0,
+		.matchsize	= sizeof(struct xt_multiport),
+		.me		= THIS_MODULE,
+	},
+	{
+		.name		= "multiport",
+		.family		= NFPROTO_IPV4,
+		.revision	= 1,
+		.checkentry	= multiport_mt_check,
+		.match		= multiport_mt,
+		.matchsize	= sizeof(struct xt_multiport_v1),
+		.me		= THIS_MODULE,
+	},
+	{
+		.name		= "multiport",
+		.family		= NFPROTO_IPV6,
+		.revision	= 0,
+		.checkentry	= multiport_mt6_check_v0,
+		.match		= multiport_mt_v0,
+		.matchsize	= sizeof(struct xt_multiport),
+		.me		= THIS_MODULE,
+	},
+	{
+		.name		= "multiport",
+		.family		= NFPROTO_IPV6,
+		.revision	= 1,
+		.checkentry	= multiport_mt6_check,
+		.match		= multiport_mt,
+		.matchsize	= sizeof(struct xt_multiport_v1),
+		.me		= THIS_MODULE,
+	},
 };
 
-static struct xt_match multiport_match_v1 = {
-	.name		= "multiport",
-	.revision	= 1,
-	.matchsize	= sizeof(struct xt_multiport_v1),
-	.match		= &match_v1,
-	.checkentry	= &checkentry_v1,
-	.family		= AF_INET,
-	.me		= THIS_MODULE,
-};
-
-static struct xt_match multiport6_match = {
-	.name		= "multiport",
-	.revision	= 0,
-	.matchsize	= sizeof(struct xt_multiport),
-	.match		= &match,
-	.checkentry	= &checkentry6,
-	.family		= AF_INET6,
-	.me		= THIS_MODULE,
-};
-
-static struct xt_match multiport6_match_v1 = {
-	.name		= "multiport",
-	.revision	= 1,
-	.matchsize	= sizeof(struct xt_multiport_v1),
-	.match		= &match_v1,
-	.checkentry	= &checkentry6_v1,
-	.family		= AF_INET6,
-	.me		= THIS_MODULE,
-};
-
-static int __init xt_multiport_init(void)
+static int __init multiport_mt_init(void)
 {
-	int ret;
-
-	ret = xt_register_match(&multiport_match);
-	if (ret)
-		goto out;
-
-	ret = xt_register_match(&multiport_match_v1);
-	if (ret)
-		goto out_unreg_multi_v0;
-
-	ret = xt_register_match(&multiport6_match);
-	if (ret)
-		goto out_unreg_multi_v1;
-
-	ret = xt_register_match(&multiport6_match_v1);
-	if (ret)
-		goto out_unreg_multi6_v0;
-
-	return ret;
-
-out_unreg_multi6_v0:
-	xt_unregister_match(&multiport6_match);
-out_unreg_multi_v1:
-	xt_unregister_match(&multiport_match_v1);
-out_unreg_multi_v0:
-	xt_unregister_match(&multiport_match);
-out:
-	return ret;
+	return xt_register_matches(multiport_mt_reg,
+	       ARRAY_SIZE(multiport_mt_reg));
 }
 
-static void __exit xt_multiport_fini(void)
+static void __exit multiport_mt_exit(void)
 {
-	xt_unregister_match(&multiport_match);
-	xt_unregister_match(&multiport_match_v1);
-	xt_unregister_match(&multiport6_match);
-	xt_unregister_match(&multiport6_match_v1);
+	xt_unregister_matches(multiport_mt_reg, ARRAY_SIZE(multiport_mt_reg));
 }
 
-module_init(xt_multiport_init);
-module_exit(xt_multiport_fini);
+module_init(multiport_mt_init);
+module_exit(multiport_mt_exit);

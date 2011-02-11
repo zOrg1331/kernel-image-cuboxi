@@ -52,43 +52,6 @@ ENTRY(ia32_clone)
 	br.ret.sptk.many rp
 END(ia32_clone)
 
-ENTRY(sys32_rt_sigsuspend)
-	.prologue ASM_UNW_PRLG_RP|ASM_UNW_PRLG_PFS, ASM_UNW_PRLG_GRSAVE(8)
-	alloc loc1=ar.pfs,8,2,3,0		// preserve all eight input regs
-	mov loc0=rp
-	mov out0=in0				// mask
-	mov out1=in1				// sigsetsize
-	mov out2=sp				// out2 = &sigscratch
-	.fframe 16
-	adds sp=-16,sp				// allocate dummy "sigscratch"
-	;;
-	.body
-	br.call.sptk.many rp=ia32_rt_sigsuspend
-1:	.restore sp
-	adds sp=16,sp
-	mov rp=loc0
-	mov ar.pfs=loc1
-	br.ret.sptk.many rp
-END(sys32_rt_sigsuspend)
-
-ENTRY(sys32_sigsuspend)
-	.prologue ASM_UNW_PRLG_RP|ASM_UNW_PRLG_PFS, ASM_UNW_PRLG_GRSAVE(8)
-	alloc loc1=ar.pfs,8,2,3,0		// preserve all eight input regs
-	mov loc0=rp
-	mov out0=in2				// mask (first two args are ignored)
-	;;
-	mov out1=sp				// out1 = &sigscratch
-	.fframe 16
-	adds sp=-16,sp				// allocate dummy "sigscratch"
-	.body
-	br.call.sptk.many rp=ia32_sigsuspend
-1:	.restore sp
-	adds sp=16,sp
-	mov rp=loc0
-	mov ar.pfs=loc1
-	br.ret.sptk.many rp
-END(sys32_sigsuspend)
-
 GLOBAL_ENTRY(ia32_ret_from_clone)
 	PT_REGS_UNWIND_INFO(0)
 {	/*
@@ -145,6 +108,11 @@ GLOBAL_ENTRY(ia32_trace_syscall)
 	;;
 	st8 [r2]=r3				// initialize return code to -ENOSYS
 	br.call.sptk.few rp=syscall_trace_enter	// give parent a chance to catch syscall args
+	cmp.lt p6,p0=r8,r0			// check tracehook
+	adds r2=IA64_PT_REGS_R8_OFFSET+16,sp	// r2 = &pt_regs.r8
+	;;
+(p6)	st8.spill [r2]=r8			// store return value in slot for r8
+(p6)	br.spnt.few .ret4
 .ret2:	// Need to reload arguments (they may be changed by the tracing process)
 	adds r2=IA64_PT_REGS_R1_OFFSET+16,sp	// r2 = &pt_regs.r1
 	adds r3=IA64_PT_REGS_R13_OFFSET+16,sp	// r3 = &pt_regs.r13
@@ -236,10 +204,10 @@ ia32_syscall_table:
 	data8 sys_setuid	/* 16-bit version */
 	data8 sys_getuid	/* 16-bit version */
 	data8 compat_sys_stime    /* 25 */
-	data8 sys32_ptrace
+	data8 compat_sys_ptrace
 	data8 sys32_alarm
 	data8 sys_ni_syscall
-	data8 sys32_pause
+	data8 sys_pause
 	data8 compat_sys_utime	  /* 30 */
 	data8 sys_ni_syscall	  /* old stty syscall holder */
 	data8 sys_ni_syscall	  /* old gtty syscall holder */
@@ -252,7 +220,7 @@ ia32_syscall_table:
 	data8 sys_mkdir
 	data8 sys_rmdir		  /* 40 */
 	data8 sys_dup
-	data8 sys32_pipe
+	data8 sys_ia64_pipe
 	data8 compat_sys_times
 	data8 sys_ni_syscall	  /* old prof syscall holder */
 	data8 sys32_brk		  /* 45 */
@@ -272,7 +240,7 @@ ia32_syscall_table:
 	data8 sys_ni_syscall
 	data8 sys_umask		  /* 60 */
 	data8 sys_chroot
-	data8 sys_ustat
+	data8 compat_sys_ustat
 	data8 sys_dup2
 	data8 sys_getppid
 	data8 sys_getpgrp	  /* 65 */
@@ -288,8 +256,8 @@ ia32_syscall_table:
 	data8 compat_sys_setrlimit	  /* 75 */
 	data8 compat_sys_old_getrlimit
 	data8 compat_sys_getrusage
-	data8 sys32_gettimeofday
-	data8 sys32_settimeofday
+	data8 compat_sys_gettimeofday
+	data8 compat_sys_settimeofday
 	data8 sys32_getgroups16	  /* 80 */
 	data8 sys32_setgroups16
 	data8 sys32_old_select
@@ -299,7 +267,7 @@ ia32_syscall_table:
 	data8 sys_uselib
 	data8 sys_swapon
 	data8 sys_reboot
-	data8 sys32_readdir
+	data8 compat_sys_old_readdir
 	data8 sys32_mmap	  /* 90 */
 	data8 sys32_munmap
 	data8 sys_truncate
@@ -326,7 +294,7 @@ ia32_syscall_table:
 	data8 sys_ni_syscall
 	data8 compat_sys_wait4
 	data8 sys_swapoff	  /* 115 */
-	data8 sys32_sysinfo
+	data8 compat_sys_sysinfo
 	data8 sys32_ipc
 	data8 sys_fsync
 	data8 sys32_sigreturn
@@ -341,7 +309,7 @@ ia32_syscall_table:
 	data8 sys_ni_syscall	/* init_module */
 	data8 sys_ni_syscall	/* delete_module */
 	data8 sys_ni_syscall	/* get_kernel_syms */  /* 130 */
-	data8 sys_quotactl
+	data8 sys32_quotactl
 	data8 sys_getpgid
 	data8 sys_fchdir
 	data8 sys_ni_syscall	/* sys_bdflush */
@@ -389,7 +357,7 @@ ia32_syscall_table:
 	data8 sys_rt_sigpending
 	data8 compat_sys_rt_sigtimedwait
 	data8 sys32_rt_sigqueueinfo
-	data8 sys32_rt_sigsuspend
+	data8 compat_sys_rt_sigsuspend
 	data8 sys32_pread	  /* 180 */
 	data8 sys32_pwrite
 	data8 sys_chown	/* 16-bit version */

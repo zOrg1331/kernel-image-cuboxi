@@ -3,7 +3,7 @@
  *
  *      (c) Copyright 2000 Red Hat Software
  *      (c) Copyright 2000 Helge Deller <hdeller@redhat.com>
- *      (c) Copyright 2001-2005 Helge Deller <deller@gmx.de>
+ *      (c) Copyright 2001-2009 Helge Deller <deller@gmx.de>
  *      (c) Copyright 2001 Randolph Chung <tausq@debian.org>
  *
  *      This program is free software; you can redistribute it and/or modify
@@ -66,8 +66,8 @@ static char lcd_text_default[32]  __read_mostly;
 
 
 static struct workqueue_struct *led_wq;
-static void led_work_func(void *);
-static DECLARE_WORK(led_task, led_work_func, NULL);
+static void led_work_func(struct work_struct *);
+static DECLARE_DELAYED_WORK(led_task, led_work_func);
 
 #if 0
 #define DPRINTK(x)	printk x
@@ -136,7 +136,7 @@ static int start_task(void)
 
 	/* Create the work queue and queue the LED task */
 	led_wq = create_singlethread_workqueue("led_wq");	
-	queue_work(led_wq, &led_task);
+	queue_delayed_work(led_wq, &led_task, 0);
 
 	return 0;
 }
@@ -195,12 +195,6 @@ static int led_proc_write(struct file *file, const char *buf,
 
 	cur = lbuf;
 
-	/* skip initial spaces */
-	while (*cur && isspace(*cur))
-	{
-		cur++;
-	}
-
 	switch ((long)data)
 	{
 	case LED_NOLCD:
@@ -249,24 +243,19 @@ static int __init led_create_procfs(void)
 
 	proc_pdc_root = proc_mkdir("pdc", 0);
 	if (!proc_pdc_root) return -1;
-	proc_pdc_root->owner = THIS_MODULE;
 	ent = create_proc_entry("led", S_IFREG|S_IRUGO|S_IWUSR, proc_pdc_root);
 	if (!ent) return -1;
-	ent->nlink = 1;
 	ent->data = (void *)LED_NOLCD; /* LED */
 	ent->read_proc = led_proc_read;
 	ent->write_proc = led_proc_write;
-	ent->owner = THIS_MODULE;
 
 	if (led_type == LED_HASLCD)
 	{
 		ent = create_proc_entry("lcd", S_IFREG|S_IRUGO|S_IWUSR, proc_pdc_root);
 		if (!ent) return -1;
-		ent->nlink = 1;
 		ent->data = (void *)LED_HASLCD; /* LCD */
 		ent->read_proc = led_proc_read;
 		ent->write_proc = led_proc_write;
-		ent->owner = THIS_MODULE;
 	}
 
 	return 0;
@@ -367,16 +356,14 @@ static __inline__ int led_get_net_activity(void)
 	 * for reading should be OK */
 	read_lock(&dev_base_lock);
 	rcu_read_lock();
-	for (dev = dev_base; dev; dev = dev->next) {
-	    struct net_device_stats *stats;
+	for_each_netdev(&init_net, dev) {
+	    const struct net_device_stats *stats;
 	    struct in_device *in_dev = __in_dev_get_rcu(dev);
 	    if (!in_dev || !in_dev->ifa_list)
 		continue;
-	    if (LOOPBACK(in_dev->ifa_list->ifa_local))
+	    if (ipv4_is_loopback(in_dev->ifa_list->ifa_local))
 		continue;
-	    if (!dev->get_stats) 
-		continue;
-	    stats = dev->get_stats(dev);
+	    stats = dev_get_stats(dev);
 	    rx_total += stats->rx_packets;
 	    tx_total += stats->tx_packets;
 	}
@@ -443,7 +430,7 @@ static __inline__ int led_get_diskio_activity(void)
 
 #define LED_UPDATE_INTERVAL (1 + (HZ*19/1000))
 
-static void led_work_func (void *unused)
+static void led_work_func (struct work_struct *unused)
 {
 	static unsigned long last_jiffies;
 	static unsigned long count_HZ; /* counter in range 0..HZ */
@@ -473,9 +460,20 @@ static void led_work_func (void *unused)
 	if (likely(led_lanrxtx))  currentleds |= led_get_net_activity();
 	if (likely(led_diskio))   currentleds |= led_get_diskio_activity();
 
-	/* blink all LEDs twice a second if we got an Oops (HPMC) */
-	if (unlikely(oops_in_progress)) 
-		currentleds = (count_HZ<=(HZ/2)) ? 0 : 0xff;
+	/* blink LEDs if we got an Oops (HPMC) */
+	if (unlikely(oops_in_progress)) {
+		if (boot_cpu_data.cpu_type >= pcxl2) {
+			/* newer machines don't have loadavg. LEDs, so we
+			 * let all LEDs blink twice per second instead */
+			currentleds = (count_HZ <= (HZ/2)) ? 0 : 0xff;
+		} else {
+			/* old machines: blink loadavg. LEDs twice per second */
+			if (count_HZ <= (HZ/2))
+				currentleds &= ~(LED4|LED5|LED6|LED7);
+			else
+				currentleds |= (LED4|LED5|LED6|LED7);
+		}
+	}
 
 	if (currentleds != lastleds)
 	{
@@ -521,7 +519,7 @@ static int led_halt(struct notifier_block *nb, unsigned long event, void *buf)
 	
 	/* Cancel the work item and delete the queue */
 	if (led_wq) {
-		cancel_rearming_delayed_workqueue(led_wq, &led_task);
+		cancel_delayed_work_sync(&led_task);
 		destroy_workqueue(led_wq);
 		led_wq = NULL;
 	}
@@ -579,7 +577,7 @@ int __init register_led_driver(int model, unsigned long cmd_reg, unsigned long d
 
 	default:
 		printk(KERN_ERR "%s: Wrong LCD/LED model %d !\n",
-		       __FUNCTION__, lcd_info.model);
+		       __func__, lcd_info.model);
 		return 1;
 	}
 	
@@ -590,7 +588,7 @@ int __init register_led_driver(int model, unsigned long cmd_reg, unsigned long d
 
 	/* Ensure the work is queued */
 	if (led_wq) {
-		queue_work(led_wq, &led_task);
+		queue_delayed_work(led_wq, &led_task, 0);
 	}
 
 	return 0;
@@ -631,7 +629,7 @@ void __init register_led_regions(void)
    ** avoid a race condition while writing the CMD/DATA register pair.
    **
  */
-int lcd_print( char *str )
+int lcd_print( const char *str )
 {
 	int i;
 
@@ -640,7 +638,7 @@ int lcd_print( char *str )
 	
 	/* temporarily disable the led work task */
 	if (led_wq)
-		cancel_rearming_delayed_workqueue(led_wq, &led_task);
+		cancel_delayed_work_sync(&led_task);
 
 	/* copy display string to buffer for procfs */
 	strlcpy(lcd_text, str, sizeof(lcd_text));
@@ -660,7 +658,7 @@ int lcd_print( char *str )
 	
 	/* re-queue the work */
 	if (led_wq) {
-		queue_work(led_wq, &led_task);
+		queue_delayed_work(led_wq, &led_task, 0);
 	}
 
 	return lcd_info.lcd_width;
@@ -684,7 +682,7 @@ int __init led_init(void)
 	int ret;
 
 	snprintf(lcd_text_default, sizeof(lcd_text_default),
-		"Linux %s", system_utsname.release);
+		"Linux %s", init_utsname()->release);
 
 	/* Work around the buggy PDC of KittyHawk-machines */
 	switch (CPU_HVERSION) {

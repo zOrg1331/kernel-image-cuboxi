@@ -7,7 +7,7 @@
  * Reiner Sailer <sailer@watson.ibm.com>
  * Kylene Hall <kjhall@us.ibm.com>
  *
- * Maintained by: <tpmdd_devel@lists.sourceforge.net>
+ * Maintained by: <tpmdd-devel@lists.sourceforge.net>
  *
  * Device driver for TCG/TCPA TPM (trusted platform module).
  * Specifications at www.trustedcomputinggroup.org	 
@@ -168,12 +168,22 @@ static void atml_plat_remove(void)
 	}
 }
 
-static struct device_driver atml_drv = {
-	.name = "tpm_atmel",
-	.bus = &platform_bus_type,
-	.owner = THIS_MODULE,
-	.suspend = tpm_pm_suspend,
-	.resume = tpm_pm_resume,
+static int tpm_atml_suspend(struct platform_device *dev, pm_message_t msg)
+{
+	return tpm_pm_suspend(&dev->dev, msg);
+}
+
+static int tpm_atml_resume(struct platform_device *dev)
+{
+	return tpm_pm_resume(&dev->dev);
+}
+static struct platform_driver atml_drv = {
+	.driver = {
+		.name = "tpm_atmel",
+		.owner		= THIS_MODULE,
+	},
+	.suspend = tpm_atml_suspend,
+	.resume = tpm_atml_resume,
 };
 
 static int __init init_atmel(void)
@@ -184,7 +194,9 @@ static int __init init_atmel(void)
 	unsigned long base;
 	struct  tpm_chip *chip;
 
-	driver_register(&atml_drv);
+	rc = platform_driver_register(&atml_drv);
+	if (rc)
+		return rc;
 
 	if ((iobase = atmel_get_base_addr(&base, &region_size)) == NULL) {
 		rc = -ENODEV;
@@ -195,10 +207,8 @@ static int __init init_atmel(void)
 	    (atmel_request_region
 	     (tpm_atmel.base, region_size, "tpm_atmel0") == NULL) ? 0 : 1;
 
-
-	if (IS_ERR
-	    (pdev =
-	     platform_device_register_simple("tpm_atmel", -1, NULL, 0))) {
+	pdev = platform_device_register_simple("tpm_atmel", -1, NULL, 0);
+	if (IS_ERR(pdev)) {
 		rc = PTR_ERR(pdev);
 		goto err_rel_reg;
 	}
@@ -223,13 +233,13 @@ err_rel_reg:
 		atmel_release_region(base,
 				     region_size);
 err_unreg_drv:
-	driver_unregister(&atml_drv);
+	platform_driver_unregister(&atml_drv);
 	return rc;
 }
 
 static void __exit cleanup_atmel(void)
 {
-	driver_unregister(&atml_drv);
+	platform_driver_unregister(&atml_drv);
 	atml_plat_remove();
 }
 

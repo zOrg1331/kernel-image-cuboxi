@@ -1,6 +1,6 @@
 /*
     TDA10021  - Single Chip Cable Channel Receiver driver module
-	       used on the the Siemens DVB-C cards
+	       used on the Siemens DVB-C cards
 
     Copyright (C) 1999 Convergence Integrated Media GmbH <ralph@convergence.de>
     Copyright (C) 2004 Markus Schulz <msc@antzsystem.de>
@@ -30,13 +30,13 @@
 #include <linux/slab.h>
 
 #include "dvb_frontend.h"
-#include "tda10021.h"
+#include "tda1002x.h"
 
 
 struct tda10021_state {
 	struct i2c_adapter* i2c;
 	/* configuration settings */
-	const struct tda10021_config* config;
+	const struct tda1002x_config* config;
 	struct dvb_frontend frontend;
 
 	u8 pwm;
@@ -53,9 +53,6 @@ struct tda10021_state {
 static int verbose;
 
 #define XIN 57840000UL
-#define DISABLE_INVERSION(reg0)		do { reg0 |= 0x20; } while (0)
-#define ENABLE_INVERSION(reg0)		do { reg0 &= ~0x20; } while (0)
-#define HAS_INVERSION(reg0)		(!(reg0 & 0x20))
 
 #define FIN (XIN >> 4)
 
@@ -64,7 +61,7 @@ static u8 tda10021_inittab[0x40]=
 {
 	0x73, 0x6a, 0x23, 0x0a, 0x02, 0x37, 0x77, 0x1a,
 	0x37, 0x6a, 0x17, 0x8a, 0x1e, 0x86, 0x43, 0x40,
-	0xb8, 0x3f, 0xa0, 0x00, 0xcd, 0x01, 0x00, 0xff,
+	0xb8, 0x3f, 0xa1, 0x00, 0xcd, 0x01, 0x00, 0xff,
 	0x11, 0x00, 0x7c, 0x31, 0x30, 0x20, 0x00, 0x00,
 	0x02, 0x00, 0x00, 0x7d, 0x00, 0x00, 0x00, 0x00,
 	0x07, 0x00, 0x33, 0x11, 0x0d, 0x95, 0x08, 0x58,
@@ -72,7 +69,7 @@ static u8 tda10021_inittab[0x40]=
 	0x04, 0x2d, 0x2f, 0xff, 0x00, 0x00, 0x00, 0x00,
 };
 
-static int tda10021_writereg (struct tda10021_state* state, u8 reg, u8 data)
+static int _tda10021_writereg (struct tda10021_state* state, u8 reg, u8 data)
 {
 	u8 buf[] = { reg, data };
 	struct i2c_msg msg = { .addr = state->config->demod_address, .flags = 0, .buf = buf, .len = 2 };
@@ -82,19 +79,11 @@ static int tda10021_writereg (struct tda10021_state* state, u8 reg, u8 data)
 	if (ret != 1)
 		printk("DVB: TDA10021(%d): %s, writereg error "
 			"(reg == 0x%02x, val == 0x%02x, ret == %i)\n",
-			state->frontend.dvb->num, __FUNCTION__, reg, data, ret);
+			state->frontend.dvb->num, __func__, reg, data, ret);
 
 	msleep(10);
 	return (ret != 1) ? -EREMOTEIO : 0;
 }
-
-int tda10021_write_byte(struct dvb_frontend* fe, int reg, int data)
-{
-	struct tda10021_state* state = fe->demodulator_priv;
-
-	return tda10021_writereg(state, reg, data);
-}
-EXPORT_SYMBOL(tda10021_write_byte);
 
 static u8 tda10021_readreg (struct tda10021_state* state, u8 reg)
 {
@@ -105,9 +94,10 @@ static u8 tda10021_readreg (struct tda10021_state* state, u8 reg)
 	int ret;
 
 	ret = i2c_transfer (state->i2c, msg, 2);
-	if (ret != 2)
+	// Don't print an error message if the id is read.
+	if (ret != 2 && reg != 0x1a)
 		printk("DVB: TDA10021: %s: readreg error (ret == %i)\n",
-				__FUNCTION__, ret);
+				__func__, ret);
 	return b1[0];
 }
 
@@ -144,13 +134,13 @@ static int tda10021_setup_reg0 (struct tda10021_state* state, u8 reg0,
 {
 	reg0 |= state->reg0 & 0x63;
 
-	if (INVERSION_ON == inversion)
-		ENABLE_INVERSION(reg0);
-	else if (INVERSION_OFF == inversion)
-		DISABLE_INVERSION(reg0);
+	if ((INVERSION_ON == inversion) ^ (state->config->invert == 0))
+		reg0 &= ~0x20;
+	else
+		reg0 |= 0x20;
 
-	tda10021_writereg (state, 0x00, reg0 & 0xfe);
-	tda10021_writereg (state, 0x00, reg0 | 0x01);
+	_tda10021_writereg (state, 0x00, reg0 & 0xfe);
+	_tda10021_writereg (state, 0x00, reg0 | 0x01);
 
 	state->reg0 = reg0;
 	return 0;
@@ -186,7 +176,7 @@ static int tda10021_set_symbolrate (struct tda10021_state* state, u32 symbolrate
 	tmp =  ((symbolrate << 4) % FIN) << 8;
 	ratio = (ratio << 8) + tmp / FIN;
 	tmp = (tmp % FIN) << 8;
-	ratio = (ratio << 8) + (tmp + FIN/2) / FIN;
+	ratio = (ratio << 8) + DIV_ROUND_CLOSEST(tmp, FIN);
 
 	BDR = ratio;
 	BDRI = (((XIN << 5) / symbolrate) + 1) / 2;
@@ -198,13 +188,13 @@ static int tda10021_set_symbolrate (struct tda10021_state* state, u32 symbolrate
 
 	NDEC = (NDEC << 6) | tda10021_inittab[0x03];
 
-	tda10021_writereg (state, 0x03, NDEC);
-	tda10021_writereg (state, 0x0a, BDR&0xff);
-	tda10021_writereg (state, 0x0b, (BDR>> 8)&0xff);
-	tda10021_writereg (state, 0x0c, (BDR>>16)&0x3f);
+	_tda10021_writereg (state, 0x03, NDEC);
+	_tda10021_writereg (state, 0x0a, BDR&0xff);
+	_tda10021_writereg (state, 0x0b, (BDR>> 8)&0xff);
+	_tda10021_writereg (state, 0x0c, (BDR>>16)&0x3f);
 
-	tda10021_writereg (state, 0x0d, BDRI);
-	tda10021_writereg (state, 0x0e, SFIL);
+	_tda10021_writereg (state, 0x0d, BDRI);
+	_tda10021_writereg (state, 0x0e, SFIL);
 
 	return 0;
 }
@@ -216,12 +206,12 @@ static int tda10021_init (struct dvb_frontend *fe)
 
 	dprintk("DVB: TDA10021(%d): init chip\n", fe->adapter->num);
 
-	//tda10021_writereg (fe, 0, 0);
+	//_tda10021_writereg (fe, 0, 0);
 
 	for (i=0; i<tda10021_inittab_size; i++)
-		tda10021_writereg (state, i, tda10021_inittab[i]);
+		_tda10021_writereg (state, i, tda10021_inittab[i]);
 
-	tda10021_writereg (state, 0x34, state->pwm);
+	_tda10021_writereg (state, 0x34, state->pwm);
 
 	//Comment by markus
 	//0x2A[3-0] == PDIV -> P multiplaying factor (P=PDIV+1)(default 0)
@@ -230,7 +220,7 @@ static int tda10021_init (struct dvb_frontend *fe)
 	//0x2A[6] == POLAXIN -> Polarity of the input reference clock (default 0)
 
 	//Activate PLL
-	tda10021_writereg(state, 0x2a, tda10021_inittab[0x2a] & 0xef);
+	_tda10021_writereg(state, 0x2a, tda10021_inittab[0x2a] & 0xef);
 	return 0;
 }
 
@@ -256,6 +246,9 @@ static int tda10021_set_parameters (struct dvb_frontend *fe,
 	if (qam < 0 || qam > 5)
 		return -EINVAL;
 
+	if (p->inversion != INVERSION_ON && p->inversion != INVERSION_OFF)
+		return -EINVAL;
+
 	//printk("tda10021: set frequency to %d qam=%d symrate=%d\n", p->frequency,qam,p->u.qam.symbol_rate);
 
 	if (fe->ops.tuner_ops.set_params) {
@@ -264,12 +257,12 @@ static int tda10021_set_parameters (struct dvb_frontend *fe,
 	}
 
 	tda10021_set_symbolrate (state, p->u.qam.symbol_rate);
-	tda10021_writereg (state, 0x34, state->pwm);
+	_tda10021_writereg (state, 0x34, state->pwm);
 
-	tda10021_writereg (state, 0x01, reg0x01[qam]);
-	tda10021_writereg (state, 0x05, reg0x05[qam]);
-	tda10021_writereg (state, 0x08, reg0x08[qam]);
-	tda10021_writereg (state, 0x09, reg0x09[qam]);
+	_tda10021_writereg (state, 0x01, reg0x01[qam]);
+	_tda10021_writereg (state, 0x05, reg0x05[qam]);
+	_tda10021_writereg (state, 0x08, reg0x08[qam]);
+	_tda10021_writereg (state, 0x09, reg0x09[qam]);
 
 	tda10021_setup_reg0 (state, reg0x00[qam], p->inversion);
 
@@ -308,6 +301,8 @@ static int tda10021_read_ber(struct dvb_frontend* fe, u32* ber)
 	u32 _ber = tda10021_readreg(state, 0x14) |
 		(tda10021_readreg(state, 0x15) << 8) |
 		((tda10021_readreg(state, 0x16) & 0x0f) << 16);
+	_tda10021_writereg(state, 0x10, (tda10021_readreg(state, 0x10) & ~0xc0)
+					| (tda10021_inittab[0x10] & 0xc0));
 	*ber = 10 * _ber;
 
 	return 0;
@@ -317,7 +312,11 @@ static int tda10021_read_signal_strength(struct dvb_frontend* fe, u16* strength)
 {
 	struct tda10021_state* state = fe->demodulator_priv;
 
+	u8 config = tda10021_readreg(state, 0x02);
 	u8 gain = tda10021_readreg(state, 0x17);
+	if (config & 0x02)
+		/* the agc value is inverted */
+		gain = ~gain;
 	*strength = (gain << 8) | gain;
 
 	return 0;
@@ -342,8 +341,8 @@ static int tda10021_read_ucblocks(struct dvb_frontend* fe, u32* ucblocks)
 		*ucblocks = 0xffffffff;
 
 	/* reset uncorrected block counter */
-	tda10021_writereg (state, 0x10, tda10021_inittab[0x10] & 0xdf);
-	tda10021_writereg (state, 0x10, tda10021_inittab[0x10]);
+	_tda10021_writereg (state, 0x10, tda10021_inittab[0x10] & 0xdf);
+	_tda10021_writereg (state, 0x10, tda10021_inittab[0x10]);
 
 	return 0;
 }
@@ -364,7 +363,7 @@ static int tda10021_get_frontend(struct dvb_frontend* fe, struct dvb_frontend_pa
 		       -((s32)p->u.qam.symbol_rate * afc) >> 10);
 	}
 
-	p->inversion = HAS_INVERSION(state->reg0) ? INVERSION_ON : INVERSION_OFF;
+	p->inversion = ((state->reg0 & 0x20) == 0x20) ^ (state->config->invert != 0) ? INVERSION_ON : INVERSION_OFF;
 	p->u.qam.modulation = ((state->reg0 >> 2) & 7) + QAM_16;
 
 	p->u.qam.fec_inner = FEC_NONE;
@@ -392,8 +391,8 @@ static int tda10021_sleep(struct dvb_frontend* fe)
 {
 	struct tda10021_state* state = fe->demodulator_priv;
 
-	tda10021_writereg (state, 0x1b, 0x02);  /* pdown ADC */
-	tda10021_writereg (state, 0x00, 0x80);  /* standby */
+	_tda10021_writereg (state, 0x1b, 0x02);  /* pdown ADC */
+	_tda10021_writereg (state, 0x00, 0x80);  /* standby */
 
 	return 0;
 }
@@ -406,14 +405,15 @@ static void tda10021_release(struct dvb_frontend* fe)
 
 static struct dvb_frontend_ops tda10021_ops;
 
-struct dvb_frontend* tda10021_attach(const struct tda10021_config* config,
+struct dvb_frontend* tda10021_attach(const struct tda1002x_config* config,
 				     struct i2c_adapter* i2c,
 				     u8 pwm)
 {
 	struct tda10021_state* state = NULL;
+	u8 id;
 
 	/* allocate memory for the internal state */
-	state = kmalloc(sizeof(struct tda10021_state), GFP_KERNEL);
+	state = kzalloc(sizeof(struct tda10021_state), GFP_KERNEL);
 	if (state == NULL) goto error;
 
 	/* setup the state */
@@ -423,7 +423,11 @@ struct dvb_frontend* tda10021_attach(const struct tda10021_config* config,
 	state->reg0 = tda10021_inittab[0];
 
 	/* check if the demod is there */
-	if ((tda10021_readreg(state, 0x1a) & 0xf0) != 0x70) goto error;
+	id = tda10021_readreg(state, 0x1a);
+	if ((id & 0xf0) != 0x70) goto error;
+
+	printk("TDA10021: i2c-addr = 0x%02x, id = 0x%02x\n",
+	       state->config->demod_address, id);
 
 	/* create dvb_frontend */
 	memcpy(&state->frontend.ops, &tda10021_ops, sizeof(struct dvb_frontend_ops));
@@ -441,11 +445,11 @@ static struct dvb_frontend_ops tda10021_ops = {
 		.name = "Philips TDA10021 DVB-C",
 		.type = FE_QAM,
 		.frequency_stepsize = 62500,
-		.frequency_min = 51000000,
-		.frequency_max = 858000000,
+		.frequency_min = 47000000,
+		.frequency_max = 862000000,
 		.symbol_rate_min = (XIN/2)/64,     /* SACLK/64 == (XIN/2)/64 */
 		.symbol_rate_max = (XIN/2)/4,      /* SACLK/4 */
-#if 0
+	#if 0
 		.frequency_tolerance = ???,
 		.symbol_rate_tolerance = ???,  /* ppm */  /* == 8% (spec p. 5) */
 	#endif

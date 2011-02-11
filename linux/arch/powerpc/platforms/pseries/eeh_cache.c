@@ -2,7 +2,8 @@
  * eeh_cache.c
  * PCI address cache; allows the lookup of PCI devices based on I/O address
  *
- * Copyright (C) 2004 Linas Vepstas <linas@austin.ibm.com> IBM Corporation
+ * Copyright IBM Corporation 2004
+ * Copyright Linas Vepstas <linas@austin.ibm.com> 2004
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -27,7 +28,6 @@
 #include <asm/pci-bridge.h>
 #include <asm/ppc-pci.h>
 
-#undef DEBUG
 
 /**
  * The pci address cache subsystem.  This subsystem places
@@ -153,10 +153,11 @@ pci_addr_cache_insert(struct pci_dev *dev, unsigned long alo,
 			return piar;
 		}
 	}
-	piar = (struct pci_io_addr_range *)kmalloc(sizeof(struct pci_io_addr_range), GFP_ATOMIC);
+	piar = kmalloc(sizeof(struct pci_io_addr_range), GFP_ATOMIC);
 	if (!piar)
 		return NULL;
 
+	pci_dev_get(dev);
 	piar->addr_lo = alo;
 	piar->addr_hi = ahi;
 	piar->pcidev = dev;
@@ -178,7 +179,6 @@ static void __pci_addr_cache_insert_device(struct pci_dev *dev)
 	struct device_node *dn;
 	struct pci_dn *pdn;
 	int i;
-	int inserted = 0;
 
 	dn = pci_device_to_OF_node(dev);
 	if (!dn) {
@@ -197,9 +197,6 @@ static void __pci_addr_cache_insert_device(struct pci_dev *dev)
 		return;
 	}
 
-	/* The cache holds a reference to the device... */
-	pci_dev_get(dev);
-
 	/* Walk resources on this device, poke them into the tree */
 	for (i = 0; i < DEVICE_COUNT_RESOURCE; i++) {
 		unsigned long start = pci_resource_start(dev,i);
@@ -212,12 +209,7 @@ static void __pci_addr_cache_insert_device(struct pci_dev *dev)
 		if (start == 0 || ~start == 0 || end == 0 || ~end == 0)
 			 continue;
 		pci_addr_cache_insert(dev, start, end, flags);
-		inserted = 1;
 	}
-
-	/* If there was nothing to add, the cache has no reference... */
-	if (!inserted)
-		pci_dev_put(dev);
 }
 
 /**
@@ -232,6 +224,10 @@ void pci_addr_cache_insert_device(struct pci_dev *dev)
 {
 	unsigned long flags;
 
+	/* Ignore PCI bridges */
+	if ((dev->class >> 16) == PCI_BASE_CLASS_BRIDGE)
+		return;
+
 	spin_lock_irqsave(&pci_io_addr_cache_root.piar_lock, flags);
 	__pci_addr_cache_insert_device(dev);
 	spin_unlock_irqrestore(&pci_io_addr_cache_root.piar_lock, flags);
@@ -240,7 +236,6 @@ void pci_addr_cache_insert_device(struct pci_dev *dev)
 static inline void __pci_addr_cache_remove_device(struct pci_dev *dev)
 {
 	struct rb_node *n;
-	int removed = 0;
 
 restart:
 	n = rb_first(&pci_io_addr_cache_root.rb_root);
@@ -250,16 +245,12 @@ restart:
 
 		if (piar->pcidev == dev) {
 			rb_erase(n, &pci_io_addr_cache_root.rb_root);
-			removed = 1;
+			pci_dev_put(piar->pcidev);
 			kfree(piar);
 			goto restart;
 		}
 		n = rb_next(n);
 	}
-
-	/* The cache no longer holds its reference to this device... */
-	if (removed)
-		pci_dev_put(dev);
 }
 
 /**
@@ -297,17 +288,16 @@ void __init pci_addr_cache_build(void)
 	spin_lock_init(&pci_io_addr_cache_root.piar_lock);
 
 	while ((dev = pci_get_device(PCI_ANY_ID, PCI_ANY_ID, dev)) != NULL) {
-		/* Ignore PCI bridges */
-		if ((dev->class >> 16) == PCI_BASE_CLASS_BRIDGE)
-			continue;
 
 		pci_addr_cache_insert_device(dev);
 
 		dn = pci_device_to_OF_node(dev);
 		if (!dn)
 			continue;
-		pci_dev_get (dev);  /* matching put is in eeh_remove_device() */
+		pci_dev_get(dev);  /* matching put is in eeh_remove_device() */
 		PCI_DN(dn)->pcidev = dev;
+
+		eeh_sysfs_add_device(dev);
 	}
 
 #ifdef DEBUG

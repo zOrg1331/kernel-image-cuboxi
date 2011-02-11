@@ -4,16 +4,16 @@
  *
  *   This program is free software;  you can redistribute it and/or modify
  *   it under the terms of the GNU General Public License as published by
- *   the Free Software Foundation; either version 2 of the License, or 
+ *   the Free Software Foundation; either version 2 of the License, or
  *   (at your option) any later version.
- * 
+ *
  *   This program is distributed in the hope that it will be useful,
  *   but WITHOUT ANY WARRANTY;  without even the implied warranty of
  *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See
  *   the GNU General Public License for more details.
  *
  *   You should have received a copy of the GNU General Public License
- *   along with this program;  if not, write to the Free Software 
+ *   along with this program;  if not, write to the Free Software
  *   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
  */
 
@@ -57,15 +57,15 @@
  *
  *   0            4                   4 + EA_SIZE(ea1)
  *   +------------+-------------------+--------------------+-----
- *   | Overall EA | First FEA Element | Second FEA Element | ..... 
+ *   | Overall EA | First FEA Element | Second FEA Element | .....
  *   | List Size  |                   |                    |
  *   +------------+-------------------+--------------------+-----
  *
  *   On-disk:
  *
- *     FEALISTs are stored on disk using blocks allocated by dbAlloc() and
- *     written directly. An EA list may be in-lined in the inode if there is
- *     sufficient room available.
+ *	FEALISTs are stored on disk using blocks allocated by dbAlloc() and
+ *	written directly. An EA list may be in-lined in the inode if there is
+ *	sufficient room available.
  */
 
 struct ea_buffer {
@@ -97,26 +97,26 @@ static inline int is_os2_xattr(struct jfs_ea *ea)
 	 */
 	if ((ea->namelen >= XATTR_SYSTEM_PREFIX_LEN) &&
 	    !strncmp(ea->name, XATTR_SYSTEM_PREFIX, XATTR_SYSTEM_PREFIX_LEN))
-		return FALSE;
+		return false;
 	/*
 	 * Check for "user."
 	 */
 	if ((ea->namelen >= XATTR_USER_PREFIX_LEN) &&
 	    !strncmp(ea->name, XATTR_USER_PREFIX, XATTR_USER_PREFIX_LEN))
-		return FALSE;
+		return false;
 	/*
 	 * Check for "security."
 	 */
 	if ((ea->namelen >= XATTR_SECURITY_PREFIX_LEN) &&
 	    !strncmp(ea->name, XATTR_SECURITY_PREFIX,
 		     XATTR_SECURITY_PREFIX_LEN))
-		return FALSE;
+		return false;
 	/*
 	 * Check for "trusted."
 	 */
 	if ((ea->namelen >= XATTR_TRUSTED_PREFIX_LEN) &&
 	    !strncmp(ea->name, XATTR_TRUSTED_PREFIX, XATTR_TRUSTED_PREFIX_LEN))
-		return FALSE;
+		return false;
 	/*
 	 * Add any other valid namespace prefixes here
 	 */
@@ -124,7 +124,7 @@ static inline int is_os2_xattr(struct jfs_ea *ea)
 	/*
 	 * We assume it's OS/2's flat namespace
 	 */
-	return TRUE;
+	return true;
 }
 
 static inline int name_size(struct jfs_ea *ea)
@@ -155,9 +155,9 @@ static void ea_release(struct inode *inode, struct ea_buffer *ea_buf);
 
 /*
  * NAME: ea_write_inline
- *                                                                    
+ *
  * FUNCTION: Attempt to write an EA inline if area is available
- *                                                                    
+ *
  * PRE CONDITIONS:
  *	Already verified that the specified EA is small enough to fit inline
  *
@@ -216,10 +216,10 @@ static int ea_write_inline(struct inode *ip, struct jfs_ea_list *ealist,
 
 /*
  * NAME: ea_write
- *                                                                    
+ *
  * FUNCTION: Write an EA for an inode
- *                                                                    
- * PRE CONDITIONS: EA has been verified 
+ *
+ * PRE CONDITIONS: EA has been verified
  *
  * PARAMETERS:
  *	ip	- Inode pointer
@@ -260,14 +260,14 @@ static int ea_write(struct inode *ip, struct jfs_ea_list *ealist, int size,
 	nblocks = (size + (sb->s_blocksize - 1)) >> sb->s_blocksize_bits;
 
 	/* Allocate new blocks to quota. */
-	if (DQUOT_ALLOC_BLOCK(ip, nblocks)) {
+	if (vfs_dq_alloc_block(ip, nblocks)) {
 		return -EDQUOT;
 	}
 
 	rc = dbAlloc(ip, INOHINT(ip), nblocks, &blkno);
 	if (rc) {
 		/*Rollback quota allocation. */
-		DQUOT_FREE_BLOCK(ip, nblocks);
+		vfs_dq_free_block(ip, nblocks);
 		return rc;
 	}
 
@@ -332,7 +332,7 @@ static int ea_write(struct inode *ip, struct jfs_ea_list *ealist, int size,
 
       failed:
 	/* Rollback quota allocation. */
-	DQUOT_FREE_BLOCK(ip, nblocks);
+	vfs_dq_free_block(ip, nblocks);
 
 	dbFree(ip, blkno, nblocks);
 	return rc;
@@ -340,9 +340,9 @@ static int ea_write(struct inode *ip, struct jfs_ea_list *ealist, int size,
 
 /*
  * NAME: ea_read_inline
- *                                                                    
+ *
  * FUNCTION: Read an inlined EA into user's buffer
- *                                                                    
+ *
  * PARAMETERS:
  *	ip	- Inode pointer
  *	ealist	- Pointer to buffer to fill in with EA
@@ -372,9 +372,9 @@ static int ea_read_inline(struct inode *ip, struct jfs_ea_list *ealist)
 
 /*
  * NAME: ea_read
- *                                                                    
+ *
  * FUNCTION: copy EA data into user's buffer
- *                                                                    
+ *
  * PARAMETERS:
  *	ip	- Inode pointer
  *	ealist	- Pointer to buffer to fill in with EA
@@ -406,7 +406,7 @@ static int ea_read(struct inode *ip, struct jfs_ea_list *ealist)
 		return -EIO;
 	}
 
-	/* 
+	/*
 	 * Figure out how many blocks were allocated when this EA list was
 	 * originally written to disk.
 	 */
@@ -443,14 +443,14 @@ static int ea_read(struct inode *ip, struct jfs_ea_list *ealist)
 
 /*
  * NAME: ea_get
- *                                                                    
+ *
  * FUNCTION: Returns buffer containing existing extended attributes.
  *	     The size of the buffer will be the larger of the existing
  *	     attributes size, or min_size.
  *
  *	     The buffer, which may be inlined in the inode or in the
- * 	     page cache must be release by calling ea_release or ea_put
- *                                                                    
+ *	     page cache must be release by calling ea_release or ea_put
+ *
  * PARAMETERS:
  *	inode	- Inode pointer
  *	ea_buf	- Structure to be populated with ealist and its metadata
@@ -538,7 +538,7 @@ static int ea_get(struct inode *inode, struct ea_buffer *ea_buf, int min_size)
 
 	if (blocks_needed > current_blocks) {
 		/* Allocate new blocks to quota. */
-		if (DQUOT_ALLOC_BLOCK(inode, blocks_needed))
+		if (vfs_dq_alloc_block(inode, blocks_needed))
 			return -EDQUOT;
 
 		quota_allocation = blocks_needed;
@@ -590,7 +590,8 @@ static int ea_get(struct inode *inode, struct ea_buffer *ea_buf, int min_size)
       size_check:
 	if (EALIST_SIZE(ea_buf->xattr) != ea_size) {
 		printk(KERN_ERR "ea_get: invalid extended attribute\n");
-		dump_mem("xattr", ea_buf->xattr, ea_size);
+		print_hex_dump(KERN_ERR, "", DUMP_PREFIX_ADDRESS, 16, 1,
+				     ea_buf->xattr, ea_size, 1);
 		ea_release(inode, ea_buf);
 		rc = -EIO;
 		goto clean_up;
@@ -601,7 +602,7 @@ static int ea_get(struct inode *inode, struct ea_buffer *ea_buf, int min_size)
       clean_up:
 	/* Rollback quota allocation */
 	if (quota_allocation)
-		DQUOT_FREE_BLOCK(inode, quota_allocation);
+		vfs_dq_free_block(inode, quota_allocation);
 
 	return (rc);
 }
@@ -676,7 +677,7 @@ static int ea_put(tid_t tid, struct inode *inode, struct ea_buffer *ea_buf,
 
 	/* If old blocks exist, they must be removed from quota allocation. */
 	if (old_blocks)
-		DQUOT_FREE_BLOCK(inode, old_blocks);
+		vfs_dq_free_block(inode, old_blocks);
 
 	inode->i_ctime = CURRENT_TIME;
 
@@ -696,7 +697,7 @@ static int can_set_system_xattr(struct inode *inode, const char *name,
 	struct posix_acl *acl;
 	int rc;
 
-	if ((current->fsuid != inode->i_uid) && !capable(CAP_FOWNER))
+	if (!is_owner_or_cap(inode))
 		return -EPERM;
 
 	/*
@@ -726,10 +727,7 @@ static int can_set_system_xattr(struct inode *inode, const char *name,
 		/*
 		 * We're changing the ACL.  Get rid of the cached one
 		 */
-		acl =JFS_IP(inode)->i_acl;
-		if (acl != JFS_ACL_NOT_CACHED)
-			posix_acl_release(acl);
-		JFS_IP(inode)->i_acl = JFS_ACL_NOT_CACHED;
+		forget_cached_acl(inode, ACL_TYPE_ACCESS);
 
 		return 0;
 	} else if (strcmp(name, POSIX_ACL_XATTR_DEFAULT) == 0) {
@@ -745,10 +743,7 @@ static int can_set_system_xattr(struct inode *inode, const char *name,
 		/*
 		 * We're changing the default ACL.  Get rid of the cached one
 		 */
-		acl =JFS_IP(inode)->i_default_acl;
-		if (acl && (acl != JFS_ACL_NOT_CACHED))
-			posix_acl_release(acl);
-		JFS_IP(inode)->i_default_acl = JFS_ACL_NOT_CACHED;
+		forget_cached_acl(inode, ACL_TYPE_DEFAULT);
 
 		return 0;
 	}
@@ -756,6 +751,11 @@ static int can_set_system_xattr(struct inode *inode, const char *name,
 	return -EOPNOTSUPP;
 }
 
+/*
+ * Most of the permission checking is done by xattr_permission in the vfs.
+ * The local file system is responsible for handling the system.* namespace.
+ * We also need to verify that this is a namespace that we recognize.
+ */
 static int can_set_xattr(struct inode *inode, const char *name,
 			 const void *value, size_t value_len)
 {
@@ -770,10 +770,6 @@ static int can_set_xattr(struct inode *inode, const char *name,
 	    strncmp(name, XATTR_USER_PREFIX, XATTR_USER_PREFIX_LEN) &&
 	    strncmp(name, XATTR_OS2_PREFIX, XATTR_OS2_PREFIX_LEN))
 		return -EOPNOTSUPP;
-
-	if (!S_ISREG(inode->i_mode) &&
-	    (!S_ISDIR(inode->i_mode) || inode->i_mode &S_ISVTX))
-		return -EPERM;
 
 	return 0;
 }
@@ -1054,7 +1050,7 @@ ssize_t jfs_listxattr(struct dentry * dentry, char *data, size_t buf_size)
 
 	/* compute required size of list */
 	for (ea = FIRST_EA(ealist); ea < END_EALIST(ealist); ea = NEXT_EA(ea)) {
-	    	if (can_list(ea))
+		if (can_list(ea))
 			size += name_size(ea) + 1;
 	}
 
@@ -1069,7 +1065,7 @@ ssize_t jfs_listxattr(struct dentry * dentry, char *data, size_t buf_size)
 	/* Copy attribute names to buffer */
 	buffer = data;
 	for (ea = FIRST_EA(ealist); ea < END_EALIST(ealist); ea = NEXT_EA(ea)) {
-	    	if (can_list(ea)) {
+		if (can_list(ea)) {
 			int namelen = copy_name(buffer, ea);
 			buffer += namelen + 1;
 		}

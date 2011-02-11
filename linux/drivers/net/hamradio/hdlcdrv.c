@@ -42,6 +42,7 @@
 
 /*****************************************************************************/
 
+#include <linux/capability.h>
 #include <linux/module.h>
 #include <linux/types.h>
 #include <linux/net.h>
@@ -56,22 +57,11 @@
 #include <linux/if_arp.h>
 #include <linux/skbuff.h>
 #include <linux/hdlcdrv.h>
+#include <linux/random.h>
 #include <net/ax25.h> 
 #include <asm/uaccess.h>
 
 #include <linux/crc-ccitt.h>
-
-/* --------------------------------------------------------------------- */
-
-/*
- * The name of the card. Is used for messages and in the requests for
- * io regions, irqs and dma channels
- */
-
-static char ax25_bcast[AX25_ADDR_LEN] =
-{'Q' << 1, 'S' << 1, 'T' << 1, ' ' << 1, ' ' << 1, ' ' << 1, '0' << 1};
-static char ax25_nocall[AX25_ADDR_LEN] =
-{'L' << 1, 'I' << 1, 'N' << 1, 'U' << 1, 'X' << 1, ' ' << 1, '1' << 1};
 
 /* --------------------------------------------------------------------- */
 
@@ -99,6 +89,7 @@ static char ax25_nocall[AX25_ADDR_LEN] =
 static inline void append_crc_ccitt(unsigned char *buffer, int len)
 {
  	unsigned int crc = crc_ccitt(0xffff, buffer, len) ^ 0xffff;
+	buffer += len;
 	*buffer++ = crc;
 	*buffer++ = crc >> 8;
 }
@@ -164,7 +155,7 @@ static void hdlc_rx_flag(struct net_device *dev, struct hdlcdrv_state *s)
 	pkt_len = s->hdlcrx.len - 2 + 1; /* KISS kludge */
 	if (!(skb = dev_alloc_skb(pkt_len))) {
 		printk("%s: memory squeeze, dropping packet\n", dev->name);
-		s->stats.rx_dropped++;
+		dev->stats.rx_dropped++;
 		return;
 	}
 	cp = skb_put(skb, pkt_len);
@@ -172,8 +163,7 @@ static void hdlc_rx_flag(struct net_device *dev, struct hdlcdrv_state *s)
 	memcpy(cp, s->hdlcrx.buffer, pkt_len - 1);
 	skb->protocol = ax25_type_trans(skb, dev);
 	netif_rx(skb);
-	dev->last_rx = jiffies;
-	s->stats.rx_packets++;
+	dev->stats.rx_packets++;
 }
 
 void hdlcdrv_receiver(struct net_device *dev, struct hdlcdrv_state *s)
@@ -328,14 +318,16 @@ void hdlcdrv_transmitter(struct net_device *dev, struct hdlcdrv_state *s)
 				dev_kfree_skb_irq(skb);
 				break;
 			}
-			memcpy(s->hdlctx.buffer, skb->data+1, pkt_len);
+			skb_copy_from_linear_data_offset(skb, 1,
+							 s->hdlctx.buffer,
+							 pkt_len);
 			dev_kfree_skb_irq(skb);
 			s->hdlctx.bp = s->hdlctx.buffer;
 			append_crc_ccitt(s->hdlctx.buffer, pkt_len);
 			s->hdlctx.len = pkt_len+2; /* the appended CRC */
 			s->hdlctx.tx_state = 2;
 			s->hdlctx.bitstream = 0;
-			s->stats.tx_packets++;
+			dev->stats.tx_packets++;
 			break;
 		case 2:
 			if (!s->hdlctx.len) {
@@ -383,16 +375,6 @@ static void start_tx(struct net_device *dev, struct hdlcdrv_state *s)
 
 /* ---------------------------------------------------------------------- */
 
-static unsigned short random_seed;
-
-static inline unsigned short random_num(void)
-{
-	random_seed = 28629 * random_seed + 157;
-	return random_seed;
-}
-
-/* ---------------------------------------------------------------------- */
-
 void hdlcdrv_arbitrate(struct net_device *dev, struct hdlcdrv_state *s)
 {
 	if (!s || s->magic != HDLCDRV_MAGIC || s->hdlctx.ptt || !s->skb) 
@@ -408,7 +390,7 @@ void hdlcdrv_arbitrate(struct net_device *dev, struct hdlcdrv_state *s)
 	if ((--s->hdlctx.slotcnt) > 0)
 		return;
 	s->hdlctx.slotcnt = s->ch_params.slottime;
-	if ((random_num() % 256) > s->ch_params.ppersist)
+	if ((random32() % 256) > s->ch_params.ppersist)
 		return;
 	start_tx(dev, s);
 }
@@ -418,20 +400,21 @@ void hdlcdrv_arbitrate(struct net_device *dev, struct hdlcdrv_state *s)
  * ===================== network driver interface =========================
  */
 
-static int hdlcdrv_send_packet(struct sk_buff *skb, struct net_device *dev)
+static netdev_tx_t hdlcdrv_send_packet(struct sk_buff *skb,
+				       struct net_device *dev)
 {
 	struct hdlcdrv_state *sm = netdev_priv(dev);
 
 	if (skb->data[0] != 0) {
 		do_kiss_params(sm, skb->data, skb->len);
 		dev_kfree_skb(skb);
-		return 0;
+		return NETDEV_TX_OK;
 	}
 	if (sm->skb)
-		return -1;
+		return NETDEV_TX_LOCKED;
 	netif_stop_queue(dev);
 	sm->skb = skb;
-	return 0;
+	return NETDEV_TX_OK;
 }
 
 /* --------------------------------------------------------------------- */
@@ -443,19 +426,6 @@ static int hdlcdrv_set_mac_address(struct net_device *dev, void *addr)
 	/* addr is an AX.25 shifted ASCII mac address */
 	memcpy(dev->dev_addr, sa->sa_data, dev->addr_len); 
 	return 0;                                         
-}
-
-/* --------------------------------------------------------------------- */
-
-static struct net_device_stats *hdlcdrv_get_stats(struct net_device *dev)
-{
-	struct hdlcdrv_state *sm = netdev_priv(dev);
-
-	/* 
-	 * Get the current statistics.  This may be called with the
-	 * card open or closed. 
-	 */
-	return &sm->stats;
 }
 
 /* --------------------------------------------------------------------- */
@@ -587,10 +557,10 @@ static int hdlcdrv_ioctl(struct net_device *dev, struct ifreq *ifr, int cmd)
 		bi.data.cs.ptt = hdlcdrv_ptt(s);
 		bi.data.cs.dcd = s->hdlcrx.dcd;
 		bi.data.cs.ptt_keyed = s->ptt_keyed;
-		bi.data.cs.tx_packets = s->stats.tx_packets;
-		bi.data.cs.tx_errors = s->stats.tx_errors;
-		bi.data.cs.rx_packets = s->stats.rx_packets;
-		bi.data.cs.rx_errors = s->stats.rx_errors;
+		bi.data.cs.tx_packets = dev->stats.tx_packets;
+		bi.data.cs.tx_errors = dev->stats.tx_errors;
+		bi.data.cs.rx_packets = dev->stats.rx_packets;
+		bi.data.cs.rx_errors = dev->stats.rx_errors;
 		break;		
 
 	case HDLCDRVCTL_OLDGETSTAT:
@@ -649,6 +619,14 @@ static int hdlcdrv_ioctl(struct net_device *dev, struct ifreq *ifr, int cmd)
 
 /* --------------------------------------------------------------------- */
 
+static const struct net_device_ops hdlcdrv_netdev = {
+	.ndo_open	= hdlcdrv_open,
+	.ndo_stop	= hdlcdrv_close,
+	.ndo_start_xmit = hdlcdrv_send_packet,
+	.ndo_do_ioctl	= hdlcdrv_ioctl,
+	.ndo_set_mac_address = hdlcdrv_set_mac_address,
+};
+
 /*
  * Initialize fields in hdlcdrv
  */
@@ -688,29 +666,20 @@ static void hdlcdrv_setup(struct net_device *dev)
 	s->bitbuf_hdlc.shreg = 0x80;
 #endif /* HDLCDRV_DEBUG */
 
-	/*
-	 * initialize the device struct
-	 */
-	dev->open = hdlcdrv_open;
-	dev->stop = hdlcdrv_close;
-	dev->do_ioctl = hdlcdrv_ioctl;
-	dev->hard_start_xmit = hdlcdrv_send_packet;
-	dev->get_stats = hdlcdrv_get_stats;
 
 	/* Fill in the fields of the device structure */
 
 	s->skb = NULL;
 	
-	dev->hard_header = ax25_hard_header;
-	dev->rebuild_header = ax25_rebuild_header;
-	dev->set_mac_address = hdlcdrv_set_mac_address;
+	dev->netdev_ops = &hdlcdrv_netdev;
+	dev->header_ops = &ax25_header_ops;
 	
 	dev->type = ARPHRD_AX25;           /* AF_AX25 device */
 	dev->hard_header_len = AX25_MAX_HEADER_LEN + AX25_BPQ_HEADER_LEN;
 	dev->mtu = AX25_DEF_PACLEN;        /* eth_mtu is the default */
 	dev->addr_len = AX25_ADDR_LEN;     /* sizeof an ax.25 address */
-	memcpy(dev->broadcast, ax25_bcast, AX25_ADDR_LEN);
-	memcpy(dev->dev_addr, ax25_nocall, AX25_ADDR_LEN);
+	memcpy(dev->broadcast, &ax25_bcast, AX25_ADDR_LEN);
+	memcpy(dev->dev_addr, &ax25_defaddr, AX25_ADDR_LEN);
 	dev->tx_queue_len = 16;
 }
 

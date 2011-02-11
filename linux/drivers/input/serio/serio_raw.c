@@ -9,7 +9,9 @@
  * the Free Software Foundation.
  */
 
+#include <linux/sched.h>
 #include <linux/slab.h>
+#include <linux/smp_lock.h>
 #include <linux/poll.h>
 #include <linux/module.h>
 #include <linux/serio.h>
@@ -57,10 +59,8 @@ static unsigned int serio_raw_no;
 static int serio_raw_fasync(int fd, struct file *file, int on)
 {
 	struct serio_raw_list *list = file->private_data;
-	int retval;
 
-	retval = fasync_helper(fd, file, on, &list->fasync);
-	return retval < 0 ? retval : 0;
+	return fasync_helper(fd, file, on, &list->fasync);
 }
 
 static struct serio_raw *serio_raw_locate(int minor)
@@ -81,9 +81,10 @@ static int serio_raw_open(struct inode *inode, struct file *file)
 	struct serio_raw_list *list;
 	int retval = 0;
 
+	lock_kernel();
 	retval = mutex_lock_interruptible(&serio_raw_mutex);
 	if (retval)
-		return retval;
+		goto out_bkl;
 
 	if (!(serio_raw = serio_raw_locate(iminor(inode)))) {
 		retval = -ENODEV;
@@ -108,6 +109,8 @@ static int serio_raw_open(struct inode *inode, struct file *file)
 
 out:
 	mutex_unlock(&serio_raw_mutex);
+out_bkl:
+	unlock_kernel();
 	return retval;
 }
 
@@ -131,7 +134,6 @@ static int serio_raw_release(struct inode *inode, struct file *file)
 
 	mutex_lock(&serio_raw_mutex);
 
-	serio_raw_fasync(-1, file, 0);
 	serio_raw_cleanup(serio_raw);
 
 	mutex_unlock(&serio_raw_mutex);
@@ -160,7 +162,7 @@ static ssize_t serio_raw_read(struct file *file, char __user *buffer, size_t cou
 {
 	struct serio_raw_list *list = file->private_data;
 	struct serio_raw *serio_raw = list->serio_raw;
-	char c;
+	char uninitialized_var(c);
 	ssize_t retval = 0;
 
 	if (!serio_raw->serio)
@@ -234,7 +236,7 @@ static unsigned int serio_raw_poll(struct file *file, poll_table *wait)
 	return 0;
 }
 
-static struct file_operations serio_raw_fops = {
+static const struct file_operations serio_raw_fops = {
 	.owner =	THIS_MODULE,
 	.open =		serio_raw_open,
 	.release =	serio_raw_release,
@@ -250,7 +252,7 @@ static struct file_operations serio_raw_fops = {
  *********************************************************************/
 
 static irqreturn_t serio_raw_interrupt(struct serio *serio, unsigned char data,
-					unsigned int dfl, struct pt_regs *regs)
+					unsigned int dfl)
 {
 	struct serio_raw *serio_raw = serio_get_drvdata(serio);
 	struct serio_raw_list *list;
@@ -297,7 +299,7 @@ static int serio_raw_connect(struct serio *serio, struct serio_driver *drv)
 
 	serio_raw->dev.minor = PSMOUSE_MINOR;
 	serio_raw->dev.name = serio_raw->name;
-	serio_raw->dev.dev = &serio->dev;
+	serio_raw->dev.parent = &serio->dev;
 	serio_raw->dev.fops = &serio_raw_fops;
 
 	err = misc_register(&serio_raw->dev);
@@ -369,6 +371,12 @@ static struct serio_device_id serio_raw_serio_ids[] = {
 		.id	= SERIO_ANY,
 		.extra	= SERIO_ANY,
 	},
+	{
+		.type	= SERIO_8042_XL,
+		.proto	= SERIO_ANY,
+		.id	= SERIO_ANY,
+		.extra	= SERIO_ANY,
+	},
 	{ 0 }
 };
 
@@ -389,8 +397,7 @@ static struct serio_driver serio_raw_drv = {
 
 static int __init serio_raw_init(void)
 {
-	serio_register_driver(&serio_raw_drv);
-	return 0;
+	return serio_register_driver(&serio_raw_drv);
 }
 
 static void __exit serio_raw_exit(void)

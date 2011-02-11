@@ -110,7 +110,8 @@ static int ali_configure(void)
 
 		nlvm_addr+= agp_bridge->gart_bus_addr;
 		nlvm_addr|=(agp_bridge->gart_bus_addr>>12);
-		printk(KERN_INFO PFX "nlvm top &base = %8x\n",nlvm_addr);
+		dev_info(&agp_bridge->dev->dev, "nlvm top &base = %8x\n",
+			 nlvm_addr);
 	}
 #endif
 
@@ -140,49 +141,54 @@ static void m1541_cache_flush(void)
 	}
 }
 
-static void *m1541_alloc_page(struct agp_bridge_data *bridge)
+static struct page *m1541_alloc_page(struct agp_bridge_data *bridge)
 {
-	void *addr = agp_generic_alloc_page(agp_bridge);
+	struct page *page = agp_generic_alloc_page(agp_bridge);
 	u32 temp;
 
-	if (!addr)
+	if (!page)
 		return NULL;
 
 	pci_read_config_dword(agp_bridge->dev, ALI_CACHE_FLUSH_CTRL, &temp);
 	pci_write_config_dword(agp_bridge->dev, ALI_CACHE_FLUSH_CTRL,
 			(((temp & ALI_CACHE_FLUSH_ADDR_MASK) |
-			  virt_to_gart(addr)) | ALI_CACHE_FLUSH_EN ));
-	return addr;
+			  page_to_phys(page)) | ALI_CACHE_FLUSH_EN ));
+	return page;
 }
 
-static void ali_destroy_page(void * addr)
+static void ali_destroy_page(struct page *page, int flags)
 {
-	if (addr) {
-		global_cache_flush();	/* is this really needed?  --hch */
-		agp_generic_destroy_page(addr);
+	if (page) {
+		if (flags & AGP_PAGE_DESTROY_UNMAP) {
+			global_cache_flush();	/* is this really needed?  --hch */
+			agp_generic_destroy_page(page, flags);
+		} else
+			agp_generic_destroy_page(page, flags);
 	}
 }
 
-static void m1541_destroy_page(void * addr)
+static void m1541_destroy_page(struct page *page, int flags)
 {
 	u32 temp;
 
-	if (addr == NULL)
+	if (page == NULL)
 		return;
 
-	global_cache_flush();
+	if (flags & AGP_PAGE_DESTROY_UNMAP) {
+		global_cache_flush();
 
-	pci_read_config_dword(agp_bridge->dev, ALI_CACHE_FLUSH_CTRL, &temp);
-	pci_write_config_dword(agp_bridge->dev, ALI_CACHE_FLUSH_CTRL,
-			(((temp & ALI_CACHE_FLUSH_ADDR_MASK) |
-			  virt_to_gart(addr)) | ALI_CACHE_FLUSH_EN));
-	agp_generic_destroy_page(addr);
+		pci_read_config_dword(agp_bridge->dev, ALI_CACHE_FLUSH_CTRL, &temp);
+		pci_write_config_dword(agp_bridge->dev, ALI_CACHE_FLUSH_CTRL,
+				       (((temp & ALI_CACHE_FLUSH_ADDR_MASK) |
+					 page_to_phys(page)) | ALI_CACHE_FLUSH_EN));
+	}
+	agp_generic_destroy_page(page, flags);
 }
 
 
 /* Setup function */
 
-static struct aper_size_info_32 ali_generic_sizes[7] =
+static const struct aper_size_info_32 ali_generic_sizes[7] =
 {
 	{256, 65536, 6, 10},
 	{128, 32768, 5, 9},
@@ -193,7 +199,7 @@ static struct aper_size_info_32 ali_generic_sizes[7] =
 	{4, 1024, 0, 3}
 };
 
-static struct agp_bridge_driver ali_generic_bridge = {
+static const struct agp_bridge_driver ali_generic_bridge = {
 	.owner			= THIS_MODULE,
 	.aperture_sizes		= ali_generic_sizes,
 	.size_type		= U32_APER_SIZE,
@@ -214,9 +220,10 @@ static struct agp_bridge_driver ali_generic_bridge = {
 	.free_by_type		= agp_generic_free_by_type,
 	.agp_alloc_page		= agp_generic_alloc_page,
 	.agp_destroy_page	= ali_destroy_page,
+	.agp_type_to_mask_type  = agp_generic_type_to_mask_type,
 };
 
-static struct agp_bridge_driver ali_m1541_bridge = {
+static const struct agp_bridge_driver ali_m1541_bridge = {
 	.owner			= THIS_MODULE,
 	.aperture_sizes		= ali_generic_sizes,
 	.size_type		= U32_APER_SIZE,
@@ -237,6 +244,7 @@ static struct agp_bridge_driver ali_m1541_bridge = {
 	.free_by_type		= agp_generic_free_by_type,
 	.agp_alloc_page		= m1541_alloc_page,
 	.agp_destroy_page	= m1541_destroy_page,
+	.agp_type_to_mask_type  = agp_generic_type_to_mask_type,
 };
 
 
@@ -308,8 +316,8 @@ static int __devinit agp_ali_probe(struct pci_dev *pdev,
 			goto found;
 	}
 
-	printk(KERN_ERR PFX "Unsupported ALi chipset (device id: %04x)\n",
-	     pdev->device);
+	dev_err(&pdev->dev, "unsupported ALi chipset [%04x/%04x])\n",
+		pdev->vendor, pdev->device);
 	return -ENODEV;
 
 
@@ -338,7 +346,7 @@ found:
 			devs[j].chipset_name = "M1641";
 			break;
 		case 0x43:
-			devs[j].chipset_name = "M????";
+			devs[j].chipset_name = "M1621";
 			break;
 		case 0x47:
 			devs[j].chipset_name = "M1647";
@@ -354,8 +362,7 @@ found:
 		bridge->driver = &ali_generic_bridge;
 	}
 
-	printk(KERN_INFO PFX "Detected ALi %s chipset\n",
-			devs[j].chipset_name);
+	dev_info(&pdev->dev, "ALi %s chipset\n", devs[j].chipset_name);
 
 	/* Fill in the mode register */
 	pci_read_config_dword(pdev,
@@ -410,6 +417,6 @@ static void __exit agp_ali_cleanup(void)
 module_init(agp_ali_init);
 module_exit(agp_ali_cleanup);
 
-MODULE_AUTHOR("Dave Jones <davej@codemonkey.org.uk>");
+MODULE_AUTHOR("Dave Jones <davej@redhat.com>");
 MODULE_LICENSE("GPL and additional rights");
 

@@ -57,8 +57,6 @@
 #include "3780i.h"
 #include "mwavepub.h"
 
-extern MWAVE_DEVICE_DATA mwave_s_mdd;
-
 static unsigned short s_ausThinkpadIrqToField[16] =
 	{ 0xFFFF, 0xFFFF, 0xFFFF, 0x0001, 0x0002, 0x0003, 0xFFFF, 0x0004,
 	0xFFFF, 0xFFFF, 0x0005, 0x0006, 0xFFFF, 0xFFFF, 0xFFFF, 0x0007 };
@@ -95,14 +93,14 @@ static void EnableSRAM(THINKPAD_BD_DATA * pBDData)
 }
 
 
-static irqreturn_t UartInterrupt(int irq, void *dev_id, struct pt_regs *regs)
+static irqreturn_t UartInterrupt(int irq, void *dev_id)
 {
 	PRINTK_3(TRACE_TP3780I,
 		"tp3780i::UartInterrupt entry irq %x dev_id %p\n", irq, dev_id);
 	return IRQ_HANDLED;
 }
 
-static irqreturn_t DspInterrupt(int irq, void *dev_id, struct pt_regs *regs)
+static irqreturn_t DspInterrupt(int irq, void *dev_id)
 {
 	pMWAVE_DEVICE_DATA pDrvData = &mwave_s_mdd;
 	DSP_3780I_CONFIG_SETTINGS *pSettings = &pDrvData->rBDData.rDspSettings;

@@ -1,102 +1,66 @@
-/* $Id: init.c,v 1.19 2004/02/21 04:42:16 kkojima Exp $
- *
- *  linux/arch/sh/mm/init.c
+/*
+ * linux/arch/sh/mm/init.c
  *
  *  Copyright (C) 1999  Niibe Yutaka
- *  Copyright (C) 2002, 2004  Paul Mundt
+ *  Copyright (C) 2002 - 2007  Paul Mundt
  *
  *  Based on linux/arch/i386/mm/init.c:
  *   Copyright (C) 1995  Linus Torvalds
  */
-
-#include <linux/signal.h>
-#include <linux/sched.h>
-#include <linux/kernel.h>
-#include <linux/errno.h>
-#include <linux/string.h>
-#include <linux/types.h>
-#include <linux/ptrace.h>
-#include <linux/mman.h>
 #include <linux/mm.h>
 #include <linux/swap.h>
-#include <linux/smp.h>
 #include <linux/init.h>
-#include <linux/highmem.h>
 #include <linux/bootmem.h>
+#include <linux/proc_fs.h>
 #include <linux/pagemap.h>
-
-#include <asm/processor.h>
-#include <asm/system.h>
-#include <asm/uaccess.h>
-#include <asm/pgtable.h>
-#include <asm/pgalloc.h>
+#include <linux/percpu.h>
+#include <linux/io.h>
 #include <asm/mmu_context.h>
-#include <asm/io.h>
 #include <asm/tlb.h>
 #include <asm/cacheflush.h>
+#include <asm/sections.h>
 #include <asm/cache.h>
 
 DEFINE_PER_CPU(struct mmu_gather, mmu_gathers);
 pgd_t swapper_pg_dir[PTRS_PER_PGD];
 
+#ifdef CONFIG_SUPERH32
 /*
- * Cache of MMU context last used.
+ * Handle trivial transitions between cached and uncached
+ * segments, making use of the 1:1 mapping relationship in
+ * 512MB lowmem.
+ *
+ * This is the offset of the uncached section from its cached alias.
+ * Default value only valid in 29 bit mode, in 32bit mode will be
+ * overridden in pmb_init.
  */
-unsigned long mmu_context_cache = NO_CONTEXT;
-
-#ifdef CONFIG_MMU
-/* It'd be good if these lines were in the standard header file. */
-#define START_PFN	(NODE_DATA(0)->bdata->node_boot_start >> PAGE_SHIFT)
-#define MAX_LOW_PFN	(NODE_DATA(0)->bdata->node_low_pfn)
+unsigned long cached_to_uncached = P2SEG - P1SEG;
 #endif
 
-void (*copy_page)(void *from, void *to);
-void (*clear_page)(void *to);
-
-void show_mem(void)
-{
-	int i, total = 0, reserved = 0;
-	int shared = 0, cached = 0;
-
-	printk("Mem-info:\n");
-	show_free_areas();
-	printk("Free swap:       %6ldkB\n", nr_swap_pages<<(PAGE_SHIFT-10));
-	i = max_mapnr;
-	while (i-- > 0) {
-		total++;
-		if (PageReserved(mem_map+i))
-			reserved++;
-		else if (PageSwapCache(mem_map+i))
-			cached++;
-		else if (page_count(mem_map+i))
-			shared += page_count(mem_map+i) - 1;
-	}
-	printk("%d pages of RAM\n",total);
-	printk("%d reserved pages\n",reserved);
-	printk("%d pages shared\n",shared);
-	printk("%d pages swap cached\n",cached);
-}
-
+#ifdef CONFIG_MMU
 static void set_pte_phys(unsigned long addr, unsigned long phys, pgprot_t prot)
 {
 	pgd_t *pgd;
+	pud_t *pud;
 	pmd_t *pmd;
 	pte_t *pte;
 
-	pgd = swapper_pg_dir + pgd_index(addr);
+	pgd = pgd_offset_k(addr);
 	if (pgd_none(*pgd)) {
 		pgd_ERROR(*pgd);
 		return;
 	}
 
-	pmd = pmd_offset(pgd, addr);
-	if (pmd_none(*pmd)) {
-		pte = (pte_t *)get_zeroed_page(GFP_ATOMIC);
-		set_pmd(pmd, __pmd(__pa(pte) | _KERNPG_TABLE | _PAGE_USER));
-		if (pte != pte_offset_kernel(pmd, 0)) {
-			pmd_ERROR(*pmd);
-			return;
-		}
+	pud = pud_alloc(NULL, pgd, addr);
+	if (unlikely(!pud)) {
+		pud_ERROR(*pud);
+		return;
+	}
+
+	pmd = pmd_alloc(NULL, pud, addr);
+	if (unlikely(!pmd)) {
+		pmd_ERROR(*pmd);
+		return;
 	}
 
 	pte = pte_offset_kernel(pmd, addr);
@@ -106,15 +70,14 @@ static void set_pte_phys(unsigned long addr, unsigned long phys, pgprot_t prot)
 	}
 
 	set_pte(pte, pfn_pte(phys >> PAGE_SHIFT, prot));
-
-	__flush_tlb_page(get_asid(), addr);
+	local_flush_tlb_one(get_asid(), addr);
 }
 
 /*
  * As a performance optimization, other platforms preserve the fixmap mapping
  * across a context switch, we don't presently do this, but this could be done
  * in a similar fashion as to the wired TLB interface that sh64 uses (by way
- * of the memorry mapped UTLB configuration) -- this unfortunately forces us to
+ * of the memory mapped UTLB configuration) -- this unfortunately forces us to
  * give up a TLB entry for each mapping we want to preserve. While this may be
  * viable for a small number of fixmaps, it's not particularly useful for
  * everything and needs to be carefully evaluated. (ie, we may want this for
@@ -137,132 +100,140 @@ void __set_fixmap(enum fixed_addresses idx, unsigned long phys, pgprot_t prot)
 	set_pte_phys(address, phys, prot);
 }
 
-/* References to section boundaries */
+void __init page_table_range_init(unsigned long start, unsigned long end,
+					 pgd_t *pgd_base)
+{
+	pgd_t *pgd;
+	pud_t *pud;
+	pmd_t *pmd;
+	pte_t *pte;
+	int i, j, k;
+	unsigned long vaddr;
 
-extern char _text, _etext, _edata, __bss_start, _end;
-extern char __init_begin, __init_end;
+	vaddr = start;
+	i = __pgd_offset(vaddr);
+	j = __pud_offset(vaddr);
+	k = __pmd_offset(vaddr);
+	pgd = pgd_base + i;
+
+	for ( ; (i < PTRS_PER_PGD) && (vaddr != end); pgd++, i++) {
+		pud = (pud_t *)pgd;
+		for ( ; (j < PTRS_PER_PUD) && (vaddr != end); pud++, j++) {
+			pmd = (pmd_t *)pud;
+			for (; (k < PTRS_PER_PMD) && (vaddr != end); pmd++, k++) {
+				if (pmd_none(*pmd)) {
+					pte = (pte_t *) alloc_bootmem_low_pages(PAGE_SIZE);
+					pmd_populate_kernel(&init_mm, pmd, pte);
+					BUG_ON(pte != pte_offset_kernel(pmd, 0));
+				}
+				vaddr += PMD_SIZE;
+			}
+			k = 0;
+		}
+		j = 0;
+	}
+}
+#endif	/* CONFIG_MMU */
 
 /*
  * paging_init() sets up the page tables
- *
- * This routines also unmaps the page at virtual kernel address 0, so
- * that we can trap those pesky NULL-reference errors in the kernel.
  */
 void __init paging_init(void)
 {
-	unsigned long zones_size[MAX_NR_ZONES] = { 0, };
+	unsigned long max_zone_pfns[MAX_NR_ZONES];
+	unsigned long vaddr, end;
+	int nid;
+
+	/* We don't need to map the kernel through the TLB, as
+	 * it is permanatly mapped using P1. So clear the
+	 * entire pgd. */
+	memset(swapper_pg_dir, 0, sizeof(swapper_pg_dir));
+
+	/* Set an initial value for the MMU.TTB so we don't have to
+	 * check for a null value. */
+	set_TTB(swapper_pg_dir);
 
 	/*
-	 * Setup some defaults for the zone sizes.. these should be safe
-	 * regardless of distcontiguous memory or MMU settings.
+	 * Populate the relevant portions of swapper_pg_dir so that
+	 * we can use the fixmap entries without calling kmalloc.
+	 * pte's will be filled in by __set_fixmap().
 	 */
-	zones_size[ZONE_DMA] = 0 >> PAGE_SHIFT;
-	zones_size[ZONE_NORMAL] = __MEMORY_SIZE >> PAGE_SHIFT;
-#ifdef CONFIG_HIGHMEM
-	zones_size[ZONE_HIGHMEM] = 0 >> PAGE_SHIFT;
-#endif
+	vaddr = __fix_to_virt(__end_of_fixed_addresses - 1) & PMD_MASK;
+	end = (FIXADDR_TOP + PMD_SIZE - 1) & PMD_MASK;
+	page_table_range_init(vaddr, end, swapper_pg_dir);
 
-#ifdef CONFIG_MMU
-	/*
-	 * If we have an MMU, and want to be using it .. we need to adjust
-	 * the zone sizes accordingly, in addition to turning it on.
-	 */
-	{
-		unsigned long max_dma, low, start_pfn;
-		pgd_t *pg_dir;
-		int i;
+	kmap_coherent_init();
 
-		/* We don't need kernel mapping as hardware support that. */
-		pg_dir = swapper_pg_dir;
+	memset(max_zone_pfns, 0, sizeof(max_zone_pfns));
 
-		for (i = 0; i < PTRS_PER_PGD; i++)
-			pgd_val(pg_dir[i]) = 0;
+	for_each_online_node(nid) {
+		pg_data_t *pgdat = NODE_DATA(nid);
+		unsigned long low, start_pfn;
 
-		/* Turn on the MMU */
-		enable_mmu();
+		start_pfn = pgdat->bdata->node_min_pfn;
+		low = pgdat->bdata->node_low_pfn;
 
-		/* Fixup the zone sizes */
-		start_pfn = START_PFN;
-		max_dma = virt_to_phys((char *)MAX_DMA_ADDRESS) >> PAGE_SHIFT;
-		low = MAX_LOW_PFN;
+		if (max_zone_pfns[ZONE_NORMAL] < low)
+			max_zone_pfns[ZONE_NORMAL] = low;
 
-		if (low < max_dma) {
-			zones_size[ZONE_DMA] = low - start_pfn;
-			zones_size[ZONE_NORMAL] = 0;
-		} else {
-			zones_size[ZONE_DMA] = max_dma - start_pfn;
-			zones_size[ZONE_NORMAL] = low - max_dma;
-		}
+		printk("Node %u: start_pfn = 0x%lx, low = 0x%lx\n",
+		       nid, start_pfn, low);
 	}
 
-#elif defined(CONFIG_CPU_SH3) || defined(CONFIG_CPU_SH4)
-	/*
-	 * If we don't have CONFIG_MMU set and the processor in question
-	 * still has an MMU, care needs to be taken to make sure it doesn't
-	 * stay on.. Since the boot loader could have potentially already
-	 * turned it on, and we clearly don't want it, we simply turn it off.
-	 *
-	 * We don't need to do anything special for the zone sizes, since the
-	 * default values that were already configured up above should be
-	 * satisfactory.
-	 */
-	disable_mmu();
-#endif
-	NODE_DATA(0)->node_mem_map = NULL;
-	free_area_init_node(0, NODE_DATA(0), zones_size, __MEMORY_START >> PAGE_SHIFT, 0);
+	free_area_init_nodes(max_zone_pfns);
+
+	/* Set up the uncached fixmap */
+	set_fixmap_nocache(FIX_UNCACHED, __pa(&__uncached_start));
 }
 
 void __init mem_init(void)
 {
-	extern unsigned long empty_zero_page[1024];
-	int codesize, reservedpages, datasize, initsize;
-	int tmp;
-	extern unsigned long memory_start;
+	int codesize, datasize, initsize;
+	int nid;
 
-#ifdef CONFIG_MMU
-	high_memory = (void *)__va(MAX_LOW_PFN * PAGE_SIZE);
-#else
-	extern unsigned long memory_end;
+	num_physpages = 0;
+	high_memory = NULL;
 
-	high_memory = (void *)(memory_end & PAGE_MASK);
-#endif
+	for_each_online_node(nid) {
+		pg_data_t *pgdat = NODE_DATA(nid);
+		unsigned long node_pages = 0;
+		void *node_high_memory;
 
-	max_mapnr = num_physpages = MAP_NR(high_memory) - MAP_NR(memory_start);
+		num_physpages += pgdat->node_present_pages;
+
+		if (pgdat->node_spanned_pages)
+			node_pages = free_all_bootmem_node(pgdat);
+
+		totalram_pages += node_pages;
+
+		node_high_memory = (void *)__va((pgdat->node_start_pfn +
+						 pgdat->node_spanned_pages) <<
+						 PAGE_SHIFT);
+		if (node_high_memory > high_memory)
+			high_memory = node_high_memory;
+	}
+
+	/* Set this up early, so we can take care of the zero page */
+	cpu_cache_init();
 
 	/* clear the zero-page */
 	memset(empty_zero_page, 0, PAGE_SIZE);
 	__flush_wback_region(empty_zero_page, PAGE_SIZE);
 
-	/*
-	 * Setup wrappers for copy/clear_page(), these will get overridden
-	 * later in the boot process if a better method is available.
-	 */
-	copy_page = copy_page_slow;
-	clear_page = clear_page_slow;
-
-	/* this will put all low memory onto the freelists */
-	totalram_pages += free_all_bootmem_node(NODE_DATA(0));
-	reservedpages = 0;
-	for (tmp = 0; tmp < num_physpages; tmp++)
-		/*
-		 * Only count reserved RAM pages
-		 */
-		if (PageReserved(mem_map+tmp))
-			reservedpages++;
-
 	codesize =  (unsigned long) &_etext - (unsigned long) &_text;
 	datasize =  (unsigned long) &_edata - (unsigned long) &_etext;
 	initsize =  (unsigned long) &__init_end - (unsigned long) &__init_begin;
 
-	printk("Memory: %luk/%luk available (%dk kernel code, %dk reserved, %dk data, %dk init)\n",
-		(unsigned long) nr_free_pages() << (PAGE_SHIFT-10),
-		max_mapnr << (PAGE_SHIFT-10),
+	printk(KERN_INFO "Memory: %luk/%luk available (%dk kernel code, "
+	       "%dk data, %dk init)\n",
+		nr_free_pages() << (PAGE_SHIFT-10),
+		num_physpages << (PAGE_SHIFT-10),
 		codesize >> 10,
-		reservedpages << (PAGE_SHIFT-10),
 		datasize >> 10,
 		initsize >> 10);
 
-	p3_cache_init();
+	/* Initialize the vDSO */
+	vsyscall_init();
 }
 
 void free_initmem(void)
@@ -276,7 +247,9 @@ void free_initmem(void)
 		free_page(addr);
 		totalram_pages++;
 	}
-	printk ("Freeing unused kernel memory: %dk freed\n", (&__init_end - &__init_begin) >> 10);
+	printk("Freeing unused kernel memory: %ldk freed\n",
+	       ((unsigned long)&__init_end -
+	        (unsigned long)&__init_begin) >> 10);
 }
 
 #ifdef CONFIG_BLK_DEV_INITRD
@@ -289,7 +262,65 @@ void free_initrd_mem(unsigned long start, unsigned long end)
 		free_page(p);
 		totalram_pages++;
 	}
-	printk ("Freeing initrd memory: %ldk freed\n", (end - start) >> 10);
+	printk("Freeing initrd memory: %ldk freed\n", (end - start) >> 10);
 }
 #endif
 
+#if THREAD_SHIFT < PAGE_SHIFT
+static struct kmem_cache *thread_info_cache;
+
+struct thread_info *alloc_thread_info(struct task_struct *tsk)
+{
+	struct thread_info *ti;
+
+	ti = kmem_cache_alloc(thread_info_cache, GFP_KERNEL);
+	if (unlikely(ti == NULL))
+		return NULL;
+#ifdef CONFIG_DEBUG_STACK_USAGE
+	memset(ti, 0, THREAD_SIZE);
+#endif
+	return ti;
+}
+
+void free_thread_info(struct thread_info *ti)
+{
+	kmem_cache_free(thread_info_cache, ti);
+}
+
+void thread_info_cache_init(void)
+{
+	thread_info_cache = kmem_cache_create("thread_info", THREAD_SIZE,
+					      THREAD_SIZE, 0, NULL);
+	BUG_ON(thread_info_cache == NULL);
+}
+#endif /* THREAD_SHIFT < PAGE_SHIFT */
+
+#ifdef CONFIG_MEMORY_HOTPLUG
+int arch_add_memory(int nid, u64 start, u64 size)
+{
+	pg_data_t *pgdat;
+	unsigned long start_pfn = start >> PAGE_SHIFT;
+	unsigned long nr_pages = size >> PAGE_SHIFT;
+	int ret;
+
+	pgdat = NODE_DATA(nid);
+
+	/* We only have ZONE_NORMAL, so this is easy.. */
+	ret = __add_pages(nid, pgdat->node_zones + ZONE_NORMAL,
+				start_pfn, nr_pages);
+	if (unlikely(ret))
+		printk("%s: Failed, __add_pages() == %d\n", __func__, ret);
+
+	return ret;
+}
+EXPORT_SYMBOL_GPL(arch_add_memory);
+
+#ifdef CONFIG_NUMA
+int memory_add_physaddr_to_nid(u64 addr)
+{
+	/* Node 0 for now.. */
+	return 0;
+}
+EXPORT_SYMBOL_GPL(memory_add_physaddr_to_nid);
+#endif
+#endif /* CONFIG_MEMORY_HOTPLUG */

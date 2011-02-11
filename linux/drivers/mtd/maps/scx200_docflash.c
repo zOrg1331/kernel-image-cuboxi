@@ -2,8 +2,6 @@
 
    Copyright (c) 2001,2002 Christer Weinigel <wingel@nano-system.com>
 
-   $Id: scx200_docflash.c,v 1.12 2005/11/07 11:14:28 gleixner Exp $
-
    National Semiconductor SCx200 flash mapped with DOCCS
 */
 
@@ -87,19 +85,23 @@ static int __init init_scx200_docflash(void)
 
 	printk(KERN_DEBUG NAME ": NatSemi SCx200 DOCCS Flash Driver\n");
 
-	if ((bridge = pci_find_device(PCI_VENDOR_ID_NS,
+	if ((bridge = pci_get_device(PCI_VENDOR_ID_NS,
 				      PCI_DEVICE_ID_NS_SCx200_BRIDGE,
 				      NULL)) == NULL)
 		return -ENODEV;
 
 	/* check that we have found the configuration block */
-	if (!scx200_cb_present())
+	if (!scx200_cb_present()) {
+		pci_dev_put(bridge);
 		return -ENODEV;
+	}
 
 	if (probe) {
 		/* Try to use the present flash mapping if any */
 		pci_read_config_dword(bridge, SCx200_DOCCS_BASE, &base);
 		pci_read_config_dword(bridge, SCx200_DOCCS_CTRL, &ctrl);
+		pci_dev_put(bridge);
+
 		pmr = inl(scx200_cb_base + SCx200_PMR);
 
 		if (base == 0
@@ -127,6 +129,7 @@ static int __init init_scx200_docflash(void)
 			return -ENOMEM;
 		}
 	} else {
+		pci_dev_put(bridge);
 		for (u = size; u > 1; u >>= 1)
 			;
 		if (u != 1) {

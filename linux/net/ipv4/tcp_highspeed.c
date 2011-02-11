@@ -14,8 +14,8 @@
  * with fixed-point MD scaled <<8.
  */
 static const struct hstcp_aimd_val {
-        unsigned int cwnd;
-        unsigned int md;
+	unsigned int cwnd;
+	unsigned int md;
 } hstcp_aimd_vals[] = {
  {     38,  128, /*  0.50 */ },
  {    118,  112, /*  0.44 */ },
@@ -97,10 +97,6 @@ struct hstcp {
 	u32	ai;
 };
 
-static int max_ssthresh = 100;
-module_param(max_ssthresh, int, 0644);
-MODULE_PARM_DESC(max_ssthresh, "limited slow start threshold (RFC3742)");
-
 static void hstcp_init(struct sock *sk)
 {
 	struct tcp_sock *tp = tcp_sk(sk);
@@ -113,8 +109,7 @@ static void hstcp_init(struct sock *sk)
 	tp->snd_cwnd_clamp = min_t(u32, tp->snd_cwnd_clamp, 0xffffffff/128);
 }
 
-static void hstcp_cong_avoid(struct sock *sk, u32 adk, u32 rtt,
-			     u32 in_flight, int data_acked)
+static void hstcp_cong_avoid(struct sock *sk, u32 adk, u32 in_flight)
 {
 	struct tcp_sock *tp = tcp_sk(sk);
 	struct hstcp *ca = inet_csk_ca(sk);
@@ -122,23 +117,9 @@ static void hstcp_cong_avoid(struct sock *sk, u32 adk, u32 rtt,
 	if (!tcp_is_cwnd_limited(sk, in_flight))
 		return;
 
-	if (tp->snd_cwnd <= tp->snd_ssthresh) {
-		/* RFC3742: limited slow start
-		 * the window is increased by 1/K MSS for each arriving ACK,
-		 * for K = int(cwnd/(0.5 max_ssthresh))
-		 */
-		if (max_ssthresh > 0 && tp->snd_cwnd > max_ssthresh) {
-			u32 k = max(tp->snd_cwnd / (max_ssthresh >> 1), 1U);
-			if (++tp->snd_cwnd_cnt >= k) {
-				if (tp->snd_cwnd < tp->snd_cwnd_clamp)
-					tp->snd_cwnd++;
-				tp->snd_cwnd_cnt = 0;
-			}
-		} else {
-			if (tp->snd_cwnd < tp->snd_cwnd_clamp)
-				tp->snd_cwnd++;
-		}
-	} else {
+	if (tp->snd_cwnd <= tp->snd_ssthresh)
+		tcp_slow_start(tp);
+	else {
 		/* Update AIMD parameters.
 		 *
 		 * We want to guarantee that:
@@ -189,7 +170,7 @@ static struct tcp_congestion_ops tcp_highspeed = {
 
 static int __init hstcp_register(void)
 {
-	BUG_ON(sizeof(struct hstcp) > ICSK_CA_PRIV_SIZE);
+	BUILD_BUG_ON(sizeof(struct hstcp) > ICSK_CA_PRIV_SIZE);
 	return tcp_register_congestion_control(&tcp_highspeed);
 }
 

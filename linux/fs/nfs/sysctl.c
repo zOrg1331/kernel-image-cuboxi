@@ -15,14 +15,11 @@
 
 #include "callback.h"
 
+#ifdef CONFIG_NFS_V4
 static const int nfs_set_port_min = 0;
 static const int nfs_set_port_max = 65535;
+#endif
 static struct ctl_table_header *nfs_callback_sysctl_table;
-/*
- * Something that isn't CTL_ANY, CTL_NONE or a value that may clash.
- * Use the same values as fs/lockd/svc.c
- */
-#define CTL_UNNUMBERED -2
 
 static ctl_table nfs_cb_sysctls[] = {
 #ifdef CONFIG_NFS_V4
@@ -55,6 +52,14 @@ static ctl_table nfs_cb_sysctls[] = {
 		.proc_handler	= &proc_dointvec_jiffies,
 		.strategy	= &sysctl_jiffies,
 	},
+	{
+		.ctl_name	= CTL_UNNUMBERED,
+		.procname	= "nfs_congestion_kb",
+		.data		= &nfs_congestion_kb,
+		.maxlen		= sizeof(nfs_congestion_kb),
+		.mode		= 0644,
+		.proc_handler	= &proc_dointvec,
+	},
 	{ .ctl_name = 0 }
 };
 
@@ -80,7 +85,7 @@ static ctl_table nfs_cb_sysctl_root[] = {
 
 int nfs_register_sysctl(void)
 {
-	nfs_callback_sysctl_table = register_sysctl_table(nfs_cb_sysctl_root, 0);
+	nfs_callback_sysctl_table = register_sysctl_table(nfs_cb_sysctl_root);
 	if (nfs_callback_sysctl_table == NULL)
 		return -ENOMEM;
 	return 0;

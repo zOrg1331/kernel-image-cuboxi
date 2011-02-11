@@ -8,12 +8,12 @@
 #include <linux/mm.h>
 #include <linux/errno.h>
 #include <linux/file.h>
-#include <linux/smp_lock.h>
 #include <linux/highuid.h>
 #include <linux/fs.h>
 #include <linux/namei.h>
 #include <linux/security.h>
 #include <linux/syscalls.h>
+#include <linux/pagemap.h>
 
 #include <asm/uaccess.h>
 #include <asm/unistd.h>
@@ -32,7 +32,7 @@ void generic_fillattr(struct inode *inode, struct kstat *stat)
 	stat->ctime = inode->i_ctime;
 	stat->size = i_size_read(inode);
 	stat->blocks = inode->i_blocks;
-	stat->blksize = inode->i_blksize;
+	stat->blksize = (1 << inode->i_blkbits);
 }
 
 EXPORT_SYMBOL(generic_fillattr);
@@ -50,57 +50,10 @@ int vfs_getattr(struct vfsmount *mnt, struct dentry *dentry, struct kstat *stat)
 		return inode->i_op->getattr(mnt, dentry, stat);
 
 	generic_fillattr(inode, stat);
-	if (!stat->blksize) {
-		struct super_block *s = inode->i_sb;
-		unsigned blocks;
-		blocks = (stat->size+s->s_blocksize-1) >> s->s_blocksize_bits;
-		stat->blocks = (s->s_blocksize / 512) * blocks;
-		stat->blksize = s->s_blocksize;
-	}
 	return 0;
 }
 
 EXPORT_SYMBOL(vfs_getattr);
-
-int vfs_stat_fd(int dfd, char __user *name, struct kstat *stat)
-{
-	struct nameidata nd;
-	int error;
-
-	error = __user_walk_fd(dfd, name, LOOKUP_FOLLOW, &nd);
-	if (!error) {
-		error = vfs_getattr(nd.mnt, nd.dentry, stat);
-		path_release(&nd);
-	}
-	return error;
-}
-
-int vfs_stat(char __user *name, struct kstat *stat)
-{
-	return vfs_stat_fd(AT_FDCWD, name, stat);
-}
-
-EXPORT_SYMBOL(vfs_stat);
-
-int vfs_lstat_fd(int dfd, char __user *name, struct kstat *stat)
-{
-	struct nameidata nd;
-	int error;
-
-	error = __user_walk_fd(dfd, name, 0, &nd);
-	if (!error) {
-		error = vfs_getattr(nd.mnt, nd.dentry, stat);
-		path_release(&nd);
-	}
-	return error;
-}
-
-int vfs_lstat(char __user *name, struct kstat *stat)
-{
-	return vfs_lstat_fd(AT_FDCWD, name, stat);
-}
-
-EXPORT_SYMBOL(vfs_lstat);
 
 int vfs_fstat(unsigned int fd, struct kstat *stat)
 {
@@ -108,13 +61,48 @@ int vfs_fstat(unsigned int fd, struct kstat *stat)
 	int error = -EBADF;
 
 	if (f) {
-		error = vfs_getattr(f->f_vfsmnt, f->f_dentry, stat);
+		error = vfs_getattr(f->f_path.mnt, f->f_path.dentry, stat);
 		fput(f);
 	}
 	return error;
 }
-
 EXPORT_SYMBOL(vfs_fstat);
+
+int vfs_fstatat(int dfd, char __user *filename, struct kstat *stat, int flag)
+{
+	struct path path;
+	int error = -EINVAL;
+	int lookup_flags = 0;
+
+	if ((flag & ~AT_SYMLINK_NOFOLLOW) != 0)
+		goto out;
+
+	if (!(flag & AT_SYMLINK_NOFOLLOW))
+		lookup_flags |= LOOKUP_FOLLOW;
+
+	error = user_path_at(dfd, filename, lookup_flags, &path);
+	if (error)
+		goto out;
+
+	error = vfs_getattr(path.mnt, path.dentry, stat);
+	path_put(&path);
+out:
+	return error;
+}
+EXPORT_SYMBOL(vfs_fstatat);
+
+int vfs_stat(char __user *name, struct kstat *stat)
+{
+	return vfs_fstatat(AT_FDCWD, name, stat, 0);
+}
+EXPORT_SYMBOL(vfs_stat);
+
+int vfs_lstat(char __user *name, struct kstat *stat)
+{
+	return vfs_fstatat(AT_FDCWD, name, stat, AT_SYMLINK_NOFOLLOW);
+}
+EXPORT_SYMBOL(vfs_lstat);
+
 
 #ifdef __ARCH_WANT_OLD_STAT
 
@@ -139,6 +127,8 @@ static int cp_old_stat(struct kstat *stat, struct __old_kernel_stat __user * sta
 	memset(&tmp, 0, sizeof(struct __old_kernel_stat));
 	tmp.st_dev = old_encode_dev(stat->dev);
 	tmp.st_ino = stat->ino;
+	if (sizeof(tmp.st_ino) < sizeof(stat->ino) && tmp.st_ino != stat->ino)
+		return -EOVERFLOW;
 	tmp.st_mode = stat->mode;
 	tmp.st_nlink = stat->nlink;
 	if (tmp.st_nlink != stat->nlink)
@@ -157,27 +147,31 @@ static int cp_old_stat(struct kstat *stat, struct __old_kernel_stat __user * sta
 	return copy_to_user(statbuf,&tmp,sizeof(tmp)) ? -EFAULT : 0;
 }
 
-asmlinkage long sys_stat(char __user * filename, struct __old_kernel_stat __user * statbuf)
+SYSCALL_DEFINE2(stat, char __user *, filename, struct __old_kernel_stat __user *, statbuf)
 {
 	struct kstat stat;
-	int error = vfs_stat_fd(AT_FDCWD, filename, &stat);
+	int error;
 
-	if (!error)
-		error = cp_old_stat(&stat, statbuf);
+	error = vfs_stat(filename, &stat);
+	if (error)
+		return error;
 
-	return error;
+	return cp_old_stat(&stat, statbuf);
 }
-asmlinkage long sys_lstat(char __user * filename, struct __old_kernel_stat __user * statbuf)
+
+SYSCALL_DEFINE2(lstat, char __user *, filename, struct __old_kernel_stat __user *, statbuf)
 {
 	struct kstat stat;
-	int error = vfs_lstat_fd(AT_FDCWD, filename, &stat);
+	int error;
 
-	if (!error)
-		error = cp_old_stat(&stat, statbuf);
+	error = vfs_lstat(filename, &stat);
+	if (error)
+		return error;
 
-	return error;
+	return cp_old_stat(&stat, statbuf);
 }
-asmlinkage long sys_fstat(unsigned int fd, struct __old_kernel_stat __user * statbuf)
+
+SYSCALL_DEFINE2(fstat, unsigned int, fd, struct __old_kernel_stat __user *, statbuf)
 {
 	struct kstat stat;
 	int error = vfs_fstat(fd, &stat);
@@ -209,6 +203,8 @@ static int cp_new_stat(struct kstat *stat, struct stat __user *statbuf)
 	tmp.st_dev = new_encode_dev(stat->dev);
 #endif
 	tmp.st_ino = stat->ino;
+	if (sizeof(tmp.st_ino) < sizeof(stat->ino) && tmp.st_ino != stat->ino)
+		return -EOVERFLOW;
 	tmp.st_mode = stat->mode;
 	tmp.st_nlink = stat->nlink;
 	if (tmp.st_nlink != stat->nlink)
@@ -238,52 +234,43 @@ static int cp_new_stat(struct kstat *stat, struct stat __user *statbuf)
 	return copy_to_user(statbuf,&tmp,sizeof(tmp)) ? -EFAULT : 0;
 }
 
-asmlinkage long sys_newstat(char __user *filename, struct stat __user *statbuf)
+SYSCALL_DEFINE2(newstat, char __user *, filename, struct stat __user *, statbuf)
 {
 	struct kstat stat;
-	int error = vfs_stat_fd(AT_FDCWD, filename, &stat);
+	int error = vfs_stat(filename, &stat);
 
-	if (!error)
-		error = cp_new_stat(&stat, statbuf);
-
-	return error;
+	if (error)
+		return error;
+	return cp_new_stat(&stat, statbuf);
 }
 
-asmlinkage long sys_newlstat(char __user *filename, struct stat __user *statbuf)
+SYSCALL_DEFINE2(newlstat, char __user *, filename, struct stat __user *, statbuf)
 {
 	struct kstat stat;
-	int error = vfs_lstat_fd(AT_FDCWD, filename, &stat);
+	int error;
 
-	if (!error)
-		error = cp_new_stat(&stat, statbuf);
+	error = vfs_lstat(filename, &stat);
+	if (error)
+		return error;
 
-	return error;
+	return cp_new_stat(&stat, statbuf);
 }
 
 #if !defined(__ARCH_WANT_STAT64) || defined(__ARCH_WANT_SYS_NEWFSTATAT)
-asmlinkage long sys_newfstatat(int dfd, char __user *filename,
-				struct stat __user *statbuf, int flag)
+SYSCALL_DEFINE4(newfstatat, int, dfd, char __user *, filename,
+		struct stat __user *, statbuf, int, flag)
 {
 	struct kstat stat;
-	int error = -EINVAL;
+	int error;
 
-	if ((flag & ~AT_SYMLINK_NOFOLLOW) != 0)
-		goto out;
-
-	if (flag & AT_SYMLINK_NOFOLLOW)
-		error = vfs_lstat_fd(dfd, filename, &stat);
-	else
-		error = vfs_stat_fd(dfd, filename, &stat);
-
-	if (!error)
-		error = cp_new_stat(&stat, statbuf);
-
-out:
-	return error;
+	error = vfs_fstatat(dfd, filename, &stat, flag);
+	if (error)
+		return error;
+	return cp_new_stat(&stat, statbuf);
 }
 #endif
 
-asmlinkage long sys_newfstat(unsigned int fd, struct stat __user *statbuf)
+SYSCALL_DEFINE2(newfstat, unsigned int, fd, struct stat __user *, statbuf)
 {
 	struct kstat stat;
 	int error = vfs_fstat(fd, &stat);
@@ -294,34 +281,35 @@ asmlinkage long sys_newfstat(unsigned int fd, struct stat __user *statbuf)
 	return error;
 }
 
-asmlinkage long sys_readlinkat(int dfd, const char __user *path,
-				char __user *buf, int bufsiz)
+SYSCALL_DEFINE4(readlinkat, int, dfd, const char __user *, pathname,
+		char __user *, buf, int, bufsiz)
 {
-	struct nameidata nd;
+	struct path path;
 	int error;
 
 	if (bufsiz <= 0)
 		return -EINVAL;
 
-	error = __user_walk_fd(dfd, path, 0, &nd);
+	error = user_path_at(dfd, pathname, 0, &path);
 	if (!error) {
-		struct inode * inode = nd.dentry->d_inode;
+		struct inode *inode = path.dentry->d_inode;
 
 		error = -EINVAL;
-		if (inode->i_op && inode->i_op->readlink) {
-			error = security_inode_readlink(nd.dentry);
+		if (inode->i_op->readlink) {
+			error = security_inode_readlink(path.dentry);
 			if (!error) {
-				touch_atime(nd.mnt, nd.dentry);
-				error = inode->i_op->readlink(nd.dentry, buf, bufsiz);
+				touch_atime(path.mnt, path.dentry);
+				error = inode->i_op->readlink(path.dentry,
+							      buf, bufsiz);
 			}
 		}
-		path_release(&nd);
+		path_put(&path);
 	}
 	return error;
 }
 
-asmlinkage long sys_readlink(const char __user *path, char __user *buf,
-				int bufsiz)
+SYSCALL_DEFINE3(readlink, const char __user *, path, char __user *, buf,
+		int, bufsiz)
 {
 	return sys_readlinkat(AT_FDCWD, path, buf, bufsiz);
 }
@@ -346,6 +334,8 @@ static long cp_new_stat64(struct kstat *stat, struct stat64 __user *statbuf)
 	tmp.st_rdev = huge_encode_dev(stat->rdev);
 #endif
 	tmp.st_ino = stat->ino;
+	if (sizeof(tmp.st_ino) < sizeof(stat->ino) && tmp.st_ino != stat->ino)
+		return -EOVERFLOW;
 #ifdef STAT64_HAS_BROKEN_ST_INO
 	tmp.__st_ino = stat->ino;
 #endif
@@ -365,7 +355,7 @@ static long cp_new_stat64(struct kstat *stat, struct stat64 __user *statbuf)
 	return copy_to_user(statbuf,&tmp,sizeof(tmp)) ? -EFAULT : 0;
 }
 
-asmlinkage long sys_stat64(char __user * filename, struct stat64 __user * statbuf)
+SYSCALL_DEFINE2(stat64, char __user *, filename, struct stat64 __user *, statbuf)
 {
 	struct kstat stat;
 	int error = vfs_stat(filename, &stat);
@@ -375,7 +365,8 @@ asmlinkage long sys_stat64(char __user * filename, struct stat64 __user * statbu
 
 	return error;
 }
-asmlinkage long sys_lstat64(char __user * filename, struct stat64 __user * statbuf)
+
+SYSCALL_DEFINE2(lstat64, char __user *, filename, struct stat64 __user *, statbuf)
 {
 	struct kstat stat;
 	int error = vfs_lstat(filename, &stat);
@@ -385,7 +376,8 @@ asmlinkage long sys_lstat64(char __user * filename, struct stat64 __user * statb
 
 	return error;
 }
-asmlinkage long sys_fstat64(unsigned long fd, struct stat64 __user * statbuf)
+
+SYSCALL_DEFINE2(fstat64, unsigned long, fd, struct stat64 __user *, statbuf)
 {
 	struct kstat stat;
 	int error = vfs_fstat(fd, &stat);
@@ -396,31 +388,22 @@ asmlinkage long sys_fstat64(unsigned long fd, struct stat64 __user * statbuf)
 	return error;
 }
 
-asmlinkage long sys_fstatat64(int dfd, char __user *filename,
-			       struct stat64 __user *statbuf, int flag)
+SYSCALL_DEFINE4(fstatat64, int, dfd, char __user *, filename,
+		struct stat64 __user *, statbuf, int, flag)
 {
 	struct kstat stat;
-	int error = -EINVAL;
+	int error;
 
-	if ((flag & ~AT_SYMLINK_NOFOLLOW) != 0)
-		goto out;
-
-	if (flag & AT_SYMLINK_NOFOLLOW)
-		error = vfs_lstat_fd(dfd, filename, &stat);
-	else
-		error = vfs_stat_fd(dfd, filename, &stat);
-
-	if (!error)
-		error = cp_new_stat64(&stat, statbuf);
-
-out:
-	return error;
+	error = vfs_fstatat(dfd, filename, &stat, flag);
+	if (error)
+		return error;
+	return cp_new_stat64(&stat, statbuf);
 }
 #endif /* __ARCH_WANT_STAT64 */
 
-void inode_add_bytes(struct inode *inode, loff_t bytes)
+/* Caller is here responsible for sufficient locking (ie. inode->i_lock) */
+void __inode_add_bytes(struct inode *inode, loff_t bytes)
 {
-	spin_lock(&inode->i_lock);
 	inode->i_blocks += bytes >> 9;
 	bytes &= 511;
 	inode->i_bytes += bytes;
@@ -428,6 +411,12 @@ void inode_add_bytes(struct inode *inode, loff_t bytes)
 		inode->i_blocks++;
 		inode->i_bytes -= 512;
 	}
+}
+
+void inode_add_bytes(struct inode *inode, loff_t bytes)
+{
+	spin_lock(&inode->i_lock);
+	__inode_add_bytes(inode, bytes);
 	spin_unlock(&inode->i_lock);
 }
 

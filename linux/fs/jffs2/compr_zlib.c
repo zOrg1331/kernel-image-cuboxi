@@ -1,13 +1,11 @@
 /*
  * JFFS2 -- Journalling Flash File System, Version 2.
  *
- * Copyright (C) 2001-2003 Red Hat, Inc.
+ * Copyright © 2001-2007 Red Hat, Inc.
  *
  * Created by David Woodhouse <dwmw2@infradead.org>
  *
  * For licensing information, see the file 'LICENCE' in this directory.
- *
- * $Id: compr_zlib.c,v 1.32 2005/11/07 11:14:38 gleixner Exp $
  *
  */
 
@@ -16,7 +14,6 @@
 #endif
 
 #include <linux/kernel.h>
-#include <linux/sched.h>
 #include <linux/slab.h>
 #include <linux/zlib.h>
 #include <linux/zutil.h>
@@ -184,7 +181,7 @@ static int jffs2_zlib_decompress(unsigned char *data_in,
 	}
 	zlib_inflateEnd(&inf_strm);
 	mutex_unlock(&inflate_mutex);
-        return 0;
+	return 0;
 }
 
 static struct jffs2_compressor jffs2_zlib_comp = {
@@ -206,11 +203,11 @@ int __init jffs2_zlib_init(void)
 
     ret = alloc_workspaces();
     if (ret)
-        return ret;
+	    return ret;
 
     ret = jffs2_register_compressor(&jffs2_zlib_comp);
     if (ret)
-        free_workspaces();
+	    free_workspaces();
 
     return ret;
 }

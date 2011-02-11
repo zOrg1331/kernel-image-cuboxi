@@ -27,28 +27,45 @@
 
 static struct ia64_cpu *sysfs_cpus;
 
-int arch_register_cpu(int num)
+void arch_fix_phys_package_id(int num, u32 slot)
 {
-#if defined (CONFIG_ACPI) && defined (CONFIG_HOTPLUG_CPU)
-	/*
-	 * If CPEI cannot be re-targetted, and this is
-	 * CPEI target, then dont create the control file
-	 */
-	if (!can_cpei_retarget() && is_cpu_cpei_target(num))
-		sysfs_cpus[num].cpu.no_control = 1;
+#ifdef CONFIG_SMP
+	if (cpu_data(num)->socket_id == -1)
+		cpu_data(num)->socket_id = slot;
 #endif
-
-	return register_cpu(&sysfs_cpus[num].cpu, num);
 }
+EXPORT_SYMBOL_GPL(arch_fix_phys_package_id);
+
 
 #ifdef CONFIG_HOTPLUG_CPU
-
-void arch_unregister_cpu(int num)
+int __ref arch_register_cpu(int num)
 {
-	return unregister_cpu(&sysfs_cpus[num].cpu);
+#ifdef CONFIG_ACPI
+	/*
+	 * If CPEI can be re-targetted or if this is not
+	 * CPEI target, then it is hotpluggable
+	 */
+	if (can_cpei_retarget() || !is_cpu_cpei_target(num))
+		sysfs_cpus[num].cpu.hotpluggable = 1;
+	map_cpu_to_node(num, node_cpuid[num].nid);
+#endif
+	return register_cpu(&sysfs_cpus[num].cpu, num);
 }
 EXPORT_SYMBOL(arch_register_cpu);
+
+void __ref arch_unregister_cpu(int num)
+{
+	unregister_cpu(&sysfs_cpus[num].cpu);
+#ifdef CONFIG_ACPI
+	unmap_cpu_from_node(num, cpu_to_node(num));
+#endif
+}
 EXPORT_SYMBOL(arch_unregister_cpu);
+#else
+static int __init arch_register_cpu(int num)
+{
+	return register_cpu(&sysfs_cpus[num].cpu, num);
+}
 #endif /*CONFIG_HOTPLUG_CPU*/
 
 
@@ -116,11 +133,11 @@ struct cpu_cache_info {
 	struct kobject kobj;
 };
 
-static struct cpu_cache_info	all_cpu_cache_info[NR_CPUS];
+static struct cpu_cache_info	all_cpu_cache_info[NR_CPUS] __cpuinitdata;
 #define LEAF_KOBJECT_PTR(x,y)    (&all_cpu_cache_info[x].cache_leaves[y])
 
 #ifdef CONFIG_SMP
-static void cache_shared_cpu_map_setup( unsigned int cpu,
+static void __cpuinit cache_shared_cpu_map_setup( unsigned int cpu,
 		struct cache_info * this_leaf)
 {
 	pal_cache_shared_info_t	csi;
@@ -155,7 +172,7 @@ static void cache_shared_cpu_map_setup( unsigned int cpu,
 				&csi) == PAL_STATUS_SUCCESS);
 }
 #else
-static void cache_shared_cpu_map_setup(unsigned int cpu,
+static void __cpuinit cache_shared_cpu_map_setup(unsigned int cpu,
 		struct cache_info * this_leaf)
 {
 	cpu_set(cpu, this_leaf->shared_cpu_map);
@@ -202,7 +219,7 @@ static ssize_t show_shared_cpu_map(struct cache_info *this_leaf, char *buf)
 	cpumask_t shared_cpu_map;
 
 	cpus_and(shared_cpu_map, this_leaf->shared_cpu_map, cpu_online_map);
-	len = cpumask_scnprintf(buf, NR_CPUS+1, shared_cpu_map);
+	len = cpumask_scnprintf(buf, NR_CPUS+1, &shared_cpu_map);
 	len += sprintf(buf+len, "\n");
 	return len;
 }
@@ -265,7 +282,7 @@ static ssize_t cache_show(struct kobject * kobj, struct attribute * attr, char *
 	return ret;
 }
 
-static struct sysfs_ops cache_sysfs_ops = {
+static const struct sysfs_ops cache_sysfs_ops = {
 	.show   = cache_show
 };
 
@@ -289,10 +306,10 @@ static void __cpuinit cpu_cache_sysfs_exit(unsigned int cpu)
 
 static int __cpuinit cpu_cache_sysfs_init(unsigned int cpu)
 {
-	u64 i, levels, unique_caches;
+	unsigned long i, levels, unique_caches;
 	pal_cache_config_info_t cci;
 	int j;
-	s64 status;
+	long status;
 	struct cache_info *this_cache;
 	int num_cache_leaves = 0;
 
@@ -352,27 +369,31 @@ static int __cpuinit cache_add_dev(struct sys_device * sys_dev)
 	if (unlikely(retval < 0))
 		return retval;
 
-	all_cpu_cache_info[cpu].kobj.parent = &sys_dev->kobj;
-	kobject_set_name(&all_cpu_cache_info[cpu].kobj, "%s", "cache");
-	all_cpu_cache_info[cpu].kobj.ktype = &cache_ktype_percpu_entry;
-	retval = kobject_register(&all_cpu_cache_info[cpu].kobj);
+	retval = kobject_init_and_add(&all_cpu_cache_info[cpu].kobj,
+				      &cache_ktype_percpu_entry, &sys_dev->kobj,
+				      "%s", "cache");
+	if (unlikely(retval < 0)) {
+		cpu_cache_sysfs_exit(cpu);
+		return retval;
+	}
 
 	for (i = 0; i < all_cpu_cache_info[cpu].num_cache_leaves; i++) {
 		this_object = LEAF_KOBJECT_PTR(cpu,i);
-		this_object->kobj.parent = &all_cpu_cache_info[cpu].kobj;
-		kobject_set_name(&(this_object->kobj), "index%1lu", i);
-		this_object->kobj.ktype = &cache_ktype;
-		retval = kobject_register(&(this_object->kobj));
+		retval = kobject_init_and_add(&(this_object->kobj),
+					      &cache_ktype,
+					      &all_cpu_cache_info[cpu].kobj,
+					      "index%1lu", i);
 		if (unlikely(retval)) {
 			for (j = 0; j < i; j++) {
-				kobject_unregister(
-					&(LEAF_KOBJECT_PTR(cpu,j)->kobj));
+				kobject_put(&(LEAF_KOBJECT_PTR(cpu,j)->kobj));
 			}
-			kobject_unregister(&all_cpu_cache_info[cpu].kobj);
+			kobject_put(&all_cpu_cache_info[cpu].kobj);
 			cpu_cache_sysfs_exit(cpu);
-			break;
+			return retval;
 		}
+		kobject_uevent(&(this_object->kobj), KOBJ_ADD);
 	}
+	kobject_uevent(&all_cpu_cache_info[cpu].kobj, KOBJ_ADD);
 	return retval;
 }
 
@@ -383,10 +404,10 @@ static int __cpuinit cache_remove_dev(struct sys_device * sys_dev)
 	unsigned long i;
 
 	for (i = 0; i < all_cpu_cache_info[cpu].num_cache_leaves; i++)
-		kobject_unregister(&(LEAF_KOBJECT_PTR(cpu,i)->kobj));
+		kobject_put(&(LEAF_KOBJECT_PTR(cpu,i)->kobj));
 
 	if (all_cpu_cache_info[cpu].kobj.parent) {
-		kobject_unregister(&all_cpu_cache_info[cpu].kobj);
+		kobject_put(&all_cpu_cache_info[cpu].kobj);
 		memset(&all_cpu_cache_info[cpu].kobj,
 			0,
 			sizeof(struct kobject));
@@ -410,9 +431,11 @@ static int __cpuinit cache_cpu_callback(struct notifier_block *nfb,
 	sys_dev = get_cpu_sysdev(cpu);
 	switch (action) {
 	case CPU_ONLINE:
+	case CPU_ONLINE_FROZEN:
 		cache_add_dev(sys_dev);
 		break;
 	case CPU_DEAD:
+	case CPU_DEAD_FROZEN:
 		cache_remove_dev(sys_dev);
 		break;
 	}
@@ -424,13 +447,13 @@ static struct notifier_block __cpuinitdata cache_cpu_notifier =
 	.notifier_call = cache_cpu_callback
 };
 
-static int __cpuinit cache_sysfs_init(void)
+static int __init cache_sysfs_init(void)
 {
 	int i;
 
 	for_each_online_cpu(i) {
-		cache_cpu_callback(&cache_cpu_notifier, CPU_ONLINE,
-				(void *)(long)i);
+		struct sys_device *sys_dev = get_cpu_sysdev((unsigned int)i);
+		cache_add_dev(sys_dev);
 	}
 
 	register_hotcpu_notifier(&cache_cpu_notifier);

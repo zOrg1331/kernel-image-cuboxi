@@ -18,26 +18,12 @@
 #ifndef	__XFS_BUF_ITEM_H__
 #define	__XFS_BUF_ITEM_H__
 
+extern kmem_zone_t	*xfs_buf_item_zone;
+
 /*
  * This is the structure used to lay out a buf log item in the
  * log.  The data map describes which 128 byte chunks of the buffer
- * have been logged.  This structure works only on buffers that
- * reside up to the first TB in the filesystem.  These buffers are
- * generated only by pre-6.2 systems and are known as XFS_LI_6_1_BUF.
- */
-typedef struct xfs_buf_log_format_v1 {
-	unsigned short	blf_type;	/* buf log item type indicator */
-	unsigned short	blf_size;	/* size of this item */
-	__int32_t	blf_blkno;	/* starting blkno of this buf */
-	ushort		blf_flags;	/* misc state */
-	ushort		blf_len;	/* number of blocks in this buf */
-	unsigned int	blf_map_size;	/* size of data bitmap in words */
-	unsigned int	blf_data_map[1];/* variable size bitmap of */
-					/*   regions of buffer in this item */
-} xfs_buf_log_format_v1_t;
-
-/*
- * This is a form of the above structure with a 64 bit blkno field.
+ * have been logged.
  * For 6.2 and beyond, this is XFS_LI_BUF.  We use this to log everything.
  */
 typedef struct xfs_buf_log_format_t {
@@ -84,21 +70,20 @@ typedef struct xfs_buf_log_format_t {
 #define	XFS_BLI_INODE_ALLOC_BUF	0x10
 #define XFS_BLI_STALE_INODE	0x20
 
+#define XFS_BLI_FLAGS \
+	{ XFS_BLI_HOLD,		"HOLD" }, \
+	{ XFS_BLI_DIRTY,	"DIRTY" }, \
+	{ XFS_BLI_STALE,	"STALE" }, \
+	{ XFS_BLI_LOGGED,	"LOGGED" }, \
+	{ XFS_BLI_INODE_ALLOC_BUF, "INODE_ALLOC" }, \
+	{ XFS_BLI_STALE_INODE,	"STALE_INODE" }
+
 
 #ifdef __KERNEL__
 
 struct xfs_buf;
-struct ktrace;
 struct xfs_mount;
 struct xfs_buf_log_item;
-
-#if defined(XFS_BLI_TRACE)
-#define	XFS_BLI_TRACE_SIZE	32
-
-void	xfs_buf_item_trace(char *, struct xfs_buf_log_item *);
-#else
-#define	xfs_buf_item_trace(id, bip)
-#endif
 
 /*
  * This is the in core log item structure used to track information
@@ -111,9 +96,6 @@ typedef struct xfs_buf_log_item {
 	unsigned int		bli_flags;	/* misc flags */
 	unsigned int		bli_recur;	/* lock recursion count */
 	atomic_t		bli_refcount;	/* cnt of tp refs */
-#ifdef XFS_BLI_TRACE
-	struct ktrace		*bli_trace;	/* event trace buf */
-#endif
 #ifdef XFS_TRANS_DEBUG
 	char			*bli_orig;	/* original buffer copy */
 	char			*bli_logged;	/* bytes logged (bitmap) */

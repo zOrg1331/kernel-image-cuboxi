@@ -23,11 +23,11 @@
 #include <linux/init.h>
 #include <linux/list.h>
 #include <linux/module.h>
-#include <linux/moduleparam.h>
 #include <linux/kernel.h>
+#include <linux/kthread.h>
 #include <linux/slab.h>
 #include <linux/delay.h>
-#include <linux/smp_lock.h>
+#include <linux/freezer.h>
 #include <asm/div64.h>
 
 #include "saa7134-reg.h"
@@ -35,18 +35,18 @@
 
 /* ------------------------------------------------------------------ */
 
-static unsigned int audio_debug = 0;
+static unsigned int audio_debug;
 module_param(audio_debug, int, 0644);
 MODULE_PARM_DESC(audio_debug,"enable debug messages [tv audio]");
 
-static unsigned int audio_ddep = 0;
+static unsigned int audio_ddep;
 module_param(audio_ddep, int, 0644);
 MODULE_PARM_DESC(audio_ddep,"audio ddep overwrite");
 
 static int audio_clock_override = UNSET;
 module_param(audio_clock_override, int, 0644);
 
-static int audio_clock_tweak = 0;
+static int audio_clock_tweak;
 module_param(audio_clock_tweak, int, 0644);
 MODULE_PARM_DESC(audio_clock_tweak, "Audio clock tick fine tuning for cards with audio crystal that's slightly off (range [-1024 .. 1024])");
 
@@ -72,12 +72,12 @@ static struct mainscan {
 	int          carr;
 } mainscan[] = {
 	{
-		.name = "M",
-		.std  = V4L2_STD_NTSC | V4L2_STD_PAL_M,
+		.name = "MN",
+		.std  = V4L2_STD_MN,
 		.carr = 4500,
 	},{
-		.name = "BG",
-		.std  = V4L2_STD_PAL_BG,
+		.name = "BGH",
+		.std  = V4L2_STD_B | V4L2_STD_GH,
 		.carr = 5500,
 	},{
 		.name = "I",
@@ -85,7 +85,7 @@ static struct mainscan {
 		.carr = 6000,
 	},{
 		.name = "DKL",
-		.std  = V4L2_STD_PAL_DK | V4L2_STD_SECAM,
+		.std  = V4L2_STD_DK | V4L2_STD_SECAM_L | V4L2_STD_SECAM_LC,
 		.carr = 6500,
 	}
 };
@@ -93,107 +93,75 @@ static struct mainscan {
 static struct saa7134_tvaudio tvaudio[] = {
 	{
 		.name          = "PAL-B/G FM-stereo",
-		.std           = V4L2_STD_PAL,
+		.std           = V4L2_STD_PAL_BG,
 		.mode          = TVAUDIO_FM_BG_STEREO,
 		.carr1         = 5500,
 		.carr2         = 5742,
 	},{
 		.name          = "PAL-D/K1 FM-stereo",
-		.std           = V4L2_STD_PAL,
+		.std           = V4L2_STD_PAL_DK,
 		.carr1         = 6500,
 		.carr2         = 6258,
 		.mode          = TVAUDIO_FM_BG_STEREO,
 	},{
 		.name          = "PAL-D/K2 FM-stereo",
-		.std           = V4L2_STD_PAL,
+		.std           = V4L2_STD_PAL_DK,
 		.carr1         = 6500,
 		.carr2         = 6742,
 		.mode          = TVAUDIO_FM_BG_STEREO,
 	},{
 		.name          = "PAL-D/K3 FM-stereo",
-		.std           = V4L2_STD_PAL,
+		.std           = V4L2_STD_PAL_DK,
 		.carr1         = 6500,
 		.carr2         = 5742,
 		.mode          = TVAUDIO_FM_BG_STEREO,
 	},{
 		.name          = "PAL-B/G NICAM",
-		.std           = V4L2_STD_PAL,
+		.std           = V4L2_STD_PAL_BG,
 		.carr1         = 5500,
 		.carr2         = 5850,
 		.mode          = TVAUDIO_NICAM_FM,
 	},{
 		.name          = "PAL-I NICAM",
-		.std           = V4L2_STD_PAL,
+		.std           = V4L2_STD_PAL_I,
 		.carr1         = 6000,
 		.carr2         = 6552,
 		.mode          = TVAUDIO_NICAM_FM,
 	},{
 		.name          = "PAL-D/K NICAM",
-		.std           = V4L2_STD_PAL,
+		.std           = V4L2_STD_PAL_DK,
 		.carr1         = 6500,
 		.carr2         = 5850,
 		.mode          = TVAUDIO_NICAM_FM,
 	},{
 		.name          = "SECAM-L NICAM",
-		.std           = V4L2_STD_SECAM,
+		.std           = V4L2_STD_SECAM_L,
 		.carr1         = 6500,
 		.carr2         = 5850,
 		.mode          = TVAUDIO_NICAM_AM,
 	},{
-		.name          = "SECAM-L MONO",
-		.std           = V4L2_STD_SECAM,
+		.name          = "SECAM-D/K NICAM",
+		.std           = V4L2_STD_SECAM_DK,
 		.carr1         = 6500,
-		.carr2         = -1,
-		.mode          = TVAUDIO_AM_MONO,
-	},{
-		.name          = "SECAM-D/K",
-		.std           = V4L2_STD_SECAM,
-		.carr1         = 6500,
-		.carr2         = -1,
-		.mode          = TVAUDIO_FM_MONO,
-	},{
-		.name          = "NTSC-M",
-		.std           = V4L2_STD_NTSC,
-		.carr1         = 4500,
-		.carr2         = -1,
-		.mode          = TVAUDIO_FM_MONO,
+		.carr2         = 5850,
+		.mode          = TVAUDIO_NICAM_FM,
 	},{
 		.name          = "NTSC-A2 FM-stereo",
 		.std           = V4L2_STD_NTSC,
 		.carr1         = 4500,
 		.carr2         = 4724,
 		.mode          = TVAUDIO_FM_K_STEREO,
+	},{
+		.name          = "NTSC-M",
+		.std           = V4L2_STD_NTSC,
+		.carr1         = 4500,
+		.carr2         = -1,
+		.mode          = TVAUDIO_FM_MONO,
 	}
 };
-#define TVAUDIO (sizeof(tvaudio)/sizeof(struct saa7134_tvaudio))
+#define TVAUDIO ARRAY_SIZE(tvaudio)
 
 /* ------------------------------------------------------------------ */
-
-static void tvaudio_init(struct saa7134_dev *dev)
-{
-	int clock = saa7134_boards[dev->board].audio_clock;
-
-	if (UNSET != audio_clock_override)
-		clock = audio_clock_override;
-
-	/* init all audio registers */
-	saa_writeb(SAA7134_AUDIO_PLL_CTRL,   0x00);
-	if (need_resched())
-		schedule();
-	else
-		udelay(10);
-
-	saa_writeb(SAA7134_AUDIO_CLOCK0,      clock        & 0xff);
-	saa_writeb(SAA7134_AUDIO_CLOCK1,     (clock >>  8) & 0xff);
-	saa_writeb(SAA7134_AUDIO_CLOCK2,     (clock >> 16) & 0xff);
-	/* frame locked audio is mandatory for NICAM */
-	saa_writeb(SAA7134_AUDIO_PLL_CTRL,   0x01);
-
-	saa_writeb(SAA7134_NICAM_ERROR_LOW,  0x14);
-	saa_writeb(SAA7134_NICAM_ERROR_HIGH, 0x50);
-	saa_writeb(SAA7134_MONITOR_SELECT,   0xa0);
-	saa_writeb(SAA7134_FM_DEMATRIX,      0x80);
-}
 
 static u32 tvaudio_carr2reg(u32 carrier)
 {
@@ -238,7 +206,7 @@ static void mute_input_7134(struct saa7134_dev *dev)
 	}
 
 	if (dev->hw_mute  == mute &&
-		dev->hw_input == in) {
+		dev->hw_input == in && !dev->insuspend) {
 		dprintk("mute/input: nothing to do [mute=%d,input=%s]\n",
 			mute,in->name);
 		return;
@@ -340,12 +308,6 @@ static void tvaudio_setmode(struct saa7134_dev *dev,
 		saa_writeb(SAA7134_STEREO_DAC_OUTPUT_SELECT,  0xa1);
 		saa_writeb(SAA7134_NICAM_CONFIG,              0x00);
 		break;
-	case TVAUDIO_AM_MONO:
-		saa_writeb(SAA7134_DEMODULATOR,               0x12);
-		saa_writeb(SAA7134_DCXO_IDENT_CTRL,           0x00);
-		saa_writeb(SAA7134_FM_DEEMPHASIS,             0x44);
-		saa_writeb(SAA7134_STEREO_DAC_OUTPUT_SELECT,  0xa0);
-		break;
 	case TVAUDIO_FM_SAT_STEREO:
 		/* not implemented (yet) */
 		break;
@@ -354,10 +316,8 @@ static void tvaudio_setmode(struct saa7134_dev *dev,
 
 static int tvaudio_sleep(struct saa7134_dev *dev, int timeout)
 {
-	DECLARE_WAITQUEUE(wait, current);
-
-	add_wait_queue(&dev->thread.wq, &wait);
-	if (dev->thread.scan1 == dev->thread.scan2 && !dev->thread.shutdown) {
+	if (dev->thread.scan1 == dev->thread.scan2 &&
+	    !kthread_should_stop()) {
 		if (timeout < 0) {
 			set_current_state(TASK_INTERRUPTIBLE);
 			schedule();
@@ -366,7 +326,6 @@ static int tvaudio_sleep(struct saa7134_dev *dev, int timeout)
 						(msecs_to_jiffies(timeout));
 		}
 	}
-	remove_wait_queue(&dev->thread.wq, &wait);
 	return dev->thread.scan1 != dev->thread.scan2;
 }
 
@@ -390,7 +349,6 @@ static int tvaudio_checkcarrier(struct saa7134_dev *dev, struct mainscan *scan)
 		}
 		printk("\n");
 	}
-
 	if (dev->tvnorm->id & scan->std) {
 		tvaudio_setcarrier(dev,scan->carr-90,scan->carr-90);
 		saa_readl(SAA7134_LEVEL_READOUT1 >> 2);
@@ -426,7 +384,6 @@ static int tvaudio_getstereo(struct saa7134_dev *dev, struct saa7134_tvaudio *au
 
 	switch (audio->mode) {
 	case TVAUDIO_FM_MONO:
-	case TVAUDIO_AM_MONO:
 		return V4L2_TUNER_SUB_MONO;
 	case TVAUDIO_FM_K_STEREO:
 	case TVAUDIO_FM_BG_STEREO:
@@ -495,7 +452,6 @@ static int tvaudio_setstereo(struct saa7134_dev *dev, struct saa7134_tvaudio *au
 
 	switch (audio->mode) {
 	case TVAUDIO_FM_MONO:
-	case TVAUDIO_AM_MONO:
 		/* nothing to do ... */
 		break;
 	case TVAUDIO_FM_K_STEREO:
@@ -521,20 +477,26 @@ static int tvaudio_thread(void *data)
 	unsigned int i, audio, nscan;
 	int max1,max2,carrier,rx,mode,lastmode,default_carrier;
 
-	daemonize("%s", dev->name);
-	allow_signal(SIGTERM);
+	set_freezable();
+
 	for (;;) {
 		tvaudio_sleep(dev,-1);
-		if (dev->thread.shutdown || signal_pending(current))
+		if (kthread_should_stop())
 			goto done;
 
 	restart:
+		try_to_freeze();
+
 		dev->thread.scan1 = dev->thread.scan2;
 		dprintk("tvaudio thread scan start [%d]\n",dev->thread.scan1);
 		dev->tvaudio  = NULL;
-		tvaudio_init(dev);
+
+		saa_writeb(SAA7134_MONITOR_SELECT,   0xa0);
+		saa_writeb(SAA7134_FM_DEMATRIX,      0x80);
+
 		if (dev->ctl_automute)
 			dev->automute = 1;
+
 		mute_input_7134(dev);
 
 		/* give the tuner some time */
@@ -556,6 +518,7 @@ static int tvaudio_thread(void *data)
 
 		if (1 == nscan) {
 			/* only one candidate -- skip scan ;) */
+			dprintk("only one main carrier candidate - skipping scan\n");
 			max1 = 12345;
 			carrier = default_carrier;
 		} else {
@@ -603,7 +566,6 @@ static int tvaudio_thread(void *data)
 		dev->automute = 0;
 		saa_andorb(SAA7134_STEREO_DAC_OUTPUT_SELECT, 0x30, 0x00);
 		saa7134_tvaudio_setmute(dev);
-
 		/* find the exact tv audio norm */
 		for (audio = UNSET, i = 0; i < TVAUDIO; i++) {
 			if (dev->tvnorm->id != UNSET &&
@@ -611,7 +573,7 @@ static int tvaudio_thread(void *data)
 				continue;
 			if (tvaudio[i].carr1 != carrier)
 				continue;
-
+			/* Note: at least the primary carrier is right here */
 			if (UNSET == audio)
 				audio = i;
 			tvaudio_setmode(dev,&tvaudio[i],"trying");
@@ -626,14 +588,18 @@ static int tvaudio_thread(void *data)
 		if (UNSET == audio)
 			continue;
 		tvaudio_setmode(dev,&tvaudio[audio],"using");
+
 		tvaudio_setstereo(dev,&tvaudio[audio],V4L2_TUNER_MODE_MONO);
 		dev->tvaudio = &tvaudio[audio];
 
 		lastmode = 42;
 		for (;;) {
+
+			try_to_freeze();
+
 			if (tvaudio_sleep(dev,5000))
 				goto restart;
-			if (dev->thread.shutdown || signal_pending(current))
+			if (kthread_should_stop())
 				break;
 			if (UNSET == dev->thread.mode) {
 				rx = tvaudio_getstereo(dev,&tvaudio[i]);
@@ -649,7 +615,7 @@ static int tvaudio_thread(void *data)
 	}
 
  done:
-	complete_and_exit(&dev->thread.exit, 0);
+	dev->thread.stopped = 1;
 	return 0;
 }
 
@@ -686,6 +652,17 @@ static char *stdres[0x20] = {
 
 #define DSP_RETRY 32
 #define DSP_DELAY 16
+#define SAA7135_DSP_RWCLEAR_RERR 1
+
+static inline int saa_dsp_reset_error_bit(struct saa7134_dev *dev)
+{
+	int state = saa_readb(SAA7135_DSP_RWSTATE);
+	if (unlikely(state & SAA7135_DSP_RWSTATE_ERR)) {
+		d2printk("%s: resetting error bit\n", dev->name);
+		saa_writeb(SAA7135_DSP_RWCLEAR, SAA7135_DSP_RWCLEAR_RERR);
+	}
+	return 0;
+}
 
 static inline int saa_dsp_wait_bit(struct saa7134_dev *dev, int bit)
 {
@@ -693,8 +670,8 @@ static inline int saa_dsp_wait_bit(struct saa7134_dev *dev, int bit)
 
 	state = saa_readb(SAA7135_DSP_RWSTATE);
 	if (unlikely(state & SAA7135_DSP_RWSTATE_ERR)) {
-		printk("%s: dsp access error\n",dev->name);
-		/* FIXME: send ack ... */
+		printk(KERN_WARNING "%s: dsp access error\n", dev->name);
+		saa_dsp_reset_error_bit(dev);
 		return -EIO;
 	}
 	while (0 == (state & bit)) {
@@ -750,7 +727,6 @@ static int mute_input_7133(struct saa7134_dev *dev)
 	int mask;
 	struct saa7134_input *in;
 
-	/* Hac 0506 route OSS sound simultanously  */
 	xbarin = 0x03;
 	switch (dev->input->amux) {
 	case TV:
@@ -796,26 +772,16 @@ static int mute_input_7133(struct saa7134_dev *dev)
 static int tvaudio_thread_ddep(void *data)
 {
 	struct saa7134_dev *dev = data;
-	u32 value, norms, clock;
+	u32 value, norms;
 
-	daemonize("%s", dev->name);
-	allow_signal(SIGTERM);
-
-	clock = saa7134_boards[dev->board].audio_clock;
-	if (UNSET != audio_clock_override)
-		clock = audio_clock_override;
-	saa_writel(0x598 >> 2, clock);
-
-	/* unmute */
-	saa_dsp_writel(dev, 0x474 >> 2, 0x00);
-	saa_dsp_writel(dev, 0x450 >> 2, 0x00);
-
+	set_freezable();
 	for (;;) {
 		tvaudio_sleep(dev,-1);
-		if (dev->thread.shutdown || signal_pending(current))
+		if (kthread_should_stop())
 			goto done;
-
 	restart:
+		try_to_freeze();
+
 		dev->thread.scan1 = dev->thread.scan2;
 		dprintk("tvaudio thread scan start [%d]\n",dev->thread.scan1);
 
@@ -834,18 +800,16 @@ static int tvaudio_thread_ddep(void *data)
 		} else {
 			/* (let chip) scan for sound carrier */
 			norms = 0;
-			if (dev->tvnorm->id & V4L2_STD_PAL) {
-				dprintk("PAL scan\n");
-				norms |= 0x2c; /* B/G + D/K + I */
-			}
-			if (dev->tvnorm->id & V4L2_STD_NTSC) {
-				dprintk("NTSC scan\n");
-				norms |= 0x40; /* M */
-			}
-			if (dev->tvnorm->id & V4L2_STD_SECAM) {
-				dprintk("SECAM scan\n");
-				norms |= 0x18; /* L + D/K */
-			}
+			if (dev->tvnorm->id & (V4L2_STD_B | V4L2_STD_GH))
+				norms |= 0x04;
+			if (dev->tvnorm->id & V4L2_STD_PAL_I)
+				norms |= 0x20;
+			if (dev->tvnorm->id & V4L2_STD_DK)
+				norms |= 0x08;
+			if (dev->tvnorm->id & V4L2_STD_MN)
+				norms |= 0x40;
+			if (dev->tvnorm->id & (V4L2_STD_SECAM_L | V4L2_STD_SECAM_LC))
+				norms |= 0x10;
 			if (0 == norms)
 				norms = 0x7c; /* all */
 			dprintk("scanning:%s%s%s%s%s\n",
@@ -894,26 +858,47 @@ static int tvaudio_thread_ddep(void *data)
 	}
 
  done:
-	complete_and_exit(&dev->thread.exit, 0);
+	dev->thread.stopped = 1;
 	return 0;
 }
 
 /* ------------------------------------------------------------------ */
 /* common stuff + external entry points                               */
 
-static void saa7134_enable_i2s(struct saa7134_dev *dev)
+void saa7134_enable_i2s(struct saa7134_dev *dev)
 {
 	int i2s_format;
 
 	if (!card_is_empress(dev))
 		return;
-	i2s_format = (dev->input->amux == TV) ? 0x00 : 0x01;
 
-	/* enable I2S audio output for the mpeg encoder */
-	saa_writeb(SAA7134_I2S_OUTPUT_SELECT,  0x80);
-	saa_writeb(SAA7134_I2S_OUTPUT_FORMAT,  i2s_format);
-	saa_writeb(SAA7134_I2S_OUTPUT_LEVEL,   0x0F);
-	saa_writeb(SAA7134_I2S_AUDIO_OUTPUT,   0x01);
+	if (dev->pci->device == PCI_DEVICE_ID_PHILIPS_SAA7130)
+		return;
+
+	/* configure GPIO for out */
+	saa_andorl(SAA7134_GPIO_GPMODE0 >> 2, 0x0E000000, 0x00000000);
+
+	switch (dev->pci->device) {
+	case PCI_DEVICE_ID_PHILIPS_SAA7133:
+	case PCI_DEVICE_ID_PHILIPS_SAA7135:
+	    /* Set I2S format (SONY)  */
+	    saa_writeb(SAA7133_I2S_AUDIO_CONTROL, 0x00);
+	    /* Start I2S */
+	    saa_writeb(SAA7134_I2S_AUDIO_OUTPUT, 0x11);
+	    break;
+
+	case PCI_DEVICE_ID_PHILIPS_SAA7134:
+	    i2s_format = (dev->input->amux == TV) ? 0x00 : 0x01;
+
+	    /* enable I2S audio output for the mpeg encoder */
+	    saa_writeb(SAA7134_I2S_OUTPUT_SELECT, 0x80);
+	    saa_writeb(SAA7134_I2S_OUTPUT_FORMAT, i2s_format);
+	    saa_writeb(SAA7134_I2S_OUTPUT_LEVEL,  0x0F);
+	    saa_writeb(SAA7134_I2S_AUDIO_OUTPUT,  0x01);
+
+	default:
+	    break;
+	}
 }
 
 int saa7134_tvaudio_rx2mode(u32 rx)
@@ -989,9 +974,40 @@ int saa7134_tvaudio_getstereo(struct saa7134_dev *dev)
 	return retval;
 }
 
+void saa7134_tvaudio_init(struct saa7134_dev *dev)
+{
+	int clock = saa7134_boards[dev->board].audio_clock;
+
+	if (UNSET != audio_clock_override)
+		clock = audio_clock_override;
+
+	switch (dev->pci->device) {
+	case PCI_DEVICE_ID_PHILIPS_SAA7134:
+		/* init all audio registers */
+		saa_writeb(SAA7134_AUDIO_PLL_CTRL,   0x00);
+		if (need_resched())
+			schedule();
+		else
+			udelay(10);
+
+		saa_writeb(SAA7134_AUDIO_CLOCK0,      clock        & 0xff);
+		saa_writeb(SAA7134_AUDIO_CLOCK1,     (clock >>  8) & 0xff);
+		saa_writeb(SAA7134_AUDIO_CLOCK2,     (clock >> 16) & 0xff);
+		/* frame locked audio is mandatory for NICAM */
+		saa_writeb(SAA7134_AUDIO_PLL_CTRL,   0x01);
+		saa_writeb(SAA7134_NICAM_ERROR_LOW,  0x14);
+		saa_writeb(SAA7134_NICAM_ERROR_HIGH, 0x50);
+		break;
+	case PCI_DEVICE_ID_PHILIPS_SAA7133:
+	case PCI_DEVICE_ID_PHILIPS_SAA7135:
+		saa_writel(0x598 >> 2, clock);
+		saa_dsp_writel(dev, 0x474 >> 2, 0x00);
+		saa_dsp_writel(dev, 0x450 >> 2, 0x00);
+	}
+}
+
 int saa7134_tvaudio_init2(struct saa7134_dev *dev)
 {
-	DECLARE_MUTEX_LOCKED(sem);
 	int (*my_thread)(void *data) = NULL;
 
 	switch (dev->pci->device) {
@@ -1004,15 +1020,16 @@ int saa7134_tvaudio_init2(struct saa7134_dev *dev)
 		break;
 	}
 
-	dev->thread.pid = -1;
+	dev->thread.thread = NULL;
 	if (my_thread) {
+		saa7134_tvaudio_init(dev);
 		/* start tvaudio thread */
-		init_waitqueue_head(&dev->thread.wq);
-		init_completion(&dev->thread.exit);
-		dev->thread.pid = kernel_thread(my_thread,dev,0);
-		if (dev->thread.pid < 0)
+		dev->thread.thread = kthread_run(my_thread, dev, "%s", dev->name);
+		if (IS_ERR(dev->thread.thread)) {
 			printk(KERN_WARNING "%s: kernel_thread() failed\n",
 			       dev->name);
+			/* XXX: missing error handling here */
+		}
 		saa7134_tvaudio_do_scan(dev);
 	}
 
@@ -1023,21 +1040,25 @@ int saa7134_tvaudio_init2(struct saa7134_dev *dev)
 int saa7134_tvaudio_fini(struct saa7134_dev *dev)
 {
 	/* shutdown tvaudio thread */
-	if (dev->thread.pid >= 0) {
-		dev->thread.shutdown = 1;
-		wake_up_interruptible(&dev->thread.wq);
-		wait_for_completion(&dev->thread.exit);
-	}
+	if (dev->thread.thread && !dev->thread.stopped)
+		kthread_stop(dev->thread.thread);
+
 	saa_andorb(SAA7134_ANALOG_IO_SELECT, 0x07, 0x00); /* LINE1 */
 	return 0;
 }
 
 int saa7134_tvaudio_do_scan(struct saa7134_dev *dev)
 {
-	if (dev->thread.pid >= 0) {
+	if (dev->input->amux != TV) {
+		dprintk("sound IF not in use, skipping scan\n");
+		dev->automute = 0;
+		saa7134_tvaudio_setmute(dev);
+	} else if (dev->thread.thread) {
 		dev->thread.mode = UNSET;
 		dev->thread.scan2++;
-		wake_up_interruptible(&dev->thread.wq);
+
+		if (!dev->insuspend && !dev->thread.stopped)
+			wake_up_process(dev->thread.thread);
 	} else {
 		dev->automute = 0;
 		saa7134_tvaudio_setmute(dev);
@@ -1046,6 +1067,7 @@ int saa7134_tvaudio_do_scan(struct saa7134_dev *dev)
 }
 
 EXPORT_SYMBOL(saa_dsp_writel);
+EXPORT_SYMBOL(saa7134_tvaudio_setmute);
 
 /* ----------------------------------------------------------- */
 /*
@@ -1053,4 +1075,3 @@ EXPORT_SYMBOL(saa_dsp_writel);
  * c-basic-offset: 8
  * End:
  */
-

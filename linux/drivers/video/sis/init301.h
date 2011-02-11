@@ -67,19 +67,11 @@
 #ifdef SIS_CP
 #undef SIS_CP
 #endif
-#include <linux/version.h>
 #include <linux/types.h>
 #include <asm/io.h>
 #include <linux/fb.h>
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,5,0)
-#include <video/fbcon.h>
-#endif
 #include "sis.h"
-#if LINUX_VERSION_CODE < KERNEL_VERSION(2,5,0)
-#include <linux/sisfb.h>
-#else
 #include <video/sisfb.h>
-#endif
 #endif
 
 static const unsigned char SiS_YPbPrTable[3][64] = {
@@ -370,8 +362,8 @@ void		SiS_LockCRT2(struct SiS_Private *SiS_Pr);
 void		SiS_EnableCRT2(struct SiS_Private *SiS_Pr);
 unsigned short	SiS_GetRatePtr(struct SiS_Private *SiS_Pr, unsigned short ModeNo, unsigned short ModeIdIndex);
 void		SiS_WaitRetrace1(struct SiS_Private *SiS_Pr);
-BOOLEAN		SiS_IsDualEdge(struct SiS_Private *SiS_Pr);
-BOOLEAN		SiS_IsVAMode(struct SiS_Private *SiS_Pr);
+bool		SiS_IsDualEdge(struct SiS_Private *SiS_Pr);
+bool		SiS_IsVAMode(struct SiS_Private *SiS_Pr);
 void		SiS_GetVBInfo(struct SiS_Private *SiS_Pr, unsigned short ModeNo,
 			unsigned short ModeIdIndex, int checkcrt2mode);
 void		SiS_SetYPbPr(struct SiS_Private *SiS_Pr);
@@ -386,7 +378,7 @@ void		SiS_DisableBridge(struct SiS_Private *SiS_Pr);
 #ifndef SIS_LINUX_KERNEL
 void		SiS_EnableBridge(struct SiS_Private *SiS_Pr);
 #endif
-BOOLEAN		SiS_SetCRT2Group(struct SiS_Private *SiS_Pr, unsigned short ModeNo);
+bool		SiS_SetCRT2Group(struct SiS_Private *SiS_Pr, unsigned short ModeNo);
 void		SiS_SiS30xBLOn(struct SiS_Private *SiS_Pr);
 void		SiS_SiS30xBLOff(struct SiS_Private *SiS_Pr);
 
@@ -410,7 +402,7 @@ void		SiS_Chrontel701xBLOff(struct SiS_Private *SiS_Pr);
 #endif /* 315 */
 
 #ifdef SIS300
-static  BOOLEAN	SiS_SetTrumpionBlock(struct SiS_Private *SiS_Pr, unsigned char *dataptr);
+static  bool	SiS_SetTrumpionBlock(struct SiS_Private *SiS_Pr, unsigned char *dataptr);
 void		SiS_SetChrontelGPIO(struct SiS_Private *SiS_Pr, unsigned short myvbinfo);
 #endif
 
@@ -423,14 +415,14 @@ unsigned short	SiS_HandleDDC(struct SiS_Private *SiS_Pr, unsigned int VBFlags, i
 #ifdef SIS_XORG_XF86
 unsigned short		SiS_InitDDCRegs(struct SiS_Private *SiS_Pr, unsigned int VBFlags,
 				int VGAEngine, unsigned short adaptnum, unsigned short DDCdatatype,
-				BOOLEAN checkcr32, unsigned int VBFlags2);
+				bool checkcr32, unsigned int VBFlags2);
 unsigned short		SiS_ProbeDDC(struct SiS_Private *SiS_Pr);
 unsigned short		SiS_ReadDDC(struct SiS_Private *SiS_Pr, unsigned short DDCdatatype,
 				unsigned char *buffer);
 #else
 static unsigned short	SiS_InitDDCRegs(struct SiS_Private *SiS_Pr, unsigned int VBFlags,
 				int VGAEngine, unsigned short adaptnum, unsigned short DDCdatatype,
-				BOOLEAN checkcr32, unsigned int VBFlags2);
+				bool checkcr32, unsigned int VBFlags2);
 static unsigned short	SiS_ProbeDDC(struct SiS_Private *SiS_Pr);
 static unsigned short	SiS_ReadDDC(struct SiS_Private *SiS_Pr, unsigned short DDCdatatype,
 				unsigned char *buffer);
@@ -476,7 +468,7 @@ extern void		SiS_SetRegOR(SISIOADDRESS, unsigned short, unsigned short);
 extern void		SiS_SetRegAND(SISIOADDRESS, unsigned short, unsigned short);
 extern void		SiS_DisplayOff(struct SiS_Private *SiS_Pr);
 extern void		SiS_DisplayOn(struct SiS_Private *SiS_Pr);
-extern BOOLEAN		SiS_SearchModeID(struct SiS_Private *, unsigned short *, unsigned short *);
+extern bool		SiS_SearchModeID(struct SiS_Private *, unsigned short *, unsigned short *);
 extern unsigned short	SiS_GetModeFlag(struct SiS_Private *SiS_Pr, unsigned short ModeNo,
 				unsigned short ModeIdIndex);
 extern unsigned short	SiS_GetModePtr(struct SiS_Private *SiS_Pr, unsigned short ModeNo, unsigned short ModeIdIndex);

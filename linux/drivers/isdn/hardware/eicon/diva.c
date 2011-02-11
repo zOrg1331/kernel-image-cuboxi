@@ -71,8 +71,6 @@ DivaIdiReqFunc(29)
 DivaIdiReqFunc(30)
 DivaIdiReqFunc(31)
 
-struct pt_regs;
-
 /*
 **  LOCALS
 */
@@ -515,14 +513,13 @@ diva_xdi_read(void *adapter, void *os_handle, void __user *dst,
 }
 
 
-irqreturn_t diva_os_irq_wrapper(int irq, void *context, struct pt_regs *regs)
+irqreturn_t diva_os_irq_wrapper(int irq, void *context)
 {
-	diva_os_xdi_adapter_t *a = (diva_os_xdi_adapter_t *) context;
+	diva_os_xdi_adapter_t *a = context;
 	diva_xdi_clear_interrupts_proc_t clear_int_proc;
 
-	if (!a || !a->xdi_adapter.diva_isr_handler) {
+	if (!a || !a->xdi_adapter.diva_isr_handler)
 		return IRQ_NONE;
-	}
 
 	if ((clear_int_proc = a->clear_interrupts_proc)) {
 		(*clear_int_proc) (a);

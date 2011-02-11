@@ -9,8 +9,12 @@
  * to achieve effects such as fast scrolling by changing the origin.
  */
 
+#ifndef _LINUX_CONSOLE_STRUCT_H
+#define _LINUX_CONSOLE_STRUCT_H
+
 #include <linux/wait.h>
 #include <linux/vt.h>
+#include <linux/workqueue.h>
 
 struct vt_struct;
 
@@ -36,6 +40,7 @@ struct vc_data {
 	unsigned char	vc_color;		/* Foreground & background */
 	unsigned char	vc_s_color;		/* Saved foreground & background */
 	unsigned char	vc_ulcolor;		/* Color for underline mode */
+	unsigned char   vc_itcolor;
 	unsigned char	vc_halfcolor;		/* Color for half intensity mode */
 	/* cursor */
 	unsigned int	vc_cursor_type;
@@ -54,7 +59,7 @@ struct vc_data {
 	struct tty_struct *vc_tty;		/* TTY we are attached to */
 	/* data for manual vt switching */
 	struct vt_mode	vt_mode;
-	int		vt_pid;
+	struct pid 	*vt_pid;
 	int		vt_newvt;
 	wait_queue_head_t paste_wait;
 	/* mode flags */
@@ -70,10 +75,12 @@ struct vc_data {
 	unsigned int	vc_deccolm	: 1;	/* 80/132 Column Mode */
 	/* attribute flags */
 	unsigned int	vc_intensity	: 2;	/* 0=half-bright, 1=normal, 2=bold */
+	unsigned int    vc_italic:1;
 	unsigned int	vc_underline	: 1;
 	unsigned int	vc_blink	: 1;
 	unsigned int	vc_reverse	: 1;
 	unsigned int	vc_s_intensity	: 2;	/* saved rendition */
+	unsigned int    vc_s_italic:1;
 	unsigned int	vc_s_underline	: 1;
 	unsigned int	vc_s_blink	: 1;
 	unsigned int	vc_s_reverse	: 1;
@@ -82,7 +89,6 @@ struct vc_data {
 	unsigned int	vc_need_wrap	: 1;
 	unsigned int	vc_can_do_color	: 1;
 	unsigned int	vc_report_mouse : 2;
-	unsigned int	vc_kmalloced	: 1;
 	unsigned char	vc_utf		: 1;	/* Unicode UTF-8 encoding */
 	unsigned char	vc_utf_count;
 		 int	vc_utf_char;
@@ -93,16 +99,19 @@ struct vc_data {
 	unsigned char 	vc_G1_charset;
 	unsigned char 	vc_saved_G0;
 	unsigned char 	vc_saved_G1;
+	unsigned int    vc_resize_user;         /* resize request from user */
 	unsigned int	vc_bell_pitch;		/* Console bell pitch */
 	unsigned int	vc_bell_duration;	/* Console bell duration */
 	struct vc_data **vc_display_fg;		/* [!] Ptr to var holding fg console for this display */
 	unsigned long	vc_uni_pagedir;
 	unsigned long	*vc_uni_pagedir_loc;  /* [!] Location of uni_pagedir variable for this console */
+	bool vc_panic_force_write; /* when oops/panic this VC can accept forced output/blanking */
 	/* additional information is in vt_kern.h */
 };
 
 struct vc {
 	struct vc_data *d;
+	struct work_struct SAK_work;
 
 	/* might add  scrmem, vt_struct, kbd  at some time,
 	   to have everything in one place - the disadvantage
@@ -110,6 +119,7 @@ struct vc {
 };
 
 extern struct vc vc_cons [MAX_NR_CONSOLES];
+extern void vc_SAK(struct work_struct *work);
 
 #define CUR_DEF		0
 #define CUR_NONE	1
@@ -124,3 +134,5 @@ extern struct vc vc_cons [MAX_NR_CONSOLES];
 #define CUR_DEFAULT CUR_UNDERLINE
 
 #define CON_IS_VISIBLE(conp) (*conp->vc_display_fg == conp)
+
+#endif /* _LINUX_CONSOLE_STRUCT_H */

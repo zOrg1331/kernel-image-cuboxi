@@ -1,6 +1,6 @@
 /*
  * net/tipc/addr.h: Include file for TIPC address utility routines
- * 
+ *
  * Copyright (c) 2000-2006, Ericsson AB
  * Copyright (c) 2004-2005, Wind River Systems
  * All rights reserved.
@@ -57,11 +57,6 @@ static inline int in_own_cluster(u32 addr)
 	return !((addr ^ tipc_own_addr) >> 12);
 }
 
-static inline int in_own_zone(u32 addr)
-{
-	return !((addr ^ tipc_own_addr) >> 24);
-}
-
 static inline int is_slave(u32 addr)
 {
 	return addr & 0x800;
@@ -100,8 +95,8 @@ static inline int addr_scope(u32 domain)
 
 /**
  * addr_domain - convert 2-bit scope value to equivalent message lookup domain
- *  
- * Needed when address of a named message must be looked up a second time 
+ *
+ * Needed when address of a named message must be looked up a second time
  * after a network hop.
  */
 

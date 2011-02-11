@@ -28,11 +28,9 @@
 
 #include <linux/module.h>
 #include <linux/kernel.h>
-#include <linux/sched.h>
 #include <linux/types.h>
 #include <linux/fcntl.h>
 #include <linux/interrupt.h>
-#include <linux/ptrace.h>
 #include <linux/ioport.h>
 #include <linux/in.h>
 #include <linux/slab.h>
@@ -52,13 +50,23 @@
 #include <asm/ecard.h>
 #include <asm/io.h>
 
-#include "../8390.h"
+#define EI_SHIFT(x)	(ei_local->reg_offset[x])
+
+#define ei_inb(_p)	 readb((void __iomem *)_p)
+#define ei_outb(_v,_p)	 writeb(_v,(void __iomem *)_p)
+#define ei_inb_p(_p)	 readb((void __iomem *)_p)
+#define ei_outb_p(_v,_p) writeb(_v,(void __iomem *)_p)
 
 #define NET_DEBUG  0
 #define DEBUG_INIT 2
 
 #define DRV_NAME	"etherh"
 #define DRV_VERSION	"1.11"
+
+static char version[] __initdata =
+	"EtherH/EtherM Driver (c) 2002-2004 Russell King " DRV_VERSION "\n";
+
+#include "../lib8390.c"
 
 static unsigned int net_debug = NET_DEBUG;
 
@@ -86,9 +94,6 @@ struct etherh_data {
 MODULE_AUTHOR("Russell King");
 MODULE_DESCRIPTION("EtherH/EtherM driver");
 MODULE_LICENSE("GPL");
-
-static char version[] __initdata =
-	"EtherH/EtherM Driver (c) 2002-2004 Russell King " DRV_VERSION "\n";
 
 #define ETHERH500_DATAPORT	0x800	/* MEMC */
 #define ETHERH500_NS8390	0x000	/* MEMC */
@@ -177,7 +182,7 @@ etherh_setif(struct net_device *dev)
 	switch (etherh_priv(dev)->id) {
 	case PROD_I3_ETHERLAN600:
 	case PROD_I3_ETHERLAN600A:
-		addr = (void *)dev->base_addr + EN0_RCNTHI;
+		addr = (void __iomem *)dev->base_addr + EN0_RCNTHI;
 
 		switch (dev->if_port) {
 		case IF_PORT_10BASE2:
@@ -218,7 +223,7 @@ etherh_getifstat(struct net_device *dev)
 	switch (etherh_priv(dev)->id) {
 	case PROD_I3_ETHERLAN600:
 	case PROD_I3_ETHERLAN600A:
-		addr = (void *)dev->base_addr + EN0_RCNTHI;
+		addr = (void __iomem *)dev->base_addr + EN0_RCNTHI;
 		switch (dev->if_port) {
 		case IF_PORT_10BASE2:
 			stat = 1;
@@ -281,7 +286,7 @@ static void
 etherh_reset(struct net_device *dev)
 {
 	struct ei_device *ei_local = netdev_priv(dev);
-	void __iomem *addr = (void *)dev->base_addr;
+	void __iomem *addr = (void __iomem *)dev->base_addr;
 
 	writeb(E8390_NODMA+E8390_PAGE0+E8390_STOP, addr);
 
@@ -327,7 +332,7 @@ etherh_block_output (struct net_device *dev, int count, const unsigned char *buf
 
 	ei_local->dmaing = 1;
 
-	addr = (void *)dev->base_addr;
+	addr = (void __iomem *)dev->base_addr;
 	dma_base = etherh_priv(dev)->dma_base;
 
 	count = (count + 1) & ~1;
@@ -360,7 +365,7 @@ etherh_block_output (struct net_device *dev, int count, const unsigned char *buf
 			printk(KERN_ERR "%s: timeout waiting for TX RDC\n",
 				dev->name);
 			etherh_reset (dev);
-			NS8390_init (dev, 1);
+			__NS8390_init (dev, 1);
 			break;
 		}
 
@@ -387,7 +392,7 @@ etherh_block_input (struct net_device *dev, int count, struct sk_buff *skb, int 
 
 	ei_local->dmaing = 1;
 
-	addr = (void *)dev->base_addr;
+	addr = (void __iomem *)dev->base_addr;
 	dma_base = etherh_priv(dev)->dma_base;
 
 	buf = skb->data;
@@ -427,7 +432,7 @@ etherh_get_header (struct net_device *dev, struct e8390_pkt_hdr *hdr, int ring_p
 
 	ei_local->dmaing = 1;
 
-	addr = (void *)dev->base_addr;
+	addr = (void __iomem *)dev->base_addr;
 	dma_base = etherh_priv(dev)->dma_base;
 
 	writeb (E8390_NODMA | E8390_PAGE0 | E8390_START, addr + E8390_CMD);
@@ -465,7 +470,7 @@ etherh_open(struct net_device *dev)
 		return -EINVAL;
 	}
 
-	if (request_irq(dev->irq, ei_interrupt, 0, dev->name, dev))
+	if (request_irq(dev->irq, __ei_interrupt, 0, dev->name, dev))
 		return -EAGAIN;
 
 	/*
@@ -491,7 +496,7 @@ etherh_open(struct net_device *dev)
 		etherh_setif(dev);
 
 	etherh_reset(dev);
-	ei_open(dev);
+	__ei_open(dev);
 
 	return 0;
 }
@@ -502,7 +507,7 @@ etherh_open(struct net_device *dev)
 static int
 etherh_close(struct net_device *dev)
 {
-	ei_close (dev);
+	__ei_close (dev);
 	free_irq (dev->irq, dev);
 	return 0;
 }
@@ -530,7 +535,7 @@ static int __init etherh_addr(char *addr, struct expansion_card *ec)
 	
 	if (!ecard_readchunk(&cd, ec, 0xf5, 0)) {
 		printk(KERN_ERR "%s: unable to read podule description string\n",
-		       ec->dev.bus_id);
+		       dev_name(&ec->dev));
 		goto no_addr;
 	}
 
@@ -549,7 +554,7 @@ static int __init etherh_addr(char *addr, struct expansion_card *ec)
 	}
 
 	printk(KERN_ERR "%s: unable to parse MAC address: %s\n",
-	       ec->dev.bus_id, cd.d.string);
+	       dev_name(&ec->dev), cd.d.string);
 
  no_addr:
 	return -ENODEV;
@@ -580,7 +585,7 @@ static void etherh_get_drvinfo(struct net_device *dev, struct ethtool_drvinfo *i
 {
 	strlcpy(info->driver, DRV_NAME, sizeof(info->driver));
 	strlcpy(info->version, DRV_VERSION, sizeof(info->version));
-	strlcpy(info->bus_info, dev->class_dev.dev->bus_id,
+	strlcpy(info->bus_info, dev_name(dev->dev.parent),
 		sizeof(info->bus_info));
 }
 
@@ -626,10 +631,26 @@ static int etherh_set_settings(struct net_device *dev, struct ethtool_cmd *cmd)
 	return 0;
 }
 
-static struct ethtool_ops etherh_ethtool_ops = {
+static const struct ethtool_ops etherh_ethtool_ops = {
 	.get_settings	= etherh_get_settings,
 	.set_settings	= etherh_set_settings,
 	.get_drvinfo	= etherh_get_drvinfo,
+};
+
+static const struct net_device_ops etherh_netdev_ops = {
+	.ndo_open		= etherh_open,
+	.ndo_stop		= etherh_close,
+	.ndo_set_config		= etherh_set_config,
+	.ndo_start_xmit		= __ei_start_xmit,
+	.ndo_tx_timeout		= __ei_tx_timeout,
+	.ndo_get_stats		= __ei_get_stats,
+	.ndo_set_multicast_list = __ei_set_multicast_list,
+	.ndo_validate_addr	= eth_validate_addr,
+	.ndo_set_mac_address	= eth_mac_addr,
+	.ndo_change_mtu		= eth_change_mtu,
+#ifdef CONFIG_NET_POLL_CONTROLLER
+	.ndo_poll_controller	= __ei_poll,
+#endif
 };
 
 static u32 etherh_regoffsets[16];
@@ -642,7 +663,7 @@ etherh_probe(struct expansion_card *ec, const struct ecard_id *id)
 	struct ei_device *ei_local;
 	struct net_device *dev;
 	struct etherh_priv *eh;
-	int i, ret;
+	int ret;
 
 	etherh_banner();
 
@@ -650,18 +671,15 @@ etherh_probe(struct expansion_card *ec, const struct ecard_id *id)
 	if (ret)
 		goto out;
 
-	dev = __alloc_ei_netdev(sizeof(struct etherh_priv));
+	dev = ____alloc_ei_netdev(sizeof(struct etherh_priv));
 	if (!dev) {
 		ret = -ENOMEM;
 		goto release;
 	}
 
-	SET_MODULE_OWNER(dev);
 	SET_NETDEV_DEV(dev, &ec->dev);
 
-	dev->open		= etherh_open;
-	dev->stop		= etherh_close;
-	dev->set_config		= etherh_set_config;
+	dev->netdev_ops		= &etherh_netdev_ops;
 	dev->irq		= ec->irq;
 	dev->ethtool_ops	= &etherh_ethtool_ops;
 
@@ -680,7 +698,7 @@ etherh_probe(struct expansion_card *ec, const struct ecard_id *id)
 	eh->supported		= data->supported;
 	eh->ctrl		= 0;
 	eh->id			= ec->cid.product;
-	eh->memc		= ioremap(ecard_resource_start(ec, ECARD_RES_MEMC), PAGE_SIZE);
+	eh->memc		= ecardm_iomap(ec, ECARD_RES_MEMC, 0, PAGE_SIZE);
 	if (!eh->memc) {
 		ret = -ENOMEM;
 		goto free;
@@ -688,7 +706,7 @@ etherh_probe(struct expansion_card *ec, const struct ecard_id *id)
 
 	eh->ctrl_port = eh->memc;
 	if (data->ctrl_ioc) {
-		eh->ioc_fast = ioremap(ecard_resource_start(ec, ECARD_RES_IOCFAST), PAGE_SIZE);
+		eh->ioc_fast = ecardm_iomap(ec, ECARD_RES_IOCFAST, 0, PAGE_SIZE);
 		if (!eh->ioc_fast) {
 			ret = -ENOMEM;
 			goto free;
@@ -704,8 +722,7 @@ etherh_probe(struct expansion_card *ec, const struct ecard_id *id)
 	 * IRQ and control port handling - only for non-NIC slot cards.
 	 */
 	if (ec->slot_no != 8) {
-		ec->ops		= &etherh_ops;
-		ec->irq_data	= eh;
+		ecard_setirq(ec, &etherh_ops, eh);
 	} else {
 		/*
 		 * If we're in the NIC slot, make sure the IRQ is enabled
@@ -736,27 +753,20 @@ etherh_probe(struct expansion_card *ec, const struct ecard_id *id)
 	ei_local->interface_num = 0;
 
 	etherh_reset(dev);
-	NS8390_init(dev, 0);
+	__NS8390_init(dev, 0);
 
 	ret = register_netdev(dev);
 	if (ret)
 		goto free;
 
-	printk(KERN_INFO "%s: %s in slot %d, ",
-		dev->name, data->name, ec->slot_no);
-
-	for (i = 0; i < 6; i++)
-		printk("%2.2x%c", dev->dev_addr[i], i == 5 ? '\n' : ':');
+	printk(KERN_INFO "%s: %s in slot %d, %pM\n",
+		dev->name, data->name, ec->slot_no, dev->dev_addr);
 
 	ecard_set_drvdata(ec, dev);
 
 	return 0;
 
  free:
-	if (eh->ioc_fast)
-		iounmap(eh->ioc_fast);
-	if (eh->memc)
-		iounmap(eh->memc);
 	free_netdev(dev);
  release:
 	ecard_release_resources(ec);
@@ -767,16 +777,10 @@ etherh_probe(struct expansion_card *ec, const struct ecard_id *id)
 static void __devexit etherh_remove(struct expansion_card *ec)
 {
 	struct net_device *dev = ecard_get_drvdata(ec);
-	struct etherh_priv *eh = etherh_priv(dev);
 
 	ecard_set_drvdata(ec, NULL);
 
 	unregister_netdev(dev);
-	ec->ops = NULL;
-
-	if (eh->ioc_fast)
-		iounmap(eh->ioc_fast);
-	iounmap(eh->memc);
 
 	free_netdev(dev);
 

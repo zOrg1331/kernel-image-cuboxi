@@ -1,8 +1,6 @@
  /*
- * $Id: iforce-usb.c,v 1.16 2002/06/09 11:08:04 jdeneux Exp $
- *
  *  Copyright (c) 2000-2002 Vojtech Pavlik <vojtech@ucw.cz>
- *  Copyright (c) 2001-2002 Johann Deneux <deneux@ifrance.com>
+ *  Copyright (c) 2001-2002, 2007 Johann Deneux <johann.deneux@gmail.com>
  *
  *  USB/RS232 I-Force joysticks and wheels.
  */
@@ -65,7 +63,8 @@ void iforce_usb_xmit(struct iforce *iforce)
 	XMIT_INC(iforce->xmit.tail, n);
 
 	if ( (n=usb_submit_urb(iforce->out, GFP_ATOMIC)) ) {
-		printk(KERN_WARNING "iforce-usb.c: iforce_usb_xmit: usb_submit_urb failed %d\n", n);
+		clear_bit(IFORCE_XMIT_RUNNING, iforce->xmit_flags);
+		dev_warn(&iforce->dev->dev, "usb_submit_urb failed %d\n", n);
 	}
 
 	/* The IFORCE_XMIT_RUNNING bit is not cleared here. That's intended.
@@ -74,7 +73,7 @@ void iforce_usb_xmit(struct iforce *iforce)
 	spin_unlock_irqrestore(&iforce->xmit_lock, flags);
 }
 
-static void iforce_usb_irq(struct urb *urb, struct pt_regs *regs)
+static void iforce_usb_irq(struct urb *urb)
 {
 	struct iforce *iforce = urb->context;
 	int status;
@@ -88,29 +87,29 @@ static void iforce_usb_irq(struct urb *urb, struct pt_regs *regs)
 	case -ESHUTDOWN:
 		/* this urb is terminated, clean up */
 		dbg("%s - urb shutting down with status: %d",
-		    __FUNCTION__, urb->status);
+		    __func__, urb->status);
 		return;
 	default:
-		dbg("%s - urb has status of: %d", __FUNCTION__, urb->status);
+		dbg("%s - urb has status of: %d", __func__, urb->status);
 		goto exit;
 	}
 
 	iforce_process_packet(iforce,
-		(iforce->data[0] << 8) | (urb->actual_length - 1), iforce->data + 1, regs);
+		(iforce->data[0] << 8) | (urb->actual_length - 1), iforce->data + 1);
 
 exit:
 	status = usb_submit_urb (urb, GFP_ATOMIC);
 	if (status)
 		err ("%s - usb_submit_urb failed with result %d",
-		     __FUNCTION__, status);
+		     __func__, status);
 }
 
-static void iforce_usb_out(struct urb *urb, struct pt_regs *regs)
+static void iforce_usb_out(struct urb *urb)
 {
 	struct iforce *iforce = urb->context;
 
 	if (urb->status) {
-		printk(KERN_DEBUG "iforce_usb_out: urb->status %d, exiting", urb->status);
+		dbg("urb->status %d, exiting", urb->status);
 		return;
 	}
 
@@ -119,7 +118,7 @@ static void iforce_usb_out(struct urb *urb, struct pt_regs *regs)
 	wake_up(&iforce->wait);
 }
 
-static void iforce_usb_ctrl(struct urb *urb, struct pt_regs *regs)
+static void iforce_usb_ctrl(struct urb *urb)
 {
 	struct iforce *iforce = urb->context;
 	if (urb->status) return;
@@ -158,13 +157,13 @@ static int iforce_usb_probe(struct usb_interface *intf,
 
 	iforce->cr.bRequestType = USB_TYPE_VENDOR | USB_DIR_IN | USB_RECIP_INTERFACE;
 	iforce->cr.wIndex = 0;
-	iforce->cr.wLength = 16;
+	iforce->cr.wLength = cpu_to_le16(16);
 
 	usb_fill_int_urb(iforce->irq, dev, usb_rcvintpipe(dev, epirq->bEndpointAddress),
 			iforce->data, 16, iforce_usb_irq, iforce, epirq->bInterval);
 
-	usb_fill_bulk_urb(iforce->out, dev, usb_sndbulkpipe(dev, epout->bEndpointAddress),
-			iforce + 1, 32, iforce_usb_out, iforce);
+	usb_fill_int_urb(iforce->out, dev, usb_sndintpipe(dev, epout->bEndpointAddress),
+			iforce + 1, 32, iforce_usb_out, iforce, epout->bInterval);
 
 	usb_fill_control_urb(iforce->ctrl, dev, usb_rcvctrlpipe(dev, 0),
 			(void*) &iforce->cr, iforce->edata, 16, iforce_usb_ctrl, iforce);
@@ -178,9 +177,9 @@ static int iforce_usb_probe(struct usb_interface *intf,
 
 fail:
 	if (iforce) {
-		if (iforce->irq) usb_free_urb(iforce->irq);
-		if (iforce->out) usb_free_urb(iforce->out);
-		if (iforce->ctrl) usb_free_urb(iforce->ctrl);
+		usb_free_urb(iforce->irq);
+		usb_free_urb(iforce->out);
+		usb_free_urb(iforce->ctrl);
 		kfree(iforce);
 	}
 
@@ -190,10 +189,9 @@ fail:
 /* Called by iforce_delete() */
 void iforce_usb_delete(struct iforce* iforce)
 {
-	usb_unlink_urb(iforce->irq);
-/* Is it ok to unlink those ? */
-	usb_unlink_urb(iforce->out);
-	usb_unlink_urb(iforce->ctrl);
+	usb_kill_urb(iforce->irq);
+	usb_kill_urb(iforce->out);
+	usb_kill_urb(iforce->ctrl);
 
 	usb_free_urb(iforce->irq);
 	usb_free_urb(iforce->out);
@@ -225,6 +223,7 @@ static struct usb_device_id iforce_usb_ids [] = {
 	{ USB_DEVICE(0x05ef, 0x8884) },		/* AVB Mag Turbo Force */
 	{ USB_DEVICE(0x05ef, 0x8888) },		/* AVB Top Shot FFB Racing Wheel */
 	{ USB_DEVICE(0x061c, 0xc0a4) },         /* ACT LABS Force RS */
+	{ USB_DEVICE(0x061c, 0xc084) },         /* ACT LABS Force RS */
 	{ USB_DEVICE(0x06f8, 0x0001) },		/* Guillemot Race Leader Force Feedback */
 	{ USB_DEVICE(0x06f8, 0x0004) },		/* Guillemot Force Feedback Racing Wheel */
 	{ USB_DEVICE(0x06f8, 0xa302) },		/* Guillemot Jet Leader 3D */

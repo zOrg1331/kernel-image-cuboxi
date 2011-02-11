@@ -1,6 +1,7 @@
 /*
  * Copyright (c) 2004 Topspin Communications.  All rights reserved.
- * Copyright (c) 2005 Voltaire, Inc.  All rights reserved.
+ * Copyright (c) 2005 Voltaire, Inc.  All rights reserved.
+ * Copyright (c) 2006 Intel Corporation.  All rights reserved.
  *
  * This software is available to you under a choice of one of two
  * licenses.  You may choose to be licensed under the terms of the GNU
@@ -29,8 +30,6 @@
  * ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
  * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
  * SOFTWARE.
- *
- * $Id: sa_query.c 2811 2005-07-06 18:11:43Z halr $
  */
 
 #include <linux/module.h>
@@ -39,15 +38,14 @@
 #include <linux/random.h>
 #include <linux/spinlock.h>
 #include <linux/slab.h>
-#include <linux/pci.h>
 #include <linux/dma-mapping.h>
 #include <linux/kref.h>
 #include <linux/idr.h>
 #include <linux/workqueue.h>
 
 #include <rdma/ib_pack.h>
-#include <rdma/ib_sa.h>
 #include <rdma/ib_cache.h>
+#include "sa.h"
 
 MODULE_AUTHOR("Roland Dreier");
 MODULE_DESCRIPTION("InfiniBand subnet administration query support");
@@ -56,6 +54,8 @@ MODULE_LICENSE("Dual BSD/GPL");
 struct ib_sa_sm_ah {
 	struct ib_ah        *ah;
 	struct kref          ref;
+	u16		     pkey_index;
+	u8		     src_path_mask;
 };
 
 struct ib_sa_port {
@@ -75,6 +75,7 @@ struct ib_sa_device {
 struct ib_sa_query {
 	void (*callback)(struct ib_sa_query *, int, struct ib_sa_mad *);
 	void (*release)(struct ib_sa_query *);
+	struct ib_sa_client    *client;
 	struct ib_sa_port      *port;
 	struct ib_mad_send_buf *mad_buf;
 	struct ib_sa_sm_ah     *sm_ah;
@@ -108,10 +109,10 @@ static struct ib_client sa_client = {
 	.remove = ib_sa_remove_one
 };
 
-static spinlock_t idr_lock;
+static DEFINE_SPINLOCK(idr_lock);
 static DEFINE_IDR(query_idr);
 
-static spinlock_t tid_lock;
+static DEFINE_SPINLOCK(tid_lock);
 static u32 tid;
 
 #define PATH_REC_FIELD(field) \
@@ -120,14 +121,10 @@ static u32 tid;
 	.field_name          = "sa_path_rec:" #field
 
 static const struct ib_field path_rec_table[] = {
-	{ RESERVED,
+	{ PATH_REC_FIELD(service_id),
 	  .offset_words = 0,
 	  .offset_bits  = 0,
-	  .size_bits    = 32 },
-	{ RESERVED,
-	  .offset_words = 1,
-	  .offset_bits  = 0,
-	  .size_bits    = 32 },
+	  .size_bits    = 64 },
 	{ PATH_REC_FIELD(dgid),
 	  .offset_words = 2,
 	  .offset_bits  = 0,
@@ -176,7 +173,7 @@ static const struct ib_field path_rec_table[] = {
 	  .offset_words = 12,
 	  .offset_bits  = 16,
 	  .size_bits    = 16 },
-	{ RESERVED,
+	{ PATH_REC_FIELD(qos_class),
 	  .offset_words = 13,
 	  .offset_bits  = 0,
 	  .size_bits    = 12 },
@@ -358,10 +355,11 @@ static void free_sm_ah(struct kref *kref)
 	kfree(sm_ah);
 }
 
-static void update_sm_ah(void *port_ptr)
+static void update_sm_ah(struct work_struct *work)
 {
-	struct ib_sa_port *port = port_ptr;
-	struct ib_sa_sm_ah *new_ah, *old_ah;
+	struct ib_sa_port *port =
+		container_of(work, struct ib_sa_port, update_task);
+	struct ib_sa_sm_ah *new_ah;
 	struct ib_port_attr port_attr;
 	struct ib_ah_attr   ah_attr;
 
@@ -377,6 +375,12 @@ static void update_sm_ah(void *port_ptr)
 	}
 
 	kref_init(&new_ah->ref);
+	new_ah->src_path_mask = (1 << port_attr.lmc) - 1;
+
+	new_ah->pkey_index = 0;
+	if (ib_find_pkey(port->agent->device, port->port_num,
+			 IB_DEFAULT_PKEY_FULL, &new_ah->pkey_index))
+		printk(KERN_ERR "Couldn't find index for default PKey\n");
 
 	memset(&ah_attr, 0, sizeof ah_attr);
 	ah_attr.dlid     = port_attr.sm_lid;
@@ -391,12 +395,11 @@ static void update_sm_ah(void *port_ptr)
 	}
 
 	spin_lock_irq(&port->ah_lock);
-	old_ah = port->sm_ah;
+	if (port->sm_ah)
+		kref_put(&port->sm_ah->ref, free_sm_ah);
 	port->sm_ah = new_ah;
 	spin_unlock_irq(&port->ah_lock);
 
-	if (old_ah)
-		kref_put(&old_ah->ref, free_sm_ah);
 }
 
 static void ib_sa_event(struct ib_event_handler *handler, struct ib_event *event)
@@ -407,13 +410,39 @@ static void ib_sa_event(struct ib_event_handler *handler, struct ib_event *event
 	    event->event == IB_EVENT_PKEY_CHANGE ||
 	    event->event == IB_EVENT_SM_CHANGE   ||
 	    event->event == IB_EVENT_CLIENT_REREGISTER) {
-		struct ib_sa_device *sa_dev;
-		sa_dev = container_of(handler, typeof(*sa_dev), event_handler);
+		unsigned long flags;
+		struct ib_sa_device *sa_dev =
+			container_of(handler, typeof(*sa_dev), event_handler);
+		struct ib_sa_port *port =
+			&sa_dev->port[event->element.port_num - sa_dev->start_port];
 
-		schedule_work(&sa_dev->port[event->element.port_num -
-					    sa_dev->start_port].update_task);
+		if (rdma_port_link_layer(handler->device, port->port_num) == IB_LINK_LAYER_INFINIBAND) {
+			spin_lock_irqsave(&port->ah_lock, flags);
+			if (port->sm_ah)
+				kref_put(&port->sm_ah->ref, free_sm_ah);
+			port->sm_ah = NULL;
+			spin_unlock_irqrestore(&port->ah_lock, flags);
+
+			schedule_work(&sa_dev->port[event->element.port_num -
+				      sa_dev->start_port].update_task);
+		}
+
 	}
 }
+
+void ib_sa_register_client(struct ib_sa_client *client)
+{
+	atomic_set(&client->users, 1);
+	init_completion(&client->comp);
+}
+EXPORT_SYMBOL(ib_sa_register_client);
+
+void ib_sa_unregister_client(struct ib_sa_client *client)
+{
+	ib_sa_client_put(client);
+	wait_for_completion(&client->comp);
+}
+EXPORT_SYMBOL(ib_sa_unregister_client);
 
 /**
  * ib_sa_cancel_query - try to cancel an SA query
@@ -443,8 +472,28 @@ void ib_sa_cancel_query(int id, struct ib_sa_query *query)
 }
 EXPORT_SYMBOL(ib_sa_cancel_query);
 
+static u8 get_src_path_mask(struct ib_device *device, u8 port_num)
+{
+	struct ib_sa_device *sa_dev;
+	struct ib_sa_port   *port;
+	unsigned long flags;
+	u8 src_path_mask;
+
+	sa_dev = ib_get_client_data(device, &sa_client);
+	if (!sa_dev)
+		return 0x7f;
+
+	port  = &sa_dev->port[port_num - sa_dev->start_port];
+	spin_lock_irqsave(&port->ah_lock, flags);
+	src_path_mask = port->sm_ah ? port->sm_ah->src_path_mask : 0x7f;
+	spin_unlock_irqrestore(&port->ah_lock, flags);
+
+	return src_path_mask;
+}
+
 int ib_init_ah_from_path(struct ib_device *device, u8 port_num,
-			 struct ib_sa_path_rec *rec, struct ib_ah_attr *ah_attr)
+			 struct ib_sa_path_rec *rec, struct ib_ah_attr *ah_attr,
+			 int force_grh)
 {
 	int ret;
 	u16 gid_index;
@@ -452,10 +501,12 @@ int ib_init_ah_from_path(struct ib_device *device, u8 port_num,
 	memset(ah_attr, 0, sizeof *ah_attr);
 	ah_attr->dlid = be16_to_cpu(rec->dlid);
 	ah_attr->sl = rec->sl;
-	ah_attr->src_path_bits = be16_to_cpu(rec->slid) & 0x7f;
+	ah_attr->src_path_bits = be16_to_cpu(rec->slid) &
+				 get_src_path_mask(device, port_num);
 	ah_attr->port_num = port_num;
+	ah_attr->static_rate = rec->rate;
 
-	if (rec->hop_limit > 1) {
+	if (rec->hop_limit > 1 || force_grh) {
 		ah_attr->ah_flags = IB_AH_GRH;
 		ah_attr->grh.dgid = rec->dgid;
 
@@ -472,6 +523,39 @@ int ib_init_ah_from_path(struct ib_device *device, u8 port_num,
 	return 0;
 }
 EXPORT_SYMBOL(ib_init_ah_from_path);
+
+static int alloc_mad(struct ib_sa_query *query, gfp_t gfp_mask)
+{
+	unsigned long flags;
+
+	spin_lock_irqsave(&query->port->ah_lock, flags);
+	if (!query->port->sm_ah) {
+		spin_unlock_irqrestore(&query->port->ah_lock, flags);
+		return -EAGAIN;
+	}
+	kref_get(&query->port->sm_ah->ref);
+	query->sm_ah = query->port->sm_ah;
+	spin_unlock_irqrestore(&query->port->ah_lock, flags);
+
+	query->mad_buf = ib_create_send_mad(query->port->agent, 1,
+					    query->sm_ah->pkey_index,
+					    0, IB_MGMT_SA_HDR, IB_MGMT_SA_DATA,
+					    gfp_mask);
+	if (IS_ERR(query->mad_buf)) {
+		kref_put(&query->sm_ah->ref, free_sm_ah);
+		return -ENOMEM;
+	}
+
+	query->mad_buf->ah = query->sm_ah->ah;
+
+	return 0;
+}
+
+static void free_mad(struct ib_sa_query *query)
+{
+	ib_free_send_mad(query->mad_buf);
+	kref_put(&query->sm_ah->ref, free_sm_ah);
+}
 
 static void init_mad(struct ib_sa_mad *mad, struct ib_mad_agent *agent)
 {
@@ -509,20 +593,11 @@ retry:
 	query->mad_buf->context[0] = query;
 	query->id = id;
 
-	spin_lock_irqsave(&query->port->ah_lock, flags);
-	kref_get(&query->port->sm_ah->ref);
-	query->sm_ah = query->port->sm_ah;
-	spin_unlock_irqrestore(&query->port->ah_lock, flags);
-
-	query->mad_buf->ah = query->sm_ah->ah;
-
 	ret = ib_post_send_mad(query->mad_buf, NULL);
 	if (ret) {
 		spin_lock_irqsave(&idr_lock, flags);
 		idr_remove(&query_idr, id);
 		spin_unlock_irqrestore(&idr_lock, flags);
-
-		kref_put(&query->sm_ah->ref, free_sm_ah);
 	}
 
 	/*
@@ -532,6 +607,12 @@ retry:
 	 */
 	return ret ? ret : id;
 }
+
+void ib_sa_unpack_path(void *attribute, struct ib_sa_path_rec *rec)
+{
+	ib_unpack(path_rec_table, ARRAY_SIZE(path_rec_table), attribute, rec);
+}
+EXPORT_SYMBOL(ib_sa_unpack_path);
 
 static void ib_sa_path_rec_callback(struct ib_sa_query *sa_query,
 				    int status,
@@ -557,6 +638,7 @@ static void ib_sa_path_rec_release(struct ib_sa_query *sa_query)
 
 /**
  * ib_sa_path_rec_get - Start a Path get query
+ * @client:SA client
  * @device:device to send query on
  * @port_num: port number to send query on
  * @rec:Path Record to send in query
@@ -579,7 +661,8 @@ static void ib_sa_path_rec_release(struct ib_sa_query *sa_query)
  * error code.  Otherwise it is a query ID that can be used to cancel
  * the query.
  */
-int ib_sa_path_rec_get(struct ib_device *device, u8 port_num,
+int ib_sa_path_rec_get(struct ib_sa_client *client,
+		       struct ib_device *device, u8 port_num,
 		       struct ib_sa_path_rec *rec,
 		       ib_sa_comp_mask comp_mask,
 		       int timeout_ms, gfp_t gfp_mask,
@@ -606,23 +689,21 @@ int ib_sa_path_rec_get(struct ib_device *device, u8 port_num,
 	if (!query)
 		return -ENOMEM;
 
-	query->sa_query.mad_buf = ib_create_send_mad(agent, 1, 0,
-						     0, IB_MGMT_SA_HDR,
-						     IB_MGMT_SA_DATA, gfp_mask);
-	if (!query->sa_query.mad_buf) {
-		ret = -ENOMEM;
+	query->sa_query.port     = port;
+	ret = alloc_mad(&query->sa_query, gfp_mask);
+	if (ret)
 		goto err1;
-	}
 
-	query->callback = callback;
-	query->context  = context;
+	ib_sa_client_get(client);
+	query->sa_query.client = client;
+	query->callback        = callback;
+	query->context         = context;
 
 	mad = query->sa_query.mad_buf->mad;
 	init_mad(mad, agent);
 
 	query->sa_query.callback = callback ? ib_sa_path_rec_callback : NULL;
 	query->sa_query.release  = ib_sa_path_rec_release;
-	query->sa_query.port     = port;
 	mad->mad_hdr.method	 = IB_MGMT_METHOD_GET;
 	mad->mad_hdr.attr_id	 = cpu_to_be16(IB_SA_ATTR_PATH_REC);
 	mad->sa_hdr.comp_mask	 = comp_mask;
@@ -639,7 +720,8 @@ int ib_sa_path_rec_get(struct ib_device *device, u8 port_num,
 
 err2:
 	*sa_query = NULL;
-	ib_free_send_mad(query->sa_query.mad_buf);
+	ib_sa_client_put(query->sa_query.client);
+	free_mad(&query->sa_query);
 
 err1:
 	kfree(query);
@@ -671,6 +753,7 @@ static void ib_sa_service_rec_release(struct ib_sa_query *sa_query)
 
 /**
  * ib_sa_service_rec_query - Start Service Record operation
+ * @client:SA client
  * @device:device to send request on
  * @port_num: port number to send request on
  * @method:SA method - should be get, set, or delete
@@ -695,7 +778,8 @@ static void ib_sa_service_rec_release(struct ib_sa_query *sa_query)
  * error code.  Otherwise it is a request ID that can be used to cancel
  * the query.
  */
-int ib_sa_service_rec_query(struct ib_device *device, u8 port_num, u8 method,
+int ib_sa_service_rec_query(struct ib_sa_client *client,
+			    struct ib_device *device, u8 port_num, u8 method,
 			    struct ib_sa_service_rec *rec,
 			    ib_sa_comp_mask comp_mask,
 			    int timeout_ms, gfp_t gfp_mask,
@@ -727,23 +811,21 @@ int ib_sa_service_rec_query(struct ib_device *device, u8 port_num, u8 method,
 	if (!query)
 		return -ENOMEM;
 
-	query->sa_query.mad_buf = ib_create_send_mad(agent, 1, 0,
-						     0, IB_MGMT_SA_HDR,
-						     IB_MGMT_SA_DATA, gfp_mask);
-	if (!query->sa_query.mad_buf) {
-		ret = -ENOMEM;
+	query->sa_query.port     = port;
+	ret = alloc_mad(&query->sa_query, gfp_mask);
+	if (ret)
 		goto err1;
-	}
 
-	query->callback = callback;
-	query->context  = context;
+	ib_sa_client_get(client);
+	query->sa_query.client = client;
+	query->callback        = callback;
+	query->context         = context;
 
 	mad = query->sa_query.mad_buf->mad;
 	init_mad(mad, agent);
 
 	query->sa_query.callback = callback ? ib_sa_service_rec_callback : NULL;
 	query->sa_query.release  = ib_sa_service_rec_release;
-	query->sa_query.port     = port;
 	mad->mad_hdr.method	 = method;
 	mad->mad_hdr.attr_id	 = cpu_to_be16(IB_SA_ATTR_SERVICE_REC);
 	mad->sa_hdr.comp_mask	 = comp_mask;
@@ -761,7 +843,8 @@ int ib_sa_service_rec_query(struct ib_device *device, u8 port_num, u8 method,
 
 err2:
 	*sa_query = NULL;
-	ib_free_send_mad(query->sa_query.mad_buf);
+	ib_sa_client_put(query->sa_query.client);
+	free_mad(&query->sa_query);
 
 err1:
 	kfree(query);
@@ -791,7 +874,8 @@ static void ib_sa_mcmember_rec_release(struct ib_sa_query *sa_query)
 	kfree(container_of(sa_query, struct ib_sa_mcmember_query, sa_query));
 }
 
-int ib_sa_mcmember_rec_query(struct ib_device *device, u8 port_num,
+int ib_sa_mcmember_rec_query(struct ib_sa_client *client,
+			     struct ib_device *device, u8 port_num,
 			     u8 method,
 			     struct ib_sa_mcmember_rec *rec,
 			     ib_sa_comp_mask comp_mask,
@@ -819,23 +903,21 @@ int ib_sa_mcmember_rec_query(struct ib_device *device, u8 port_num,
 	if (!query)
 		return -ENOMEM;
 
-	query->sa_query.mad_buf = ib_create_send_mad(agent, 1, 0,
-						     0, IB_MGMT_SA_HDR,
-						     IB_MGMT_SA_DATA, gfp_mask);
-	if (!query->sa_query.mad_buf) {
-		ret = -ENOMEM;
+	query->sa_query.port     = port;
+	ret = alloc_mad(&query->sa_query, gfp_mask);
+	if (ret)
 		goto err1;
-	}
 
-	query->callback = callback;
-	query->context  = context;
+	ib_sa_client_get(client);
+	query->sa_query.client = client;
+	query->callback        = callback;
+	query->context         = context;
 
 	mad = query->sa_query.mad_buf->mad;
 	init_mad(mad, agent);
 
 	query->sa_query.callback = callback ? ib_sa_mcmember_rec_callback : NULL;
 	query->sa_query.release  = ib_sa_mcmember_rec_release;
-	query->sa_query.port     = port;
 	mad->mad_hdr.method	 = method;
 	mad->mad_hdr.attr_id	 = cpu_to_be16(IB_SA_ATTR_MC_MEMBER_REC);
 	mad->sa_hdr.comp_mask	 = comp_mask;
@@ -853,13 +935,13 @@ int ib_sa_mcmember_rec_query(struct ib_device *device, u8 port_num,
 
 err2:
 	*sa_query = NULL;
-	ib_free_send_mad(query->sa_query.mad_buf);
+	ib_sa_client_put(query->sa_query.client);
+	free_mad(&query->sa_query);
 
 err1:
 	kfree(query);
 	return ret;
 }
-EXPORT_SYMBOL(ib_sa_mcmember_rec_query);
 
 static void send_handler(struct ib_mad_agent *agent,
 			 struct ib_mad_send_wc *mad_send_wc)
@@ -887,8 +969,8 @@ static void send_handler(struct ib_mad_agent *agent,
 	idr_remove(&query_idr, query->id);
 	spin_unlock_irqrestore(&idr_lock, flags);
 
-        ib_free_send_mad(mad_send_wc->send_buf);
-	kref_put(&query->sm_ah->ref, free_sm_ah);
+	free_mad(query);
+	ib_sa_client_put(query->client);
 	query->release(query);
 }
 
@@ -919,14 +1001,17 @@ static void ib_sa_add_one(struct ib_device *device)
 	struct ib_sa_device *sa_dev;
 	int s, e, i;
 
-	if (device->node_type == IB_NODE_SWITCH)
+	if (rdma_node_get_transport(device->node_type) != RDMA_TRANSPORT_IB)
+		return;
+
+	if (device->node_type == RDMA_NODE_IB_SWITCH)
 		s = e = 0;
 	else {
 		s = 1;
 		e = device->phys_port_cnt;
 	}
 
-	sa_dev = kmalloc(sizeof *sa_dev +
+	sa_dev = kzalloc(sizeof *sa_dev +
 			 (e - s + 1) * sizeof (struct ib_sa_port),
 			 GFP_KERNEL);
 	if (!sa_dev)
@@ -936,9 +1021,12 @@ static void ib_sa_add_one(struct ib_device *device)
 	sa_dev->end_port   = e;
 
 	for (i = 0; i <= e - s; ++i) {
+		spin_lock_init(&sa_dev->port[i].ah_lock);
+		if (rdma_port_link_layer(device, i + 1) != IB_LINK_LAYER_INFINIBAND)
+			continue;
+
 		sa_dev->port[i].sm_ah    = NULL;
 		sa_dev->port[i].port_num = i + s;
-		spin_lock_init(&sa_dev->port[i].ah_lock);
 
 		sa_dev->port[i].agent =
 			ib_register_mad_agent(device, i + s, IB_QPT_GSI,
@@ -947,8 +1035,7 @@ static void ib_sa_add_one(struct ib_device *device)
 		if (IS_ERR(sa_dev->port[i].agent))
 			goto err;
 
-		INIT_WORK(&sa_dev->port[i].update_task,
-			  update_sm_ah, &sa_dev->port[i]);
+		INIT_WORK(&sa_dev->port[i].update_task, update_sm_ah);
 	}
 
 	ib_set_client_data(device, &sa_client, sa_dev);
@@ -965,13 +1052,15 @@ static void ib_sa_add_one(struct ib_device *device)
 		goto err;
 
 	for (i = 0; i <= e - s; ++i)
-		update_sm_ah(&sa_dev->port[i]);
+		if (rdma_port_link_layer(device, i + 1) == IB_LINK_LAYER_INFINIBAND)
+			update_sm_ah(&sa_dev->port[i].update_task);
 
 	return;
 
 err:
 	while (--i >= 0)
-		ib_unregister_mad_agent(sa_dev->port[i].agent);
+		if (rdma_port_link_layer(device, i + 1) == IB_LINK_LAYER_INFINIBAND)
+			ib_unregister_mad_agent(sa_dev->port[i].agent);
 
 	kfree(sa_dev);
 
@@ -991,8 +1080,12 @@ static void ib_sa_remove_one(struct ib_device *device)
 	flush_scheduled_work();
 
 	for (i = 0; i <= sa_dev->end_port - sa_dev->start_port; ++i) {
-		ib_unregister_mad_agent(sa_dev->port[i].agent);
-		kref_put(&sa_dev->port[i].sm_ah->ref, free_sm_ah);
+		if (rdma_port_link_layer(device, i + 1) == IB_LINK_LAYER_INFINIBAND) {
+			ib_unregister_mad_agent(sa_dev->port[i].agent);
+			if (sa_dev->port[i].sm_ah)
+				kref_put(&sa_dev->port[i].sm_ah->ref, free_sm_ah);
+		}
+
 	}
 
 	kfree(sa_dev);
@@ -1002,20 +1095,30 @@ static int __init ib_sa_init(void)
 {
 	int ret;
 
-	spin_lock_init(&idr_lock);
-	spin_lock_init(&tid_lock);
-
 	get_random_bytes(&tid, sizeof tid);
 
 	ret = ib_register_client(&sa_client);
-	if (ret)
+	if (ret) {
 		printk(KERN_ERR "Couldn't register ib_sa client\n");
+		goto err1;
+	}
 
+	ret = mcast_init();
+	if (ret) {
+		printk(KERN_ERR "Couldn't initialize multicast handling\n");
+		goto err2;
+	}
+
+	return 0;
+err2:
+	ib_unregister_client(&sa_client);
+err1:
 	return ret;
 }
 
 static void __exit ib_sa_cleanup(void)
 {
+	mcast_cleanup();
 	ib_unregister_client(&sa_client);
 	idr_destroy(&query_idr);
 }

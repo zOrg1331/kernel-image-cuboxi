@@ -23,7 +23,7 @@
  *
  * ########################################################################
  *
- * 
+ *
  */
 
 
@@ -40,8 +40,8 @@
 
 #define MULTICAST_FILTER_LIMIT 64
 
-/* 
- * Data Buffer Descriptor. Data buffers must be aligned on 32 byte 
+/*
+ * Data Buffer Descriptor. Data buffers must be aligned on 32 byte
  * boundary for both, receive and transmit.
  */
 typedef struct db_dest {
@@ -51,7 +51,7 @@ typedef struct db_dest {
 } db_dest_t;
 
 /*
- * The transmit and receive descriptors are memory 
+ * The transmit and receive descriptors are memory
  * mapped registers.
  */
 typedef struct tx_dma {
@@ -106,15 +106,14 @@ struct au1000_private {
 	int old_duplex;
 
 	struct phy_device *phy_dev;
-	struct mii_bus mii_bus;
-	
+	struct mii_bus *mii_bus;
+
 	/* These variables are just for quick access to certain regs addresses. */
-	volatile mac_reg_t *mac;  /* mac registers                      */   
+	volatile mac_reg_t *mac;  /* mac registers                      */
 	volatile u32 *enable;     /* address of MAC Enable Register     */
 
 	u32 vaddr;                /* virtual address of rx/tx buffers   */
 	dma_addr_t dma_addr;      /* dma address of rx/tx buffers       */
 
-	struct net_device_stats stats;
 	spinlock_t lock;       /* Serialise access to device */
 };
