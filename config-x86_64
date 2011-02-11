@@ -1,7 +1,7 @@
 #
 # Automatically generated make config: don't edit
 # Linux kernel version: 2.6.36-un-def-alt3.1
-# Wed Feb  2 12:03:36 2011
+# Fri Feb 11 10:17:55 2011
 #
 CONFIG_64BIT=y
 # CONFIG_X86_32 is not set
@@ -3723,6 +3723,7 @@ CONFIG_BACKLIGHT_MBP_NVIDIA=m
 CONFIG_BACKLIGHT_SAHARA=m
 CONFIG_BACKLIGHT_ADP8860=m
 CONFIG_BACKLIGHT_PCF50633=m
+CONFIG_BACKLIGHT_NVIDIA=m
 
 #
 # Display device support
