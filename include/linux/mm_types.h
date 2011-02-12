@@ -278,6 +278,7 @@ struct mm_struct {
 
 	unsigned int vps_dumpable:2;
 	unsigned int oom_killed:1;
+	unsigned int global_oom:1;
 
 #ifdef CONFIG_BEANCOUNTERS
 	struct user_beancounter *mm_ub;

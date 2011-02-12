@@ -129,12 +129,21 @@ static int parse_sections(loff_t start, loff_t end, cpt_context_t *ctx)
 
 int rst_image_acceptable(unsigned long version)
 {
-	if (version > CPT_CURRENT_VERSION ||
-			CPT_VERSION_MINOR(version) >
-			CPT_VERSION_MINOR(CPT_CURRENT_VERSION))
-		return 0;
-	else
-		return 1;
+	switch (CPT_VERSION_MAJOR(version)) {
+		case CPT_VERSION_18:
+			if (version >= CPT_VERSION_18_3)
+				return 1;
+			break;
+		case CPT_VERSION_32:
+			if (CPT_VERSION_MINOR(version) <= 
+				CPT_VERSION_MINOR(CPT_CURRENT_VERSION))
+				return 1;
+			break;
+		default:
+			break;
+	}
+
+	return 0;
 }
 
 int rst_open_dumpfile(struct cpt_context *ctx)

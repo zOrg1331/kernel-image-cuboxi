@@ -1162,7 +1162,7 @@ int __set_page_dirty_nobuffers(struct page *page)
 					!radix_tree_prev_tag_get(
 						&mapping->page_tree,
 						PAGECACHE_TAG_DIRTY))
-				ub_io_account_dirty(mapping, 1);
+				ub_io_account_dirty(mapping);
 		}
 		spin_unlock_irq(&mapping->tree_lock);
 		if (mapping->host) {
@@ -1377,7 +1377,7 @@ int test_set_page_writeback(struct page *page)
 					radix_tree_prev_tag_get(
 						&mapping->page_tree,
 						PAGECACHE_TAG_DIRTY))
-				ub_io_account_clean(mapping, 1, 0);
+				ub_io_account_clean(mapping);
 		}
 		spin_unlock_irqrestore(&mapping->tree_lock, flags);
 	} else {

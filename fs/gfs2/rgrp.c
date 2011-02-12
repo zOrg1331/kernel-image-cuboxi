@@ -10,6 +10,7 @@
 #include <linux/slab.h>
 #include <linux/spinlock.h>
 #include <linux/completion.h>
+#include <linux/quotaops.h>
 #include <linux/buffer_head.h>
 #include <linux/fs.h>
 #include <linux/gfs2_ondisk.h>
@@ -1486,11 +1487,13 @@ static void gfs2_rgrp_error(struct gfs2_rgrpd *rgd)
  * @ip: the inode to allocate the block for
  * @bn: Used to return the starting block number
  * @n: requested number of blocks/extent length (value/result)
+ * @do_reserve: reserve linux disk quota blocks
  *
  * Returns: 0 or error
  */
 
-int gfs2_alloc_block(struct gfs2_inode *ip, u64 *bn, unsigned int *n)
+int gfs2_alloc_block(struct gfs2_inode *ip, u64 *bn, unsigned int *n,
+		     int do_reserve)
 {
 	struct gfs2_sbd *sdp = GFS2_SB(&ip->i_inode);
 	struct buffer_head *dibh;
@@ -1499,6 +1502,12 @@ int gfs2_alloc_block(struct gfs2_inode *ip, u64 *bn, unsigned int *n)
 	u32 goal, blk;
 	u64 block;
 	int error;
+	int quota_initial_reserve = *n;
+
+	if (do_reserve) {
+		if (vfs_dq_reserve_block(&ip->i_inode, *n))
+			return -EDQUOT;
+	}
 
 	if (rgrp_contains_block(rgd, ip->i_goal))
 		goal = ip->i_goal - rgd->rd_data0;
@@ -1506,6 +1515,10 @@ int gfs2_alloc_block(struct gfs2_inode *ip, u64 *bn, unsigned int *n)
 		goal = rgd->rd_last_alloc;
 
 	blk = rgblk_search(rgd, goal, GFS2_BLKST_FREE, GFS2_BLKST_USED, n);
+
+	if (do_reserve && *n != quota_initial_reserve)
+		vfs_dq_release_reservation_block(&ip->i_inode,
+						 quota_initial_reserve - *n);
 
 	/* Since all blocks are reserved in advance, this shouldn't happen */
 	if (blk == BFITNOENT)
@@ -1542,6 +1555,8 @@ int gfs2_alloc_block(struct gfs2_inode *ip, u64 *bn, unsigned int *n)
 	return 0;
 
 rgrp_error:
+	if (do_reserve)
+		vfs_dq_release_reservation_block(&ip->i_inode, *n);
 	gfs2_rgrp_error(rgd);
 	return -EIO;
 }
@@ -1655,7 +1670,7 @@ void gfs2_free_meta(struct gfs2_inode *ip, u64 bstart, u32 blen)
 
 	gfs2_statfs_change(sdp, 0, +blen, 0);
 	gfs2_quota_change(ip, -(s64)blen, ip->i_inode.i_uid, ip->i_inode.i_gid);
-	gfs2_meta_wipe(ip, bstart, blen);
+	gfs2_meta_wipe(GFS2_SB(&ip->i_inode), ip->i_gl, bstart, blen);
 }
 
 void gfs2_unlink_di(struct inode *inode)
@@ -1702,7 +1717,14 @@ void gfs2_free_di(struct gfs2_rgrpd *rgd, struct gfs2_inode *ip)
 	gfs2_free_uninit_di(rgd, ip->i_no_addr);
 	trace_gfs2_block_alloc(ip, ip->i_no_addr, 1, GFS2_BLKST_FREE);
 	gfs2_quota_change(ip, -1, ip->i_inode.i_uid, ip->i_inode.i_gid);
-	gfs2_meta_wipe(ip, ip->i_no_addr, 1);
+	gfs2_meta_wipe(GFS2_SB(&ip->i_inode), ip->i_gl, ip->i_no_addr, 1);
+}
+
+void gfs2_free_di_early(struct gfs2_rgrpd *rgd, struct gfs2_sbd *sdp,
+			struct gfs2_glock *i_gl, u64 i_no_addr)
+{
+	gfs2_free_uninit_di(rgd, i_no_addr);
+	gfs2_meta_wipe(sdp, i_gl, i_no_addr, 1);
 }
 
 /**

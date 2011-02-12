@@ -387,56 +387,46 @@ static int hook(void *arg)
 
 			e.tv64 = 0;
 
-			if (ctx->image_version >= CPT_VERSION_20)
-				e = ktime_add_ns(e, ti->cpt_restart.arg2);
-			else if (ctx->image_version >= CPT_VERSION_9)
-				e = ktime_add_ns(e, ti->cpt_restart.arg0);
-			else
-				e = ktime_add_ns(e, ti->cpt_restart.arg0*TICK_NSEC);
-			if (e.tv64 < 0)
-				e.tv64 = TICK_NSEC;
-			e = ktime_add(e, timespec_to_ktime(ctx->cpt_monotonic_time));
-
 			rb = &task_thread_info(current)->restart_block;
 			rb->fn = hrtimer_nanosleep_restart;
 #ifdef CONFIG_COMPAT
 			if (ti->cpt_restart.fn == CPT_RBL_COMPAT_NANOSLEEP)
 				rb->fn = compat_nanosleep_restart;
+			rb->nanosleep.compat_rmtp = NULL;
 #endif
-			if (ctx->image_version >= CPT_VERSION_20) {
-				rb->arg0 = ti->cpt_restart.arg0;
-				rb->arg1 = ti->cpt_restart.arg1;
-				rb->arg2 = e.tv64 & 0xFFFFFFFF;
-				rb->arg3 = e.tv64 >> 32;
-			} else if (ctx->image_version >= CPT_VERSION_9) {
-				rb->arg0 = ti->cpt_restart.arg2;
-				rb->arg1 = ti->cpt_restart.arg3;
-				rb->arg2 = e.tv64 & 0xFFFFFFFF;
-				rb->arg3 = e.tv64 >> 32;
-			} else {
-				rb->arg0 = ti->cpt_restart.arg1;
-				rb->arg1 = CLOCK_MONOTONIC;
-				rb->arg2 = e.tv64 & 0xFFFFFFFF;
-				rb->arg3 = e.tv64 >> 32;
+			if (ctx->image_version >= CPT_VERSION_32) {
+				rb->nanosleep.index = ti->cpt_restart.arg0;
+				rb->nanosleep.rmtp = (void *)ti->cpt_restart.arg1;
+#ifdef CONFIG_COMPAT
+				rb->nanosleep.compat_rmtp = (void *)ti->cpt_restart.arg2;
+#endif
+				e = ktime_add_ns(e, ti->cpt_restart.arg3);
+			} else if (ctx->image_version >= CPT_VERSION_18_3) {
+				rb->nanosleep.index = ti->cpt_restart.arg3;
+				rb->nanosleep.rmtp = (void *)ti->cpt_restart.arg2;
+				e = ktime_add_ns(e, ti->cpt_restart.arg0);
 			}
+			if (e.tv64 < 0)
+				e.tv64 = TICK_NSEC;
+			e = ktime_add(e, timespec_to_ktime(ctx->cpt_monotonic_time));
+			rb->nanosleep.expires = e.tv64;
 		} else if (ti->cpt_restart.fn == CPT_RBL_POLL) {
 			struct restart_block *rb;
 			ktime_t e;
 			struct timespec ts;
-			unsigned long timeout_jiffies;
 			
-			e.tv64 = 0;
-			e = ktime_add_ns(e, ti->cpt_restart.arg2);
+			e.tv64 = ti->cpt_restart.arg2;
 			e = ktime_sub(e, timespec_to_ktime(ctx->delta_time));
 			ts = ns_to_timespec(ktime_to_ns(e));
-			timeout_jiffies = timespec_to_jiffies(&ts);
 
 			rb = &task_thread_info(current)->restart_block;
 			rb->fn = do_restart_poll;
-			rb->arg0 = ti->cpt_restart.arg0;
-			rb->arg1 = ti->cpt_restart.arg1;
-			rb->arg2 = timeout_jiffies & 0xFFFFFFFF;
-			rb->arg3 = (u64)timeout_jiffies >> 32;
+
+			rb->poll.ufds = (void *)ti->cpt_restart.arg0;
+			rb->poll.nfds = ti->cpt_restart.arg1 & 0xFFFFFFFF;
+			rb->poll.has_timeout = ti->cpt_restart.arg1 >> 32;
+			rb->poll.tv_sec = ts.tv_sec;
+			rb->poll.tv_nsec = ts.tv_nsec;
 		} else if (ti->cpt_restart.fn == CPT_RBL_FUTEX_WAIT) {
 			struct restart_block *rb;
 			ktime_t e;
@@ -562,8 +552,6 @@ static void set_task_ubs(struct cpt_task_image *ti, struct cpt_context *ctx)
 
 	tbc = task_bc(current);
 
-	put_beancounter(tbc->fork_sub);
-	tbc->fork_sub = rst_lookup_ubc(ti->cpt_task_ub, ctx);
 	if (ti->cpt_mm_ub != CPT_NULL) {
 		put_beancounter(tbc->exec_ub);
 		tbc->exec_ub = rst_lookup_ubc(ti->cpt_mm_ub, ctx);

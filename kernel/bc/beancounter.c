@@ -75,10 +75,6 @@ const char *ub_rnames[] = {
 	"dummy",
 	"numiptent",
 	"swappages",
-	"unused_privvmpages",	/* UB_RESOURCES */
-	"tmpfs_respages",
-	"mapped_file",
-	"anonymous",
 };
 
 unsigned int ub_dcache_threshold __read_mostly = 1024;
@@ -86,6 +82,7 @@ unsigned int ub_dcache_threshold __read_mostly = 1024;
 /* default maximum perpcu resources precharge */
 static int resource_precharge[UB_RESOURCES] = {
 	[UB_KMEMSIZE]	= 32 * PAGE_SIZE,
+       [UB_PRIVVMPAGES]= 256,
 	[UB_NUMPROC]	= 4,
 	[UB_PHYSPAGES]	= 256,	/* up to 1Mb */
 	[UB_NUMSIGINFO]	= 4,
@@ -130,18 +127,27 @@ static void __init init_beancounter_precharges_early(struct user_beancounter *ub
 	}
 }
 
+void ub_precharge_snapshot(struct user_beancounter *ub, int *precharge)
+{
+	int cpu, resource;
+
+	memset(precharge, 0, sizeof(int) * UB_RESOURCES);
+	for_each_possible_cpu(cpu) {
+		struct ub_percpu_struct *pcpu = ub_percpu(ub, cpu);
+		for ( resource = 0 ; resource < UB_RESOURCES ; resource++ )
+			precharge[resource] += pcpu->precharge[resource];
+	}
+}
+
 static void uncharge_beancounter_precharge(struct user_beancounter *ub)
 {
-	int resource, precharge;
+	int resource, precharge[UB_RESOURCES];
 
+	ub_precharge_snapshot(ub, precharge);
 	for ( resource = 0 ; resource < UB_RESOURCES ; resource++ ) {
 		/* DEBUG: to trigger BUG_ON in precharge/charge/uncharge */
 		ub->ub_parms[resource].max_precharge = -1;
-		precharge = __ub_percpu_sum(ub, precharge[resource]);
-		if (!precharge)
-			continue;
-		BUG_ON(ub->ub_parms[resource].held < precharge);
-		__uncharge_beancounter_locked(ub, resource, precharge);
+		ub->ub_parms[resource].held -= precharge[resource];
 	}
 }
 
@@ -318,14 +324,14 @@ void release_beancounter(struct user_beancounter *ub)
 
 #else
 
-static int verify_res(struct user_beancounter *ub, int resource,
+static int verify_res(struct user_beancounter *ub, const char *name,
 		unsigned long held)
 {
 	if (likely(held == 0))
 		return 1;
 
 	printk(KERN_WARNING "Ub %u helds %ld in %s on put\n",
-			ub->ub_uid, held, ub_rnames[resource]);
+			ub->ub_uid, held, name);
 	return 0;
 }
 
@@ -333,19 +339,23 @@ static inline void bc_verify_held(struct user_beancounter *ub)
 {
 	int i, clean;
 
+	ub_stat_mod(ub, dirty_pages, __ub_percpu_sum(ub, dirty_pages));
+	ub_stat_mod(ub, mapped_file_pages, __ub_percpu_sum(ub, mapped_file_pages));
+	ub_stat_mod(ub, anonymous_pages, __ub_percpu_sum(ub, anonymous_pages));
 	uncharge_beancounter_precharge(ub);
 	ub_update_resources_locked(ub);
 
 	clean = 1;
 	for (i = 0; i < UB_RESOURCES; i++)
-		clean &= verify_res(ub, i, ub->ub_parms[i].held);
+		clean &= verify_res(ub, ub_rnames[i], ub->ub_parms[i].held);
 
-	clean &= verify_res(ub, UB_UNUSEDPRIVVM, ub->ub_unused_privvmpages);
-	clean &= verify_res(ub, UB_TMPFSPAGES, ub->ub_tmpfs_respages);
-	clean &= verify_res(ub, UB_MAPPED_FILE,
-			__ub_percpu_sum(ub, mapped_file_pages));
-	clean &= verify_res(ub, UB_ANONYMOUS,
-			__ub_percpu_sum(ub, anonymous_pages));
+	clean &= verify_res(ub, "dirty_pages",
+			__ub_stat_get(ub, dirty_pages));
+	clean &= verify_res(ub, "tmpfs_respages", ub->ub_tmpfs_respages);
+	clean &= verify_res(ub, "mapped_file",
+			__ub_stat_get(ub, mapped_file_pages));
+	clean &= verify_res(ub, "anonymous",
+			__ub_stat_get(ub, anonymous_pages));
 
 	ub_debug_trace(!clean, 5, 60*HZ);
 }
@@ -480,11 +490,11 @@ out:
 
 EXPORT_SYMBOL(charge_beancounter);
 
-void uncharge_warn(struct user_beancounter *ub, int resource,
+void uncharge_warn(struct user_beancounter *ub, const char *resource,
 		unsigned long val, unsigned long held)
 {
 	printk(KERN_ERR "Uncharging too much %lu h %lu, res %s ub %u\n",
-			val, held, ub_rnames[resource], ub->ub_uid);
+			val, held, resource, ub->ub_uid);
 	ub_debug_trace(1, 10, 10*HZ);
 }
 
@@ -494,7 +504,7 @@ void __uncharge_beancounter_locked(struct user_beancounter *ub,
 	ub_debug_resource(resource, "Uncharging %lu for %d of %p with %lu\n",
 			val, resource, ub, ub->ub_parms[resource].held);
 	if (ub->ub_parms[resource].held < val) {
-		uncharge_warn(ub, resource,
+		uncharge_warn(ub, ub_rnames[resource],
 				val, ub->ub_parms[resource].held);
 		val = ub->ub_parms[resource].held;
 	}
@@ -515,7 +525,7 @@ void uncharge_beancounter(struct user_beancounter *ub,
 
 EXPORT_SYMBOL(uncharge_beancounter);
 
-/* called with disabled interrupts and preemption */
+/* called with disabled interrupts */
 static int __precharge_beancounter_percpu(struct user_beancounter *ub,
 		int resource, unsigned long val)
 {
@@ -542,7 +552,7 @@ static int __precharge_beancounter_percpu(struct user_beancounter *ub,
 	return retval;
 }
 
-/* called with disabled interrupts and preemption */
+/* called with disabled interrupts */
 static int __charge_beancounter_percpu(struct user_beancounter *ub,
 		int resource, unsigned long val, enum ub_severity strict)
 {
@@ -573,7 +583,7 @@ static int __charge_beancounter_percpu(struct user_beancounter *ub,
 	return retval;
 }
 
-/* called with disabled interrupts and preemption */
+/* called with disabled interrupts */
 void __uncharge_beancounter_percpu(struct user_beancounter *ub,
 		int resource, unsigned long val)
 {
@@ -619,15 +629,14 @@ int precharge_beancounter(struct user_beancounter *ub,
 	int retval;
 
 	retval = -EINVAL;
-	local_irq_save(flags);
-	preempt_disable();
+	if (val > UB_MAXVALUE)
+		goto out;
 
+	local_irq_save(flags);
 	if (ub)
 		retval = __precharge_beancounter_percpu(ub, resource, val);
-
-	preempt_enable();
 	local_irq_restore(flags);
-
+out:
 	return retval;
 }
 EXPORT_SYMBOL(precharge_beancounter);
@@ -643,10 +652,8 @@ int charge_beancounter_fast(struct user_beancounter *ub,
 		goto out;
 
 	local_irq_save(flags);
-	preempt_disable();
 	if (ub)
 		retval = __charge_beancounter_percpu(ub, resource, val, strict);
-	preempt_enable();
 	local_irq_restore(flags);
 out:
 	return retval;
@@ -659,12 +666,8 @@ void uncharge_beancounter_fast(struct user_beancounter *ub,
 	unsigned long flags;
 
 	local_irq_save(flags);
-	preempt_disable();
-
 	if (ub)
 		__uncharge_beancounter_percpu(ub, resource, val);
-
-	preempt_enable();
 	local_irq_restore(flags);
 }
 EXPORT_SYMBOL(uncharge_beancounter_fast);
@@ -696,6 +699,7 @@ static void init_beancounter_struct(struct user_beancounter *ub)
 #ifndef CONFIG_BC_KEEP_UNUSED
 	INIT_WORK(&ub->work, delayed_release_beancounter);
 #endif
+	init_oom_control(&ub->oom_ctrl);
 }
 
 static void init_beancounter_nolimits(struct user_beancounter *ub)
@@ -766,7 +770,6 @@ void __init ub_init_early(void)
 	(void)set_exec_ub(ub);
 	current->task_bc.task_ub = get_beancounter(ub);
 	__charge_beancounter_locked(ub, UB_NUMPROC, 1, UB_FORCE);
-	current->task_bc.fork_sub = get_beancounter(ub);
 	init_mm.mm_ub = get_beancounter(ub);
 
 	hlist_add_head(&ub->ub_hash, &ub_hash[ub->ub_uid]);
@@ -846,6 +849,8 @@ void __init ub_init_late(void)
 	init_beancounter_syslimits(&default_beancounter);
 #endif
 	init_beancounter_struct(&default_beancounter);
+
+	init_oom_control(&global_oom_ctrl);
 }
 
 static __init int ub_init_wq(void)

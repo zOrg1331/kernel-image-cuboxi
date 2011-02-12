@@ -1005,12 +1005,12 @@ static int dump_one_process(cpt_object_t *obj, struct cpt_context *ctx)
 		if (rb->fn == hrtimer_nanosleep_restart) {
 			v->cpt_restart.fn = CPT_RBL_NANOSLEEP;
 
-			e.tv64 = ((u64)rb->arg3 << 32) | (u64)rb->arg2;
+			e.tv64 = rb->nanosleep.expires;
 			e = ktime_sub(e, timespec_to_ktime(ctx->cpt_monotonic_time));
-			v->cpt_restart.arg0 = rb->arg0;
-			v->cpt_restart.arg1 = rb->arg1;
-			v->cpt_restart.arg2 = ktime_to_ns(e);
-			v->cpt_restart.arg3 = 0;
+			v->cpt_restart.arg0 = (unsigned int)rb->nanosleep.index;
+			v->cpt_restart.arg1 = (unsigned long)rb->nanosleep.rmtp;
+			v->cpt_restart.arg2 = 0;
+			v->cpt_restart.arg3 = ktime_to_ns(e);
 			dprintk_ctx(CPT_FID " %Lu\n", CPT_TID(tsk), (unsigned long long)v->cpt_restart.arg0);
 			goto continue_dump;
 		}
@@ -1018,26 +1018,26 @@ static int dump_one_process(cpt_object_t *obj, struct cpt_context *ctx)
 		if (rb->fn == compat_nanosleep_restart) {
 			v->cpt_restart.fn = CPT_RBL_COMPAT_NANOSLEEP;
 
-			e.tv64 = ((u64)rb->arg3 << 32) | (u64)rb->arg2;
+			e.tv64 = rb->nanosleep.expires;
 			e = ktime_sub(e, timespec_to_ktime(ctx->cpt_monotonic_time));
-			v->cpt_restart.arg0 = rb->arg0;
-			v->cpt_restart.arg1 = rb->arg1;
-			v->cpt_restart.arg2 = ktime_to_ns(e);
-			v->cpt_restart.arg3 = 0;
+			v->cpt_restart.arg0 = (unsigned int)rb->nanosleep.index;
+			v->cpt_restart.arg1 = (unsigned long)rb->nanosleep.rmtp;
+			v->cpt_restart.arg2 = (unsigned long)rb->nanosleep.compat_rmtp;
+			v->cpt_restart.arg3 = ktime_to_ns(e);
 			dprintk_ctx(CPT_FID " %Lu\n", CPT_TID(tsk), (unsigned long long)v->cpt_restart.arg0);
 			goto continue_dump;
 		}
 #endif
 		if (rb->fn == do_restart_poll) {
-			u64 timeout_jiffies;
+			struct timespec ts;
 
-			timeout_jiffies = ((u64)rb->arg3 << 32)|(u64)rb->arg2;
-			e.tv64 = timeout_jiffies * TICK_NSEC;
+			ts.tv_sec = rb->poll.tv_sec;
+			ts.tv_nsec = rb->poll.tv_nsec;
 
 			v->cpt_restart.fn = CPT_RBL_POLL;
-			v->cpt_restart.arg0 = rb->arg0;
-			v->cpt_restart.arg1 = rb->arg1;
-			v->cpt_restart.arg2 = ktime_to_ns(e);
+			v->cpt_restart.arg0 = (unsigned long)rb->poll.ufds;
+			v->cpt_restart.arg1 = (unsigned long)rb->poll.has_timeout << 32 | rb->poll.nfds;
+			v->cpt_restart.arg2 = timespec_to_ns(&ts);
 			v->cpt_restart.arg3 = 0;
 			dprintk_ctx(CPT_FID " %Lu\n", CPT_TID(tsk), (unsigned long long)v->cpt_restart.arg0);
 			goto continue_dump;
@@ -1151,7 +1151,7 @@ continue_dump:
 		v->cpt_mm_ub = CPT_NULL;
 	v->cpt_task_ub = cpt_lookup_ubc(tsk->task_bc.task_ub, ctx);
 	v->cpt_exec_ub = cpt_lookup_ubc(tsk->task_bc.exec_ub, ctx);
-	v->cpt_fork_sub = cpt_lookup_ubc(tsk->task_bc.fork_sub, ctx);
+	v->cpt_fork_sub = v->cpt_exec_ub;
 #endif
 
 	v->cpt_ptrace_message = tsk->ptrace_message;

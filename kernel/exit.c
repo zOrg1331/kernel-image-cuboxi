@@ -218,7 +218,7 @@ repeat:
 
 	write_unlock_irq(&tasklist_lock);
 	release_thread(p);
-	ub_task_uncharge(p);
+	ub_task_uncharge(p->task_bc.task_ub);
 	pput_ve(p->ve_task_info.owner_env);
 	call_rcu(&p->rcu, delayed_put_task_struct);
 

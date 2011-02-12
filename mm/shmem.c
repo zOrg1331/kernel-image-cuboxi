@@ -2852,7 +2852,9 @@ int shmem_zero_setup(struct vm_area_struct *vma)
 	if (vma->vm_file)
 		fput(vma->vm_file);
 	else if (vma->vm_flags & VM_WRITE)
-		__ub_unused_privvm_dec(vma->vm_mm, size >> PAGE_SHIFT);
+               uncharge_beancounter_fast(vma->vm_mm->mm_ub, UB_PRIVVMPAGES,
+                               size >> PAGE_SHIFT);
+
 	vma->vm_file = file;
 	vma->vm_ops = &shmem_vm_ops;
 	return 0;

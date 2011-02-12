@@ -13,6 +13,8 @@
 #include <linux/perf_event.h>		/* perf_sw_event		*/
 #include <trace/events/kmem.h>
 
+#include <bc/oom_kill.h>
+
 #include <asm/traps.h>			/* dotraplinkage, ...		*/
 #include <asm/pgalloc.h>		/* pgd_*(), ...			*/
 #include <asm/kmemcheck.h>		/* kmemcheck_*(), ...		*/
@@ -796,6 +798,7 @@ bad_area_access_error(struct pt_regs *regs, unsigned long error_code,
 	__bad_area(regs, error_code, address, SEGV_ACCERR);
 }
 
+#if 0
 /* TODO: fixup for "mm-invoke-oom-killer-from-page-fault.patch" */
 static void
 out_of_memory(struct pt_regs *regs, unsigned long error_code,
@@ -809,6 +812,7 @@ out_of_memory(struct pt_regs *regs, unsigned long error_code,
 
 	out_of_memory_in_ub(get_exec_ub(), 0);
 }
+#endif
 
 static void
 do_sigbus(struct pt_regs *regs, unsigned long error_code, unsigned long address,
@@ -850,7 +854,13 @@ mm_fault_error(struct pt_regs *regs, unsigned long error_code,
 	       unsigned long address, unsigned int fault)
 {
 	if (fault & VM_FAULT_OOM) {
-		out_of_memory(regs, error_code, address);
+		/*
+		 * This fault can be caused by two different reasons:
+		 * 1) Buddy allocator failed to alloc a page for pud and friends.
+		 * 2) OOM-killed failed to provide us requred memory.
+		 * Current task can't execute in such circumstances.
+		 */
+		send_sig(SIGKILL, current, 0);
 	} else {
 		if (fault & (VM_FAULT_SIGBUS|VM_FAULT_HWPOISON))
 			do_sigbus(regs, error_code, address, fault);

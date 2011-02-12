@@ -38,6 +38,7 @@
 #include <linux/shm.h>
 #include <linux/signalfd.h>
 #include <linux/proc_fs.h>
+#include <linux/init_task.h>
 
 #include "cpt_obj.h"
 #include "cpt_context.h"
@@ -838,34 +839,6 @@ static struct file *open_signalfd(struct cpt_file_image *fi, int flags, struct c
 }
 #endif
 
-/*
- * It may happen that a process which created a file
- * had changed its UID after that (keeping file opened/referenced
- * with write permissions for 'own' only) as a result we might
- * be unable to read it at restore time due to credentials
- * mismatch, to break this tie we temporary take 'init_task' credentials
- * and as only the file gets read into the memory we restore original
- * credentials back
- *
- * Same time if between credentials rise/restore you need
- * the former credentials (for fixups or whatever) --
- * use rst_cred_origin for that
- */
-static const struct cred *rst_cred_origin;
-
-void rst_creds_rise_current(void)
-{
-	struct task_struct *tsk = &init_task;
-	BUG_ON(rst_cred_origin);
-	rst_cred_origin = override_creds(tsk->cred);
-}
-
-void rst_creds_restore_current(void)
-{
-	revert_creds(rst_cred_origin);
-	rst_cred_origin = NULL;
-}
-
 struct file *rst_file(loff_t pos, int fd, struct cpt_context *ctx)
 {
 	int err;
@@ -880,8 +853,23 @@ struct file *rst_file(loff_t pos, int fd, struct cpt_context *ctx)
 	loff_t pos2;
 	cpt_object_t *mntobj = NULL;
 	struct nameidata nd;
+	const struct cred *cred_origin;
 
-	rst_creds_rise_current();
+	/*
+	 * It may happen that a process which created a file
+	 * had changed its UID after that (keeping file opened/referenced
+	 * with write permissions for 'own' only) as a result we might
+	 * be unable to read it at restore time due to credentials
+	 * mismatch, to break this tie we temporary take init_cred credentials
+	 * and as only the file gets read into the memory we restore original
+	 * credentials back
+	 *
+	 * Same time if between credentials rise/restore you need
+	 * the former credentials (for fixups or whatever) --
+	 * use cred_origin for that
+	 */
+
+	cred_origin = override_creds(&init_cred);
 
 	obj = lookup_cpt_obj_bypos(CPT_OBJ_FILE, pos, ctx);
 	if (obj) {
@@ -891,10 +879,10 @@ struct file *rst_file(loff_t pos, int fd, struct cpt_context *ctx)
 			err = rst_get_object(CPT_OBJ_FILE, pos, &fi, ctx);
 			if (err < 0)
 				goto err_out;
-			fixup_file_flags(file, rst_cred_origin, &fi, 0, pos, ctx);
+			fixup_file_flags(file, cred_origin, &fi, 0, pos, ctx);
 		}
 		get_file(file);
-		rst_creds_restore_current();
+		revert_creds(cred_origin);
 		return file;
 	}
 
@@ -1096,7 +1084,7 @@ open_file:
 	}
 map_file:
 	if (!IS_ERR(file)) {
-		fixup_file_flags(file, rst_cred_origin, &fi, was_dentry_open, pos, ctx);
+		fixup_file_flags(file, cred_origin, &fi, was_dentry_open, pos, ctx);
 
 		if (S_ISFIFO(fi.cpt_i_mode) && !was_dentry_open) {
 			err = fixup_pipe_data(file, &fi, ctx);
@@ -1155,7 +1143,7 @@ map_file:
 out:
 	if (name)
 		rst_put_name(name, ctx);
-	rst_creds_restore_current();
+	revert_creds(cred_origin);
 	return file;
 
 err_put:
@@ -1164,7 +1152,7 @@ err_put:
 err_out:
 	if (name)
 		rst_put_name(name, ctx);
-	rst_creds_restore_current();
+	revert_creds(cred_origin);
 	return ERR_PTR(err);
 }
 

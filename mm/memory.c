@@ -721,7 +721,7 @@ again:
 	arch_leave_lazy_mmu_mode();
 	spin_unlock(src_ptl);
 	pte_unmap_nested(orig_src_pte);
-	ub_unused_privvm_sub(dst_mm, dst_vma, rss[0] + rss[1]);
+
 	add_mm_rss(dst_mm, rss[0], rss[1], rss[2]);
 	pte_unmap_unlock(orig_dst_pte, dst_ptl);
 	cond_resched();
@@ -881,7 +881,6 @@ static unsigned long zap_pte_range(struct mmu_gather *tlb,
 	int file_rss = 0;
 	int anon_rss = 0;
 	int swap_usage = 0;
-	int rss;
 
 	pte = pte_offset_map_lock(mm, pmd, addr, &ptl);
 	arch_enter_lazy_mmu_mode();
@@ -964,8 +963,6 @@ static unsigned long zap_pte_range(struct mmu_gather *tlb,
 		pte_clear_not_present_full(mm, addr, pte, tlb->fullmm);
 	} while (pte++, addr += PAGE_SIZE, (addr != end && *zap_work > 0));
 
-	rss = -(file_rss + anon_rss);
-	ub_unused_privvm_add(mm, vma, rss);
 	add_mm_rss(mm, file_rss, anon_rss, swap_usage);
 	arch_leave_lazy_mmu_mode();
 	pte_unmap_unlock(pte - 1, ptl);
@@ -2287,7 +2284,6 @@ gotten:
 				trace_mm_filemap_cow(mm, address);
 			}
 		} else {
-			ub_unused_privvm_dec(mm, vma);
 			inc_mm_counter(mm, anon_rss);
 			trace_mm_anon_cow(mm, address);
 		}
@@ -2761,7 +2757,6 @@ static int do_swap_page(struct mm_struct *mm, struct vm_area_struct *vma,
 	flush_icache_page(vma, page);
 	set_pte_at(mm, address, page_table, pte);
 	page_add_anon_rmap(page, vma, address);
-	ub_unused_privvm_dec(mm, vma);
 	/* It's better to call commit-charge after rmap is established */
 	mem_cgroup_commit_charge_swapin(page, ptr);
 
@@ -2894,7 +2889,6 @@ static int do_anonymous_page(struct mm_struct *mm, struct vm_area_struct *vma,
 
 	inc_mm_counter(mm, anon_rss);
 	page_add_new_anon_rmap(page, vma, address);
-	ub_unused_privvm_dec(mm, vma);
 setpte:
 	set_pte_at(mm, address, page_table, entry);
 
@@ -3094,8 +3088,6 @@ static int __do_fault(struct mm_struct *mm, struct vm_area_struct *vma,
 			}
 		}
 		set_pte_at(mm, address, page_table, entry);
-
-		ub_unused_privvm_dec(mm, vma);
 
 		/* no need to invalidate: a not-present page won't be cached */
 		update_mmu_cache(vma, address, entry);

@@ -155,8 +155,10 @@ SYSCALL_DEFINE3(fairsched_rate, unsigned int, id, int, op, unsigned, rate)
 			break;
 		case FAIRSCHED_GET_RATE:
 			rate = sched_cgroup_get_rate(cgrp);
-			rate *= vcpus;
-			ret = rate;
+			if (rate)
+				ret = rate * vcpus;
+			else
+				ret = -ENODATA;
 			break;
 		default:
 			ret = -EINVAL;
@@ -261,6 +263,26 @@ out:
 	return retval;
 }
 
+/*
+ * Init cgroup 'cgrp' and attach task 'tsk' to it.
+ */
+static int init_cgroup(struct cgroup *cgrp, struct task_struct *tsk)
+{
+	int ret = 0;
+
+	cgroup_lock();
+	ret = cgroup_set_cpumask(cgrp, cpu_active_mask);
+	if (ret)
+		goto out;
+	ret = cgroup_set_nodemask(cgrp, &node_states[N_HIGH_MEMORY]);
+	if (ret)
+		goto out;
+	ret = cgroup_attach_task(cgrp, tsk);
+out:
+	cgroup_unlock();
+	return ret;
+}
+
 int fairsched_new_node(int id, unsigned int vcpus)
 {
 	struct cgroup *cgrp;
@@ -283,32 +305,15 @@ int fairsched_new_node(int id, unsigned int vcpus)
 	}
 #endif
 
-	cgroup_lock();
-
-	err = cgroup_set_cpumask(cgrp, cpu_active_mask);
-	if (err) {
-		printk(KERN_WARNING "Can't set sched cpumask on node %d\n", id);
-		goto cleanup_locked;
-	}
-
-	err = cgroup_set_nodemask(cgrp, &node_states[N_HIGH_MEMORY]);
-	if (err) {
-		printk(KERN_WARNING "Can't set sched nodemask on node %d\n", id);
-		goto cleanup_locked;
-	}
-
-	err = cgroup_attach_task(cgrp, current);
+	err = init_cgroup(cgrp, current);
 	if (err) {
 		printk(KERN_WARNING "Can't switch to fairsched node %d\n", id);
-		goto cleanup_locked;
+		goto cleanup;
 	}
 
-	cgroup_unlock();
 	cgroup_kernel_close(cgrp);
 	return 0;
 
-cleanup_locked:
-	cgroup_unlock();
 cleanup:
 	cgroup_kernel_close(cgrp);
 	if (cgroup_kernel_remove(fairsched_root, name))
@@ -422,7 +427,7 @@ static struct fairsched_dump *fairsched_do_dump(int compat)
 		p->nr_runtasks = sched_cgroup_get_nr_running(cgrp);
 		p->weight = FSCHWEIGHT_BASE / sched_cgroup_get_shares(cgrp);
 		p->nr_pcpu = num_online_cpus();
-		p->rate = 0;
+		p->rate = sched_cgroup_get_rate(cgrp) * p->nr_pcpu;
 		p++;
 		if (!--nr_nodes)
 			break;
@@ -681,7 +686,7 @@ int __init fairsched_init(void)
 	cgrp = cgroup_kernel_open(fairsched_root, CGRP_CREAT, "2147483647");
 	if (IS_ERR(cgrp))
 		return PTR_ERR(cgrp);
-	ret = cgroup_kernel_attach(cgrp, init_pid_ns.child_reaper);
+	ret = init_cgroup(cgrp, init_pid_ns.child_reaper);
 	if (ret)
 		return ret;
 

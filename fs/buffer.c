@@ -681,7 +681,7 @@ static void __set_page_dirty(struct page *page,
 				!radix_tree_prev_tag_get(
 					&mapping->page_tree,
 					PAGECACHE_TAG_DIRTY))
-			ub_io_account_dirty(mapping, 1);
+			ub_io_account_dirty(mapping);
 	}
 	spin_unlock_irq(&mapping->tree_lock);
 	__mark_inode_dirty(mapping->host, I_DIRTY_PAGES);

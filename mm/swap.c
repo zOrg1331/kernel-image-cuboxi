@@ -271,16 +271,21 @@ void activate_page(struct page *page)
 		int lru = page_lru_base_type(page);
 		del_page_from_lru_list(gang, page, lru);
 
-		/* FIXME race with page_add_file_rmap */
 		if (page->mapping && !PageAnon(page) && !page_mapped(page)) {
 			struct gang_set *gs = get_mapping_gang(page->mapping);
 
-			if (unlikely(gang->set != gs)) {
+			if (unlikely(gang->set != gs) &&
+					atomic_cmpxchg(&page->_mapcount, -1, 0) == -1) {
 				ClearPageLRU(page);
 				spin_unlock(&gang->lru_lock);
 				gang_mod_user_page(page, gs);
 				gang = lock_page_lru(page);
 				SetPageLRU(page);
+
+				if (!atomic_add_negative(-1, &page->_mapcount)) {
+					gang_map_file_page(gs);
+					__inc_zone_page_state(page, NR_FILE_MAPPED);
+				}
 			}
 		}
 

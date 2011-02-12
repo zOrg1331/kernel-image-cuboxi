@@ -63,6 +63,7 @@ struct cred init_cred = {
 	.tgcred			= &init_tgcred,
 #endif
 };
+EXPORT_SYMBOL_GPL(init_cred);
 
 static inline void set_cred_subscribers(struct cred *cred, int n)
 {

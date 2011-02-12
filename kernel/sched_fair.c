@@ -271,7 +271,11 @@ find_matching_se(struct sched_entity **se, struct sched_entity **pse)
 
 static inline int cfs_rq_rate_limited(struct cfs_rq *cfs_rq)
 {
-	return cfs_rq->rate < MAX_RATE;
+	/*
+	 * If cfs_rq->rate == MAX_RATE, we can do no limiting procedures
+	 * because MAX_RATE <-> 100% limit <-> no limit by definition.
+	 */
+	return cfs_rq->rate != 0 && cfs_rq->rate < MAX_RATE;
 }
 
 static inline int cfs_rq_no_credit(struct cfs_rq *cfs_rq)
@@ -297,8 +301,11 @@ static inline int task_throttled(struct task_struct *p)
 static inline unsigned long entity_lb_weight(struct sched_entity *se)
 {
 	unsigned long weight = se->load.weight;
-	if (!entity_is_task(se))
-		weight = weight * group_cfs_rq(se)->rate / MAX_RATE;
+	if (!entity_is_task(se)) {
+		struct cfs_rq *cfs_rq = group_cfs_rq(se);
+		if (cfs_rq_rate_limited(cfs_rq))
+			weight = weight * cfs_rq->rate / MAX_RATE;
+	}
 	return weight;
 }
 
@@ -1682,7 +1689,8 @@ select_idle_sibling(struct task_struct *p, struct sched_domain *sd, int target)
  *
  * preempt must be disabled.
  */
-static int select_task_rq_fair(struct task_struct *p, int sd_flag, int wake_flags)
+static int
+select_task_rq_fair(struct rq *rq, struct task_struct *p, int sd_flag, int wake_flags)
 {
 	struct sched_domain *tmp, *affine_sd = NULL, *sd = NULL;
 	int cpu = smp_processor_id();
@@ -1776,8 +1784,11 @@ static int select_task_rq_fair(struct task_struct *p, int sd_flag, int wake_flag
 				  cpumask_weight(sched_domain_span(sd))))
 			tmp = affine_sd;
 
-		if (tmp)
+		if (tmp) {
+			spin_unlock(&rq->lock);
 			update_shares(tmp);
+			spin_lock(&rq->lock);
+		}
 	}
 
 	if (affine_sd && wake_affine(affine_sd, p, sync)) {
@@ -2233,28 +2244,30 @@ static void task_tick_fair(struct rq *rq, struct task_struct *curr, int queued)
 }
 
 /*
- * Share the fairness runtime between parent and child, thus the
- * total amount of pressure for CPU stays equal - new tasks
- * get a chance to run but frequent forkers are not allowed to
- * monopolize the CPU. Note: the parent runqueue is locked,
- * the child is not running yet.
+ * called on fork with the child task as argument from the parent's context
+ *  - child not yet on the tasklist
+ *  - preemption disabled
  */
-static void task_new_fair(struct rq *rq, struct task_struct *p)
+static void task_fork_fair(struct task_struct *p)
 {
-	struct cfs_rq *cfs_rq = task_cfs_rq(p);
+	struct cfs_rq *cfs_rq = task_cfs_rq(current);
 	struct sched_entity *se = &p->se, *curr = cfs_rq->curr;
 	int this_cpu = smp_processor_id();
+	struct rq *rq = this_rq();
+	unsigned long flags;
 
-	sched_info_queued(p);
+	spin_lock_irqsave(&rq->lock, flags);
+
+	if (unlikely(task_cpu(p) != this_cpu))
+		__set_task_cpu(p, this_cpu);
 
 	update_curr(cfs_rq);
+
 	if (curr)
 		se->vruntime = curr->vruntime;
 	place_entity(cfs_rq, se, 1);
 
-	/* 'curr' will be NULL if the child belongs to a different group */
-	if (sysctl_sched_child_runs_first && this_cpu == task_cpu(p) &&
-			curr && entity_before(curr, se)) {
+	if (sysctl_sched_child_runs_first && curr && entity_before(curr, se)) {
 		/*
 		 * Upon rescheduling, sched_class::put_prev_task() will place
 		 * 'current' within the tree based on its new key value.
@@ -2263,7 +2276,7 @@ static void task_new_fair(struct rq *rq, struct task_struct *p)
 		resched_task(rq->curr);
 	}
 
-	enqueue_task_fair(rq, p, 0);
+	spin_unlock_irqrestore(&rq->lock, flags);
 }
 
 /*
@@ -2369,7 +2382,7 @@ static const struct sched_class fair_sched_class = {
 
 	.set_curr_task          = set_curr_task_fair,
 	.task_tick		= task_tick_fair,
-	.task_new		= task_new_fair,
+	.task_fork		= task_fork_fair,
 
 	.prio_changed		= prio_changed_fair,
 	.switched_to		= switched_to_fair,

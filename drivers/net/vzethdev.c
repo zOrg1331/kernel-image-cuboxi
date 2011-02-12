@@ -60,9 +60,9 @@ static LIST_HEAD(veth_hwaddr_list);
 static DEFINE_RWLOCK(ve_hwaddr_lock);
 static DECLARE_MUTEX(hwaddr_sem);
 
-struct net_device * veth_dev_start(char *dev_addr, char *name);
+static struct net_device * veth_dev_start(char *dev_addr, char *name);
 
-struct veth_struct *hwaddr_entry_lookup(char *name)
+static struct veth_struct *hwaddr_entry_lookup(char *name)
 {
 	struct veth_struct *entry;
 
@@ -74,7 +74,7 @@ struct veth_struct *hwaddr_entry_lookup(char *name)
 	return NULL;
 }
 
-int veth_entry_add(struct ve_struct *ve, char *dev_addr, char *name,
+static int veth_entry_add(struct ve_struct *ve, char *dev_addr, char *name,
 		char *dev_addr_ve, char *name_ve)
 {
 	struct net_device *dev_ve;
@@ -130,7 +130,7 @@ err:
 	return err;
 }
 
-void veth_pair_del(struct ve_struct *env, struct veth_struct *entry)
+static void veth_pair_del(struct ve_struct *env, struct veth_struct *entry)
 {
 	struct net_device *dev;
 	struct ve_struct *old_env;
@@ -160,7 +160,7 @@ void veth_pair_del(struct ve_struct *env, struct veth_struct *entry)
 	rtnl_unlock();
 }
 
-int veth_entry_del(struct ve_struct *ve, char *name)
+static int veth_entry_del(struct ve_struct *ve, char *name)
 {
 	struct veth_struct *found;
 	int err;
@@ -181,7 +181,7 @@ out:
 	return err;
 }
 
-int veth_allow_change_mac(envid_t veid, char *name, int allow)
+static int veth_allow_change_mac(envid_t veid, char *name, int allow)
 {
 	struct ve_struct *ve;
 	struct veth_struct *found;
@@ -354,7 +354,7 @@ static int veth_set_mac(struct net_device *dev, void *p)
 	return 0;
 }
 
-int veth_init_dev(struct net_device *dev)
+static int veth_init_dev(struct net_device *dev)
 {
 	veth_from_netdev(dev)->real_stats =
 		alloc_percpu(struct net_device_stats);
@@ -548,7 +548,7 @@ static struct file_operations proc_vehwaddr_operations = {
 };
 #endif
 
-int real_ve_hwaddr(envid_t veid, int op,
+static int real_ve_hwaddr(envid_t veid, int op,
 		unsigned char *dev_addr, int addrlen, char *name,
 		unsigned char *dev_addr_ve, int addrlen_ve, char *name_ve)
 {
@@ -614,7 +614,7 @@ out:
 	return err;
 }
 
-int veth_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
+static int veth_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 {
 	int err;
 
@@ -642,7 +642,7 @@ static struct vzioctlinfo vethcalls = {
 	.owner		= THIS_MODULE,
 };
 
-struct net_device * veth_dev_start(char *dev_addr, char *name)
+static struct net_device * veth_dev_start(char *dev_addr, char *name)
 {
 	struct net_device *dev;
 	int err;
@@ -697,7 +697,7 @@ static struct ve_hook veth_ve_hook = {
 	.priority = HOOK_PRIO_NET,
 };
 
-__init int veth_init(void)
+static __init int veth_init(void)
 {
 #ifdef CONFIG_PROC_FS
 	struct proc_dir_entry *de;
@@ -714,7 +714,7 @@ __init int veth_init(void)
 	return 0;
 }
 
-__exit void veth_exit(void)
+static __exit void veth_exit(void)
 {
 	struct veth_struct *entry;
 	struct list_head *tmp, *n;

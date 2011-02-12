@@ -127,7 +127,7 @@ void __remove_from_page_cache(struct page *page)
 	if (mapping_cap_account_dirty(mapping) &&
 			radix_tree_prev_tag_get(&mapping->page_tree,
 				PAGECACHE_TAG_DIRTY))
-		ub_io_account_clean(mapping, 1, 1);
+		ub_io_account_cancel(mapping);
 	page->mapping = NULL;
 	mapping->nrpages--;
 	__dec_zone_page_state(page, NR_FILE_PAGES);

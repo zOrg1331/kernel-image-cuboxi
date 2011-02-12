@@ -63,6 +63,7 @@
 #include "internal.h"
 
 #include <bc/vmpages.h>
+#include <bc/kmem.h>
 
 int core_uses_pid;
 char core_pattern[CORENAME_MAX_SIZE] = "core";
@@ -239,7 +240,7 @@ static int __bprm_mm_init(struct linux_binprm *bprm)
 				NULL, UB_SOFT))
 		goto err_charge;
 
-	bprm->vma = vma = kmem_cache_zalloc(vm_area_cachep, GFP_KERNEL);
+	bprm->vma = vma = allocate_vma(mm, GFP_KERNEL | __GFP_ZERO);
 	if (!vma)
 		goto err_alloc;
 
@@ -269,7 +270,7 @@ static int __bprm_mm_init(struct linux_binprm *bprm)
 err:
 	up_write(&mm->mmap_sem);
 	bprm->vma = NULL;
-	kmem_cache_free(vm_area_cachep, vma);
+	free_vma(mm, vma);
 err_alloc:
 	ub_memory_uncharge(mm, PAGE_SIZE, VM_STACK_FLAGS | mm->def_flags, NULL);
 err_charge:

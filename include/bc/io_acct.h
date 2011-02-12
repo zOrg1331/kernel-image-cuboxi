@@ -63,10 +63,12 @@ static inline void ub_io_account_write(size_t bytes)
 	virtinfo_notifier_call(VITYPE_IO, VIRTINFO_IO_ACCOUNT, &bytes);
 }
 
-extern void ub_io_account_dirty(struct address_space *mapping, int pages);
-extern void ub_io_account_clean(struct address_space *mapping, int pages, int cancel);
+extern void ub_io_account_dirty(struct address_space *mapping);
+extern void ub_io_account_clean(struct address_space *mapping);
+extern void ub_io_account_cancel(struct address_space *mapping);
 
-extern unsigned long ub_dirty_pages(struct user_beancounter *ub);
+#define ub_dirty_pages(ub)	ub_stat_get(ub, dirty_pages)
+
 extern int ub_dirty_limits(long *pdirty, struct user_beancounter *ub);
 
 #else /* UBC_IO_ACCT */
@@ -79,11 +81,15 @@ static inline void ub_io_account_write(size_t bytes)
 {
 }
 
-static inline void ub_io_account_dirty(struct address_space *mapping, int pages)
+static inline void ub_io_account_dirty(struct address_space *mapping)
 {
 }
 
-static inline void ub_io_account_clean(struct address_space *mapping, int pages, int cancel)
+static inline void ub_io_account_clean(struct address_space *mapping)
+{
+}
+
+static inline void ub_io_account_cancel(struct address_space *mapping)
 {
 }
 

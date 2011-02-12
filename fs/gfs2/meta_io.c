@@ -373,19 +373,19 @@ void gfs2_remove_from_journal(struct buffer_head *bh, struct gfs2_trans *tr, int
 
 /**
  * gfs2_meta_wipe - make inode's buffers so they aren't dirty/pinned anymore
- * @ip: the inode who owns the buffers
+ * @sdp: gfs2 super block
+ * @i_gl: glock to locate bh-s
  * @bstart: the first buffer in the run
  * @blen: the number of buffers in the run
  *
  */
-
-void gfs2_meta_wipe(struct gfs2_inode *ip, u64 bstart, u32 blen)
+void gfs2_meta_wipe(struct gfs2_sbd *sdp, struct gfs2_glock *i_gl,
+		    u64 bstart, u32 blen)
 {
-	struct gfs2_sbd *sdp = GFS2_SB(&ip->i_inode);
 	struct buffer_head *bh;
 
 	while (blen) {
-		bh = gfs2_getbuf(ip->i_gl, bstart, NO_CREATE);
+		bh = gfs2_getbuf(i_gl, bstart, NO_CREATE);
 		if (bh) {
 			lock_buffer(bh);
 			gfs2_log_lock(sdp);

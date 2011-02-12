@@ -356,6 +356,13 @@ static int gfs2_page_mkwrite(struct vm_area_struct *vma, struct vm_fault *vmf)
 	struct gfs2_alloc *al;
 	int ret;
 
+	if (vma->vm_file->f_op->get_host) {
+		struct file *file = vma->vm_file->f_op->get_host(vma->vm_file);
+		inode = file->f_path.dentry->d_inode;
+		ip = GFS2_I(inode);
+		sdp = GFS2_SB(inode);
+	}
+
 	gfs2_holder_init(ip->i_gl, LM_ST_EXCLUSIVE, 0, &gh);
 	ret = gfs2_glock_nq(&gh);
 	if (ret)

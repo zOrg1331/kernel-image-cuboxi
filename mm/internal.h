@@ -107,14 +107,8 @@ static inline int is_mlocked_vma(struct vm_area_struct *vma, struct page *page)
 		return 0;
 
 	if (!TestSetPageMlocked(page)) {
-		struct gang_set *gs = get_mm_gang(vma->vm_mm);
-
-		rcu_read_lock();
 		/* page is isolated by caller */
-		if (page_gang(page)->set != gs)
-			gang_mod_user_page(page, gs);
-		rcu_read_unlock();
-
+		gang_move_mapped_isolated_page(page, get_mm_gang(vma->vm_mm));
 		inc_zone_page_state(page, NR_MLOCK);
 		count_vm_event(UNEVICTABLE_PGMLOCKED);
 	}
