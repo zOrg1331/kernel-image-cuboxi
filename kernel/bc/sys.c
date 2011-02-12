@@ -66,10 +66,6 @@ SYSCALL_DEFINE1(setluid, uid_t, uid)
 			current->comm, current->pid);
 
 	error = set_task_exec_ub(current, ub);
-	if (!error) {
-		put_beancounter(current->task_bc.fork_sub);
-		current->task_bc.fork_sub = get_beancounter(ub);
-	}
 
 	put_beancounter(ub);
 out:

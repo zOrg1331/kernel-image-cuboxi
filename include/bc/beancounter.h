@@ -65,11 +65,6 @@
 #define UB_SWAPPAGES	24
 #define UB_RESOURCES	25
 
-#define UB_UNUSEDPRIVVM	(UB_RESOURCES + 0)
-#define UB_TMPFSPAGES	(UB_RESOURCES + 1)
-#define UB_MAPPED_FILE	(UB_RESOURCES + 2)
-#define UB_ANONYMOUS	(UB_RESOURCES + 3)
-
 struct ubparm {
 	/* 
 	 * A barrier over which resource allocations are failed gracefully.
@@ -103,6 +98,7 @@ struct ubparm {
 #include <linux/threads.h>
 #include <linux/percpu.h>
 #include <linux/percpu_counter.h>
+#include <linux/oom.h>
 #include <bc/debug.h>
 #include <bc/decl.h>
 #include <asm/atomic.h>
@@ -126,7 +122,6 @@ struct task_beancounter;
 struct sock_beancounter;
 
 struct page_private {
-	unsigned long		ubp_unused_privvmpages;
 	unsigned long		ubp_tmpfs_respages;
 };
 
@@ -145,12 +140,13 @@ struct sock_private {
 };
 
 struct ub_percpu_struct {
+	int mapped_file_pages;
+	int anonymous_pages;
+	int dirty_pages;
+
 	unsigned long unmap;
 	unsigned long swapin;
-	unsigned long mapped_file_pages;
-	unsigned long anonymous_pages;
 #ifdef CONFIG_BC_IO_ACCOUNTING
-	unsigned long dirty_pages;
 	unsigned long async_write_complete;
 	unsigned long async_write_canceled;
 	unsigned long long sync_write_bytes;
@@ -200,7 +196,6 @@ struct user_beancounter
 	int			ub_oom_noproc;
 
 	struct page_private	ppriv;
-#define ub_unused_privvmpages	ppriv.ubp_unused_privvmpages
 #define ub_tmpfs_respages	ppriv.ubp_tmpfs_respages
 	struct sock_private	spriv;
 #define ub_rmem_thres		spriv.ubp_rmem_thres
@@ -211,6 +206,10 @@ struct user_beancounter
 #define ub_other_sk_list	spriv.ubp_other_socks
 #define ub_orphan_count		spriv.ubp_orphan_count
 #define ub_tw_count		spriv.ubp_tw_count
+
+	atomic_long_t		mapped_file_pages;
+	atomic_long_t		anonymous_pages;
+	atomic_long_t		dirty_pages;
 
 	struct gang_set		gang_set;
 
@@ -231,9 +230,11 @@ struct user_beancounter
 #ifdef CONFIG_BC_DEBUG_KMEM
 	struct list_head	ub_cclist;
 #endif
+	struct oom_control	oom_ctrl;
 };
 
 extern int ub_count;
+extern struct oom_control global_oom_ctrl;
 
 enum ub_severity { UB_HARD, UB_SOFT, UB_FORCE };
 
@@ -368,7 +369,7 @@ extern int __charge_beancounter_locked(struct user_beancounter *ub,
 extern void __uncharge_beancounter_locked(struct user_beancounter *ub,
 		int resource, unsigned long val);
 
-extern void uncharge_warn(struct user_beancounter *ub, int resource,
+extern void uncharge_warn(struct user_beancounter *ub, const char *resource,
 		unsigned long val, unsigned long held);
 
 extern long ub_oomguarpages_left(struct user_beancounter *ub);
@@ -420,6 +421,46 @@ struct user_beancounter *get_beancounter_rcu(struct user_beancounter *ub)
 extern void ub_init_late(void);
 extern void ub_init_early(void);
 
+#define UB_STAT_BATCH	64
+
+static inline void __ub_stat_add(atomic_long_t *stat, int *pcpu, long val)
+{
+	unsigned long flags;
+
+	local_irq_save(flags);
+	pcpu = per_cpu_ptr(pcpu, smp_processor_id());
+	if (*pcpu + val <= UB_STAT_BATCH)
+		*pcpu += val;
+	else {
+		atomic_long_add(*pcpu + val, stat);
+		*pcpu = 0;
+	}
+	local_irq_restore(flags);
+}
+
+static inline void __ub_stat_sub(atomic_long_t *stat, int *pcpu, long val)
+{
+	unsigned long flags;
+
+	local_irq_save(flags);
+	pcpu = per_cpu_ptr(pcpu, smp_processor_id());
+	if (*pcpu - val >= -UB_STAT_BATCH)
+		*pcpu -= val;
+	else {
+		atomic_long_add(*pcpu - val, stat);
+		*pcpu = 0;
+	}
+	local_irq_restore(flags);
+}
+
+#define ub_stat_add(ub, name, val)	__ub_stat_add(&(ub)->name, &(ub)->ub_percpu->name, val)
+#define ub_stat_sub(ub, name, val)	__ub_stat_sub(&(ub)->name, &(ub)->ub_percpu->name, val)
+#define ub_stat_inc(ub, name)		ub_stat_add(ub, name, 1)
+#define ub_stat_dec(ub, name)		ub_stat_sub(ub, name, 1)
+#define ub_stat_mod(ub, name, val)	atomic_long_add(val, &(ub)->name)
+#define __ub_stat_get(ub, name)		atomic_long_read(&(ub)->name)
+#define ub_stat_get(ub, name)		max(0l, atomic_long_read(&(ub)->name))
+
 int ubstat_alloc_store(struct user_beancounter *ub);
 
 /*
@@ -453,6 +494,7 @@ int charge_beancounter_fast(struct user_beancounter *ub,
 		int resource, unsigned long val, enum ub_severity strict);
 void uncharge_beancounter_fast(struct user_beancounter *ub,
 		int resource, unsigned long val);
+void ub_precharge_snapshot(struct user_beancounter *ub, int *precharge);
 
 #define UB_IOPRIO_MIN 0
 #define UB_IOPRIO_MAX 8

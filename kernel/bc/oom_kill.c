@@ -11,17 +11,38 @@
 
 #define UB_OOM_TIMEOUT	(5 * HZ)
 
-int oom_generation;
-int oom_kill_counter;
-static DEFINE_SPINLOCK(oom_lock);
-static DECLARE_WAIT_QUEUE_HEAD(oom_wq);
-
-static inline int ub_oom_completed(struct task_struct *tsk)
+void ub_oom_start(struct oom_control *oom_ctrl)
 {
-	if (test_tsk_thread_flag(tsk, TIF_MEMDIE))
+	current->task_bc.oom_ctrl = oom_ctrl;
+	current->task_bc.oom_generation = oom_ctrl->generation;
+}
+
+void ub_oom_task_killed(struct task_struct *tsk)
+{
+	if (active_oom_ctrl() == &global_oom_ctrl)
+		tsk->mm->global_oom = 1;
+	else {
+		/*
+		 * Task can be killed when using either global oom ctl
+		 * or by task's beancounter one.
+		 * When this task will die it'll have to decide with ctl
+		 * to use lokking at this flag and we have to sure it
+		 * will use the proper one.
+		 */
+		BUG_ON(tsk->mm->mm_ub != get_exec_ub());
+		tsk->mm->global_oom = 0;
+	}
+
+	active_oom_ctrl()->kill_counter++;
+	wake_up_process(tsk);
+}
+
+static inline int ub_oom_completed(struct oom_control *oom_ctrl)
+{
+	if (test_thread_flag(TIF_MEMDIE))
 		/* we were oom killed - just die */
 		return 1;
-	if (tsk->task_bc.oom_generation != oom_generation)
+	if (current->task_bc.oom_generation != oom_ctrl->generation)
 		/* some task was succesfully killed */
 		return 1;
 	return 0;
@@ -40,16 +61,28 @@ static void ub_clear_oom(void)
 int ub_oom_lock(void)
 {
 	int timeout;
+	struct oom_control *oom_ctrl = active_oom_ctrl();
 	DEFINE_WAIT(oom_w);
 
-	spin_lock(&oom_lock);
-	if (!oom_kill_counter)
+	if (oom_ctrl != &global_oom_ctrl) {
+		/*
+		 * Check if global OOM killeris on the way. If so -
+		 * let the senior handle the situation.
+		 */
+		wait_event_killable(global_oom_ctrl.wq,
+					global_oom_ctrl.kill_counter == 0);
+		if (test_thread_flag(TIF_MEMDIE))
+			return -EINVAL;
+	}
+
+	spin_lock(&oom_ctrl->lock);
+	if (!oom_ctrl->kill_counter && !ub_oom_completed(oom_ctrl))
 		goto out_do_oom;
 
 	timeout = UB_OOM_TIMEOUT;
 	while (1) {
-		if (ub_oom_completed(current)) {
-			spin_unlock(&oom_lock);
+		if (ub_oom_completed(oom_ctrl)) {
+			spin_unlock(&oom_ctrl->lock);
 			return -EINVAL;
 		}
 
@@ -57,13 +90,14 @@ int ub_oom_lock(void)
 			break;
 
 		__set_current_state(TASK_UNINTERRUPTIBLE);
-		add_wait_queue(&oom_wq, &oom_w);
-		spin_unlock(&oom_lock);
+		add_wait_queue(&oom_ctrl->wq, &oom_w);
+		spin_unlock(&oom_ctrl->lock);
 
 		timeout = schedule_timeout(timeout);
 
-		spin_lock(&oom_lock);
-		remove_wait_queue(&oom_wq, &oom_w);
+		spin_lock(&oom_ctrl->lock);
+		remove_wait_queue(&oom_ctrl->wq, &oom_w);
+
 	}
 
 out_do_oom:
@@ -133,7 +167,7 @@ void ub_oom_mm_killed(struct user_beancounter *ub)
 {
 	static DEFINE_RATELIMIT_STATE(rl, 60*HZ, 5);
 
-	/* increment is serialized with oom_lock */
+	/* increment is serialized with ub->oom_ctrl */
 	ub->ub_parms[UB_OOMGUARPAGES].failcnt++;
 
 	if (__ratelimit(&rl))
@@ -142,30 +176,41 @@ void ub_oom_mm_killed(struct user_beancounter *ub)
 
 void ub_oom_unlock(void)
 {
-	spin_unlock(&oom_lock);
+	spin_unlock(&active_oom_ctrl()->lock);
 }
 
-void ub_oom_task_dead(struct task_struct *tsk)
+void ub_oom_task_dead(struct mm_struct *mm)
 {
-	spin_lock(&oom_lock);
-	oom_kill_counter = 0;
-	oom_generation++;
+	struct oom_control *oom_ctrl;
+	
+	if (mm->global_oom)
+		oom_ctrl = &global_oom_ctrl;
+	else
+		oom_ctrl = &mm_ub(mm)->oom_ctrl;
+
+	spin_lock(&oom_ctrl->lock);
+	oom_ctrl->kill_counter = 0;
+	oom_ctrl->generation++;
 
 	printk("OOM killed process %s (pid=%d, ve=%d) exited, "
 			"free=%lu gen=%d.\n",
-			tsk->comm, tsk->pid, VEID(tsk->ve_task_info.owner_env),
-			nr_free_pages(), oom_generation);
+			current->comm, current->pid,
+			VEID(current->ve_task_info.owner_env),
+			nr_free_pages(), oom_ctrl->generation);
 	/* if there is time to sleep in ub_oom_lock -> sleep will continue */
-	wake_up_all(&oom_wq);
-	spin_unlock(&oom_lock);
+	wake_up_all(&oom_ctrl->wq);
+	spin_unlock(&oom_ctrl->lock);
 }
 
-void out_of_memory_in_ub(struct user_beancounter *ub, gfp_t gfp_mask)
+int out_of_memory_in_ub(struct user_beancounter *ub, gfp_t gfp_mask)
 {
 	struct task_struct *p;
+	int res;
 
-	if (ub_oom_lock())
+	res = ub_oom_lock();
+	if (res)
 		goto out;
+
 	read_lock(&tasklist_lock);
 
 	do {
@@ -184,4 +229,14 @@ out:
 	 */
 	if (!test_thread_flag(TIF_MEMDIE))
 		schedule_timeout_uninterruptible(1);
+
+	return res;
+}
+
+struct oom_control global_oom_ctrl;
+
+void init_oom_control(struct oom_control *oom_ctrl)
+{
+	spin_lock_init(&oom_ctrl->lock);
+	init_waitqueue_head(&oom_ctrl->wq);
 }

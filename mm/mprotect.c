@@ -151,8 +151,6 @@ mprotect_fixup(struct vm_area_struct *vma, struct vm_area_struct **pprev,
 	unsigned long old_end;
 	pgoff_t pgoff;
 	int error;
-	unsigned long ch_size;
-	int ch_dir;
 	int dirty_accountable = 0;
 
 	old_end = vma->vm_end;
@@ -162,9 +160,9 @@ mprotect_fixup(struct vm_area_struct *vma, struct vm_area_struct **pprev,
 	}
 
 	error = -ENOMEM;
-	ch_size = nrpages - pages_in_vma_range(vma, start, end);
-	ch_dir = ub_protected_charge(mm, ch_size, newflags, vma);
-	if (ch_dir == PRIVVM_ERROR)
+       if (!VM_UB_PRIVATE(oldflags, vma->vm_file) &&
+            VM_UB_PRIVATE(newflags, vma->vm_file) &&
+            charge_beancounter_fast(mm->mm_ub, UB_PRIVVMPAGES, nrpages, UB_SOFT))
 		goto fail_ch;
 
 	/*
@@ -235,15 +233,19 @@ success:
 	mmu_notifier_invalidate_range_end(mm, start, end);
 	vm_stat_account(mm, oldflags, vma->vm_file, -nrpages);
 	vm_stat_account(mm, newflags, vma->vm_file, nrpages);
-	if (ch_dir == PRIVVM_TO_SHARED)
-		__ub_unused_privvm_dec(mm, ch_size);
+
+       if (VM_UB_PRIVATE(oldflags, vma->vm_file) &&
+                       !VM_UB_PRIVATE(newflags, vma->vm_file))
+               uncharge_beancounter_fast(mm->mm_ub, UB_PRIVVMPAGES, nrpages);
+
 	return 0;
 
 fail:
 	vm_unacct_memory(charged);
 fail_sec:
-	if (ch_dir == PRIVVM_TO_PRIVATE)
-		__ub_unused_privvm_dec(mm, ch_size);
+       if (!VM_UB_PRIVATE(oldflags, vma->vm_file) &&
+                       VM_UB_PRIVATE(newflags, vma->vm_file))
+               uncharge_beancounter_fast(mm->mm_ub, UB_PRIVVMPAGES, nrpages);
 fail_ch:
 	return error;
 }

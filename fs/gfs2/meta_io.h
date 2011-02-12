@@ -54,7 +54,8 @@ void gfs2_attach_bufdata(struct gfs2_glock *gl, struct buffer_head *bh,
 void gfs2_remove_from_journal(struct buffer_head *bh, struct gfs2_trans *tr,
 			      int meta);
 
-void gfs2_meta_wipe(struct gfs2_inode *ip, u64 bstart, u32 blen);
+void gfs2_meta_wipe(struct gfs2_sbd *sdp, struct gfs2_glock *i_gl,
+		    u64 bstart, u32 blen);
 
 int gfs2_meta_indirect_buffer(struct gfs2_inode *ip, int height, u64 num,
 			      int new, struct buffer_head **bhp);

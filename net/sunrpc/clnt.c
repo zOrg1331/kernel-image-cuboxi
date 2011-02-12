@@ -1877,7 +1877,9 @@ void ve_sunrpc_stop(void *data)
 {
 	struct ve_struct *ve = (struct ve_struct *)data;
 	struct rpc_clnt *clnt;
-	struct rpc_task	*rovr;
+
+	if (ve->rpc_data == NULL)
+		return;
 
 	dprintk("RPC:       killing all tasks for VE %d\n", ve->veid);
 
@@ -1886,26 +1888,11 @@ void ve_sunrpc_stop(void *data)
 		if (clnt->cl_xprt->owner_env != ve)
 			continue;
 
-		spin_lock(&clnt->cl_lock);
-		list_for_each_entry(rovr, &clnt->cl_tasks, tk_task) {
-			if (!RPC_IS_ACTIVATED(rovr))
-				continue;
-			printk(KERN_WARNING "RPC: Killing task %d client %p\n",
-			       rovr->tk_pid, clnt);
-
-			rovr->tk_flags |= RPC_TASK_KILLED;
-			rpc_exit(rovr, -EIO);
-			 rpc_wake_up_queued_task(rovr->tk_waitqueue, rovr);
-		}
-		schedule_work(&clnt->cl_xprt->task_cleanup);
-		spin_unlock(&clnt->cl_lock);
+		rpc_killall_tasks(clnt);
 	}
 	spin_unlock(&rpc_client_lock);
 
 	flush_scheduled_work();
-
-	if (ve->rpc_data == NULL)
-		return;
 
 	cleanup_rpcb_clnt();
 	unregister_rpc_pipefs();

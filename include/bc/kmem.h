@@ -53,6 +53,31 @@ UB_DECLARE_FUNC(int, ub_slab_charge(struct kmem_cache *cachep,
 			void *objp, gfp_t flags))
 UB_DECLARE_VOID_FUNC(ub_slab_uncharge(struct kmem_cache *cachep, void *obj))
 
+static inline void *ub_kmem_alloc(struct user_beancounter *ub,
+		struct kmem_cache *cachep, gfp_t gfp_flags)
+{
+	void *objp;
+
+	if (charge_beancounter_fast(ub, UB_KMEMSIZE,
+				cachep->objuse,
+				(gfp_flags & __GFP_SOFT_UBC)?UB_SOFT:UB_HARD))
+		return NULL;
+
+	objp = kmem_cache_alloc(cachep, gfp_flags);
+
+	if (unlikely(objp == NULL))
+		uncharge_beancounter_fast(ub, UB_KMEMSIZE, cachep->objuse);
+
+	return objp;
+}
+
+static inline void ub_kmem_free(struct user_beancounter *ub,
+		struct kmem_cache *cachep, void *objp)
+{
+	kmem_cache_free(cachep, objp);
+	uncharge_beancounter_fast(ub, UB_KMEMSIZE, cachep->objuse);
+}
+
 #ifdef CONFIG_BEANCOUNTERS
 static inline int should_charge(unsigned long cflags, gfp_t flags)
 {

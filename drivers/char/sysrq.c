@@ -42,6 +42,8 @@
 #include <linux/oom.h>
 #include <linux/nmi.h>
 
+#include <bc/oom_kill.h>
+
 #include <asm/ptrace.h>
 #include <asm/irq_regs.h>
 
@@ -343,6 +345,7 @@ static struct sysrq_key_op sysrq_term_op = {
 
 static void moom_callback(struct work_struct *ignored)
 {
+	ub_oom_start(&global_oom_ctrl);
 	out_of_memory(node_zonelist(0, GFP_KERNEL), GFP_KERNEL, 0);
 }
 

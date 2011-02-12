@@ -57,6 +57,7 @@
 
 #include <bc/kmem.h>
 #include <bc/io_acct.h>
+#include <bc/oom_kill.h>
 
 #define CREATE_TRACE_POINTS
 #include <trace/events/kmem.h>
@@ -1837,6 +1838,8 @@ __alloc_pages_direct_reclaim(gfp_t gfp_mask, unsigned int order,
 	struct reclaim_state reclaim_state;
 	struct task_struct *p = current;
 	bool drained = false;
+
+	ub_oom_start(&global_oom_ctrl);
 
 	cond_resched();
 

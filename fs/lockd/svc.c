@@ -538,7 +538,7 @@ static struct ve_hook lockd_hook = {
 	.init	  = ve_lockd_start,
 	.fini	  = ve_lockd_stop,
 	.owner	  = THIS_MODULE,
-	.priority = HOOK_PRIO_FS,
+	.priority = HOOK_PRIO_NET,
 };
 #endif
 

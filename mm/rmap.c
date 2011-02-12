@@ -62,6 +62,7 @@
 
 #include <bc/beancounter.h>
 #include <bc/vmpages.h>
+#include <bc/kmem.h>
 
 #include <asm/tlbflush.h>
 
@@ -70,25 +71,30 @@
 static struct kmem_cache *anon_vma_cachep;
 static struct kmem_cache *anon_vma_chain_cachep;
 
-static inline struct anon_vma *anon_vma_alloc(void)
+static inline struct anon_vma *anon_vma_alloc(struct mm_struct *mm)
 {
-	return kmem_cache_alloc(anon_vma_cachep, GFP_KERNEL);
+	struct user_beancounter *ub = mm->mm_ub;
+	struct anon_vma *anon_vma;
+
+	anon_vma = ub_kmem_alloc(ub, anon_vma_cachep, GFP_KERNEL);
+	if (anon_vma)
+		anon_vma->anon_vma_ub = get_beancounter(ub);
+
+	return anon_vma;
 }
 
 void anon_vma_free(struct anon_vma *anon_vma)
 {
-	kmem_cache_free(anon_vma_cachep, anon_vma);
+	struct user_beancounter *ub = anon_vma->anon_vma_ub;
+
+	ub_kmem_free(ub, anon_vma_cachep, anon_vma);
+	put_beancounter(ub);
 }
 
-static inline struct anon_vma_chain *anon_vma_chain_alloc(void)
-{
-	return kmem_cache_alloc(anon_vma_chain_cachep, GFP_KERNEL);
-}
-
-void anon_vma_chain_free(struct anon_vma_chain *anon_vma_chain)
-{
-	kmem_cache_free(anon_vma_chain_cachep, anon_vma_chain);
-}
+#define anon_vma_chain_alloc(mm) \
+	ub_kmem_alloc(mm->mm_ub, anon_vma_chain_cachep, GFP_KERNEL)
+#define anon_vma_chain_free(mm, avc) \
+	ub_kmem_free(mm->mm_ub, anon_vma_chain_cachep, avc)
 
 /**
  * anon_vma_prepare - attach an anon_vma to a memory region
@@ -127,14 +133,14 @@ int anon_vma_prepare(struct vm_area_struct *vma)
 		struct mm_struct *mm = vma->vm_mm;
 		struct anon_vma *allocated;
 
-		avc = anon_vma_chain_alloc();
+		avc = anon_vma_chain_alloc(mm);
 		if (!avc)
 			goto out_enomem;
 
 		anon_vma = find_mergeable_anon_vma(vma);
 		allocated = NULL;
 		if (!anon_vma) {
-			anon_vma = anon_vma_alloc();
+			anon_vma = anon_vma_alloc(mm);
 			if (unlikely(!anon_vma))
 				goto out_enomem_free_avc;
 			allocated = anon_vma;
@@ -163,12 +169,12 @@ int anon_vma_prepare(struct vm_area_struct *vma)
 		if (unlikely(allocated))
 			anon_vma_free(allocated);
 		if (unlikely(avc))
-			anon_vma_chain_free(avc);
+			anon_vma_chain_free(mm, avc);
 	}
 	return 0;
 
  out_enomem_free_avc:
-	anon_vma_chain_free(avc);
+	anon_vma_chain_free(vma->vm_mm, avc);
  out_enomem:
 	return -ENOMEM;
 }
@@ -200,7 +206,7 @@ int anon_vma_clone(struct vm_area_struct *dst, struct vm_area_struct *src)
 	struct anon_vma_chain *avc, *pavc;
 
 	list_for_each_entry_reverse(pavc, &src->anon_vma_chain, same_vma) {
-		avc = anon_vma_chain_alloc();
+		avc = anon_vma_chain_alloc(dst->vm_mm);
 		if (!avc)
 			goto enomem_failure;
 		anon_vma_chain_link(dst, avc, pavc->anon_vma);
@@ -234,10 +240,10 @@ int anon_vma_fork(struct vm_area_struct *vma, struct vm_area_struct *pvma)
 		return -ENOMEM;
 
 	/* Then add our own anon_vma. */
-	anon_vma = anon_vma_alloc();
+	anon_vma = anon_vma_alloc(vma->vm_mm);
 	if (!anon_vma)
 		goto out_error;
-	avc = anon_vma_chain_alloc();
+	avc = anon_vma_chain_alloc(vma->vm_mm);
 	if (!avc)
 		goto out_error_free_anon_vma;
 
@@ -265,7 +271,7 @@ int anon_vma_link(struct vm_area_struct *vma)
 {
 	struct anon_vma_chain *avc;
 
-	avc = anon_vma_chain_alloc();
+	avc = anon_vma_chain_alloc(vma->vm_mm);
 	if (!avc)
 		goto enomem_failure;
 
@@ -309,7 +315,7 @@ void unlink_anon_vmas(struct vm_area_struct *vma)
 	list_for_each_entry_safe(avc, next, &vma->anon_vma_chain, same_vma) {
 		anon_vma_unlink(avc);
 		list_del(&avc->same_vma);
-		anon_vma_chain_free(avc);
+		anon_vma_chain_free(vma->vm_mm, avc);
 	}
 }
 
@@ -325,8 +331,8 @@ static void anon_vma_ctor(void *data)
 void __init anon_vma_init(void)
 {
 	anon_vma_cachep = kmem_cache_create("anon_vma", sizeof(struct anon_vma),
-			0, SLAB_DESTROY_BY_RCU|SLAB_PANIC|SLAB_UBC, anon_vma_ctor);
-	anon_vma_chain_cachep = KMEM_CACHE(anon_vma_chain, SLAB_PANIC|SLAB_UBC);
+			0, SLAB_DESTROY_BY_RCU|SLAB_PANIC, anon_vma_ctor);
+	anon_vma_chain_cachep = KMEM_CACHE(anon_vma_chain, SLAB_PANIC);
 }
 
 /*
@@ -880,6 +886,9 @@ void page_add_anon_rmap(struct page *page,
 {
 	int first = atomic_inc_and_test(&page->_mapcount);
 	if (first) {
+		rcu_read_lock();
+		gang_map_anon_page(page_gang(page)->set);
+		rcu_read_unlock();
 		if (!PageTransHuge(page))
 			__inc_zone_page_state(page, NR_ANON_PAGES);
 		else
@@ -893,7 +902,6 @@ void page_add_anon_rmap(struct page *page,
 	VM_BUG_ON(address < vma->vm_start || address >= vma->vm_end);
 	if (first) {
 		__page_set_anon_rmap(page, vma, address, 0);
-		gang_map_anon_page(page);
 	} else
 		__page_check_anon_rmap(page, vma, address);
 }
@@ -911,11 +919,13 @@ void page_add_anon_rmap(struct page *page,
 void page_add_new_anon_rmap(struct page *page,
 	struct vm_area_struct *vma, unsigned long address)
 {
+	struct gang_set *gs = get_mm_gang(vma->vm_mm);
+
 	VM_BUG_ON(address < vma->vm_start || address >= vma->vm_end);
 	SetPageSwapBacked(page);
 	atomic_set(&page->_mapcount, 0); /* increment count (starts at -1) */
-	gang_add_user_page(page, get_mm_gang(vma->vm_mm));
-	gang_map_anon_page(page);
+	gang_add_user_page(page, gs);
+	gang_map_anon_page(gs);
 	if (!PageTransHuge(page))
 		__inc_zone_page_state(page, NR_ANON_PAGES);
 	else
@@ -940,16 +950,15 @@ void page_add_file_rmap(struct page *page, struct mm_struct *mm)
 
 		rcu_read_lock();
 		if (unlikely(page_gang(page)->set != gs)) {
-			local_irq_disable();
 			if (!isolate_lru_page(page)) {
 				gang_mod_user_page(page, gs);
 				putback_lru_page(page);
-			}
-			local_irq_enable();
+			} else
+				gs = page_gang(page)->set;
 		}
+		gang_map_file_page(gs);
 		rcu_read_unlock();
 
-		gang_map_file_page(page);
 		__inc_zone_page_state(page, NR_FILE_MAPPED);
 		mem_cgroup_update_mapped_file_stat(page, 1);
 	}
@@ -963,9 +972,14 @@ void page_add_file_rmap(struct page *page, struct mm_struct *mm)
  */
 void page_remove_rmap(struct page *page)
 {
+	struct gang *gang;
+
+	rcu_read_lock();
+	gang = page_gang(page);
+
 	/* page still mapped by someone else? */
 	if (!atomic_add_negative(-1, &page->_mapcount))
-		return;
+		goto out;
 
 	/*
 	 * Now that the last pte has gone, s390 must transfer dirty
@@ -985,7 +999,7 @@ void page_remove_rmap(struct page *page)
 	 */
 	ClearPageCheckpointed(page);
 	if (PageAnon(page)) {
-		gang_unmap_anon_page(page);
+		gang_unmap_anon_page(gang->set);
 		mem_cgroup_uncharge_page(page);
 		if (!PageTransHuge(page))
 			__dec_zone_page_state(page, NR_ANON_PAGES);
@@ -993,7 +1007,7 @@ void page_remove_rmap(struct page *page)
 			__dec_zone_page_state(page,
 					      NR_ANON_TRANSPARENT_HUGEPAGES);
 	} else {
-		gang_unmap_file_page(page);
+		gang_unmap_file_page(gang->set);
 		__dec_zone_page_state(page, NR_FILE_MAPPED);
 	}
 	mem_cgroup_update_mapped_file_stat(page, -1);
@@ -1006,6 +1020,8 @@ void page_remove_rmap(struct page *page)
 	 * Leaving it set also helps swapoff to reinstate ptes
 	 * faster for those pages still in swapcache.
 	 */
+out:
+	rcu_read_unlock();
 }
 
 /*
@@ -1104,7 +1120,6 @@ int try_to_unmap_one(struct page *page, struct vm_area_struct *vma,
 		dec_mm_counter(mm, file_rss);
 
 	page_remove_rmap(page);
-	ub_unused_privvm_inc(mm, vma);
 	ub_percpu_inc(mm->mm_ub, unmap);
 	page_cache_release(page);
 
@@ -1233,7 +1248,6 @@ static int try_to_unmap_cluster(unsigned long cursor, unsigned int *mapcount,
 
 		page_remove_rmap(page);
 		ub_percpu_inc(mm->mm_ub, unmap);
-		ub_unused_privvm_inc(mm, vma);
 		page_cache_release(page);
 		dec_mm_counter(mm, file_rss);
 		(*mapcount)--;

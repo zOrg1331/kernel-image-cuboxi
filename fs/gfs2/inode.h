@@ -82,12 +82,13 @@ static inline void gfs2_inum_out(const struct gfs2_inode *ip,
 
 
 extern void gfs2_set_iop(struct inode *inode);
-extern struct inode *gfs2_inode_lookup(struct super_block *sb, unsigned type, 
-				       u64 no_addr, u64 no_formal_ino);
+extern struct inode *gfs2_inode_lookup(struct super_block *sb, unsigned type,
+				       u64 no_addr, u64 no_formal_ino,
+				       int createi);
 extern void gfs2_process_unlinked_inode(struct super_block *sb, u64 no_addr);
 extern struct inode *gfs2_ilookup(struct super_block *sb, u64 no_addr);
 
-extern int gfs2_inode_refresh(struct gfs2_inode *ip);
+extern int gfs2_inode_refresh(struct gfs2_inode *ip, int createi);
 
 extern int gfs2_dinode_dealloc(struct gfs2_inode *inode);
 extern int gfs2_change_nlink(struct gfs2_inode *ip, int diff);

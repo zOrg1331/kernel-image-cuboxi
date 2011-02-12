@@ -516,7 +516,6 @@ static void collect_task_ubc(struct task_struct *t, struct cpt_context *ctx)
 	tbc = &(t->task_bc);
 	cpt_add_ubc(tbc->exec_ub, ctx);
 	cpt_add_ubc(tbc->task_ub, ctx);
-	cpt_add_ubc(tbc->fork_sub, ctx);
 }
 #else
 static void inline collect_task_ubc(struct task_struct *t,

@@ -25,43 +25,36 @@
  * Task staff
  */
 
-static void init_task_sub(struct task_struct *parent,
-		struct task_struct *tsk,
-  		struct task_beancounter *old_bc)
+#define TASK_KMEM_SIZE	(sizeof(struct task_struct) + THREAD_SIZE)
+
+int ub_task_charge(struct user_beancounter *ub)
 {
-	struct task_beancounter *new_bc;
-	struct user_beancounter *sub;
+	if (charge_beancounter_fast(ub, UB_KMEMSIZE, TASK_KMEM_SIZE, UB_HARD))
+		goto no_mem;
 
-	new_bc = &tsk->task_bc;
-	sub = old_bc->fork_sub;
-	new_bc->fork_sub = get_beancounter(sub);
-}
-
-int ub_task_charge(struct task_struct *parent, struct task_struct *task)
-{
-	struct task_beancounter *old_bc;
-	struct task_beancounter *new_bc;
-	struct user_beancounter *ub;
-
-	old_bc = &parent->task_bc;
-	ub = old_bc->fork_sub;
-
-	if (charge_beancounter_fast(ub, UB_NUMPROC, 1, UB_HARD) < 0)
-		return -ENOMEM;
-
-	new_bc = &task->task_bc;
-	new_bc->task_ub = get_beancounter(ub);
-	new_bc->exec_ub = get_beancounter(ub);
-	init_task_sub(parent, task, old_bc);
+	if (charge_beancounter_fast(ub, UB_NUMPROC, 1, UB_HARD))
+		goto no_num;
 
 	return 0;
+
+no_num:
+	uncharge_beancounter_fast(ub, UB_KMEMSIZE, TASK_KMEM_SIZE);
+no_mem:
+	return -ENOMEM;
 }
 
-extern atomic_t dbgpre;
-
-void ub_task_uncharge(struct task_struct *task)
+void ub_task_uncharge(struct user_beancounter *ub)
 {
-	uncharge_beancounter_fast(task->task_bc.task_ub, UB_NUMPROC, 1);
+	uncharge_beancounter_fast(ub, UB_NUMPROC, 1);
+	uncharge_beancounter_fast(ub, UB_KMEMSIZE, TASK_KMEM_SIZE);
+}
+
+void ub_task_get(struct user_beancounter *ub, struct task_struct *task)
+{
+	struct task_beancounter *new_bc = &task->task_bc;
+
+	new_bc->task_ub = get_beancounter(ub);
+	new_bc->exec_ub = get_beancounter(ub);
 }
 
 void ub_task_put(struct task_struct *task)
@@ -72,7 +65,6 @@ void ub_task_put(struct task_struct *task)
 
 	put_beancounter(task_bc->exec_ub);
 	put_beancounter(task_bc->task_ub);
-	put_beancounter(task_bc->fork_sub);
 
 	task_bc->exec_ub = (struct user_beancounter *)0xdeadbcbc;
 	task_bc->task_ub = (struct user_beancounter *)0xdead100c;

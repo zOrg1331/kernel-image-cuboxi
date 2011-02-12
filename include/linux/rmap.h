@@ -48,6 +48,8 @@ struct anon_vma {
 	 * mm_take_all_locks() (mm_all_locks_mutex).
 	 */
 	struct list_head head;	/* Chain of private "related" vmas */
+
+	struct user_beancounter *anon_vma_ub;
 };
 
 /*

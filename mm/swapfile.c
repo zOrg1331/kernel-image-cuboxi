@@ -880,7 +880,6 @@ static int unuse_pte(struct vm_area_struct *vma, pmd_t *pmd,
 
 	dec_mm_counter(vma->vm_mm, swap_usage);
 	inc_mm_counter(mm, anon_rss);
-	ub_unused_privvm_dec(mm, vma);
 	get_page(page);
 	set_pte_at(mm, addr, pte,
 		   pte_mkold(mk_pte(page, vma->vm_page_prot)));

@@ -12,6 +12,7 @@
 #include <linux/slab.h>
 #include <linux/spinlock.h>
 #include <linux/completion.h>
+#include <linux/quotaops.h>
 #include <linux/buffer_head.h>
 #include <linux/statfs.h>
 #include <linux/seq_file.h>
@@ -1408,6 +1409,12 @@ out_truncate:
 		goto out_unlock;
 	/* Needs to be done before glock release & also in a transaction */
 	truncate_inode_pages(&inode->i_data, 0);
+
+	vfs_dq_init(inode);
+	vfs_dq_free_block(inode, 1);
+	vfs_dq_free_inode(inode);
+	vfs_dq_drop(inode);
+
 	gfs2_trans_end(sdp);
 
 out_unlock:

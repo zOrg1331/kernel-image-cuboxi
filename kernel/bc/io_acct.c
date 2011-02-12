@@ -25,7 +25,7 @@
 
 /* under write lock mapping->tree_lock */
 
-void ub_io_account_dirty(struct address_space *mapping, int pages)
+void ub_io_account_dirty(struct address_space *mapping)
 {
 	struct user_beancounter *ub = mapping->dirtied_ub;
 
@@ -35,10 +35,34 @@ void ub_io_account_dirty(struct address_space *mapping, int pages)
 	if (!ub)
 		ub = mapping->dirtied_ub = get_beancounter(get_io_ub());
 
-	ub_percpu_add(ub, dirty_pages, pages);
+	ub_stat_inc(ub, dirty_pages);
 }
 
-void ub_io_account_clean(struct address_space *mapping, int pages, int cancel)
+void ub_io_account_clean(struct address_space *mapping)
+{
+	struct user_beancounter *ub = mapping->dirtied_ub;
+	size_t bytes = PAGE_SIZE;
+
+	if (unlikely(!ub)) {
+		WARN_ON_ONCE(1);
+		return;
+	}
+
+	ub_stat_dec(ub, dirty_pages);
+
+	ub_percpu_inc(ub, async_write_complete);
+
+	ub = set_exec_ub(ub);
+	virtinfo_notifier_call(VITYPE_IO, VIRTINFO_IO_ACCOUNT, &bytes);
+	ub = set_exec_ub(ub);
+
+	if (!radix_tree_tagged(&mapping->page_tree, PAGECACHE_TAG_DIRTY)) {
+		mapping->dirtied_ub = NULL;
+		__put_beancounter(ub);
+	}
+}
+
+void ub_io_account_cancel(struct address_space *mapping)
 {
 	struct user_beancounter *ub = mapping->dirtied_ub;
 
@@ -47,40 +71,15 @@ void ub_io_account_clean(struct address_space *mapping, int pages, int cancel)
 		return;
 	}
 
-	ub_percpu_sub(ub, dirty_pages, pages);
+	ub_stat_dec(ub, dirty_pages);
 
-	if (cancel)
-		ub_percpu_add(ub, async_write_canceled, pages);
-	else {
-		size_t bytes = pages << PAGE_SHIFT;
-
-		ub_percpu_add(ub, async_write_complete, pages);
-
-		ub = set_exec_ub(ub);
-		virtinfo_notifier_call(VITYPE_IO, VIRTINFO_IO_ACCOUNT, &bytes);
-		ub = set_exec_ub(ub);
-	}
+	ub_percpu_inc(ub, async_write_canceled);
 
 	if (!radix_tree_tagged(&mapping->page_tree, PAGECACHE_TAG_DIRTY)) {
 		mapping->dirtied_ub = NULL;
 		__put_beancounter(ub);
 	}
 }
-
-unsigned long ub_dirty_pages(struct user_beancounter *ub)
-{
-	unsigned long dirty_pages = 0;
-	int cpu;
-
-	for_each_online_cpu(cpu)
-		dirty_pages += per_cpu_ptr(ub->ub_percpu, cpu)->dirty_pages;
-
-	if ((long)dirty_pages < 0)
-		dirty_pages = 0;
-
-	return dirty_pages;
-}
-EXPORT_SYMBOL(ub_dirty_pages);
 
 int ub_dirty_limits(long *pdirty, struct user_beancounter *ub)
 {
@@ -120,10 +119,12 @@ static int bc_ioacct_show(struct seq_file *f, void *v)
 	unsigned long reads, writes;
 	unsigned long long rchar, wchar;
 	struct user_beancounter *ub;
-	unsigned long dirty_pages = 0;
+	unsigned long dirty_pages;
 	unsigned long long dirtied;
 
 	ub = seq_beancounter(f);
+
+	dirty_pages = __ub_stat_get(ub, dirty_pages);
 
 	read = write = cancel = 0;
 	sync = sync_done = fsync = fsync_done =

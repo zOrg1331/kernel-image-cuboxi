@@ -10,6 +10,8 @@
 #ifdef __KERNEL__
 
 #include <linux/types.h>
+#include <linux/spinlock_types.h>
+#include <linux/wait.h>
 
 struct zonelist;
 struct notifier_block;
@@ -52,5 +54,17 @@ static inline void oom_killer_enable(void)
 {
 	oom_killer_disabled = false;
 }
+
+struct oom_control {
+	int			generation;
+	int			kill_counter;
+	spinlock_t		lock;
+	wait_queue_head_t 	wq;
+};
+
+extern struct oom_control global_oom_ctrl;
+
+extern void init_oom_control(struct oom_control *oom_ctrl);
+
 #endif /* __KERNEL__*/
 #endif /* _INCLUDE_LINUX_OOM_H */

@@ -50,24 +50,40 @@
 #include <linux/vzctl_venet.h>
 
 struct hlist_head ip_entry_hash_table[VEIP_HASH_SZ];
-rwlock_t veip_hash_lock = RW_LOCK_UNLOCKED;
+DEFINE_SPINLOCK(veip_lock);
 LIST_HEAD(veip_lh);
 
 #define ip_entry_hash_function(ip)  (ntohl(ip) & (VEIP_HASH_SZ - 1))
 
 void ip_entry_hash(struct ip_entry_struct *entry, struct veip_struct *veip)
 {
-	hlist_add_head(&entry->ip_hash,
+	hlist_add_head_rcu(&entry->ip_hash,
 			ip_entry_hash_table +
 			ip_entry_hash_function(entry->addr.key[3]));
 	list_add(&entry->ve_list, &veip->ip_lh);
 }
 
+static void ip_entry_free(struct rcu_head *rcu)
+{
+	struct ip_entry_struct *e;
+
+	e = container_of(rcu, struct ip_entry_struct, rcu);
+	kfree(e);
+}
+
 void ip_entry_unhash(struct ip_entry_struct *entry)
 {
 	list_del(&entry->ve_list);
-	hlist_del(&entry->ip_hash);
-	kfree(entry);
+	hlist_del_rcu(&entry->ip_hash);
+	call_rcu_bh(&entry->rcu, ip_entry_free);
+}
+
+static void veip_free(struct rcu_head *rcu)
+{
+	struct veip_struct *veip;
+
+	veip = container_of(rcu, struct veip_struct, rcu);
+	veip_pool_ops->veip_free(veip);
 }
 
 int veip_put(struct veip_struct *veip)
@@ -80,7 +96,7 @@ int veip_put(struct veip_struct *veip)
 		return 0;
 
 	list_del(&veip->list);
-	veip_pool_ops->veip_free(veip);
+	call_rcu_bh(&veip->rcu, veip_free);
 	return 1;
 }
 
@@ -89,7 +105,7 @@ struct ip_entry_struct *venet_entry_lookup(struct ve_addr_struct *addr)
 	struct ip_entry_struct *entry;
 	struct hlist_node *n;
 
-	hlist_for_each_entry (entry, n, ip_entry_hash_table +
+	hlist_for_each_entry_rcu(entry, n, ip_entry_hash_table +
 			ip_entry_hash_function(addr->key[3]), ip_hash)
 		if (memcmp(&entry->addr, addr, sizeof(*addr)) == 0)
 			return entry;
@@ -100,17 +116,19 @@ struct ext_entry_struct *venet_ext_lookup(struct ve_struct *ve,
 		struct ve_addr_struct *addr)
 {
 	struct ext_entry_struct *entry;
+	struct veip_struct *veip;
 
-	if (ve->veip == NULL)
+	veip = ACCESS_ONCE(ve->veip);
+	if (veip == NULL)
 		return NULL;
 
-	list_for_each_entry (entry, &ve->veip->ext_lh, list)
+	list_for_each_entry_rcu (entry, &veip->ext_lh, list)
 		if (memcmp(&entry->addr, addr, sizeof(*addr)) == 0)
 			return entry;
 	return NULL;
 }
 
-int venet_ext_add(struct ve_struct *ve, struct ve_addr_struct *addr)
+static int venet_ext_add(struct ve_struct *ve, struct ve_addr_struct *addr)
 {
 	struct ext_entry_struct *entry, *found;
 	int err;
@@ -122,24 +140,38 @@ int venet_ext_add(struct ve_struct *ve, struct ve_addr_struct *addr)
 	if (entry == NULL)
 		return -ENOMEM;
 
-	write_lock_irq(&veip_hash_lock);
+	spin_lock(&veip_lock);
 	err = -EADDRINUSE;
 	found = venet_ext_lookup(ve, addr);
 	if (found != NULL)
 		goto out_unlock;
 
 	entry->addr = *addr;
-	list_add(&entry->list, &ve->veip->ext_lh);
+	list_add_rcu(&entry->list, &ve->veip->ext_lh);
 	err = 0;
 	entry = NULL;
 out_unlock:
-	write_unlock_irq(&veip_hash_lock);
+	spin_unlock(&veip_lock);
 	if (entry != NULL)
 		kfree(entry);
 	return err;
 }
 
-int venet_ext_del(struct ve_struct *ve, struct ve_addr_struct *addr)
+static void venet_ext_free(struct rcu_head *rcu)
+{
+	struct ext_entry_struct *e;
+
+	e = container_of(rcu, struct ext_entry_struct, rcu);
+	kfree(e);
+}
+
+static void venet_ext_release(struct ext_entry_struct *e)
+{
+	list_del_rcu(&e->list);
+	call_rcu_bh(&e->rcu, venet_ext_free);
+}
+
+static int venet_ext_del(struct ve_struct *ve, struct ve_addr_struct *addr)
 {
 	struct ext_entry_struct *found;
 	int err;
@@ -148,32 +180,29 @@ int venet_ext_del(struct ve_struct *ve, struct ve_addr_struct *addr)
 		return -ENONET;
 
 	err = -EADDRNOTAVAIL;
-	write_lock_irq(&veip_hash_lock);
+	spin_lock(&veip_lock);
 	found = venet_ext_lookup(ve, addr);
 	if (found == NULL)
 		goto out;
 
-	list_del(&found->list);
-	kfree(found);
+	venet_ext_release(found);
 	err = 0;
 out:
-	write_unlock_irq(&veip_hash_lock);
+	spin_unlock(&veip_lock);
 	return err;
 }
 
-void venet_ext_clean(struct ve_struct *ve)
+static void venet_ext_clean(struct ve_struct *ve)
 {
 	struct ext_entry_struct *entry, *tmp;
 
 	if (ve->veip == NULL)
 		return;
 
-	write_lock_irq(&veip_hash_lock);
-	list_for_each_entry_safe (entry, tmp, &ve->veip->ext_lh, list) {
-		list_del(&entry->list);
-		kfree(entry);
-	}
-	write_unlock_irq(&veip_hash_lock);
+	spin_lock(&veip_lock);
+	list_for_each_entry_safe (entry, tmp, &ve->veip->ext_lh, list)
+		venet_ext_release(entry);
+	spin_unlock(&veip_lock);
 }
 
 struct veip_struct *veip_find(envid_t veid)
@@ -213,14 +242,14 @@ static int veip_start(struct ve_struct *ve)
 {
 	int err, get;
 
-	write_lock_irq(&veip_hash_lock);
+	spin_lock(&veip_lock);
 
 	get = ve->veip == NULL;
 	err = veip_pool_ops->veip_create(ve);
 	if (!err && get && !ve_is_super(ve))
 		__module_get(THIS_MODULE);
 
-	write_unlock_irq(&veip_hash_lock);
+	spin_unlock(&veip_lock);
 
 	return err;
 }
@@ -229,7 +258,7 @@ static void veip_stop(struct ve_struct *ve)
 {
 	struct list_head *p, *tmp;
 
-	write_lock_irq(&veip_hash_lock);
+	spin_lock(&veip_lock);
 	if (ve->veip == NULL)
 		goto unlock;
 	list_for_each_safe(p, tmp, &ve->veip->ip_lh) {
@@ -245,7 +274,7 @@ static void veip_stop(struct ve_struct *ve)
 	if (!ve_is_super(ve))
 		module_put(THIS_MODULE);
 unlock:
-	write_unlock_irq(&veip_hash_lock);
+	spin_unlock(&veip_lock);
 }
 
 static int veip_entry_conflict(struct ip_entry_struct *entry, struct ve_struct *ve)
@@ -275,7 +304,7 @@ static int veip_entry_add(struct ve_struct *ve, struct ve_addr_struct *addr)
 			goto out;
 	}
 
-	write_lock_irq(&veip_hash_lock);
+	spin_lock(&veip_lock);
 	found = venet_entry_lookup(addr);
 	if (found != NULL) {
 		err = veip_entry_conflict(found, ve);
@@ -289,7 +318,7 @@ static int veip_entry_add(struct ve_struct *ve, struct ve_addr_struct *addr)
 	err = 0;
 	entry = NULL;
 out_unlock:
-	write_unlock_irq(&veip_hash_lock);
+	spin_unlock(&veip_lock);
 out:
 	if (entry != NULL)
 		kfree(entry);
@@ -303,7 +332,7 @@ static int veip_entry_del(envid_t veid, struct ve_addr_struct *addr)
 	int err;
 
 	err = -EADDRNOTAVAIL;
-	write_lock_irq(&veip_hash_lock);
+	spin_lock(&veip_lock);
 	found = venet_entry_lookup(addr);
 	if (found == NULL)
 		goto out;
@@ -318,7 +347,7 @@ static int veip_entry_del(envid_t veid, struct ve_addr_struct *addr)
 	if (found->tgt_veip == NULL)
 		ip_entry_unhash(found);
 out:
-	write_unlock_irq(&veip_hash_lock);
+	spin_unlock(&veip_lock);
 	return err;
 }
 
@@ -677,11 +706,13 @@ static void venet_setup(struct net_device *dev)
 static void veaddr_seq_print(struct seq_file *m, struct ve_struct *ve)
 {
 	struct ip_entry_struct *entry;
+	struct veip_struct *veip;
 
-	read_lock(&veip_hash_lock);
-	if (ve->veip == NULL)
+	rcu_read_lock();
+	veip = ACCESS_ONCE(ve->veip);
+	if (veip == NULL)
 		goto unlock;
-	list_for_each_entry (entry, &ve->veip->ip_lh, ve_list) {
+	list_for_each_entry_rcu (entry, &veip->ip_lh, ve_list) {
 		char addr[40];
 
 		if (entry->active_env == NULL)
@@ -694,24 +725,25 @@ static void veaddr_seq_print(struct seq_file *m, struct ve_struct *ve)
 			seq_printf(m, " %39s", addr);
 	}
 unlock:
-	read_unlock(&veip_hash_lock);
+	rcu_read_unlock();
 }
 
 static void *veip_seq_start(struct seq_file *m, loff_t *pos)
 {
 	loff_t l;
 	struct hlist_node *p;
+	struct ip_entry_struct *s;
 	int i;
 
 	l = *pos;
-	write_lock_irq(&veip_hash_lock);
+	rcu_read_lock();
 	if (l == 0) {
 		m->private = (void *)0;
 		return SEQ_START_TOKEN;
 	}
 
 	for (i = 0; i < VEIP_HASH_SZ; i++) {
-		hlist_for_each(p, ip_entry_hash_table + i) {
+		hlist_for_each_entry_rcu(s, p, ip_entry_hash_table + i, ip_hash) {
 			if (--l == 0) {
 				m->private = (void *)(long)(i + 1);
 				return p;
@@ -729,13 +761,13 @@ static void *veip_seq_next(struct seq_file *m, void *v, loff_t *pos)
 	if (v == SEQ_START_TOKEN)
 		goto find;
 
-	p = ((struct hlist_node *)v)->next;
+	p = rcu_dereference(((struct hlist_node *)v)->next);
 	if (p != NULL)
 		goto found;
 
 find:
 	for (i = (int)(long)m->private; i < VEIP_HASH_SZ; i++) {
-		p = ip_entry_hash_table[i].first;
+		p = rcu_dereference(ip_entry_hash_table[i].first);
 		if (p != NULL) {
 			m->private = (void *)(long)(i + 1);
 found:
@@ -749,13 +781,14 @@ found:
 
 static void veip_seq_stop(struct seq_file *m, void *v)
 {
-	write_unlock_irq(&veip_hash_lock);
+	rcu_read_unlock();
 }
 
 static int veip_seq_show(struct seq_file *m, void *v)
 {
 	struct hlist_node *p;
 	struct ip_entry_struct *entry;
+	struct veip_struct *veip;
 	char s[40];
 
 	if (v == SEQ_START_TOKEN) {
@@ -766,8 +799,8 @@ static int veip_seq_show(struct seq_file *m, void *v)
 	p = (struct hlist_node *)v;
 	entry = hlist_entry(p, struct ip_entry_struct, ip_hash);
 	veaddr_print(s, sizeof(s), &entry->addr);
-	seq_printf(m, "%39s %10u\n", s,
-			entry->tgt_veip == NULL ? 0 : entry->tgt_veip->veid);
+	veip = ACCESS_ONCE(entry->tgt_veip);
+	seq_printf(m, "%39s %10u\n", s, veip == NULL ? 0 : veip->veid);
 	return 0;
 }
 
@@ -1029,7 +1062,7 @@ MODULE_DESCRIPTION("Virtuozzo Virtual Network Device");
 MODULE_LICENSE("GPL v2");
 MODULE_ALIAS("vznet");
 
-EXPORT_SYMBOL(veip_hash_lock);
+EXPORT_SYMBOL(veip_lock);
 EXPORT_SYMBOL(ip_entry_hash);
 EXPORT_SYMBOL(ip_entry_unhash);
 EXPORT_SYMBOL(sockaddr_to_veaddr);

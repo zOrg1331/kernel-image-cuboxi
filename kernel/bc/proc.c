@@ -39,16 +39,20 @@ static const char *res_fmt = "%10s  %-12s %20lu %20lu %20lu %20lu %20lu\n";
 #endif
 
 static void ub_show_res(struct seq_file *f, struct user_beancounter *ub,
-		int r, int show_uid)
+		int r, int precharge, int show_uid)
 {
 	char ub_uid[64];
+	unsigned long held;
 
 	memset(ub_uid, 0, sizeof(ub_uid));
 	if (show_uid && r == 0)
 		snprintf(ub_uid, sizeof(ub_uid), "%u:", ub->ub_uid);
 
+	held = ub->ub_parms[r].held;
+	held = (held > precharge) ? (held - precharge) : 0;
+
 	seq_printf(f, res_fmt, ub_uid, ub_rnames[r],
-			ub->ub_parms[r].held,
+			held,
 			ub->ub_parms[r].maxheld,
 			ub->ub_parms[r].barrier,
 			ub->ub_parms[r].limit,
@@ -58,16 +62,17 @@ static void ub_show_res(struct seq_file *f, struct user_beancounter *ub,
 static void __show_resources(struct seq_file *f, struct user_beancounter *ub,
 		int show_uid)
 {
-	int i;
+	int i, precharge[UB_RESOURCES];
 
 	ub_update_resources(ub);
+	ub_precharge_snapshot(ub, precharge);
 
 	for (i = 0; i < UB_RESOURCES_COMPAT; i++)
 		if (strcmp(ub_rnames[i], "dummy") != 0)
-			ub_show_res(f, ub, i, show_uid);
+			ub_show_res(f, ub, i, precharge[i], show_uid);
 
 	for (i = UB_RESOURCES_COMPAT; i < UB_RESOURCES; i++)
-		ub_show_res(f, ub, i, show_uid);
+		ub_show_res(f, ub, i, precharge[i], show_uid);
 }
 
 static int bc_resources_show(struct seq_file *f, void *v)
@@ -105,15 +110,19 @@ static int bc_precharge_show(struct seq_file *f, void *v)
 {
 	struct user_beancounter *ub;
 	int i, cpus = num_possible_cpus();
+	int precharge[UB_RESOURCES];
 
-	seq_printf(f, "resource        \tsum\tmax\n");
+	seq_printf(f, "%-12s %16s %10s %10s\n",
+			"resource", "real_held", "precharge", "max_precharge");
 
 	ub = seq_beancounter(f);
+	ub_precharge_snapshot(ub, precharge);
 	for ( i = 0 ; i < UB_RESOURCES ; i++ ) {
 		if (!strcmp(ub_rnames[i], "dummy"))
 			continue;
-		seq_printf(f, "%-16s\t%d\t%d\n", ub_rnames[i],
-				__ub_percpu_sum(ub, precharge[i]),
+		seq_printf(f, "%-12s %16lu %10d %10d\n", ub_rnames[i],
+				ub->ub_parms[i].held,
+				precharge[i],
 				ub->ub_parms[i].max_precharge * cpus);
 	}
 
@@ -169,13 +178,14 @@ static struct bc_proc_entry bc_meminfo_entry = {
 
 static int ub_show(struct seq_file *f, void *v)
 {
-	int i;
+	int i, precharge[UB_RESOURCES];
 	struct user_beancounter *ub = v;
 
 	ub_update_resources(ub);
+	ub_precharge_snapshot(ub, precharge);
 
 	for (i = 0; i < UB_RESOURCES_COMPAT; i++)
-		ub_show_res(f, ub, i, 1);
+		ub_show_res(f, ub, i, precharge[i], 1);
 	return 0;
 }
 

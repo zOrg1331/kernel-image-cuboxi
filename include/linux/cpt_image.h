@@ -121,6 +121,7 @@ struct cpt_major_hdr
 	__u16	cpt_hdrlen;		/* Length of this header */
 	__u16	cpt_image_version;	/* Format of this file */
 #define CPT_VERSION_MINOR(a)	((a) & 0xf)
+#define CPT_VERSION_MAJOR(a)	((a) & 0xff00)
 #define CPT_VERSION_8		0
 #define CPT_VERSION_9		0x100
 #define CPT_VERSION_9_1		0x101

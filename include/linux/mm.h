@@ -53,7 +53,9 @@ extern int sysctl_legacy_va_layout;
  * mmap() functions).
  */
 
-extern struct kmem_cache *vm_area_cachep;
+extern struct kmem_cache *__vm_area_cachep;
+#define allocate_vma(mm, gfp_flags)	ub_kmem_alloc((mm)->mm_ub, __vm_area_cachep, gfp_flags)
+#define free_vma(mm, vma)		ub_kmem_free((mm)->mm_ub, __vm_area_cachep, vma)
 
 #ifndef CONFIG_MMU
 extern struct rb_root nommu_region_tree;

@@ -17,36 +17,12 @@
 
 /*
  * Check whether vma has private or copy-on-write mapping.
- * Should match checks in ub_protected_charge().
  */
 #define VM_UB_PRIVATE(__flags, __file)					\
 		( ((__flags) & VM_WRITE) ?				\
 			(__file) == NULL || !((__flags) & VM_SHARED) :	\
 			0						\
 		)
-
-/* Mprotect charging result */
-#define PRIVVM_ERROR		-1
-#define PRIVVM_NO_CHARGE	 0 /* UB_DECLARE_FUNC retval with ubc off */
-#define PRIVVM_TO_PRIVATE	 1
-#define PRIVVM_TO_SHARED	 2
-
-UB_DECLARE_FUNC(int, ub_protected_charge(struct mm_struct *mm,
-			unsigned long size,
-			unsigned long newflags,
-			struct vm_area_struct *vma))
-
-UB_DECLARE_VOID_FUNC(ub_unused_privvm_add(struct mm_struct *mm,
-			struct vm_area_struct *vma,
-			unsigned long num))
-#define ub_unused_privvm_inc(mm, vma)	ub_unused_privvm_add(mm, vma, 1)
-UB_DECLARE_VOID_FUNC(ub_unused_privvm_sub(struct mm_struct *mm,
-			struct vm_area_struct *vma,
-			unsigned long num))
-#define ub_unused_privvm_dec(mm, vma)	ub_unused_privvm_sub(mm, vma, 1)
-
-UB_DECLARE_VOID_FUNC(__ub_unused_privvm_dec(struct mm_struct *mm,
-			long sz))
 
 UB_DECLARE_FUNC(int, ub_memory_charge(struct mm_struct *mm,
 			unsigned long size,
@@ -90,21 +66,12 @@ UB_DECLARE_FUNC(int, ub_lockedshm_charge(struct shmem_inode_info *shi,
 UB_DECLARE_VOID_FUNC(ub_lockedshm_uncharge(struct shmem_inode_info *shi,
 			unsigned long size))
 
-UB_DECLARE_FUNC(unsigned long, pages_in_vma_range(struct vm_area_struct *vma,
-			unsigned long addr, unsigned long end))
-#define pages_in_vma(vma)	(pages_in_vma_range(vma, \
-			vma->vm_start, vma->vm_end))
-
-/* Mprotect charging result */
-#define PRIVVM_ERROR		-1
-#define PRIVVM_NO_CHARGE	0
-#define PRIVVM_TO_PRIVATE	1
-#define PRIVVM_TO_SHARED	2
-
 extern void __ub_update_oomguarpages(struct user_beancounter *ub);
-extern void __ub_update_privvm(struct user_beancounter *ub);
-extern unsigned long ub_mapped_pages(struct user_beancounter *ub);
-#define ub_physical_pages(ub)  ((ub)->ub_parms[UB_PHYSPAGES].held)
+static inline unsigned long ub_mapped_pages(struct user_beancounter *ub)
+{
+	return ub_stat_get(ub, mapped_file_pages) +
+		ub_stat_get(ub, anonymous_pages);
+}
 
 #ifdef CONFIG_BC_SWAP_ACCOUNTING
 #define SWP_DECLARE_FUNC(ret, decl)	UB_DECLARE_FUNC(ret, decl)

@@ -66,10 +66,8 @@ static int install_file_pte(struct mm_struct *mm, struct vm_area_struct *vma,
 	if (!pte)
 		goto out;
 
-	if (!pte_none(*pte)) {
+       if (!pte_none(*pte))
 		zap_pte(mm, vma, addr, pte);
-		ub_unused_privvm_inc(mm, vma);
-	}
 
 	set_pte_at(mm, addr, pte, pgoff_to_pte(pgoff));
 	/*

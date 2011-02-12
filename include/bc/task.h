@@ -19,8 +19,8 @@ struct task_beancounter {
 	struct user_beancounter	*exec_ub;
 	struct user_beancounter *saved_ub;
 	struct user_beancounter	*task_ub;
-	struct user_beancounter *fork_sub;
 	unsigned long oom_generation;
+	struct oom_control *oom_ctrl;
 };
 
 extern int set_task_exec_ub(struct task_struct *, struct user_beancounter *);

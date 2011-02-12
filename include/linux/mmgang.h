@@ -85,6 +85,7 @@ int alloc_mem_gangs(struct gang_set *gs);
 void free_mem_gangs(struct gang_set *gs);
 void add_mem_gangs(struct gang_set *gs);
 void del_mem_gangs(struct gang_set *gs);
+void gang_move_mapped_isolated_page(struct page *page, struct gang_set *gs);
 #define for_each_gang(gang, zone)			\
 	list_for_each_entry_rcu(gang, &zone->gangs, list)
 static inline int pin_mem_gang(struct gang *gang)
@@ -128,29 +129,29 @@ static inline void gang_del_kernel_page(struct page *page, int order)
 		set_page_gang(page, NULL);
 }
 
-static inline void gang_map_anon_page(struct page *page)
+static inline void gang_map_anon_page(struct gang_set *gs)
 {
-	rcu_read_lock();
-	ub_percpu_add(get_gang_ub(page_gang(page)), anonymous_pages, 1);
-	rcu_read_unlock();
+	struct user_beancounter *ub = get_gangs_ub(gs);
+
+	ub_stat_inc(ub, anonymous_pages);
 }
-static inline void gang_unmap_anon_page(struct page *page)
+static inline void gang_unmap_anon_page(struct gang_set *gs)
 {
-	rcu_read_lock();
-	ub_percpu_sub(get_gang_ub(page_gang(page)), anonymous_pages, 1);
-	rcu_read_unlock();
+	struct user_beancounter *ub = get_gangs_ub(gs);
+
+	ub_stat_dec(ub, anonymous_pages);
 }
-static inline void gang_map_file_page(struct page *page)
+static inline void gang_map_file_page(struct gang_set *gs)
 {
-	rcu_read_lock();
-	ub_percpu_add(get_gang_ub(page_gang(page)), mapped_file_pages, 1);
-	rcu_read_unlock();
+	struct user_beancounter *ub = get_gangs_ub(gs);
+
+	ub_stat_inc(ub, mapped_file_pages);
 }
-static inline void gang_unmap_file_page(struct page *page)
+static inline void gang_unmap_file_page(struct gang_set *gs)
 {
-	rcu_read_lock();
-	ub_percpu_sub(get_gang_ub(page_gang(page)), mapped_file_pages, 1);
-	rcu_read_unlock();
+	struct user_beancounter *ub = get_gangs_ub(gs);
+
+	ub_stat_dec(ub, mapped_file_pages);
 }
 
 static inline struct gang *lock_page_lru(struct page *page)
@@ -219,6 +220,7 @@ static inline void free_mem_gangs(struct gang_set *gs) { }
 static inline int alloc_mem_gangs(struct gang_set *gs) { return -EFAULT; }
 static inline void add_mem_gangs(struct gang_set *gs) { }
 static inline void del_mem_gangs(struct gang_set *gs) { }
+static inline void gang_move_mapped_isolated_page(struct page *page, struct gang_set *gs) { }
 #define for_each_gang(gang, zone)			\
 	for ( gang = &(zone)->init_gang ; gang ; gang = NULL )
 static inline int pin_mem_gang(struct gang *gang) { return 0; }
@@ -231,10 +233,10 @@ static inline void gang_del_user_page(struct page *page) { }
 static inline void gang_add_kernel_page(struct page *page, int order, struct gang_set *gs) { }
 static inline void gang_del_kernel_page(struct page *page, int order) { }
 
-static inline void gang_map_anon_page(struct page *page) { }
-static inline void gang_unmap_anon_page(struct page *page) { }
-static inline void gang_map_file_page(struct page *page) { }
-static inline void gang_unmap_file_page(struct page *page) { }
+static inline void gang_map_anon_page(struct gang_set *gs) { }
+static inline void gang_unmap_anon_page(struct gang_set *gs) { }
+static inline void gang_map_file_page(struct gang_set *gs) { }
+static inline void gang_unmap_file_page(struct gang_set *gs) { }
 
 static inline struct gang *lock_page_lru(struct page *page)
 {

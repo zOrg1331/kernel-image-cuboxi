@@ -57,7 +57,6 @@ static int restore_one_bc(struct cpt_beancounter_image *v,
 		cpt_object_t *obj, struct cpt_context *ctx)
 {
 	struct user_beancounter *bc;
-	cpt_object_t *pobj;
 	int resources, i;
 
 	if (v->cpt_parent != CPT_NULL) {

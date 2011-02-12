@@ -28,8 +28,12 @@ static void veip_free(struct veip_struct *veip)
 
 static void veip_release(struct ve_struct *ve)
 {
-	veip_put(ve->veip);
+	struct veip_struct *veip;
+
+	veip = ve->veip;
 	ve->veip = NULL;
+	barrier();
+	veip_put(veip);
 }
 
 static int veip_create(struct ve_struct *ve)
@@ -69,52 +73,59 @@ static int skb_extract_addr(struct sk_buff *skb,
 	return -EAFNOSUPPORT;
 }
 
-static struct ve_struct *venet_find_ve(struct sk_buff *skb, int dir)
+static struct ve_struct *venet_find_ve(struct ve_addr_struct *addr, int dir)
 {
 	struct ip_entry_struct *entry;
-	struct ve_addr_struct addr;
+	struct ve_struct *ve = NULL;
 
-	if (skb_extract_addr(skb, &addr, dir) < 0)
-		return NULL;
+	entry = venet_entry_lookup(addr);
+	if (entry != NULL)
+		ve = ACCESS_ONCE(entry->active_env);
 
-	entry = venet_entry_lookup(&addr);
-	if (entry == NULL)
-		return NULL;
-
-	return entry->active_env;
+	return ve;
 }
 
 static struct ve_struct *veip_lookup(struct sk_buff *skb)
 {
 	struct ve_struct *ve, *ve_old;
+	int dir;
+	struct ve_addr_struct addr;
 
 	ve_old = skb->owner_env;
+	dir = ve_is_super(ve_old);
+	if (skb_extract_addr(skb, &addr, dir) < 0)
+		goto out_drop_nolock;
 
-	read_lock(&veip_hash_lock);
-	if (!ve_is_super(ve_old)) {
+	rcu_read_lock();
+	if (!dir) {
 		/* from VE to host */
-		ve = venet_find_ve(skb, 0);
-		if (ve == NULL)
-			goto out_drop;
-		if (!ve_accessible_strict(ve, ve_old))
-			goto out_source;
+		ve = venet_find_ve(&addr, 0);
+		if (ve == NULL) {
+			if (!venet_ext_lookup(ve_old, &addr))
+				goto out_drop;
+		} else {
+			if (!ve_accessible_strict(ve, ve_old))
+				goto out_source;
+		}
+
 		ve = get_ve0();
 	} else {
 		/* from host to VE */
-		ve = venet_find_ve(skb, 1);
+		ve = venet_find_ve(&addr, 1);
 		if (ve == NULL)
 			goto out_drop;
 	}
-	read_unlock(&veip_hash_lock);
+	rcu_read_unlock();
 
 	return ve;
 
 out_drop:
-	read_unlock(&veip_hash_lock);
+	rcu_read_unlock();
+out_drop_nolock:
 	return ERR_PTR(-ESRCH);
 
 out_source:
-	read_unlock(&veip_hash_lock);
+	rcu_read_unlock();
 	if (net_ratelimit() && skb->protocol == __constant_htons(ETH_P_IP)) {
 		printk(KERN_WARNING "Dropped packet, source wrong "
 		       "veid=%u src-IP=%u.%u.%u.%u "
@@ -130,7 +141,7 @@ void veip_cleanup(void)
 {
 	int i;
 
-	write_lock_irq(&veip_hash_lock);
+	spin_lock(&veip_lock);
 	for (i = 0; i < VEIP_HASH_SZ; i++)
 		while (!hlist_empty(ip_entry_hash_table + i)) {
 			struct ip_entry_struct *entry;
@@ -141,7 +152,7 @@ void veip_cleanup(void)
 			list_del(&entry->ve_list);
 			kfree(entry);
 		}
-	write_unlock_irq(&veip_hash_lock);
+	spin_unlock(&veip_lock);
 }
 
 static struct veip_pool_ops open_pool_ops = {
