@@ -68,6 +68,7 @@ static DEFINE_PCI_DEVICE_TABLE(igb_pci_tbl) = {
 	{ PCI_VDEVICE(INTEL, E1000_DEV_ID_I350_SGMII), board_82575 },
 	{ PCI_VDEVICE(INTEL, E1000_DEV_ID_82580_COPPER), board_82575 },
 	{ PCI_VDEVICE(INTEL, E1000_DEV_ID_82580_FIBER), board_82575 },
+	{ PCI_VDEVICE(INTEL, E1000_DEV_ID_82580_QUAD_FIBER), board_82575 },
 	{ PCI_VDEVICE(INTEL, E1000_DEV_ID_82580_SERDES), board_82575 },
 	{ PCI_VDEVICE(INTEL, E1000_DEV_ID_82580_SGMII), board_82575 },
 	{ PCI_VDEVICE(INTEL, E1000_DEV_ID_82580_COPPER_DUAL), board_82575 },
@@ -2286,9 +2287,14 @@ static int __devinit igb_sw_init(struct igb_adapter *adapter)
 
 	spin_lock_init(&adapter->stats64_lock);
 #ifdef CONFIG_PCI_IOV
-	if (hw->mac.type == e1000_82576)
+	switch (hw->mac.type) {
+	case e1000_82576:
+	case e1000_i350:
 		adapter->vfs_allocated_count = (max_vfs > 7) ? 7 : max_vfs;
-
+		break;
+	default:
+		break;
+	}
 #endif /* CONFIG_PCI_IOV */
 	adapter->rss_queues = min_t(u32, IGB_MAX_RX_QUEUES, num_online_cpus());
 
