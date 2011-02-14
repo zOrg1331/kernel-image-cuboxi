@@ -22,6 +22,7 @@
 
 #include <asm/pgtable.h>
 #include <asm/sections.h>
+#include <asm/smp_plat.h>
 #include <asm/unwind.h>
 
 #ifdef CONFIG_XIP_KERNEL
@@ -283,6 +284,7 @@ static const Elf_Shdr *find_mod_section(const Elf32_Ehdr *hdr,
 }
 
 extern void fixup_pv_table(const void *, unsigned long);
+extern void fixup_smp(const void *, unsigned long);
 
 int module_finalize(const Elf32_Ehdr *hdr, const Elf_Shdr *sechdrs,
 		    struct module *mod)
@@ -337,6 +339,9 @@ int module_finalize(const Elf32_Ehdr *hdr, const Elf_Shdr *sechdrs,
 	if (s)
 		fixup_pv_table((void *)s->sh_addr, s->sh_size);
 #endif
+	s = find_mod_section(hdr, sechdrs, ".alt.smp.init");
+	if (s && !is_smp())
+		fixup_smp((void *)s->sh_addr, s->sh_size);
 	return 0;
 }
 
