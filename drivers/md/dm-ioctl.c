@@ -1518,10 +1518,17 @@ static int copy_params(struct dm_ioctl __user *user, struct dm_ioctl **param)
 	if (copy_from_user(dmi, user, tmp.data_size))
 		goto bad;
 
+	/* Wipe the user buffer so we do not return it to userspace */
+	if ((tmp.flags & DM_SECURE_DATA_FLAG) &&
+	    clear_user(user, tmp.data_size))
+		goto bad;
+
 	*param = dmi;
 	return 0;
 
 bad:
+	if (tmp.flags & DM_SECURE_DATA_FLAG)
+		memset(dmi, 0, tmp.data_size);
 	vfree(dmi);
 	return -EFAULT;
 }
@@ -1531,6 +1538,7 @@ static int validate_params(uint cmd, struct dm_ioctl *param)
 	/* Always clear this flag */
 	param->flags &= ~DM_BUFFER_FULL_FLAG;
 	param->flags &= ~DM_UEVENT_GENERATED_FLAG;
+	param->flags &= ~DM_SECURE_DATA_FLAG;
 
 	/* Ignores parameters */
 	if (cmd == DM_REMOVE_ALL_CMD ||
@@ -1558,6 +1566,7 @@ static int validate_params(uint cmd, struct dm_ioctl *param)
 static int ctl_ioctl(uint command, struct dm_ioctl __user *user)
 {
 	int r = 0;
+	int wipe_buffer;
 	unsigned int cmd;
 	struct dm_ioctl *uninitialized_var(param);
 	ioctl_fn fn = NULL;
@@ -1603,6 +1612,7 @@ static int ctl_ioctl(uint command, struct dm_ioctl __user *user)
 	 */
 	r = copy_params(user, &param);
 	input_param_size = param->data_size;
+	wipe_buffer = param->flags & DM_SECURE_DATA_FLAG;
 
 	current->flags &= ~PF_MEMALLOC;
 
@@ -1623,6 +1633,9 @@ static int ctl_ioctl(uint command, struct dm_ioctl __user *user)
 		r = -EFAULT;
 
 out:
+	if (wipe_buffer)
+		memset(param, 0, input_param_size);
+
 	vfree(param);
 	return r;
 }
